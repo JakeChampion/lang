@@ -249,6 +249,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_memchr")
+				case "__fern_ascii_run":
+					// The v128 high-bit scan. Same two dependencies
+					// and for the same two reasons.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_ascii_run")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1076,6 +1082,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBody,
+	},
+	"__fern_ascii_run": {
+		// (data, len, from) → i32 index of the first high-bit byte, or len.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildAsciiRunBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -3393,6 +3405,158 @@ func buildMemchrBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // block
 
 	body = inst.InstI32Const(body, -1)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildAsciiRunBody assembles wasm bytes for __fern_ascii_run.
+//
+// Signature: (param $data $len $from i32) (result i32) — three params, because
+// the string's two words plus `from` is one fewer than __memchr's four.
+//
+// THE CHEAPEST OF THE THREE ASCII-RUN KERNELS, and the reason is the same
+// instruction that made __memchr shortest here: `i8x16.bitmask` gathers the top
+// bit of each of 16 bytes, which IS the "not ASCII" test. So this needs no
+// splat AND no compare — the whole vector body is v128.load / i8x16.bitmask /
+// i32.ctz. x86-64 lands in the same place via pmovmskb; arm64 still pays for a
+// compare (cmlt) because NEON has no bitmask at all.
+//
+// The two wasm-specific structures from __memchr both carry over unchanged: a
+// short (SSO) string has no address, so it takes a scalar loop over
+// __fern_str_byte, and the tail after the last whole vector is scalar.
+//
+// Returns $n (the length), not -1, when the rest is ASCII — the branch-free
+// skip contract, and the reason both loops fall through to a `local.get $n`
+// rather than to a constant.
+//
+// Locals after the three params: $n (3), $i (4), $m (5).
+func buildAsciiRunBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pFrom = 2
+		lN    = 3
+		lI    = 4
+		lM    = 5
+	)
+	var body []byte
+
+	// $n = __fern_str_len($data, $len)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	// $i = max($from, 0) — clamped, not rejected, matching the reference.
+	body = inst.InstLocalGet(body, pFrom)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstEnd(body)
+
+	// Inline (SSO) string: scalar loop through __fern_str_byte, the only
+	// reader that can see bytes living in the two words.
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstLocalGet(body, lN)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		// str_byte returns 0..255, so "high bit set" is `>= 128` on the
+		// zero-extended value rather than a sign test.
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, pLen)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstI32Const(body, 128)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		body = inst.InstLocalGet(body, lN)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Heap string: $data is the byte address, so the vector loop applies.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstBrIf(body, 1)
+	// $m = i8x16.bitmask(v128.load($data + $i)) — no compare: the bitmask
+	// gathers exactly the bit being asked about.
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	// align 0, as in __memchr: a Fern string buffer carries no 16-byte
+	// alignment guarantee and `$i` walks it from an arbitrary `from`.
+	body = simd.InstV128Load(body, 0, 0)
+	body = simd.InstI8x16Bitmask(body)
+	body = inst.InstLocalTee(body, lM)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lM)
+	body = numeric.InstI32Ctz(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Scalar tail: the final 0..15 bytes.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstI32Const(body, 128)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lN)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

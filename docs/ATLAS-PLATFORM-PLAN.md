@@ -539,15 +539,39 @@ The lesson generalises past this row: "no IR change" is not the same as "no
 toolchain change", and the fused design's whole argument is that it stays
 below the IR. Below the IR is where the assembler lives.
 
-### 3.4 Ordering across six backends
+**The second kernel cost one more encoding, and the rule above paid for
+itself.** `__ascii_run`'s arm64 body needs `cmlt Vd.<T>, Vn.<T>, #0`, which
+the NEON set added for `__memchr` did not include. It was landed first and
+pinned against `aarch64-linux-gnu-as` before the kernel was written, so it
+cost a few lines rather than a scalar-then-vectorise round trip. x86-64 and
+wasm needed nothing new — `pmovmskb` and `i8x16.bitmask` were already there
+from the first kernel, and this one uses strictly less than that one.
 
-The kernel must exist in all six backends before `std/string` may call it,
+One encoding detail worth keeping, since it is the same class of hazard as the
+uleb128 note above: `#0` in `cmlt` is **part of the opcode, not an immediate
+field**. There is no `cmlt … #1`. A parser that accepts one and encodes it
+into a nonexistent field emits a compare-against-zero that reads correct at
+the call site, so `internal/native/arm64` rejects a non-zero immediate rather
+than encoding it.
+
+### 3.4 Ordering across seven backends
+
+**Seven, not six.** This section said six through the whole of `__memchr`'s
+build, and the miscount was not free: `arm64-ssa`
+(`internal/codegen/arm64ssa`, reached via `ssa.LiftFromIR`, with its own
+hand-written `runtimeHelperEmitters` table) was adopted-past rather than
+ported, and CI reported it as `branch to undefined label
+"fn___fern_memchr"`. The full list is three native
+(`internal/codegen/{x86_64,arm64,wasmbin}`), three self-host
+(`asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`), and `arm64ssa`.
+
+The kernel must exist in all seven before `std/string` may call it,
 because the self-hosted compiler compiles the stdlib and a missing lowering is
 a hard compile error, not a fallback — the AST emitters are gone and every
 backend routes IR-or-error (`docs/SELFHOST-AST-RETIREMENT.md`). The sequence
 is therefore:
 
-1. IR op + interpreter reference + scalar-only lowering in all six backends
+1. IR op + interpreter reference + scalar-only lowering in all seven backends
    (correct, not yet fast) + differential tests.
 2. `std/string` adoption behind the now-total intrinsic.
 3. Vectorise the lowerings one backend at a time, each with a measurement.
@@ -568,21 +592,38 @@ two words with no address, so there is nothing for `v128.load` to point at.
 The three *self-host* backends followed, and there step 1's scalar-first
 ordering is the whole point rather than a formality: `asm_ir.fern` /
 `asm_arm64_ir.fern` emit an inline byte loop, `wasm_ir.fern` a
-`$__fern_memchr` WAT helper. Step 1 is therefore **complete — the intrinsic is
-total**, and step 2 (`std/string` adoption) is unblocked.
+`$__fern_memchr` WAT helper. `arm64-ssa` was the seventh and, as above, the
+forgotten one; it is scalar too. Step 1 is therefore **complete — the intrinsic
+is total** — and step 2 (`std/string` adoption) landed at ~43x on the
+single-byte search path.
 
-One thing the six lowerings did *not* end up sharing is a string
-representation, and it is worth recording because it is what made three of the
-six non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
+One thing the seven lowerings did *not* end up sharing is a string
+representation, and it is worth recording because it is what made four of the
+seven non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
 native wasm use two words with small-string optimisation (and wasm's SSO form
 has no address at all, so its kernel needs a second scalar path); the self-host
 backends use a `[data@0, len@8]` box on the register targets and a
-`[len@0][bytes@4]` block on wasm. The op is the same op in all six; nothing
-below it is.
+`[len@0][bytes@4]` block on wasm; `arm64-ssa` uses one word with the length at
+`[ptr-4]`. The op is the same op in all seven; nothing below it is.
 
-Remaining: step 3 for the self-host tier — swapping those scalar bodies for
-vector ones. Unlike the native tier that is pure speed with no totality
-argument behind it, so it ranks below §4's other items.
+**`__ascii_run`, the second kernel.** Total across all seven, and — unlike
+`__memchr` — made total *before* any caller adopts it, which is the one
+process change the miscount above bought. x86-64 is SSE2, arm64 is NEON, wasm
+is v128; the other four are scalar. Its vector form is cheaper than
+`__memchr`'s on every target, and interestingly for two different reasons:
+
+- x86-64 and wasm save the **compare**. `pmovmskb` / `i8x16.bitmask` gather the
+  top bit of each byte, which IS the "not ASCII" test, so the vector body is
+  load / gather / scan-for-lowest-set-bit with no compare at all.
+- arm64 saves the **splat**. NEON has no bitmask, so it still needs a compare
+  to widen "high bit set" into an all-ones lane before `shrn` can narrow it —
+  but `cmlt v0.16b, v0.16b, #0` compares against zero, so the `dup` that
+  `__memchr` needs disappears.
+
+Remaining: step 3 for the self-host and `arm64-ssa` tiers — swapping those
+scalar bodies for vector ones. Unlike the native tier that is pure speed with
+no totality argument behind it, so it ranks below §4's other items. Adoption of
+`__ascii_run` in `is_valid_utf8` is step 2 for that kernel and is unblocked.
 
 ### 3.5 Testing
 
@@ -613,12 +654,54 @@ Per rule 5, each kernel ships with:
    the caller contract is already pinned by the Linux side.
 4. **`__memcmp` / UTF-8 validation** as the second and third kernels, proving
    the contract generalises past a single shape.
+   *Landed as `__ascii_run`, and NOT as `__memcmp` — this item named the wrong
+   one of its two candidates. See "Is the length the input or the needle?"
+   below, which is the general rule that fell out of measuring before
+   building.*
 5. **`byteswap` / `rotate` intrinsics** — small, independent, unblocked. (§2.3)
 6. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
    credible non-vector variant, so it can proceed in parallel.
 7. Re-evaluate the first-class vector type only after 2 and 4 have landed, with
    real kernels to point at. If the fused set stays under a dozen leaf kernels,
    the register-class project may never be worth it.
+
+### Is the length the input, or the needle?
+
+Item 4 above listed `__memcmp` as the natural second kernel. Measured first, on
+x86-64, and it does not earn the slot:
+
+| shape                                     | measured   |
+| ----------------------------------------- | ---------- |
+| `starts_with`, 1600-byte prefix, 20k calls | 0.16 GB/s  |
+| `starts_with`, 8-byte prefix, 2M calls     | ~52 ns/call |
+
+The first shape would gain the way `__memchr` did. The second would not: at 8
+bytes the whole compare fits inside one vector, so the cost is call overhead
+rather than comparison. That is structural, not incidental, and it generalises
+into the rule this section is named for:
+
+> **A fused kernel pays when its vector length is the INPUT. It does not pay
+> when its vector length is the NEEDLE.**
+
+`__memchr` scans the haystack, which is long whenever anyone cares. `__memcmp`
+compares needle-length runs, and needles are short in nearly every real caller
+— `"https://"` is 8 bytes, `","` is 1, and Two-Way's `__substr_eq` compares
+exactly needle-length runs. Its favourable shape is the uncommon one, so it is
+**deferred, not dropped**: the long-compare callers are real, just rarer than
+the ordering here implied.
+
+`__ascii_run` was built instead because it has `__memchr`'s profile — the
+length is the input. It shipped as the ASCII skip inside UTF-8 validation
+rather than as a whole `__utf8_validate`, for a separate reason worth keeping:
+the per-length, overlong-and-surrogate rules are branchy logic that would be
+duplicated across all seven backends, and the readable place for them is Fern.
+Only the run between multi-byte sequences vectorises, and any other scanner
+wanting "first high byte" reuses it.
+
+Applying the rule to the rest of the Tier-2 table in §3.3: `str_eq` and
+`starts_with`/`ends_with` are needle-length and rank down with `__memcmp`;
+`trim`, `count_byte`, `to_upper`/`to_lower` and base64/hex codecs are
+input-length and rank up.
 
 Two of the open questions this document opened are now **closed**, both by the
 same route — someone decided, and the decision turned a "needs a decision" row

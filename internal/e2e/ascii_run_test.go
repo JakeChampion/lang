@@ -153,3 +153,40 @@ func TestX86_64AsciiRun(t *testing.T) {
 		return out
 	})
 }
+
+// The arm64 leg. Not a formality: arm64 passes a `string` in TWO registers, so
+// `from` arrives in w2 here and in esi there, and the two kernels reach their
+// answer by different routes — x86 needs no compare (pmovmskb IS the test),
+// arm64 needs no splat (cmlt compares against zero). The mask extraction also
+// differs: NEON has no pmovmskb, so a lane index is the lowest set bit of a
+// nibble-per-byte mask divided by four, and that /4 is exactly the kind of
+// thing that produces a plausible wrong index rather than a crash.
+func TestArm64AsciiRun(t *testing.T) {
+	runAsciiRunCorpus(t, func(t *testing.T, src string) string {
+		out, exit := compileAndRunArm64(t, src)
+		if exit != 0 {
+			t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
+		}
+		return out
+	})
+}
+
+// The wasm leg covers the representation neither native backend has: a string
+// under 8 bytes lives IN its two words with no address at all, so every short
+// case in the sweep above takes the kernel's scalar path rather than its v128
+// one. The sweep starting at length 0 is what makes both paths reachable from
+// one corpus.
+func TestWASMAsciiRun(t *testing.T) {
+	runAsciiRunCorpus(t, func(t *testing.T, src string) string {
+		out, _ := invokeWasmtime(t, src)
+		// The component harness builds with PrintMainResult, so main()'s
+		// return arrives as one extra line. Checking it is this leg's only
+		// signal that the program ran to completion rather than stopping
+		// early with the right prefix.
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if n := len(lines); n == 0 || strings.TrimSpace(lines[n-1]) != "0" {
+			t.Fatalf("main() result line = %q, want \"0\"", lines[len(lines)-1])
+		}
+		return strings.Join(lines[:len(lines)-1], "\n")
+	})
+}

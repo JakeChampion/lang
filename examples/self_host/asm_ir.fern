@@ -4654,6 +4654,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(l_done + ":\n    pushq %rdx\n");
         return s;
     }
+    if (o.kind_tag == 227) {  // ascii_run
+        // operand stack [box, from] (from on top) -> the index of the first
+        // byte at or after `from` with its high bit set, or the LENGTH.
+        //
+        // SCALAR for memchr's reason above. Two operands rather than three:
+        // there is no byte to compare against, which is also what makes the
+        // native vector forms of this kernel cheaper than memchr's.
+        var alo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var a_clamped: string = alo.name;
+        var alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
+        var a_loop: string = alo2.name;
+        var alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
+        var a_none: string = alo3.name;
+        var alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
+        var a_done: string = alo4.name;
+        s = alo4.state;
+        s = s.write("    popq %rdx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        // from clamps at 0.
+        s = s.write("    cmpq $0, %rdx\n    jge " + a_clamped + "\n    xorq %rdx, %rdx\n");
+        s = s.write(a_clamped + ":\n");
+        s = s.write(a_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + a_none + "\n");
+        s = s.write("    movzbq (%rax,%rdx), %r9\n");
+        // Zero-extended, so bit 7 is the high bit.
+        s = s.write("    testq $128, %r9\n    jnz " + a_done + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + a_loop + "\n");
+        // The miss value is the LENGTH, not -1 — the branch-free-skip
+        // contract this op keeps everywhere.
+        s = s.write(a_none + ":\n    movq %r8, %rdx\n");
+        s = s.write(a_done + ":\n    pushq %rdx\n");
+        return s;
+    }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box
