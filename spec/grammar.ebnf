@@ -292,10 +292,16 @@ LambdaExpr  = 'function' [ '(' [ ParamList ] ')' ] [ ':' Type ] ValueBlock ;
 # Fern (the parser reports P001), and admitting it here would swallow
 # the `=>` of a match arm: `when x == y => x + y` would read `y => x + y`
 # as a lambda and leave the arm with no arrow.
-ArrowLambda = '(' [ LambdaParams ] ')' '=>' Expr ;
+ArrowLambda = '(' [ LambdaParams ] ')' [ ':' Type ] '=>' Expr ;
 LambdaParams
             = LambdaParam { ',' LambdaParam } [ ',' ] ;
-LambdaParam = TupleParam | IDENT [ ':' Type ] ;
+# The type annotation is REQUIRED, not optional. It is what tells the
+# parser that `(x: i32) => …` opens a lambda rather than a parenthesized
+# expression or a tuple literal, decided before the matching `)` is
+# reached — see `looksLikeArrowLambda` / `firstParamLooksTyped`. So
+# `(x) => x + 1` and `(x, y) => x` are both P001, and an empty parameter
+# list needs no annotation because `()` is already unambiguous.
+LambdaParam = TupleParam | IDENT ':' Type ;
 
 ParenOrTuple
             = '(' Expr { ',' Expr } [ ',' ] ')' ;

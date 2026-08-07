@@ -294,8 +294,14 @@ language. Three filed issues were wrong for exactly this reason.
 Most apparent "gaps" turn out to be invalid programs — wrong keyword
 (match guards are `when`, not `if`), checker-rejected (a bare-ident
 arm on a SCALAR match is E035 — i32 matches only accept literals or
-`_`), parse errors (arrow lambdas take an EXPRESSION body, not a block:
-`(x) => x+1`, not `(x) => { … }`), or missing imports (the path-probe
+`_`), parse errors (an arrow lambda takes an EXPRESSION body, not a
+block, and **every parameter must be type-annotated**: `(x: i32) => x+1`
+— both `(x) => x+1` and `(x: i32) => { … }` are P001. The annotation is
+what tells the parser it is looking at a lambda rather than a
+parenthesized expression or a tuple literal, decided before the matching
+`)` is reached; `spec/grammar.ebnf` claimed it was optional until the
+grammar was corrected to match. `function(x: i32): i32 { … }` is the
+block-bodied form), or missing imports (the path-probe
 driver resolves no stdlib, so anything needing `std/iter`/`std/map`/…
 falsely reads `ast`). The genuine remaining AST fallbacks are
 documented, not probe-findable: the ~512-function merged-bundle budget

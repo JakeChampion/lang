@@ -36,6 +36,12 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// A shared '[' … ']' around an inner choice does not backtrack in
 		// a PEG: `i` matched as a type argument, then '-' failed.
 		{"index with arithmetic", `function main(): i32 { return arr[i - 1]; }`},
+
+		// The parser accepts a return-type annotation on an arrow lambda; the
+		// grammar had no place for one, and no corpus source uses the form,
+		// so the differential could not have found it either.
+		{"arrow lambda with a return type", `function main(): i32 { var f = (x: i32): i32 => x + 1; return 0; }`},
+		{"nullary arrow lambda with a return type", `function main(): i32 { var f = (): i32 => 1; return 0; }`},
 		{"slice", `function main(): i32 { return xs[0:n]; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},
@@ -109,6 +115,15 @@ func TestGrammarRejects(t *testing.T) {
 		{"missing semicolon", `function main(): i32 { return 0 }`},
 		{"binary operator with no right operand", `function main(): i32 { return 1 + ; }`},
 		{"struct field with no type", `struct P { x }`},
+
+		// An arrow lambda's parameter annotation is what tells the parser it
+		// is looking at a lambda rather than a parenthesized expression or a
+		// tuple literal, decided before the matching `)` is reached. Dropping
+		// it is P001, and the grammar said it was optional — a promise the
+		// parser has never kept, and one the parser->grammar differential is
+		// structurally unable to notice.
+		{"arrow lambda, untyped param", `function main(): i32 { var f = (x) => x + 1; return 0; }`},
+		{"arrow lambda, untyped params", `function main(): i32 { var f = (x, y) => x; return 0; }`},
 	}
 
 	for _, tc := range cases {
