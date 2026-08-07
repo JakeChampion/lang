@@ -10748,6 +10748,27 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// inner at i32 (the slot a scalar rides) rather than handing
 			// settleNumeric a non-numeric target.
 			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
+		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
+			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
+			!isBareNumericLiteral(n.Inner) {
+			// A NARROWING cast must not push its target into a compound
+			// operand. `(i % 256) as u8` computes in i32 and narrows at the
+			// end — settling the whole binary at u8 range-checks the 256
+			// against u8 and rejects the canonical way to write a byte wrap.
+			//
+			// It only ever bit expressions with an UNSETTLED operand, which is
+			// what made it look arbitrary: `var x: i32 = …; (x % 256) as u8`
+			// was accepted all along, because x had already committed, while
+			// `for i in … { (i % 256) as u8 }` was rejected, because the loop
+			// variable had not. The same expression accepted or refused on
+			// whether its neighbour happened to be declared.
+			//
+			// Settling at i32 here makes the loop variable behave exactly like
+			// the declared local. A BARE literal still settles at the target,
+			// so `300 as u8` stays the E047 it should be — that is a typo, not
+			// an arithmetic intent, and it is the case the widening rule above
+			// (`4611686018427387904 as u64`) was written for.
+			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -14349,4 +14370,17 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 	if t != nil && !ast.Equal(t, ast.BoolType{}) {
 		c.errfCode(p, "E009", "operator %q requires boolean, got %s", op, t)
 	}
+}
+
+// isBareNumericLiteral reports whether `e` is a numeric literal, optionally
+// negated — the shape a narrowing cast still settles at its target so an
+// out-of-range constant stays an E047 rather than silently wrapping.
+func isBareNumericLiteral(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		return true
+	case *ast.Unary:
+		return x.Op == "-" && isBareNumericLiteral(x.Operand)
+	}
+	return false
 }
