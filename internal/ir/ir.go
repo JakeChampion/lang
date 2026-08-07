@@ -7435,12 +7435,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// consume (tag, payload) from the operand stack into two
 		// scratch locals, dispatch on the tag local, bind the
 		// payload from the payload local — zero alloc end-to-end.
-		// Scoped to Option[i32] today (the pair-form set's only
-		// shape); any arm with multiple bindings or pointer-
-		// shaped payload skips through to the heap-form path,
-		// but pair-form-eligibility already excludes those cases
-		// upstream so the fast path always covers Option[i32]
-		// matches end-to-end.
+		// The payload is a single slot, so it is not only Option[i32]:
+		// isPairFormPayloadShape admits array / slice / struct / tuple
+		// too, and for those the register is the ONLY reference to a
+		// value the callee allocated. Nothing owns it, which is what
+		// payReleaseSlot below exists to fix.
 		// An `@` binding needs the whole scrutinee box, so it forces the
 		// heap-form path (the pair-form fast path splits the value into a
 		// (tag, payload) pair with no single box pointer to bind).
@@ -7587,6 +7586,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// scrutinees load from `[ptr+offset]`.
 			offsets, _ := payloadLayout(arm.BindingTypes, len(arm.Bindings), b.ptrW)
 			armRestores := []func(){}
+			// A pair-form payload has no box behind it, so the reclaim the
+			// heap-form path gets from reclaimScrut doesn't apply and a
+			// pointer-shaped payload is left ownerless. Release it after the
+			// arm body instead — see reclaimablePairFormPayload.
+			payReleaseSlot := int32(-1)
+			var payReleaseType ast.Type
 			for i, name := range arm.Bindings {
 				bt := ast.Type(ast.NumberType{})
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
@@ -7594,6 +7599,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 				}
 				slot, restore := b.bindingSlotScoped(name, bt)
 				armRestores = append(armRestores, restore)
+				if pairFormScrutinee && arm.Guard == nil && arm.AtBinding == "" &&
+					b.reclaimablePairFormPayload(n.Tag, bt, arm.Body, name) {
+					payReleaseSlot, payReleaseType = slot, bt
+				}
 				if pairFormScrutinee {
 					b.emit(Op{Kind: OpLoadLocal, I32: payloadSlot})
 				} else {
@@ -7671,6 +7680,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			if err := b.stmt(arm.Body); err != nil {
 				return err
+			}
+			// The borrowed payload binding is dead now, and it is the only
+			// reference to a value the callee freshly allocated. A `return`
+			// inside the body skips this and leaks as before — safe, and the
+			// binding would have escaped anyway (pairFormPayloadConfined
+			// rejects a body that mentions the name in a return).
+			if payReleaseSlot >= 0 {
+				b.emitOwnedSlotDrop(payReleaseSlot, payReleaseType)
 			}
 			// SAME-shape bindings stay in b.locals after the arm
 			// finishes: the IR only cares about slot indices

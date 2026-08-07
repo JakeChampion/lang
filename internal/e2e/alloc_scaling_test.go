@@ -220,6 +220,42 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A pair-form Option return carries `(tag, payload)` in registers with
+		// no box, so the box-reclaim the heap-form match path performs has
+		// nothing to free. The payload is still allowed to be POINTER-shaped
+		// (array / slice / struct / tuple all pass isPairFormPayloadShape),
+		// and for those the register was the ONLY reference to a value the
+		// callee had just allocated: bound as a borrow, owned by nobody. Every
+		// evaluation leaked the whole payload — 3200 / 6400 / 12800 bytes at
+		// 100 / 200 / 400 rounds, exactly linear.
+		//
+		// `match (mk()) { Some(v) => … }` is how a lookup is written, which is
+		// what made this expensive. Constant in n: one payload per round,
+		// released when the arm ends.
+		name: "pair-form-pointer-payload",
+		decls: `struct P { a: i32, b: i32 }
+function mkarr(k: i32): Option[i32[]] {
+    if (k == 0) { return None; }
+    return Some([k, k + 1, k + 2]);
+}
+function mkstruct(k: i32): Option[P] {
+    if (k == 0) { return None; }
+    return Some(P { a: k, b: k + 1 });
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        match (mkarr(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
+        match (mkstruct(1)) { Some(p) => { t = t + p.b; }, None => { }, }
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the
