@@ -2233,6 +2233,38 @@ function if_expr_rt(e: Expr): string {
                 _ => { return "i32"; }
             }
         },
+        // An ARITHMETIC / BITWISE branch takes its width from its operands, so
+        // read them rather than falling through to "i32". That fall-through lost
+        // the width whenever the arm computed its value instead of naming it:
+        // `match (x /? y) { Some(v) => v, None => (3i64 * 5i64) }` labelled the
+        // IIFE i32 and the i64 `return` then bailed the module, while the same
+        // arm written as the bare literal `15i64` was fine. Magnitude never
+        // mattered — `2147483967i64` alone lowered; `2147483967i64 * 2i64` did not.
+        ExprBinary(b) => {
+            // A COMPARISON / LOGICAL operator yields a boolean whatever its
+            // operands are, so their width says nothing about the branch's.
+            if (b.op == "||" || b.op == "&&" || b.op == "==" || b.op == "!="
+                    || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return "bool"; }
+            // A CHECKED operator yields an Option, not the operand type — the
+            // classifier has no tag for that, so leave it on the default.
+            if (b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "+?"
+                    || b.op == "-?" || b.op == "<<?" || b.op == ">>?") { return "i32"; }
+            // A SHIFT is typed by the value being shifted; the count is an
+            // independent operand and may legitimately be narrower.
+            if (b.op == "<<" || b.op == ">>" || b.op == "<<|") { return if_expr_rt(b.left); }
+            return wider_rt(if_expr_rt(b.left), if_expr_rt(b.right));
+        },
+        // Unary shares the same width loss: `-x` / `~x` are as wide as their
+        // operand, and `!x` is a boolean regardless of it.
+        ExprUnary(u) => {
+            // An `as <type>` cast (op "as_<type>") is DECISIVE on its TARGET —
+            // reading the operand instead inverts the one construct whose whole
+            // job is to change the width, and `((163i64 >> 32i64) as i32) & 233i32`
+            // then reads i64 and bails the module it was previously fine in.
+            if (u.op.len() > 3 && u.op[0:3] == "as_") { return u.op[3:u.op.len()] + ""; }
+            if (u.op == "!") { return "bool"; }
+            return if_expr_rt(u.operand);
+        },
         _ => { return "i32"; }
     }
 }

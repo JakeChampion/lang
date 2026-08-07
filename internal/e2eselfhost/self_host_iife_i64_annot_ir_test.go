@@ -24,6 +24,11 @@ import (
 //
 // (Constant-condition forms like `if (1 < 2) { 5 } else { 9 }` take a separate
 // const-fold path and stay on the AST emitter — correct, just not widened here.)
+//
+// The later cases pin the other half of the same decision: the per-branch tag
+// if_expr_rt computes, which wider_rt then combines. A branch that COMPUTES its
+// value (binary / unary / cast) rather than naming a literal used to fall through
+// to "i32" and lose the width the same way.
 var iifeI64AnnotIRCases = []struct {
 	name string
 	main string
@@ -43,6 +48,33 @@ var iifeI64AnnotIRCases = []struct {
 	// Regression: a branch with a real i64 (big-literal) value was already on the IR
 	// path via the branch-value classifier — it must stay there. 5000000000 % 7 = 2.
 	{"ifexpr-i64-bigbranch", `function main(): i32 { var n = 5; var x: i64 = if (n > 3) { 5000000000 } else { 1 }; return (x % 7) as i32; }`},
+
+	// A COMPUTED branch — if_expr_rt classified literals, bools, strings and nested
+	// IIFEs and sent everything else to "i32", so an arm that computed its value
+	// instead of naming it lost the width: wider_rt had nothing to widen with, the
+	// IIFE was labelled i32, and the i64 `return` bailed the module. Magnitude was
+	// never the trigger — the bare literal `2147483967i64` lowered fine while
+	// `2147483967i64 * 2i64` did not. 604 /? 478 = Some(1), so 1.
+	{"matchexpr-i64-binary-arm", `function main(): i32 { var x: i64 = match ((604i64) /? (478i64)) { Some(w) => w, None => (3i64 * 5i64) }; return x as i32; }`},
+	// Same gap with the computed arm TAKEN, so the exit code is a direct oracle on
+	// the width: 5000000000 / 1000000000 = 5 at 64-bit, but a 32-bit truncation
+	// (705032704) / 1000000000 = 0. 1 /? 0 is None, so the None arm is the value.
+	{"matchexpr-i64-binary-arm-taken", `function main(): i32 { var x: i64 = match ((1i64) /? (0i64)) { Some(w) => w, None => (5000000000i64 / 1000000000i64) }; return x as i32; }`},
+	// A SHIFT is typed by the value being shifted, not by the count — the count is
+	// an independent operand and may legitimately be narrower. 5000000000 >> 30 = 4;
+	// truncated to 32 bits it would be 705032704 >> 30 = 0.
+	{"matchexpr-i64-shift-arm", `function main(): i32 { var x: i64 = match ((1i64) /? (0i64)) { Some(w) => w, None => (5000000000i64 >> 30i64) }; return x as i32; }`},
+	// An `as <type>` CAST is decisive on its TARGET, not its operand: reading the
+	// operand inverts the one construct whose job is to change the width, so
+	// `((5000000000i64 >> 30i64) as i32) & 7i32` reads i64 and bails a module that
+	// lowered before. The un-annotated `return` position is what exposes it — with a
+	// `var x: i32 =` annotation the binding supplies the type and the inversion hides.
+	// 5000000000 >> 30 = 4, & 7 = 4.
+	{"matchexpr-cast-arm-narrows", `function main(): i32 { return (match ((1i64) /? (0i64)) { Some(w) => (w as i32), None => (((5000000000i64 >> 30i64) as i32) & 7i32) } & 255i32); }`},
+	// A `!` branch is a boolean whatever its operand is. 5.
+	{"ifexpr-bool-not-arm", `function main(): i32 { var n = 5; var b: boolean = if (n > 3) { !(n > 100) } else { false }; var x: i32 = 0; if (b) { x = 5; } return x; }`},
+	// A COMPARISON branch is likewise a boolean, not the width of its operands. 7.
+	{"ifexpr-bool-cmp-arm", `function main(): i32 { var n = 5; var b: boolean = if (n > 3) { n > 1 } else { false }; var x: i32 = 0; if (b) { x = 7; } return x; }`},
 }
 
 // TestSelfHostIifeI64AnnotIRX86_64 routes each case through the self-hosted x86-64
