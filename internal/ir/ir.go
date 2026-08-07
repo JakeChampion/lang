@@ -10001,6 +10001,24 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 			}
 		}
 	case *ast.FieldAccess:
+		// `t.1.field` — the TARGET is a tuple element selector, so its owner
+		// comes from the tuple's element list, not from a struct's fields.
+		// Falling through to the struct path looks up a numeric selector that
+		// no struct declares, so the owner came back "" and lowering aborted
+		// with `field access on unresolved struct ""` — on code the checker
+		// accepts and the interpreter runs. Binding the element to a local
+		// first (`var p: P = t.1; p.field`) always worked, which is what kept
+		// this narrow.
+		if tup, ok := b.targetTupleType(x.Target); ok {
+			idx, err := strconv.Atoi(x.Field)
+			if err != nil || idx < 0 || idx >= len(tup.Elems) {
+				return ""
+			}
+			if st, ok := tup.Elems[idx].(ast.StructType); ok {
+				return st.Name
+			}
+			return ""
+		}
 		owner := b.fieldOwner(x.Target)
 		sd, ok := b.info.Structs[owner]
 		if !ok {

@@ -1,0 +1,67 @@
+// A struct reached through a tuple element is still a struct.
+//
+// `t.1.a` — a field access whose target is a tuple element selector —
+// type-checked and ran under the interpreter while failing to LOWER on every
+// compiled backend: `ir: field access on unresolved struct ""`. The owner
+// lookup walked the struct-field path for a numeric selector no struct
+// declares, so it resolved to the empty name and gave up.
+//
+// Binding the element to a local first always worked, which is why this went
+// unnoticed: the workaround is the shape most code already has. It shows up
+// the moment a function returns `(value, state)` and the caller wants one
+// field out of the state without naming the whole thing.
+//
+// Every depth is here — one level, two levels, through a call result, through
+// an array element, and as a method receiver — because the fix resolves the
+// owner recursively and a single-level test would not notice if it stopped
+// there.
+
+import "std/i32";
+import "std/string";
+
+struct Point { x: i32, y: i32 }
+struct Segment { from: Point, to: Point }
+
+function origin(): (i32, Point) {
+    return (1, Point { x: 7, y: 9 });
+}
+
+function span(): (string, Segment) {
+    return ("diag", Segment { from: Point { x: 0, y: 0 }, to: Point { x: 3, y: 4 } });
+}
+
+function pairs(): (i32, Point)[] {
+    return [(10, Point { x: 1, y: 2 }), (20, Point { x: 3, y: 4 })];
+}
+
+function (p: Point) manhattan(): i32 {
+    return p.x + p.y;
+}
+
+function main(): i32 {
+    var t: (i32, Point) = origin();
+    print(t.1.x.to_string());
+    print(t.1.y.to_string());
+    print(t.0.to_string());
+
+    // Two levels: the tuple element is a struct whose field is a struct.
+    var s: (string, Segment) = span();
+    print(s.1.to.x.to_string());
+    print(s.1.from.y.to_string());
+    print(s.0);
+
+    // Directly off the call result, with no local in between.
+    print(origin().1.y.to_string());
+    print(span().1.to.y.to_string());
+
+    // Through an array element.
+    var ps: (i32, Point)[] = pairs();
+    print(ps[1].1.x.to_string());
+    print(ps[0].1.y.to_string());
+
+    // As a method receiver.
+    print(t.1.manhattan().to_string());
+    print(span().1.to.manhattan().to_string());
+
+    return 0;
+}
