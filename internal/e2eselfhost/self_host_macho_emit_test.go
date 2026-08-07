@@ -74,7 +74,7 @@ const machoSelfTestMain = `
 function main(): i32 {
     var text: i32[] = [1, 2, 3, 4];
     var none: i32[] = [];
-    var bin: i32[] = macho_executable(text, none, "fern", 0, 0);
+    var bin: i32[] = macho_executable(text, none, "fern", 0, 0, none);
 
     // total = code_limit (16384) + sig_len (241).
     if (bin.len() != 16625) { return 1; }
@@ -170,7 +170,7 @@ function main(): i32 {
     // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 = 832.
     var t2: i32[] = [1, 2, 3, 4, 5];
     var d2: i32[] = [9, 9];
-    var b2: i32[] = macho_executable(t2, d2, "fern", 0, 0);
+    var b2: i32[] = macho_executable(t2, d2, "fern", 0, 0, none);
     // ncmds = 12 @16 (now with __DATA).
     if (b2[16] != 12) { return 40; }
     // sizeofcmds = 752 (0x2f0) @20.
@@ -195,12 +195,42 @@ function main(): i32 {
     // the difference) so a .bss symbol at data_vaddr + data.len() + off is
     // inside the mapped segment. 2 + 20000 rounds to two pages = 32768,
     // against one page (16384) of file bytes.
-    var b3: i32[] = macho_executable(t2, d2, "fern", 8, 20000);
+    var b3: i32[] = macho_executable(t2, d2, "fern", 8, 20000, none);
     if (b3[752] != 72 || b3[753] != 3 || b3[754] != 0 || b3[755] != 0) { return 48; }
     if (b3[289] != 128 || b3[288] != 0) { return 49; }
     if (b3[305] != 64 || b3[304] != 0) { return 50; }
     // The file layout (hence the signature) is unchanged by bss.
     if (b3.len() != 33137) { return 51; }
+
+    // ---- LC_DYLD_INFO_ONLY rebase stream (#6259) ----
+    // dyld slides a PIE image, so an absolute address in __DATA (the
+    // assembler's .quad-symbol slots) is stale unless the image asks for
+    // it to be rebased. b2/b3 above pass no slots, so their streams are empty
+    // and their lengths (33137) are the proof that costs nothing when there is
+    // nothing to rebase. Here two slots are named.
+    var offs: i32[] = [8, 200];
+    var b4: i32[] = macho_executable(t2, d2, "fern", 0, 0, offs);
+    // rebase_off @488, rebase_size @492 in LC_DYLD_INFO_ONLY (@480 for a
+    // data-carrying image: 32 + __PAGEZERO 72 + __TEXT 152 + __DATA 152 +
+    // __LINKEDIT 72). off = 32768, where __LINKEDIT starts.
+    if (b4[488] != 0 || b4[489] != 128 || b4[490] != 0 || b4[491] != 0) { return 52; }
+    // 9 opcode bytes, padded to 16 like every other __LINKEDIT blob. A zero
+    // here is the whole bug: the image loads and then reads a stale pointer.
+    if (b4[492] != 16 || b4[493] != 0) { return 53; }
+    // SET_TYPE_IMM | POINTER, then per slot SET_SEGMENT_AND_OFFSET_ULEB(seg 2)
+    // + uleb(off) + DO_REBASE_IMM_TIMES(1), then DONE. 200 needs two uleb
+    // bytes, which is what makes the second slot worth naming.
+    if (b4[32768] != 0x11) { return 54; }
+    if (b4[32769] != 0x22 || b4[32770] != 8 || b4[32771] != 0x51) { return 55; }
+    if (b4[32772] != 0x22 || b4[32773] != 200 || b4[32774] != 1 || b4[32775] != 0x51) { return 56; }
+    if (b4[32776] != 0) { return 57; }
+    // __LINKEDIT (@408) fileoff @448 = 32768, filesize @456 = the 16 stream
+    // bytes + the signature. Leave it at sig_len alone and dyld reads the
+    // rebase stream from outside the mapped segment.
+    if (b4[448] != 0 || b4[449] != 128 || b4[450] != 0) { return 58; }
+    if (b4[456] != 161 || b4[457] != 1) { return 59; }   // 417 = 16 + 401
+    // code_limit 32784 spans 9 signed pages, not 8: sig_len 401, total 33185.
+    if (b4.len() != 33185) { return 60; }
     return 0;
 }
 `
