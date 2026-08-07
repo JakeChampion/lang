@@ -141,29 +141,21 @@ function arm64_elf_binary_pie(asm: string): string {
 }
 
 // x86_elf_binary assembles x86-64 Linux GAS text into a runnable static ELF
-// entirely in-process via x86_native + elf.fern — the x86-64
-// counterpart of arm64_elf_binary, and what removes the `.s` + external
-// gcc/ld step from the last Linux target that still needed one. Returns the
-// binary bytes packed into a string, or "" if the assembler could not
-// encode something (the caller reports it and exits 2).
+// in-process via x86_native + elf.fern — the counterpart of
+// arm64_elf_binary. Returns the binary bytes packed into a string, or "" if
+// the assembler could not encode something (the caller exits 2).
 //
-// Single R+W+X PT_LOAD (elf_static_executable_bss_x86_at), not the
-// two-segment W^X image arm64 uses: x86_resolve fixes .rodata references up
-// against the 8-byte-padded .text length, which is exactly this layout. A
-// W^X x86 image would need the assembler to resolve against a page-aligned
-// data vaddr, as arm64_gas_link does.
+// Single R+W+X PT_LOAD, not the two-segment W^X image arm64 uses:
+// x86_resolve fixes .rodata references against the 8-byte-padded .text
+// length, which is exactly this layout. W^X would need the assembler to
+// resolve against a page-aligned data vaddr, as arm64_gas_link does.
 function x86_elf_binary(asm: string): string {
     var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
-    // Absolute `.quad <label>` pointers need the load address, which the
-    // assembler does not know — the ELF container picks it. This is the
-    // x86 analogue of arm64_gas_link's data-vaddr argument.
+    // Absolute `.quad <label>` pointers need the load address, which the ELF
+    // container picks — the analogue of arm64_gas_link's data-vaddr argument.
     a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr());
-    // An unknown mnemonic, operand shape or directive means instructions or
-    // data bytes were DROPPED, so every offset past the first one is wrong.
-    // Refusing is the whole point of recording them (SH-005): the arm64
-    // sibling learned this the hard way in #6045, where an unresolvable
-    // symbol was patched as an offset anyway and became a runtime SEGV
-    // instead of a compile error.
+    // Anything unencodable means bytes were dropped, so every offset past
+    // the first is wrong — refuse rather than write it (SH-005, #6045).
     if (a.unknown.len() > 0) {
         eprint("fern: -target x86-64: in-process assembler could not encode: ");
         eprint(a.unknown[0]);

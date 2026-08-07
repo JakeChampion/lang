@@ -97,11 +97,9 @@ function x86_mov_r32_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
     return x86_le32(buf, imm);
 }
 
-// x86_mov_r64_imm32: `movq $imm, <reg>` — REX.W + 0xC7 /0 id, where the
-// 32-bit immediate is SIGN-extended to 64 bits. This is the difference
-// between `movq $-1, %rax` meaning -1 and meaning 4294967295; the 32-bit
-// x86_mov_r32_imm32 above zero-extends and is only correct for immediates
-// known non-negative.
+// x86_mov_r64_imm32: `movq $imm, <reg>` — REX.W + 0xC7 /0 id. The immediate
+// is SIGN-extended; x86_mov_r32_imm32 above zero-extends and is correct only
+// for immediates known non-negative.
 function x86_mov_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
     buf = buf.append(x86_rex(1, 0, 0, reg));
     buf = buf.append(199); // 0xC7
@@ -225,10 +223,7 @@ function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
 }
 
 // x86_test_r64_imm32: `testq $imm32, <reg>` — REX.W F7 /0 id. GNU as picks
-// the shorter A9 accumulator form when the register is rax; F7 /0 encodes
-// every register uniformly and is what this assembler emits. Without it the
-// immediate parsed through the register table and the test compared two
-// unrelated registers, so a bit-mask branch took whichever way that landed.
+// the shorter A9 form for rax; F7 /0 encodes every register uniformly.
 function x86_test_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
     buf = buf.append(x86_rex(1, 0, 0, reg));
     buf = buf.append(247); // 0xF7
@@ -400,8 +395,7 @@ function x86_alu_store_r64(buf: i32[], opcode: i32, src: i32, base: i32, has_ind
 
 // x86_lea_idx_nobase: `lea disp(,%index,scale), <dst>` — REX.W 8D with a
 // SIB whose base field is 101 (no base) and mod=00, so a disp32 always
-// follows. The emitter uses it for element-offset computation
-// (`leaq 0(,%rcx,8), %rsi`, 1480 sites across the fixture corpus).
+// follows. Element-offset computation.
 function x86_lea_idx_nobase(buf: i32[], dst: i32, index: i32, scale: i32, disp: i32): i32[] {
     buf = buf.append(x86_rex(1, dst, index, 0));
     buf = buf.append(141); // 0x8D
@@ -663,10 +657,8 @@ function x86_sse_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
     return x86_sse_pfx_rr(buf, 242, opcode, dst, src); // 0xF2
 }
 
-// x86_cvtsd2ss: `cvtsd2ss <dst>, <src>` (F2 0F 5A /r) — narrow a double to
-// a single. x86_cvtss2sd is the widening inverse (F3 0F 5A /r). Both are
-// the f32 half of the float surface: the emitter keeps f32 values in the
-// low half of an xmm and converts around every double-only operation.
+// x86_cvtsd2ss narrows a double to a single (F2 0F 5A /r); x86_cvtss2sd is
+// the widening inverse (F3 0F 5A /r).
 function x86_cvtsd2ss(buf: i32[], dst: i32, src: i32): i32[] {
     return x86_sse_pfx_rr(buf, 242, 90, dst, src); // 0xF2 … 0x5A
 }
@@ -676,8 +668,7 @@ function x86_cvtss2sd(buf: i32[], dst: i32, src: i32): i32[] {
 }
 
 // x86_movd_gpr_to_xmm: `movd <xmm>, <gpr32>` (66 0F 6E /r) — the 32-bit
-// sibling of x86_movq_gpr_to_xmm, moving f32 bits into an xmm without the
-// REX.W that would make it a 64-bit movq.
+// sibling of x86_movq_gpr_to_xmm.
 function x86_movd_gpr_to_xmm(buf: i32[], xmm: i32, gpr: i32): i32[] {
     buf = buf.append(102); // 0x66
     var rex: i32 = x86_rex(0, xmm, 0, gpr);
@@ -703,11 +694,9 @@ function x86_movd_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
 
 // ---- bit-count (Haswell baseline: BMI1 + SSE4.2) ----
 //
-// lzcnt / tzcnt / popcnt share one shape: F3 [REX.W] 0F <op> /r with a
-// direct ModR/M. Note the project's CPU baseline makes these a hard
-// requirement rather than a fast path, and that LZCNT/TZCNT fail SILENTLY
-// on a pre-BMI1 CPU (same opcodes as bsr/bsf plus an F3 it ignores) where
-// POPCNT faults — see docs/BACKEND-PARITY.md.
+// lzcnt / tzcnt / popcnt share one shape: F3 [REX.W] 0F <op> /r, direct
+// ModR/M. Below the baseline LZCNT/TZCNT decode as bsr/bsf and give wrong
+// answers silently, where POPCNT faults — see docs/BACKEND-PARITY.md.
 function x86_bitcnt_rr(buf: i32[], opcode: i32, w: i32, dst: i32, src: i32): i32[] {
     buf = buf.append(243); // 0xF3
     var rex: i32 = x86_rex(w, dst, 0, src);
@@ -732,22 +721,17 @@ function x86_popcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
 }
 
 // x86_shift_r64_cl: `<shift>q %cl, <reg>` — REX.W + D3 /slash (shl 4,
-// shr 5, sar 7). The variable-count shift, distinct from the imm8 forms
-// (x86_shl_r64_imm8 et al.) because the count rides %cl rather than an
-// immediate byte. It is the dominant shift in the emitted surface —
-// 26,281 sites across the fixture corpus versus 1,974 immediate ones —
-// and routing it through the imm8 path parsed "%cl" as the number 0, so
-// every one of those shifts silently became a shift by zero.
+// shr 5, sar 7). Variable count in %cl, as against the imm8 forms
+// (x86_shift_r64_imm8).
 function x86_shift_r64_cl(buf: i32[], slash: i32, reg: i32): i32[] {
     buf = buf.append(x86_rex(1, 0, 0, reg));
     buf = buf.append(211); // 0xD3
     return buf.append(x86_modrm(3, slash, reg));
 }
 
-// x86_byte_alu_rr: a byte ALU op `<op> <src8>, <dst8>` (AT&T order) with a
-// direct ModR/M — `andb` 0x20, `orb` 0x08. REX is forced when either
-// operand is 4..7 so the encoding selects spl/bpl/sil/dil rather than the
-// legacy ah/ch/dh/bh (the same rule x86_setcc_reg8 applies).
+// x86_byte_alu_rr: a byte ALU op `<op> <src8>, <dst8>` (AT&T order), direct
+// ModR/M — `andb` 0x20, `orb` 0x08. REX is forced when either operand is
+// 4..7 so the encoding selects spl/bpl/sil/dil, not ah/ch/dh/bh.
 function x86_byte_alu_rr(buf: i32[], opcode: i32, dst8: i32, src8: i32): i32[] {
     var rex: i32 = x86_rex(0, src8, 0, dst8);
     var force: boolean = (dst8 >= 4 && dst8 <= 7) || (src8 >= 4 && src8 <= 7);
@@ -760,11 +744,9 @@ function x86_byte_alu_rr(buf: i32[], opcode: i32, dst8: i32, src8: i32): i32[] {
 
 // ---- x87 ----
 //
-// The transcendentals (exp / log / sin / cos / pow) lower to the x87 stack
-// unit rather than SSE, because SSE has no transcendental instructions —
-// so every program reaching those stdlib functions needs this group. The
-// whole surface the emitter uses reduces to three shapes, so they are
-// encoded as three helpers rather than one function per mnemonic.
+// The transcendentals (exp / log / sin / cos / pow) lower here because SSE
+// has none. The surface reduces to three operand shapes, so it is three
+// helpers rather than one function per mnemonic.
 
 // x86_x87_op: a fixed two-byte x87 instruction with no operand
 // (fld1 D9 E8, fyl2x D9 F1, f2xm1 D9 F0, fscale D9 FD, frndint D9 FC,
@@ -800,12 +782,9 @@ function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
     return x86_cvttsd2si_w(buf, 1, gpr, xmm);
 }
 
-// x86_cvttsd2si_w is x86_cvttsd2si with an explicit operand width: w=1 for
-// a 64-bit destination (REX.W), w=0 for a 32-bit one, which the emitter
-// writes far more often (`cvttsd2si %xmm0, %eax`). The width is not
-// cosmetic — the 32-bit form truncates to 32 bits and zeroes the upper
-// half — and reading `%eax` through the 64-bit register table returned -1,
-// so the ModR/M was garbage.
+// x86_cvttsd2si_w is x86_cvttsd2si with an explicit operand width. The
+// 32-bit form truncates to 32 bits and zeroes the upper half, so the width
+// is load-bearing, not a choice of encoding.
 function x86_cvttsd2si_w(buf: i32[], w: i32, gpr: i32, xmm: i32): i32[] {
     buf = buf.append(242); // 0xF2
     var rex: i32 = x86_rex(w, gpr, 0, xmm);
@@ -1061,11 +1040,7 @@ function x86_movl_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
 }
 
 // x86_alu_store_rip_label: `<alu>q <src>, sym(%rip)` — the store-form ALU
-// (add 0x01 / sub 0x29 / cmp 0x39) against a rip-relative global. The
-// emitter uses it for the instrumentation counters
-// (`addq %rax, __fern_arr_push_copied(%rip)`); without it the symbol
-// parsed as a base REGISTER and the add landed on `(%rax)`, corrupting
-// whatever rax pointed at.
+// (add 0x01 / sub 0x29 / cmp 0x39) against a rip-relative global.
 function x86_alu_store_rip_label(a: X86Asm, opcode: i32, src: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(opcode) };
@@ -1232,9 +1207,7 @@ function x86_rep_movsb(buf: i32[]): i32[] {
 }
 
 // x86_rep_stosq: `rep stosq` (0xF3 REX.W 0xAB) — store rax into rcx 8-byte
-// slots at [rdi]. This is how every freshly allocated buffer is zeroed, so
-// it is by far the most-emitted instruction in the whole surface (63,637
-// occurrences across the fixture corpus, versus 144 `rep stosb`).
+// slots at [rdi]. Zeroes a freshly allocated buffer.
 function x86_rep_stosq(buf: i32[]): i32[] {
     buf = buf.append(243); // 0xF3
     buf = buf.append(x86_rex_w());
@@ -1374,11 +1347,10 @@ pub struct X86Asm {
     code: i32[],
     rodata: i32[],
     bss_size: i32,
-    // Absolute 8-byte data relocations: a `.quad <label>` in .rodata,
-    // which is how a constant aggregate holds a pointer to a string
-    // literal (`.K0: .quad .S0`). Unlike the rel32 code fixups these need
-    // the final VIRTUAL address, not a body offset, so they are resolved
-    // separately by x86_resolve_data once the load address is known.
+    // Absolute 8-byte data relocations — a `.quad <label>` in .rodata, how
+    // a constant aggregate holds a pointer to a string literal. Unlike the
+    // rel32 code fixups these need the virtual address, so x86_resolve_data
+    // resolves them separately once the load address is known.
     dfix_offs: i32[],
     dfix_names: string[],
     lab_names: string[],
@@ -1540,10 +1512,8 @@ function x86_jmp_label(a: X86Asm, name: string): X86Asm {
     return x86_fixup_or_patch(a, name);
 }
 
-// x86_call_reg: `call *<reg>` — FF /2 with a direct ModR/M. This is how
-// every closure and dyn-trait dispatch lands (2688 sites across the
-// fixture corpus); without it `*%r11` parsed as a LABEL name, resolved to
-// nothing, and was patched as a rel32 anyway — the #6045 shape.
+// x86_call_reg: `call *<reg>` — FF /2, direct ModR/M. Closure and dyn-trait
+// dispatch land here.
 function x86_call_reg(buf: i32[], reg: i32): i32[] {
     if (reg >= 8) {
         buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
@@ -1552,8 +1522,8 @@ function x86_call_reg(buf: i32[], reg: i32): i32[] {
     return buf.append(x86_modrm(3, 2, reg));
 }
 
-// x86_call_mem: `call *disp(%base)` — FF /2 over a memory operand, the
-// form used when the callee pointer is still in a stack slot.
+// x86_call_mem: `call *disp(%base)` — FF /2 over a memory operand, for a
+// callee pointer still in a stack slot.
 function x86_call_mem(buf: i32[], base: i32, disp: i32): i32[] {
     if (base >= 8) {
         buf = buf.append(x86_rex(0, 0, 0, base)); // REX.B
@@ -1599,15 +1569,11 @@ function x86_rodata_quad_sym(a: X86Asm, name: string): X86Asm {
 }
 
 // x86_resolve_data patches the absolute `.quad <label>` relocations, which
-// x86_resolve cannot: a rel32 branch needs only body offsets, but an
-// absolute pointer needs the VIRTUAL address the image loads at. Call
-// after x86_resolve with the .text vaddr (elf_text_vaddr()); body offsets
-// map linearly onto virtual addresses from there, because .text and the
-// data blob share one contiguous PT_LOAD.
-//
-// An unresolvable name is RECORDED, not patched as 0 — writing the
-// placeholder through would reproduce exactly the null-pointer bug this
-// relocation exists to fix, and silently.
+// x86_resolve cannot: a rel32 branch needs only body offsets, an absolute
+// pointer needs the virtual address the image loads at. Call after
+// x86_resolve with the .text vaddr; body offsets map linearly onto virtual
+// addresses from there, because .text and the data blob share one PT_LOAD.
+// An unresolvable name is recorded, not patched as 0.
 pub function x86_resolve_data(a: X86Asm, text_vaddr: i32): X86Asm {
     var padded_text: i32 = x86_align8(a.code.len());
     var i: i32 = 0;
@@ -1641,11 +1607,8 @@ function x86_resolve(a: X86Asm): X86Asm {
     while (i < a.fix_offs.len()) {
         var patch_off: i32 = a.fix_offs[i];
         var target: i32 = x86_final_off(a, a.fix_names[i], padded_text);
-        // A missing label is -1, and patching that as a displacement
-        // branches into the ELF header. REFUSE instead: this is the exact
-        // failure #6045 fixed on arm64, where an unresolvable symbol was
-        // patched as an offset anyway and became a runtime SEGV rather
-        // than a compile error.
+        // A missing label is -1; patching that as a displacement branches
+        // into the ELF header, so refuse rather than emit it (#6045).
         if (target < 0) {
             a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
         } else {
@@ -1662,12 +1625,9 @@ function x86_resolve(a: X86Asm): X86Asm {
 
 // ---- string helpers ----
 //
-// Hand-rolled rather than taken from std/string, for the reason
-// arm64_native.fern hand-rolls its own: this module has to work BOTH as an
-// import (the fern CLI drives emit -> assemble -> ELF through it) and
-// concatenated into a driver by its unit tests. An `import "std/string"`
-// would satisfy the first and pull stdlib into the merged compiler bundle
-// for the second.
+// Hand-rolled rather than taken from std/string, as arm64_native.fern does:
+// this module must work both as an import and concatenated into a driver by
+// its unit tests, and an `import "std/string"` breaks the second.
 
 function x86_str_indexof(s: string, sub: string): i32 {
     var n: i32 = s.len();
@@ -1736,8 +1696,7 @@ function x86_str_split(s: string, sep: string): string[] {
 // whose `code` / `rodata` sections elf.fern wraps into a runnable binary —
 // the final wiring that removes the external `as` + `ld` step.
 //
-// Coverage is the whole surface the IR emitter produces, measured against
-// it rather than assumed: integer/pointer, byte and 32-bit ALU, jmp/jCC,
+// Coverage is the whole surface the IR emitter produces: integer/pointer, byte and 32-bit ALU, jmp/jCC,
 // setCC/cmovCC, the SSE scalar-double set plus the f32 conversions, the
 // bit-count group (lzcnt/tzcnt/popcnt — Haswell baseline, see
 // docs/BACKEND-PARITY.md), and the x87 stack unit the transcendentals
@@ -1746,11 +1705,10 @@ function x86_str_split(s: string, sep: string): string[] {
 // branch-target labels. AT&T operand order is `op src, dst` (the reverse
 // of the encoder's dst,src).
 //
-// Anything NOT recognised — mnemonic, operand shape, or directive — is
-// recorded in `unknown` rather than dropped (SH-005), because a dropped
-// instruction is a corrupt byte stream, not a missing feature: drivers
-// must refuse to write the executable instead of emitting one that
-// branches into the middle of an unrelated function.
+// Anything not recognised — mnemonic, operand shape, or directive — is
+// recorded in `unknown` rather than dropped (SH-005): a dropped instruction
+// is a corrupt byte stream, not a missing feature, so drivers must refuse to
+// write the executable.
 //
 // Import-free, like the other native-binary modules: the eventual emitter
 // `import`s x86_encode + this, and the unit test concatenates them.
@@ -1765,11 +1723,10 @@ struct GasMem {
     has_index: boolean,
     index: i32,
     scale: i32,
-    // `disp(,%index,scale)` — an index and scale with NO base register, the
-    // AT&T spelling with an empty base field. x86 encodes it as a SIB whose
-    // base field is 101 with mod=00 and a disp32. It is a distinct addressing
-    // mode, not base 0: parsing the empty base through the register table
-    // yields -1, and the encoders masked that to a real register.
+    // `disp(,%index,scale)` — index and scale with no base register, encoded
+    // as a SIB with base field 101, mod=00 and a disp32. A distinct
+    // addressing mode, not base 0: the empty base parses to -1, which the
+    // encoders would mask to a real register.
     no_base: boolean,
 }
 
@@ -2357,11 +2314,8 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
             a = X86Asm { ...a, code: x86_mov_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
             return a;
         }
-        // `movq $imm, %reg` must SIGN-extend: REX.W C7 /0 id, not the
-        // 32-bit B8+r id, which zero-extends. The emitter writes
-        // `movq $-1, %rax` 1382 times across the fixture corpus (the
-        // not-found sentinel), and through the 32-bit form every one of
-        // them loaded 0x00000000FFFFFFFF instead of -1. An immediate too
+        // Must SIGN-extend (REX.W C7 /0 id), not the zero-extending 32-bit
+        // B8+r id — `movq $-1, %rax` is -1, not 4294967295. An immediate too
         // wide for a signed 32-bit field takes the 10-byte movabsq.
         var iv: i64 = x86_gas_atoi64(src);
         if (iv >= (0 - 2147483648) as i64 && iv <= (2147483647) as i64) {
@@ -2534,13 +2488,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "leave") { a = X86Asm { ...a, code: x86_leave(a.code) }; return a; }
     if (mnem == "cqto") { a = X86Asm { ...a, code: x86_cqo(a.code) }; return a; }
     if (mnem == "cld") { a = X86Asm { ...a, code: x86_cld(a.code) }; return a; }
-    // `rep <string-op>`. The unrecognised arm RECORDS (SH-005) rather than
-    // returning unchanged: `rep stosq` — the buffer-zeroing instruction, and
-    // the single most-emitted mnemonic in the surface — was silently dropped
-    // here, so every freshly allocated array, closure env and struct box kept
-    // whatever the arena last held. That reads as a miscompile far from the
-    // cause: the first symptom was a closure call through a null function
-    // pointer (rip=0), not a missing store.
+    // A dropped string-op leaves memory uninitialised, which surfaces far
+    // from here — so an unrecognised suffix is recorded, not ignored (SH-005).
     if (mnem == "rep") {
         if (rest == "stosq") { a = X86Asm { ...a, code: x86_rep_stosq(a.code) }; return a; }
         if (rest == "stosb") { a = X86Asm { ...a, code: x86_rep_stosb(a.code) }; return a; }
@@ -2564,10 +2513,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "setnp") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 155, x86_gas_reg8(rest)) }; return a; }
     if (mnem == "setns") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)) }; return a; }
     // branch / call: one operand = a label
-    // `call`/`jmp` with a `*` operand are INDIRECT — through a register or
-    // a stack slot — not a branch to a label of that name. Routing them to
-    // the label path made `*%r11` an unresolvable symbol that got patched
-    // as a rel32 regardless, so a closure call jumped into unrelated code.
+    // A `*` operand means INDIRECT — through a register or stack slot — not
+    // a branch to a label of that name.
     if (mnem == "call" || mnem == "jmp") {
         if (rest.len() > 0 && rest[0] == 42) { // '*'
             var ind: string = x86_gas_trim(rest[1:rest.len()]);
@@ -2678,14 +2625,9 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
     if (mnem == "idivq") { a = X86Asm { ...a, code: x86_idiv_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    // ---- x87 ----
-    //
-    // The transcendental helpers (exp / log / sin / cos / pow) lower to the
-    // x87 stack unit — SSE has no transcendental instructions — so this
-    // group is reached by every program that touches those stdlib
-    // functions, not by a rare corner. Handled as one block (parsing its
-    // own operands, like imulq / roundsd above) so the stack-register and
-    // memory forms stay next to the no-operand ones they interleave with.
+    // x87, handled as one block parsing its own operands (like imulq /
+    // roundsd above) so the stack-register and memory forms stay next to
+    // the no-operand ones they interleave with.
     if (mnem == "f2xm1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 240) }; return a; }
     if (mnem == "fyl2x") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 241) }; return a; }
     if (mnem == "fld1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 232) }; return a; }
@@ -2700,10 +2642,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "fld") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 192, x86_gas_st(rest)) }; return a; }
     if (mnem == "fxch") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 200, x86_gas_st(rest)) }; return a; }
     if (mnem == "fstp") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 221, 216, x86_gas_st(rest)) }; return a; }
-    // `fsubr %st, %st(i)` — DC E8+i. AT&T reverses the x87 non-pop
-    // subtract mnemonics relative to Intel, so this is encoded from the
-    // GNU as ground truth (`fsubr %st,%st(1)` = DC E9), not from the
-    // Intel-manual reading of the name.
+    // `fsubr %st, %st(i)` — DC E8+i. AT&T reverses the x87 non-pop subtract
+    // mnemonics, so this is taken from GNU as, not from the name.
     if (mnem == "fsubr") {
         var fci: i32 = x86_gas_top_comma(rest);
         if (fci < 0) { return X86Asm { ...a, unknown: a.unknown.append("fsubr " + rest) }; }
@@ -2774,10 +2714,9 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     // a null key (SIGSEGV). The operands are zero-extended, so the full-width
     // testq gives the same ZF; route to it (as movzbl routes to movzbq).
     if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    // The 64-bit shifts take either `%cl` (variable count, D3 /slash) or an
-    // immediate (C1 /slash). Dispatch on the operand, and record anything
-    // else: reading a register name through the immediate parser yields 0,
-    // which is a silent shift-by-zero rather than a diagnostic.
+    // Either `%cl` (variable count, D3 /slash) or an immediate (C1 /slash).
+    // Anything else is recorded: a register name read through the immediate
+    // parser yields 0, i.e. a silent shift by zero.
     if (mnem == "shlq" || mnem == "shrq" || mnem == "sarq") {
         var sl: i32 = 4; // shl
         if (mnem == "shrq") { sl = 5; }
@@ -2798,10 +2737,8 @@ function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
     if (mnem == "andb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 32, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
     if (mnem == "orb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 8, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
-    // lzcnt / tzcnt / popcnt, 32- and 64-bit. The `l` forms are not routed to
-    // the `q` ones the way testl is: the count these produce DIFFERS by width
-    // (lzcntl of a value with high bits clear counts from bit 31, lzcntq from
-    // bit 63), so the operand size is load-bearing, not an encoding detail.
+    // The `l` forms are not routed to the `q` ones the way testl is: the
+    // count differs by width (lzcntl counts from bit 31, lzcntq from 63).
     if (mnem == "lzcntl") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "lzcntq") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
     if (mnem == "tzcntl") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
@@ -2945,11 +2882,8 @@ function x86_gas_directive_ignorable(line: string): boolean {
 }
 
 // x86_gas_comment_start returns the index of the `#` that begins a comment,
-// or -1. A `#` INSIDE a string literal is data, not a comment: truncating
-// the line there silently shortened the string and shifted every .rodata
-// symbol after it. It cost real output — the fixture URL
-// "http://h.com:8080/p?q#f" lost its fragment, and a lone `.ascii "#"`
-// emitted nothing at all.
+// or -1. A `#` inside a string literal is data: truncating there shortens
+// the string and shifts every .rodata symbol after it.
 function x86_gas_comment_start(line: string): i32 {
     var i: i32 = 0;
     var in_str: boolean = false;
@@ -3023,9 +2957,7 @@ pub function x86_gas_assemble(src: string): X86Asm {
             } else if (line == ".text") {
                 section = 0;
             } else if (line == ".bss") {
-                // The bare section shorthands, as emitted by the SSA
-                // backend (`.bss` / `.align 16` / `__fern_ssa_heap:` /
-                // `.zero …`). Only `.section .bss` was recognised.
+                // The bare section shorthands, alongside `.section .bss`.
                 section = 2;
             } else if (line == ".data") {
                 section = 1;
@@ -3035,10 +2967,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
                     a = x86_bss_skip(a, 8); // zero-init quad reserves 8 bytes
                 } else if (x86_gas_is_symbol(qop)) {
                     // `.quad <label>` — an absolute pointer to another
-                    // symbol, how a constant aggregate holds a string
-                    // literal (`.K0: .quad .S0`). Parsed as a number this
-                    // became 0 and the program null-dereferenced at
-                    // runtime, so it is queued as a relocation instead.
+                    // symbol. Queued as a relocation; read as a number it
+                    // would be 0.
                     a = x86_rodata_quad_sym(a, qop);
                 } else {
                     a = x86_rodata_quad(a, x86_gas_atoi(qop), 0);
@@ -3071,12 +3001,9 @@ pub function x86_gas_assemble(src: string): X86Asm {
             } else if (x86_str_starts_with(line, ".ascii")) {
                 a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
             } else if (x86_str_starts_with(line, ".skip") || x86_str_starts_with(line, ".zero") || x86_str_starts_with(line, ".space")) {
-                // Reserve N zero bytes. `.zero` / `.space` are the spellings
-                // the SSA backend uses for its heap and string-buffer
-                // reservations; only `.skip` was recognised, so `-ssa` could
-                // not assemble at all. In an initialised section the bytes
-                // must actually be laid down — dropping them (the previous
-                // behaviour outside .bss) shifts every later symbol.
+                // Reserve N zero bytes; `.zero` / `.space` are the SSA
+                // backend's spellings. In an initialised section the bytes
+                // must be laid down, or every later symbol shifts.
                 var zn: i32 = x86_gas_atoi(x86_gas_trim(line[x86_str_indexof(line, " "):line.len()]));
                 if (section == 2) {
                     a = x86_bss_skip(a, zn);
@@ -3085,10 +3012,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
                     while (zi < zn) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; zi = zi + 1; }
                 }
             } else if (x86_str_starts_with(line, ".byte")) {
-                // A single byte of initialised data. Emitted for the empty
-                // I/O-error string (`.Lioe_empty: .byte 0`); dropping it
-                // shifted every later .rodata symbol by one byte, the same
-                // SH-005 hazard the .long list had before #5434.
+                // A single byte of initialised data; dropping it shifts
+                // every later .rodata symbol (SH-005).
                 a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(line[5:line.len()])) & 255) };
             } else if (x86_str_starts_with(line, ".align")) {
                 var an: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
@@ -3100,12 +3025,9 @@ pub function x86_gas_assemble(src: string): X86Asm {
                     }
                 }
             } else if (!x86_gas_directive_ignorable(line)) {
-                // An unrecognised directive is RECORDED, not ignored (SH-005).
                 // Every directive above either lays bytes down or moves a
-                // section cursor, so a new one that silently does neither
-                // shifts every symbol after it — a corrupt binary with no
-                // diagnostic. The ignorable set is the symbol-table metadata
-                // the in-process linker has no use for.
+                // section cursor, so an unrecognised one that silently does
+                // neither shifts every symbol after it (SH-005).
                 a = X86Asm { ...a, unknown: a.unknown.append(line) };
             }
             continue;
