@@ -177,15 +177,45 @@ pub function codepoint_count(s: string): i32 {
 // Validation sits on the ingest path — `from_bytes` and every caller
 // that checks bytes arriving from a file, socket, or FFI boundary — so
 // this scan has to cost what a byte walk costs.
+//
+// The ASCII run is skipped by `__ascii_run`, the second fused SIMD
+// kernel (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 2). This is the whole
+// reason that kernel exists: what dominates an ASCII-heavy ingest body
+// is the run *between* the multi-byte sequences, and a vector clears it
+// 16 bytes per iteration where the byte walk it replaced cleared one:
+// 0.22 -> 13.8 GB/s, ~63x, on a 64 KB body with a 2-byte codepoint every
+// 1 KB (x86-64). The per-length, overlong-and-surrogate rules
+// deliberately stay here in Fern rather than moving into the intrinsic —
+// they are branchy logic that would be duplicated across seven backends,
+// and this is the readable place for them.
+//
+// The skip runs only when `b0` is already ASCII, and that condition is
+// load-bearing rather than defensive. Called unconditionally, dense
+// non-ASCII input (every codepoint multi-byte, so the skip finds a hit
+// immediately and never clears a block) pays a call per codepoint where
+// the old code paid none — measured 15% SLOWER on a 43 KB CJK body.
+// Reusing the `b0` this loop already loads costs nothing and removes
+// that: a non-ASCII lead byte goes straight to the length chain, and the
+// CJK body comes back to baseline (0.782 -> 0.773 s) while the ASCII one
+// keeps the 63x. Re-reading `b0` after a skip rather than hoisting the
+// load is the same economy, one level in.
+//
+// Note there is no `i = i + 1` ASCII arm in the chain below any more,
+// and there must not be: whether the skip ran or not, a `b0` reaching it
+// is >= 128 by construction. `__ascii_run` returns `n` rather than -1
+// when the rest is ASCII, which is what lets the skip itself be
+// branch-free once entered.
 pub function is_valid_utf8(s: string): boolean {
     var n: i32 = s.len();
     var i: i32 = 0;
     while (i < n) {
         var b0: i32 = s[i] as i32;
-        // 1-byte: 0xxxxxxx (ASCII).
         if (b0 < 128) {
-            i = i + 1;
-        } else if (b0 < 192) {
+            i = __ascii_run(s, i);
+            if (i >= n) { return true; }
+            b0 = s[i] as i32;
+        }
+        if (b0 < 192) {
             return false;                   // stray continuation byte
         } else if (b0 < 224) {
             // 2-byte: 110xxxxx 10xxxxxx.

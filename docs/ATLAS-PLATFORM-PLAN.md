@@ -620,10 +620,24 @@ is v128; the other four are scalar. Its vector form is cheaper than
   but `cmlt v0.16b, v0.16b, #0` compares against zero, so the `dup` that
   `__memchr` needs disappears.
 
+Step 2 for `__ascii_run` is `std/utf8`'s `is_valid_utf8`, and it landed at
+**0.22 → 13.8 GB/s (~63x)** on a 64 KB body with a 2-byte codepoint every 1 KB
+— 1.3 GB validated in 97 ms where the byte walk took 6.1 s. The scan's
+`b0 < 128` arm is *gone*, not bypassed: a lead byte reaching the length chain
+is >= 128 by construction.
+
+**A fused kernel can regress the shape it does not fit, and this one did.**
+Called unconditionally the skip costs a call per codepoint on DENSE non-ASCII
+input, where it finds a hit immediately and never clears a block: 15% slower on
+a 43 KB CJK body, against 63x faster on the ASCII one. Gating the call on the
+lead byte the loop already loaded removes it at no cost (CJK back to baseline,
+ASCII unchanged). Worth generalising alongside the input-vs-needle rule below:
+**the rule says whether a kernel pays on its intended corpus; it says nothing
+about what the kernel costs on the corpus it was not chosen for.** Measure both.
+
 Remaining: step 3 for the self-host and `arm64-ssa` tiers — swapping those
 scalar bodies for vector ones. Unlike the native tier that is pure speed with
-no totality argument behind it, so it ranks below §4's other items. Adoption of
-`__ascii_run` in `is_valid_utf8` is step 2 for that kernel and is unblocked.
+no totality argument behind it, so it ranks below §4's other items.
 
 ### 3.5 Testing
 
