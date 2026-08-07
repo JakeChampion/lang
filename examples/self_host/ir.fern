@@ -461,6 +461,20 @@ pub function op_raw_addr(): Op { return op0("raw_addr"); }
 // — the pointer already IS the array value — so it emits no op at all.
 pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
 
+// memchr (docs/ATLAS-PLATFORM-PLAN.md §3): pops [str, byte, from] → the i32
+// index of the first occurrence of `byte` at or after `from`, or -1. Allocates
+// nothing and reads only the source bytes.
+//
+// It is an OP rather than a Fern function for one reason: an op is what a
+// backend can SUBSTITUTE. The native backends replace it with a 16-byte-per-
+// iteration vector kernel (SSE2 / NEON / v128); the self-host backends serve
+// the scalar meaning, which is the §3.4 ordering — the intrinsic becomes
+// TOTAL before anything depends on it being fast.
+//
+// `from` clamps (negative behaves as 0, past-the-end finds nothing) and a
+// byte outside 0..255 never matches, matching the interpreter reference.
+pub function op_memchr(): Op { return op0("memchr"); }
+
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
 // helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
@@ -1518,6 +1532,16 @@ function kind_id_4(name: string): i32 {
     if (name == "map_hash_seed") { return 222; }
     if (name == "raw_addr") { return 223; }
     if (name == "raw_arr_box") { return 224; }
+    if (name == "memchr") { return 225; }
+    // ADDING AN EXTENSION TAG: take the next id here AND register it in
+    // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
+    // for the number you took. Two branches that each claim "the next free
+    // id" MERGE CLEANLY — memchr and raw_arr_box both landed on 224, and git
+    // conflicted only this file and the sweep lists. The three backends
+    // auto-merged into two `kind_tag == 224` arms apiece, first-one-wins,
+    // which builds and silently aliases the two ops. The registry golden is
+    // the only gate that catches it, and only if BOTH names survive the
+    // merge.
     return 0;
 }
 
@@ -1771,13 +1795,14 @@ function kind_name_4(id: i32): string {
     if (id == 222) { return "map_hash_seed"; }
     if (id == 223) { return "raw_addr"; }
     if (id == 224) { return "raw_arr_box"; }
+    if (id == 225) { return "memchr"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … raw_arr_box=224)
+// extension tags beyond kind_count() (struct_copy=198 … memchr=225)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2008,5 +2033,5 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 110 || tag == 111 || tag == 112 || tag == 113
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
-        || tag == 99 || tag == 100;
+        || tag == 99 || tag == 100 || tag == 225;
 }

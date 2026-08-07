@@ -4620,6 +4620,40 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // at [data + i]; zero-extend to an i32.
         s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
     }
+    if (o.kind_tag == 225) {  // memchr
+        // operand stack [box, byte, from] (from on top) -> i32 index or -1.
+        //
+        // SCALAR, deliberately. §3.4 of ATLAS-PLATFORM-PLAN orders the kernel
+        // as "correct in every backend first, fast one backend at a time":
+        // the native x86-64 emitter serves this with an SSE2 loop, and this
+        // one serves the same meaning a byte at a time. Substituting a vector
+        // body here is a later slice and changes no caller.
+        var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var l_clamped: string = mlo.name;
+        var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
+        var l_loop: string = mlo2.name;
+        var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
+        var l_none: string = mlo3.name;
+        var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
+        var l_done: string = mlo4.name;
+        s = mlo4.state;
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        // from clamps at 0.
+        s = s.write("    cmpq $0, %rdx\n    jge " + l_clamped + "\n    xorq %rdx, %rdx\n");
+        s = s.write(l_clamped + ":\n");
+        // A byte outside 0..255 can never match. One UNSIGNED compare covers
+        // both ends: a negative arrives as a huge unsigned and fails it too.
+        s = s.write("    cmpq $255, %rcx\n    ja " + l_none + "\n");
+        s = s.write(l_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + l_none + "\n");
+        s = s.write("    movzbq (%rax,%rdx), %r9\n");
+        s = s.write("    cmpq %rcx, %r9\n    je " + l_done + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + l_loop + "\n");
+        s = s.write(l_none + ":\n    movq $-1, %rdx\n");
+        s = s.write(l_done + ":\n    pushq %rdx\n");
+        return s;
+    }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box

@@ -3989,9 +3989,9 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         // other, so it takes a trailing comma. Without this the `)` and the
         // `in` are each one token further right than the fixed lookahead
         // expects: neither is consumed, `in` parses as an ordinary identifier
-        // (it is not a lexer keyword), and the module bails with
-        // `did not lower: for k,v`. The native parser learned this in #6374,
-        // which shipped the conformance fixture the self-host then failed.
+        // (it is not a lexer keyword), and the module bails. The native parser
+        // learned this in #6358, which shipped the conformance fixture the
+        // self-host then failed on all three legs.
         if (p.peek_punct() == ",") { p = p.advance(); }
         if (p.peek_punct() == ")") { p = p.advance(); }
         if (p.peek_ident() == "in") { p = p.advance(); }
