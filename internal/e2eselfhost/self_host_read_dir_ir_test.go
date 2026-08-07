@@ -12,13 +12,13 @@ import (
 // TestSelfHostReadDirIR pins `read_dir(path)` lowering on the self-host x86-64 IR
 // path. read_dir lists a directory's base-name children (openat+getdents64,
 // skipping . / ..) and returns Result[string[], IoError]; it had a full AST
-// runtime (__fern_read_dir) but no IR lowering, so any user (std/test's
+// runtime (__fn___fern_read_dir) but no IR lowering, so any user (std/test's
 // assert_eq_dir_listing) was dragged to the AST emitter (#3457). It now lowers to
-// op_read_dir -> the same __fern_read_dir runtime the AST path calls (boxing a
+// op_read_dir -> the Fern __fn___fern_read_dir runtime (boxing a
 // string[] via __fern_arr_box). The program makes a temp dir, writes two files,
 // read_dirs it, asserts the count is 2, removes the tree, and exits 0 — exercising
 // temp_dir / write_file / read_dir / remove_dir_all all on the IR path. The test
-// also pins that the IR runtime was reached (__fern_read_dir in the asm).
+// also pins that the IR runtime was reached (call __fn___fern_read_dir in the asm).
 func TestSelfHostReadDirIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -57,8 +57,13 @@ func TestSelfHostReadDirIR(t *testing.T) {
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	if !strings.Contains(string(asm), "__fern_read_dir") {
-		t.Fatal("read_dir did not reach the IR runtime path (no __fern_read_dir in asm)")
+	// The Fern-compiled symbol (#2649): read_dir is asmcore.rt_src_read_dir
+	// now, so op_read_dir calls the stack-ABI __fn___fern_read_dir. The bare
+	// "__fern_read_dir" this used to look for is a SUBSTRING of that, so the
+	// assertion kept passing across the migration without ever proving which
+	// symbol was reached — name the whole thing.
+	if !strings.Contains(string(asm), "call __fn___fern_read_dir") {
+		t.Fatal("read_dir did not reach the Fern IR runtime (no call __fn___fern_read_dir in asm)")
 	}
 	progBin := buildBin(t, gcc, dir, "readdir_prog", string(asm))
 	var run *exec.Cmd

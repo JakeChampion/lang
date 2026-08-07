@@ -47,6 +47,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (xs[0:1].len() != 1) { return 7; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
+		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
+		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -67,7 +69,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// hand-asm on Darwin (mrs cntvct_el0 is not a syscall), so the "hand-asm
 		// is back" arm would be wrong for it. The Darwin test below covers that
 		// case from the other side.
-		"now_unix_ms", "now_ns"} {
+		"now_unix_ms", "now_ns",
+		// The directory pair (#2649) — the last two off the shape-diverging
+		// list. Darwin's getdirentries64 4th out-param is __syscall4 and its
+		// dirent name offset is a direntoff row, so no per-target body.
+		"read_dir", "remove_dir_all"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -102,8 +108,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// The fs leaves call a Fern __fern_io_error bundled with them, rather than
 	// inlining the five-way errno classification — the "dependencies are the
 	// call graph" shape #2649 is aiming at. The register-ABI hand-asm sibling
-	// still exists for stat / read_dir / remove_dir_all / temp_dir, so assert
-	// the Fern one specifically.
+	// still exists for open_fd, so assert the Fern one specifically.
 	if !strings.Contains(asm, "bl __fn___fern_io_error") {
 		t.Error("the migrated fs leaves do not call the bundled Fern __fern_io_error")
 	}
@@ -174,6 +179,8 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 7; }\n" +
 		"    if (monotonic_ns() < (0 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
+		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
+		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -207,11 +214,38 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// syscall, and this number reaches the trap as a pushed operand, so
 		// darwinize never sees it and a wrong sysno row is invisible elsewhere.
 		{"gettimeofday", "116"},
+		{"getdirentries64", "344"},
+		{"AT_REMOVEDIR", "128"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
+	// Constants above 65535 do not reach `mov x0, #N` at all:
+	// emit_const_i32_push only takes that path for 0..65535 (a single movz),
+	// and puts everything wider in the literal pool. O_DIRECTORY is the one
+	// operand in this helper set that crosses the line.
+	//
+	// It is also the one whose value is NOT shared across targets — 0x100000 on
+	// XNU, 65536 on x86-64 Linux, 16384 on arm64 Linux. Every wrong choice is a
+	// silent wrong FLAG rather than a rejected constant: 65536 on Darwin means
+	// O_NDELAY|O_ASYNC (the open succeeds, the first read fails), and 65536 on
+	// arm64 Linux means O_RDONLY|O_DIRECT (EINVAL on /tmp).
+	for _, c := range []struct{ what, imm string }{
+		{"O_RDONLY|O_DIRECTORY", "1048576"},
+	} {
+		if !strings.Contains(asm, "ldr x0, ="+c.imm+"\n") {
+			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
+		}
+	}
+	// There is deliberately NO matching negative assertion. A bare search for
+	// the Linux values cannot work: 65536 is also the getdents read buffer's
+	// size, which is target-independent and legitimately present, and 16384
+	// turns up elsewhere too. Nothing lexical separates "an open flag" from "a
+	// buffer size" once both are just an operand push, so the honest coverage
+	// for the wrong-flag case is the arm64 runtime leg (dirs-fern under qemu) —
+	// which is in fact what caught the 16384 bug, after this emission test had
+	// been green on it.
 	if strings.Contains(asm, "ldr x8, [sp], #16") {
 		t.Error("darwinize left the __syscall3 number load on x8 (Linux form) in Mach-O output")
 	}
