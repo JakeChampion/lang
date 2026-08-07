@@ -6,6 +6,7 @@ Status: normative, and partial.
 | --- | --- |
 | `grammar.ebnf` | The syntactic grammar. Gated by `internal/grammar`. |
 | `diagnostics.md` | The index of every rejection the front-end can report, and which conformance case pins it. Gated by `TestDiagnosticsIndexIsAccurate`. |
+| `semantics.md` | The index of the behavioural rules the policy docs below state, and which conformance case pins each. Gated by `TestSemanticsIndexIsAccurate`. |
 
 See `docs/SPECIFICATION-RESEARCH.md` for the staged shape these are
 layers of, and §"What is not specified" below for what a reader must
@@ -95,12 +96,21 @@ maintained as living documents and a copy would drift:
 | `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
 | `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |
 
-Unlike `grammar.ebnf` and `diagnostics.md`, **none of these has a gate
-tying its prose to a test**. Each states rules that the conformance
-corpus happens to exercise, but nothing checks that a claim in the prose
-is pinned by a case, or that a case has not quietly contradicted one.
-Closing that is the natural next increment, and it is the same shape as
-the diagnostics index: derive the truth, make the document match it.
+`semantics.md` is the index that ties these to tests. It extracts the
+claims each doc makes and names the conformance case that pins each one;
+the case names the claim back with a `// spec: <ID>` marker, so neither
+side can be edited out from under the other. **25 of 33** claims are
+pinned today, three are deliberate freedoms, and five are gaps.
+
+The docs stay where they are rather than moving here, because they are
+living documents — implementation notes, the reasoning behind a choice,
+and corrections when the choice turned out to have been described
+wrongly. A copy would drift; an index cannot, because it is checked.
+
+Requiring an example that runs found `docs/ARRAY-BOUNDS.md` illustrating
+an out-of-range write as `xs[7] = 9`, which is `E056` — a subscript is
+read-only after construction, so the assignment form never reaches the
+bounds check the section is about.
 
 ## What is not specified
 

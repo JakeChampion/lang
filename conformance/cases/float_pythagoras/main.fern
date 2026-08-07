@@ -1,3 +1,4 @@
+// spec: FS-07
 import "std/float";
 // f64 arithmetic: 3^2 + 4^2 = 25.0. Float formatting is implemented
 // in pure Fern (std/float), so it is identical on every backend and
