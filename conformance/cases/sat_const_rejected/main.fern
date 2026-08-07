@@ -1,0 +1,13 @@
+// spec: IS-11
+//
+// A saturating operator is rejected inside a `const` initializer.
+// Constant folding runs BEFORE the checker, so at that point no
+// operand width is known — and without a width there is no [MIN, MAX]
+// to clamp against. The compiler says so rather than guessing a width,
+// which would make the same expression fold differently depending on
+// where it appeared.
+const K: i32 = 2147483647 +| 1;
+
+function main(): i32 {
+    return K;
+}

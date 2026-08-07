@@ -1,0 +1,31 @@
+// spec: FS-01
+// spec: FS-02
+// spec: FS-03
+//
+// Float-to-int conversion SATURATES, identically on every backend: NaN
+// becomes 0, anything above the destination's maximum becomes that
+// maximum, anything below its minimum becomes that minimum, and an
+// in-range value truncates toward zero.
+//
+// This is the one float edge the language pins rather than leaving to
+// the hardware, and it has to be, because the hardware answers three
+// different ways: wasm's `trunc_sat_*` and arm64's `fcvtz*` saturate
+// natively, while x86's `cvtt*2si` returns INT_MIN for every invalid
+// input — NaN and +overflow included — so the backend fixes those up.
+import "std/i32";
+
+function fid(x: f64): f64 { return x; }
+
+function main(): i32 {
+    var zero: f64 = fid(0.0);
+    var nan: f64 = zero / zero;
+    var inf: f64 = fid(1.0) / zero;
+
+    print((nan as i32).to_string());
+    print((inf as i32).to_string());
+    print(((0.0 - inf) as i32).to_string());
+    print((fid(3.9) as i32).to_string());
+    print((fid(0.0 - 3.9) as i32).to_string());
+    print((fid(0.0) as i32).to_string());
+    return 0;
+}

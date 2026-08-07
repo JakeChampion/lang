@@ -393,11 +393,41 @@ diagnostics. Publishing the catalogue is not the work; asking what
   disproves.
 
 The policy docs were indexed rather than rewritten, as planned — but
-that half shipped **ungated**, and `spec/README.md` says so rather than
-implying otherwise. Nothing checks that a claim in `INTEGER-SEMANTICS.md`
-is pinned by a case, or that a case has not quietly contradicted one.
-That is the next increment, and it is the diagnostics index's shape
-again: derive the truth, make the document match it.
+that half first shipped **ungated**: nothing checked that a claim in
+`INTEGER-SEMANTICS.md` was pinned by a case, or that a case had not
+quietly contradicted one.
+
+**Correction, from gating them.** `spec/semantics.md` now does for
+behaviour what `diagnostics.md` does for rejections: 33 claims across
+the six docs, 25 pinned by a conformance case, three deliberate
+freedoms, five gaps. Three things the plan did not anticipate:
+
+- **A one-directional index is not enough.** The diagnostics index can
+  verify itself by running the CLI and reading the code back. There is
+  no equivalent for a behavioural claim — nothing in a case's output
+  says which rule it is about — so the link has to be declared from
+  both ends. Each pinning case carries a `// spec: <ID>` marker naming
+  its claim, and the gate matches the two sets in both directions. A
+  case can then be rewritten, but not rewritten out from under the
+  claim it was written for.
+- **Freedoms are not gaps, and collapsing them hides the gaps.** Three
+  of `FLOAT-SEMANTICS.md`'s claims are that nothing is guaranteed — the
+  NaN bit-pattern, denormal handling, whether `-0.0` survives
+  arithmetic. A conformance case cannot pin one, because a case asserts
+  an output and the content of the claim is that no output is owed.
+  Marked `—` they would read as three oversights and bury the five real
+  ones; they are marked `n/a — freedom` and counted separately.
+- **Requiring an example that runs found a stale one.**
+  `docs/ARRAY-BOUNDS.md` illustrated an out-of-range write as
+  `xs[7] = 9`. That is `E056` — a subscript is read-only after
+  construction — so the program never reaches the bounds check the
+  section is about. Same lesson as `E039` and the invented grammar
+  rules, for the third time: a prose example nothing executes is a
+  claim nothing disproves.
+
+The gaps left are all rejections (`E009` on saturating `usize`, `E050`,
+`E067`), each currently exercised only by a Go test — the same shape,
+and the same freeze consequence, as the diagnostics index's own.
 
 ### Layer 3 — specify **Fern Core**, executably (the real work; 1–3 months)
 

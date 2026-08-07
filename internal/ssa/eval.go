@@ -10,8 +10,8 @@ import (
 // function's result (`Eval(f) == Eval(optimize(f))`), and the SSA→native
 // register allocator + emitter (#4112) are validated differentially against it
 // (the emitted code's result must match `Eval`). This mirrors how the
-// self-hosted compiler validates its SSA builder with an SSA interpreter
-// (CLAUDE.md), and how `irlower.fern` is checked end-to-end without a backend.
+// self-hosted compiler validates its SSA builder with an SSA interpreter,
+// and how `irlower.fern` is checked end-to-end without a backend.
 //
 // Scope: integer values (i32/i64 modelled as int64), booleans (0/1), the
 // integer arithmetic / bitwise / shift / comparison ops, OpNot, OpSelect,

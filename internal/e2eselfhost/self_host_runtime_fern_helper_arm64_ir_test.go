@@ -45,6 +45,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    var xs: i32[] = [1, 2];\n" +
 		"    if (xs.reverse().concat(xs).len() != 4) { return 6; }\n" +
 		"    if (xs[0:1].len() != 1) { return 7; }\n" +
+		"    if (now_unix_ms() < (1577836800000 as i64)) { return 8; }\n" +
+		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -59,7 +61,13 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	asm := string(out)
 
 	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
-		"arr_reverse", "arr_concat", "arr_slice"} {
+		"arr_reverse", "arr_concat", "arr_slice",
+		// The clocks (#2649): now_unix_ms / now_ns are Fern on every native
+		// target. monotonic_ns is NOT in this list — it is Fern on Linux but
+		// hand-asm on Darwin (mrs cntvct_el0 is not a syscall), so the "hand-asm
+		// is back" arm would be wrong for it. The Darwin test below covers that
+		// case from the other side.
+		"now_unix_ms", "now_ns"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -69,6 +77,27 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		if strings.Contains(asm, "\n__fern_"+leaf+":") {
 			t.Errorf("the register-ABI hand-asm __fern_%s is back", leaf)
 		}
+	}
+	// monotonic_ns is Fern on arm64 LINUX (clock_gettime 113); only the Darwin
+	// form stays hand-written, so this leg gets the full three-way assertion
+	// while the shared loop above skips it.
+	//
+	// Note the probe never calls monotonic_ns() directly — temp_dir()'s body
+	// does. That is deliberate: the clocks are emitted by
+	// emit_rt_clock_and_print, which runs BEFORE the fs bundle, so a need
+	// marked while lowering temp_dir's own body would arrive too late. This
+	// assertion is what pins op_temp_dir marking it up front.
+	if !strings.Contains(asm, "__fn___fern_monotonic_ns:") {
+		t.Error("__fn___fern_monotonic_ns not defined — the Fern clock did not lower on arm64 Linux")
+	}
+	if strings.Contains(asm, "\n__fern_monotonic_ns:") {
+		t.Error("the register-ABI hand-asm __fern_monotonic_ns is back on arm64 Linux")
+	}
+	// The clocks are heap-independent, so their scratch buffer cannot ride the
+	// fs runtime's gate — a pure-scalar timing program would reference a slot
+	// nothing defined. It is emitted by emit_rt_clock_and_print now.
+	if strings.Count(asm, "__fern_scratch: .skip 256") != 1 {
+		t.Errorf("want exactly one __fern_scratch definition, got %d", strings.Count(asm, "__fern_scratch: .skip 256"))
 	}
 	// The fs leaves call a Fern __fern_io_error bundled with them, rather than
 	// inlining the five-way errno classification — the "dependencies are the
@@ -142,6 +171,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
 		"    var xs: i32[] = [1, 2];\n" +
 		"    if (xs[0:1].len() != 1) { return 6; }\n" +
+		"    if (now_unix_ms() < (1577836800000 as i64)) { return 7; }\n" +
+		"    if (monotonic_ns() < (0 as i64)) { return 8; }\n" +
+		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -171,6 +203,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"mkdirat", "475"},
 		{"fstatat64", "470"},
 		{"st_size offset", "96"},
+		// gettimeofday, the clocks' Darwin stand-in: XNU has no clock_gettime
+		// syscall, and this number reaches the trap as a pushed operand, so
+		// darwinize never sees it and a wrong sysno row is invisible elsewhere.
+		{"gettimeofday", "116"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
@@ -205,6 +241,24 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	}
 	if strings.Contains(asm, "\n__fern_arr_slice:") {
 		t.Error("the register-ABI hand-asm __fern_arr_slice is back")
+	}
+	// The two wall clocks migrate on Darwin too — gettimeofday is an ordinary
+	// syscall. monotonic_ns does NOT: XNU's monotonic clock on Apple Silicon is
+	// `mrs cntvct_el0` scaled by `cntfrq_el0`, not a syscall, and Fern has no
+	// system-register-read intrinsic. It keeps the __fn___ name anyway (a
+	// zero-arg helper's stack and register conventions coincide), so the call
+	// site does not branch on the target — which is exactly what makes the
+	// "is it really hand-asm here" question worth pinning.
+	for _, leaf := range []string{"now_unix_ms", "now_ns"} {
+		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
+			t.Errorf("__fn___fern_%s not defined — the Fern clock did not lower for Darwin", leaf)
+		}
+	}
+	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
+		t.Error("Darwin monotonic_ns is not reading the architectural counter")
+	}
+	if strings.Contains(asm, "mov x8, #113") || strings.Contains(asm, "mov x0, #113\n    str x0, [sp, #-16]!") {
+		t.Error("a clock issued Linux's clock_gettime (113) in Mach-O output")
 	}
 	// The exit NUMBER is a pushed operand, so a wrong asmcore.sysno row is
 	// invisible everywhere else: darwinize never sees it (it rewrites `mov x8`,

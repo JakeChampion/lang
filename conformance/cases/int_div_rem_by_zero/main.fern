@@ -1,0 +1,29 @@
+// spec: IS-04
+// spec: IS-05
+//
+// Division is TOTAL: `x / 0` is 0 and `x % 0` is x, on every backend,
+// with no fault. This is the edge where the hardware disagrees with
+// itself — x86's `idiv` raises #DE, wasm's `i32.div_s` traps by
+// specification, arm64's `sdiv` answers 0 — so leaving it to the target
+// gives one language three behaviours.
+//
+// The operands flow through a call so the divisor is not a constant the
+// folder could reject or answer at compile time.
+import "std/i32";
+import "std/i64";
+
+function idiv(a: i32, b: i32): i32 { return a / b; }
+function irem(a: i32, b: i32): i32 { return a % b; }
+function ldiv(a: i64, b: i64): i64 { return a / b; }
+function lrem(a: i64, b: i64): i64 { return a % b; }
+
+function main(): i32 {
+    print(idiv(10, 0).to_string());
+    print(irem(10, 0).to_string());
+    print(idiv(0 - 10, 0).to_string());
+    print(irem(0 - 10, 0).to_string());
+    print(idiv(0, 0).to_string());
+    print(ldiv(10i64, 0i64).to_string());
+    print(lrem(10i64, 0i64).to_string());
+    return 0;
+}
