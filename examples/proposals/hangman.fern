@@ -1,0 +1,445 @@
+// examples/proposals/hangman.fern — proposal turn, drawn line 126:
+// "A hangman game with a word list and a guess tracker."
+//
+// A game is usually written as a loop around an input prompt, which is
+// untestable. This is the state machine underneath one: `guess` takes a game
+// and a letter and returns a game, so a play-through is a fold and every
+// intermediate state is a value you can assert about.
+//
+// The guess tracker is the interesting half. Hangman's whole rule set is about
+// what a repeat guess costs (nothing), what an already-finished game does
+// (nothing), and exactly when the two terminal states fire. All four are
+// invisible in a transcript and obvious in a state machine, so they are what
+// the tests are about:
+//
+//   - guessing a letter twice must leave the game BYTE-IDENTICAL, not merely
+//     "not lose a life" — the mask, the wrong count, and the tracker all
+//     unchanged;
+//   - a finished game is absorbing, so a late guess cannot un-win it;
+//   - the win fires on the guess that completes the word, not one after;
+//   - the loss fires on the max_wrong'th wrong guess, not the one before.
+//
+// The independent oracle is a from-scratch recomputation: given the set of
+// letters guessed so far, the mask and the wrong count can be derived directly
+// from the word without stepping through anything. Stepping and deriving must
+// agree at every prefix of every play-through, which is a much stronger claim
+// than agreeing at the end.
+//
+// The tracker is a `Set[string]` from std/set rather than a hand-rolled
+// string, so the app leans on the generic + trait-bound path rather than
+// re-implementing membership.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/set";
+import "std/string";
+
+struct Game {
+    word: string,
+    guessed: set.Set[string],
+    wrong: i32,
+    max_wrong: i32,
+}
+
+function new_game(word: string, max_wrong: i32): Game {
+    return Game { word: word, guessed: set.set_new(), wrong: 0,
+                  max_wrong: max_wrong };
+}
+
+function letter_at(w: string, i: i32): string {
+    return "" + w[i:i + 1];
+}
+
+function word_has(w: string, c: string): boolean {
+    for i in 0..w.len() {
+        if (letter_at(w, i) == c) { return true; }
+    }
+    return false;
+}
+
+// The distinct letters of a word, which is what "guessed everything" means —
+// a repeated letter is one thing to find, not two.
+function distinct_letters(w: string): set.Set[string] {
+    var s: set.Set[string] = set.set_new();
+    for i in 0..w.len() { s = s.add(letter_at(w, i)); }
+    return s;
+}
+
+function is_won(g: Game): boolean {
+    return distinct_letters(g.word).is_subset(g.guessed);
+}
+
+function is_lost(g: Game): boolean {
+    return g.wrong >= g.max_wrong;
+}
+
+function is_over(g: Game): boolean {
+    return is_won(g) || is_lost(g);
+}
+
+// The three rules that make hangman hangman, in the order they apply:
+// a finished game ignores everything; a repeat guess is free; and only a
+// letter that is not in the word costs a life.
+function guess(g: Game, c: string): Game {
+    if (is_over(g)) { return g; }
+    if (g.guessed.contains(c)) { return g; }
+    var w: i32 = g.wrong;
+    if (!word_has(g.word, c)) { w = w + 1; }
+    return Game { word: g.word, guessed: g.guessed.add(c), wrong: w,
+                  max_wrong: g.max_wrong };
+}
+
+function masked(g: Game): string {
+    var out: string = "";
+    for i in 0..g.word.len() {
+        var c: string = letter_at(g.word, i);
+        if (g.guessed.contains(c)) { out = out + c; } else { out = out + "_"; }
+    }
+    return out;
+}
+
+function remaining(g: Game): i32 {
+    return distinct_letters(g.word).difference(g.guessed).len();
+}
+
+// ---------------------------------------------------------------- oracle
+
+// The mask, derived from the word and a set of letters with no game state in
+// between. `masked` walks the game; this walks the word. They must agree.
+function derived_mask(word: string, letters: string[]): string {
+    var out: string = "";
+    for i in 0..word.len() {
+        var c: string = letter_at(word, i);
+        var shown: boolean = false;
+        for k in 0..letters.len() {
+            if (letters[k] == c) { shown = true; }
+        }
+        if (shown) { out = out + c; } else { out = out + "_"; }
+    }
+    return out;
+}
+
+// The wrong count, derived the same way: how many DISTINCT letters in the
+// sequence are absent from the word, counting a repeat once.
+function derived_wrong(word: string, letters: string[]): i32 {
+    var n: i32 = 0;
+    for k in 0..letters.len() {
+        var dup: boolean = false;
+        for j in 0..k {
+            if (letters[j] == letters[k]) { dup = true; }
+        }
+        if (!dup && !word_has(word, letters[k])) { n = n + 1; }
+    }
+    return n;
+}
+
+function play(word: string, max_wrong: i32, letters: string[]): Game {
+    var g: Game = new_game(word, max_wrong);
+    for k in 0..letters.len() { g = guess(g, letters[k]); }
+    return g;
+}
+
+function words(): string[] {
+    return ["fern", "compiler", "banana", "aaa", "xyz", "mississippi",
+            "queue", "rhythm", "a", "bookkeeper"];
+}
+
+function chars_of(w: string): string[] {
+    var out: string[] = [];
+    for i in 0..w.len() { out = out.append(letter_at(w, i)); }
+    return out;
+}
+
+function alphabet(): string[] {
+    return chars_of("abcdefghijklmnopqrstuvwxyz");
+}
+
+// ----------------------------------------------------------------- tests
+
+// THE test. A repeat guess must leave the game BYTE-IDENTICAL — not merely
+// "not cost a life". A tracker that re-adds the letter, or a mask that
+// recomputes differently the second time, passes a life-count assertion and
+// fails this one.
+function test_a_repeated_guess_changes_nothing(): test.TestOutcome {
+    var ws: string[] = words();
+    for i in 0..ws.len() {
+        var az: string[] = alphabet();
+        for k in 0..az.len() {
+            var once: Game = play(ws[i], 6, [az[k]]);
+            var twice: Game = guess(once, az[k]);
+            if (masked(twice) != masked(once) || twice.wrong != once.wrong
+                || twice.guessed.len() != once.guessed.len()
+                || remaining(twice) != remaining(once)) {
+                return test.fail("\"" + ws[i] + "\": guessing '" + az[k]
+                    + "' twice moved the game from " + masked(once) + "/"
+                    + once.wrong.to_string() + " to " + masked(twice) + "/"
+                    + twice.wrong.to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Stepping and deriving must agree at EVERY PREFIX, not just at the end — a
+// state machine that drifts and re-syncs would pass a final-state check.
+//
+// The derivation is only valid while the game is still running. Once it is
+// over the game stops accepting guesses, so `derived_wrong` — which counts
+// every absent letter in the sequence — deliberately parts company with it.
+// That is not a gap in the test: the two regimes are checked separately, the
+// running one against the derivation and the finished one against itself, and
+// the pair is strictly stronger than either. The first draft asserted the
+// derivation throughout and failed on "banana", which the guess sequence
+// completes with five letters still to come.
+function test_stepping_agrees_with_deriving_at_every_prefix(): test.TestOutcome {
+    var ws: string[] = words();
+    var seq: string[] = chars_of("aeioubcnrsxyz");
+    for i in 0..ws.len() {
+        var g: Game = new_game(ws[i], 99);
+        var sofar: string[] = [];
+        for k in 0..seq.len() {
+            if (is_over(g)) {
+                var wasm: string = masked(g);
+                var wasw: i32 = g.wrong;
+                g = guess(g, seq[k]);
+                if (masked(g) != wasm || g.wrong != wasw) {
+                    return test.fail("\"" + ws[i] + "\": a finished game moved"
+                        + " on guess " + k.to_string() + ": " + wasm + "/"
+                        + wasw.to_string() + " -> " + masked(g) + "/"
+                        + g.wrong.to_string());
+                }
+                continue;
+            }
+            g = guess(g, seq[k]);
+            sofar = sofar.append(seq[k]);
+            var dm: string = derived_mask(ws[i], sofar);
+            if (masked(g) != dm) {
+                return test.fail("\"" + ws[i] + "\" after " + k.to_string()
+                    + " guesses: stepped to " + masked(g) + ", derives as " + dm);
+            }
+            var dw: i32 = derived_wrong(ws[i], sofar);
+            if (g.wrong != dw) {
+                return test.fail("\"" + ws[i] + "\" after " + k.to_string()
+                    + " guesses: stepped wrong=" + g.wrong.to_string()
+                    + ", derives as " + dw.to_string());
+            }
+        }
+    }
+    return test.pass();
+}
+
+// The win fires on the guess that completes the word — not before, and the
+// game must not already be won at the start of a non-empty word.
+function test_the_win_fires_exactly_on_the_last_letter(): test.TestOutcome {
+    var ws: string[] = words();
+    for i in 0..ws.len() {
+        var need: string[] = distinct_letters(ws[i]).to_array();
+        var g: Game = new_game(ws[i], 6);
+        if (is_won(g)) {
+            return test.fail("\"" + ws[i] + "\" is won before any guess");
+        }
+        for k in 0..need.len() {
+            g = guess(g, need[k]);
+            var last: boolean = k == need.len() - 1;
+            if (is_won(g) != last) {
+                return test.fail("\"" + ws[i] + "\": after " + (k + 1).to_string()
+                    + " of " + need.len().to_string() + " letters, is_won="
+                    + is_won(g).to_string());
+            }
+        }
+        if (g.wrong != 0) {
+            return test.fail("\"" + ws[i] + "\": guessing only its own letters"
+                + " cost " + g.wrong.to_string() + " lives");
+        }
+        if (masked(g) != ws[i]) {
+            return test.fail("\"" + ws[i] + "\": fully guessed but masked as "
+                + masked(g));
+        }
+    }
+    return test.pass();
+}
+
+// The loss fires on the max_wrong'th wrong guess, not the one before it. Off
+// by one in either direction is a different game, and both directions are
+// checked because only one of them is visible from a transcript.
+function test_the_loss_fires_exactly_at_max_wrong(): test.TestOutcome {
+    for limit in 1..7 {
+        var g: Game = new_game("fern", limit);
+        var misses: string[] = chars_of("xyzwqvpo");
+        for k in 0..limit {
+            if (is_lost(g)) {
+                return test.fail("limit " + limit.to_string() + ": lost after "
+                    + k.to_string() + " wrong guesses");
+            }
+            g = guess(g, misses[k]);
+        }
+        if (!is_lost(g)) {
+            return test.fail("limit " + limit.to_string() + ": still alive after "
+                + limit.to_string() + " wrong guesses (wrong="
+                + g.wrong.to_string() + ")");
+        }
+    }
+    return test.pass();
+}
+
+// A finished game is absorbing. Without this a late correct guess can un-lose
+// a game, or a late wrong one can un-win it — both reachable in any UI that
+// does not itself check.
+function test_a_finished_game_ignores_further_guesses(): test.TestOutcome {
+    var won: Game = play("fern", 6, chars_of("fern"));
+    if (!is_won(won)) { return test.fail("the setup did not win"); }
+    var after: Game = guess(guess(won, "x"), "z");
+    if (!is_won(after) || is_lost(after) || after.wrong != won.wrong
+        || masked(after) != masked(won)) {
+        return test.fail("a won game moved on: wrong " + won.wrong.to_string()
+            + " -> " + after.wrong.to_string() + ", mask " + masked(won)
+            + " -> " + masked(after));
+    }
+    var lost: Game = play("fern", 2, chars_of("xy"));
+    if (!is_lost(lost)) { return test.fail("the setup did not lose"); }
+    var after2: Game = guess(guess(guess(lost, "f"), "e"), "r");
+    if (!is_lost(after2) || is_won(after2) || masked(after2) != masked(lost)) {
+        return test.fail("a lost game moved on: mask " + masked(lost) + " -> "
+            + masked(after2) + ", is_won=" + is_won(after2).to_string());
+    }
+    return test.pass();
+}
+
+// Order must not matter for a game that never ends: the same set of letters,
+// guessed in any order, reaches the same state. A tracker that is
+// order-sensitive — a list compared positionally, say — passes every
+// single-sequence test.
+//
+// "for a game that never ends" is load-bearing, and the first draft left it
+// out and was wrong. Once a game terminates it stops accepting guesses, so a
+// sequence that wins early and one that wins late genuinely differ in how many
+// wrong guesses they recorded — order matters exactly as much as termination
+// does. The letter set here is the alphabet MINUS one letter the word
+// contains, so the word can never be completed, and max_wrong is far above the
+// 25 guesses available. Under those conditions the claim is unconditional.
+function test_the_order_of_guesses_does_not_matter(): test.TestOutcome {
+    var ws: string[] = words();
+    for i in 0..ws.len() {
+        var hold: string = letter_at(ws[i], 0);
+        var fwd: string[] = [];
+        var az: string[] = alphabet();
+        for k in 0..az.len() {
+            if (az[k] != hold) { fwd = fwd.append(az[k]); }
+        }
+        var rev: string[] = [];
+        for k in 0..fwd.len() { rev = rev.append(fwd[fwd.len() - 1 - k]); }
+        var a: Game = play(ws[i], 99, fwd);
+        var b: Game = play(ws[i], 99, rev);
+        if (is_over(a) || is_over(b)) {
+            return test.fail("\"" + ws[i] + "\": withholding '" + hold
+                + "' should have kept the game running, but it ended");
+        }
+        if (masked(a) != masked(b) || a.wrong != b.wrong
+            || remaining(a) != remaining(b)) {
+            return test.fail("\"" + ws[i] + "\": forward gives " + masked(a)
+                + "/" + a.wrong.to_string() + ", reversed gives " + masked(b)
+                + "/" + b.wrong.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// What is left to find only ever shrinks, and reaches zero exactly when the
+// game is won. Monotonicity is what makes the game finite.
+function test_what_is_left_only_shrinks(): test.TestOutcome {
+    var ws: string[] = words();
+    var az: string[] = alphabet();
+    for i in 0..ws.len() {
+        var g: Game = new_game(ws[i], 99);
+        var prev: i32 = remaining(g);
+        if (prev != distinct_letters(ws[i]).len()) {
+            return test.fail("\"" + ws[i] + "\": starts with " + prev.to_string()
+                + " remaining but has "
+                + distinct_letters(ws[i]).len().to_string() + " distinct letters");
+        }
+        for k in 0..az.len() {
+            g = guess(g, az[k]);
+            var now: i32 = remaining(g);
+            if (now > prev) {
+                return test.fail("\"" + ws[i] + "\": remaining rose from "
+                    + prev.to_string() + " to " + now.to_string());
+            }
+            if ((now == 0) != is_won(g)) {
+                return test.fail("\"" + ws[i] + "\": remaining=" + now.to_string()
+                    + " but is_won=" + is_won(g).to_string());
+            }
+            prev = now;
+        }
+        if (remaining(g) != 0) {
+            return test.fail("\"" + ws[i] + "\": guessing the whole alphabet"
+                + " left " + remaining(g).to_string() + " unfound");
+        }
+    }
+    return test.pass();
+}
+
+// A word of one repeated letter and a word of all-distinct letters are the two
+// degenerate shapes, and "aaa" is the one where counting occurrences instead
+// of distinct letters gives the wrong answer.
+function test_repeated_letters_count_once(): test.TestOutcome {
+    var g: Game = new_game("aaa", 6);
+    if (remaining(g) != 1) {
+        return test.fail("\"aaa\" has " + remaining(g).to_string()
+            + " letters left to find; it has one");
+    }
+    var after: Game = guess(g, "a");
+    if (!is_won(after)) {
+        return test.fail("\"aaa\" not won after guessing 'a': " + masked(after));
+    }
+    if (masked(after) != "aaa") {
+        return test.fail("\"aaa\" masked as " + masked(after) + " after 'a'");
+    }
+    var m: Game = new_game("mississippi", 6);
+    if (remaining(m) != 4) {
+        return test.fail("\"mississippi\" has " + remaining(m).to_string()
+            + " distinct letters; it has 4 (m i s p)");
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------- app
+
+function main(): i32 {
+    eprint("hangman — a word list and a guess tracker");
+    var g: Game = new_game("compiler", 6);
+    var seq: string[] = chars_of("eaoicmplr");
+    eprint("  word: " + masked(g) + "  (" + remaining(g).to_string()
+        + " letters to find)");
+    for k in 0..seq.len() {
+        var before: i32 = g.wrong;
+        g = guess(g, seq[k]);
+        var mark: string = "hit ";
+        if (g.wrong > before) { mark = "miss"; }
+        eprint("  " + mark + " '" + seq[k] + "' -> " + masked(g)
+            + "  lives " + (g.max_wrong - g.wrong).to_string()
+            + "  left " + remaining(g).to_string());
+        if (is_over(g)) { break; }
+    }
+    if (is_won(g)) { eprint("  won"); } else { eprint("  lost"); }
+
+    var ws: string[] = words();
+    for i in 0..ws.len() {
+        var w: Game = play(ws[i], 6, distinct_letters(ws[i]).to_array());
+        eprint("  \"" + ws[i] + "\" solved by its own "
+            + distinct_letters(ws[i]).len().to_string() + " letters: "
+            + masked(w) + " (" + w.wrong.to_string() + " wrong)");
+    }
+
+    var t: test.TestRunner = test.test_new("hangman");
+    t = t.it("a repeated guess changes nothing", test_a_repeated_guess_changes_nothing);
+    t = t.it("stepping agrees with deriving at every prefix", test_stepping_agrees_with_deriving_at_every_prefix);
+    t = t.it("the win fires exactly on the last letter", test_the_win_fires_exactly_on_the_last_letter);
+    t = t.it("the loss fires exactly at max wrong", test_the_loss_fires_exactly_at_max_wrong);
+    t = t.it("a finished game ignores further guesses", test_a_finished_game_ignores_further_guesses);
+    t = t.it("the order of guesses does not matter", test_the_order_of_guesses_does_not_matter);
+    t = t.it("what is left only shrinks", test_what_is_left_only_shrinks);
+    t = t.it("repeated letters count once", test_repeated_letters_count_once);
+    return t.finish();
+}
