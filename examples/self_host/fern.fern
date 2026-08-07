@@ -58,6 +58,34 @@ function to_u8(b: i32[]): u8[] {
     return o;
 }
 
+// arm64_refusals renders the assembler's / linker's refusal list as ONE
+// diagnostic line and returns "" — the empty-binary sentinel every caller
+// already returns on failure, so a caller reads `return arm64_refusals(…)`.
+//
+// Two things this fixes over the three-eprint sequence it replaces. `eprint`
+// appends its own newline, so "…does not yet support: " / entry / "\n" printed
+// the reason on its own line with a blank one after it, which read as an EMPTY
+// instruction and looked like the compiler could not say what it choked on
+// (#6164). And only unknown[0] was printed: a module with twenty refusals
+// reported one, so each fix revealed the next.
+//
+// `stage` names where it came from ("assembler" / "linker"), since the two are
+// different failures: an unrecognised mnemonic is an instruction-selection gap,
+// while `label:__fern_x` is an emitted call to a runtime helper the emitter did
+// not define — not an instruction at all, which the old wording insisted it was.
+function arm64_refusals(target: string, stage: string, unknown: string[]): string {
+    var msg: string = "fern: -target " + target + ": in-process " + stage
+        + " refused " + util.i32_to_string(unknown.len()) + ": ";
+    var i: i32 = 0;
+    while (i < unknown.len()) {
+        if (i > 0) { msg = msg + ", "; }
+        msg = msg + unknown[i];
+        i = i + 1;
+    }
+    eprint(msg);
+    return "";
+}
+
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
 // emitter) into a runnable static ELF entirely in-process via arm64_native +
 // elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
@@ -67,10 +95,7 @@ function to_u8(b: i32[]): u8[] {
 function arm64_elf_binary(asm: string): string {
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
-        eprint("fern: -target arm64: in-process assembler hit an instruction it does not yet support: ");
-        eprint(p.unknown[0]);
-        eprint("\n");
-        return "";
+        return arm64_refusals("arm64", "assembler", p.unknown);
     }
     var pa: arm64_native.Arm64Asm = p.asm;
     // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx() and the
@@ -86,10 +111,7 @@ function arm64_elf_binary(asm: string): string {
     // which is how a function value became an address in the middle of .data
     // and stayed a runtime SEGV rather than a compile error (#6045).
     if (p.unknown.len() > 0) {
-        eprint("fern: -target arm64: in-process linker could not resolve: ");
-        eprint(p.unknown[0]);
-        eprint("\n");
-        return "";
+        return arm64_refusals("arm64", "linker", p.unknown);
     }
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
@@ -110,20 +132,14 @@ function arm64_elf_binary(asm: string): string {
 function arm64_elf_binary_pie(asm: string): string {
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
-        eprint("fern: -target arm64-android: in-process assembler hit an instruction it does not yet support: ");
-        eprint(p.unknown[0]);
-        eprint("\n");
-        return "";
+        return arm64_refusals("arm64-android", "assembler", p.unknown);
     }
     var pa: arm64_native.Arm64Asm = p.asm;
     var tv: i64 = (elf.elf_text_vaddr_pie()) as i64;
     var dv: i64 = (elf.elf_data_vaddr_pie(pa.code.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
     if (p.unknown.len() > 0) {
-        eprint("fern: -target arm64-android: in-process linker could not resolve: ");
-        eprint(p.unknown[0]);
-        eprint("\n");
-        return "";
+        return arm64_refusals("arm64-android", "linker", p.unknown);
     }
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
@@ -752,9 +768,7 @@ function run(): i32 {
         var gas: string = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error(full, true));
         var prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(gas);
         if (prog.unknown.len() > 0) {
-            eprint("fern: -target arm64-darwin: in-process assembler hit an instruction it does not yet support: ");
-            eprint(prog.unknown[0]);
-            eprint("\n");
+            var _ar: string = arm64_refusals("arm64-darwin", "assembler", prog.unknown);
             return 2;
         }
         var pa: arm64_native.Arm64Asm = prog.asm;
@@ -762,9 +776,7 @@ function run(): i32 {
         var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len());
         prog = arm64_native.arm64_gas_link(prog, tv, dv);
         if (prog.unknown.len() > 0) {
-            eprint("fern: -target arm64-darwin: in-process linker could not resolve: ");
-            eprint(prog.unknown[0]);
-            eprint("\n");
+            var _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
             return 2;
         }
         var pa2: arm64_native.Arm64Asm = prog.asm;
@@ -772,7 +784,8 @@ function run(): i32 {
         // path, resolve its label rather than assuming offset 0 — the
         // emitter writes the entry after the user's functions.
         var deoff: i32 = arm64_native.macho_entry_off(pa2);
-        out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_executable(pa2.code, prog.data, "fern", deoff, prog.bss_size)));
+        var dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
+        out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_executable(pa2.code, prog.data, "fern", deoff, prog.bss_size, dreb)));
     } else if (target == "wasm") {
         // WASI core module in text format (WAT). Runnable directly by
         // `wasmtime run`; main()'s result becomes the process exit code.

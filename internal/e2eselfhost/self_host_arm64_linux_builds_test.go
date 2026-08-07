@@ -99,6 +99,21 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
     if (d > 1.0e-15) { return 7; }                           // 3-part reduction
     return 42;
 }`, 42, ""},
+		// A socket program that allocates NOTHING ELSE. The arm64 emitter puts
+		// the whole native runtime — arena, rc, fs, subprocess AND the socket
+		// helpers — behind one "heap" need, but the socket op sites marked no
+		// need at all, so this shape emitted `bl __fern_tcp_listen` against a
+		// definition that was never written and the in-process assembler
+		// refused the module (#6164). Add a string concat and it compiled,
+		// which is why every existing socket test missed it. No listener is
+		// contacted: socket -> bind -> listen -> close is enough to prove the
+		// helper is present and callable.
+		{"tcp_listen_close_no_alloc", `function main(): i32 {
+  var fd: i32 = tcp_listen(39621);
+  if (fd < 0) { return 1; }
+  if (tcp_close(fd) < 0) { return 2; }
+  return 42;
+}`, 42, ""},
 	}
 
 	for _, c := range cases {

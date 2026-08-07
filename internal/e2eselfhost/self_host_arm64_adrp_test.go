@@ -160,7 +160,8 @@ function main(): i32 {
     code = arm64_patch_adrp(code, 0, arm64_page_delta(answer, adrp_at));
     code = arm64_patch_ldr_off(code, 4, arm64_page_off(answer));
 
-    var bin: i32[] = macho_executable(code, data, "fern", 0, 0);
+    var none: i32[] = [];               // no absolute-address data slots to rebase
+    var bin: i32[] = macho_executable(code, data, "fern", 0, 0, none);
     write(string_from_bytes_unchecked(bin));
     return 0;
 }

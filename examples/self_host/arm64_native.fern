@@ -3475,6 +3475,22 @@ function arm64_gas_sym_addr(p: Arm64GasProg, aw: Arm64Asm, name: string, text_va
     return Arm64SymAddr { found: false, addr: 0 };
 }
 
+// arm64_gas_rebase_offs returns the offsets, within the data blob, of every
+// 8-byte slot arm64_gas_link filled with an ABSOLUTE address (`.quad <symbol>`
+// — today only a static aggregate constant's shape pointer, #6149). A Mach-O
+// main executable on Apple Silicon must be PIE, so dyld slides the image and
+// every one of those needs the slide added: macho_executable turns these into
+// LC_DYLD_INFO_ONLY rebase opcodes. Everything else the arm64 emitter produces
+// is PC-relative (adrp/@PAGEOFF, b/bl), which is why this is the whole list.
+//
+// Miss a slot here and the image loads fine, then reads a pointer that is stale
+// by the slide — which presents as a codegen bug, not a container one. #6259
+// was exactly that: every `match` on a static constant fell through both arms
+// and the program returned 0.
+pub function arm64_gas_rebase_offs(p: Arm64GasProg): i32[] {
+    return p.dref_offs;
+}
+
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the
 // final __TEXT / __DATA segment addresses are known (the caller supplies
 // them from macho.fern's macho_text_vaddr / macho_data_vaddr). After this,
@@ -3594,15 +3610,15 @@ function arm64_gas_assemble(src: string): Arm64Asm {
 //     CodeDirectory's SHA-256 page hashes are the identity.
 //
 // PIE means dyld slides the image, so an absolute address baked into
-// __DATA would arrive stale. The native writer answers that with
-// LC_DYLD_INFO_ONLY rebase opcodes over the assembler's `.quad <symbol>`
-// slots; this image needs none, because the arm64 emitter's only `.quad`
-// is `.quad 0` (heap globals) and every address it computes is
-// PC-relative (adrp/@PAGEOFF, b/bl). The command is still emitted, with
-// an empty rebase stream, so growing a jump table later has one obvious
-// place to fill in. Emit a `.quad <symbol>` without also emitting its
-// rebase opcode and the image loads fine, then segfaults through a stale
-// pointer — which reads as a codegen bug rather than a container one.
+// __DATA arrives stale unless the image asks for it to be rebased.
+// LC_DYLD_INFO_ONLY carries that request as a rebase opcode stream over the
+// assembler's `.quad <symbol>` slots (macho_rebase_opcodes, fed from
+// arm64_gas_rebase_offs). Everything else the arm64 emitter computes is
+// PC-relative (adrp/@PAGEOFF, b/bl), so those slots are the whole list.
+// Emit a `.quad <symbol>` without its rebase opcode and the image loads
+// fine, then reads through a pointer stale by the slide — which presents as
+// a codegen bug rather than a container one (#6259: the shape pointer of
+// every static aggregate constant, so every `match` on one fell through).
 //
 // Conventions (matching elf.fern):
 //   * A byte buffer is an `i32[]` of values in 0..255; each helper appends
@@ -4046,14 +4062,52 @@ function macho_lcstr(buf: i32[], cmd: i32, path: string): i32[] {
 }
 
 // macho_dyld_info writes LC_DYLD_INFO_ONLY. Only the rebase stream is ever
-// populated — the image imports, exports and binds nothing — and this
-// emitter has nothing to rebase either, so every off/size pair is zero.
+// populated — the image imports, exports and binds nothing — so every other
+// off/size pair is zero.
 function macho_dyld_info(buf: i32[], rebase_off: i32, rebase_size: i32): i32[] {
     buf = macho_le32w(buf, 0x80000022); // LC_DYLD_INFO_ONLY | LC_REQ_DYLD
     buf = macho_le32(buf, 48);
     buf = macho_le32(buf, rebase_off);
     buf = macho_le32(buf, rebase_size);
     return macho_zeros(buf, 32); // bind, weak_bind, lazy_bind, export
+}
+
+// macho_uleb appends `v` as an unsigned LEB128 (the encoding every operand in
+// a dyld opcode stream uses).
+function macho_uleb(buf: i32[], v: i32): i32[] {
+    var n: i32 = v;
+    while (n >= 128) {
+        buf = buf.append((n & 127) | 128);
+        n = n >> 7;
+    }
+    return buf.append(n & 127);
+}
+
+// macho_rebase_opcodes builds the LC_DYLD_INFO_ONLY rebase stream: the program
+// that tells dyld which words to add the image slide to. `seg_idx` is the
+// segment the offsets are relative to (2 = __DATA: __PAGEZERO 0, __TEXT 1) and
+// `offs` their byte offsets within it.
+//
+// Three opcodes suffice. SET_TYPE_IMM once (every slot is a plain pointer),
+// then per slot SET_SEGMENT_AND_OFFSET_ULEB + DO_REBASE_IMM_TIMES(1). Naming
+// the segment and offset again for each slot costs a few bytes over a run-based
+// encoding and makes the stream order-independent, so a caller need not sort.
+// The stream is padded to a multiple of 8 like every other __LINKEDIT blob.
+function macho_rebase_opcodes(seg_idx: i32, offs: i32[]): i32[] {
+    if (offs.len() == 0) { return []; }
+    var buf: i32[] = [0x10 | 1];        // REBASE_OPCODE_SET_TYPE_IMM | REBASE_TYPE_POINTER
+    var i: i32 = 0;
+    while (i < offs.len()) {
+        buf = buf.append(0x20 | seg_idx); // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        buf = macho_uleb(buf, offs[i]);
+        buf = buf.append(0x50 | 1);      // REBASE_OPCODE_DO_REBASE_IMM_TIMES, count 1
+        i = i + 1;
+    }
+    buf = buf.append(0);               // REBASE_OPCODE_DONE
+    while ((buf.len() % 8) != 0) {
+        buf = buf.append(0);
+    }
+    return buf;
 }
 
 // macho_symtab writes an LC_SYMTAB, and macho_dysymtab an LC_DYSYMTAB with
@@ -4223,7 +4277,13 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // has_data test so the linker and the container agree on the layout. The
 // arm64 emitter always emits initialized data (rodata pools + globals)
 // alongside its bss, so a bss-only image cannot arise here.
-pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off: i32, bss: i32): i32[] {
+//
+// `rebase_offs` names every 8-byte slot in `data` that holds an ABSOLUTE
+// address (arm64_gas_rebase_offs — the assembler's `.quad <symbol>` slots).
+// dyld slides a PIE image, so each of those needs the slide added; the
+// LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
+// empty array when the data blob holds no absolute addresses.
+pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
     var has_data: boolean = data.len() > 0;
     var text_len: i32 = text.len();
     var data_len: i32 = data.len();
@@ -4236,7 +4296,17 @@ pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off
         data_file_len = macho_align_up(data_len, page);
         data_vm_len = macho_align_up(data_len + bss, page);
     }
-    var code_limit: i32 = text_vmsize + data_file_len;
+    // __LINKEDIT holds the rebase stream first, then the code signature. The
+    // signed region (code_limit) must cover the stream, so the signature
+    // starts at the 16-aligned end of it. With no rebases the stream is empty
+    // and sig_off lands exactly where it used to, so those images are
+    // byte-identical to before.
+    var rebase: i32[] = [];
+    if (has_data) {
+        rebase = macho_rebase_opcodes(2, rebase_offs);
+    }
+    var linkedit_off: i32 = text_vmsize + data_file_len;
+    var code_limit: i32 = macho_align_up(linkedit_off + rebase.len(), 16);
 
     var base: i64 = macho_base_vaddr();
     var text_vaddr: i64 = base + (text_off as i64);
@@ -4244,7 +4314,8 @@ pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off
     var linkedit_vaddr: i64 = data_vaddr + (data_vm_len as i64);
 
     var sig_len: i32 = macho_sig_len(code_limit, ident.len());
-    var linkedit_vmsize: i32 = macho_align_up(sig_len, page);
+    var linkedit_file_len: i32 = (code_limit - linkedit_off) + sig_len;
+    var linkedit_vmsize: i32 = macho_align_up(linkedit_file_len, page);
 
     var ncmds: i32 = 11;
     if (has_data) {
@@ -4285,12 +4356,10 @@ pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off
     }
 
     // ---- __LINKEDIT (r) ----
-    buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, code_limit as i64, sig_len as i64, 1, 1, 0);
+    buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, linkedit_off as i64, linkedit_file_len as i64, 1, 1, 0);
 
     // ---- the dyld command set (see the module comment) ----
-    // The rebase stream is empty, so its offset is only nominal; point it
-    // at the start of __LINKEDIT, where a stream would live.
-    buf = macho_dyld_info(buf, code_limit, 0);
+    buf = macho_dyld_info(buf, linkedit_off, rebase.len());
     buf = macho_symtab(buf, 0, 0, 0, 0);
     buf = macho_dysymtab(buf);
     buf = macho_build_version(buf);
@@ -4312,8 +4381,10 @@ pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off
     buf = macho_pad_to(buf, text_vmsize);
     if (has_data) {
         buf = macho_cat(buf, data);
-        buf = macho_pad_to(buf, code_limit);
+        buf = macho_pad_to(buf, linkedit_off);
     }
+    buf = macho_cat(buf, rebase);
+    buf = macho_pad_to(buf, code_limit);
     // buf length is now code_limit; sign it and append the signature.
     var sig: i32[] = macho_code_signature(buf, code_limit, text_vmsize, ident);
     buf = macho_cat(buf, sig);

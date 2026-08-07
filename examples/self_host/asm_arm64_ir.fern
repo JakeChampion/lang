@@ -856,10 +856,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("wasm_poll");
         } else if (o.kind_tag == 193) {  // tcp_connect
             // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
-            // The __fern_tcp_* bodies are emitted unconditionally by emit_runtime.
+            s = s.need("heap");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_connect\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 194) {  // tcp_send
             // [fd, str box] -> __fern_tcp_send(x0=fd, x1=box) -> bytes / -errno.
+            s = s.need("heap");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_send\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max] -> __fern_tcp_recv(x0=fd, x1=max) -> string box. Allocates
@@ -868,16 +869,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
         } else if (o.kind_tag == 196) {  // tcp_close
             // [fd] -> __fern_tcp_close(x0=fd) -> 0 / -errno.
+            s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_close\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 197) {  // tcp_pollable
             // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
+            s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_pollable\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
-            // [port] -> __fern_tcp_listen(x0=port) -> listener fd / -errno. The
-            // __fern_tcp_* bodies are emitted unconditionally by emit_runtime.
+            // [port] -> __fern_tcp_listen(x0=port) -> listener fd / -errno.
+            s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_listen\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
             // [listener fd] -> __fern_tcp_accept(x0=fd) -> connection fd / -errno.
+            s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_accept\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
             // [fd, str box] -> write(2) the box's bytes to the fd -> i32 bytes /
@@ -5209,6 +5213,16 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
     // Same shape as the x86-64 backend; instructions translated
     // to aarch64. Sets x0 = old ptr (return), advances the
     // ptr by x0 (the size arg).
+    //
+    // "heap" gates the whole native runtime block, not just the allocator: the
+    // fs / subprocess / socket helpers below all reach __fern_alloc, so they
+    // cannot be emitted without it and there is no separate need to key them
+    // on. That means every op site calling one of them must mark "heap" — the
+    // socket sites did not, on a comment claiming their bodies were emitted
+    // unconditionally, so a program that used a socket and allocated nothing
+    // else emitted `bl __fern_tcp_listen` with no definition and the in-process
+    // assembler refused the module (#6164). The x86-64 emitter gates each
+    // helper on its own need instead, which is why it never had the hole.
     if (s.has_need("heap")) {
         s = emit_rt_arena_and_alloc(s, darwin);
         s = emit_rt_large_tier_and_rc(s);
@@ -7126,6 +7140,15 @@ pub function darwinize(asm: string): string {
                 keep = false;
             } else if (body == ".section .rodata") {
                 out_line = "    .section __TEXT,__const";
+            } else if (body == ".data" || body == ".section .data") {
+                // The static-aggregate-constant blocks (#6149). Left
+                // untranslated, `-target arm64-darwin-asm` emitted a Linux
+                // section directive that clang refuses ("unexpected token in
+                // '.section' directive") — so the one tool for splitting an
+                // emitter bug from an assembler bug did not work on any
+                // program with a constant struct or enum, which is exactly the
+                // set #6259 was about.
+                out_line = "    .section __DATA,__data";
             } else if (body == ".bss" || body == ".section .bss") {
                 out_line = "    .section __DATA,__bss";
             } else if (body == ".section .text") {
