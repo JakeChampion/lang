@@ -6,9 +6,9 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// __heap_bump_bytes() is declared i64. It used to be declared i32 while every
-// backend's runtime computed the offset in 64 bits, so the declared result
-// silently truncated: a quadratic sweep read 141 MB / 555 MB / -2.09 GB /
+// __heap_bump_bytes() is declared i64. Declaring it i32 while every backend's
+// runtime computes the offset in 64 bits truncates the result silently: a
+// quadratic sweep reads 141 MB / 555 MB / -2.09 GB /
 // 202 MB, and only the third of those four readings looks wrong. The arena is
 // 16 GiB, so the mark passes 2^31 on any run this probe exists to measure.
 //

@@ -10,10 +10,10 @@ import (
 )
 
 // `@derive(cmp.Eq)` on the self-host IR path. The derive synthesises a
-// field-/payload-wise `eq`; it used to emit `self.f.eq(other.f)` for EVERY
-// field, and a scalar field's `.eq()` resolves to `core/cmp`'s `i32.eq` — which
-// the self-host loader skips (it loads only local + builtin), so the whole
-// module bailed to the legacy AST emitter. The synthesiser now compares a
+// field-/payload-wise `eq`. Emitting `self.f.eq(other.f)` for EVERY field
+// resolves a scalar field's `.eq()` to `core/cmp`'s `i32.eq`, which the
+// self-host loader skips (it loads only local + builtin), bailing the whole
+// module to the legacy AST emitter. The synthesiser compares a
 // SCALAR field with the primitive `==` (a nominal field still delegates to its
 // own derived `.eq()`), so a derived `eq` lowers through the IR path with no
 // stdlib dependency. `==` equals `core/cmp`'s scalar `eq` (`self == other`), so

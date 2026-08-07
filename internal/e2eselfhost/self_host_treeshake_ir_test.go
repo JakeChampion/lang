@@ -148,9 +148,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if _, code := runFixtureInterp(t, entry, ""); code != 7 {
 			t.Fatalf("heavy native interp = %d, want 7", code)
 		}
-		// This case used to be "heavy-flips-ast-to-ir": the unpruned module was
-		// over the 512-function budget → `ast`, the pruned one fit → `ir`, and
-		// that flip was the keystone. The budget is gone (#3457), so BOTH route
+		// With the 512-function budget gone (#3457), BOTH route
 		// IR — which is the assertion now, and it is the one that proves the
 		// removal took. Treeshake is a size/compile-time optimisation again
 		// rather than the thing that makes a stdlib-heavy program compilable.

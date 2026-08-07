@@ -12,7 +12,7 @@ import (
 // ..., false => ... }` — through the IR path. The scrutinee is already a 0/1
 // value in a slot (no tag to extract), so each arm compares it to the wanted
 // value, skips on mismatch, runs the body, and exits the match (mirroring the
-// Option-tag arm). Previously boolean patterns bailed to the AST emitter.
+// Option-tag arm), rather than bailing to the AST emitter.
 //
 // Each program declares a fresh, non-escaping struct temp whose IR-only reclaim
 // free (`call __fn___fern_arr_dec`; the AST fallback is leak-only and emits none,

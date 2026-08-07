@@ -31,10 +31,10 @@ check whether the floor already says the thing.
 What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
-`__fern_map_*`, `__fern_arr_push`), the arm64
-leaves whose Darwin form diverges in SHAPE rather than in constants
-(`read_dir`, `remove_dir_all`), and the
-per-backend wasm helper bundles.
+`__fern_map_*`, `__fern_arr_push`), Darwin's `monotonic_ns` alone, and the
+per-backend wasm helper bundles. **The "shape-diverging leaves" category is
+now empty** — see below; every entry that was in it turned out to be table
+rows over the existing floor.
 
 The **clocks** used to be on that shape-diverging list and mostly are not.
 `now_unix_ms` / `now_ns` do diverge — Linux takes
@@ -45,7 +45,27 @@ at once — but every one of those is expressible with the existing floor, and
 `clock_read(t, clk)` is where all three live. Only `monotonic_ns` on Darwin
 is genuinely out of reach: XNU's monotonic clock on Apple Silicon is not a
 syscall at all but `mrs cntvct_el0` scaled by `cntfrq_el0`, and Fern has no
-system-register-read intrinsic. That one helper stays hand-written. This is the architecture document the end goal of
+system-register-read intrinsic. That one helper stays hand-written.
+
+`read_dir` / `remove_dir_all` were the last two on that list, and went the
+same way. Both grounds recorded against them were table rows: Darwin's
+`getdirentries64` takes a 4th out-param `getdents64` has no equivalent of —
+but `__syscall4` was already in the floor, so the shared body issues four
+arguments on every target and hands Linux a register it ignores — and the
+dirent layouts differ only in where the name starts (19 vs 21, XNU carrying a
+`d_namlen` the Linux record does not), which is `direntoff`.
+
+**Three consecutive slices found the same thing**, which is worth stating as
+a rule rather than three anecdotes: a leaf recorded as "needs a per-target
+body" usually needs a per-target CONSTANT plus a floor primitive that already
+exists. Check the floor before designing a fork. The genuine exceptions so
+far share one property — they are not syscalls at all (`mrs cntvct_el0`).
+
+The counter-lesson from the same slice: `O_DIRECTORY` differs between the two
+**Linux** arches too (65536 on x86-64, 16384 on arm64 — an arch-specific
+override), so a Darwin-vs-Linux fork is not always the right shape for a
+table. Every wrong value there is a silent wrong FLAG, not a rejected
+constant: 65536 on arm64 Linux is `O_RDONLY|O_DIRECT`, EINVAL on `/tmp`. This is the architecture document the end goal of
 [#2649](https://github.com/JakeChampion/lang/issues/2649) needs as more helpers
 move; see the "Slice 1 / Slice 2 (landed)" sections at the end for what the
 first migrations actually took, which was simpler than first proposed. The near-term stepping stone it references

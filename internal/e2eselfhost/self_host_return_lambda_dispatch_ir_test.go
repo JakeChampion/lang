@@ -35,7 +35,7 @@ var returnLambdaDispatchIRCases = []struct {
 	{"single-noncapturing", "function pick(): () => i32 { return () => 7; } function main(): i32 { var g = pick(); return g(); }", 7},
 	// C — non-capturing with an argument.
 	{"noncapturing-arg", "function pick(): (i32) => i32 { return (x: i32) => x + 1; } function main(): i32 { var g = pick(); return g(10); }", 11},
-	// B — two DIFFERENT capturing returns, taken branch (was wrong value: 7).
+	// B — two DIFFERENT capturing returns, taken branch (mis-dispatch gives 7).
 	{"two-capturing-then", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { var g = pick(1, 6); return g(); }", 6},
 	// B — two DIFFERENT capturing returns, fall-through branch.
 	{"two-capturing-else", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { var g = pick(0, 6); return g(); }", 7},

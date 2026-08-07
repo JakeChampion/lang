@@ -11,9 +11,8 @@ import (
 )
 
 // TestNumericLiteralErrorsCarryCode pins that invalid numeric literals report
-// the P002 ("numeric literal error") code — previously these sites emitted an
-// uncoded `error:` so `fern -explain` couldn't speak to a code the parser had
-// just reported.
+// the P002 ("numeric literal error") code. An uncoded `error:` leaves
+// `fern -explain` unable to speak to a code the parser just reported.
 func TestNumericLiteralErrorsCarryCode(t *testing.T) {
 	codeOf := func(src string) string {
 		t.Helper()
@@ -855,9 +854,9 @@ func TestCompoundAssignDesugars(t *testing.T) {
 }
 
 // Compound assignment to a struct field (`a.v += 2`) must desugar the
-// same way as a plain `=` lvalue — into `a.v = a.v + 2`. Previously the
-// compound path only allowed Ident/Index targets and rejected a field
-// lvalue with P003, even though plain `=` accepted it.
+// same way as a plain `=` lvalue — into `a.v = a.v + 2`. A compound path
+// allowing only Ident/Index targets rejects a field lvalue with P003 even
+// though plain `=` accepts it.
 func TestCompoundAssignFieldDesugars(t *testing.T) {
 	prog, err := Parse(`struct A { v: i32 } function f(): i32 { var a: A = A { v: 1 }; a.v += 2; return a.v; }`)
 	if err != nil {

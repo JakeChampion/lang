@@ -76,7 +76,7 @@ function main(): i32 {
     return f().len() + 38;
 }`}, // 42
 	// Struct FIELD body — needs the struct table threaded into the inference
-	// (me_field_type_of), which it previously did not receive at all.
+	// (me_field_type_of).
 	{"lambda_struct_field", `struct P { x: f64 }
 function main(): i32 {
     var p: P = P { x: 4.5 };

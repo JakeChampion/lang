@@ -13,9 +13,9 @@ import (
 // TestSelfHostWatbinFlat validates that watbin (the self-host WAT->binary
 // encoder) assembles the stack-IR emitter's FLAT WAT — the prerequisite for
 // flipping wasm's default to the IR path, since wasm.emit_module's output feeds
-// not only wasmtime (which accepts flat WAT) but also watbin (which previously
-// handled only the AST emitter's FOLDED S-expressions). The new enc_flat_body
-// path encodes a linear instruction-atom sequence directly (the natural shape
+// not only wasmtime (which accepts flat WAT) but also watbin, which otherwise
+// handles only FOLDED S-expressions. The enc_flat_body path encodes a linear
+// instruction-atom sequence directly (the natural shape
 // of the wasm binary format), dispatched per-function by body shape — so a
 // program mixing flat user functions with the emitter's folded heap/RC helpers
 // (array programs) assembles correctly too.

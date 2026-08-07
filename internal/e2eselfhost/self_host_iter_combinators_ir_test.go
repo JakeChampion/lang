@@ -25,7 +25,7 @@ var iterCombinatorIRCases = []struct {
 	src  string
 }{
 	// find with a NAMED-function predicate in a match scrutinee — the case the
-	// lift's match-scrutinee walk fixes (previously segfaulted).
+	// lift's match-scrutinee walk covers; without it this segfaults.
 	{"find-named", `import "core/iter";
 function gt1(x: i32): boolean { return x > 1; }
 function main(): i32 { var xs: i32[] = [1, 2, 3]; match (iter.find(iter.of(xs), gt1)) { Some(v) => { return v; }, None => { return 0; } } }`},

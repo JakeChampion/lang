@@ -474,8 +474,7 @@ func checkSelfHostNativeRun(t *testing.T, f *fixtureSpec, r selfHostRun, failf f
 	}
 	if r.exit != f.wantExit {
 		// __fern_alloc's arena-exhaustion abort is exit 125 (ExitArenaExhausted).
-		// This used to say 137 and to call 137 the arena abort; both halves are
-		// now wrong and in the more expensive direction — the two statuses were
+		// 137 is NOT the arena abort — the two statuses were
 		// split precisely so 137 could mean the host OOM-killed us and nothing
 		// else, and a hint asserting the opposite sends the reader hunting a
 		// leak when they should be lowering a memory budget.

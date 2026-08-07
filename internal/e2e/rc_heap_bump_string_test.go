@@ -57,9 +57,9 @@ const stringConcatUnderflowSrc = `function main(): i32 {
 // longStringReinitBumpSrc builds a HEAP string (>15 B, so no SSO on any
 // backend) into a loop-body `var s` each iteration. This pins the slice-5g
 // follow-up: arm64 two-word heap strings now reclaim on loop-var REINIT
-// (emitOwnedSlotDrop's str_dec, mirroring the exit sweep) — previously arm64
-// safe-leaked here, so N=5000 vs N=50000 would diverge. All three backends
-// must now report the SAME bump high-water.
+// (emitOwnedSlotDrop's str_dec, mirroring the exit sweep). A safe-leak here
+// makes N=5000 and N=50000 diverge; all three backends must report the SAME
+// bump high-water.
 func longStringReinitBumpSrc(n string) string {
 	return `function tag(i: i32): string {
     if (i % 2 == 0) { return "even"; }

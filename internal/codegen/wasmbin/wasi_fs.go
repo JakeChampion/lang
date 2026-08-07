@@ -961,8 +961,8 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 	body = inst.InstDrop(body)
 
 	// Return Ok(()): 8-byte alloc, tag = 0 @ +0, unit payload @ +4.
-	// The unit occupies a payload slot like any other value, so the
-	// success arm is no longer the 4-byte tag-only box Option used.
+	// The unit occupies a payload slot like any other value — not the
+	// 4-byte tag-only box Option uses.
 	body = inst.InstI32Const(body, 8)
 	body = inst.InstCall(body, allocBox)
 	body = inst.InstLocalTee(body, 16)

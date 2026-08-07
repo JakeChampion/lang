@@ -21,7 +21,7 @@ import (
 // scalar field read (p.0), an indexed array-field read (p.1[i]) and p.1.len() are
 // borrows (reclaim proceeds); a BARE array-field extraction (store/return/pass/
 // alias/slice p.1) escapes and the local is left leak-safe (never over-released —
-// the store-p.1 case previously double-freed).
+// the store-p.1 case is the one that can double-free).
 var optTupReclaimCases = []struct {
 	name string
 	src  string
@@ -103,8 +103,8 @@ function main(): i32 {
 	// STRING-element payload (#4353 item 2, probe p4): `Option[(i32, string)]`
 	// with a fresh producer element — construction str_box's the element into
 	// a fresh copy, the type-driven drop routes it through the rc-aware
-	// __fern_str_free. Previously the string tag rejected admission and all
-	// three levels leaked per iteration.
+	// __fern_str_free. A string tag that rejects admission leaks all three
+	// levels per iteration.
 	{"opttup-string-elem-churn", `function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;

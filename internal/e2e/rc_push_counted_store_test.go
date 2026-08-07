@@ -3,9 +3,9 @@
 // element (the same Ident / FieldAccess / Index shapes the old full-escape
 // taint walked), and the buffer's deep drop decs elements. That makes a
 // PROJECTION source (`out.push(src[i])`) co-owned by the buffer, so the
-// source container no longer escape-taints and reclaims at scope exit —
-// previously `src`'s whole buffer (and transitively its elements' buffers)
-// leaked per call, the dominant safe-leak class for push-heavy code
+// source container does not escape-taint and reclaims at scope exit. Without
+// it `src`'s whole buffer (and transitively its elements' buffers) leaks per
+// call, the dominant safe-leak class for push-heavy code
 // (docs/OWNERSHIP-INFERENCE-PLAN.md).
 //
 // Three contracts, mirrored on x86-64 and wasm:

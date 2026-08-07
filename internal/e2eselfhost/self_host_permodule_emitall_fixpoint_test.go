@@ -34,9 +34,7 @@ import (
 // This test's batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM
 // config — and it now runs UNGATED, in its own CI job (emitall-fixpoint-x86_64).
 //
-// It used to be env-gated on RUN_EMITALL_FIXPOINT, which NOTHING set, on the
-// stated grounds that "the gen1 emit peaks 7909 MB against the 8 GiB arena
-// (~99% of the ceiling)". The arena has been **16 GiB** for some time
+// Not env-gated: the gen1 emit peaks ~7909 MB, and the arena is **16 GiB**
 // (x86_64.go's heapBytes and arm64.go's, both 0x400000000), so that reasoning
 // was off by 2x in the direction that retires a test. Re-measured 2026-08-03 on
 // this tree: gen0 42.0 s / 4.96 GB, gen1 108.8 s / 7.27 GB, 297.6 s total —

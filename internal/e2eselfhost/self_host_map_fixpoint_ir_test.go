@@ -16,9 +16,8 @@ import (
 //   - `m.get_or(k, d)` no longer leaks its intermediate: __fern_map_get
 //     allocates a raw 16-byte Option box that the map_get_or emission
 //     consumes on the spot, so the box now goes straight back to the
-//     size-class-2 freelist (previously ~16 B leaked per call — the dominant
-//     residual map leak on this path, unbounded in a loop; the miss path
-//     leaked identically, m.has() never did).
+//     size-class-2 freelist. Without it ~16 B leaks per call on both the
+//     hit and miss paths, unbounded in a loop (m.has() never leaked).
 //
 // Fixpoint contract: growth at N=50 == growth at N=5000, non-zero, under a
 // hard leak guard. The fixed-exit cases pin value-correctness churn and the
@@ -34,9 +33,9 @@ var mapFixpointIRCases = []struct {
 }{
 	// A cow-threaded map DECLARED INSIDE a loop body: the loop-reinit drop
 	// (emit_map_buffers_free before the shared store) frees the prior
-	// iteration's box, so the loop's high-water is one box wide. Previously
-	// leaked one box per iteration (precise_drop_names is top-level-only, so
-	// no early drop ever fired for a loop-declared map).
+	// iteration's box, so the loop's high-water is one box wide. Without the
+	// reinit drop it leaks one box per iteration: precise_drop_names is
+	// top-level-only, so no early drop fires for a loop-declared map.
 	{name: "cow-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -108,8 +107,8 @@ function main(): i32 {
 	// Bound-from-call: `var m: Map[..] = mk(i)` where mk is a registered
 	// builder ("MAPF:" — map_fresh_ret_fns_of) earns the same reclaim credit
 	// as a local map_new, so the loop-reinit drop and end-of-scope free fire
-	// on the binding. Previously each mk() box leaked (the collector only
-	// credited literal map_new inits).
+	// on the binding. A collector that credits only literal map_new inits
+	// leaks every mk() box.
 	{name: "mkcall-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
@@ -153,9 +152,9 @@ function main(): i32 {
     return g / 8;
 }`
 	}},
-	// A DISCARDED builder call (`mk(i);` as a bare statement) previously
-	// leaked the whole fresh map per call: no binding, so no slot reclaim
-	// ever fired. The "MAPRET:" seeding (from the MAPF registry, the map
+	// A DISCARDED builder call (`mk(i);` as a bare statement) has no binding,
+	// so no slot reclaim fires and the whole fresh map leaks per call. The
+	// "MAPRET:" seeding (from the MAPF registry, the map
 	// sibling of TUPRET) now frees the result on the spot via
 	// __fern_map_free.
 	{name: "mkcall-discard", src: func(n string) string {

@@ -11,9 +11,9 @@ import (
 
 // returnClosureIRCases exercise calling a capturing closure that is RETURNED
 // from a function, directly off the call result (`mk(..)(args)`) — the inline
-// call-on-call shape. Previously this bailed the module to the AST path: the
-// call-on-call lowering handled a callee returning a bare fn pointer
-// (no-capture lambda) but explicitly bailed when the callee returned a CLOSURE
+// call-on-call shape. Handling only a callee that returns a bare fn pointer
+// (no-capture lambda) and bailing when the callee returns a CLOSURE drops the
+// module to the AST path, because that lowering
 // box (a capturing-lambda-returning fn). The fix dispatches env-first off the
 // returned box, the same shape `var f = mk(..); f(args)` already used.
 //

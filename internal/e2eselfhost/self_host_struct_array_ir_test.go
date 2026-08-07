@@ -12,9 +12,9 @@ import (
 // path: indexing a struct array (`arr[i].field`, `arr[i].method()`) and
 // iterating one (`for x in arr { x.field }`) recover the element's struct type
 // from the array slot, so field access / method dispatch resolve without an
-// intermediate typed local. Previously a direct `arr[i].field` (or a struct
-// for-loop var) bailed the whole module to the AST emitter; only binding to a
-// `var q: P = arr[i]` first worked. Exit codes are the behavioural oracle.
+// intermediate typed local: a direct `arr[i].field` (or a struct for-loop var)
+// must lower, not just the `var q: P = arr[i]` binding. Exit codes are the
+// behavioural oracle.
 var structArrayIRCases = []struct {
 	name     string
 	src      string
