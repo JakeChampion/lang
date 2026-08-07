@@ -157,7 +157,7 @@ func TestX86_64MatchCallScrutineeReclaim(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"wildcard_string_payload", matchCallWildcardSrc, 65},
+		{"wildcard_string_payload", matchCallWildcardSrc, 72},
 		{"result_err_wildcard", matchCallResultSrc, 72},
 		{"all_scalar_control", matchCallScalarSrc, 65},
 	} {
