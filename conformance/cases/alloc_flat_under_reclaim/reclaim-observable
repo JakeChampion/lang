@@ -1,0 +1,13 @@
+This case reports the SHAPE of the allocator's fresh-byte curve, so its
+output is deliberately different with reclamation off: "flat" with free
+on, "grows" with free off. That is the property it exists to assert.
+
+The *FixturesFreeMatchesNoFree gates therefore invert for it — they
+require the two runs to DIFFER. The marker is a claim being checked, not
+a check being skipped: if this case ever stops observing reclamation,
+the gate fails and says so.
+
+Its sibling alloc_grows_when_retained deliberately does NOT carry this
+marker. It prints "grows" either way — a retained value is not reclaimed
+whether or not reclamation is on — so it satisfies the ordinary rule and
+must keep satisfying it.

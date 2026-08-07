@@ -127,3 +127,27 @@ What changes with this document is smaller and prior to that: there is
 now *an* observable with a written contract, so a claim about allocation
 can be pinned by a conformance case at all. Before it, the corpus could
 not express one.
+
+## Such a case must declare itself
+
+Every conformance case is also run with reclamation compiled OUT, and
+`*FixturesFreeMatchesNoFree` requires the two runs to agree. That gate is
+what turns an rc bug into a visible behaviour change instead of a leak
+nobody measures, and it rests on the corpus being normative about the
+*language* — where whether the allocator ran is not observable.
+
+A case built on this document's observable breaks that assumption on
+purpose: reading `__heap_bump_bytes()` is exactly how it tells. So it
+must carry a `reclaim-observable` sidecar file, and the gate then
+**inverts** for it — the two runs are required to DIFFER.
+
+The inversion, rather than a skip, is the point. A skip would make the
+marker a way to silence any free-off divergence, including the
+miscompiles the gate exists to catch; and a case that quietly stopped
+observing reclamation would keep passing while testing nothing. As a
+claim, it fails loudly in both directions.
+
+Only a case whose *expected output* changes with reclamation needs it.
+`alloc_grows_when_retained` reports `grows` either way — a retained
+value is not reclaimed regardless — so it satisfies the ordinary rule
+and carries no marker.
