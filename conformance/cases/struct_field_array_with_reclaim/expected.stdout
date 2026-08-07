@@ -1,0 +1,4 @@
+struct field: flat
+bound first: flat
+bare local: flat
+7188

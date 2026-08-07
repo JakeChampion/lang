@@ -14464,9 +14464,19 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 // dec'd, never freed.
 func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	if at, ok := t.(ast.ArrayType); ok {
-		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})
-		b.emit(Op{Kind: OpCallDirect, Str: "__fern_arr_dec", I32: 2})
-		b.emit(Op{Kind: OpDrop})
+		// Reuse `dropStructField`'s ladder rather than the flat
+		// `__fern_arr_dec` this used to emit unconditionally. That helper
+		// frees the BUFFER and nothing else, so an array field whose
+		// elements are rc-tracked lost every element when the field was
+		// replaced — `b.items = b.items.with(0, …)` on a struct field leaked
+		// one element box per call, unbounded, on all three compiled
+		// backends. (A bare local array is fine: its receiver is a
+		// reassign-to-self move, so `cow_inplace` takes the in-place branch
+		// and the overwritten element's own drop is the sole release. Only
+		// the copy branch — which a struct-field read forces by leaving the
+		// buffer at rc >= 2 — retains the elements, and only this release
+		// was failing to give those retains back.)
+		b.dropStructField(at)
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
