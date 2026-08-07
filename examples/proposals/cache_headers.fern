@@ -1,0 +1,515 @@
+// examples/proposals/cache_headers.fern — proposal turn, drawn line 151:
+// "An HTTP cache-header calculator (ETag, Last-Modified, conditional
+// requests)."
+//
+// The conditional-request rules from RFC 9110 §13, which are almost
+// entirely about PRECEDENCE and about two different ways to compare an
+// entity-tag — and both are things an implementation gets wrong in a way
+// that only shows on the cases nobody thinks to try.
+//
+//   - `If-None-Match` takes precedence over `If-Modified-Since`. When the
+//     former is present the latter is not evaluated AT ALL, even if it
+//     would have given a different answer.
+//   - `If-None-Match` compares WEAKLY (`W/"x"` matches `"x"`);
+//     `If-Match` compares STRONGLY (it does not). One comparison function
+//     for both is the classic bug, and it is invisible until a weak tag
+//     meets a state-changing request.
+//   - A failed precondition is 304 for GET/HEAD and 412 for anything else.
+//
+// The tests are written from those rules rather than from the code: each
+// one names the clause it is checking, and several deliberately set up a
+// header that MUST be ignored, so an implementation that consults it fails
+// even though it would otherwise agree.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/string";
+import "std/i32";
+
+// A request's conditional headers. An empty string means the header was
+// absent — distinct from present-but-empty, which the parser rejects.
+struct Request {
+    method: string,
+    if_none_match: string,
+    if_match: string,
+    if_modified_since: i32,      // epoch seconds; -1 = absent
+    if_unmodified_since: i32,
+}
+
+// What the origin holds. `etag` is the tag as it would be sent, weak tags
+// included (`W/"abc"`).
+struct Resource {
+    etag: string,
+    last_modified: i32,
+    exists: boolean,
+}
+
+function status_ok(): i32 { return 200; }
+function status_not_modified(): i32 { return 304; }
+function status_precondition_failed(): i32 { return 412; }
+function status_not_found(): i32 { return 404; }
+
+// ------------------------------------------------------------ entity tags
+
+function is_weak(tag: string): boolean { return tag.starts_with("W/"); }
+
+// The opaque part, without the weak prefix and without the quotes. Two tags
+// are equal by the WEAK comparison exactly when their opaque parts match;
+// by the STRONG comparison they must also both be strong.
+function opaque_of(tag: string): string {
+    var t: string = tag;
+    if (is_weak(t)) { t = t.drop(2).to_owned(); }
+    if (t.len() >= 2 && t.starts_with("\"") && t.ends_with("\"")) {
+        return t.drop(1).take(t.len() - 2).to_owned();
+    }
+    return t;
+}
+
+// RFC 9110 §8.8.3.2. Used by If-None-Match.
+function weak_eq(a: string, b: string): boolean {
+    return opaque_of(a) == opaque_of(b);
+}
+
+// RFC 9110 §8.8.3.2. Used by If-Match: neither tag may be weak.
+function strong_eq(a: string, b: string): boolean {
+    if (is_weak(a) || is_weak(b)) { return false; }
+    return opaque_of(a) == opaque_of(b);
+}
+
+// A header value is `*` or a comma-separated list of tags. Splitting on ","
+// is enough because an opaque tag cannot contain one unescaped, and the
+// parser rejects anything it cannot read rather than guessing.
+function parse_tag_list(h: string): string[] {
+    var out: string[] = [];
+    var parts: string[] = h.split(",");
+    for i in 0..parts.len() {
+        var t: string = parts[i].trim().to_owned();
+        if (t.len() > 0) { out = out.append(t); }
+    }
+    return out;
+}
+
+function list_matches(h: string, etag: string, strong: boolean): boolean {
+    if (h.trim() == "*") { return true; }
+    var tags: string[] = parse_tag_list(h);
+    for i in 0..tags.len() {
+        if (strong) {
+            if (strong_eq(tags[i], etag)) { return true; }
+        } else {
+            if (weak_eq(tags[i], etag)) { return true; }
+        }
+    }
+    return false;
+}
+
+// ------------------------------------------------------------- evaluation
+
+function is_safe(method: string): boolean {
+    return method == "GET" || method == "HEAD";
+}
+
+// RFC 9110 §13.2.2, in the order the specification gives — the order IS the
+// behaviour, so the function is written as a straight sequence of clauses
+// rather than as a set of conditions to combine.
+function evaluate(req: Request, res: Resource): i32 {
+    if (!res.exists) { return status_not_found(); }
+
+    // 1. If-Match. Strong comparison; failure is 412 for every method.
+    if (req.if_match.len() > 0) {
+        if (!list_matches(req.if_match, res.etag, true)) {
+            return status_precondition_failed();
+        }
+        // When If-Match is present and succeeds, If-Unmodified-Since is
+        // ignored — the tag is the more precise validator.
+    } else if (req.if_unmodified_since >= 0) {
+        // 2. If-Unmodified-Since, only when If-Match is absent.
+        if (res.last_modified > req.if_unmodified_since) {
+            return status_precondition_failed();
+        }
+    }
+
+    // 3. If-None-Match. WEAK comparison. A match means the client already
+    //    has it: 304 for a safe method, 412 otherwise.
+    if (req.if_none_match.len() > 0) {
+        if (list_matches(req.if_none_match, res.etag, false)) {
+            if (is_safe(req.method)) { return status_not_modified(); }
+            return status_precondition_failed();
+        }
+        // No match: send the representation. If-Modified-Since is NOT
+        // consulted — this early return is the precedence rule.
+        return status_ok();
+    }
+
+    // 4. If-Modified-Since, only for safe methods and only when
+    //    If-None-Match is absent.
+    if (req.if_modified_since >= 0 && is_safe(req.method)) {
+        if (res.last_modified <= req.if_modified_since) {
+            return status_not_modified();
+        }
+    }
+    return status_ok();
+}
+
+// --------------------------------------------------------------- freshness
+
+struct CacheControl {
+    no_store: boolean,
+    no_cache: boolean,
+    max_age: i32,        // -1 = absent
+    s_maxage: i32,       // -1 = absent
+}
+
+function cc_none(): CacheControl {
+    return CacheControl { no_store: false, no_cache: false, max_age: -1, s_maxage: -1 };
+}
+
+// RFC 9111 §4.2.1: s-maxage wins for a shared cache, then max-age, then
+// Expires. `expires` and `date` are epoch seconds; -1 means absent.
+function freshness_lifetime(cc: CacheControl, expires: i32, date: i32,
+                            shared: boolean): i32 {
+    if (shared && cc.s_maxage >= 0) { return cc.s_maxage; }
+    if (cc.max_age >= 0) { return cc.max_age; }
+    if (expires >= 0 && date >= 0) {
+        var d: i32 = expires - date;
+        if (d < 0) { return 0; }
+        return d;
+    }
+    return 0;
+}
+
+function is_fresh(cc: CacheControl, expires: i32, date: i32, age: i32,
+                  shared: boolean): boolean {
+    if (cc.no_store || cc.no_cache) { return false; }
+    return age < freshness_lifetime(cc, expires, date, shared);
+}
+
+// ---------------------------------------------------------------- helpers
+
+function req_get(): Request {
+    return Request { method: "GET", if_none_match: "", if_match: "",
+                     if_modified_since: -1, if_unmodified_since: -1 };
+}
+
+function res_at(etag: string, modified: i32): Resource {
+    return Resource { etag: etag, last_modified: modified, exists: true };
+}
+
+// ---------------------------------------------------------------- tests
+
+// RFC 9110 §13.2.2 step 3/5: when If-None-Match is present, If-Modified-Since
+// is not evaluated. Each row sets the date header to a value that WOULD give
+// the other answer, so an implementation that consults it fails here while
+// agreeing on every ordinary case.
+function test_if_none_match_shadows_if_modified_since(): test.TestOutcome {
+    var res: Resource = res_at("\"v2\"", 1000);
+
+    // Tag does NOT match -> 200, even though the date says "not modified".
+    var a: Request = Request { ...req_get(), if_none_match: "\"v1\"",
+                               if_modified_since: 2000 };
+    if (evaluate(a, res) != status_ok()) {
+        return test.fail("a non-matching tag with a satisfied date gave "
+            + evaluate(a, res).to_string() + ", wanted 200 — the date was consulted");
+    }
+
+    // Tag DOES match -> 304, even though the date says "modified since".
+    var b: Request = Request { ...req_get(), if_none_match: "\"v2\"",
+                               if_modified_since: 500 };
+    if (evaluate(b, res) != status_not_modified()) {
+        return test.fail("a matching tag with an unsatisfied date gave "
+            + evaluate(b, res).to_string() + ", wanted 304");
+    }
+
+    // With no tag, the same dates decide normally — so the rows above are
+    // really about precedence and not about a broken date comparison.
+    var c: Request = Request { ...req_get(), if_modified_since: 2000 };
+    if (evaluate(c, res) != status_not_modified()) {
+        return test.fail("the date alone should give 304");
+    }
+    var d: Request = Request { ...req_get(), if_modified_since: 500 };
+    if (evaluate(d, res) != status_ok()) {
+        return test.fail("the date alone should give 200");
+    }
+    return test.pass();
+}
+
+// RFC 9110 §8.8.3.2. If-None-Match compares weakly, If-Match strongly. The
+// same pair of tags must therefore give opposite answers in the two headers
+// — one comparison function for both cannot produce that.
+function test_the_two_comparisons_differ_on_weak_tags(): test.TestOutcome {
+    var strong_res: Resource = res_at("\"abc\"", 1000);
+    var weak_res: Resource = res_at("W/\"abc\"", 1000);
+
+    // If-None-Match: weak comparison, so all four combinations match.
+    var pairs_h: string[] = ["\"abc\"", "W/\"abc\"", "\"abc\"", "W/\"abc\""];
+    var pairs_r: Resource[] = [strong_res, strong_res, weak_res, weak_res];
+    for i in 0..pairs_h.len() {
+        var r: Request = Request { ...req_get(), if_none_match: pairs_h[i] };
+        if (evaluate(r, pairs_r[i]) != status_not_modified()) {
+            return test.fail("If-None-Match " + pairs_h[i] + " vs "
+                + pairs_r[i].etag + " gave "
+                + evaluate(r, pairs_r[i]).to_string() + ", wanted 304");
+        }
+    }
+
+    // If-Match: strong comparison. Only strong-vs-strong matches.
+    var put: Request = Request { ...req_get(), method: "PUT" };
+    var m1: Request = Request { ...put, if_match: "\"abc\"" };
+    if (evaluate(m1, strong_res) != status_ok()) {
+        return test.fail("If-Match strong vs strong should pass");
+    }
+    var m2: Request = Request { ...put, if_match: "W/\"abc\"" };
+    if (evaluate(m2, strong_res) != status_precondition_failed()) {
+        return test.fail("If-Match with a WEAK tag must fail the strong "
+            + "comparison, got " + evaluate(m2, strong_res).to_string());
+    }
+    var m3: Request = Request { ...put, if_match: "\"abc\"" };
+    if (evaluate(m3, weak_res) != status_precondition_failed()) {
+        return test.fail("If-Match against a WEAK stored tag must fail, got "
+            + evaluate(m3, weak_res).to_string());
+    }
+    return test.pass();
+}
+
+// A failed If-None-Match is 304 for a safe method and 412 for anything else
+// (RFC 9110 §13.1.2). The method is the only thing that differs.
+function test_the_method_decides_304_versus_412(): test.TestOutcome {
+    var res: Resource = res_at("\"v\"", 1000);
+    var safe: string[] = ["GET", "HEAD"];
+    var unsafe: string[] = ["PUT", "POST", "DELETE", "PATCH"];
+    for i in 0..safe.len() {
+        var r: Request = Request { ...req_get(), method: safe[i],
+                                   if_none_match: "\"v\"" };
+        if (evaluate(r, res) != status_not_modified()) {
+            return test.fail(safe[i] + " with a matching If-None-Match gave "
+                + evaluate(r, res).to_string() + ", wanted 304");
+        }
+    }
+    for i in 0..unsafe.len() {
+        var r2: Request = Request { ...req_get(), method: unsafe[i],
+                                    if_none_match: "\"v\"" };
+        if (evaluate(r2, res) != status_precondition_failed()) {
+            return test.fail(unsafe[i] + " with a matching If-None-Match gave "
+                + evaluate(r2, res).to_string() + ", wanted 412");
+        }
+    }
+    // If-Match failure is 412 for every method, safe ones included.
+    for i in 0..safe.len() {
+        var r3: Request = Request { ...req_get(), method: safe[i],
+                                    if_match: "\"other\"" };
+        if (evaluate(r3, res) != status_precondition_failed()) {
+            return test.fail(safe[i] + " with a failing If-Match gave "
+                + evaluate(r3, res).to_string() + ", wanted 412");
+        }
+    }
+    return test.pass();
+}
+
+// `*` matches any existing representation, in both headers, and matches a
+// weak stored tag too — it is about existence, not about the tag's strength.
+function test_the_wildcard_is_about_existence(): test.TestOutcome {
+    var tags: string[] = ["\"v\"", "W/\"v\"", "\"\""];
+    for i in 0..tags.len() {
+        var res: Resource = res_at(tags[i], 1000);
+        var a: Request = Request { ...req_get(), if_none_match: "*" };
+        if (evaluate(a, res) != status_not_modified()) {
+            return test.fail("If-None-Match: * against " + tags[i] + " gave "
+                + evaluate(a, res).to_string() + ", wanted 304");
+        }
+        var b: Request = Request { ...req_get(), method: "PUT", if_match: "*" };
+        if (evaluate(b, res) != status_ok()) {
+            return test.fail("If-Match: * against an existing resource gave "
+                + evaluate(b, res).to_string() + ", wanted 200");
+        }
+    }
+    // Against a resource that does not exist, nothing gets as far as a
+    // precondition.
+    var gone: Resource = Resource { etag: "", last_modified: 0, exists: false };
+    var c: Request = Request { ...req_get(), method: "PUT", if_match: "*" };
+    if (evaluate(c, gone) != status_not_found()) {
+        return test.fail("If-Match: * against a missing resource gave "
+            + evaluate(c, gone).to_string() + ", wanted 404");
+    }
+    return test.pass();
+}
+
+// A list matches if ANY member does, and whitespace around the commas is not
+// part of a tag. A parser that keeps the spaces silently stops matching.
+function test_a_tag_list_matches_any_member(): test.TestOutcome {
+    var res: Resource = res_at("\"c\"", 1000);
+    var headers: string[] = [
+        "\"a\", \"b\", \"c\"",
+        "\"c\",\"a\"",
+        "  \"a\" ,  \"c\"  ",
+        "W/\"a\", W/\"c\"",
+    ];
+    for i in 0..headers.len() {
+        var r: Request = Request { ...req_get(), if_none_match: headers[i] };
+        if (evaluate(r, res) != status_not_modified()) {
+            return test.fail("list [" + headers[i] + "] did not match \"c\"");
+        }
+    }
+    var misses: string[] = ["\"a\", \"b\"", "\"cc\"", "\"\"", "W/\"d\""];
+    for i in 0..misses.len() {
+        var r2: Request = Request { ...req_get(), if_none_match: misses[i] };
+        if (evaluate(r2, res) != status_ok()) {
+            return test.fail("list [" + misses[i] + "] wrongly matched \"c\"");
+        }
+    }
+    return test.pass();
+}
+
+// If-Unmodified-Since is evaluated only when If-Match is absent, and its
+// comparison is the mirror of If-Modified-Since: strictly-after fails.
+function test_if_match_shadows_if_unmodified_since(): test.TestOutcome {
+    var res: Resource = res_at("\"v\"", 1000);
+    var put: Request = Request { ...req_get(), method: "PUT" };
+
+    // If-Match succeeds, so the date that would have failed is ignored.
+    var a: Request = Request { ...put, if_match: "\"v\"", if_unmodified_since: 500 };
+    if (evaluate(a, res) != status_ok()) {
+        return test.fail("a satisfied If-Match with a failing date gave "
+            + evaluate(a, res).to_string() + ", wanted 200");
+    }
+    // Without If-Match, the same date decides.
+    var b: Request = Request { ...put, if_unmodified_since: 500 };
+    if (evaluate(b, res) != status_precondition_failed()) {
+        return test.fail("If-Unmodified-Since alone should give 412");
+    }
+    // Equal timestamps satisfy If-Unmodified-Since (only strictly-after fails).
+    var c: Request = Request { ...put, if_unmodified_since: 1000 };
+    if (evaluate(c, res) != status_ok()) {
+        return test.fail("an equal timestamp should satisfy If-Unmodified-Since");
+    }
+    // …and the mirror: an equal timestamp satisfies If-Modified-Since too,
+    // giving 304.
+    var d: Request = Request { ...req_get(), if_modified_since: 1000 };
+    if (evaluate(d, res) != status_not_modified()) {
+        return test.fail("an equal timestamp should give 304");
+    }
+    return test.pass();
+}
+
+// RFC 9111 §4.2.1: for a shared cache s-maxage wins over max-age, which wins
+// over Expires. A private cache ignores s-maxage entirely.
+function test_freshness_directives_have_a_fixed_order(): test.TestOutcome {
+    var all: CacheControl = CacheControl { no_store: false, no_cache: false,
+                                           max_age: 60, s_maxage: 120 };
+    if (freshness_lifetime(all, 1000, 0, true) != 120) {
+        return test.fail("a shared cache should take s-maxage");
+    }
+    if (freshness_lifetime(all, 1000, 0, false) != 60) {
+        return test.fail("a private cache should ignore s-maxage");
+    }
+    var only_max: CacheControl = CacheControl { ...cc_none(), max_age: 30 };
+    if (freshness_lifetime(only_max, 1000, 0, true) != 30) {
+        return test.fail("max-age should beat Expires");
+    }
+    if (freshness_lifetime(cc_none(), 1000, 400, true) != 600) {
+        return test.fail("Expires - Date should be the lifetime");
+    }
+    // An Expires in the past is zero, not negative.
+    if (freshness_lifetime(cc_none(), 100, 400, true) != 0) {
+        return test.fail("a past Expires should give a lifetime of 0");
+    }
+    if (freshness_lifetime(cc_none(), -1, -1, true) != 0) {
+        return test.fail("no directives at all should give 0");
+    }
+    // no-store and no-cache defeat freshness whatever the lifetime says.
+    var ns: CacheControl = CacheControl { ...all, no_store: true };
+    if (is_fresh(ns, 1000, 0, 0, true)) { return test.fail("no-store is never fresh"); }
+    var nc: CacheControl = CacheControl { ...all, no_cache: true };
+    if (is_fresh(nc, 1000, 0, 0, true)) { return test.fail("no-cache is never fresh"); }
+    // Age at exactly the lifetime is STALE — the boundary is exclusive.
+    if (is_fresh(only_max, -1, -1, 30, false)) {
+        return test.fail("age == lifetime should be stale");
+    }
+    if (!is_fresh(only_max, -1, -1, 29, false)) {
+        return test.fail("age just under the lifetime should be fresh");
+    }
+    return test.pass();
+}
+
+// Every combination of the four conditional headers, on both a safe and an
+// unsafe method, must land on one of the four statuses — no combination may
+// fall through to something else, and the answer must not depend on the
+// order the struct was built in.
+function test_every_combination_is_decided(): test.TestOutcome {
+    var res: Resource = res_at("\"v\"", 1000);
+    var inm: string[] = ["", "\"v\"", "\"other\"", "*"];
+    var im: string[] = ["", "\"v\"", "\"other\"", "*"];
+    var ims: i32[] = [-1, 500, 1000, 2000];
+    var ius: i32[] = [-1, 500, 1000, 2000];
+    var methods: string[] = ["GET", "PUT"];
+    var seen_ok: boolean = false;
+    var seen_304: boolean = false;
+    var seen_412: boolean = false;
+    for a in 0..inm.len() {
+        for b in 0..im.len() {
+            for c in 0..ims.len() {
+                for d in 0..ius.len() {
+                    for m in 0..methods.len() {
+                        var r: Request = Request {
+                            method: methods[m], if_none_match: inm[a],
+                            if_match: im[b], if_modified_since: ims[c],
+                            if_unmodified_since: ius[d] };
+                        var s: i32 = evaluate(r, res);
+                        if (s == status_ok()) { seen_ok = true; }
+                        else if (s == status_not_modified()) { seen_304 = true; }
+                        else if (s == status_precondition_failed()) { seen_412 = true; }
+                        else {
+                            return test.fail("unexpected status " + s.to_string());
+                        }
+                        // Deciding twice gives the same answer.
+                        if (evaluate(r, res) != s) {
+                            return test.fail("evaluate is not deterministic");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (!seen_ok || !seen_304 || !seen_412) {
+        return test.fail("the sweep never reached one of the three statuses");
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------ app
+
+function describe(label: string, r: Request, res: Resource): void {
+    eprint("  " + label + " -> " + evaluate(r, res).to_string());
+}
+
+function main(): i32 {
+    eprint("cache_headers — RFC 9110 conditional requests");
+    var res: Resource = res_at("W/\"v2\"", 1000);
+    eprint("  resource: ETag W/\"v2\", Last-Modified 1000");
+    describe("GET If-None-Match: \"v2\"          ",
+        Request { ...req_get(), if_none_match: "\"v2\"" }, res);
+    describe("GET If-None-Match: \"v1\", IMS ok  ",
+        Request { ...req_get(), if_none_match: "\"v1\"", if_modified_since: 2000 }, res);
+    describe("GET If-Modified-Since: 2000       ",
+        Request { ...req_get(), if_modified_since: 2000 }, res);
+    describe("PUT If-Match: \"v2\"               ",
+        Request { ...req_get(), method: "PUT", if_match: "\"v2\"" }, res);
+    describe("PUT If-None-Match: *              ",
+        Request { ...req_get(), method: "PUT", if_none_match: "*" }, res);
+
+    var cc: CacheControl = CacheControl { no_store: false, no_cache: false,
+                                          max_age: 60, s_maxage: 120 };
+    eprint("  freshness: shared=" + freshness_lifetime(cc, 1000, 0, true).to_string()
+        + "s  private=" + freshness_lifetime(cc, 1000, 0, false).to_string() + "s");
+
+    var r: test.TestRunner = test.test_new("cache_headers");
+    r = r.it("If-None-Match shadows If-Modified-Since", test_if_none_match_shadows_if_modified_since);
+    r = r.it("the two comparisons differ on weak tags", test_the_two_comparisons_differ_on_weak_tags);
+    r = r.it("the method decides 304 versus 412", test_the_method_decides_304_versus_412);
+    r = r.it("the wildcard is about existence", test_the_wildcard_is_about_existence);
+    r = r.it("a tag list matches any member", test_a_tag_list_matches_any_member);
+    r = r.it("If-Match shadows If-Unmodified-Since", test_if_match_shadows_if_unmodified_since);
+    r = r.it("freshness directives have a fixed order", test_freshness_directives_have_a_fixed_order);
+    r = r.it("every combination is decided", test_every_combination_is_decided);
+    return r.finish();
+}

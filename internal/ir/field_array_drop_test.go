@@ -49,3 +49,55 @@ function main(): i32 { return churn(3); }
 		t.Error("the array field still takes the buffer-only __fern_arr_dec release")
 	}
 }
+
+// A struct-update spread whose base is a FRESH value — a call result or a
+// nested literal — owns that base, so the construction has to release it.
+// The lowering treated every base as borrowed, which is right for an Ident
+// (its local releases at scope exit) and wrong for a temporary nobody holds:
+// `T { ...mk(), f: v }` leaked one base box per evaluation, unbounded.
+func TestStructUpdateReleasesAFreshBase(t *testing.T) {
+	const src = `struct R { tag: string, n: i32 }
+
+function mk(): R { return R { tag: "base", n: 0 }; }
+
+function from_call(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n { var r: R = R { ...mk(), n: i }; t = t + r.n; }
+    return t;
+}
+
+function from_local(n: i32): i32 {
+    var b: R = mk();
+    var t: i32 = 0;
+    for i in 0..n { var r: R = R { ...b, n: i }; t = t + r.n; }
+    return t;
+}
+
+function main(): i32 { return from_call(2) + from_local(2); }
+`
+	ip := lowerForTest(t, src)
+	// The two functions release the same number of R values — one per loop
+	// iteration plus one base. They differ only in where the base comes
+	// from, and the Ident-base form was already right, so it is the yardstick.
+	call := dropStructCalls(funcByName(ip, "from_call"), "R")
+	local := dropStructCalls(funcByName(ip, "from_local"), "R")
+	if call != local {
+		t.Errorf("from_call releases %d R values and from_local %d — a fresh base is owned by the construction, so the counts must match", call, local)
+	}
+	if call == 0 {
+		t.Error("neither function releases anything; the test no longer measures what it claims")
+	}
+}
+
+func dropStructCalls(fn *ir.Func, structName string) int {
+	if fn == nil {
+		return 0
+	}
+	n := 0
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == "__drop_struct_"+structName {
+			n++
+		}
+	}
+	return n
+}

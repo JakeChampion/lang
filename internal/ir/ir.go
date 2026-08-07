@@ -9194,6 +9194,19 @@ func (b *builder) expr(e ast.Expr) error {
 				}
 				b.emit(payloadStoreOpFor(ft, b.ptrW))
 			}
+			// A base nobody else owns has to be released here. The "borrowed,
+			// so do not drop" reasoning above is about an Ident base, whose
+			// local decs at its own scope exit; a base that is a FRESH value —
+			// a call result, a nested literal — has no such owner, so
+			// `T { ...mk(), f: v }` leaked one base box per evaluation,
+			// unbounded, while `var b = mk(); T { ...b, f: v }` was flat.
+			// Every pointer field was inc'd into the new box just above, so
+			// the deep drop nets each of them back to their new owner's single
+			// reference and frees the shell.
+			if ast.RcFreeEnabled && b.structUpdateBaseIsOwned(n.Base) {
+				b.emit(Op{Kind: OpLoadLocal, I32: updBaseSlot})
+				b.dropStructField(ast.StructType{Name: sd.Name})
+			}
 		}
 		for _, f := range n.Fields {
 			off := offs[f.Name]
@@ -14451,17 +14464,43 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpDrop})
 }
 
+// structUpdateBaseIsOwned reports whether a struct-update spread base is a
+// value this construction OWNS — one no local, parameter or container is
+// holding a reference to — so its box must be released once the copy is done.
+//
+// Deliberately narrow: only a struct literal (unambiguously fresh) and a call
+// whose callee the borrow analysis proved never returns one of its own
+// parameters. An Ident, a field read, an index — anything that could name
+// storage somebody else owns — stays borrowed, which is the pre-existing
+// behaviour and the one this must not disturb. Over-declining costs a leak
+// that was already there; over-claiming would be a use-after-free.
+func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
+	switch x := base.(type) {
+	case *ast.StructLit:
+		return true
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		if _, isLocal := b.locals[id.Name]; isLocal {
+			return false // a closure call — the callee is not statically known
+		}
+		return b.returnsNoParamEscape[id.Name]
+	}
+	return false
+}
+
 // emitFieldDropOnStack consumes a pointer-shaped field value already on
 // the operand stack and releases it per its static type — the
-// struct-reuse-overwrite sibling of the exit sweep's dropStructField.
-// An array field frees its BUFFER via __fern_arr_dec (pointer-element
-// buffers leak their elements, exactly as the array exit-sweep / reinit
-// paths — leak-but-never-UAF); a concrete struct / enum / tuple field
-// recurses through its generated __drop_* fn; everything else (Map
-// handles, closures, non-droppable generics) keeps the flat one-level
-// __fern_rc_dec. Each helper is_unique-gates internally, so a field
-// shared with a live alias (or carried over with an eval-inc) is only
-// dec'd, never freed.
+// struct-reuse-overwrite sibling of the exit sweep's dropStructField, whose
+// ladder it now shares outright. A concrete struct / enum / tuple field
+// recurses through its generated __drop_* fn; an array field goes through
+// the same per-element-type dispatch a swept local does; everything else
+// (Map handles, closures, non-droppable generics) keeps the flat one-level
+// __fern_rc_dec. Each helper is_unique-gates internally, so a field shared
+// with a live alias (or carried over with an eval-inc) is only dec'd, never
+// freed.
 func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	if at, ok := t.(ast.ArrayType); ok {
 		// Reuse `dropStructField`'s ladder rather than the flat
