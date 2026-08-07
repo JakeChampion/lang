@@ -21499,7 +21499,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names));
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -26627,6 +26627,91 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
     return false;
 }
 
+// fresh_scalar_option_call_init is the CALL-init sibling of
+// fresh_scalar_option_init (#6360): `var v: Option[i32] = mk(i)`, where the
+// whole-program OPTFRESH scan (opt_fresh_ret_fns_of) already proved every
+// return of `mk` is a direct constructor — a fresh rc=1 box, sole-owned by the
+// caller, exactly as if the ctor had been written inline.
+//
+// Without this the local earns no candidacy at all and its box is NEVER freed
+// (`frees=0`, one box per iteration), while the byte-identical shape with the
+// ctor written inline is flat at 0. The freshness verdict already existed and
+// was consumed only by lower_try's `?`-edge; the user-enum sibling
+// (collect_fresh_rcenum_names via rcenum_call_init_owner) has admitted call
+// inits since #4355 slice 5. This is that same admission for Option / Result.
+//
+// The gate is STRICTER than the direct sibling's, and deliberately: that one
+// knows which variant it built and checks only that variant's payload, while a
+// call's variant is not statically known. The free here is SHALLOW (the box,
+// not its payloads), so a `Result[i32, string]` whose Err arm carries a string
+// pointer would leak that payload. Requiring EVERY variant's payload to be
+// scalar is what makes the shallow free sound; a mixed Result stays refused and
+// stays leaking, which is the safe direction.
+function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): boolean {
+    var callee: string = "";
+    match (v.init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { callee = id.name; },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (callee == "") { return false; }
+    if (util.index_of_str(opt_fresh, callee) < 0) { return false; }
+    // Annotation-only: the payload spelling is what proves scalar-ness, and an
+    // un-annotated call init has none to read (the direct sibling can fall back
+    // on a bare literal argument; there is no such fallback through a call).
+    var ann: string = v.type_name;
+    var n: i32 = ann.len();
+    if (n >= 8 && ann[0:7] == "Option[") {
+        // None carries no payload, so the success payload is the only one.
+        return is_scalar_type_name(opt_payload_type(ann, "Ok"));
+    }
+    if (n >= 8 && ann[0:7] == "Result[") {
+        return is_scalar_type_name(opt_payload_type(ann, "Ok"))
+            && is_scalar_type_name(opt_payload_type(ann, "Err"));
+    }
+    return false;
+}
+
+// optfresh_names_of pulls the bare callee names out of a LowerState
+// reclaimable_names list's "OPTFRESH:<name>" entries, for the block-level
+// consumed_scalar_enum_frees call which has the seeded list rather than the raw
+// registry. Entries the seeding derived from a TAGGED registry row ("RCE:" /
+// "AAC:") yield a name no real callee can match, so they are inert here.
+function optfresh_names_of(reclaim: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < reclaim.len()) {
+        var e: string = reclaim[i];
+        if (e.len() > 9 && e[0:9] == "OPTFRESH:") { out = out.append(e[9:e.len()] + ""); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// optfresh_call_names_of is the same list built from the RAW registry
+// (sg.opt_fresh_ret_fns, "name|ptype|flag"), for lower_func's two call sites —
+// one of which runs before the OPTFRESH seeding. Tagged rows ("RCE:" / "AAC:")
+// are skipped rather than yielding a junk name.
+function optfresh_call_names_of(entries: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:");
+        if (!tagged) {
+            var bar: i32 = 0;
+            while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            out = out.append(e[0:bar] + "");
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
 // whose scrutinee is the bare ident `name`, returns true.
 function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
@@ -26798,7 +26883,7 @@ function expr_is_scalarish(e: parser.Expr): boolean {
     }
 }
 
-function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): EnumFrees {
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[]): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -26811,7 +26896,11 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                 // values whose box is shallow-freed after their consuming match. The
                 // Option box gained its rc header from opt_make → __fern_arr_box.
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
-                var is_opt: boolean = fresh_scalar_option_init(v);
+                // #6360: a call to an OPTFRESH-proven producer is admitted on the
+                // same footing as an inline ctor — see fresh_scalar_option_call_init
+                // for why its payload gate is the stricter of the two.
+                var is_opt: boolean = fresh_scalar_option_init(v)
+                    || fresh_scalar_option_call_init(v, opt_fresh);
                 // A REBOUND name is admitted when every one of its assignments
                 // constructs a fresh all-scalar enum / scalar Option (#6127): the
                 // old box is then dead at each rebind and the escape gate below
@@ -35667,7 +35756,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // here is what carries the fn-level admission (escape gate + sole consuming match
     // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
     // one statement.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
         if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
@@ -35903,7 +35992,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the match. The box is freed (dec + zero) right after its match statement —
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
