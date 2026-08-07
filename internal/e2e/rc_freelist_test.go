@@ -95,6 +95,36 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 	}
 }
 
+// checkFreeToggle compares a fixture's free-off run against its free-on run.
+//
+// The ordinary rule is that they must be identical: reclamation is an
+// allocator concern, so a conformance case — which is normative about the
+// LANGUAGE — must not be able to tell whether it ran. That is what makes this
+// gate able to catch an rc bug as a behaviour change rather than as a leak.
+//
+// A case marked reclaim-observable is the deliberate exception, and the check
+// inverts rather than lifting: it must actually diverge. Without that, the
+// marker would be a way to silence any free-off divergence at all, including
+// the miscompiles this gate exists to find — and a case that stopped observing
+// reclamation (because someone rewrote its loop, or because the shape it
+// probes started being reclaimed under free-off too) would keep passing while
+// testing nothing.
+func checkFreeToggle(t *testing.T, f *fixtureSpec, outOff string, exitOff int, outOn string, exitOn int) {
+	t.Helper()
+	same := outOff == outOn && exitOff == exitOn
+	if f.reclaimObservable {
+		if same {
+			t.Errorf("case is marked reclaim-observable, but free-off matched free-on:\n both=(exit %d) %q\n"+
+				"either it no longer observes reclamation (fix the case), or it never needed the marker (delete the reclaim-observable file)",
+				exitOn, outOn)
+		}
+		return
+	}
+	if !same {
+		t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
+	}
+}
+
 func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		// Restore via t.Cleanup, not straight-line code: runFixtureX86_64
@@ -108,9 +138,7 @@ func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 		outOff, exitOff := runFixtureX86_64(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
+		checkFreeToggle(t, f, outOff, exitOff, outOn, exitOn)
 	})
 }
 
@@ -124,9 +152,7 @@ func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 		outOff, exitOff := runFixtureArm64(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = prev
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
+		checkFreeToggle(t, f, outOff, exitOff, outOn, exitOn)
 	})
 }
 
@@ -141,9 +167,7 @@ func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
 		ast.RcFreeEnabled = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.RcFreeEnabled = prev
-		if outOff != outOn || exitOff != exitOn {
-			t.Errorf("free-on diverged from free-off:\n off=(exit %d) %q\n on =(exit %d) %q", exitOff, outOff, exitOn, outOn)
-		}
+		checkFreeToggle(t, f, outOff, exitOff, outOn, exitOn)
 	})
 }
 
