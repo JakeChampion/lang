@@ -886,6 +886,26 @@ function main(): i32 {
 			want: 11,
 		},
 		{
+			// __ascii_run's counterpart case, added BEFORE any caller adopts
+			// it rather than after — which is the whole lesson of the case
+			// above. Nothing in std/string routes through this intrinsic yet,
+			// so without an explicit case here the helper would be unreachable
+			// from this backend and its absence, when a validator does adopt
+			// it, would again show up as a link error rather than as a gap.
+			//
+			// Covers the three answers: a hit, a miss (which returns the
+			// LENGTH, not -1 — the contract difference from __memchr), and a
+			// hit at a nonzero start. 3 + 5 + 4 = 12.
+			name: "string_ascii_run_paths",
+			src: `function main(): i32 {
+    var hit = __ascii_run("abcéx", 0);
+    var miss = __ascii_run("plain", 0);
+    var later = __ascii_run("abééz", 4);
+    return hit + miss + later;
+}`,
+			want: 12,
+		},
+		{
 			// string[] from split, whose scope-exit drop uses __fern_drop_arr_str.
 			// "a,b,c".split(",") has 3 parts -> len 3.
 			name: "string_split_len",

@@ -504,6 +504,12 @@ func TestNeonByteKernelInsns(t *testing.T) {
 		// immh:immb = 16 - shift, which is why both ends are pinned.
 		{"\tshrn v1.8b, v1.8h, #4\n", 0x0f0c8421},
 		{"\tshrn v6.8b, v7.8h, #1\n", 0x0f0f84e6},
+		// cmlt #0: per-byte "is the high bit set", the whole compare half of
+		// the ascii-run kernel. Note #0 is part of the opcode, not a field —
+		// there is no encoding here for any other immediate.
+		{"\tcmlt v0.16b, v0.16b, #0\n", 0x4e20a800},
+		{"\tcmlt v7.16b, v20.16b, #0\n", 0x4e20aa87},
+		{"\tcmlt v2.8b, v3.8b, #0\n", 0x0e20a862},
 		// umov: zero-extending byte-lane extract.
 		{"\tumov w0, v1.b[0]\n", 0x0e013c20},
 		{"\tumov w9, v2.b[15]\n", 0x0e1f3c49},
@@ -532,6 +538,9 @@ func TestNeonByteKernelReject(t *testing.T) {
 		"\tld1 {v1.16b}, [x0, #16]\n",   // offset form is a different encoding
 		"\tld1 {v1.16b}, [x0], #16\n",   // writeback form likewise
 		"\tcmeq v0.8b, v1.16b, v2.8b\n", // mismatched arrangements
+		"\tcmlt v0.8b, v1.16b, #0\n",    // likewise
+		"\tcmlt v0.16b, v1.16b, #1\n",   // no such instruction: #0 is the opcode
+		"\tcmlt v0.16b, v1.16b\n",       // the immediate is not optional
 		"\tshrn v1.16b, v1.8h, #4\n",    // shrn destination is always 8b
 		"\tshrn v1.8b, v1.8h, #0\n",     // shift out of range (1..8)
 		"\tshrn v1.8b, v1.8h, #9\n",     //

@@ -475,6 +475,24 @@ pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
 // byte outside 0..255 never matches, matching the interpreter reference.
 pub function op_memchr(): Op { return op0("memchr"); }
 
+// ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
+// → the i32 index of the first byte at or after `from` whose high bit is set,
+// or the string's length if the rest is ASCII. Allocates nothing and reads only
+// the source bytes.
+//
+// An op for op_memchr's reason — an op is what a backend can SUBSTITUTE — and
+// the substitution here is unusually lopsided, which is why it earns a second
+// kernel at all. The vector form needs no splat and, on x86-64 and wasm, no
+// compare either: pmovmskb / i8x16.bitmask gather the top bit of each byte,
+// which IS the question. arm64 pays for one compare (cmlt … #0) because NEON
+// has no bitmask. The self-host backends serve the scalar meaning, per §3.4:
+// total before fast.
+//
+// Note the miss value is the LENGTH, not -1. That breaks with memchr's
+// convention deliberately — the caller is a validator advancing a cursor, so
+// `i = __ascii_run(s, i)` has to be a branch-free skip.
+pub function op_ascii_run(): Op { return op0("ascii_run"); }
+
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
 // helper the IR backends emit (no `__fn_` body), so the eligibility gate treats
@@ -1537,6 +1555,7 @@ function kind_id_4(name: string): i32 {
     if (name == "raw_arr_box") { return 224; }
     if (name == "memchr") { return 225; }
     if (name == "write_file_exec") { return 226; }
+    if (name == "ascii_run") { return 227; }
     // ADDING AN EXTENSION TAG: take the next id here AND register it in
     // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
     // for the number you took. Two branches that each claim "the next free
@@ -1803,13 +1822,14 @@ function kind_name_4(id: i32): string {
     if (id == 224) { return "raw_arr_box"; }
     if (id == 225) { return "memchr"; }
     if (id == 226) { return "write_file_exec"; }
+    if (id == 227) { return "ascii_run"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … write_file_exec=226)
+// extension tags beyond kind_count() (struct_copy=198 … ascii_run=227)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2040,5 +2060,5 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 110 || tag == 111 || tag == 112 || tag == 113
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
-        || tag == 99 || tag == 100 || tag == 225;
+        || tag == 99 || tag == 100 || tag == 225 || tag == 227;
 }

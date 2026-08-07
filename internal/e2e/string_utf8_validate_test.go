@@ -129,6 +129,55 @@ function main(): i32 {
         if (utf8.is_valid_utf8(broken)) { return 29; }
         k = k + 1;
     }
+
+    // The ASCII skip is now __ascii_run, a 16-byte-per-iteration vector
+    // kernel (ATLAS-PLATFORM-PLAN §3.4 step 2), so the scan has a block
+    // boundary that the byte loop it replaced did not. None of the cases
+    // above is long enough to reach it: the longest is 12 bytes.
+    //
+    // Sweep an ASCII run of every length 0..40 — two full blocks plus a
+    // partial tail either side — with a 2-byte sequence placed at every
+    // offset in it, valid and then corrupted. A skip that overshot its
+    // block, stopped one byte early, or mislocated the lane would land the
+    // scan on the wrong byte and disagree with the reference here.
+    var run: i32 = 0;
+    while (run <= 40) {
+        var at: i32 = 0;
+        while (at <= run) {
+            var pre: u8[] = [];
+            var p: i32 = 0;
+            while (p < run) {
+                if (p < at) { pre = pre.append(97 as u8); } else { pre = pre.append(98 as u8); }
+                p = p + 1;
+            }
+            // Splice a valid 2-byte codepoint in at the offset, then the rest.
+            var withcp: u8[] = [];
+            var q: i32 = 0;
+            while (q < at) { withcp = withcp.append(pre[q]); q = q + 1; }
+            withcp = withcp.append(195 as u8);
+            withcp = withcp.append(169 as u8);
+            while (q < run) { withcp = withcp.append(pre[q]); q = q + 1; }
+            var good: string = string_from_bytes_unchecked(withcp);
+            if (check(good, 30) != 0) { return 30; }
+            if (!utf8.is_valid_utf8(good)) { return 31; }
+
+            // Same shape with the continuation byte replaced by an ASCII
+            // one: the lead byte is still found, but the sequence is now
+            // truncated. This is the case a skip that ran PAST the high
+            // byte would wrongly accept.
+            var bad: u8[] = [];
+            var r2: i32 = 0;
+            while (r2 < withcp.len()) {
+                if (r2 == at + 1) { bad = bad.append(97 as u8); } else { bad = bad.append(withcp[r2]); }
+                r2 = r2 + 1;
+            }
+            var broke: string = string_from_bytes_unchecked(bad);
+            if (check(broke, 32) != 0) { return 32; }
+            if (utf8.is_valid_utf8(broke)) { return 33; }
+            at = at + 1;
+        }
+        run = run + 1;
+    }
     return 0;
 }
 `

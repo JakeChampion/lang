@@ -12,11 +12,14 @@
 package wasmbin
 
 import (
+	"math"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
 	"github.com/jakechampion/lang/internal/wasm/encode"
 	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/leb128"
 	"github.com/jakechampion/lang/internal/wasm/memory"
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 	"github.com/jakechampion/lang/internal/wasm/simd"
@@ -249,6 +252,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_memchr")
+				case "__fern_ascii_run":
+					// The v128 high-bit scan. Same two dependencies
+					// and for the same two reasons.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_ascii_run")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -331,6 +340,19 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_wasm_poll")
 				case "__fern_sqrt_f64":
 					needs.add("__fern_sqrt_f64")
+				case "__fern_exp_f64":
+					needs.add("__fern_exp_f64")
+				case "__fern_log_f64":
+					needs.add("__fern_log_f64")
+				case "__fern_sin_f64":
+					needs.add("__fern_sin_f64")
+				case "__fern_cos_f64":
+					needs.add("__fern_cos_f64")
+				case "__fern_pow_f64":
+					// Falls back to exp(y*log x) off the integer path.
+					needs.add("__fern_exp_f64")
+					needs.add("__fern_log_f64")
+					needs.add("__fern_pow_f64")
 				case "__fern_abs_f64":
 					needs.add("__fern_abs_f64")
 				case "__fern_floor_f64":
@@ -1077,6 +1099,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildMemchrBody,
 	},
+	"__fern_ascii_run": {
+		// (data, len, from) → i32 index of the first high-bit byte, or len.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildAsciiRunBody,
+	},
 	"__fern_print": {
 		// (data, len) → ()
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
@@ -1198,6 +1226,37 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildSqrtF64Body,
+	},
+	"__fern_exp_f64": {
+		// (f64) → f64 — fdlibm __ieee754_exp; see buildExpF64Body.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildExpF64Body,
+	},
+	"__fern_log_f64": {
+		// (f64) → f64 — fdlibm __ieee754_log; see buildLogF64Body.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildLogF64Body,
+	},
+	"__fern_sin_f64": {
+		// (f64) → f64 — fdlibm sin; see buildSinF64Body.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildSinF64Body,
+	},
+	"__fern_cos_f64": {
+		// (f64) → f64 — fdlibm cos; see buildCosF64Body.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildCosF64Body,
+	},
+	"__fern_pow_f64": {
+		// (f64, f64) → f64 — exact repeated squaring for integral y,
+		// exp(y*log x) otherwise; see buildPowF64Body.
+		params:  []byte{encode.ValtypeF64, encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildPowF64Body,
 	},
 	"__fern_abs_f64": {
 		// (f64) → f64 — wasm-native f64.abs.
@@ -3393,6 +3452,158 @@ func buildMemchrBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // block
 
 	body = inst.InstI32Const(body, -1)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildAsciiRunBody assembles wasm bytes for __fern_ascii_run.
+//
+// Signature: (param $data $len $from i32) (result i32) — three params, because
+// the string's two words plus `from` is one fewer than __memchr's four.
+//
+// THE CHEAPEST OF THE THREE ASCII-RUN KERNELS, and the reason is the same
+// instruction that made __memchr shortest here: `i8x16.bitmask` gathers the top
+// bit of each of 16 bytes, which IS the "not ASCII" test. So this needs no
+// splat AND no compare — the whole vector body is v128.load / i8x16.bitmask /
+// i32.ctz. x86-64 lands in the same place via pmovmskb; arm64 still pays for a
+// compare (cmlt) because NEON has no bitmask at all.
+//
+// The two wasm-specific structures from __memchr both carry over unchanged: a
+// short (SSO) string has no address, so it takes a scalar loop over
+// __fern_str_byte, and the tail after the last whole vector is scalar.
+//
+// Returns $n (the length), not -1, when the rest is ASCII — the branch-free
+// skip contract, and the reason both loops fall through to a `local.get $n`
+// rather than to a constant.
+//
+// Locals after the three params: $n (3), $i (4), $m (5).
+func buildAsciiRunBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pFrom = 2
+		lN    = 3
+		lI    = 4
+		lM    = 5
+	)
+	var body []byte
+
+	// $n = __fern_str_len($data, $len)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	// $i = max($from, 0) — clamped, not rejected, matching the reference.
+	body = inst.InstLocalGet(body, pFrom)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstEnd(body)
+
+	// Inline (SSO) string: scalar loop through __fern_str_byte, the only
+	// reader that can see bytes living in the two words.
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstLocalGet(body, lN)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		// str_byte returns 0..255, so "high bit set" is `>= 128` on the
+		// zero-extended value rather than a sign test.
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, pLen)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstI32Const(body, 128)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		body = inst.InstLocalGet(body, lN)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Heap string: $data is the byte address, so the vector loop applies.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstBrIf(body, 1)
+	// $m = i8x16.bitmask(v128.load($data + $i)) — no compare: the bitmask
+	// gathers exactly the bit being asked about.
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	// align 0, as in __memchr: a Fern string buffer carries no 16-byte
+	// alignment guarantee and `$i` walks it from an arbitrary `from`.
+	body = simd.InstV128Load(body, 0, 0)
+	body = simd.InstI8x16Bitmask(body)
+	body = inst.InstLocalTee(body, lM)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lM)
+	body = numeric.InstI32Ctz(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Scalar tail: the final 0..15 bytes.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstI32Const(body, 128)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lN)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
@@ -6006,4 +6217,590 @@ func buildTruncF64Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = numeric.InstF64Trunc(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// --- f64 transcendentals (#6404) --------------------------------------------
+//
+// fdlibm kernels, transliterated from the self-host wasm-IR path's WAT emitters
+// (wasm_ir.fern) so all four backends share constants and reduction order.
+// exp / log / sin / cos / pow are the only primitives; exp2, exp10, log2,
+// log10, tan, sinh, cosh, tanh and cbrt compose from them in float.fern.
+//
+// Two things that are easy to get wrong here:
+//
+//   - f64.nearest is ties-to-even, matching arm64 `frintn` and x86
+//     `roundsd …, 0`, so every backend picks the same k. `frinta` would not.
+//   - The domain guards are load-bearing, not defensive. 2^k is built as
+//     (k+1023)<<52, so without them exp(1000) overflows the exponent field into
+//     the sign bit and returns -6.1e-183 instead of +Inf.
+
+// f64 bit patterns for the infinities, used by the domain guards.
+const (
+	f64PosInfBits = 0x7FF0000000000000
+	f64NegInfBits = 0xFFF0000000000000
+)
+
+// instF64Inf pushes +Inf (neg=false) or -Inf (neg=true) via reinterpret.
+func instF64Inf(body []byte, neg bool) []byte {
+	bits := uint64(f64PosInfBits)
+	if neg {
+		bits = f64NegInfBits
+	}
+	body = inst.InstI64Const(body, int64(bits))
+	return convert.InstF64ReinterpretI64(body)
+}
+
+// instGuardReturn emits `if <cond already on stack> then <push> return end`.
+func instGuardReturn(body []byte, push func([]byte) []byte) []byte {
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = push(body)
+	body = inst.InstReturn(body)
+	return inst.InstEnd(body)
+}
+
+// instPolyStep emits p = p*t + c, with p in local `p` and t in local `t`.
+func instPolyStep(body []byte, p, t uint32, c float64) []byte {
+	body = inst.InstLocalGet(body, p)
+	body = inst.InstLocalGet(body, t)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstF64Const(body, math.Float64bits(c))
+	body = numeric.InstF64Add(body)
+	return inst.InstLocalSet(body, p)
+}
+
+// buildExpF64Body — (f64) → f64, fdlibm __ieee754_exp. ln2 is carried as hi/lo
+// so the reduction keeps its low bits.
+//
+// Locals (all f64, param x is 0): kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7. k is
+// recomputed from kf at the end so the locals vector stays a single group.
+func buildExpF64Body(_ map[string]uint32) []byte {
+	const (
+		lx = 0 // param x
+		kf = 1
+		r  = 2
+		hi = 3
+		lo = 4
+		t  = 5
+		c  = 6
+		p  = 7
+	)
+	var body []byte
+	// NaN in, NaN out — the comparisons below would all read false.
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstLocalGet(body, lx)
+	body = numeric.InstF64Ne(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
+	// Overflow / underflow, before 2^k can wrap into the sign bit.
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(709.782712893383973096))
+	body = numeric.InstF64Gt(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return instF64Inf(b, false) })
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(-745.133219101941108420))
+	body = numeric.InstF64Lt(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstF64Const(b, math.Float64bits(0.0)) })
+	// kf = nearest(x * log2e)
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(1.44269504088896338700))
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Nearest(body)
+	body = inst.InstLocalSet(body, kf)
+	// hi = x - kf*ln2hi ; lo = kf*ln2lo ; r = hi - lo
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstLocalGet(body, kf)
+	body = inst.InstF64Const(body, math.Float64bits(0.693147180369123816490))
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, hi)
+	body = inst.InstLocalGet(body, kf)
+	body = inst.InstF64Const(body, math.Float64bits(1.90821492927058770002e-10))
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, lo)
+	body = inst.InstLocalGet(body, hi)
+	body = inst.InstLocalGet(body, lo)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, r)
+	// t = r*r
+	body = inst.InstLocalGet(body, r)
+	body = inst.InstLocalGet(body, r)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, t)
+	// p = P5..P1 by Horner in t
+	body = inst.InstF64Const(body, math.Float64bits(4.13813679705723846039e-08))
+	body = inst.InstLocalSet(body, p)
+	body = instPolyStep(body, p, t, -1.65339022054652515390e-06)
+	body = instPolyStep(body, p, t, 6.61375632143793436117e-05)
+	body = instPolyStep(body, p, t, -2.77777777770155933842e-03)
+	body = instPolyStep(body, p, t, 1.66666666666666019037e-01)
+	// c = r - p*t
+	body = inst.InstLocalGet(body, r)
+	body = inst.InstLocalGet(body, p)
+	body = inst.InstLocalGet(body, t)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, c)
+	// p = 1 - ((lo - (r*c)/(2-c)) - hi)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = inst.InstLocalGet(body, lo)
+	body = inst.InstLocalGet(body, r)
+	body = inst.InstLocalGet(body, c)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstF64Const(body, math.Float64bits(2.0))
+	body = inst.InstLocalGet(body, c)
+	body = numeric.InstF64Sub(body)
+	body = numeric.InstF64Div(body)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalGet(body, hi)
+	body = numeric.InstF64Sub(body)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, p)
+	// result = p * 2^k, with 2^k = reinterpret((trunc(kf)+1023) << 52)
+	body = inst.InstLocalGet(body, p)
+	body = inst.InstLocalGet(body, kf)
+	body = convert.InstI64TruncF64S(body)
+	body = inst.InstI64Const(body, 1023)
+	body = numeric.InstI64Add(body)
+	body = inst.InstI64Const(body, 52)
+	body = numeric.InstI64Shl(body)
+	body = convert.InstF64ReinterpretI64(body)
+	body = numeric.InstF64Mul(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 7, encode.ValtypeF64), body)
+}
+
+// localGroup is one (count, valtype) run of a locals vector. Local indices
+// follow declaration order across groups, after the params.
+type localGroup struct {
+	count uint32
+	vt    byte
+}
+
+// putLocalsGroups emits a multi-group locals_vec. PutLocalsOneGroup covers the
+// "N spill slots of one type" case; the transcendentals need f64 and i64 side
+// by side.
+func putLocalsGroups(buf []byte, groups ...localGroup) []byte {
+	buf = leb128.UlebU32(buf, uint32(len(groups)))
+	for _, g := range groups {
+		buf = leb128.UlebU32(buf, g.count)
+		buf = append(buf, g.vt)
+	}
+	return buf
+}
+
+// buildLogF64Body — (f64) → f64, fdlibm __ieee754_log. x = 2^k * m with m in
+// [sqrt2/2, sqrt2). R(z) is two independent chains in w = z^2 so they evaluate
+// in parallel rather than as one 7-deep Horner.
+//
+// Locals: f64 m=1 f=2 s=3 z=4 w=5 t1=6 t2=7 hfsq=8 kf=9, then i64 k=10 bits=11.
+func buildLogF64Body(_ map[string]uint32) []byte {
+	const (
+		lx   = 0
+		m    = 1
+		f    = 2
+		s    = 3
+		z    = 4
+		w    = 5
+		t1   = 6
+		t2   = 7
+		hfsq = 8
+		kf   = 9
+		k    = 10
+		bits = 11
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstLocalGet(body, lx)
+	body = numeric.InstF64Ne(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
+	// x < 0 → NaN; x == 0 → -Inf; x == +Inf → +Inf.
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(0.0))
+	body = numeric.InstF64Lt(body)
+	body = instGuardReturn(body, func(b []byte) []byte {
+		b = inst.InstI64Const(b, int64(uint64(0x7FF8000000000000)))
+		return convert.InstF64ReinterpretI64(b)
+	})
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(0.0))
+	body = numeric.InstF64Eq(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return instF64Inf(b, true) })
+	body = inst.InstLocalGet(body, lx)
+	body = instF64Inf(body, false)
+	body = numeric.InstF64Eq(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
+	// bits = reinterpret(x); k = ((bits >> 52) & 0x7FF) - 1023
+	body = inst.InstLocalGet(body, lx)
+	body = convert.InstI64ReinterpretF64(body)
+	body = inst.InstLocalSet(body, bits)
+	body = inst.InstLocalGet(body, bits)
+	body = inst.InstI64Const(body, 52)
+	body = numeric.InstI64ShrU(body)
+	body = inst.InstI64Const(body, 2047)
+	body = numeric.InstI64And(body)
+	body = inst.InstI64Const(body, 1023)
+	body = numeric.InstI64Sub(body)
+	body = inst.InstLocalSet(body, k)
+	// m = reinterpret((bits & mantissa) | exponent-of-1)
+	body = inst.InstLocalGet(body, bits)
+	body = inst.InstI64Const(body, 4503599627370495)
+	body = numeric.InstI64And(body)
+	body = inst.InstI64Const(body, 4607182418800017408)
+	body = numeric.InstI64Or(body)
+	body = convert.InstF64ReinterpretI64(body)
+	body = inst.InstLocalSet(body, m)
+	// if m >= sqrt2 { m *= 0.5; k += 1 }
+	body = inst.InstLocalGet(body, m)
+	body = inst.InstF64Const(body, math.Float64bits(1.4142135623730951))
+	body = numeric.InstF64Ge(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, m)
+	body = inst.InstF64Const(body, math.Float64bits(0.5))
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, m)
+	body = inst.InstLocalGet(body, k)
+	body = inst.InstI64Const(body, 1)
+	body = numeric.InstI64Add(body)
+	body = inst.InstLocalSet(body, k)
+	body = inst.InstEnd(body)
+	// f = m-1; s = f/(2+f); z = s*s; w = z*z
+	body = inst.InstLocalGet(body, m)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, f)
+	body = inst.InstLocalGet(body, f)
+	body = inst.InstF64Const(body, math.Float64bits(2.0))
+	body = inst.InstLocalGet(body, f)
+	body = numeric.InstF64Add(body)
+	body = numeric.InstF64Div(body)
+	body = inst.InstLocalSet(body, s)
+	body = inst.InstLocalGet(body, s)
+	body = inst.InstLocalGet(body, s)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, z)
+	body = inst.InstLocalGet(body, z)
+	body = inst.InstLocalGet(body, z)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, w)
+	// t1 = ((Lg7*w + Lg5)*w + Lg3)*w
+	body = inst.InstF64Const(body, math.Float64bits(0.1531383769920937332))
+	body = inst.InstLocalSet(body, t1)
+	body = instPolyStep(body, t1, w, 0.2222219843214978396)
+	body = instPolyStep(body, t1, w, 0.3999999999940941908)
+	body = inst.InstLocalGet(body, t1)
+	body = inst.InstLocalGet(body, w)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, t1)
+	// t2 = (((Lg6*w + Lg4)*w + Lg2)*w + Lg1)*z
+	body = inst.InstF64Const(body, math.Float64bits(0.1479819860511658591))
+	body = inst.InstLocalSet(body, t2)
+	body = instPolyStep(body, t2, w, 0.1818357216161805012)
+	body = instPolyStep(body, t2, w, 0.2857142874366239149)
+	body = instPolyStep(body, t2, w, 0.6666666666666735130)
+	body = inst.InstLocalGet(body, t2)
+	body = inst.InstLocalGet(body, z)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, t2)
+	body = inst.InstLocalGet(body, t1)
+	body = inst.InstLocalGet(body, t2)
+	body = numeric.InstF64Add(body)
+	body = inst.InstLocalSet(body, t1)
+	// hfsq = 0.5*f*f ; kf = (f64)k
+	body = inst.InstF64Const(body, math.Float64bits(0.5))
+	body = inst.InstLocalGet(body, f)
+	body = inst.InstLocalGet(body, f)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, hfsq)
+	body = inst.InstLocalGet(body, k)
+	body = convert.InstF64ConvertI64S(body)
+	body = inst.InstLocalSet(body, kf)
+	// kf*ln2hi - ((hfsq - (s*(hfsq+t1) + kf*ln2lo)) - f)
+	body = inst.InstLocalGet(body, kf)
+	body = inst.InstF64Const(body, math.Float64bits(0.693147180369123816490))
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalGet(body, hfsq)
+	body = inst.InstLocalGet(body, s)
+	body = inst.InstLocalGet(body, hfsq)
+	body = inst.InstLocalGet(body, t1)
+	body = numeric.InstF64Add(body)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalGet(body, kf)
+	body = inst.InstF64Const(body, math.Float64bits(1.90821492927058770002e-10))
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Add(body)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalGet(body, f)
+	body = numeric.InstF64Sub(body)
+	body = numeric.InstF64Sub(body)
+	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
+		localGroup{9, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
+}
+
+// instTrigReduceAndPolys emits the shared Cody-Waite reduction plus sin(r) and
+// cos(r). Locals are declared by the caller as: k=1 r=2 r2=3 sinr=4 cosr=5
+// hz=6 cw=7 (f64), q=8 (i64).
+//
+// pi/2 needs THREE 33-bit chunks: near a zero of sine the reduced argument is
+// the answer, so the reduction's absolute error becomes the relative error.
+func instTrigReduceAndPolys(body []byte) []byte {
+	const (
+		lx   = 0
+		k    = 1
+		r    = 2
+		r2   = 3
+		sinr = 4
+		cosr = 5
+		hz   = 6
+		cw   = 7
+		q    = 8
+	)
+	// k = nearest(x * 2/pi) ; q = (i64)k & 3
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(0.636619772367581382433))
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Nearest(body)
+	body = inst.InstLocalSet(body, k)
+	body = inst.InstLocalGet(body, k)
+	body = convert.InstI64TruncF64S(body)
+	body = inst.InstI64Const(body, 3)
+	body = numeric.InstI64And(body)
+	body = inst.InstLocalSet(body, q)
+	// r = x - k*pio2_1 - k*pio2_2 - k*pio2_3
+	body = inst.InstLocalGet(body, lx)
+	for _, c := range []float64{1.57079632673412561417, 6.07710050630396597660e-11, 2.02226624879595063154e-21} {
+		body = inst.InstLocalGet(body, k)
+		body = inst.InstF64Const(body, math.Float64bits(c))
+		body = numeric.InstF64Mul(body)
+		body = numeric.InstF64Sub(body)
+	}
+	body = inst.InstLocalSet(body, r)
+	body = inst.InstLocalGet(body, r)
+	body = inst.InstLocalGet(body, r)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, r2)
+	// sinr = r + (S6..S1 Horner in r2)*r2*r
+	body = inst.InstF64Const(body, math.Float64bits(1.58969099521155010221e-10))
+	body = inst.InstLocalSet(body, sinr)
+	for _, c := range []float64{
+		-2.50507602534068634195e-08, 2.75573137070700676789e-06,
+		-1.98412698298579493134e-04, 8.33333333332248946124e-03,
+		-1.66666666666666324348e-01,
+	} {
+		body = instPolyStep(body, sinr, r2, c)
+	}
+	body = inst.InstLocalGet(body, r)
+	body = inst.InstLocalGet(body, sinr)
+	body = inst.InstLocalGet(body, r2)
+	body = inst.InstLocalGet(body, r)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Add(body)
+	body = inst.InstLocalSet(body, sinr)
+	// cosr from C6..C1, then the (1-w)-hz recovery step.
+	body = inst.InstF64Const(body, math.Float64bits(-1.13596475577881948265e-11))
+	body = inst.InstLocalSet(body, cosr)
+	for _, c := range []float64{
+		2.08757232129817482790e-09, -2.75573143513906633035e-07,
+		2.48015872894767294178e-05, -1.38888888888741095749e-03,
+		4.16666666666666019037e-02,
+	} {
+		body = instPolyStep(body, cosr, r2, c)
+	}
+	body = inst.InstF64Const(body, math.Float64bits(0.5))
+	body = inst.InstLocalGet(body, r2)
+	body = numeric.InstF64Mul(body)
+	body = inst.InstLocalSet(body, hz)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = inst.InstLocalGet(body, hz)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalSet(body, cw)
+	// cosr = cw + ((1-cw) - hz + r2*r2*cosr). Computing 1 - hz + r2*r2*p
+	// directly costs ~2 ulp; this recovers the bits 1-hz discards.
+	body = inst.InstLocalGet(body, cw)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = inst.InstLocalGet(body, cw)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalGet(body, hz)
+	body = numeric.InstF64Sub(body)
+	body = inst.InstLocalGet(body, r2)
+	body = inst.InstLocalGet(body, r2)
+	body = inst.InstLocalGet(body, cosr)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Mul(body)
+	body = numeric.InstF64Add(body)
+	body = numeric.InstF64Add(body)
+	return inst.InstLocalSet(body, cosr)
+}
+
+// instTrigPrologue emits the NaN / +-Inf guards both wrappers share. NaN
+// returns itself; an infinite argument has no meaningful reduction, so it
+// becomes NaN.
+func instTrigPrologue(body []byte) []byte {
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Ne(body)
+	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, 0) })
+	body = inst.InstLocalGet(body, 0)
+	body = numeric.InstF64Abs(body)
+	body = instF64Inf(body, false)
+	body = numeric.InstF64Eq(body)
+	return instGuardReturn(body, func(b []byte) []byte {
+		b = inst.InstI64Const(b, int64(uint64(0x7FF8000000000000)))
+		return convert.InstF64ReinterpretI64(b)
+	})
+}
+
+// instTrigQuadrant emits the quadrant dispatch: three guarded returns for
+// q==0,1,2 then the q==3 fallthrough. Each entry is (local, negate).
+func instTrigQuadrant(body []byte, arms [4]struct {
+	local  uint32
+	negate bool
+}) []byte {
+	push := func(b []byte, a struct {
+		local  uint32
+		negate bool
+	}) []byte {
+		b = inst.InstLocalGet(b, a.local)
+		if a.negate {
+			b = numeric.InstF64Neg(b)
+		}
+		return b
+	}
+	for i := 0; i < 3; i++ {
+		a := arms[i]
+		body = inst.InstLocalGet(body, 8) // q
+		body = inst.InstI64Const(body, int64(i))
+		body = numeric.InstI64Eq(body)
+		body = instGuardReturn(body, func(b []byte) []byte { return push(b, a) })
+	}
+	return push(body, arms[3])
+}
+
+func trigLocals() []byte {
+	return putLocalsGroups(nil, localGroup{7, encode.ValtypeF64}, localGroup{1, encode.ValtypeI64})
+}
+
+// buildSinF64Body — (f64) → f64, fdlibm sin via the shared reduction.
+func buildSinF64Body(_ map[string]uint32) []byte {
+	body := instTrigReduceAndPolys(instTrigPrologue(nil))
+	body = instTrigQuadrant(body, [4]struct {
+		local  uint32
+		negate bool
+	}{{4, false}, {5, false}, {4, true}, {5, true}})
+	return inst.PutFunctionBody(nil, trigLocals(), body)
+}
+
+// buildCosF64Body — (f64) → f64, the same reduction with the quadrant table
+// rotated by one.
+func buildCosF64Body(_ map[string]uint32) []byte {
+	body := instTrigReduceAndPolys(instTrigPrologue(nil))
+	body = instTrigQuadrant(body, [4]struct {
+		local  uint32
+		negate bool
+	}{{5, false}, {4, true}, {5, true}, {4, false}})
+	return inst.PutFunctionBody(nil, trigLocals(), body)
+}
+
+// buildPowF64Body — (f64, f64) → f64.
+//
+// The integral-y path is exact repeated squaring, which is required rather than
+// faster: exp(y*ln x) cannot return exactly 9 for pow(3, 2). Integrality is an
+// i64 round-trip, so NaN and out-of-range y fall out as a huge |n|.
+//
+// Locals: f64 acc=2 base=3, then i64 n=4 an=5 (params x=0, y=1).
+func buildPowF64Body(funcs map[string]uint32) []byte {
+	const (
+		lx   = 0
+		ly   = 1
+		acc  = 2
+		base = 3
+		n    = 4
+		an   = 5
+	)
+	var body []byte
+	// n = (i64)y ; if (f64)n == y { ... }
+	body = inst.InstLocalGet(body, ly)
+	body = convert.InstI64TruncF64S(body)
+	body = inst.InstLocalSet(body, n)
+	body = inst.InstLocalGet(body, n)
+	body = convert.InstF64ConvertI64S(body)
+	body = inst.InstLocalGet(body, ly)
+	body = numeric.InstF64Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// an = |n|
+		body = inst.InstLocalGet(body, n)
+		body = inst.InstLocalSet(body, an)
+		body = inst.InstLocalGet(body, an)
+		body = inst.InstI64Const(body, 0)
+		body = numeric.InstI64LtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI64Const(body, 0)
+		body = inst.InstLocalGet(body, an)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, an)
+		body = inst.InstEnd(body)
+		// |n| <= 64 caps accumulated rounding for a general x, not
+		// representability; it is why 2^280 takes the exp(y*log x) path (#6405).
+		body = inst.InstLocalGet(body, an)
+		body = inst.InstI64Const(body, 64)
+		body = numeric.InstI64LeS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstF64Const(body, math.Float64bits(1.0))
+			body = inst.InstLocalSet(body, acc)
+			body = inst.InstLocalGet(body, lx)
+			body = inst.InstLocalSet(body, base)
+			// block { loop { if an&1 { acc *= base } ; base *= base ;
+			//               an >>= 1 ; br_if done (an == 0) ; br loop } }
+			body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLocalGet(body, an)
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64And(body)
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64Eq(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstLocalGet(body, acc)
+			body = inst.InstLocalGet(body, base)
+			body = numeric.InstF64Mul(body)
+			body = inst.InstLocalSet(body, acc)
+			body = inst.InstEnd(body)
+			body = inst.InstLocalGet(body, base)
+			body = inst.InstLocalGet(body, base)
+			body = numeric.InstF64Mul(body)
+			body = inst.InstLocalSet(body, base)
+			body = inst.InstLocalGet(body, an)
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64ShrU(body)
+			body = inst.InstLocalSet(body, an)
+			body = inst.InstLocalGet(body, an)
+			body = numeric.InstI64Eqz(body)
+			body = inst.InstBrIf(body, 1) // out of the loop, to the block end
+			body = inst.InstBr(body, 0)   // repeat
+			body = inst.InstEnd(body)     // loop
+			body = inst.InstEnd(body)     // block
+			// A negative exponent reciprocates the (exact) positive power.
+			body = inst.InstLocalGet(body, n)
+			body = inst.InstI64Const(body, 0)
+			body = numeric.InstI64LtS(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstF64Const(body, math.Float64bits(1.0))
+			body = inst.InstLocalGet(body, acc)
+			body = numeric.InstF64Div(body)
+			body = inst.InstLocalSet(body, acc)
+			body = inst.InstEnd(body)
+			body = inst.InstLocalGet(body, acc)
+			body = inst.InstReturn(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstEnd(body)
+	// General case: exp(y * log(x)).
+	body = inst.InstLocalGet(body, ly)
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstCall(body, funcs["__fern_log_f64"])
+	body = numeric.InstF64Mul(body)
+	body = inst.InstCall(body, funcs["__fern_exp_f64"])
+	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
+		localGroup{2, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
 }
