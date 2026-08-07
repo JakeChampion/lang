@@ -15582,6 +15582,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     match (v.init) {
         parser.ExprLambda(_) => { clo_init = true; },
         parser.ExprCall(cc) => {
+            // `var w: (i32) => i32 = (if (c) { f } else { g })` — a value-position
+            // if/match parses as an IIFE, and its arms can yield closure BOXES.
+            // Every other init form here says so and gets marked; this one did
+            // not, so the slot stayed a plain scalar and `w(3)` bare-called the
+            // box pointer as code — a SIGSEGV with no bail and no diagnostic,
+            // which is why bail-counting never saw it (#6323).
+            //
+            // Marked only when EVERY arm yields a box (iife_arms_all_boxed): a
+            // bare fn-name arm is a plain fn pointer, and box-dispatching that
+            // is the same crash in the other direction.
+            if (cc.args.len() == 0 && iife_callee_boxed_arms(cc.callee, s)) { clo_init = true; }
             match (cc.callee) {
                 // A `__mkclo$<wrapN>()` env-box constructor marker — the
                 // lift pass's boxed fn-value local binding `var g = dbl`
@@ -46213,6 +46224,78 @@ function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfunc
     match (arg) {
         parser.ExprLambda(_) => { return !lift_callee_param_is_fn(mfuncs, mfield, idx); },
         _ => {}
+    }
+    return false;
+}
+
+// iife_callee_boxed_arms reports whether `callee` is a value-position if/match
+// desugar (a zero-param IIFE lambda) whose every arm yields a closure BOX, so a
+// local bound from it must be marked a closure local and dispatch env-first.
+//
+// Conservative by construction: an arm that is not provably a box answers false
+// for the whole IIFE, so a bare fn-pointer arm (a named function) keeps the
+// plain call_indirect dispatch it has today. An empty arm set answers false —
+// nothing to prove it is a closure. #6323.
+function iife_callee_boxed_arms(callee: parser.Expr, s: LowerState): boolean {
+    match (callee) {
+        parser.ExprLambda(lam) => {
+            if (lam.params.len() != 0) { return false; }
+            var seen: i32 = 0;
+            return iife_stmts_all_boxed(lam.body, s, seen) > 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_stmts_all_boxed returns the number of arm returns proved to yield a box,
+// or -1 as soon as one is not. Walking the control-flow spine mirrors
+// iife_arms_hold_fn_value; the difference is what it asks of each arm value.
+function iife_stmts_all_boxed(stmts: parser.Stmt[], s: LowerState, seen: i32): i32 {
+    var n: i32 = seen;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                if (!expr_is_closure_box(r.value, s)) { return 0 - 1; }
+                n = n + 1;
+            },
+            parser.StmtIf(iff) => {
+                n = iife_stmts_all_boxed(iff.then_body, s, n);
+                if (n < 0) { return 0 - 1; }
+                n = iife_stmts_all_boxed(iff.else_body, s, n);
+                if (n < 0) { return 0 - 1; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    n = iife_stmts_all_boxed(mm.arms[a].body, s, n);
+                    if (n < 0) { return 0 - 1; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// expr_is_closure_box reports whether an arm value is already a closure box: a
+// closure LOCAL (the `v0` alias shape), a `__mkclo$…` env-box marker the lift
+// pass produced, or a nested value-position if/match whose own arms are all
+// boxed. Anything else — a bare fn name, a call, a literal — answers false.
+function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_closure_local(id.name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name.len() > 8 && cid.name[0:8] == "__mkclo$"; },
+                parser.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_boxed_arms(c.callee, s); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
     }
     return false;
 }
