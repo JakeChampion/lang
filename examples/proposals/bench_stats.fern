@@ -1,0 +1,355 @@
+// examples/proposals/bench_stats.fern — proposal turn, drawn line 223:
+// "A stopwatch-based benchmark harness that reports median and interquartile
+// range."
+//
+// A harness has two halves that must not be confused. The STOPWATCH is
+// nondeterministic — it reads `monotonic_ns()` and every run differs — so it
+// reports to stderr and asserts nothing. The STATISTICS are a pure function
+// of a sample array, and everything this file tests is about those.
+//
+// Median and IQR rather than mean and standard deviation because a benchmark
+// sample is not normal: it has a hard floor and a long tail of scheduler
+// interference. `test_the_summary_ignores_an_outlier` is the whole argument
+// in one assertion — replacing the largest sample with a million-fold value
+// must not move the median or the IQR by a single unit, and does move the
+// mean by 200000. A harness reporting the mean is reporting the noise.
+//
+// Quantiles have several incompatible definitions, so this one is pinned
+// rather than assumed: Tukey's hinges over integer nanoseconds, with the
+// middle element excluded from both halves when the count is odd. Every
+// expected value in the tests was computed independently rather than read
+// off this implementation.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+
+// ------------------------------------------------------------ statistics
+
+struct Summary {
+    n: i32,
+    min: i64, q1: i64, median: i64, q3: i64, max: i64,
+    iqr: i64, mean: i64,
+}
+
+function sorted(xs: i64[]): i64[] {
+    var out: i64[] = [];
+    for i in 0..xs.len() {
+        var v: i64 = xs[i];
+        var at: i32 = out.len();
+        for k in 0..out.len() { if (at == out.len() && v < out[k]) { at = k; } }
+        var next: i64[] = [];
+        for k in 0..at { next = next.append(out[k]); }
+        next = next.append(v);
+        for k in at..out.len() { next = next.append(out[k]); }
+        out = next;
+    }
+    return out;
+}
+
+// Median of an already-sorted slice. Even counts average the two middle
+// values with integer division, which floors — stated here because a reader
+// checking `[10, 20] -> 15` needs to know it is not rounding.
+function median_of(s: i64[]): i64 {
+    var n: i32 = s.len();
+    if (n == 0) { return 0; }
+    if (n % 2 == 1) { return s[n / 2]; }
+    return (s[n / 2 - 1] + s[n / 2]) / (2 as i64);
+}
+
+function slice_of(s: i64[], from: i32, to: i32): i64[] {
+    var out: i64[] = [];
+    for i in from..to { out = out.append(s[i]); }
+    return out;
+}
+
+// Tukey's hinges: the lower half is everything below the middle, the upper
+// half everything above it, and an odd-count sample's middle element belongs
+// to neither. That choice is why `[5, 10, 100]` has q1=5 and q3=100.
+function summarise(xs: i64[]): Summary {
+    var n: i32 = xs.len();
+    if (n == 0) {
+        return Summary { n: 0, min: 0, q1: 0, median: 0, q3: 0, max: 0,
+                         iqr: 0, mean: 0 };
+    }
+    var s: i64[] = sorted(xs);
+    var med: i64 = median_of(s);
+    var lo: i64 = med;
+    var hi: i64 = med;
+    if (n >= 2) {
+        lo = median_of(slice_of(s, 0, n / 2));
+        hi = median_of(slice_of(s, (n + 1) / 2, n));
+    }
+    var total: i64 = 0;
+    for i in 0..n { total = total + s[i]; }
+    return Summary { n: n, min: s[0], q1: lo, median: med, q3: hi,
+                     max: s[n - 1], iqr: hi - lo, mean: total / (n as i64) };
+}
+
+function render(name: string, m: Summary): string {
+    return name + ": n=" + m.n.to_string()
+        + " min=" + m.min.to_string()
+        + " q1=" + m.q1.to_string()
+        + " median=" + m.median.to_string()
+        + " q3=" + m.q3.to_string()
+        + " max=" + m.max.to_string()
+        + " iqr=" + m.iqr.to_string()
+        + " mean=" + m.mean.to_string();
+}
+
+// -------------------------------------------------------------- stopwatch
+
+// The nondeterministic half. `monotonic_ns` is the right clock for this: a
+// wall clock can step backwards under NTP, which shows up as a negative
+// duration rather than as an obviously wrong one.
+struct Run { name: string, samples: i64[] }
+
+function bench(name: string, reps: i32, work: i32): Run {
+    var samples: i64[] = [];
+    for r in 0..reps {
+        var t0: i64 = monotonic_ns();
+        var sink: i32 = 0;
+        for i in 0..work { sink = sink + (i % 7) * (i % 3); }
+        var t1: i64 = monotonic_ns();
+        if (sink < 0) { return Run { name: name, samples: [] }; }  // keep the work
+        samples = samples.append(t1 - t0);
+    }
+    return Run { name: name, samples: samples };
+}
+
+// ------------------------------------------------------------- fixtures
+
+function longs(xs: i32[]): i64[] {
+    var out: i64[] = [];
+    for i in 0..xs.len() { out = out.append(xs[i] as i64); }
+    return out;
+}
+
+// ---------------------------------------------------------------- tests
+
+// Every expected value here was computed independently of this
+// implementation. The odd/even split, the single- and two-element cases and
+// the three-element case (where Tukey's hinges are at their most surprising:
+// q1=5, q3=100) are the ones a different quantile definition would move.
+function test_the_quantiles_match_hand_computed_values(): test.TestOutcome {
+    var names: string[] = ["odd7", "even8", "one", "two", "three", "constant", "bench"];
+    var data: i64[][] = [
+        longs([1, 2, 3, 4, 5, 6, 7]),
+        longs([1, 2, 3, 4, 5, 6, 7, 8]),
+        longs([42]),
+        longs([10, 20]),
+        longs([5, 10, 100]),
+        longs([7, 7, 7, 7, 7]),
+        longs([102, 98, 101, 99, 100, 103, 97, 150, 101, 99]),
+    ];
+    var want_q1: i64[] = longs([2, 2, 42, 10, 5, 7, 99]);
+    var want_med: i64[] = longs([4, 4, 42, 15, 10, 7, 100]);
+    var want_q3: i64[] = longs([6, 6, 42, 20, 100, 7, 102]);
+    var want_iqr: i64[] = longs([4, 4, 0, 10, 95, 0, 3]);
+    var want_mean: i64[] = longs([4, 4, 42, 15, 38, 7, 105]);
+    for i in 0..data.len() {
+        var m: Summary = summarise(data[i]);
+        if (m.q1 != want_q1[i] || m.median != want_med[i] || m.q3 != want_q3[i]) {
+            return test.fail(names[i] + ": got q1=" + m.q1.to_string()
+                + " median=" + m.median.to_string() + " q3=" + m.q3.to_string()
+                + ", wanted " + want_q1[i].to_string() + "/"
+                + want_med[i].to_string() + "/" + want_q3[i].to_string());
+        }
+        if (m.iqr != want_iqr[i]) {
+            return test.fail(names[i] + ": iqr " + m.iqr.to_string()
+                + ", wanted " + want_iqr[i].to_string());
+        }
+        if (m.mean != want_mean[i]) {
+            return test.fail(names[i] + ": mean " + m.mean.to_string()
+                + ", wanted " + want_mean[i].to_string());
+        }
+    }
+    return test.pass();
+}
+
+// THE argument for reporting the median. Replace the largest sample with a
+// value a million times bigger and neither the median nor the IQR moves at
+// all — the mean moves by 200000. That is the difference between reporting
+// the benchmark and reporting the scheduler.
+function test_the_summary_ignores_an_outlier(): test.TestOutcome {
+    var clean: i64[] = longs([10, 11, 12, 13, 14]);
+    var spiked: i64[] = longs([10, 11, 12, 13, 1000000]);
+    var a: Summary = summarise(clean);
+    var b: Summary = summarise(spiked);
+    if (a.median != b.median) {
+        return test.fail("the median moved from " + a.median.to_string()
+            + " to " + b.median.to_string() + " because of one outlier");
+    }
+    if (a.q1 != b.q1) {
+        return test.fail("q1 moved from " + a.q1.to_string() + " to " + b.q1.to_string());
+    }
+    if (a.mean == b.mean) {
+        return test.fail("the mean did NOT move — the outlier is not reaching the sample");
+    }
+    if (b.mean - a.mean != (199997 as i64)) {
+        return test.fail("the mean moved by " + (b.mean - a.mean).to_string()
+            + ", so the fixture is not the one this test describes");
+    }
+    // The max reports the outlier — it is not hidden, just not summarised.
+    if (b.max != (1000000 as i64)) { return test.fail("max lost the outlier"); }
+    return test.pass();
+}
+
+// A summary is a function of the SET, not of arrival order. Rotations and
+// the reverse must all agree.
+function test_order_does_not_matter(): test.TestOutcome {
+    var base: i64[] = longs([102, 98, 101, 99, 100, 103, 97, 150, 101, 99]);
+    var want: Summary = summarise(base);
+    var n: i32 = base.len();
+    for r in 0..n {
+        var rot: i64[] = [];
+        for k in 0..n { rot = rot.append(base[(k + r) % n]); }
+        var got: Summary = summarise(rot);
+        if (got.q1 != want.q1 || got.median != want.median || got.q3 != want.q3
+            || got.min != want.min || got.max != want.max || got.mean != want.mean) {
+            return test.fail("rotating by " + r.to_string() + " changed the summary");
+        }
+    }
+    var rev: i64[] = [];
+    for k in 0..n { rev = rev.append(base[n - 1 - k]); }
+    var got2: Summary = summarise(rev);
+    if (got2.median != want.median || got2.iqr != want.iqr) {
+        return test.fail("reversing the sample changed the summary");
+    }
+    return test.pass();
+}
+
+// Adding a constant to every sample shifts the quantiles by that constant
+// and leaves the IQR alone — a spread is invariant under translation, and an
+// implementation that computes it from an accumulated total is not.
+function test_shifting_the_sample_shifts_only_the_centre(): test.TestOutcome {
+    var base: i64[] = longs([97, 98, 99, 99, 100, 101, 101, 102, 103, 150]);
+    var a: Summary = summarise(base);
+    var shifts: i32[] = [1, 1000, 1000000];
+    for s in 0..shifts.len() {
+        var c: i64 = shifts[s] as i64;
+        var moved: i64[] = [];
+        for i in 0..base.len() { moved = moved.append(base[i] + c); }
+        var b: Summary = summarise(moved);
+        if (b.median != a.median + c) {
+            return test.fail("shifting by " + c.to_string() + " moved the median to "
+                + b.median.to_string() + ", wanted " + (a.median + c).to_string());
+        }
+        if (b.q1 != a.q1 + c || b.q3 != a.q3 + c) {
+            return test.fail("shifting by " + c.to_string() + " did not shift both quartiles");
+        }
+        if (b.iqr != a.iqr) {
+            return test.fail("shifting by " + c.to_string() + " changed the IQR from "
+                + a.iqr.to_string() + " to " + b.iqr.to_string());
+        }
+    }
+    return test.pass();
+}
+
+// The invariants that must hold for every sample, checked over a family
+// rather than a chosen example: min <= q1 <= median <= q3 <= max, IQR is the
+// difference, and the mean sits within the range.
+function test_the_ordering_invariants_hold(): test.TestOutcome {
+    var families: i64[][] = [
+        longs([1]),
+        longs([2, 1]),
+        longs([3, 1, 2]),
+        longs([5, 5, 5, 5]),
+        longs([1, 100, 2, 99, 3, 98, 4, 97]),
+        longs([0, 0, 0, 1, 1000000]),
+        longs([1000000, 999999, 999998, 1, 2, 3, 4]),
+    ];
+    for i in 0..families.len() {
+        var m: Summary = summarise(families[i]);
+        if (m.min > m.q1 || m.q1 > m.median || m.median > m.q3 || m.q3 > m.max) {
+            return test.fail("family " + i.to_string() + " is out of order: "
+                + render("", m));
+        }
+        if (m.iqr != m.q3 - m.q1) {
+            return test.fail("family " + i.to_string() + ": iqr is not q3 - q1");
+        }
+        if (m.mean < m.min || m.mean > m.max) {
+            return test.fail("family " + i.to_string() + ": the mean is outside the range");
+        }
+        if (m.n != families[i].len()) {
+            return test.fail("family " + i.to_string() + ": n is wrong");
+        }
+    }
+    return test.pass();
+}
+
+// A constant sample has zero spread, and an empty one answers rather than
+// dividing by zero.
+function test_degenerate_samples(): test.TestOutcome {
+    var flat: Summary = summarise(longs([7, 7, 7, 7, 7, 7]));
+    if (flat.iqr != (0 as i64)) { return test.fail("a constant sample has a non-zero IQR"); }
+    if (flat.median != (7 as i64) || flat.mean != (7 as i64)) {
+        return test.fail("a constant sample does not summarise to its constant");
+    }
+    var empty: Summary = summarise([]);
+    if (empty.n != 0) { return test.fail("an empty sample reports n != 0"); }
+    if (empty.median != (0 as i64) || empty.iqr != (0 as i64)) {
+        return test.fail("an empty sample invented a summary");
+    }
+    return test.pass();
+}
+
+// The stopwatch half, asserted only where it CAN be: durations are
+// non-negative and the clock advances. Timing values themselves are never
+// compared — that is what makes the rest of this file deterministic.
+function test_the_stopwatch_is_monotonic(): test.TestOutcome {
+    var t0: i64 = monotonic_ns();
+    var sink: i32 = 0;
+    for i in 0..200000 { sink = sink + (i % 5); }
+    var t1: i64 = monotonic_ns();
+    if (sink < 0) { return test.fail("the work was elided"); }
+    if (t1 < t0) {
+        return test.fail("the monotonic clock went backwards: " + t0.to_string()
+            + " then " + t1.to_string());
+    }
+    var run: Run = bench("probe", 5, 20000);
+    if (run.samples.len() != 5) {
+        return test.fail("5 reps produced " + run.samples.len().to_string() + " samples");
+    }
+    for i in 0..run.samples.len() {
+        if (run.samples[i] < (0 as i64)) {
+            return test.fail("sample " + i.to_string() + " is a negative duration");
+        }
+    }
+    // A summary over real timings still satisfies its own invariants.
+    var m: Summary = summarise(run.samples);
+    if (m.min > m.median || m.median > m.max) {
+        return test.fail("a summary of real timings is out of order");
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------ app
+
+function main(): i32 {
+    eprint("bench_stats — median and IQR, because a benchmark sample is not normal");
+    var runs: Run[] = [bench("tiny", 15, 5000), bench("small", 15, 50000),
+                       bench("medium", 15, 200000)];
+    for i in 0..runs.len() {
+        var m: Summary = summarise(runs[i].samples);
+        eprint("  " + render(runs[i].name, m) + "  ns");
+    }
+    eprint("  (timings vary per run and are asserted nowhere; the statistics below are)");
+    var demo: i64[] = longs([10, 11, 12, 13, 14]);
+    var spiked: i64[] = longs([10, 11, 12, 13, 1000000]);
+    eprint("  " + render("clean ", summarise(demo)));
+    eprint("  " + render("spiked", summarise(spiked)));
+
+    var r: test.TestRunner = test.test_new("bench_stats");
+    r = r.it("the quantiles match hand-computed values", test_the_quantiles_match_hand_computed_values);
+    r = r.it("the summary ignores an outlier", test_the_summary_ignores_an_outlier);
+    r = r.it("order does not matter", test_order_does_not_matter);
+    r = r.it("shifting the sample shifts only the centre", test_shifting_the_sample_shifts_only_the_centre);
+    r = r.it("the ordering invariants hold", test_the_ordering_invariants_hold);
+    r = r.it("degenerate samples", test_degenerate_samples);
+    r = r.it("the stopwatch is monotonic", test_the_stopwatch_is_monotonic);
+    return r.finish();
+}
