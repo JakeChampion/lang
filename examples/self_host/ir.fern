@@ -444,9 +444,13 @@ pub function op_raw_environ(): Op { return op0("raw_environ"); }
 // the machine's FULL pointer width. It exists because `p + off` written in the
 // helper source does not survive: the surface type of a raw pointer is i32, so
 // the arm64 backend sign-extends the sum back to 32 bits (`sxtw x0, w0`) and a
-// high heap address comes out truncated. The load/store intrinsics dodge this
-// by folding the offset into the addressing mode; a pointer that has to be
-// PASSED somewhere (a syscall buffer arg) needs this instead.
+// high heap address comes out truncated. The TWO-ARGUMENT raw load/stores
+// (raw_load8 / raw_store8 / raw_load_ptr / raw_store_ptr) dodge this by folding
+// their `off` operand into the addressing mode. Everything else needs this op:
+// a pointer PASSED somewhere (a syscall buffer arg), and — the trap #6386 fell
+// into — the ONE-argument loads, `__load_i32(a)` / `__load_i64(a)` /
+// `__load_ptr(a)`, which have no offset operand to fold, so their caller must
+// not reach for a bare `a + off`.
 pub function op_raw_addr(): Op { return op0("raw_addr"); }
 // memchr (docs/ATLAS-PLATFORM-PLAN.md §3): pops [str, byte, from] → the i32
 // index of the first occurrence of `byte` at or after `from`, or -1. Allocates

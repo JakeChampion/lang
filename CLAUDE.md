@@ -405,14 +405,23 @@ and native does not, measured rather than inferred by the
 shapes at that sweep, every one scaling linearly with the round count.
 **#6127 is CLOSED** — all seven of its shapes measure zero (#6218 /
 #6225 / #6232 / #6240 / #6251 / #6252 / #6255 / #6263 / #6274 / #6285 /
-#6291 / #6308). This note used to send you there for the live list; it
-no longer is one. **The live list is #6360**: an enum local bound from
+#6291 / #6308 / #6319 / #6336 / #6347 / #6375). This note used to send
+you there for the live list; it no longer is one. **The live list is #6360**: an enum local bound from
 a CALL is never reclaimed on the self-host — `frees=0`, exactly ×2.0
 per doubling, and not Result-specific (`Option` behaves identically).
-Native is clean on every row. Also still open from #6285: the
-BARE-NAME struct credit block-scoped, which needs a narrower gate
-rather than a flip — flipping it segfaults the gen1 self-compile
-(#6285 has the bisect).
+Native is clean on every row. Also from #6285: the BARE-NAME struct
+credit block-scoped is now HALF closed (#6375, 8800 → 4000) — the
+BOX is reclaimed and the field drop is not. That note used to say it
+"needs a narrower gate rather than a flip"; the narrow gate was tried
+(scope the sweep + entry-zeroing, leave the other twelve consumers of
+`slot_is_reclaimable_struct` alone) and **still segfaults gen1**. Three
+fixpoint runs, one variable each, located the real culprit:
+`__struct_drop_<T>` on a block-scoped slot — not the box dec, not the
+zeroing, not the other consumers. Entry-zeroing alone is green (402s);
+box-only free is green (390s); adding the field drop segfaults. The
+remaining 4000 is the field buffers, and closing it means explaining
+why the deep drop is unsafe when the credit already proves the name
+fresh and non-escaping.
 
 **Re-measure before quoting any figure in this area.** FIVE
 attributions have now been wrong. Four of #6127's own: three because a
@@ -428,7 +437,26 @@ lead. Both are 0 at HEAD, closed by #6291 (`.len()` is a borrow, not an
 escape) as a side effect of a fix aimed elsewhere, and the column was
 never the cause — `.len()` marked the local as escaping, so no credit
 was earnable however the columns were set. Following that lead would
-have cost a day in the wrong predicate.
+have cost a day in the wrong predicate. A SIXTH: #6285 attributed the
+block-scoped struct segfault to the credit's other consumers, and
+#6375's bisect showed it is the deep field drop alone — the difference
+between "this class is entangled" and "one operation is unsafe", and
+only the second is actionable.
+
+**A leak this family hides well: the shape reclaims until you INDENT
+it.** #6319 found that a `match (o)` scrutinee reads as an escape
+(`expr_unsafe_for` flags any bare ident), and the analysis that
+disagrees skips the consuming match by top-level statement INDEX — so
+it only ever reached a match that IS a top-level statement. The same
+Option consumed by a match inside an `if` or a `while` released
+NOTHING (8000–12800 per 100 rounds), while the top-level spelling was
+flat at 0. When a probe reclaims cleanly, try it one block deeper
+before concluding the class is closed.
+
+**And the probe corpus cannot see the segfault class at all.** All 162
+differential programs agreed with native on both the segfaulting and
+the green build in #6375; only the self-compiler shows it. That is the
+concrete case for running the fixpoint FIRST on a reclaim change.
 
 Vary one dimension at a time (array length vs field count; access
 pattern vs binding form) and re-measure before naming what leaked; it

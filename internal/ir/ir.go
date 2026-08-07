@@ -5022,7 +5022,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
 	// Consuming-owned-match bindings (#4400): pre-allocate each binding's slot
-	// and zero it, so (a) bindingSlot reuses this slot when the arm binds (the
+	// and zero it, so (a) bindingSlotScoped reuses this slot when the arm binds (the
 	// scratchType stamp gives it the right single-word shape), and (b) the
 	// exit-sweep dec added for these names sees a NULL — not stack garbage —
 	// when the binding's arm never ran. Same safety-zero contract as the
@@ -6651,7 +6651,7 @@ func isFloatType(t ast.Type) bool {
 	return ok
 }
 
-// bindingSlot shape classes. Two same-named bindings may share a local
+// bindingSlotScoped shape classes. Two same-named bindings may share a local
 // slot only when the backend gives both the SAME physical slot type —
 // on wasm a local is typed (i32/i64/f32/f64) and a mixed-width share
 // miscompiles: the local's valtype comes from the final scratchType
@@ -6697,11 +6697,14 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 	return bindingShapeOneWord
 }
 
-// bindingSlot returns the local slot for a match / if-let / let-else arm
-// binding `name` of static type bt. When the name ALREADY has a slot — a
-// `var` of the same name elsewhere in the function (pre-allocated at
-// entry and covered by the zero-init safety net) or an earlier arm's
-// same-named binding — the slot is REUSED instead of freshly allocated.
+// bindingSlotScoped returns the local slot for a match arm binding `name`
+// of static type bt, plus a restore closure for bindings whose visibility
+// ends with their arm / Then body (match arms, if-let and let-else after
+// their desugar to a match, tuple-match binds). When the name ALREADY has
+// a slot — a `var` of the same name elsewhere in the function
+// (pre-allocated at entry and covered by the zero-init safety net) or an
+// earlier arm's same-named binding — the slot is REUSED instead of freshly
+// allocated.
 //
 // Why reuse is load-bearing: the return / function-exit dec sweep
 // resolves names through b.locals at the moment each return is LOWERED.
@@ -6725,30 +6728,24 @@ func bindingSlotShape(t ast.Type, ptrW int) int {
 // backend gives both the same physical slot type (bindingSlotShape) —
 // two-word vs one-word, and on wasm the scalar valtype class too (an
 // i32 arm binding sharing an i64 var's slot fails module validation).
-// Mixed shapes fall back to a fresh slot; on the SCOPED variant below the
-// name remap is temporary (restored when the binding's scope ends), so
-// the shadowing hazard the fresh slot used to introduce (#4510 — reads,
-// the entry zero-init, and later-lowered exit sweeps splitting one name
-// across two slots, observed as the self-host interp's ExprTuple loop
-// trapping its own arm64 bounds check) cannot outlive the arm.
-func (b *builder) bindingSlot(name string, bt ast.Type) int32 {
-	slot, _ := b.bindingSlotScoped(name, bt)
-	return slot
-}
-
-// bindingSlotScoped is bindingSlot plus a restore closure for bindings
-// whose visibility ends with their arm / Then body (match arms, if-let,
-// tuple-match binds). On the same-shape reuse path and for a first-sight
-// name the restore is a no-op — those mappings are deliberately
-// permanent (sibling arms share the slot; the exit sweep resolves the
-// name through it). On the CROSS-SHAPE fresh-slot path (#4510: a
-// two-word string/dyn var vs a one-word binding, arm64/wasm) the remap
-// is temporary: callers invoke restore right after lowering the arm
-// body, reinstating the shadowed slot so everything lowered afterwards
-// — reads of the outer name, the exit dec sweep at later returns —
-// resolves the var's own (entry-zeroed) slot again. Let-else bindings
-// outlive their statement and keep the plain bindingSlot (permanent
-// remap IS their semantics).
+// Mixed shapes fall back to a fresh slot, and there the name remap is
+// temporary (restored when the binding's scope ends), so the shadowing
+// hazard the fresh slot used to introduce (#4510 — reads, the entry
+// zero-init, and later-lowered exit sweeps splitting one name across two
+// slots, observed as the self-host interp's ExprTuple loop trapping its
+// own arm64 bounds check) cannot outlive the arm.
+//
+// On the same-shape reuse path and for a first-sight name the restore is
+// a no-op — those mappings are deliberately permanent (sibling arms share
+// the slot; the exit sweep resolves the name through it). On the
+// CROSS-SHAPE fresh-slot path (#4510: a two-word string/dyn var vs a
+// one-word binding, arm64/wasm) callers invoke restore right after
+// lowering the arm body, reinstating the shadowed slot so everything
+// lowered afterwards — reads of the outer name, the exit dec sweep at
+// later returns — resolves the var's own (entry-zeroed) slot again. A
+// let-else binding outliving its statement needs no exception: its
+// desugar puts the rest of the block INSIDE the success arm, so the arm
+// already spans the binding's whole scope.
 func (b *builder) bindingSlotScoped(name string, bt ast.Type) (int32, func()) {
 	if slot, ok := b.locals[name]; ok {
 		if bindingSlotShape(b.slotShapeType(slot), b.ptrW) == bindingSlotShape(bt, b.ptrW) {
@@ -6769,8 +6766,9 @@ func (b *builder) bindingSlotScoped(name string, bt ast.Type) (int32, func()) {
 
 // slotShapeType returns the type that sizes `slot`'s physical storage in
 // the backend: the declared param / info.Locals type for slots in those
-// ranges, the scratchType stamp for scratch-range slots. bindingSlot's
-// two-word shape guard MUST compare against this — lowerFunc's entry
+// ranges, the scratchType stamp for scratch-range slots.
+// bindingSlotScoped's two-word shape guard MUST compare against this —
+// lowerFunc's entry
 // loops never stamp scratchType for param / var slots, so reading
 // b.scratchType directly returns nil there, which reads as single-word
 // and let a pointer-shaped match binding reuse a same-named `var`'s

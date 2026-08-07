@@ -619,12 +619,12 @@ pub function rt_src_remove_dir_all(): string {
 // has no generic syscall.
 pub function rt_src_clock(which: string): string {
     if (which == "monotonic_ns") {
-        return "function __fern_monotonic_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 1, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+        return "function __fern_monotonic_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 1, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000000000 as i64) + nsec; }";
     }
     if (which == "now_unix_ms") {
-        return "function __fern_now_unix_ms(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000 as i64) + nsec / (1000000 as i64); }";
+        return "function __fern_now_unix_ms(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000 as i64) + nsec / (1000000 as i64); }";
     }
-    return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(ts + 8); return sec * (1000000000 as i64) + nsec; }";
+    return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000000000 as i64) + nsec; }";
 }
 
 // rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned
@@ -643,8 +643,17 @@ pub function rt_src_clock(which: string): string {
 // does not: with fstatat and asmcore.statoff it is the same constant
 // substitution as the other leaves. (The u16 st_mode on Darwin needs no special
 // read — see statoff.)
+//
+// The two field reads go through `__raw_addr(buf, off)`, not `buf + off` (#6386).
+// `__load_i32` / `__load_i64` take a bare address with no offset operand to fold,
+// so a bare `+` is an i32 add: arm64 sign-extends it back to 32 bits and the
+// address is truncated. Invisible wherever the image sits below 4 GiB — which is
+// every Linux target — but Mach-O's __PAGEZERO puts __fern_scratch above
+// 0x100000000, so on arm64-darwin the truncated address landed in the unmapped
+// page-zero and `stat` segfaulted on every path that EXISTS (the Err arm returns
+// before the loads, which is why only stat_dir / fs_builtins_lifecycle failed).
 pub function rt_src_stat(t: string): string {
-    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(buf + " + statoff(t, "mode") + "); var size: i64 = __load_i64(buf + " + statoff(t, "size") + "); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(__raw_addr(buf, " + statoff(t, "mode") + ")); var size: i64 = __load_i64(__raw_addr(buf, " + statoff(t, "size") + ")); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
