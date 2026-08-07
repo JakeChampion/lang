@@ -1,0 +1,21 @@
+// spec: MC-01
+//
+// Pins E067: a value of a `@must_consume` type must be consumed on
+// every path before its binding goes out of scope. Here `t` is bound
+// and then simply abandoned, which is the forgotten-obligation bug the
+// attribute exists to turn into a compile error.
+//
+// Written rather than derived: E067's catalogue entry is the one code
+// in this family with no `## Example` block, so there was nothing to
+// lift.
+@must_consume
+struct Ticket { id: i32 }
+
+function issue(n: i32): Ticket {
+    return Ticket { id: n };
+}
+
+function main(): i32 {
+    var t: Ticket = issue(7);   // error[E067]: never consumed
+    return 0;
+}

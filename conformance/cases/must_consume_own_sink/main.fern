@@ -1,0 +1,24 @@
+// spec: MC-02
+//
+// The other half of the `@must_consume` contract: an `own` parameter
+// is the declared SINK. `redeem` takes the obligation and discharges
+// it by doing nothing further, and that is not E067 — without the
+// exemption every sink in a program would report the error it exists
+// to satisfy.
+//
+// The argument is a fresh construction because an `own` parameter
+// accepts only those or another `own` parameter (E051); a local
+// binding cannot be handed over.
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function main(): i32 {
+    print(redeem(Ticket { id: 7 }).to_string());
+    return 0;
+}

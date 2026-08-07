@@ -54,8 +54,9 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**25 of 33** claims are pinned by a conformance case. Of the eight
-that are not, **three are freedoms** — see below — and five are gaps.
+**30 of 34** claims are pinned by a conformance case. Of the four
+that are not, **three are freedoms** — see below — and one is a gap the
+corpus format cannot currently reach.
 
 ## Freedoms are not gaps
 
@@ -71,7 +72,7 @@ asserts an output and the whole content of the claim is that no
 particular output is owed. The distinction is worth keeping visible:
 a `—` is work someone should do, and a `n/a` is a decision someone
 already made. Collapsing them would turn three deliberate choices into
-three apparent oversights, and hide the five real gaps among them.
+three apparent oversights, and hide the one real gap among them.
 
 ## Claims
 
@@ -91,8 +92,8 @@ three apparent oversights, and hide the five real gaps among them.
 | `IS-07` | `docs/INTEGER-SEMANTICS.md` | `MIN % -1 == 0` | `int_min_arithmetic` |
 | `IS-08` | `docs/INTEGER-SEMANTICS.md` | `+\| -\| *\| <<\|` clamp to the type's `[MIN, MAX]` | `int_saturating_ops` |
 | `IS-09` | `docs/INTEGER-SEMANTICS.md` | `+? -? *? /? %? <<? >>?` yield `None` on overflow, zero divisor, or out-of-range count | `int_checked_ops` |
-| `IS-10` | `docs/INTEGER-SEMANTICS.md` | A saturating operator on `usize` is rejected (`E009`) | — |
-| `IS-11` | `docs/INTEGER-SEMANTICS.md` | A saturating operator is rejected inside a `const` initializer | — |
+| `IS-10` | `docs/INTEGER-SEMANTICS.md` | A saturating operator on `usize` is rejected (`E009`) | `sat_usize_rejected` |
+| `IS-11` | `docs/INTEGER-SEMANTICS.md` | A saturating operator is rejected inside a `const` initializer | `sat_const_rejected` |
 | `FS-01` | `docs/FLOAT-SEMANTICS.md` | Float-to-int conversion of `NaN` yields `0` | `float_to_int_saturating` |
 | `FS-02` | `docs/FLOAT-SEMANTICS.md` | Out-of-range float-to-int saturates to the destination's min / max | `float_to_int_saturating` |
 | `FS-03` | `docs/FLOAT-SEMANTICS.md` | In-range float-to-int truncates toward zero | `float_to_int_saturating` |
@@ -107,23 +108,36 @@ three apparent oversights, and hide the five real gaps among them.
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`) | `diag_e063` |
 | `ML-04` | `docs/MODE-LATTICE.md` | A `str` view of a function-local string may not be returned (`E065`) | `diag_e065` |
-| `ML-05` | `docs/MODE-LATTICE.md` | Using an owned parameter after it is consumed is rejected (`E050`) | — |
-| `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | — |
-| `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | — |
+| `ML-05` | `docs/MODE-LATTICE.md` | Using an owned parameter after it is consumed is rejected (`E050`) | `diag_e050` |
+| `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | — |
+| `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
+| `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 
-## What the five gaps have in common
+## The one gap, and why the format cannot reach it
 
-`IS-10`, `IS-11`, `ML-05`, `MC-01` and `MC-02` are all *rejections*, and
-each is already exercised by a Go test under `internal/checker`. That
-is the same shape as the diagnostics index's own gaps, and it has the
-same consequence: `docs/NATIVE-CONVERGENCE.md` makes the self-host
+`ML-06` is the `fbip` allocation rule behind `E068`, and it is not
+unpinned for want of writing a case. A case with an `expected.error`
+file is **not run**: it must fail the front-end — parse, module load,
+or type check — and the captured error is matched against the file.
+`E068` is not a front-end error. It is reported by
+`internal/ir/fip_verify.go` during lowering, after the checker has
+already accepted the program, so a compile-error case never reaches
+it and a runnable case cannot be built from a program that does not
+compile.
+
+Closing it means either teaching the corpus format about errors
+raised past the front end, or moving the `fbip` allocation check
+forward into the checker. Both are decisions, not omissions, which is
+why the row says `—` and this section says why.
+
+Every other claim that was a gap when this index landed is now pinned:
+`IS-10`, `IS-11`, `ML-05`, `MC-01` and `MC-02` were all *rejections*
+exercised only by a Go test under `internal/checker`. That is coverage
+of `internal/`, and `docs/NATIVE-CONVERGENCE.md` makes the self-host
 compiler the definition once the freeze preconditions (#4451) go
-green, and a Go test cannot measure the self-host compiler. A rule
-with only Go-side coverage stops being checked at the moment it starts
-mattering most.
-
-`E050`, `E067` and `E068` are also the three codes `spec/diagnostics.md`
-lists as unpinned, so closing them closes rows in both indexes at once.
+green — at which point a Go test measures the wrong thing. `E050` and
+`E067` were also two of the three codes `spec/diagnostics.md` listed as
+unpinned, so those rows closed in both indexes at once.
 
 ## What is still not here
 
