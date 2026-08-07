@@ -452,6 +452,15 @@ pub function op_raw_environ(): Op { return op0("raw_environ"); }
 // `__load_ptr(a)`, which have no offset operand to fold, so their caller must
 // not reach for a bare `a + off`.
 pub function op_raw_addr(): Op { return op0("raw_addr"); }
+// raw_arr_box (#2649 raw-memory floor): pops [n] → the DATA pointer of a fresh
+// n-element array box, with the rc header, length and capacity already written
+// (a `call __fern_arr_box`, the one array primitive that stays asm — the same
+// role __raw_alloc plays for bytes). Element i lives at [ptr + (i+1)*W], which
+// is exactly what __raw_store_ptr / __raw_load_ptr address, so a Fern helper can
+// fill it without naming the layout. Its sibling __raw_array(ptr) is type-only
+// — the pointer already IS the array value — so it emits no op at all.
+pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
+
 // memchr (docs/ATLAS-PLATFORM-PLAN.md §3): pops [str, byte, from] → the i32
 // index of the first occurrence of `byte` at or after `from`, or -1. Allocates
 // nothing and reads only the source bytes.
@@ -1522,7 +1531,8 @@ function kind_id_4(name: string): i32 {
     if (name == "popcount") { return 221; }
     if (name == "map_hash_seed") { return 222; }
     if (name == "raw_addr") { return 223; }
-    if (name == "memchr") { return 224; }
+    if (name == "raw_arr_box") { return 224; }
+    if (name == "memchr") { return 225; }
     return 0;
 }
 
@@ -1775,14 +1785,15 @@ function kind_name_4(id: i32): string {
     if (id == 221) { return "popcount"; }
     if (id == 222) { return "map_hash_seed"; }
     if (id == 223) { return "raw_addr"; }
-    if (id == 224) { return "memchr"; }
+    if (id == 224) { return "raw_arr_box"; }
+    if (id == 225) { return "memchr"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … memchr=224)
+// extension tags beyond kind_count() (struct_copy=198 … memchr=225)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2013,5 +2024,5 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 110 || tag == 111 || tag == 112 || tag == 113
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
-        || tag == 99 || tag == 100 || tag == 224;
+        || tag == 99 || tag == 100 || tag == 225;
 }

@@ -136,7 +136,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // [data + i]; ldrb zero-extends into w0.
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n    str x0, [sp, #-16]!\n"); return s;
     }
-    if (o.kind_tag == 224) {  // memchr
+    if (o.kind_tag == 225) {  // memchr
         // operand stack [box, byte, from] (from on top) -> i32 index or -1.
         // Scalar for the same reason as the x86-64 sibling: §3.4 makes the
         // intrinsic total everywhere before making it fast anywhere. The
@@ -634,6 +634,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // is emitted with the fs runtime (emit_rt_fs), unconditionally, since
             // _start's save is gated on `heap` rather than on `env`.
             s = s.write("    adrp x0, __fern_envp\n    add x0, x0, :lo12:__fern_envp\n    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 224) {  // raw_arr_box
+            // [n] → a fresh n-element array box's data pointer (#2649), the
+            // array sibling of raw_alloc. __fern_arr_box writes the rc header,
+            // length and capacity; element i then lives at [ptr + (i+1)*8].
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arr_box\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 223) {  // raw_addr
             // pop off (top), ptr; push ptr+off at full width (#2649). Unlike the
             // `add` op this is NOT followed by the i32 `sxtw` narrow, which is
@@ -660,19 +666,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // to keep this dispatch under the oversized-function threshold (#2720).
             s = emit_str_op(o, s);
         } else if (o.kind_tag == 214) {  // arr_reverse
-            // operand stack [arr]; __fern_arr_reverse(x0=arr) -> fresh array in x0.
-            // The helper body is already in this file's emit_ir_runtime, gated on
-            // the arr_reverse need — it just had no call site until irlower
-            // lowered the builtin (#3457 slice 5).
+            // [arr] IS param[0]; call the Fern-compiled __fn___fern_arr_reverse
+            // (asmcore.rt_src_arr_reverse, #2649) via the stack ABI.
             s = s.mark_heap();
             s = s.mark_arr_reverse();
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_arr_reverse\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_arr_reverse\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 215) {  // arr_concat
-            // operand stack [A, B] (B top); __fern_arr_concat(x0=A, x1=B) -> fresh
-            // array in x0. Same story as arr_reverse: body present, call site new.
+            // operand stack [A, B] (B top); the stack ABI wants param[0]=A on
+            // top, so re-push the two popped operands in reverse.
             s = s.mark_heap();
             s = s.mark_arr_concat();
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_concat\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 96) {  // arr_slice
             // operand stack [arr, start, end] (end top); __fern_arr_slice(x0=arr,
             // x1=start, x2=end) -> fresh array in x0. asm_arm64.emit_runtime emits
@@ -6797,77 +6801,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_arr_concat: x0 = arr A, x1 = arr B. Returns a fresh
-    // array containing A's elements followed by B's. Works on
-    // any 8-byte-payload array.
-    if (s.has_need("arr_concat")) {
-        s = s.write("__fern_arr_concat:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // arr A
-        s = s.write("    mov x20, x1\n");           // arr B
-        s = s.write("    ldr x21, [x19]\n");        // a_len
-        s = s.write("    ldr x22, [x20]\n");        // b_len
-        s = s.write("    add x0, x21, x22\n");       // cap = a_len + b_len
-        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
-        // copy A's elements
-        s = s.write("    mov x2, #0\n");            // i
-        s = s.write(".Larr_concat_a:\n");
-        s = s.write("    cmp x2, x21\n");
-        s = s.write("    b.ge .Larr_concat_b_init\n");
-        s = s.write("    add x3, x2, #1\n");
-        s = s.write("    ldr x4, [x19, x3, lsl #3]\n");
-        s = s.write("    str x4, [x0, x3, lsl #3]\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    b .Larr_concat_a\n");
-        s = s.write(".Larr_concat_b_init:\n");
-        s = s.write("    mov x2, #0\n");
-        s = s.write(".Larr_concat_b:\n");
-        s = s.write("    cmp x2, x22\n");
-        s = s.write("    b.ge .Larr_concat_done\n");
-        s = s.write("    add x3, x2, #1\n");
-        s = s.write("    ldr x4, [x20, x3, lsl #3]\n");
-        s = s.write("    add x5, x21, x2\n");
-        s = s.write("    add x5, x5, #1\n");
-        s = s.write("    str x4, [x0, x5, lsl #3]\n");
-        s = s.write("    add x2, x2, #1\n");
-        s = s.write("    b .Larr_concat_b\n");
-        s = s.write(".Larr_concat_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_arr_reverse: x0 = src arr ptr. Returns a fresh
-    // array with elements in opposite order. Works on any
-    // 8-byte-payload array (i32[] or string[]).
-    if (s.has_need("arr_reverse")) {
-        s = s.write("__fern_arr_reverse:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // src
-        s = s.write("    ldr x20, [x19]\n");        // len
-        s = s.write("    mov x0, x20\n");           // cap = len
-        s = s.write("    bl __fern_arr_box\n");      // -> data ptr in x0 (cap + len written)
-        // for i in 0..len: dst[i+1] = src[len - i]
-        s = s.write("    mov x1, #0\n");            // i
-        s = s.write(".Larr_rev_loop:\n");
-        s = s.write("    cmp x1, x20\n");
-        s = s.write("    b.ge .Larr_rev_done\n");
-        s = s.write("    sub x2, x20, x1\n");       // src idx = len - i
-        s = s.write("    ldr x3, [x19, x2, lsl #3]\n");
-        s = s.write("    add x4, x1, #1\n");
-        s = s.write("    str x3, [x0, x4, lsl #3]\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    b .Larr_rev_loop\n");
-        s = s.write(".Larr_rev_done:\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_arr_concat and __fern_arr_reverse are Fern runtime functions now
+    // (#2649): asmcore.rt_src_arr_concat / rt_src_arr_reverse, emitted need-gated
+    // in the migrated-helpers section over the __raw_arr_box + __raw_array pair.
+    // The source is shared with x86-64 verbatim — these were raw 8-byte slot
+    // copies with nothing target-specific in them, so there is no `tgt` to pass.
     // __fern_arr_str_join is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_str_join. It calls str_concat (via `+`); the str_concat
     // + heap deps are declared by mark_arr_str_join so their bodies are present.
@@ -6954,6 +6892,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // random_bytes: fill the buffer through __syscall3, box it with __raw_string.
     if (s.has_need("random_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes(tgt), s.struct_decls, s);
+    }
+    // xs.reverse() / xs.concat(ys) — the same source x86-64 emits, no `tgt`:
+    // allocate the fresh box with __raw_arr_box, copy the 8-byte slots, hand it
+    // back with __raw_array.
+    if (s.has_need("arr_reverse")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_reverse(), s.struct_decls, s);
+    }
+    if (s.has_need("arr_concat")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s.struct_decls, s);
     }
     // The migrated fs leaves — read_file / write_file / remove_file / temp_dir —
     // share ONE errno→IoError classifier and are emitted as a single bundle

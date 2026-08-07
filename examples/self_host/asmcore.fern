@@ -841,6 +841,29 @@ pub function (s: EmitState) mark_i32_lcm(): EmitState {
     return s.need("i32_gcd").need("i32_lcm");
 }
 
+// rt_src_arr_reverse / rt_src_arr_concat back `xs.reverse()` / `xs.concat(ys)`
+// (#2649) — the first ARRAY-producing helpers written in Fern, over the
+// __raw_arr_box + __raw_array pair. Both are raw 8-byte SLOT copies, which is
+// why one `i32[]`-typed body serves every element type: a string / struct
+// element is a pointer in the same slot, and neither helper inspects it.
+//
+// That slot copy is also deliberately SHALLOW — no element refcount traffic,
+// exactly as the hand-asm they replace did, and typing the parameters `i32[]` is
+// what keeps the RC insertion agreeing with that. The parameters are read-only,
+// so borrowable_params_interproc marks them borrowed and the caller's array
+// survives; the fresh box comes back at rc=1 from __fern_arr_box.
+//
+// Element i lives at slot i+1 (slot 0 is the length), which is the index
+// __raw_store_ptr scales, so the body never names the box layout. Arch-
+// independent: one source for x86-64 and arm64 alike, no target parameter.
+pub function rt_src_arr_reverse(): string {
+    return "function __fern_arr_reverse(a: i32[]): i32[] { var n: i32 = a.len(); var p: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(p, i + 1, a[n - 1 - i]); i = i + 1; } return __raw_array(p); }";
+}
+
+pub function rt_src_arr_concat(): string {
+    return "function __fern_arr_concat(a: i32[], b: i32[]): i32[] { var an: i32 = a.len(); var bn: i32 = b.len(); var p: i32 = __raw_arr_box(an + bn); var i: i32 = 0; while (i < an) { __raw_store_ptr(p, i + 1, a[i]); i = i + 1; } var j: i32 = 0; while (j < bn) { __raw_store_ptr(p, an + j + 1, b[j]); j = j + 1; } return __raw_array(p); }";
+}
+
 // rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
 // the integer-power runtime helper backing `n.pow(e)`. It is the first runtime
 // helper written in Fern instead of a hand-written asm string (issue #2649):
@@ -2270,6 +2293,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // Pointer + offset at full machine width (#2649) — `p + off`
                     // in the source would be narrowed to i32 by arm64.
                     if (id.name == "__raw_addr") { return ty_i32(); }
+                    // Fresh array box (#2649): __raw_arr_box hands back the data
+                    // pointer as i32, __raw_array retypes it as the array value
+                    // it already is — the array sibling of __raw_string.
+                    if (id.name == "__raw_arr_box") { return ty_i32(); }
+                    if (id.name == "__raw_array") { return ty_array_i32(); }
                     // Syscall sub-floor (#2649): the raw-memory floor's I/O
                     // sibling. Returns the syscall result as i32.
                     if (id.name == "__syscall3") { return ty_i32(); }

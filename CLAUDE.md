@@ -427,8 +427,23 @@ entry-zeroing alone still segfaults), and NODEEP visibility — the
 theory that `slot_nodeep`'s exact-name lookup silently loses the
 marker for a retired slot. Making that lookup prefix-aware is inert
 (every consumer emits while the name is live) and, with the marker
-visible, granting the deep drop STILL segfaults. Whatever it is, it is
-not the guard being bypassed.
+visible, granting the deep drop STILL segfaults. **The actual cause is
+now known**, from a stack trace rather than a guess: gen1 faults in
+`asmcore.EmitState.has_need` → `__fern_str_eq`, reading a freed string
+out of `needed`. The shape is `var lo: StringLitOut = add_string_lit(s,
+..); s = lo.state;` in `asm_ir.emit_function_via_ir_pre` — `lo` is
+block-scoped and its `EmitState` FIELD is moved into the live threaded
+`s`, so the deep drop frees that state's arrays out from under it
+(`ShapeRefOut` / `ConstAggOut` are identical). Both escape analyses
+miss it for the same reason: `expr_unsafe_for` returns false for
+`name.field` ("base read is a borrow" — true for a scalar field, wrong
+for a nested-struct one), and `moves_fields_expr`, the "NODEEP:"
+detector, has the same hole. Closing it needs the move detector to know
+the FIELD TYPE (it takes no `structs` today); marking every bare field
+read conservatively would withhold deep drops far beyond this class.
+**Reproduce in seconds, not the 211s fixpoint**: grant the drop, build
+gen1 as `runEmitAllFixpoint` does, and run it under gdb with
+`-per-module-emit-all -assume-eligible -unit-range 0:8`.
 
 **Re-measure before quoting any figure in this area.** FIVE
 attributions have now been wrong. Four of #6127's own: three because a

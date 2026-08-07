@@ -620,7 +620,7 @@ pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
         var r: irlower.LowerResult = cache[fi];
         var i: i32 = 0;
         while (i < r.ops.len()) {
-            if (r.ops[i].kind_tag == 224) { return true; }  // memchr
+            if (r.ops[i].kind_tag == 225) { return true; }  // memchr
             i = i + 1;
         }
         fi = fi + 1;
@@ -3602,7 +3602,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // stack: src, start, end -> $__fern_substr(src, start, end) copies the
             // bytes into a fresh block (wasm strings are inline, so no view).
             out = out + "    call $__fern_substr\n";
-        } else if (o.kind_tag == 224) {  // memchr
+        } else if (o.kind_tag == 225) {  // memchr
             // stack: s, byte, from -> i32 index or -1. A call, not inline: the
             // body needs a loop over its own locals, and the operand stack here
             // is the wasm value stack.

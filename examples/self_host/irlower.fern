@@ -8458,6 +8458,20 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     if (cid.name == "__raw_environ" && c.args.len() == 0) {
         return s.emit(ir.op_raw_environ());
     }
+    // __raw_arr_box(n) — a fresh n-element array box's data pointer (#2649).
+    // The rc header, length and capacity are written by __fern_arr_box; the
+    // caller fills element i with __raw_store_ptr(p, i + 1, v).
+    if (cid.name == "__raw_arr_box" && c.args.len() == 1) {
+        var ab0: LowerState = lower_expr(c.args[0], s);
+        if (!ab0.ok) { return ab0; }
+        return ab0.emit(ir.op_raw_arr_box());
+    }
+    // __raw_array(ptr) — the type-only bridge back to a typed array (#2649),
+    // the array sibling of __raw_string. It emits NOTHING: the data pointer
+    // already IS the array value, so only the checker needed convincing.
+    if (cid.name == "__raw_array" && c.args.len() == 1) {
+        return lower_expr(c.args[0], s);
+    }
     // __raw_addr(ptr, off) — pointer + offset at full machine width (#2649).
     // Written as `p + off` this would be i32 arithmetic, which arm64 narrows
     // back to 32 bits; the op keeps the whole address.
@@ -20815,9 +20829,38 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // free the box. Order matters: read the fields before freeing the box.
             // A BLOCK-SCOPED slot (credit reached only through the retired name) takes
             // the BOX-ONLY form — the #3456 shallow contract, as for a "NODEEP:" slot.
-            // Making slot_nodeep read through the "!retired!" prefix (below) was tried
-            // as the explanation for #6375's segfault and is NOT it: with the marker
-            // visible, granting the deep drop here still segfaults gen1.
+            //
+            // WHY, precisely (#6127; #6375 left this open and it is now answered by a
+            // stack trace rather than a guess). Granting the deep drop here segfaults
+            // the gen1 self-compile at asmcore.EmitState.has_need → __fern_str_eq,
+            // reading a freed string out of `needed`. The shape that does it, in
+            // asm_ir.emit_function_via_ir_pre:
+            //
+            //     var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
+            //     s = lo.state;
+            //
+            // `StringLitOut { state: EmitState, idx: i32 }` — `lo` is block-scoped and
+            // its EmitState field is MOVED into the function's live threaded `s`. The
+            // deep drop then walks `lo` and frees that EmitState's arrays out from
+            // under `s`. ShapeRefOut / ConstAggOut have the identical shape.
+            //
+            // The escape analysis misses it because expr_unsafe_for's ExprFieldAccess
+            // arm returns false for `name.field` ("base read is a borrow") — true for a
+            // SCALAR field, wrong for a nested-struct / array / string one, which is a
+            // move. moves_fields_expr (the "NODEEP:" detector, the natural place to
+            // catch this) has the same hole: its ExprFieldAccess arm only recurses into
+            // the object, and a bare `ExprIdent` object matches no arm at all.
+            //
+            // So closing this needs the move detector to know the FIELD TYPE — it
+            // currently takes no `structs` — and marking every bare field read
+            // conservatively would withhold deep drops far beyond this class. That is
+            // the shape of the fix, and it is why it is not a one-liner.
+            //
+            // Reproduce in seconds rather than via the 211s fixpoint: grant the drop,
+            // `make selfhost-cli`, then build gen1 the way runEmitAllFixpoint does and
+            // run it under gdb —
+            //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
+            //       -out-dir OUT -func-budget 100 -unit-range 0:8
             if (!scoped_credit) { st = emit_struct_field_drops(st, j); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
