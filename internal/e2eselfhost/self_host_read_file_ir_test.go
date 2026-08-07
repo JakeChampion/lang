@@ -49,7 +49,8 @@ func assertNoDanglingLocalLabels(t *testing.T, ctx string, asm []byte) {
 // readFileIRCases exercise the `read_file(path)` builtin through the IR path on
 // x86-64, arm64, and wasm (the wasm IR path opens the path under preopen fd 3 —
 // run with `--dir`). read_file lowers to a value IR op that pops the path string box and
-// calls each backend's __fern_read_file helper, pushing a fresh
+// calls each backend's read_file helper — `__fn___fern_read_file` on the two
+// register backends, the WAT `$__fern_read_file` on wasm — pushing a fresh
 // Result[string, IoError] box — so `match (read_file(p)) { Ok(s) => …, Err(e)
 // => … }` lowers like any other Result (the Result type is recognised by
 // opt_ret_type's read_file fallback).
@@ -90,9 +91,10 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 	for _, tc := range readFileIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			// x86-64 read_file is now a Fern runtime function (#2649): op_read_file
-			// calls the stack-ABI __fn___fern_read_file (wasm/arm64 keep the
-			// register-ABI __fern_read_file — not migrated).
+			// Both register backends now serve read_file as a Fern runtime
+			// function (#2649): x86-64 first, arm64 in #6352, so op_read_file
+			// calls the stack-ABI __fn___fern_read_file on each. wasm keeps its
+			// WAT helper $__fern_read_file — see the wasm leg below.
 			if !bytes.Contains(asm, []byte("call __fn___fern_read_file")) {
 				t.Fatalf("%s: no call to __fn___fern_read_file — did not lower through the IR path", tc.name)
 			}
@@ -221,8 +223,12 @@ func TestSelfHostReadFileIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_read_file")) {
-				t.Fatalf("%s: no bl __fern_read_file — did not lower through the arm64 IR path", tc.name)
+			// __fn___fern_read_file, not __fern_read_file: #6352 moved arm64's
+			// read_file to a Fern runtime function like x86-64's, and a Fern
+			// function is emitted under the `__fn_` prefix. This assertion kept
+			// the pre-migration name and so went red on every branch.
+			if !bytes.Contains(asm, []byte("bl __fn___fern_read_file")) {
+				t.Fatalf("%s: no bl __fn___fern_read_file — did not lower through the arm64 IR path", tc.name)
 			}
 			assertNoDanglingLocalLabels(t, "arm64 "+tc.name, asm)
 			bin := buildBinArm64(t, arm64gcc, dir, "rf_"+tc.name, string(asm))
