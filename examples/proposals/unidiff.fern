@@ -1,0 +1,654 @@
+// examples/proposals/unidiff.fern — proposal turn, drawn line 2:
+// "A diff tool that prints a unified diff of two text files."
+//
+// LCS by dynamic programming, backtracked into an edit script, grouped into
+// hunks with three lines of context, rendered as a unified diff.
+//
+// The load-bearing test is a ROUND TRIP through the rendered text: the diff
+// is parsed back — hunk headers, context and change lines — and applied to
+// the original, and the result must equal the target exactly. That covers
+// the renderer and the parser together, and it is the property a diff is
+// actually for. An off-by-one in a hunk's start line or line count survives
+// every eyeball check and fails this immediately.
+//
+// Minimality gets an independent oracle rather than a second run of the
+// same DP: for small inputs, every subsequence of the first file is
+// enumerated by bit mask and tested against the second, so the longest
+// common subsequence is known by brute force. A DP with a wrong recurrence
+// still produces a valid, appliable diff — just a longer one — so only this
+// catches it.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from
+// std/test, so the file is its own test suite.
+
+import "std/test";
+import "std/string";
+import "std/i32";
+
+// One edit. `a` and `b` are 0-based line indices into the two files;
+// the unused one is -1.
+enum Edit {
+    Keep(i32, i32),
+    Del(i32),
+    Ins(i32),
+}
+
+function edit_a(e: Edit): i32 {
+    match (e) {
+        Keep(a, _) => { return a; },
+        Del(a) => { return a; },
+        Ins(_) => { return -1; },
+    }
+}
+
+function edit_b(e: Edit): i32 {
+    match (e) {
+        Keep(_, b) => { return b; },
+        Del(_) => { return -1; },
+        Ins(b) => { return b; },
+    }
+}
+
+function is_keep(e: Edit): boolean {
+    match (e) {
+        Keep(_, _) => { return true; },
+        _ => { return false; },
+    }
+}
+
+// ------------------------------------------------------------------ LCS
+
+// lcs[i * (m+1) + j] = length of the LCS of a[i..] and b[j..], filled from
+// the bottom right so the backtrack below can walk forward and produce the
+// edit script in file order.
+function lcs_table(a: string[], b: string[]): i32[] {
+    var n: i32 = a.len();
+    var m: i32 = b.len();
+    var t: i32[] = [];
+    for k in 0..((n + 1) * (m + 1)) { t = t.append(0); }
+    var i: i32 = n - 1;
+    while (i >= 0) {
+        var j: i32 = m - 1;
+        while (j >= 0) {
+            var v: i32 = 0;
+            if (a[i] == b[j]) {
+                v = t[(i + 1) * (m + 1) + (j + 1)] + 1;
+            } else {
+                var down: i32 = t[(i + 1) * (m + 1) + j];
+                var right: i32 = t[i * (m + 1) + (j + 1)];
+                v = down;
+                if (right > v) { v = right; }
+            }
+            t = t.with(i * (m + 1) + j, v);
+            j = j - 1;
+        }
+        i = i - 1;
+    }
+    return t;
+}
+
+// Deletions before insertions at a tie, so a replaced line renders as
+// `-old` then `+new` rather than interleaved — the conventional shape, and
+// the one the round-trip parser is written against.
+function diff(a: string[], b: string[]): Edit[] {
+    var m: i32 = b.len();
+    var t: i32[] = lcs_table(a, b);
+    var edits: Edit[] = [];
+    var i: i32 = 0;
+    var j: i32 = 0;
+    while (i < a.len() || j < b.len()) {
+        if (i < a.len() && j < b.len() && a[i] == b[j]) {
+            edits = edits.append(Keep(i, j));
+            i = i + 1;
+            j = j + 1;
+        } else if (i < a.len() && (j == b.len()
+                   || t[(i + 1) * (m + 1) + j] >= t[i * (m + 1) + (j + 1)])) {
+            // Deleting loses nothing inserting would keep — and at a tie
+            // this branch wins, which is what puts `-old` before `+new`.
+            edits = edits.append(Del(i));
+            i = i + 1;
+        } else {
+            edits = edits.append(Ins(j));
+            j = j + 1;
+        }
+    }
+    return edits;
+}
+
+function keep_count(edits: Edit[]): i32 {
+    var n: i32 = 0;
+    for k in 0..edits.len() { if (is_keep(edits[k])) { n = n + 1; } }
+    return n;
+}
+
+// ---------------------------------------------------------------- hunks
+
+function context(): i32 { return 3; }
+
+struct Hunk {
+    a_start: i32, a_count: i32,     // 1-based start, as the header prints it
+    b_start: i32, b_count: i32,
+    lines: string[],                 // each already prefixed with ' ', '-' or '+'
+}
+
+// Group the edit script into hunks: every run of changes, padded with up to
+// `context()` unchanged lines on each side, with adjacent runs merged when
+// their context would overlap.
+function hunks_of(edits: Edit[], a: string[], b: string[]): Hunk[] {
+    var out: Hunk[] = [];
+    var k: i32 = 0;
+    while (k < edits.len()) {
+        if (is_keep(edits[k])) { k = k + 1; continue; }
+        // Walk back over the leading context.
+        var start: i32 = k;
+        var back: i32 = 0;
+        while (start > 0 && back < context() && is_keep(edits[start - 1])) {
+            start = start - 1;
+            back = back + 1;
+        }
+        // Extend forward while a change is within 2*context of the last one,
+        // so two nearby runs share one hunk rather than repeating context.
+        var end: i32 = k;
+        var run: i32 = 0;
+        var p: i32 = k;
+        while (p < edits.len()) {
+            if (!is_keep(edits[p])) {
+                end = p;
+                run = 0;
+            } else {
+                run = run + 1;
+                if (run > 2 * context()) { break; }
+            }
+            p = p + 1;
+        }
+        var stop: i32 = end + 1;
+        var fwd: i32 = 0;
+        while (stop < edits.len() && fwd < context() && is_keep(edits[stop])) {
+            stop = stop + 1;
+            fwd = fwd + 1;
+        }
+        out = out.append(build_hunk(edits, a, b, start, stop));
+        k = stop;
+    }
+    return out;
+}
+
+function build_hunk(edits: Edit[], a: string[], b: string[],
+                    start: i32, stop: i32): Hunk {
+    var lines: string[] = [];
+    var a_count: i32 = 0;
+    var b_count: i32 = 0;
+    var a_first: i32 = -1;
+    var b_first: i32 = -1;
+    for k in start..stop {
+        var ai: i32 = edit_a(edits[k]);
+        var bi: i32 = edit_b(edits[k]);
+        if (ai >= 0 && a_first < 0) { a_first = ai; }
+        if (bi >= 0 && b_first < 0) { b_first = bi; }
+        match (edits[k]) {
+            Keep(x, _) => {
+                lines = lines.append(" " + a[x]);
+                a_count = a_count + 1;
+                b_count = b_count + 1;
+            },
+            Del(x) => {
+                lines = lines.append("-" + a[x]);
+                a_count = a_count + 1;
+            },
+            Ins(y) => {
+                lines = lines.append("+" + b[y]);
+                b_count = b_count + 1;
+            },
+        }
+    }
+    // A hunk with no lines from one side starts at 0 by unified-diff
+    // convention (there is no line to point at), not at 1.
+    var a_start: i32 = 0;
+    if (a_count > 0) { a_start = a_first + 1; }
+    var b_start: i32 = 0;
+    if (b_count > 0) { b_start = b_first + 1; }
+    return Hunk { a_start: a_start, a_count: a_count,
+                  b_start: b_start, b_count: b_count, lines: lines };
+}
+
+function hunk_header(h: Hunk): string {
+    return "@@ -" + h.a_start.to_string() + "," + h.a_count.to_string()
+        + " +" + h.b_start.to_string() + "," + h.b_count.to_string() + " @@";
+}
+
+function render(a: string[], b: string[], a_name: string, b_name: string): string {
+    var hs: Hunk[] = hunks_of(diff(a, b), a, b);
+    if (hs.len() == 0) { return ""; }
+    var out: string = "--- " + a_name + "\n+++ " + b_name + "\n";
+    for i in 0..hs.len() {
+        out = out + hunk_header(hs[i]) + "\n";
+        for k in 0..hs[i].lines.len() { out = out + hs[i].lines[k] + "\n"; }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- apply
+
+// Parse a rendered unified diff and apply it to `a`. Deliberately strict:
+// a context line that does not match, or a header whose counts disagree
+// with its body, is an error rather than a best-effort patch — the point is
+// to detect a renderer bug, not to survive one.
+function apply(a: string[], diff_text: string): Result[string[], string] {
+    if (diff_text.len() == 0) { return Ok(a); }
+    var lines: string[] = diff_text.split("\n");
+    var out: string[] = [];
+    var cursor: i32 = 0;          // next unconsumed line of `a`, 0-based
+    var i: i32 = 0;
+    if (lines.len() < 2 || !lines[0].starts_with("--- ")
+        || !lines[1].starts_with("+++ ")) {
+        return Err("missing file headers");
+    }
+    i = 2;
+    while (i < lines.len()) {
+        if (lines[i].len() == 0) { i = i + 1; continue; }
+        if (!lines[i].starts_with("@@ ")) {
+            return Err("expected a hunk header, got \"" + lines[i] + "\"");
+        }
+        var hdr: Result[i32[], string] = parse_header(lines[i]);
+        var nums: i32[] = [];
+        match (hdr) {
+            Err(e) => { return Err(e); },
+            Ok(v) => { nums = v; },
+        }
+        i = i + 1;
+        var a_start: i32 = nums[0];
+        var a_count: i32 = nums[1];
+        var b_count: i32 = nums[3];
+        // Copy the untouched lines before this hunk.
+        var upto: i32 = a_start - 1;
+        if (a_count == 0) { upto = a_start; }
+        if (upto < cursor) {
+            return Err("hunk starts at " + a_start.to_string()
+                + ", before the cursor at " + (cursor + 1).to_string());
+        }
+        while (cursor < upto) {
+            if (cursor >= a.len()) { return Err("hunk starts past the end"); }
+            out = out.append(a[cursor]);
+            cursor = cursor + 1;
+        }
+        var seen_a: i32 = 0;
+        var seen_b: i32 = 0;
+        while (i < lines.len() && (seen_a < a_count || seen_b < b_count)) {
+            var ln: string = lines[i];
+            if (ln.len() == 0) {
+                return Err("hunk ended early: " + seen_a.to_string() + "/"
+                    + a_count.to_string() + " old, " + seen_b.to_string() + "/"
+                    + b_count.to_string() + " new");
+            }
+            var tag: str = ln.take(1);
+            var body: string = ln.drop(1).to_owned();
+            if (tag == " ") {
+                if (cursor >= a.len() || a[cursor] != body) {
+                    return Err("context line " + (cursor + 1).to_string()
+                        + " does not match: \"" + body + "\"");
+                }
+                out = out.append(body);
+                cursor = cursor + 1;
+                seen_a = seen_a + 1;
+                seen_b = seen_b + 1;
+            } else if (tag == "-") {
+                if (cursor >= a.len() || a[cursor] != body) {
+                    return Err("deleted line " + (cursor + 1).to_string()
+                        + " does not match: \"" + body + "\"");
+                }
+                cursor = cursor + 1;
+                seen_a = seen_a + 1;
+            } else if (tag == "+") {
+                out = out.append(body);
+                seen_b = seen_b + 1;
+            } else {
+                return Err("unknown line prefix \"" + tag + "\"");
+            }
+            i = i + 1;
+        }
+        if (seen_a != a_count || seen_b != b_count) {
+            return Err("hunk header says " + a_count.to_string() + "/"
+                + b_count.to_string() + ", body has " + seen_a.to_string()
+                + "/" + seen_b.to_string());
+        }
+    }
+    while (cursor < a.len()) {
+        out = out.append(a[cursor]);
+        cursor = cursor + 1;
+    }
+    return Ok(out);
+}
+
+// "@@ -1,4 +1,5 @@" -> [1, 4, 1, 5]
+function parse_header(h: string): Result[i32[], string] {
+    var parts: string[] = h.split(" ");
+    if (parts.len() < 4) { return Err("malformed hunk header: " + h); }
+    var old_side: string = parts[1];
+    var new_side: string = parts[2];
+    if (!old_side.starts_with("-") || !new_side.starts_with("+")) {
+        return Err("malformed hunk header: " + h);
+    }
+    var a_nums: string[] = old_side.drop(1).split(",");
+    var b_nums: string[] = new_side.drop(1).split(",");
+    if (a_nums.len() != 2 || b_nums.len() != 2) {
+        return Err("malformed hunk ranges: " + h);
+    }
+    var out: i32[] = [];
+    var raw: string[] = [a_nums[0], a_nums[1], b_nums[0], b_nums[1]];
+    for k in 0..4 {
+        match (raw[k].parse_int()) {
+            None => { return Err("non-numeric range in: " + h); },
+            Some(v) => { out = out.append(v); },
+        }
+    }
+    return Ok(out);
+}
+
+// ------------------------------------------------------------- the corpus
+
+struct Pair { name: string, a: string[], b: string[] }
+
+function corpus(): Pair[] {
+    return [
+        Pair { name: "identical", a: ["one", "two", "three"],
+                                  b: ["one", "two", "three"] },
+        Pair { name: "one line changed", a: ["a", "b", "c"], b: ["a", "B", "c"] },
+        Pair { name: "insert at the top", a: ["b", "c"], b: ["a", "b", "c"] },
+        Pair { name: "insert at the end", a: ["a", "b"], b: ["a", "b", "c"] },
+        Pair { name: "delete the middle", a: ["a", "b", "c"], b: ["a", "c"] },
+        Pair { name: "empty to full", a: [], b: ["a", "b"] },
+        Pair { name: "full to empty", a: ["a", "b"], b: [] },
+        Pair { name: "both empty", a: [], b: [] },
+        Pair { name: "everything replaced", a: ["a", "b", "c"], b: ["x", "y", "z"] },
+        Pair { name: "two distant hunks",
+               a: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                   "11", "12", "13", "14", "15", "16", "17", "18"],
+               b: ["1", "CHANGED", "3", "4", "5", "6", "7", "8", "9", "10",
+                   "11", "12", "13", "14", "15", "16", "ALSO", "18"] },
+        Pair { name: "two adjacent hunks merge",
+               a: ["1", "2", "3", "4", "5", "6", "7", "8"],
+               b: ["1", "X", "3", "4", "Y", "6", "7", "8"] },
+        Pair { name: "repeated lines",
+               a: ["x", "x", "x", "y"], b: ["x", "y", "x", "x"] },
+        Pair { name: "duplicate blocks",
+               a: ["a", "b", "a", "b"], b: ["a", "b"] },
+        Pair { name: "prefix and suffix shared",
+               a: ["h1", "h2", "mid", "t1", "t2"],
+               b: ["h1", "h2", "other", "t1", "t2"] },
+        Pair { name: "long run inserted",
+               a: ["start", "end"],
+               b: ["start", "i1", "i2", "i3", "i4", "i5", "end"] },
+    ];
+}
+
+// ---------------------------------------------------------------- tests
+
+// THE test. Render, parse the rendered text back, apply it to the original,
+// and require the target exactly. This is the property a diff exists to
+// have, and it covers the renderer and the parser at once.
+function test_the_diff_round_trips(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        var text: string = render(cs[i].a, cs[i].b, "a", "b");
+        match (apply(cs[i].a, text)) {
+            Err(e) => {
+                return test.fail("\"" + cs[i].name + "\": applying failed: " + e);
+            },
+            Ok(got) => {
+                if (!same(got, cs[i].b)) {
+                    return test.fail("\"" + cs[i].name + "\": applying gave ["
+                        + got.join(", ") + "], wanted [" + cs[i].b.join(", ") + "]");
+                }
+            },
+        }
+    }
+    return test.pass();
+}
+
+function same(x: string[], y: string[]): boolean {
+    if (x.len() != y.len()) { return false; }
+    for i in 0..x.len() { if (x[i] != y[i]) { return false; } }
+    return true;
+}
+
+// A file against itself has no diff at all — not an empty hunk, no output.
+function test_no_difference_prints_nothing(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        var text: string = render(cs[i].a, cs[i].a, "a", "a");
+        if (text.len() != 0) {
+            return test.fail("\"" + cs[i].name + "\" against itself produced:\n"
+                + text);
+        }
+        var edits: Edit[] = diff(cs[i].a, cs[i].a);
+        if (keep_count(edits) != cs[i].a.len()) {
+            return test.fail("\"" + cs[i].name + "\" against itself kept "
+                + keep_count(edits).to_string() + " of "
+                + cs[i].a.len().to_string() + " lines");
+        }
+    }
+    return test.pass();
+}
+
+// Every hunk header's counts must equal what its body contains. A header
+// that lies is the failure the round trip catches too — this one names it.
+function test_hunk_headers_match_their_bodies(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        var hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+        for k in 0..hs.len() {
+            var old_n: i32 = 0;
+            var new_n: i32 = 0;
+            for l in 0..hs[k].lines.len() {
+                var tag: str = hs[k].lines[l].take(1);
+                if (tag == " ") { old_n = old_n + 1; new_n = new_n + 1; }
+                if (tag == "-") { old_n = old_n + 1; }
+                if (tag == "+") { new_n = new_n + 1; }
+            }
+            if (old_n != hs[k].a_count || new_n != hs[k].b_count) {
+                return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
+                    + ": " + hunk_header(hs[k]) + " but the body has "
+                    + old_n.to_string() + "/" + new_n.to_string());
+            }
+            // A hunk must contain at least one change, or it is pure noise.
+            var changed: boolean = false;
+            for l in 0..hs[k].lines.len() {
+                var t2: str = hs[k].lines[l].take(1);
+                if (t2 == "-" || t2 == "+") { changed = true; }
+            }
+            if (!changed) {
+                return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
+                    + " contains no changes");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Minimality, against brute force rather than a second run of the DP. Every
+// subsequence of `a` is enumerated by bit mask and tested against `b`, so
+// the true LCS length is known independently. A wrong recurrence still
+// yields an appliable diff — just a longer one — so nothing else finds it.
+function test_the_edit_script_is_minimal(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        if (cs[i].a.len() > 12) { continue; }   // 2^n enumeration below
+        var want: i32 = brute_force_lcs(cs[i].a, cs[i].b);
+        var got: i32 = keep_count(diff(cs[i].a, cs[i].b));
+        if (got != want) {
+            return test.fail("\"" + cs[i].name + "\": kept " + got.to_string()
+                + " lines, but the longest common subsequence is "
+                + want.to_string());
+        }
+    }
+    return test.pass();
+}
+
+function brute_force_lcs(a: string[], b: string[]): i32 {
+    var n: i32 = a.len();
+    var best: i32 = 0;
+    var total: i32 = 1;
+    for k in 0..n { total = total * 2; }
+    for mask in 0..total {
+        var pick: string[] = [];
+        for k in 0..n {
+            if (((mask >> k) & 1) == 1) { pick = pick.append(a[k]); }
+        }
+        if (pick.len() > best && is_subsequence(pick, b)) { best = pick.len(); }
+    }
+    return best;
+}
+
+function is_subsequence(needle: string[], hay: string[]): boolean {
+    var j: i32 = 0;
+    for i in 0..hay.len() {
+        if (j < needle.len() && needle[j] == hay[i]) { j = j + 1; }
+    }
+    return j == needle.len();
+}
+
+// Swapping the two files swaps the roles of `-` and `+`, line for line. A
+// diff that is asymmetric in its tie-breaking still passes the round trip,
+// so this checks something the round trip cannot.
+function test_reversing_the_files_swaps_the_signs(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        var fwd: Edit[] = diff(cs[i].a, cs[i].b);
+        var rev: Edit[] = diff(cs[i].b, cs[i].a);
+        var fwd_del: i32 = count_kind(fwd, 1);
+        var fwd_ins: i32 = count_kind(fwd, 2);
+        var rev_del: i32 = count_kind(rev, 1);
+        var rev_ins: i32 = count_kind(rev, 2);
+        if (fwd_del != rev_ins || fwd_ins != rev_del) {
+            return test.fail("\"" + cs[i].name + "\": forward is -"
+                + fwd_del.to_string() + "/+" + fwd_ins.to_string()
+                + " but reverse is -" + rev_del.to_string() + "/+"
+                + rev_ins.to_string());
+        }
+        // And the accounting closes: kept + deleted = |a|, kept + inserted = |b|.
+        var keeps: i32 = keep_count(fwd);
+        if (keeps + fwd_del != cs[i].a.len()) {
+            return test.fail("\"" + cs[i].name + "\": kept + deleted != |a|");
+        }
+        if (keeps + fwd_ins != cs[i].b.len()) {
+            return test.fail("\"" + cs[i].name + "\": kept + inserted != |b|");
+        }
+    }
+    return test.pass();
+}
+
+function count_kind(edits: Edit[], kind: i32): i32 {
+    var n: i32 = 0;
+    for k in 0..edits.len() {
+        match (edits[k]) {
+            Del(_) => { if (kind == 1) { n = n + 1; } },
+            Ins(_) => { if (kind == 2) { n = n + 1; } },
+            Keep(_, _) => { if (kind == 0) { n = n + 1; } },
+        }
+    }
+    return n;
+}
+
+// The applier refuses a diff that does not describe this file, rather than
+// producing a plausible wrong result. A patch tool that guesses is worse
+// than one that stops.
+function test_a_mismatched_patch_is_refused(): test.TestOutcome {
+    var a: string[] = ["one", "two", "three", "four"];
+    var b: string[] = ["one", "TWO", "three", "four"];
+    var good: string = render(a, b, "a", "b");
+    var others: string[][] = [
+        ["one", "different", "three", "four"],   // the context does not match
+        ["totally", "unrelated"],                 // too short
+        [],                                       // empty
+    ];
+    for i in 0..others.len() {
+        match (apply(others[i], good)) {
+            Err(_) => { },
+            Ok(got) => {
+                return test.fail("patch " + i.to_string()
+                    + " applied to the wrong file, giving [" + got.join(", ") + "]");
+            },
+        }
+    }
+    // Malformed diffs are refused too.
+    var bad: string[] = [
+        "@@ -1,1 +1,1 @@\n one\n",                       // no file headers
+        "--- a\n+++ b\nnot a hunk header\n",
+        "--- a\n+++ b\n@@ -1,9 +1,9 @@\n one\n",         // counts exceed the body
+        "--- a\n+++ b\n@@ -x,1 +1,1 @@\n one\n",         // non-numeric range
+    ];
+    for i in 0..bad.len() {
+        match (apply(a, bad[i])) {
+            Err(_) => { },
+            Ok(_) => {
+                return test.fail("malformed diff " + i.to_string() + " was accepted");
+            },
+        }
+    }
+    return test.pass();
+}
+
+// Context is bounded: no hunk carries more than `context()` unchanged lines
+// before its first change or after its last. An unbounded context is how a
+// diff quietly becomes the whole file.
+function test_context_is_bounded(): test.TestOutcome {
+    var cs: Pair[] = corpus();
+    for i in 0..cs.len() {
+        var hs: Hunk[] = hunks_of(diff(cs[i].a, cs[i].b), cs[i].a, cs[i].b);
+        for k in 0..hs.len() {
+            var lead: i32 = 0;
+            for l in 0..hs[k].lines.len() {
+                if (hs[k].lines[l].take(1) != " ") { break; }
+                lead = lead + 1;
+            }
+            if (lead > context()) {
+                return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
+                    + " leads with " + lead.to_string() + " context lines");
+            }
+            var trail: i32 = 0;
+            var l2: i32 = hs[k].lines.len() - 1;
+            while (l2 >= 0 && hs[k].lines[l2].take(1) == " ") {
+                trail = trail + 1;
+                l2 = l2 - 1;
+            }
+            if (trail > context()) {
+                return test.fail("\"" + cs[i].name + "\" hunk " + k.to_string()
+                    + " trails with " + trail.to_string() + " context lines");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------------ app
+
+function main(): i32 {
+    eprint("unidiff — a unified diff, checked by applying it back");
+    var a: string[] = ["the quick brown fox", "jumps over", "the lazy dog",
+                       "and keeps going", "line five", "line six", "line seven"];
+    var b: string[] = ["the quick brown fox", "leaps over", "the lazy dog",
+                       "and keeps going", "line five", "line six",
+                       "line six and a half", "line seven"];
+    var text: string = render(a, b, "before.txt", "after.txt");
+    var out: string[] = text.split("\n");
+    for i in 0..out.len() {
+        if (out[i].len() > 0) { eprint("  " + out[i]); }
+    }
+    match (apply(a, text)) {
+        Err(e) => { eprint("  applying it back FAILED: " + e); },
+        Ok(got) => {
+            if (same(got, b)) { eprint("  applying it back reproduces after.txt"); }
+            else { eprint("  applying it back did NOT reproduce after.txt"); }
+        },
+    }
+
+    var r: test.TestRunner = test.test_new("unidiff");
+    r = r.it("the diff round trips", test_the_diff_round_trips);
+    r = r.it("no difference prints nothing", test_no_difference_prints_nothing);
+    r = r.it("hunk headers match their bodies", test_hunk_headers_match_their_bodies);
+    r = r.it("the edit script is minimal", test_the_edit_script_is_minimal);
+    r = r.it("reversing the files swaps the signs", test_reversing_the_files_swaps_the_signs);
+    r = r.it("a mismatched patch is refused", test_a_mismatched_patch_is_refused);
+    r = r.it("context is bounded", test_context_is_bounded);
+    return r.finish();
+}

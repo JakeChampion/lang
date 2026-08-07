@@ -6886,6 +6886,44 @@ func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	return gotStr && wantString
 }
 
+// freshOwnedProducers are calls whose result is a freshly allocated value by
+// contract, so an `own` parameter may consume one (E051). The general rule in
+// `isOwnedExpr` is conservative — a callee with a borrowed pointer parameter
+// could hand that same pointer back — and `to_owned` trips it: its parameter
+// is a borrowed `string`, even though its entire purpose is to return a copy
+// and its body is the `s + ""` concat `isOwnedExpr` already trusts in every
+// other position.
+//
+// That mattered because `.to_owned()` is what the checker TELLS the reader to
+// write: `argAssignable` refuses a `str` at an `own` parameter with
+// "materialise with .to_owned() instead", and doing so cleared the E038 only
+// to leave an E051 on the same expression. The advice and the rule disagreed;
+// this makes the rule agree with the advice.
+var freshOwnedProducers = map[string]bool{
+	"__method_string_to_owned": true,
+}
+
+// strCopyHint names the remedy when a borrowed `str` view reaches an owning
+// sink. Refusing the promotion is deliberate — see `assignable` — but the
+// diagnostic only restated the two type names, and the way out was written
+// down in a checker comment and nowhere the reader could see it. That dead-
+// ends the most ordinary string expression there is:
+//
+//	var t: string = s.trim();
+//	error[E003]: cannot assign str to variable of type string
+//
+// `.to_owned()` is the materialiser, and the stdlib already uses it at every
+// such site. Empty for any other pair, so it only fires where it applies.
+func strCopyHint(want, got ast.Type) string {
+	if _, gotStr := got.(ast.StrType); !gotStr {
+		return ""
+	}
+	if _, wantString := want.(ast.StringType); !wantString {
+		return ""
+	}
+	return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string"
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	if ast.Equal(dst, src) {
 		return true
@@ -8264,6 +8302,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 					return true // variant-constructor call → fresh enum value
 				}
+				if freshOwnedProducers[id.Name] {
+					return true
+				}
 				// A user function with a pointer result whose every pointer
 				// parameter it could return is provably not BORROWED returns a
 				// freshly-owned value. Two such cases:
@@ -9059,7 +9100,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !c.assignable(want, got) {
-			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s", want, got)
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, strCopyHint(want, got))
 		}
 	case *ast.Defer:
 		// Just type-check the action; its result is discarded (defer is
@@ -9145,7 +9186,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
-				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s", got, n.Type)
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, strCopyHint(n.Type, got))
 			}
 		}
 		s.names[n.Name] = n.Type
@@ -11733,10 +11774,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if sub != nil {
 					if !c.unifyType(expected, at, sub) {
-						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
+						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 					}
 				} else if !c.argAssignable(expected, at, i < len(calleeOwnFlags) && calleeOwnFlags[i]) {
-					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s", i+1, expected, at)
+					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 				}
 			}
 		}
@@ -12338,7 +12379,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
-			c.errfCode(n.P, "E003", "cannot assign %s to %s", rt, lt)
+			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, strCopyHint(lt, rt))
 		}
 		// Fields are immutable after construction: a struct value
 		// can't have a field reassigned in place. This is the
@@ -12735,7 +12776,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, substituteType(expected, sub), vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, strCopyHint(substituteType(expected, sub), vt))
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -12745,7 +12786,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s", f.Name, expected, vt)
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, strCopyHint(expected, vt))
 				}
 			}
 		}
