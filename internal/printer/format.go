@@ -85,80 +85,83 @@ func Format(prog *ast.Program) string {
 		f.b.WriteByte('\n')
 	}
 	written := len(prog.Imports) > 0 || len(prog.PubUses) > 0
-	for _, sd := range prog.Structs {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(sd.P.Line, 0)
-		f.formatStructDecl(sd)
-		written = true
-	}
-	for _, ed := range prog.Enums {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(ed.P.Line, 0)
-		f.formatEnumDecl(ed)
-		written = true
-	}
-	for _, ud := range prog.Unions {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(ud.P.Line, 0)
-		f.formatUnionDecl(ud)
-		written = true
-	}
-	for _, rd := range prog.Resources {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(rd.P.Line, 0)
-		f.formatResourceDecl(rd)
-		written = true
-	}
-	for _, td := range prog.Traits {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(td.P.Line, 0)
-		f.formatTraitDecl(td)
-		written = true
-	}
 	// Impl methods are also present in prog.Funcs (the parser flattens
-	// them there for the checker). Collect them so the top-level Funcs
-	// loop skips them — they render inside their `impl { … }` block.
+	// them there for the checker). Collect them so the funcs below are
+	// skipped — they render inside their `impl { … }` block.
 	implMethods := map[*ast.FuncDecl]bool{}
 	for _, id := range prog.Impls {
 		for _, m := range id.Methods {
 			implMethods[m] = true
 		}
 	}
+	// Declarations emit in SOURCE ORDER, not grouped by kind.
+	//
+	// The kind-grouped form (every struct, then every enum, then …)
+	// silently RELOCATED COMMENTS, because the comment cursor is monotonic
+	// over source-ordered comments while the emission order was not: a
+	// declaration printed first but positioned later in the source drained
+	// every pending comment above it, including comments documenting the
+	// declarations that had not been printed yet. So a comment trailing an
+	// enum variant reappeared above a struct written after the enum,
+	// attached to something it says nothing true about — and `-fmt -w` put
+	// that on disk (#6335). Emitting in source order keeps the cursor in
+	// step with the text, which fixes the attachment at its cause instead
+	// of teaching each element printer to carry its own trailing comments.
+	//
+	// It also drops the reordering itself, which was never a stated
+	// contract — the syntax reference promises only that the formatter
+	// "preserves their original position" for comments — and which made a
+	// `-fmt -d` diff on an unformatted file far larger than the change it
+	// was reporting.
+	type topDecl struct {
+		p    ast.Position
+		emit func()
+	}
+	decls := make([]topDecl, 0,
+		len(prog.Structs)+len(prog.Enums)+len(prog.Unions)+len(prog.Resources)+
+			len(prog.Traits)+len(prog.Impls)+len(prog.Consts)+len(prog.Funcs))
+	for _, sd := range prog.Structs {
+		decls = append(decls, topDecl{sd.P, func() { f.formatStructDecl(sd) }})
+	}
+	for _, ed := range prog.Enums {
+		decls = append(decls, topDecl{ed.P, func() { f.formatEnumDecl(ed) }})
+	}
+	for _, ud := range prog.Unions {
+		decls = append(decls, topDecl{ud.P, func() { f.formatUnionDecl(ud) }})
+	}
+	for _, rd := range prog.Resources {
+		decls = append(decls, topDecl{rd.P, func() { f.formatResourceDecl(rd) }})
+	}
+	for _, td := range prog.Traits {
+		decls = append(decls, topDecl{td.P, func() { f.formatTraitDecl(td) }})
+	}
 	for _, id := range prog.Impls {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(id.P.Line, 0)
-		f.formatImplDecl(id)
-		written = true
+		decls = append(decls, topDecl{id.P, func() { f.formatImplDecl(id) }})
 	}
 	for _, cd := range prog.Consts {
-		if written {
-			f.b.WriteByte('\n')
-		}
-		f.drainLeading(cd.P.Line, 0)
-		f.formatConstDecl(cd)
-		written = true
+		decls = append(decls, topDecl{cd.P, func() { f.formatConstDecl(cd) }})
 	}
 	for _, fn := range prog.Funcs {
 		if implMethods[fn] {
 			continue
 		}
+		decls = append(decls, topDecl{fn.P, func() { f.formatFunc(fn, 0) }})
+	}
+	// Stable, so two declarations the parser gave the same position (a
+	// desugar that synthesises one from another) keep the order the
+	// per-kind slices had rather than swapping run to run.
+	sort.SliceStable(decls, func(i, j int) bool {
+		if decls[i].p.Line != decls[j].p.Line {
+			return decls[i].p.Line < decls[j].p.Line
+		}
+		return decls[i].p.Col < decls[j].p.Col
+	})
+	for _, d := range decls {
 		if written {
 			f.b.WriteByte('\n')
 		}
-		f.drainLeading(fn.P.Line, 0)
-		f.formatFunc(fn, 0)
+		f.drainLeading(d.p.Line, 0)
+		d.emit()
 		written = true
 	}
 	// Trailing comments past the last declaration emit at depth 0.
@@ -216,6 +219,28 @@ func (f *formatter) emitTrailing(line int) {
 		f.b.WriteString(f.comments[f.ci].Text)
 		f.ci++
 	}
+}
+
+// innerCommentPending reports whether a pending comment falls INSIDE a
+// declaration's source span — after its opening line, at or before `last`
+// (the last element's line). It is the signal that the one-line rendering
+// would strand the comment: nothing inside that rendering can emit it, so
+// it survives in the queue and is drained by whatever is printed next,
+// reappearing attached to an unrelated declaration (#6335).
+//
+// The scan starts at the cursor and stops at the first comment past `last`,
+// so it is O(comments in the span) rather than O(all comments).
+func (f *formatter) innerCommentPending(declLine, last int) bool {
+	for i := f.ci; i < len(f.comments); i++ {
+		ln := f.comments[i].Pos.Line
+		if ln > last {
+			return false
+		}
+		if ln > declLine {
+			return true
+		}
+	}
+	return false
 }
 
 // drainAll flushes every remaining comment at the supplied indent.
@@ -283,35 +308,60 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 		}
 		f.b.WriteByte(']')
 	}
+	// A comment inside the braces forces the MULTI-LINE form: the one-liner
+	// has nowhere to put it, so it would be stranded in the queue and
+	// re-emitted above the next declaration (#6335). One variant per line
+	// gives each its own drainLeading / emitTrailing pair, which is what
+	// keeps `Unclosed(i32),  // opener never closed` on `Unclosed`.
+	if len(ed.Variants) > 0 && f.innerCommentPending(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
+		f.b.WriteString(" {\n")
+		for _, v := range ed.Variants {
+			f.drainLeading(v.P.Line, 1)
+			f.b.WriteString(formatIndent)
+			f.writeEnumVariant(v)
+			f.b.WriteByte(',')
+			f.emitTrailing(v.P.Line)
+			f.b.WriteByte('\n')
+		}
+		f.b.WriteString("}\n")
+		return
+	}
 	f.b.WriteString(" { ")
 	for i, v := range ed.Variants {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		f.b.WriteString(v.Name)
-		if len(v.FieldNames) > 0 {
-			f.b.WriteString(" { ")
-			for j, fn := range v.FieldNames {
-				if j > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(fn)
-				f.b.WriteString(": ")
-				f.b.WriteString(formatType(v.Payloads[j]))
-			}
-			f.b.WriteString(" }")
-		} else if len(v.Payloads) > 0 {
-			f.b.WriteByte('(')
-			for j, p := range v.Payloads {
-				if j > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(formatType(p))
-			}
-			f.b.WriteByte(')')
-		}
+		f.writeEnumVariant(v)
 	}
 	f.b.WriteString(" }\n")
+}
+
+// writeEnumVariant emits one variant — `Name`, `Name(T, U)` or the
+// record form `Name { f: T }` — with no separator or indent of its own,
+// so the one-line and multi-line enum renderings share it.
+func (f *formatter) writeEnumVariant(v ast.EnumVariant) {
+	f.b.WriteString(v.Name)
+	if len(v.FieldNames) > 0 {
+		f.b.WriteString(" { ")
+		for j, fn := range v.FieldNames {
+			if j > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(fn)
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(v.Payloads[j]))
+		}
+		f.b.WriteString(" }")
+	} else if len(v.Payloads) > 0 {
+		f.b.WriteByte('(')
+		for j, p := range v.Payloads {
+			if j > 0 {
+				f.b.WriteString(", ")
+			}
+			f.b.WriteString(formatType(p))
+		}
+		f.b.WriteByte(')')
+	}
 }
 
 // formatUnionDecl emits `type Name = A | B | C;` on a single
@@ -409,6 +459,26 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
 	f.writeTypeParams(sd.TypeParams, nil, nil)
+	// A comment inside the braces forces the MULTI-LINE form, for the same
+	// reason the enum printer does — see #6335 and innerCommentPending. A
+	// synthetic field (NamePos zero) has no line to attach to, so a struct
+	// carrying one keeps the one-liner.
+	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
+		f.innerCommentPending(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
+		f.b.WriteString(" {\n")
+		for _, fld := range sd.Fields {
+			f.drainLeading(fld.NamePos.Line, 1)
+			f.b.WriteString(formatIndent)
+			f.b.WriteString(fld.Name)
+			f.b.WriteString(": ")
+			f.b.WriteString(formatType(fld.Type))
+			f.b.WriteByte(',')
+			f.emitTrailing(fld.NamePos.Line)
+			f.b.WriteByte('\n')
+		}
+		f.b.WriteString("}\n")
+		return
+	}
 	f.b.WriteString(" { ")
 	for i, fld := range sd.Fields {
 		if i > 0 {
