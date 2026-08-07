@@ -127,3 +127,67 @@ func TestSelfHostCheckerModloadX86_64(t *testing.T) {
 		t.Errorf("checker driver exited %d, want 1 (diagnostics emitted)", code)
 	}
 }
+
+// TestSelfHostCheckerModloadEmptyImplMangledX86_64 pins that an EMPTY
+// `impl Trait for Type` block survives flatten's name mangling.
+//
+// flatten renames an imported module's decls (`Num` -> `num__Num`) and
+// rewrites every type spelling with them, including each receiver method's
+// receiver type — but it used to pass `mod.impls` through verbatim, so the
+// impl table still said `Num` / `num.Num` while the providing method had
+// become `num__Num`. The checker's E021 conformance scan resolves an empty
+// impl by looking for an inherent method on `impl_type` ("empty impls adopt
+// the existing method"), found nothing under the stale spelling, and
+// reported every required method of every empty impl as missing. Real
+// programs hit it through core/cmp's `impl Display for bigint.BigInt` et al,
+// which any `import "std/array"` pulls in — four spurious E021s on a clean
+// program. `flatten.mangle_impls` (#6398) fixed it; this is the pin, which
+// that PR did not carry.
+//
+// Both shapes are covered: an empty impl on the impl-ing module's OWN struct
+// (bare `Tag`, mangled by prefix) and one on a struct from another module
+// (qualified `num.Num`, mangled by module map) — the bigint/cmp shape.
+func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
+	_, runner, driverBin := buildCheckerModloadDriverX86(t)
+
+	progDir := t.TempDir()
+	bsrc, err := os.ReadFile("../../examples/self_host/builtins.fern")
+	if err != nil {
+		t.Fatalf("read builtins.fern: %v", err)
+	}
+	files := map[string]string{
+		"builtins.fern": string(bsrc),
+		// num: the struct + its inherent method, no impl block of its own.
+		"num.fern": "pub struct Num { v: i32 }\n" +
+			"pub function (n: Num) to_string(): string { return \"n\"; }\n",
+		// cross: the trait, plus two empty impls — one on its OWN struct
+		// (bare `Tag`) and one on num's (qualified `num.Num`).
+		"cross.fern": "import \"./num\";\n" +
+			"pub trait Show {\n    function to_string(self: Self): string;\n}\n" +
+			"pub struct Tag { v: i32 }\n" +
+			"pub function (t: Tag) to_string(): string { return \"t\"; }\n" +
+			"impl Show for Tag { }\n" +
+			"impl Show for num.Num { }\n",
+		"main.fern": "import \"./num\";\nimport \"./cross\";\n" +
+			"function main(): i32 { var n: num.Num = num.Num { v: 1 }; return n.v; }\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(driverBin, filepath.Join(progDir, "main.fern"))
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], driverBin, filepath.Join(progDir, "main.fern"))...)
+	}
+	out, _ := cmd.Output()
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Errorf("checker driver: want no diagnostics on a program whose empty impls are\nsatisfied by inherent methods, got codes %q", got)
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("checker driver exited %d, want 0 (no diagnostics)", code)
+	}
+}

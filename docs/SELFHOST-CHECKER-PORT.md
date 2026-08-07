@@ -654,6 +654,32 @@ same code(s) the Go checker does — restricted to
   new corpus (`method-unknown-receiver`, `method-struct-receiver-ok`,
   `method-builtin-receiver-ok`) and `check-position-bad-receiver`.
 
+  *The impl table had to be mangled before conformance could work across
+  modules.* `flatten.rewrite_module_bodies` rewrites every type spelling in
+  an imported module — including each method's receiver type (`Num` →
+  `num__Num`) — but passed `mod.impls` through verbatim, so an
+  `impl Trait for Type` block kept its source spelling. An EMPTY impl is
+  resolved by looking for an inherent method on `impl_type` ("empty impls
+  adopt the existing method"), and under the stale spelling there was none:
+  every required method of every empty impl in an imported module read as
+  missing — and since a bundle's diagnostics are compared as a SET, one bad
+  decl poisoned the whole program's code set. Real programs hit it once
+  `core/cmp` gained `impl Display/Eq/Ord/Hash for bigint.BigInt`, which
+  #6314 put in `std/string`'s closure: four spurious E021s on anything
+  reaching `core/bigint`, which `import "std/array"` does.
+  `flatten.mangle_impls` (#6398) maps `impl_type` through
+  `rewrite_type_name` — trait names are global and `method_names` are bare,
+  so only the target moves. The checker side does NOT work as an
+  alternative: the receiver is `bigint__BigInt` and the target
+  `bigint.BigInt`, so stripping the qualifier still leaves them unequal.
+  Only the checker reads `impl_type`, so this is checker-only and
+  fixpoint-safe. Pinned by
+  `TestSelfHostCheckerModloadEmptyImplMangledX86_64`, which covers both
+  spellings that were broken — an empty impl on the impl-ing module's own
+  struct (bare, mangled by prefix) and one on another module's struct
+  (qualified, mangled by the module map) — plus the whole
+  stdlib-importing half of the bundle differential corpus.
+
   *Note on the remaining codes:* this note originally listed E040, E015
   multi-payload patterns, E027 match guards, and E022 let-else as blocked
   on missing language features — all four have since shipped (E040 via the
