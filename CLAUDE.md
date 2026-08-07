@@ -253,11 +253,27 @@ each with its own
 `internal/e2e/testdata/selfhost-<target>-known-divergences.txt`), which
 found twelve divergences on
 fixtures green for months, and sixteen more on x86-64. The **arm64 leg is
-now live too**, after being held back through #6044/#6045/#6047. It is the
-highest-value of the three, because `-target arm64` is the only path where
-the self-host compiler produces the finished binary ITSELF (emit +
-assemble + link in-process, no gcc, no wasmtime), so it is the only gate
-on `arm64_native.fern`. Its first valid run measured 302/317 passing with
+now live too**, after being held back through #6044/#6045/#6047. Both
+Linux legs are now high-value, because `-target arm64` AND `-target x86-64`
+each produce the finished binary ITSELF (emit + assemble + link in-process,
+no gcc, no wasmtime), so they are the only gates on `arm64_native.fern` and
+`x86_native.fern`. The x86-64 half of that is recent: `-target x86-64` used
+to stop at GAS text and hand it to gcc, and `-target x86-64-asm` is what
+still does. Closing it took eleven assembler fixes, and the lesson matches
+arm64's: **an assembler that DROPS something produces a plausible binary,
+so "the corpus emits no unknown mnemonic" is not evidence it is correct.**
+`rep stosq` — the buffer-zeroing instruction, 63,637 sites in the corpus —
+was silently ignored by a `rep` handler that recognised only `stosb`, and
+the first visible symptom was a closure call through a null function
+pointer. Others of the same family: `movq $-1, %rax` zero-extended (1,382
+sites, so the not-found sentinel read 4294967295); every `%cl` shift parsed
+as shift-by-zero (26,281 sites); `call *%r11` treated as a branch to a
+LABEL named `*%r11`; and a `#` inside a string literal stripped as a
+comment, which silently shortened the string and shifted every later
+.rodata symbol. Every one of these assembles without complaint. The gate
+that catches them is a decoded-instruction differential against the SAME
+program linked by gcc (`-target x86-64-asm` + `gcc -static -nostdlib`),
+not the refusal list. Its first valid run measured 302/317 passing with
 15 listed rows, 12 of which are the x86-64 leg's own rows at the same
 measured values — i.e. shared frontend bugs, not arm64 ones. Reaching that
 took three assembler fixes, all of which had been mis-attributed to

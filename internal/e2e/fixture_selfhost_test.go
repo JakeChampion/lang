@@ -189,15 +189,21 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 }
 
 // TestFernFixturesSelfHostX86_64 runs the corpus through `fern -target x86-64`:
-// the self-host x86 emitter's GAS text, assembled + linked by gcc and executed.
+// the self-host x86 emitter, assembled + linked IN-PROCESS by x86_native +
+// elf.fern (no `.s`, no gcc), executed natively.
 //
-// gcc rather than the in-process assembler because the self-host x86-64 path has
-// none — it stops at asm text, where `-target arm64` links in-process
-// (arm64_native + elf.fern) and native x86-64 has internal/native/x86_64. That
-// gap is itself worth knowing about when weighing native retirement, and it puts
-// the external assembler on this leg's critical path, so an emitted-asm defect
-// gcc rejects (the #5862 / #6022 class: a Fern function named `and` / `not` /
-// after an x86 register) fails here as a link error rather than hiding.
+// This leg used to stop at asm text and hand it to gcc, because the self-host
+// x86-64 path had no in-process assembler. It has one now, so both Linux legs
+// produce the finished binary by themselves and the corpus tests the
+// self-hosted toolchain end to end on each. The external link is gone rather
+// than kept alongside: it was the toolchain, and keeping a second path would
+// mean the leg no longer tests what `-target x86-64` actually does.
+//
+// One thing went with it. A Fern function named after an x86 register or
+// directive (`and`, `not` — the #5862 / #6022 class) used to fail here as a
+// gcc link error; the in-process assembler has no such reserved-word clash, so
+// those names are now simply legal on this path. They still break
+// `-target x86-64-asm` piped to gcc, which is what that flag is for.
 func TestFernFixturesSelfHostX86_64(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	gcc, runner := x86_64Tooling(t)
@@ -208,21 +214,18 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 		runner:    runner,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			dir := t.TempDir()
-			asmPath := filepath.Join(dir, "prog.s")
-			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", asmPath)
+			binPath := filepath.Join(t.TempDir(), "prog")
+			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", binPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
+				// Includes the in-process assembler's own refusal ("could not
+				// encode: …"), which names the mnemonic or operand shape.
 				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
 				return
 			}
-			binPath := filepath.Join(dir, "prog")
-			// -static -nostdlib -no-pie: the flags every other self-host x86
-			// link uses (linkSelfHostAsm's small path). Non-fatal, unlike
-			// buildBin/cachedLink — a link failure is a finding this leg is
-			// meant to report, not a reason to abort the run.
-			if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-				failf("the assembler/linker REJECTED the self-host asm — the artifact never ran (%v):\n%s", err, out)
-				return
+			// write_file does not set the exec bit (the Makefile chmods
+			// bin/fern-selfhost for the same reason).
+			if err := os.Chmod(binPath, 0o755); err != nil {
+				t.Fatalf("chmod: %v", err)
 			}
 			// No runner prefix: runSelfHostFixtureLeg has already skipped the
 			// hosts that need one (they cannot exec the driver either).

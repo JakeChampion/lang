@@ -109,6 +109,36 @@ all. Post-freeze it keeps receiving the same bugfix / oracle-need updates as
 the rest of `internal/`. Retiring the native *backends* is on the table once
 the self-host backends reach parity; retiring the native *interpreter* is not.
 
+### 3a. Backend retirement has its own prerequisites, distinct from the freeze
+
+The freeze stops native being where features land. Retiring the native
+*backends* is a strictly later and larger step, and it is worth writing down
+what it actually needs, because "goal 2 is nearly done" does not imply
+"the backends can go":
+
+1. **A bootstrap that does not need them.** `make selfhost-cli` builds the
+   self-host compiler with `./bin/fern` — the native backends. There is no
+   checked-in stage0 snapshot and no `make bootstrap` / `make distcheck`
+   (`BOOTSTRAP-RESEARCH.md §2` specifies the shape; none of it is built).
+   Delete the native backends today and a clean checkout has no path to a
+   Fern binary at all: the interpreter cannot practically compile the
+   compiler.
+2. **Every target self-contained on the self-host side.** ~~As of this
+   writing `-target x86-64` stops at GAS text and needs an external
+   assembler + linker, where `-target arm64` links in-process.~~ **Closed:**
+   `-target x86-64` now assembles and links in-process via `x86_native.fern`
+   + `elf.fern`, so both Linux targets produce a finished binary with
+   nothing on `$PATH`. `-target x86-64-asm` is the escape hatch that still
+   emits text.
+3. **A decision on the oracle.** `BOOTSTRAP-RESEARCH.md §1` recommends
+   *two-implementations-forever* precisely so the fuzz-diff oracle keeps two
+   witnesses; that directly contradicts deleting the native backends. The
+   contradiction between these two docs is unresolved and needs a call
+   before any deletion PR makes sense.
+4. **The non-compiler consumers.** `internal/wasm/playground` and
+   `cmd/fern-wasm` are built on native codegen; the browser playground would
+   need the self-host compiler compiled to wasm instead.
+
 ## Freeze preconditions (all must be green before native is frozen)
 
 **Read the live state from `make freeze`, not from this list.** The rows below

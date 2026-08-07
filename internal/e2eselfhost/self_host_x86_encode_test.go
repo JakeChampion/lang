@@ -9,11 +9,11 @@ import (
 )
 
 // TestSelfHostX86Encode exercises the self-hosted x86-64 machine-code
-// encoding primitives (examples/self_host/x86_encode.fern) — slice 2a of
+// encoding primitives (examples/self_host/x86_native.fern) — slice 2a of
 // the native binary backend (the assembler half; the container half is
 // elf.fern). It mirrors internal/native/x86_64/asm.go's byte emission.
 //
-// x86_encode.fern is import-free, so this test concatenates it with a
+// x86_native.fern is import-free, so this test concatenates it with a
 // self-test main() that encodes each instruction and asserts the bytes
 // against the ground-truth encodings (cross-checked with `as`/objdump),
 // then runs the combined program through the self-host wasm pipeline
@@ -29,11 +29,11 @@ func TestSelfHostX86Encode(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
 	if err != nil {
-		t.Fatalf("read x86_encode.fern: %v", err)
+		t.Fatalf("read x86_native.fern: %v", err)
 	}
-	source := string(enc) + "\n" + x86EncodeSelfTestMain
+	source := string(nat) + "\n" + x86EncodeSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -51,7 +51,7 @@ func TestSelfHostX86Encode(t *testing.T) {
 }
 
 // TestSelfHostX86ElfExitRuns is the first true end-to-end proof of the
-// native-binary track: a Fern program (x86_encode.fern + elf.fern + a
+// native-binary track: a Fern program (x86_native.fern + elf.fern + a
 // driver) assembles an exit(42) program to machine code, wraps it in a
 // static ELF via elf.fern, and writes the raw binary to stdout. The Go
 // test captures that binary, writes it 0o755, and runs it *natively* on
@@ -99,11 +99,11 @@ func TestSelfHostX86Labels(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
 	if err != nil {
-		t.Fatalf("read x86_encode.fern: %v", err)
+		t.Fatalf("read x86_native.fern: %v", err)
 	}
-	source := string(enc) + "\n" + x86LabelsSelfTestMain
+	source := string(nat) + "\n" + x86LabelsSelfTestMain
 
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
 	if len(wat) == 0 {
@@ -148,7 +148,7 @@ func TestSelfHostX86RodataRuns(t *testing.T) {
 	runX86NativeDriver(t, "rodata42", x86ElfRodataDriverMain, 42)
 }
 
-// runX86NativeDriver compiles x86_encode.fern + elf.fern + driverMain
+// runX86NativeDriver compiles x86_native.fern + elf.fern + driverMain
 // through the self-host wasm emitter, runs the resulting WAT under
 // wasmtime to obtain the raw ELF the Fern program assembled and wrote to
 // stdout, then executes that ELF natively on x86-64 and asserts its exit
@@ -168,15 +168,15 @@ func runX86NativeDriver(t *testing.T, name, driverMain string, wantExit int) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	enc, err := os.ReadFile("../../examples/self_host/x86_encode.fern")
+	nat, err := os.ReadFile("../../examples/self_host/x86_native.fern")
 	if err != nil {
-		t.Fatalf("read x86_encode.fern: %v", err)
+		t.Fatalf("read x86_native.fern: %v", err)
 	}
 	elf, err := os.ReadFile("../../examples/self_host/elf.fern")
 	if err != nil {
 		t.Fatalf("read elf.fern: %v", err)
 	}
-	source := string(enc) + "\n" + string(elf) + "\n" + driverMain
+	source := string(nat) + "\n" + string(elf) + "\n" + driverMain
 
 	// Stage 1: compile the driver source to WAT via the self-host emitter.
 	wat := runCapture(t, gcc, runner, driverBin, []byte(source))

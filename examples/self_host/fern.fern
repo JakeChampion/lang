@@ -3,22 +3,29 @@
 // (asm_load_run = emit, checker_run = check, interp_run = evaluate),
 // this is a single binary that parses argv flags and dispatches:
 //
-//     fern <entry.fern> [stdlib-root]      emit asm to stdout (def x86-64)
-//     fern -target arm64 <entry.fern>      emit arm64 (Linux ELF) asm
-//     fern -target arm64-darwin <e.fern>   emit arm64 (macOS Mach-O) asm
+//     fern -o OUT <entry.fern> [stdlib]    a runnable x86-64 Linux ELF
+//     fern -target arm64 -o OUT <e.fern>   a runnable arm64 Linux ELF
+//     fern -target arm64-darwin -o OUT …   a runnable arm64 Mach-O
+//     fern -target x86-64-asm <entry.fern> emit x86-64 GAS text
+//     fern -target arm64-asm <entry.fern>  emit arm64 GAS text
 //     fern -target wasm <entry.fern>       emit a WASI WAT module
-//     fern -no-ssa <entry.fern>            force the AST emitter (no SSA)
-//     fern -o OUT <entry.fern>             emit asm to OUT
+//     fern -ssa <entry.fern>               opt into the SSA pipeline
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
 //     fern -interp <entry.fern>            evaluate; exit = program result
 //     fern -fmt <entry.fern>               format the entry file to stdout
 //
-// Codegen routes through the SSA pipeline (AST → SSA → optimise →
-// regalloc → emit) by DEFAULT for the x86-64 / arm64 targets; programs
-// the SSA subset can't yet lower fall back transparently to the AST
-// emitter (so output is never wrong). `-no-ssa` forces the AST emitter;
-// `-ssa` is accepted but a no-op (SSA is the default). See
-// docs/SELFHOST-SSA-ALWAYS.md for the roadmap to every backend on the IR.
+// The three native targets assemble and link IN-PROCESS (x86_native /
+// arm64_native + elf.fern, or the Mach-O writer on darwin), so producing a
+// runnable binary needs nothing on $PATH — no `.s`, no gcc, no ld. The
+// `-asm` targets stop at the emitter's GAS text, which is what a harness
+// assembling with its own toolchain wants, and the only way to observe an
+// emitter in isolation.
+//
+// Codegen routes through the IR path (asm_ir / asm_arm64_ir / wasm_ir,
+// each IR-or-error per #3457) for every target. The SSA pipeline (AST →
+// SSA → optimise → regalloc → emit) is opt-in via `-ssa` and applies only
+// when every function is in its subset, else it falls through to the IR
+// path. See docs/SELFHOST-SSA-DECISION.md.
 //
 // It is a drop-in-shaped replacement for cmd/fern: one binary hosting
 // both the x86-64 (asm_ir.fern) and arm64 (asm_arm64.fern) emitters,
@@ -45,6 +52,7 @@ import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
 import "./arm64_native";
+import "./x86_native";
 import "./elf";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
@@ -132,6 +140,45 @@ function arm64_elf_binary_pie(asm: string): string {
     return string_from_bytes_unchecked(to_u8(bin));
 }
 
+// x86_elf_binary assembles x86-64 Linux GAS text into a runnable static ELF
+// entirely in-process via x86_native + elf.fern — the x86-64
+// counterpart of arm64_elf_binary, and what removes the `.s` + external
+// gcc/ld step from the last Linux target that still needed one. Returns the
+// binary bytes packed into a string, or "" if the assembler could not
+// encode something (the caller reports it and exits 2).
+//
+// Single R+W+X PT_LOAD (elf_static_executable_bss_x86_at), not the
+// two-segment W^X image arm64 uses: x86_resolve fixes .rodata references up
+// against the 8-byte-padded .text length, which is exactly this layout. A
+// W^X x86 image would need the assembler to resolve against a page-aligned
+// data vaddr, as arm64_gas_link does.
+function x86_elf_binary(asm: string): string {
+    var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
+    // Absolute `.quad <label>` pointers need the load address, which the
+    // assembler does not know — the ELF container picks it. This is the
+    // x86 analogue of arm64_gas_link's data-vaddr argument.
+    a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr());
+    // An unknown mnemonic, operand shape or directive means instructions or
+    // data bytes were DROPPED, so every offset past the first one is wrong.
+    // Refusing is the whole point of recording them (SH-005): the arm64
+    // sibling learned this the hard way in #6045, where an unresolvable
+    // symbol was patched as an offset anyway and became a runtime SEGV
+    // instead of a compile error.
+    if (a.unknown.len() > 0) {
+        eprint("fern: -target x86-64: in-process assembler could not encode: ");
+        eprint(a.unknown[0]);
+        eprint("\n");
+        return "";
+    }
+    var eoff: i32 = x86_native.x86_label_off(a, "_start");
+    if (eoff < 0) {
+        eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
+        return "";
+    }
+    var bin: i32[] = elf.elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, eoff);
+    return string_from_bytes_unchecked(to_u8(bin));
+}
+
 // last_slash returns the index of the final '/' in p, or -1.
 function last_slash(p: string): i32 {
     var i: i32 = 0;
@@ -213,7 +260,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|arm64|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-darwin|wasm] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -389,15 +436,15 @@ function main(): i32 {
 }
 
 // target_writes_binary reports whether `-target t` produces a finished
-// EXECUTABLE rather than assembler text or a wasm module — the three targets
-// that assemble and link in-process. Their output must land 0755, the way the
+// EXECUTABLE rather than assembler text or a wasm module — the targets that
+// assemble and link in-process. Their output must land 0755, the way the
 // native CLI's does: a non-executable binary run under qemu exits 1 with no
 // output, which is indistinguishable from a program that ran and returned 1,
 // and that has already cost one investigation a fabricated reproduction
 // (#6133). wasm-bin / wasm-component are binaries too, but they are modules
 // loaded by a runtime, not things the kernel execs, so they stay 0644.
 function target_writes_binary(t: string): boolean {
-    return t == "arm64" || t == "arm64-android" || t == "arm64-darwin";
+    return t == "x86-64" || t == "arm64" || t == "arm64-android" || t == "arm64-darwin";
 }
 
 // write_output writes the compiler's output, executable when the target
@@ -475,7 +522,7 @@ function run(): i32 {
 
     if (!have_entry) { return usage(); }
 
-    if (target != "x86-64" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "arm64-darwin-asm" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
+    if (target != "x86-64" && target != "x86-64-asm" && target != "arm64" && target != "arm64-asm" && target != "arm64-android" && target != "arm64-darwin" && target != "arm64-darwin-asm" && target != "wasm" && target != "wasm-bin" && target != "wasm-component") {
         eprint("fern: unknown -target: ");
         eprint(target);
         eprint(" (want x86-64, arm64, arm64-asm, arm64-darwin, arm64-darwin-asm, wasm, wasm-bin, or wasm-component)\n");
@@ -671,11 +718,15 @@ function run(): i32 {
     if (use_ssa) {
         var sr: SsaResult = try_ssa(merged.funcs, merged.structs, target);
         if (sr.ok) {
-            // arm64 (Linux) emits a runnable ELF in-process (arm64_native +
-            // elf.fern), dropping the `.s` + gcc/ld link — same flip as
-            // arm64-darwin. Other targets write the SSA text as-is.
+            // Both Linux targets emit a runnable ELF in-process (x86_native /
+            // arm64_native + elf.fern), dropping the `.s` + gcc/ld link —
+            // same flip as arm64-darwin. Other targets write the SSA text
+            // as-is.
             var ssa_out: string = sr.asm;
-            if (target == "arm64") {
+            if (target == "x86-64") {
+                ssa_out = x86_elf_binary(sr.asm);
+                if (ssa_out.len() == 0) { return 2; }
+            } else if (target == "arm64") {
                 ssa_out = arm64_elf_binary(sr.asm);
                 if (ssa_out.len() == 0) { return 2; }
             } else if (target == "arm64-android") {
@@ -710,8 +761,8 @@ function run(): i32 {
     } else if (target == "arm64-asm") {
         // The arm64 emitter's GAS text, stopping short of the in-process
         // assembler + linker that `-target arm64` runs on top of it — the
-        // arm64 sibling of what `-target x86-64` produces, and the shape a
-        // harness wants when it assembles with its own toolchain.
+        // arm64 sibling of `-target x86-64-asm`, and the shape a harness
+        // wants when it assembles with its own toolchain.
         //
         // It is also the only way to observe the emitter in isolation, which
         // is what corrected #6011: measured through `-target arm64` the
@@ -834,10 +885,20 @@ function run(): i32 {
             comp = watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error(full, true, false)));
         }
         out_asm = string_from_bytes_unchecked(to_u8(comp));
+    } else if (target == "x86-64-asm") {
+        // The x86-64 emitter's GAS text, stopping short of the in-process
+        // assembler + linker `-target x86-64` runs on top of it — the mirror
+        // of arm64-asm, and what a harness assembling with its own toolchain
+        // wants.
+        out_asm = asm_ir.emit_module_or_error(full);
     } else {
         // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
         // AST emitter. As of slice 5 asm.emit_module has no callers at all.
-        out_asm = asm_ir.emit_module_or_error(full);
+        // The text is then assembled + linked in-process (x86_native + elf.fern),
+        // so `-target x86-64` produces a runnable binary like `-target arm64`
+        // does and needs nothing on $PATH.
+        out_asm = x86_elf_binary(asm_ir.emit_module_or_error(full));
+        if (out_asm.len() == 0) { return 2; }
     }
     if (out_path.len() > 0) {
         match (write_output(out_path, out_asm, target)) {

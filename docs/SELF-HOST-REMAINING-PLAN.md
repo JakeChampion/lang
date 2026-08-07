@@ -1403,6 +1403,36 @@ smallest → largest:
     and run end-to-end (`TestSelfHostX86RodataRuns`: `lea rax,[rip+answer]`;
     `rax=[rax]`; exit — a `.quad 42` in `.rodata`, R+W+X data ELF, runs
     natively exiting 42).
+  - ✅ **slice 2 COMPLETE — `-target x86-64` links in-process.** The
+    slices below were built but never wired to the CLI: `-target x86-64`
+    kept emitting `.s` for gcc. It no longer does. `x86_encode.fern` +
+    `x86_gas.fern` were merged into `examples/self_host/x86_native.fern`
+    (one module, so the CLI can `import` it without cross-module bare
+    references — the same reason `arm64_native.fern` is one module), the
+    remaining mnemonics were added, and `fern.fern`'s `x86_elf_binary`
+    drives assemble → `elf.fern` → executable. `-target x86-64-asm` is the
+    new spelling for the GAS text. Both Linux targets now need nothing on
+    `$PATH`.
+
+    Eleven encoder/parser defects surfaced only when real emitter output
+    was assembled — every one assembles *without complaint*, which is why
+    "the corpus records no unknown mnemonic" was not evidence of
+    correctness. The gate that found them is a decoded-instruction
+    differential against the same program linked by gcc. Worst first:
+    `rep stosq` silently dropped (63,637 sites — buffer zeroing, so the
+    symptom was a closure call through a null pointer); every `%cl` shift
+    parsed as shift-by-zero (26,281); `call *%reg` treated as a branch to
+    a label named `*%r11` (2,688); `movq $imm` zero-extending, so
+    `movq $-1` loaded 4294967295 (1,382); no-base SIB `0(,%rcx,8)` given
+    an invented base (1,480); `addq %rax, sym(%rip)` and `incq sym(%rip)`
+    encoded against a bogus base register; `testq $imm` comparing two
+    unrelated registers; `cvttsd2si %xmm0, %eax` taking the 64-bit path;
+    and a `#` inside a string literal stripped as a comment, shortening
+    the string and shifting every later `.rodata` symbol. Unresolvable
+    symbols are now REFUSED rather than patched (the #6045 shape), and so
+    are unknown directives and rip / no-base operands on paths that cannot
+    encode them.
+
   - ✅ **slice 2g — GAS-text front-end**: `examples/self_host/x86_gas.fern`
     parses the AT&T assembly `asm.fern` emits and drives the encoders +
     label/`.rodata` API. Covers the core integer/pointer subset — directives

@@ -12,7 +12,7 @@ import (
 
 // TestSelfHostArm64Gas exercises the self-hosted AArch64 GAS-text assembler
 // (examples/self_host/arm64_gas.fern) — the text->bytes step of the
-// arm64-darwin native path, the counterpart of x86_gas.fern. It parses
+// arm64-darwin native path, the counterpart of x86_native.fern PART 2. It parses
 // assembly-text statements into machine code via the arm64_encode.fern
 // encoders + Arm64Asm label machinery.
 //

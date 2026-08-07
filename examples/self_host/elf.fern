@@ -247,7 +247,7 @@ function elf_static_executable_data_x86_at(text: i32[], data: i32[], entry_off: 
 // memory just past the file content (p_memsz = p_filesz + bss); rip-
 // relative refs to .bss globals resolve into it. This is the form a real
 // program needs for its zero-init globals (cursors, scratch buffers, etc.).
-function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
+pub function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
     var body: i32[] = elf_cat([], text);
     body = elf_pad_to_8(body);
     body = elf_cat(body, data);
