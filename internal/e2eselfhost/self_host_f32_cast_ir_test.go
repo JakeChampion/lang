@@ -16,7 +16,7 @@ import (
 // 4-byte slot and rounds at the cast (cvtsd2ss / fcvt s,d). irlower now emits
 // the f32_bits/f32_from_bits round-trip (demote to f32, promote back) on an
 // `as f32` cast, applying single-precision rounding while keeping the value in
-// the f64 slot. These tests pin the corrected behaviour against the native
+// the f64 slot. These tests pin that behaviour against the native
 // oracle. They are NOT differential vs the legacy AST backend (which does not
 // round f32 either — a legacy-AST gap the IR path closes, per the IR-widening
 // policy), so each program's result is pinned to a hardcoded oracle value.

@@ -961,7 +961,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		},
 		// 64-bit-element arrays (i64[] / f64[]): the native backend already
 		// uses 8-byte element slots, so values above 2^31 round-trip.
-		// Previously untested; these lock it in (mirror the wasm i64arr-*).
+		// Mirrors the wasm i64arr-* cases.
 		{
 			"arr-i64-literal-index-large",
 			"function main(): i32 { var xs: i64[] = [5000000000, 42]; if (xs[0] == 5000000000) { return xs[1] as i32; } return 0; }",

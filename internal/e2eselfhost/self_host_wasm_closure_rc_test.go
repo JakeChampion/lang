@@ -11,7 +11,7 @@ import (
 // closure's env block is now rc-boxed (via $__fern_str_box, so table_idx@0 +
 // captures@4+i*4 are unchanged) instead of raw-allocated, and an owned closure
 // local (bound to a lambda literal) is FREED at function exit via the shared
-// $__fern_arr_dec — reclaiming the env box that previously leaked entirely. A
+// $__fern_arr_dec, reclaiming the env box rather than leaking it. A
 // move-on-return closure is excluded from the sweep (handed to the caller).
 // Captures still leak one level here (a later slice releases them); the box
 // reclaim is sound on its own (detector 0). Cross-checks value + the

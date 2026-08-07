@@ -38,8 +38,8 @@ const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } stru
 // a dead struct donor whose box is reused in place by a LATER construction of a
 // DIFFERENT struct type with the same box class (identical per-position field
 // widths + kinds — scalar↔scalar or leak-safe-array↔leak-safe-array). Native does
-// this (general_reuse same-box-class incl. pointer fields); the self-host
-// previously required the donor and recipient to be the SAME type. Each case
+// this (general_reuse same-box-class incl. pointer fields), so the self-host
+// must not require the donor and recipient to be the SAME type. Each case
 // embeds a value check (returns 90/91 on mismatch)
 // and then returns __rc_underflow() — so want=0 means both the reused value is
 // correct AND no over-release occurred. A mis-sized reuse (wrong box class) would

@@ -107,8 +107,8 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"bitwise", "function main(): i32 { return (6 & 3) | 8; }"},
 		{"shift", "function main(): i32 { return 1 << 4; }"},
 		// Hex literals: lowered via op_const_i32_text (source text spliced into
-		// the literal pool `ldr x0, =TEXT`), where the IR path previously zeroed
-		// every `0x..` via a decimal-only parse. Exit codes are mod 256 —
+		// the literal pool `ldr x0, =TEXT`). A decimal-only parse zeroes every
+		// `0x..`. Exit codes are mod 256 —
 		// shifts/masks expose the high bits.
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},

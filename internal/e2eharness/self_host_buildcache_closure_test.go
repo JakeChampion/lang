@@ -14,10 +14,8 @@ import (
 // compiler.
 //
 //  1. Every file the driver compiles is IN the key. A local import that does
-//     not resolve used to be skipped in silence, which drops it from the key.
+//     not resolve must not be skipped in silence, which would drop it.
 //  2. Changing any file in the closure changes the key.
-//
-// Both are cheap to assert and neither was.
 
 func writeClosure(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -103,9 +101,8 @@ func TestImportClosureIgnoresUnrelatedFileChanges(t *testing.T) {
 
 // TestImportClosureExternalImportClassification — `std/…` and `core/…` are
 // deliberately outside the key; `./x` and a bare `x` are local and must
-// resolve. This is the distinction that used to be implicit in "the path
-// happens not to exist", which is what let a MISSING local source look exactly
-// like a stdlib import.
+// resolve. Leaving that distinction implicit in "the path happens not to
+// exist" makes a MISSING local source look exactly like a stdlib import.
 func TestImportClosureExternalImportClassification(t *testing.T) {
 	for _, c := range []struct {
 		imp      string

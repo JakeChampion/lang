@@ -62,8 +62,8 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			// E057: a Cell[T] element must be cycle-free — a composite element
 			// (here a struct) could reconstruct a reference cycle, so the
 			// native compiler rejects it before codegen. The self-host build
-			// gate must match (it previously filtered E057 out and silently
-			// compiled this — more permissive than native).
+			// gate must match: filtering E057 out compiles this silently,
+			// which is more permissive than native.
 			name:     "cell-composite-E057",
 			src:      "struct P { x: i32 }\nfunction main(): i32 { var c = cell_new(P { x: 1 }); return 0; }\n",
 			wantDiag: "error[E057]",

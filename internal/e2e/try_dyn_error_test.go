@@ -126,10 +126,10 @@ func TestWASMTryDynMultiTrait(t *testing.T) {
 
 // Direct construction of `Err(concrete)` into a `Result[_, dyn Trait]` — i.e.
 // boxing the error WITHOUT the `?` operator (#3961). The enum-level coercion
-// `Result[_, Concrete] -> Result[_, dyn Trait]` used to be a no-op that left
-// the payload unboxed, so the concrete struct was stored straight into the
-// `dyn` slot and the later match-arm `e.message()` dispatched through a garbage
-// vtable (segfault on the compiled backends; the interpreter was fine). The
+// `Result[_, Concrete] -> Result[_, dyn Trait]` must box the payload. As a
+// no-op it stores the concrete struct straight into the `dyn` slot and the
+// later match-arm `e.message()` dispatches through a garbage vtable (segfault
+// on the compiled backends; the interpreter is fine). The
 // checker now injects the same `payload as dyn Trait` cast the `?`-desugar uses
 // (maybeWrapForUnion / variantDynPayloadTypes), so the payload boxes into the
 // `[data, vtable]` fat pointer. Two distinct concrete error types prove the

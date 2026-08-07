@@ -64,7 +64,7 @@ function combine(a: Opt[i32], b: Opt[i32]): i32 {
     return x;
 }
 function main(): i32 { return combine(Nn, Sm(40)); }`, 41},
-	// construction-only (no match): the construction alone previously bailed.
+	// construction-only (no match): the construction alone must lower.
 	{"construction_only", `enum Opt[T] { Sm(T), Nn }
 function main(): i32 {
     var o: Opt[i32] = Sm(5);

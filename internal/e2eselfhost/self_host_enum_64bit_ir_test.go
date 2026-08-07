@@ -68,7 +68,7 @@ func TestSelfHostEnum64bitIR(t *testing.T) {
 		{"i64-payload", `enum E { A(i64), B } function f(e: E): i32 { match (e) { A(n) => { if (n > 15000000000) { return 7; } return 1; }, B => { return 3; } } return 0; } function main(): i32 { return f(A(20000000000)); }`, 7},
 		// the no-payload variant still discriminates alongside the 8-byte payload.
 		{"i64-other-variant", `enum E { A(i64), B } function f(e: E): i32 { match (e) { A(n) => { return 1; }, B => { return 3; } } return 0; } function main(): i32 { return f(B); }`, 3},
-		// enum with an f64 payload (previously 4-byte-truncated). 2.5 > 2.0 -> 6
+		// enum with an f64 payload (a 4-byte truncation fails). 2.5 > 2.0 -> 6
 		{"f64-payload", `enum E { V(f64), W } function f(e: E): i32 { match (e) { V(x) => { if (x > 2.0) { return 6; } return 1; }, W => { return 3; } } return 0; } function main(): i32 { return f(V(2.5)); }`, 6},
 		// i64 payload used in arithmetic inside the arm.
 		{"i64-arith", `enum E { N(i64) } function f(e: E): i32 { match (e) { N(v) => { var s: i64 = v + v; if (s > 11000000000) { return 9; } return 1; } } return 0; } function main(): i32 { return f(N(6000000000)); }`, 9},

@@ -121,7 +121,7 @@ _start:
 }
 
 // TestAssembleFPUnscaled covers the FP unscaled (LDUR/STUR) addressing mode.
-// A negative FP displacement used to be rejected outright ("must be a
+// A negative FP displacement must not be rejected outright ("must be a
 // non-negative multiple of 8"). Both spellings are checked: the explicit
 // stur/ldur mnemonics, and the str/ldr spelling that GNU as itself rewrites to
 // them — accepting the latter is matching the reference assembler, not being

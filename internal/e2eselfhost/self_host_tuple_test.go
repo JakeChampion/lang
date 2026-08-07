@@ -9,8 +9,8 @@ import (
 
 // tupleTypeCases exercise tuple TYPE annotations — `(T1, T2)` as a
 // return/var type and nested inside a generic (`Option[(i32, i32)]`).
-// The self-host parser previously stalled (OOM) on the leading `(` of a
-// tuple type; these confirm it now parses and the i32-tuple values work.
+// The self-host parser must not stall (OOM) on the leading `(` of a tuple
+// type; these confirm it parses and the i32-tuple values work.
 // (Tuple element TYPES are still coarse — e.g. `.len()` on a string
 // tuple field mis-infers — a separate inference limitation.)
 var tupleTypeCases = []struct {

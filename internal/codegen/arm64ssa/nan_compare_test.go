@@ -8,10 +8,10 @@ import (
 )
 
 // Every ordered comparison against a NaN is false; only `!=` is true. The
-// renderer used to emit the UNSIGNED integer condition codes (lo/ls/hi/hs),
-// which agree with the IEEE ones on ordered operands but read TRUE on
-// unordered: AArch64 `fcmp` marks NaN with N=0 Z=0 C=1 V=1, so `hi` (C && !Z)
-// and `hs` (C) both fired. Sweeping the fernsmith printable corpus through
+// renderer must not emit the UNSIGNED integer condition codes (lo/ls/hi/hs):
+// they agree with the IEEE ones on ordered operands but read TRUE on
+// unordered, since AArch64 `fcmp` marks NaN with N=0 Z=0 C=1 V=1, so `hi`
+// (C && !Z) and `hs` (C) both fire. Sweeping the fernsmith printable corpus through
 // `-target arm64-ssa` caught it as a stdout divergence — `0.0/0.0 <= x`
 // printing "T" where the interpreter and both native backends print "F".
 //
