@@ -43,10 +43,11 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 			if strings.TrimSpace(string(probe)) != "ir" {
 				t.Fatalf("%s: path probe = %q, want \"ir\" (clock builtin bailed the module to the AST path)", tc.name, probe)
 			}
-			// (b) compile + run through the IR-default driver. The x86-64 IR
-			// path hosts the clock helpers as Fern runtime functions (#2649),
-			// so the op handler calls the stack-ABI __fn_-prefixed symbol
-			// (wasm/arm64 keep the register-ABI __fern_<clock> — not migrated).
+			// (b) compile + run through the IR-default driver. Both native IR
+			// paths host the clock helpers as Fern runtime functions (#2649),
+			// so the op handler calls the stack-ABI __fn_-prefixed symbol.
+			// wasm is the exception: it keeps `call $__fern_<clock>` over the
+			// preview1 clock_time_get import.
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
 			if !bytes.Contains(asm, []byte("call __fn_"+tc.helper)) {
 				t.Fatalf("%s: emitted asm has no `call __fn_%s`", tc.name, tc.helper)
@@ -127,9 +128,12 @@ func TestSelfHostClockIRWasm(t *testing.T) {
 }
 
 // TestSelfHostClockIRArm64 runs the same cases through the arm64 IR backend
-// under qemu (CI-gated). The arm64 op handler emits `bl __fern_<clock>`, whose
-// helper asm_arm64.emit_runtime already provides unconditionally (shared with
-// the AST path).
+// under qemu (CI-gated). arm64 hosts the clocks as Fern runtime functions too
+// (#2649), so the op handler calls the stack-ABI `bl __fn___fern_<clock>` —
+// note that `bl __fern_<clock>`, what this asserted before the migration, is
+// NOT a substring of it: the `__fn___` prefix sits between. That is what makes
+// this a t.Fatalf that silently skipped the qemu run rather than a mismatch
+// something downstream would have caught.
 func TestSelfHostClockIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -162,8 +166,8 @@ func TestSelfHostClockIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl "+tc.helper)) {
-				t.Fatalf("%s: emitted asm has no `bl %s` — clock builtin did not lower through the arm64 IR path", tc.name, tc.helper)
+			if !bytes.Contains(asm, []byte("bl __fn_"+tc.helper)) {
+				t.Fatalf("%s: emitted asm has no `bl __fn_%s` — clock builtin did not lower through the arm64 IR path", tc.name, tc.helper)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "clk_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

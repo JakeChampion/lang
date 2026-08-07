@@ -322,8 +322,8 @@ pub struct Import { path: string, is_reexport: boolean, reexport_names: string[]
 // raw-memory intrinsics, #5998), #5992 recorded "to_lower is not IR-eligible on
 // wasm" from a wasm_run `ast` verdict (it is eligible — the emitted module
 // called an undefined helper), and a third was made while fixing the second.
-// CLAUDE.md documents the trap in prose; a trap that careful readers walk into
-// repeatedly needs to announce itself at the point of use.
+// docs/TEST-GATES.md documents the trap in prose; a trap that careful readers
+// walk into repeatedly needs to announce itself at the point of use.
 //
 // Deliberately a WARNING, not an error, and deliberately not touching the exit
 // code: dozens of existing tests feed these drivers programs whose imports are

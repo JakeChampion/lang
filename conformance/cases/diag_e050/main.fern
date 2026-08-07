@@ -1,0 +1,18 @@
+// spec: ML-05
+//
+// Pins E050: an `own` parameter is consumed at most once on any path,
+// and using it again is an error.
+//
+// This case is NOT the example from the code's catalogue entry, unlike
+// its E051 / E053 / E063 / E065 siblings, because that example does not
+// produce E050. It passed the owned `xs` to a callee taking a BORROWED
+// `xs: i32[]` and called that a consuming use; passing to a borrowed
+// parameter is a borrow, so the second call was legal and the program
+// compiled. Only a callee that takes `own` moves the value. The
+// catalogue entry has been corrected to say so.
+function take(own xs: i32[]): i32 { return xs[0]; }
+
+function f(own xs: i32[]): i32 {
+    var a: i32 = take(xs);   // consumes xs — the callee takes ownership
+    return take(xs) + a;     // error[E050]: xs was already consumed
+}

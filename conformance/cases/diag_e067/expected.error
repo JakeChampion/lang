@@ -1,0 +1,1 @@
+value of @must_consume type "Ticket" bound to "t" may go out of scope without being consumed

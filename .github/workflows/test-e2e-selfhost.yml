@@ -417,9 +417,10 @@ jobs:
   #
   # Memory is the real constraint, not time: gen1's emit peaks ~7.6 GB against
   # the arena, so its emit runs SERIALLY inside the test (concurrent large-module
-  # emits thrash the host). If this job starts failing with exit 137 from a Fern
+  # emits thrash the host). If this job starts failing with exit 125 from a Fern
   # binary rather than the runner, that is arena exhaustion as the compiler
-  # sources grow — see the note on __fern_alloc in CLAUDE.md, not an infra flake.
+  # sources grow — see the __fern_alloc note in docs/LOCAL-DEV-LOOP.md, not an
+  # infra flake. (Exit 137 is the host OOM-killing a build; different problem.)
   permodule-fixpoint:
     needs: build
     name: permodule-fixpoint-x86_64

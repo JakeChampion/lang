@@ -1,0 +1,11 @@
+// spec: IS-10
+//
+// A saturating operator on `usize` is rejected. `usize` is the
+// target-width integer, so its clamp bounds differ between wasm32 and
+// the 64-bit natives — and the IR is target-agnostic, so there is no
+// width for the clamp to be expressed against. Rejecting is the
+// alternative to picking one and being silently wrong on the other
+// target.
+function add(a: usize, b: usize): usize {
+    return a +| b;   // error[E009]
+}

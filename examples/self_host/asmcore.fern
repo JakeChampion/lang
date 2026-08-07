@@ -379,6 +379,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "fstatat") { return "262"; }
         if (name == "getrandom") { return "318"; }
         if (name == "exit") { return "60"; }
+        if (name == "clock_gettime") { return "228"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -396,6 +397,11 @@ pub function sysno(t: string, name: string): string {
         // returns 0 rather than a count — see rt_src_random_bytes.
         if (name == "getrandom") { return "500"; }
         if (name == "exit") { return "1"; }
+        // XNU has no clock_gettime syscall — gettimeofday(&tv, NULL) is the
+        // portable stand-in, and it fills a DIFFERENTLY SHAPED struct (see
+        // subsec_off / subsec_per_sec). clock_gettime has no row here on
+        // purpose: -1 would be issued as a real syscall number.
+        if (name == "gettimeofday") { return "116"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -410,6 +416,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "fstatat") { return "79"; }
     if (name == "getrandom") { return "278"; }
     if (name == "exit") { return "93"; }
+    if (name == "clock_gettime") { return "113"; }
     return "-1";
 }
 
@@ -638,24 +645,65 @@ pub function rt_src_remove_dir_all(): string {
     return "function __fern_remove_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(257, -100, pathz, 65536); if (fd < 0) { var e: i32 = 0 - fd; if (e == 2) { return Ok(()); } if (e == 20) { __syscall3(263, -100, pathz, 0); return Ok(()); } return Err(__fern_io_error(e, __raw_string(pathz, plen))); } var done: i32 = 0; while (done == 0) { var buf: i32 = __raw_alloc(65536); var n: i32 = __syscall3(217, fd, buf, 65536); if (n <= 0) { done = 1; } else { var pos: i32 = 0; while (pos < n) { var reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; var nl: i32 = 0; while (__raw_load8(buf, pos + 19 + nl) != 0) { nl = nl + 1; } var skip: i32 = 0; if (nl == 1) { if (__raw_load8(buf, pos + 19) == 46) { skip = 1; } } if (nl == 2) { if (__raw_load8(buf, pos + 19) == 46) { if (__raw_load8(buf, pos + 20) == 46) { skip = 1; } } } if (skip == 0) { var cl: i32 = plen + 1 + nl; var cb: i32 = __raw_alloc(cl + 1); var a: i32 = 0; while (a < plen) { __raw_store8(cb, a, path[a]); a = a + 1; } __raw_store8(cb, plen, 47); var b: i32 = 0; while (b < nl) { __raw_store8(cb, plen + 1 + b, __raw_load8(buf, pos + 19 + b)); b = b + 1; } __raw_store8(cb, cl, 0); match (__fern_remove_dir_all(__raw_string(cb, cl))) { Ok(_) => {}, Err(_) => {} } } pos = pos + reclen; } } } __syscall3(3, fd, 0, 0); __syscall3(263, -100, pathz, 512); return Ok(()); }";
 }
 
+// clock_read emits the statements that leave `sec` and `sub` bound — the
+// seconds and the SUBSECOND count the kernel wrote, whatever unit that is on
+// this target. Everything target-specific about the clocks lives here; the
+// three helpers below differ only in arithmetic.
+//
+// Linux takes `clock_gettime(clk_id, &timespec)` and fills
+// `{ i64 tv_sec @0; i64 tv_nsec @8 }`. XNU has no clock_gettime syscall, so
+// Darwin takes `gettimeofday(&timeval, NULL)` — note the buffer is the FIRST
+// argument, not the second — and fills `{ i64 tv_sec @0; i32 tv_usec @8 }`.
+// Three things move at once, which is why this is not a sysno row: the number,
+// the argument order, and the subsecond field's WIDTH. That last one is load-
+// bearing — `tv_usec` is 32 bits with 4 bytes of padding after it, and nothing
+// promises the kernel zeroed that padding, so it must be `__load_i32`. Reading
+// the slot as an i64 would splice the padding into the high half.
+//
+// Errno is ignored on both: with a fixed clock id and a buffer we own, the
+// realistic failures (EFAULT / EINVAL) cannot fire.
+function clock_read(t: string, clk: string): string {
+    if (t == "arm64-darwin") {
+        return "var ts: i32 = __raw_scratch(16); __syscall3(" + sysno(t, "gettimeofday") + ", ts, 0, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i32(__raw_addr(ts, 8)) as i64;";
+    }
+    return "var ts: i32 = __raw_scratch(16); __syscall3(" + sysno(t, "clock_gettime") + ", " + clk + ", ts, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i64(__raw_addr(ts, 8));";
+}
+
+// subsec_ns / subsec_per_ms convert `sub` for the two arithmetic shapes below:
+// how many nanoseconds one subsecond tick is (1 for a nsec timespec, 1000 for a
+// usec timeval), and how many ticks make a millisecond.
+function subsec_ns(t: string): string {
+    if (t == "arm64-darwin") { return "1000"; }
+    return "1";
+}
+
+function subsec_per_ms(t: string): string {
+    if (t == "arm64-darwin") { return "1000"; }
+    return "1000000";
+}
+
 // rt_src_clock backs the clock builtins (#2649, syscall-leaf slice 2): `which`
-// selects monotonic_ns / now_ns / now_unix_ms. Each reads a `timespec { i64
-// tv_sec; i64 tv_nsec }` from clock_gettime (x86-64 syscall 228) into the fixed
-// static scratch buffer (no per-call leak — the buffer is reused), then does i64
-// math. CLOCK_MONOTONIC = 1, CLOCK_REALTIME = 0. Allocation-free (scratch is
-// static, not heap), so these emit independently of the heap runtime. One
-// compiler function for the three helpers keeps the merged-bundle self-compile
-// under its function budget (#3425). x86-64-only: the clock_gettime syscall
-// number is arch-specific (arm64 = 113), so arm64/AST keep their hand-asm; wasm
-// has no generic syscall.
-pub function rt_src_clock(which: string): string {
+// selects monotonic_ns / now_ns / now_unix_ms. Each reads the wall or monotonic
+// clock into the fixed static scratch buffer (reused, so no per-call leak) and
+// does i64 math. CLOCK_MONOTONIC = 1, CLOCK_REALTIME = 0. Allocation-free
+// (scratch is static, not heap), so these emit independently of the heap
+// runtime. One compiler function for the three helpers keeps the merged-bundle
+// self-compile under its function budget (#3425).
+//
+// `monotonic_ns` has NO Darwin form here, and that is a real gap rather than an
+// omission: XNU's monotonic clock on Apple Silicon is a read of the
+// architectural counter (`mrs cntvct_el0`, scaled by `cntfrq_el0`), not a
+// syscall, and Fern has no system-register-read intrinsic. asm_arm64_ir keeps
+// the hand-asm for that one case. `now_unix_ms` / `now_ns` need no such thing —
+// gettimeofday is an ordinary syscall — so they migrate on every native target.
+pub function rt_src_clock(which: string, t: string): string {
     if (which == "monotonic_ns") {
-        return "function __fern_monotonic_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 1, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000000000 as i64) + nsec; }";
+        return "function __fern_monotonic_ns(): i64 { " + clock_read(t, "1") + " return sec * (1000000000 as i64) + sub * (" + subsec_ns(t) + " as i64); }";
     }
     if (which == "now_unix_ms") {
-        return "function __fern_now_unix_ms(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000 as i64) + nsec / (1000000 as i64); }";
+        return "function __fern_now_unix_ms(): i64 { " + clock_read(t, "0") + " return sec * (1000 as i64) + sub / (" + subsec_per_ms(t) + " as i64); }";
     }
-    return "function __fern_now_ns(): i64 { var ts: i32 = __raw_scratch(16); __syscall3(228, 0, ts, 0); var sec: i64 = __load_i64(ts); var nsec: i64 = __load_i64(__raw_addr(ts, 8)); return sec * (1000000000 as i64) + nsec; }";
+    return "function __fern_now_ns(): i64 { " + clock_read(t, "0") + " return sec * (1000000000 as i64) + sub * (" + subsec_ns(t) + " as i64); }";
 }
 
 // rt_src_stat backs `stat(path)` (#2649) — the first syscall leaf that returned

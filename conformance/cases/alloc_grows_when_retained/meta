@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: internal/interp has no bump allocator — it is a tree-walking
+  evaluator over Go values — so __heap_bump_bytes() returns 0 there
+  unconditionally and the shape this case measures is unobservable.
+  Giving the interpreter a fake arena would make it report numbers that
+  describe nothing; see docs/ALLOCATION-OBSERVABLE.md.

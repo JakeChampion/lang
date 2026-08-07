@@ -1,0 +1,21 @@
+// spec: AB-01
+//
+// Reading past the end of an array aborts the program. The alternative
+// — reading whatever is adjacent in the heap and returning it as an
+// i32 — is what every backend did before #5538, and it is unobservable
+// from inside the language: the value is a plausible integer.
+//
+// The index comes through a function call so no constant-folding pass
+// can decide the access statically and turn the abort into a compile
+// error, which would pin something else entirely.
+import "std/i32";
+
+function at(xs: i32[], i: i32): i32 {
+    return xs[i];
+}
+
+function main(): i32 {
+    var xs: i32[] = [10, 20, 30];
+    print(at(xs, 5).to_string());
+    return 0;
+}

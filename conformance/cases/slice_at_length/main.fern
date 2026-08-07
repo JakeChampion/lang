@@ -1,0 +1,20 @@
+// spec: AB-05
+//
+// The boundary the check must NOT reject: `lo == hi == len` is a legal
+// empty slice sitting at the end of the array. An off-by-one in the
+// construction check turns every `xs[n:]`-style loop terminator into an
+// abort, so the permissive edge needs pinning as much as the
+// prohibited one.
+import "std/i32";
+
+function view(xs: i32[], lo: i32, hi: i32): [i32] {
+    return xs[lo:hi];
+}
+
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    print(view(xs, 3, 3).len().to_string());
+    print(view(xs, 0, 3).len().to_string());
+    print(view(xs, 2, 2).len().to_string());
+    return 0;
+}
