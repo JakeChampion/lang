@@ -62,3 +62,40 @@ func TestTupleElementBindingIsReclaimed(t *testing.T) {
 		t.Error("churn never drops the tuple itself; this test no longer covers the shape it describes")
 	}
 }
+
+// A MAP element must NOT be credited. The counted-alias argument rests on the
+// destination's drop being is_unique-gated and shallow — true for a struct,
+// array or enum element, false for a map, whose drop deep-frees the value
+// column. Crediting one segfaulted `map_delete_tuple_churn_free` on both
+// natives: `var m = t.0` on a `(Map, boolean)` freed a map the tuple still
+// referenced.
+//
+// The e2e rc corpus covers the crash. This covers the DECISION, in a tenth of
+// a second rather than eighty: crediting the element makes the loop body emit
+// map drops (four `__fern_map_drop` calls, plus the tuple's own deep drop),
+// where declining to credit it emits none at all.
+func TestTupleMapElementIsNotReclaimed(t *testing.T) {
+	fn := funcByName(lowerForTest(t, `
+import "core/int";
+import "core/map";
+
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var m: Map[i32, i32] = map_new(8);
+        m = m.insert(1, 4);
+        var t: (Map[i32, i32], boolean) = m.without(1);
+        m = t.0;
+        if (t.1) { acc = acc + 1; }
+        i = i + 1;
+    }
+    return acc % 7;
+}
+
+function main(): i32 { return churn(4); }
+`), "churn")
+	if n := callCount(fn, "__fern_map_drop"); n != 0 {
+		t.Errorf("churn emits %d map drops; the tuple element is credited as owned, so the loop frees a map the tuple still references — map_delete_tuple_churn_free segfaults on both natives when it does", n)
+	}
+}

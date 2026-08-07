@@ -1520,11 +1520,24 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// unbounded, and grew with the element's width rather than the
 		// tuple's. `(value, state)` threading is where this shows up, and
 		// reading the field straight through — `p.1.a` — was flat all along.
+		//
+		// A MAP element is excluded, and it is not a hypothetical: crediting
+		// one segfaulted map_delete_tuple_churn_free on both natives. The
+		// counted-alias argument above rests on the destination's drop being
+		// is_unique-gated and shallow, which holds for a struct / array /
+		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
+		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
+		// the tuple still referenced. ownedCallResultType singles maps out
+		// for the same reason; this is that caution, one site over.
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isLocal := b.locals[id.Name]; isLocal {
 				switch b.exprType(id).(type) {
-				case ast.StructType, ast.TupleType:
+				case ast.StructType:
 					return false
+				case ast.TupleType:
+					if !isMapType(b.exprType(x)) {
+						return false
+					}
 				}
 			}
 		}
