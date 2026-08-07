@@ -78,6 +78,10 @@ func TestLowerDeterministicOverFixtureCorpus(t *testing.T) {
 	// to read one constant drags the whole build-and-run machinery in with it.
 	// internal/ir sits one level below internal/, like internal/e2e, so the
 	// relative path is identical.
+	//
+	// The count check below is why the move (#6337) was caught the same day
+	// rather than months later: a corpus glob that silently matches nothing is
+	// the one failure mode of this test that looks exactly like success.
 	cases, err := filepath.Glob(filepath.Join("..", "..", "conformance", "cases", "*", "main.fern"))
 	if err != nil {
 		t.Fatalf("glob fixtures: %v", err)

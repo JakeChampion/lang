@@ -7918,6 +7918,19 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             return ba.emit(ir.op_popcount(bw));
         }
     }
+    // __memchr(s, byte, from) → i32 (ATLAS-PLATFORM-PLAN §3). Three operands
+    // in source order, then one op — the native backends substitute a vector
+    // kernel for it, which is the whole reason it is an op and not a Fern
+    // function.
+    if (cid.name == "__memchr" && c.args.len() == 3) {
+        var mc0: LowerState = lower_expr(c.args[0], s);
+        if (!mc0.ok) { return mc0; }
+        var mc1: LowerState = lower_expr(c.args[1], mc0);
+        if (!mc1.ok) { return mc1; }
+        var mc2: LowerState = lower_expr(c.args[2], mc1);
+        if (!mc2.ok) { return mc2; }
+        return mc2.emit(ir.op_memchr());
+    }
     // __arr_push_shared_count(): appends that copied a buffer
     // which still had spare capacity — the rc==1 cliff. Same
     // allocation-free introspection shape as heap_bump_bytes;
@@ -15591,6 +15604,17 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     match (v.init) {
         parser.ExprLambda(_) => { clo_init = true; },
         parser.ExprCall(cc) => {
+            // `var w: (i32) => i32 = (if (c) { f } else { g })` — a value-position
+            // if/match parses as an IIFE, and its arms can yield closure BOXES.
+            // Every other init form here says so and gets marked; this one did
+            // not, so the slot stayed a plain scalar and `w(3)` bare-called the
+            // box pointer as code — a SIGSEGV with no bail and no diagnostic,
+            // which is why bail-counting never saw it (#6323).
+            //
+            // Marked only when EVERY arm yields a box (iife_arms_all_boxed): a
+            // bare fn-name arm is a plain fn pointer, and box-dispatching that
+            // is the same crash in the other direction.
+            if (cc.args.len() == 0 && iife_callee_boxed_arms(cc.callee, s)) { clo_init = true; }
             match (cc.callee) {
                 // A `__mkclo$<wrapN>()` env-box constructor marker — the
                 // lift pass's boxed fn-value local binding `var g = dbl`
@@ -21508,7 +21532,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names));
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -26636,6 +26660,91 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
     return false;
 }
 
+// fresh_scalar_option_call_init is the CALL-init sibling of
+// fresh_scalar_option_init (#6360): `var v: Option[i32] = mk(i)`, where the
+// whole-program OPTFRESH scan (opt_fresh_ret_fns_of) already proved every
+// return of `mk` is a direct constructor — a fresh rc=1 box, sole-owned by the
+// caller, exactly as if the ctor had been written inline.
+//
+// Without this the local earns no candidacy at all and its box is NEVER freed
+// (`frees=0`, one box per iteration), while the byte-identical shape with the
+// ctor written inline is flat at 0. The freshness verdict already existed and
+// was consumed only by lower_try's `?`-edge; the user-enum sibling
+// (collect_fresh_rcenum_names via rcenum_call_init_owner) has admitted call
+// inits since #4355 slice 5. This is that same admission for Option / Result.
+//
+// The gate is STRICTER than the direct sibling's, and deliberately: that one
+// knows which variant it built and checks only that variant's payload, while a
+// call's variant is not statically known. The free here is SHALLOW (the box,
+// not its payloads), so a `Result[i32, string]` whose Err arm carries a string
+// pointer would leak that payload. Requiring EVERY variant's payload to be
+// scalar is what makes the shallow free sound; a mixed Result stays refused and
+// stays leaking, which is the safe direction.
+function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): boolean {
+    var callee: string = "";
+    match (v.init) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { callee = id.name; },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (callee == "") { return false; }
+    if (util.index_of_str(opt_fresh, callee) < 0) { return false; }
+    // Annotation-only: the payload spelling is what proves scalar-ness, and an
+    // un-annotated call init has none to read (the direct sibling can fall back
+    // on a bare literal argument; there is no such fallback through a call).
+    var ann: string = v.type_name;
+    var n: i32 = ann.len();
+    if (n >= 8 && ann[0:7] == "Option[") {
+        // None carries no payload, so the success payload is the only one.
+        return is_scalar_type_name(opt_payload_type(ann, "Ok"));
+    }
+    if (n >= 8 && ann[0:7] == "Result[") {
+        return is_scalar_type_name(opt_payload_type(ann, "Ok"))
+            && is_scalar_type_name(opt_payload_type(ann, "Err"));
+    }
+    return false;
+}
+
+// optfresh_names_of pulls the bare callee names out of a LowerState
+// reclaimable_names list's "OPTFRESH:<name>" entries, for the block-level
+// consumed_scalar_enum_frees call which has the seeded list rather than the raw
+// registry. Entries the seeding derived from a TAGGED registry row ("RCE:" /
+// "AAC:") yield a name no real callee can match, so they are inert here.
+function optfresh_names_of(reclaim: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < reclaim.len()) {
+        var e: string = reclaim[i];
+        if (e.len() > 9 && e[0:9] == "OPTFRESH:") { out = out.append(e[9:e.len()] + ""); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// optfresh_call_names_of is the same list built from the RAW registry
+// (sg.opt_fresh_ret_fns, "name|ptype|flag"), for lower_func's two call sites —
+// one of which runs before the OPTFRESH seeding. Tagged rows ("RCE:" / "AAC:")
+// are skipped rather than yielding a junk name.
+function optfresh_call_names_of(entries: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:");
+        if (!tagged) {
+            var bar: i32 = 0;
+            while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            out = out.append(e[0:bar] + "");
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
 // whose scrutinee is the bare ident `name`, returns true.
 function match_scrutinee_is(st: parser.Stmt, name: string): boolean {
@@ -26807,7 +26916,7 @@ function expr_is_scalarish(e: parser.Expr): boolean {
     }
 }
 
-function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[]): EnumFrees {
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[]): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -26820,7 +26929,11 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                 // values whose box is shallow-freed after their consuming match. The
                 // Option box gained its rc header from opt_make → __fern_arr_box.
                 var owner: string = fresh_scalar_enum_init(v.init, structs);
-                var is_opt: boolean = fresh_scalar_option_init(v);
+                // #6360: a call to an OPTFRESH-proven producer is admitted on the
+                // same footing as an inline ctor — see fresh_scalar_option_call_init
+                // for why its payload gate is the stricter of the two.
+                var is_opt: boolean = fresh_scalar_option_init(v)
+                    || fresh_scalar_option_call_init(v, opt_fresh);
                 // A REBOUND name is admitted when every one of its assignments
                 // constructs a fresh all-scalar enum / scalar Option (#6127): the
                 // old box is then dead at each rebind and the escape gate below
@@ -35676,7 +35789,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // here is what carries the fn-level admission (escape gate + sole consuming match
     // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
     // one statement.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
         if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
@@ -35912,7 +36025,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the match. The box is freed (dec + zero) right after its match statement —
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs);
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
@@ -46134,6 +46247,78 @@ function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfunc
     match (arg) {
         parser.ExprLambda(_) => { return !lift_callee_param_is_fn(mfuncs, mfield, idx); },
         _ => {}
+    }
+    return false;
+}
+
+// iife_callee_boxed_arms reports whether `callee` is a value-position if/match
+// desugar (a zero-param IIFE lambda) whose every arm yields a closure BOX, so a
+// local bound from it must be marked a closure local and dispatch env-first.
+//
+// Conservative by construction: an arm that is not provably a box answers false
+// for the whole IIFE, so a bare fn-pointer arm (a named function) keeps the
+// plain call_indirect dispatch it has today. An empty arm set answers false —
+// nothing to prove it is a closure. #6323.
+function iife_callee_boxed_arms(callee: parser.Expr, s: LowerState): boolean {
+    match (callee) {
+        parser.ExprLambda(lam) => {
+            if (lam.params.len() != 0) { return false; }
+            var seen: i32 = 0;
+            return iife_stmts_all_boxed(lam.body, s, seen) > 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_stmts_all_boxed returns the number of arm returns proved to yield a box,
+// or -1 as soon as one is not. Walking the control-flow spine mirrors
+// iife_arms_hold_fn_value; the difference is what it asks of each arm value.
+function iife_stmts_all_boxed(stmts: parser.Stmt[], s: LowerState, seen: i32): i32 {
+    var n: i32 = seen;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                if (!expr_is_closure_box(r.value, s)) { return 0 - 1; }
+                n = n + 1;
+            },
+            parser.StmtIf(iff) => {
+                n = iife_stmts_all_boxed(iff.then_body, s, n);
+                if (n < 0) { return 0 - 1; }
+                n = iife_stmts_all_boxed(iff.else_body, s, n);
+                if (n < 0) { return 0 - 1; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    n = iife_stmts_all_boxed(mm.arms[a].body, s, n);
+                    if (n < 0) { return 0 - 1; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// expr_is_closure_box reports whether an arm value is already a closure box: a
+// closure LOCAL (the `v0` alias shape), a `__mkclo$…` env-box marker the lift
+// pass produced, or a nested value-position if/match whose own arms are all
+// boxed. Anything else — a bare fn name, a call, a literal — answers false.
+function expr_is_closure_box(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_closure_local(id.name); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return cid.name.len() > 8 && cid.name[0:8] == "__mkclo$"; },
+                parser.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_boxed_arms(c.callee, s); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
     }
     return false;
 }

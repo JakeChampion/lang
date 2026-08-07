@@ -3051,58 +3051,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
     // emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
-    // __fern_arr_slice: %rdi = src arr,
-    // %rsi = start, %rdx = end → a fresh array holding src[start:end] (copies the
-    // 8-byte element payloads via __fern_arr_box). Drives array `a[start:end]`.
-    // Construction-time bounds check (#5419): two unsigned compares trap unless
-    // 0 <= start <= end <= src len — without them an oversized `end` walked the
-    // copy loop past the source buffer.
-    if (s.has_need("arr_slice")) {
-        s = s.write("__fern_arr_slice:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    pushq %r15\n");
-        s = s.write("    movq %rdi, %r12\n");
-        s = s.write("    movq %rsi, %r13\n");
-        s = s.write("    movq %rdx, %r14\n");
-        s = s.write("    cmpq (%r12), %r14\n");    // end > src len (unsigned) → abort
-        s = s.write("    ja __fern_oob_abort\n");
-        s = s.write("    cmpq %r14, %r13\n");      // start > end (unsigned) → abort
-        s = s.write("    ja __fern_oob_abort\n");
-        s = s.write("    movq %r14, %r15\n");
-        s = s.write("    subq %r13, %r15\n");
-        s = s.write("    movq %r15, %rdi\n");
-        s = s.write("    call __fern_arr_box\n");
-        s = s.write("    movq $0, %rcx\n");
-        s = s.write(".Larr_slice_loop:\n");
-        s = s.write("    cmpq %r15, %rcx\n");
-        s = s.write("    jge .Larr_slice_done\n");
-        s = s.write("    movq %r13, %rdx\n");
-        s = s.write("    addq %rcx, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq (%r12,%rdx,8), %rdi\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    movq %rdi, (%rax,%rdx,8)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Larr_slice_loop\n");
-        s = s.write(".Larr_slice_done:\n");
-        s = s.write("    popq %r15\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_arr_reverse and __fern_arr_concat are Fern runtime functions now
-    // (#2649): asmcore.rt_src_arr_reverse / rt_src_arr_concat, emitted need-gated
-    // in the migrated-helpers section over the __raw_arr_box + __raw_array pair.
-    // One arch-independent source replaces the two hand-asm copies (this one and
-    // asm_arm64_ir's) — they were raw slot copies with nothing target-specific in
-    // them, which is what made them the first array helpers worth moving.
+    // All three array helpers — __fern_arr_reverse, __fern_arr_concat and
+    // __fern_arr_slice — are Fern runtime functions now (#2649):
+    // asmcore.rt_src_arr_reverse / rt_src_arr_concat / rt_src_arr_slice, emitted
+    // need-gated in the migrated-helpers section over the __raw_arr_box +
+    // __raw_array pair. One source each replaces the two hand-asm copies (this
+    // one and asm_arm64_ir's) — they were raw slot copies with nothing
+    // target-specific in them, which is what made them worth moving. arr_slice
+    // came last because its bounds check (#5419) traps: it spells the trap with
+    // the __syscall3 sub-floor (exit 134), which is why it alone takes a target.
     // __fern_random_bytes is now a Fern runtime function (#2649): emitted via
     // emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block (need-gated on
     // random_bytes) — it allocs n bytes, fills them from getrandom via the
@@ -4569,10 +4526,10 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // shared helpers or every library unit dangles at the per-module link.
         "__fern_oob_abort",
         "__fern_arr_push_owned",
-        "__fern_arr_slice",
-        // xs.reverse() / xs.concat(ys) (#3457): a LIBRARY module's call resolves
-        // against the entry module's single definition, exactly like arr_slice.
-        "__fn___fern_arr_reverse", "__fn___fern_arr_concat",
+        // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
+        // call resolves against the entry module's single definition, exactly
+        // like the heap helpers above.
+        "__fn___fern_arr_reverse", "__fn___fern_arr_concat", "__fn___fern_arr_slice",
         "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes", "__fn___fern_str_chars",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
@@ -4662,6 +4619,40 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // pop index (top), string box; box = [data@0, len@8], so the byte is
         // at [data + i]; zero-extend to an i32.
         s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
+    }
+    if (o.kind_tag == 225) {  // memchr
+        // operand stack [box, byte, from] (from on top) -> i32 index or -1.
+        //
+        // SCALAR, deliberately. §3.4 of ATLAS-PLATFORM-PLAN orders the kernel
+        // as "correct in every backend first, fast one backend at a time":
+        // the native x86-64 emitter serves this with an SSE2 loop, and this
+        // one serves the same meaning a byte at a time. Substituting a vector
+        // body here is a later slice and changes no caller.
+        var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var l_clamped: string = mlo.name;
+        var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
+        var l_loop: string = mlo2.name;
+        var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
+        var l_none: string = mlo3.name;
+        var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
+        var l_done: string = mlo4.name;
+        s = mlo4.state;
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        // from clamps at 0.
+        s = s.write("    cmpq $0, %rdx\n    jge " + l_clamped + "\n    xorq %rdx, %rdx\n");
+        s = s.write(l_clamped + ":\n");
+        // A byte outside 0..255 can never match. One UNSIGNED compare covers
+        // both ends: a negative arrives as a huge unsigned and fails it too.
+        s = s.write("    cmpq $255, %rcx\n    ja " + l_none + "\n");
+        s = s.write(l_loop + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + l_none + "\n");
+        s = s.write("    movzbq (%rax,%rdx), %r9\n");
+        s = s.write("    cmpq %rcx, %r9\n    je " + l_done + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + l_loop + "\n");
+        s = s.write(l_none + ":\n    movq $-1, %rdx\n");
+        s = s.write(l_done + ":\n    pushq %rdx\n");
+        return s;
     }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, but now
@@ -5149,9 +5140,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_arr_concat\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.mark_arr_concat();
         } else if (o.kind_tag == 96) {  // arr_slice
-            // operand stack [arr, start, end]; __fern_arr_slice(%rdi=arr,
-            // %rsi=start, %rdx=end) -> fresh array in %rax (copies elements).
-            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call __fern_arr_slice\n    pushq %rax\n");
+            // operand stack [arr, start, end] (end on top); the stack ABI wants
+            // param[0]=arr on top, so re-push the three popped operands in
+            // reverse — the three-operand form of the arr_concat shuffle.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_arr_slice\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.mark_arr_slice();
         } else if (o.kind_tag == 185) {  // random_bytes
             // [n] IS param[0] (+16); call the Fern-compiled __fn___fern_random_bytes
@@ -5432,7 +5424,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_write_file\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("write_file");
-        } else if (o.kind_tag == 225) {  // write_file_exec
+        } else if (o.kind_tag == 226) {  // write_file_exec
             // Identical shuffle; the only difference is the helper it calls,
             // which opens 0755 rather than 0644 (#6133).
             s = s.write("    popq %rsi\n    popq %rdi\n");
@@ -7356,6 +7348,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("arr_concat")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), all_structs, s);
+    }
+    // a[start:end] — the third array helper (#2649). Unlike its two siblings it
+    // takes a target, because its bounds trap is exit(134) through __syscall3
+    // and the exit number is per-target (asmcore.sysno picks 60 here).
+    if (s.has_need("arr_slice")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice("x86_64"), all_structs, s);
     }
     // str_split — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: scan for `sep`, append each segment slice (.append() ->

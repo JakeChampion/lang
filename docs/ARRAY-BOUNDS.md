@@ -52,7 +52,13 @@ index: natives exit 134 (the IR routes construction through the
 reports `slice [lo:hi] out of range for length N` and exits
 non-zero. The self-host backends check inside their copying
 helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
-`str_slice` view emit, branching to the shared `__fern_oob_abort`.
+`str_slice` view emit. The inline emits branch to the shared
+`__fern_oob_abort`; the native `__fern_arr_slice` is a Fern helper
+now (#2649, `asmcore.rt_src_arr_slice`) and cannot name an asm
+symbol, so it issues the same `exit(134)` through the `__syscall3`
+sub-floor instead. Same status, same four conditions — spelled with
+explicit `< 0` arms because Fern's `i32` compares are signed where
+the hand-asm's were unsigned.
 
 ## Cost
 

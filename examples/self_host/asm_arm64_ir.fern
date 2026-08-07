@@ -136,6 +136,36 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // [data + i]; ldrb zero-extends into w0.
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0]\n    ldrb w0, [x0, x1]\n    str x0, [sp, #-16]!\n"); return s;
     }
+    if (o.kind_tag == 225) {  // memchr
+        // operand stack [box, byte, from] (from on top) -> i32 index or -1.
+        // Scalar for the same reason as the x86-64 sibling: §3.4 makes the
+        // intrinsic total everywhere before making it fast anywhere. The
+        // native arm64 emitter runs a NEON kernel over the same meaning.
+        var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var l_clamped: string = mlo.name;
+        var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
+        var l_loop: string = mlo2.name;
+        var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
+        var l_none: string = mlo3.name;
+        var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
+        var l_done: string = mlo4.name;
+        s = mlo4.state;
+        s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+        s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
+        s = s.write(l_clamped + ":\n");
+        // Unsigned compare against 255 rejects both a negative byte and one
+        // above the range in a single test.
+        s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
+        s = s.write(l_loop + ":\n");
+        s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
+        s = s.write("    ldrb w4, [x0, x2]\n");
+        s = s.write("    cmp x4, x1\n    b.eq " + l_done + "\n");
+        s = s.write("    add x2, x2, #1\n    b " + l_loop + "\n");
+        s = s.write(l_none + ":\n    mov x2, #-1\n");
+        s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
+        return s;
+    }
     if (o.kind_tag == 102) {  // str_slice
         // operand stack [src box, start, end] (end on top). Zero-copy view, now
         // rc-HEADERED with an IMMORTAL sentinel (#2649): a 24-byte box
@@ -648,12 +678,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.mark_arr_concat();
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 96) {  // arr_slice
-            // operand stack [arr, start, end] (end top); __fern_arr_slice(x0=arr,
-            // x1=start, x2=end) -> fresh array in x0. asm_arm64.emit_runtime emits
-            // the helper when arr_slice is needed.
+            // operand stack [arr, start, end] (end top); the stack ABI wants
+            // param[0]=arr on top, so re-push the three popped operands in
+            // reverse — the three-operand form of the arr_concat shuffle above.
             s = s.mark_heap();
             s = s.mark_arr_slice();
-            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_arr_slice\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_slice\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 185) {  // random_bytes
             // [n] IS param[0]; call the Fern-compiled __fn___fern_random_bytes
             // (asmcore.rt_src_random_bytes, #2649) via the stack ABI, mirroring
@@ -888,7 +918,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // reverse — the same shuffle the two-arg string helpers do.
             s = s.need("heap"); s = s.need("write_file");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_write_file\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 225) {  // write_file_exec
+        } else if (o.kind_tag == 226) {  // write_file_exec
             // Identical shuffle; the only difference is the helper it calls,
             // which opens 0755 rather than 0644 (#6133).
             s = s.need("heap"); s = s.need("write_file_exec");
@@ -6732,55 +6762,14 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    bl __fern_large_push\n");
         s = s.write("    b .Lapo_ret\n");
     }
-    // __fern_arr_slice: return a fresh array containing
-    // arr[start..end] (end exclusive). x0 = src arr ptr,
-    // x1 = start, x2 = end. Source array layout matches the
-    // ExprArray emit: [len: 8, e0: 8, …]. Each element is an
-    // 8-byte payload — i32 zero-extended or string-box ptr.
-    // Construction-time bounds check (#5419): two unsigned
-    // compares trap unless 0 <= start <= end <= src len —
-    // without them an oversized `end` walked the copy loop
-    // past the source buffer.
-    if (s.has_need("arr_slice")) {
-        s = s.write("__fern_arr_slice:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");           // src arr
-        s = s.write("    mov x20, x1\n");           // start
-        s = s.write("    mov x21, x2\n");           // end
-        s = s.write("    ldr x3, [x19]\n");         // src len
-        s = s.write("    cmp x21, x3\n");
-        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n"); // end > src len (unsigned) → abort
-        s = s.write("    cmp x20, x21\n");
-        s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n"); // start > end (unsigned) → abort
-        s = s.write("    sub x22, x21, x20\n");     // new len = end - start
-        s = s.write("    mov x0, x22\n");            // cap = new len
-        s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
-        // copy elements: i from 0 to new_len, dst[i+1] = src[start + i + 1]
-        s = s.write("    mov x3, #0\n");            // i
-        s = s.write(".Larr_slice_loop:\n");
-        s = s.write("    cmp x3, x22\n");
-        s = s.write("    b.ge .Larr_slice_done\n");
-        s = s.write("    add x4, x20, x3\n");
-        s = s.write("    add x4, x4, #1\n");
-        s = s.write("    ldr x5, [x19, x4, lsl #3]\n");
-        s = s.write("    add x6, x3, #1\n");
-        s = s.write("    str x5, [x0, x6, lsl #3]\n");
-        s = s.write("    add x3, x3, #1\n");
-        s = s.write("    b .Larr_slice_loop\n");
-        s = s.write(".Larr_slice_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_arr_concat and __fern_arr_reverse are Fern runtime functions now
-    // (#2649): asmcore.rt_src_arr_concat / rt_src_arr_reverse, emitted need-gated
-    // in the migrated-helpers section over the __raw_arr_box + __raw_array pair.
-    // The source is shared with x86-64 verbatim — these were raw 8-byte slot
-    // copies with nothing target-specific in them, so there is no `tgt` to pass.
+    // All three array helpers — __fern_arr_concat, __fern_arr_reverse and
+    // __fern_arr_slice — are Fern runtime functions now (#2649):
+    // asmcore.rt_src_arr_concat / rt_src_arr_reverse / rt_src_arr_slice, emitted
+    // need-gated in the migrated-helpers section over the __raw_arr_box +
+    // __raw_array pair. reverse / concat share their source with x86-64 verbatim
+    // — raw 8-byte slot copies with nothing target-specific in them, so there is
+    // no `tgt` to pass. arr_slice takes one, and only because its bounds trap
+    // (#5419) is exit(134) through __syscall3 and the exit number is per-target.
     // __fern_arr_str_join is now a Fern runtime function (#2649): see
     // asmcore.rt_src_arr_str_join. It calls str_concat (via `+`); the str_concat
     // + heap deps are declared by mark_arr_str_join so their bodies are present.
@@ -6876,6 +6865,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("arr_concat")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s.struct_decls, s);
+    }
+    // a[start:end] — takes `tgt`, unlike its two siblings: its bounds trap is
+    // exit(134) through __syscall3, and Darwin's exit is 1 where Linux's is 93.
+    if (s.has_need("arr_slice")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(tgt), s.struct_decls, s);
     }
     // The migrated fs leaves — read_file / write_file / remove_file / temp_dir —
     // share ONE errno→IoError classifier and are emitted as a single bundle

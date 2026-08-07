@@ -378,6 +378,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "mkdirat") { return "258"; }
         if (name == "fstatat") { return "262"; }
         if (name == "getrandom") { return "318"; }
+        if (name == "exit") { return "60"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -394,6 +395,7 @@ pub function sysno(t: string, name: string): string {
         // two args and ignores a third, but caps each call at 256 bytes and
         // returns 0 rather than a count — see rt_src_random_bytes.
         if (name == "getrandom") { return "500"; }
+        if (name == "exit") { return "1"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -407,6 +409,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "mkdirat") { return "34"; }
     if (name == "fstatat") { return "79"; }
     if (name == "getrandom") { return "278"; }
+    if (name == "exit") { return "93"; }
     return "-1";
 }
 
@@ -890,6 +893,36 @@ pub function rt_src_arr_reverse(): string {
 
 pub function rt_src_arr_concat(): string {
     return "function __fern_arr_concat(a: i32[], b: i32[]): i32[] { var an: i32 = a.len(); var bn: i32 = b.len(); var p: i32 = __raw_arr_box(an + bn); var i: i32 = 0; while (i < an) { __raw_store_ptr(p, i + 1, a[i]); i = i + 1; } var j: i32 = 0; while (j < bn) { __raw_store_ptr(p, an + j + 1, b[j]); j = j + 1; } return __raw_array(p); }";
+}
+
+// rt_src_arr_slice backs `a[start:end]` (#2649), the third and last array
+// helper to move. Same shallow 8-byte slot copy as its two siblings, over the
+// same __raw_arr_box + __raw_array pair.
+//
+// It came last because its construction-time bounds check (#5419) traps, and
+// "abort" is not a Fern expression. It does not need one: the hand-asm's
+// __fern_oob_abort is nothing but exit(134), which the existing __syscall3
+// floor already says — so the only new surface is an `exit` row in sysno
+// (60 / 93 / 1; darwinize's darwin_sysno already maps 93 -> 1). No new
+// intrinsic, no new IR op, no new backend code. That is also why this helper
+// takes a target where reverse / concat do not.
+//
+// The hand-asm's two traps were UNSIGNED compares (`ja`), which is how a
+// negative bound aborted rather than wrapping the copy loop; Fern's i32
+// compares are signed, so the same condition is spelled with the explicit
+// `< 0` arms. Four separate ifs rather than a chain of `||`, to keep each
+// arm's origin in the hand-asm legible. The trap assigns back into `bad`
+// rather than binding a fresh local: exit(134) does not return, so the value
+// is never read, and a named local would only invite the reader to look for
+// where it is used.
+//
+// `a[start + i]` pays the ordinary per-access bounds check, which the raw
+// hand-asm load did not. That is deliberate and matches reverse / concat: the
+// helper reads through the same checked path user code does, and the indices
+// are provably in range, so the check is a predictable-branch cost rather than
+// a correctness one.
+pub function rt_src_arr_slice(t: string): string {
+    return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0); } var m: i32 = end - start; var p: i32 = __raw_arr_box(m); var i: i32 = 0; while (i < m) { __raw_store_ptr(p, i + 1, a[start + i]); i = i + 1; } return __raw_array(p); }";
 }
 
 // rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
@@ -2361,6 +2394,11 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // __map_hash_seed(): core/map's per-process string-hash
                     // seed (#6194). i32, never 0. Matches native's FuncSigs.
                     if (id.name == "__map_hash_seed") { return ty_i32(); }
+                    // __memchr(s, byte, from): the index of the first `byte`
+                    // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
+                    // for both the index and the not-found sentinel; the
+                    // haystack length it searches is an i32 everywhere.
+                    if (id.name == "__memchr") { return ty_i32(); }
                     if (id.name == "__load_i32") { return ty_i32(); }
                     if (id.name == "exit") { return ty_i32(); }
                     if (id.name == "args_count") { return ty_i32(); }
