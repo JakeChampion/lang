@@ -145,8 +145,12 @@ var linuxDarwinSysno = map[string][2]int{
 	// unlinkat(2) / mkdirat(2): identical arg shapes on both
 	// platforms (Darwin BSD 472 / 475). Back __fern_remove_file /
 	// __fern_remove_dir_all / __fern_temp_dir.
-	"unlinkat":   {35, 472},
-	"mkdirat":    {34, 475},
+	"unlinkat": {35, 472},
+	"mkdirat":  {34, 475},
+	// fchmod(2) — Linux 52, Darwin BSD 124. Backs write_file_exec's
+	// mode fixup: openat's mode argument applies only on CREATE, so
+	// writing over a stale output would leave the old mode (#6133).
+	"fchmod":     {52, 124},
 	"exit":       {sysExit, darExit},
 	"exit_group": {sysExitGroup, darExit},
 	"mmap":       {sysMmap, darMmap},
@@ -405,7 +409,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// box constructor is shared with the Reader/Writer family
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
-	if g.usesReadFile || g.usesWriteFile || g.usesRemoveFile ||
+	if g.usesReadFile || g.usesWriteFile || g.usesWriteFileExec || g.usesRemoveFile ||
 		g.usesTempDir || g.usesReadDir || g.usesStat || g.usesRemoveDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -659,6 +663,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
+	}
+	if g.usesWriteFileExec {
+		g.emitWriteFileRuntimeMode("__fern_write_file_exec", "0755", "x", "0755")
 	}
 	if g.usesRemoveFile {
 		g.emitRemoveFileRuntime()
@@ -7315,12 +7322,22 @@ func (g *generator) emitReadFileRuntime2W() {
 // O_WRONLY = 1, O_CREAT = 0100 (octal) = 64, O_TRUNC = 01000
 // (octal) = 512. Combined flags = 577.
 func (g *generator) emitWriteFileRuntime() {
+	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
+}
+
+// emitWriteFileRuntimeMode is emitWriteFileRuntime parameterised by symbol,
+// creation mode and local-label suffix, so `write_file` (0644) and
+// `write_file_exec` (0755) share one body rather than a copy that can drift
+// (#6133). The suffix keeps the two copies' `.Lwf*` labels distinct — without
+// it a program using both would emit each label twice and the assembler would
+// reject it.
+func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.line("")
-	g.line(".global __fern_write_file")
-	g.typeDirective("__fern_write_file")
-	g.label("__fern_write_file")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
 	if ast.UseTwoWordStrings(8) {
-		g.emitWriteFileRuntime2W()
+		g.emitWriteFileRuntime2W(sym, mode, sfx, fixupMode)
 		return
 	}
 	// Frame: 80 bytes — fp/lr (16) + 6 callee-saves (48) +
@@ -7340,25 +7357,36 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x24")
 	g.emit("mov x2, #577")
-	g.emit("mov x3, #0644")
+	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
-	g.emit("tbnz x0, #63, .Lwf_err_open")
+	g.emit("tbnz x0, #63, .Lwf_err_open%s", sfx)
 	g.emit("mov x21, x0") // fd
 
 	// Write loop. x23 = bytes_written.
 	g.emit("mov x23, #0")
-	g.label(".Lwf_loop")
+	g.label(".Lwf_loop" + sfx)
 	g.emit("cmp x23, x22")
-	g.emit("b.ge .Lwf_done")
+	g.emit("b.ge .Lwf_done%s", sfx)
 	g.emit("mov x0, x21")
 	g.emit("add x1, x20, x23")
 	g.emit("sub x2, x22, x23")
 	g.syscall("write")
-	g.emit("tbnz x0, #63, .Lwf_err_close")
+	g.emit("tbnz x0, #63, .Lwf_err_close%s", sfx)
 	g.emit("add x23, x23, x0")
-	g.emit("b .Lwf_loop")
+	g.emit("b .Lwf_loop%s", sfx)
 
-	g.label(".Lwf_done")
+	g.label(".Lwf_done" + sfx)
+	if fixupMode != "" {
+		// openat applies its mode only on CREATE, so writing over a stale
+		// output keeps the old one — for write_file_exec that is an
+		// unrunnable binary, the failure it exists to remove. The result
+		// is ignored: the bytes are already written, and a mode failure
+		// must not turn a successful write into an Err. Plain write_file
+		// passes "" and keeps preserving an existing file's mode.
+		g.emit("mov x0, x21")
+		g.emit("mov x1, #%s", fixupMode)
+		g.syscall("fchmod")
+	}
 	g.emit("mov x0, x21")
 	g.syscall("close")
 	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -7369,18 +7397,18 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]")
 	g.emit("str xzr, [x0, #8]")
-	g.emit("b .Lwf_return")
+	g.emit("b .Lwf_return%s", sfx)
 
-	g.label(".Lwf_err_close")
+	g.label(".Lwf_err_close" + sfx)
 	g.emit("neg x22, x0") // errno
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	g.emit("b .Lwf_err_dispatch")
+	g.emit("b .Lwf_err_dispatch%s", sfx)
 
-	g.label(".Lwf_err_open")
+	g.label(".Lwf_err_open" + sfx)
 	g.emit("neg x22, x0")
 
-	g.label(".Lwf_err_dispatch")
+	g.label(".Lwf_err_dispatch" + sfx)
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x19")
 	g.emit("bl __fern_io_error")
@@ -7393,13 +7421,13 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("str w1, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
 
-	g.label(".Lwf_return")
+	g.label(".Lwf_return" + sfx)
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #80")
 	g.emit("ret")
-	g.sizeDirective("__fern_write_file")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 }
 
@@ -7410,7 +7438,7 @@ func (g *generator) emitWriteFileRuntime() {
 //
 //	Some(IoError): 16-byte box {tag=0@0, payload=err@8}
 //	None:           8-byte box {tag=1@0}
-func (g *generator) emitWriteFileRuntime2W() {
+func (g *generator) emitWriteFileRuntime2W(sym, mode, sfx, fixupMode string) {
 	// Frame: 112 bytes. fp/lr (16) + 7 callee-saves (56 = x19..x25
 	// + 8 pad) + 2× 16-byte inline-spill scratch for path + content
 	// (32) + 8 align.
@@ -7435,26 +7463,37 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov x0, #%d", g.atFdCwd())
 	g.emit("mov x1, x25")
 	g.emit("mov x2, #577")
-	g.emit("mov x3, #0644")
+	g.emit("mov x3, #%s", mode)
 	g.syscall("openat")
-	g.emit("tbnz x0, #63, .Lwf2w_err_open")
+	g.emit("tbnz x0, #63, .Lwf2w_err_open%s", sfx)
 	g.emit("mov x21, x0") // fd (reuse x21 — content_data no longer needed past this point)
 	// Write loop. x22 = cumulative bytes written (callee-
 	// save). Note: x20 still holds path_len which we needed
 	// for io_error — preserved across the loop since syscall
 	// doesn't touch x20.
 	g.emit("mov x22, #0")
-	g.label(".Lwf2w_loop")
+	g.label(".Lwf2w_loop" + sfx)
 	g.emit("cmp x22, x24")
-	g.emit("b.ge .Lwf2w_done")
+	g.emit("b.ge .Lwf2w_done%s", sfx)
 	g.emit("mov x0, x21")      // fd
 	g.emit("add x1, x23, x22") // buf + offset
 	g.emit("sub x2, x24, x22") // remaining
 	g.syscall("write")
-	g.emit("tbnz x0, #63, .Lwf2w_err_close")
+	g.emit("tbnz x0, #63, .Lwf2w_err_close%s", sfx)
 	g.emit("add x22, x22, x0")
-	g.emit("b .Lwf2w_loop")
-	g.label(".Lwf2w_done")
+	g.emit("b .Lwf2w_loop%s", sfx)
+	g.label(".Lwf2w_done" + sfx)
+	if fixupMode != "" {
+		// openat applies its mode only on CREATE, so writing over a stale
+		// output keeps the old one — for write_file_exec that is an
+		// unrunnable binary, the failure it exists to remove. The result
+		// is ignored: the bytes are already written, and a mode failure
+		// must not turn a successful write into an Err. Plain write_file
+		// passes "" and keeps preserving an existing file's mode.
+		g.emit("mov x0, x21")
+		g.emit("mov x1, #%s", fixupMode)
+		g.syscall("fchmod")
+	}
 	g.emit("mov x0, x21")
 	g.syscall("close")
 	// Return Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -7465,15 +7504,15 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]")
 	g.emit("str xzr, [x0, #8]")
-	g.emit("b .Lwf2w_return")
-	g.label(".Lwf2w_err_close")
+	g.emit("b .Lwf2w_return%s", sfx)
+	g.label(".Lwf2w_err_close" + sfx)
 	g.emit("neg x22, x0") // errno
 	g.emit("mov x0, x21")
 	g.syscall("close")
-	g.emit("b .Lwf2w_err_dispatch")
-	g.label(".Lwf2w_err_open")
+	g.emit("b .Lwf2w_err_dispatch%s", sfx)
+	g.label(".Lwf2w_err_open" + sfx)
 	g.emit("neg x22, x0")
-	g.label(".Lwf2w_err_dispatch")
+	g.label(".Lwf2w_err_dispatch" + sfx)
 	// __fern_io_error(errno, path_data, path_len).
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x19")
@@ -7485,14 +7524,14 @@ func (g *generator) emitWriteFileRuntime2W() {
 	g.emit("mov w1, #1")
 	g.emit("str w1, [x0]")      // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]") // payload
-	g.label(".Lwf2w_return")
+	g.label(".Lwf2w_return" + sfx)
 	g.emit("ldr x25, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #112")
 	g.emit("ret")
-	g.sizeDirective("__fern_write_file")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 }
 
@@ -9361,6 +9400,10 @@ type generator struct {
 	// for the IR-matching layout.
 	usesReadFile  bool
 	usesWriteFile bool
+	// usesWriteFileExec is write_file_exec — write_file with the
+	// executable bit. Its own flag so a program that never asks for
+	// one does not carry the second helper body (#6133).
+	usesWriteFileExec bool
 	// usesRemoveFile / usesTempDir / usesReadDir / usesStat /
 	// usesRemoveDirAll pull in the filesystem-op family (#5372):
 	// unlinkat / mkdirat / getdents64 / fstatat runtimes with the
@@ -12522,6 +12565,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// close on Linux.
 			target = "__fern_write_file"
 			g.usesWriteFile = true
+			g.usesAlloc = true
+			g.usesIoError = true
+		case "write_file_exec":
+			// Same, created 0755 (#6133).
+			target = "__fern_write_file_exec"
+			g.usesWriteFileExec = true
 			g.usesAlloc = true
 			g.usesIoError = true
 		case "remove_file":

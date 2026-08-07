@@ -388,6 +388,26 @@ function main(): i32 {
     return util.arr_push_cliff_report("fern", run());
 }
 
+// target_writes_binary reports whether `-target t` produces a finished
+// EXECUTABLE rather than assembler text or a wasm module — the three targets
+// that assemble and link in-process. Their output must land 0755, the way the
+// native CLI's does: a non-executable binary run under qemu exits 1 with no
+// output, which is indistinguishable from a program that ran and returned 1,
+// and that has already cost one investigation a fabricated reproduction
+// (#6133). wasm-bin / wasm-component are binaries too, but they are modules
+// loaded by a runtime, not things the kernel execs, so they stay 0644.
+function target_writes_binary(t: string): boolean {
+    return t == "arm64" || t == "arm64-android" || t == "arm64-darwin";
+}
+
+// write_output writes the compiler's output, executable when the target
+// produced one. Both emit paths (the SSA one and the AST shell) go through it
+// so the mode rule cannot be applied at one and forgotten at the other.
+function write_output(out_path: string, data: string, t: string): Result[void, IoError] {
+    if (target_writes_binary(t)) { return write_file_exec(out_path, data); }
+    return write_file(out_path, data);
+}
+
 function run(): i32 {
     var av: string[] = args();
 
@@ -663,7 +683,7 @@ function run(): i32 {
                 if (ssa_out.len() == 0) { return 2; }
             }
             if (out_path.len() > 0) {
-                match (write_file(out_path, ssa_out)) {
+                match (write_output(out_path, ssa_out, target)) {
                     Err(e) => {
                         eprint("fern: cannot write output: ");
                         eprint(out_path);
@@ -820,7 +840,7 @@ function run(): i32 {
         out_asm = asm_ir.emit_module_or_error(full);
     }
     if (out_path.len() > 0) {
-        match (write_file(out_path, out_asm)) {
+        match (write_output(out_path, out_asm, target)) {
             Err(e) => {
                 eprint("fern: cannot write output: ");
                 eprint(out_path);

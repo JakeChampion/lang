@@ -373,6 +373,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "close") { return "3"; }
         if (name == "lseek") { return "8"; }
         if (name == "openat") { return "257"; }
+        if (name == "fchmod") { return "91"; }
         if (name == "unlinkat") { return "263"; }
         if (name == "mkdirat") { return "258"; }
         if (name == "fstatat") { return "262"; }
@@ -386,6 +387,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "close") { return "6"; }
         if (name == "lseek") { return "199"; }
         if (name == "openat") { return "463"; }
+        if (name == "fchmod") { return "124"; }
         if (name == "unlinkat") { return "472"; }
         if (name == "mkdirat") { return "475"; }
         if (name == "fstatat") { return "470"; }
@@ -402,6 +404,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "close") { return "57"; }
     if (name == "lseek") { return "62"; }
     if (name == "openat") { return "56"; }
+    if (name == "fchmod") { return "52"; }
     if (name == "unlinkat") { return "35"; }
     if (name == "mkdirat") { return "34"; }
     if (name == "fstatat") { return "79"; }
@@ -515,7 +518,32 @@ pub function rt_src_remove_file(t: string): string {
 // FRESH path string. Only the syscall numbers, AT_FDCWD and the open flag-set
 // come from `t` — the flag-set genuinely differs (577 Linux / 1537 Darwin).
 pub function rt_src_write_file(t: string): string {
-    return "function __fern_write_file(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "wr_creat_trunc") + ", 420); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(cbuf, put), clen - put); if (w <= 0) { put = clen; } else { put = put + w; } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(()); }";
+    return rt_src_write_file_mode(t, "__fern_write_file", "420", "");
+}
+
+// rt_src_write_file_exec backs `write_file_exec` — write_file with the
+// executable bit (0755 = 493). A compiler that emits a finished binary has to
+// be able to produce a runnable one, and the self-host CLI could not: it wrote
+// 0644 where the native CLI writes 0755, and a non-executable binary run under
+// qemu exits 1 with no output — indistinguishable from a program that ran and
+// returned 1 (#6133).
+pub function rt_src_write_file_exec(t: string): string {
+    // fchmod AFTER the write, because openat's mode argument only applies when
+    // it CREATES the file — recompiling over a stale 0644 output would
+    // otherwise leave it unrunnable, which is the whole failure this builtin
+    // removes. Plain write_file deliberately does NOT do this: it would force
+    // an existing file's mode, where today it preserves it, and that is also
+    // what os.WriteFile (the interpreter) does.
+    return rt_src_write_file_mode(t, "__fern_write_file_exec", "493",
+        "__syscall3(" + sysno(t, "fchmod") + ", fd, 493, 0); ");
+}
+
+// rt_src_write_file_mode is the shared body, parameterised by emitted function
+// name, creation mode (DECIMAL, as the emitted source is Fern: 420 = 0644,
+// 493 = 0755) and an optional statement spliced in before close(2). One body so
+// the two cannot drift.
+pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixup: string): string {
+    return "function " + fname + "(path: string, contents: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, " + oflag(t, "wr_creat_trunc") + ", " + mode + "); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var clen: i32 = contents.len(); var cbuf: i32 = __raw_alloc(clen + 1); var j: i32 = 0; while (j < clen) { __raw_store8(cbuf, j, contents[j]); j = j + 1; } var put: i32 = 0; while (put < clen) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(cbuf, put), clen - put); if (w <= 0) { put = clen; } else { put = put + w; } } " + fixup + "__syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Ok(()); }";
 }
 
 // rt_src_env backs `env(name)` (#2649) → Option[string]. Walks the process envp
@@ -2229,6 +2257,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "Err" && c.args.len() == 1) { return ty_result(ty_unknown()); }
                     if (id.name == "read_file") { return ty_result(ty_string()); }
                     if (id.name == "write_file") { return ty_result(ty_unknown()); }
+                    if (id.name == "write_file_exec") { return ty_result(ty_unknown()); }
                     // now_unix_ms / monotonic_ns return i64. The self-host
                     // has no distinct i64 tag — integers live in 64-bit x0
                     // slots and compare via cmp — so "i32" routes them

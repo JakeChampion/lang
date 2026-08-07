@@ -122,8 +122,21 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 			if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
 			}
-			if err := os.Chmod(binPath, 0o755); err != nil {
-				t.Fatalf("chmod: %v", err)
+			// The compiler must emit a RUNNABLE binary. This used to be an
+			// os.Chmod: the self-host CLI wrote 0644 where the native one
+			// writes 0755, and the harness quietly repaired it, so nothing
+			// gated the mode. That repair is why a hand-run of the same
+			// command exited 1 with no output — indistinguishable from a
+			// program that ran and returned 1, and it cost one investigation
+			// a fabricated reproduction before anyone checked the mode
+			// (#6133). Asserting it here is what keeps the fix honest.
+			fi, err := os.Stat(binPath)
+			if err != nil {
+				t.Fatalf("stat output: %v", err)
+			}
+			if fi.Mode().Perm()&0o111 == 0 {
+				t.Fatalf("self-host wrote a NON-EXECUTABLE binary (mode %04o); "+
+					"the CLI must write_file_exec for a target that emits one", fi.Mode().Perm())
 			}
 			cmd := exec.Command("qemu-aarch64", binPath)
 			var so, se bytes.Buffer
