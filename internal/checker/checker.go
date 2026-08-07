@@ -7551,6 +7551,63 @@ func scalarModuleFor(t ast.Type) string {
 	return mod
 }
 
+// unknownVariantHint explains an arm name that is not a variant. Two
+// distinct mistakes reach here and the bare message serves neither:
+//
+//   - a near-miss on a real variant, which wants the name;
+//   - a CATCH-ALL written the Rust way (`other => …`), where the reader
+//     meant "everything else, bound to `other`". Fern reads a bare ident
+//     in arm position as a variant name, so they are told their variant
+//     does not exist -- true, and no help at all. There is no binding
+//     catch-all (`other @ _` is refused too), so the answer is `_` plus
+//     binding the scrutinee first.
+//
+// The catch-all reading is only offered when the name resembles no
+// variant: a near-miss is far more likely to be a typo than an attempt
+// at a wildcard.
+func unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	best, bestD := "", 0
+	max := len(name)/3 + 1
+	for i := range ed.Variants {
+		d := editDistanceStr(name, ed.Variants[i].Name)
+		if d <= max && (best == "" || d < bestD) {
+			best, bestD = ed.Variants[i].Name, d
+		}
+	}
+	if best != "" {
+		return fmt.Sprintf(" (did you mean %q?)", best)
+	}
+	return " — a bare name in arm position is a VARIANT, not a binding;" +
+		" for a catch-all use `_`, binding the scrutinee to a variable first if you need its value"
+}
+
+// editDistanceStr is Levenshtein over bytes, for the hint above.
+func editDistanceStr(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = prev[j] + 1
+			if cur[j-1]+1 < cur[j] {
+				cur[j] = cur[j-1] + 1
+			}
+			if prev[j-1]+cost < cur[j] {
+				cur[j] = prev[j-1] + cost
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
 	// A retired method spelling reads as a missing FIELD here, because
 	// `m.set(k, v)` parses as a field access before it is a call — and
@@ -9406,7 +9463,8 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -10188,7 +10246,8 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s", arm.VariantName, ed.Name)
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}

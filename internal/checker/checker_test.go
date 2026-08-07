@@ -5488,3 +5488,46 @@ func TestMixedIntegerHintSurvives(t *testing.T) {
 		t.Fatalf("the cast hint should survive for two integers, got:\n%v", err)
 	}
 }
+
+// TestUnknownVariantHintDistinguishesTypoFromCatchAll: two different
+// mistakes reach E014, and the bare "variant %q is not part of enum %s"
+// serves neither.
+//
+// A near-miss wants the right name. A CATCH-ALL written the Rust way
+// (`other => …`) wants to be told that Fern reads a bare ident in arm
+// position as a variant name — the reader meant "everything else, bound to
+// `other`", and there is no binding catch-all at all (`other @ _` is
+// refused by the parser too), so the answer is `_` plus binding the
+// scrutinee first.
+//
+// The catch-all reading is only offered when the name resembles no
+// variant: a near-miss is far likelier to be a typo than a wildcard
+// attempt, and a wrong hint costs more than none.
+func TestUnknownVariantHintDistinguishesTypoFromCatchAll(t *testing.T) {
+	const decl = `enum Ord { Before, After, Equal, Concurrent }
+`
+	cases := []struct {
+		name, arm, want, notWant string
+	}{
+		{"typo suggests the variant", "Befre", `did you mean "Before"?`, "bare name in arm position"},
+		{"typo on a longer name", "Concurent", `did you mean "Concurrent"?`, "bare name in arm position"},
+		{"catch-all is explained", "other", "for a catch-all use `_`", "did you mean"},
+		{"unrelated name is explained", "zzzqqq", "a VARIANT, not a binding", "did you mean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := decl + "function f(o: Ord): i32 { match (o) { " + tc.arm +
+				" => { return 1; }, _ => { return 0; }, } }\nfunction main(): i32 { return f(Equal); }"
+			err := checkSource(t, src)
+			if err == nil {
+				t.Fatalf("expected E014 for arm %q", tc.arm)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("arm %q: wanted %q in:\n%v", tc.arm, tc.want, err)
+			}
+			if strings.Contains(err.Error(), tc.notWant) {
+				t.Fatalf("arm %q: did not want %q in:\n%v", tc.arm, tc.notWant, err)
+			}
+		})
+	}
+}
