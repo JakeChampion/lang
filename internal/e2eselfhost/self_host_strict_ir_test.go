@@ -836,28 +836,16 @@ function main(): i32 {
     return ((v as i32) & 255i32);
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},
-	// The OTHER half of func_ineligible_reason: the body lowered fine and the
-	// bail is a symbol that does not resolve. It is a different debugging task
-	// — look at the name, not the body — and the bare function name never said
 	// which of the two had happened.
 	//
-	// This used to be the plain #6256 shape (an array mixing a fn-valued ident
-	// with an inline lambda), which #6324 closed — it now compiles and agrees
-	// with the interpreter, and is pinned as `mixed-arms-array-element` in
-	// self_host_iife_fn_arm_ir_test.go. What still reaches this bail is the
-	// case #6324 deliberately declines: the captured fn-typed local is bound
-	// from a CALL, so its signature is recoverable from neither of the two
-	// exact sources (a ParamDecl to copy, or a lambda to read), and StmtVar
-	// keeps only the coarse "fn" tag. Synthesizing a param from that would be
-	// a guess, and wasm funcref types are structural (#6282), so the guess
-	// would produce an unloadable module rather than a slow path.
-	{"unresolved-function-value", `function mk(): (i32) => i32 { var f: (i32) => i32 = ((x: i32) => 7i32); return f; }
-function main(): i32 {
-    var v0: (i32) => i32 = mk();
-    var xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0];
-    return xs.len() & 63i32;
+	// The branch lambdas capture `n`, so they stay closures inside the desugar's
+	// lifted IIFE instead of hoisting to top-level `__lam_N` functions.
+	{"unresolved-function-value", `function main(): i32 {
+    var n: i32 = 7i32;
+    var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) });
+    return v2(1i32) & 63i32;
 }
-`, "main", "function value main$clo not defined"},
+`, "main$iife0", "function value main$iife0$clo not defined"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
