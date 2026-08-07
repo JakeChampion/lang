@@ -25,7 +25,7 @@ import (
 // table in conformance/README.md. `meta` is read by this gate rather than
 // by the loader: it justifies a case that asserts less than the maximum.
 var (
-	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
+	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends", "reclaim-observable"}
 	allSidecars = append([]string{"expected.error", "meta"}, runSidecars...)
 )
 
