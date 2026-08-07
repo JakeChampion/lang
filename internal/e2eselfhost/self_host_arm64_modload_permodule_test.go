@@ -199,9 +199,8 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// 7. WHOLE-COMPILER MERGED-DEFAULT COMPILE (arm64). No per-module flags, so
 	// the driver takes the merged route: past the 512-function IR budget, past
 	// the single-process concat ceiling, and therefore out through the BATCHED
-	// per-module emit (emit_per_module_spawned). That escape used to be x86-only
-	// — arm64 had the AST emitter to drop to instead — so this is the direct
-	// guard on the arm64 wiring #3457 slice 5 added.
+	// per-module emit (emit_per_module_spawned). This is the direct guard on the
+	// arm64 wiring #3457 slice 5 added; arm64 has no AST emitter to drop to.
 	//
 	// Run on the HOST driver, not the qemu one. The per-module-BUILT compiler
 	// doing this same self-compile is what the step used to assert; with the AST

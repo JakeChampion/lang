@@ -8,8 +8,7 @@ import (
 )
 
 // A string/array-free struct local whose last use is inside an `if` takes the
-// control-flow precise drop, where it previously fell back to the function-exit
-// sweep. The signal: a scalar-only struct's *sweep* drop is emitted INLINE
+// control-flow precise drop rather than the function-exit sweep. The signal: a scalar-only struct's *sweep* drop is emitted INLINE
 // (is_unique + box_free), so the generated `__drop_struct_*` helper appears ONLY
 // when the precise control-flow placement fires. See safeForControlFlowDrop /
 // typeIsStringArrayFree. (A string-containing struct is excluded — verified

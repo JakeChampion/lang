@@ -66,9 +66,9 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 			wantLines:   []string{"main: BAIL call"},
 		},
 		{
-			// A MAIN-LESS module now routes IR (#3457 slice 5). It used to be a
-			// blanket refusal — the whole-program `_start` emitted `call __fn_main`
-			// unconditionally, so the gate carried a require_main flag — and this
+			// A MAIN-LESS module routes IR (#3457 slice 5). A whole-program
+			// `_start` that emits `call __fn_main` unconditionally forces a
+			// require_main gate flag — and this
 			// case pinned that refusal. `_start` exits 0 when there is no main, the
 			// flag is deleted, and the shape is covered end-to-end (link + run) by
 			// TestSelfHostNoMainModuleIRX86_64. Note `helper: ir` was ALREADY the

@@ -11,9 +11,9 @@ import (
 // TestSelfHostMatchLiteralIR covers `match` on a NON-enum scrutinee
 // (i32 / string literal patterns + `_`) through the self-hosted x86-64
 // compiler on the IR path. The native compiler already lowers this
-// (internal/ir.emitLiteralMatch); the self-host previously could not
-// parse a literal pattern at all (its Pattern grammar is variant-only),
-// so a `match (n) { 1 => …, _ => … }` failed to compile.
+// (internal/ir.emitLiteralMatch); the self-host Pattern grammar is
+// otherwise variant-only, so a `match (n) { 1 => …, _ => … }` fails to
+// compile.
 //
 // The parser now recognises a literal at the pattern position and
 // desugars the whole match to an if/else-if chain (build_literal_match),

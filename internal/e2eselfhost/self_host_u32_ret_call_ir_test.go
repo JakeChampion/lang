@@ -15,9 +15,9 @@ import (
 // signed `i32.shr_s` / `div_s` / `rem_s` / `gt_s` diverge from the unsigned
 // answer; irlower must select the `_u` opcode.
 //
-// expr_is_u32 previously did NOT treat a u32-returning call as u32 (the reasoning
-// held for value WRAPPING — the callee already masked its result into [0, 2^32) —
-// but NOT for SIGN INTERPRETATION). So `id32(a) >> 25`, `p.get() >> 25`,
+// expr_is_u32 must treat a u32-returning call as u32. Skipping it holds for
+// value WRAPPING — the callee already masked its result into [0, 2^32) — but
+// NOT for SIGN INTERPRETATION, so `id32(a) >> 25`, `p.get() >> 25`,
 // `id32(a) / 7`, and `p.get() > k` all lowered SIGNED. This is wasm-only: x86-64
 // / arm64 keep the u32 zero-extended in a 64-bit register, so a signed shift/div
 // already matched there. The fix rides the same i64_ret_fns registry as the

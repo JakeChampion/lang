@@ -960,12 +960,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("write_file_exec");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_write_file_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 172) {  // remove_dir_all
-            // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
-            // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
-            // emitted in its heap block — the same recursive runtime the AST path
-            // calls). Pop the path box into x0, push the result box.
-            s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_remove_dir_all\n    str x0, [sp, #-16]!\n");
+            // [pathbox] IS param[0]; call the Fern-compiled
+            // __fn___fern_remove_dir_all (asmcore.rt_src_remove_dir_all, #2649)
+            // via the stack ABI, same shape as its fs-bundle siblings.
+            s = s.need("heap"); s = s.need("remove_dir_all");
+            s = s.write("    bl __fn___fern_remove_dir_all\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 173) {  // remove_file
             // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_remove_file
             // (asmcore.rt_src_remove_file, #2649) via the stack ABI.
@@ -982,12 +981,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("monotonic_ns"); s = s.need("temp_dir");
             s = s.write("    bl __fn___fern_temp_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 171) {  // read_dir
-            // [pathbox] -> list a directory's base-name children, push a fresh
-            // Result[string[], IoError] box (asm_arm64.emit_runtime's __fern_read_dir,
-            // in its heap block; boxes a string[] via __fern_arr_box). Pop the path
-            // box into x0, push the result box.
-            s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_read_dir\n    str x0, [sp, #-16]!\n");
+            // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_read_dir
+            // (asmcore.rt_src_read_dir, #2649) via the stack ABI. Its body builds
+            // the string[] with .append(), so the arr_push deps come from the
+            // bundle's own lowering.
+            s = s.need("heap"); s = s.need("read_dir");
+            s = s.write("    bl __fn___fern_read_dir\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 176) {  // env
             // [namebox] IS param[0]; call the Fern-compiled __fn___fern_env
             // (asmcore.rt_src_env, #2649) via the stack ABI. It walks __fern_envp
@@ -4461,390 +4460,13 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // one body — no `darwin` fork, and no hand-interned FileStat shape (the
     // pre-intern below still runs; the lowering dedups to it).
 
-    // __fern_read_dir(x0 = path box) → Result[string[]]. openat
-    // O_DIRECTORY, getdents64=61 into a 1 MiB buffer, two passes to
-    // build the [cap, len, e0…] array of base-name string boxes.
-    s = s.write(".globl __fern_read_dir\n");
-    s = s.write(".type __fern_read_dir, %function\n");
-    s = s.write("__fern_read_dir:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // path box
-    s = s.write("    ldr x20, [x19]\n");        // path data
-    s = s.write("    ldr x23, [x19, #8]\n");    // path len
-    s = s.write("    add x0, x23, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x20, x0\n");           // pathz (temp; data not needed after copy)
-    s = s.write("    ldr x21, [x19]\n");        // reload path data
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lrd_copy:\n");
-    s = s.write("    cmp x9, x23\n");
-    s = s.write("    b.ge .Lrd_cpd\n");
-    s = s.write("    ldrb w10, [x21, x9]\n");
-    s = s.write("    strb w10, [x20, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lrd_copy\n");
-    s = s.write(".Lrd_cpd:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x20, x23]\n");
-    // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0). Note: on
-    // arm64 Linux O_DIRECTORY=040000=16384 (arch-specific override
-    // of the asm-generic value); on x86-64 it's 65536. Using
-    // 65536 here would mean O_RDONLY|O_DIRECT — EINVAL on /tmp.
-    // Darwin: AT_FDCWD=-2 and O_DIRECTORY=0x100000=1048576; the
-    // openat syscall number (56 -> 463) + errno are remapped by
-    // darwinize.
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-    }
-    s = s.write("    mov x1, x20\n");
-    if (darwin) {
-        s = s.write("    ldr x2, =1048576\n");   // O_DIRECTORY (Darwin)
-    } else {
-        s = s.write("    mov x2, #16384\n");
-    }
-    s = s.write("    mov x3, #0\n");
-    s = s.write("    mov x8, #56\n");            // openat
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lrd_err\n");
-    s = s.write("    mov x20, x0\n");            // fd
-    s = s.write("    ldr x0, =1048576\n");       // 1 MiB buffer
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");            // buf base
-    // Darwin getdirentries64 takes a 4th arg basep (off_t* updated
-    // with the directory position); allocate an 8-byte heap scratch
-    // and keep it in callee-saved x24 (free until pass 2's name ptr).
-    if (darwin) {
-        s = s.write("    mov x0, #8\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x24, x0\n");        // basep scratch
-    }
-    s = s.write("    mov x22, #0\n");            // total
-    s = s.write(".Lrd_g:\n");
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    add x1, x21, x22\n");
-    s = s.write("    ldr x2, =1048576\n");
-    s = s.write("    sub x2, x2, x22\n");
-    if (darwin) {
-        s = s.write("    mov x3, x24\n");        // basep (getdirentries64)
-    }
-    s = s.write("    mov x8, #61\n");            // getdents64 (-> getdirentries64 on Darwin)
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.le .Lrd_gd\n");
-    s = s.write("    add x22, x22, x0\n");
-    s = s.write("    b .Lrd_g\n");
-    s = s.write(".Lrd_gd:\n");
-    s = s.write("    mov x0, x20\n");            // close(fd)
-    s = s.write("    mov x8, #57\n");
-    s = s.write("    svc #0\n");
-    // pass 1: count valid entries → x23
-    s = s.write("    mov x23, #0\n");            // count
-    s = s.write("    mov x19, #0\n");            // offset
-    s = s.write(".Lrd_c1:\n");
-    s = s.write("    cmp x19, x22\n");
-    s = s.write("    b.ge .Lrd_c1d\n");
-    s = s.write("    add x10, x21, x19\n");      // entry base
-    // dirent d_name offset: Linux getdents64 = 19, Darwin
-    // getdirentries64 64-bit-inode dirent = 21.
-    if (darwin) {
-        s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
-    } else {
-        s = s.write("    add x10, x10, #19\n");   // name ptr
-    }
-    s = s.write("    ldrb w11, [x10]\n");
-    s = s.write("    cmp w11, #46\n");           // '.'
-    s = s.write("    b.ne .Lrd_c1n\n");
-    s = s.write("    ldrb w11, [x10, #1]\n");
-    s = s.write("    cbz w11, .Lrd_c1s\n");      // "." → skip
-    s = s.write("    cmp w11, #46\n");
-    s = s.write("    b.ne .Lrd_c1n\n");
-    s = s.write("    ldrb w11, [x10, #2]\n");
-    s = s.write("    cbz w11, .Lrd_c1s\n");      // ".." → skip
-    s = s.write(".Lrd_c1n:\n");
-    s = s.write("    add x23, x23, #1\n");
-    s = s.write(".Lrd_c1s:\n");
-    s = s.write("    add x12, x21, x19\n");
-    s = s.write("    ldrh w11, [x12, #16]\n");   // d_reclen
-    s = s.write("    add x19, x19, x11\n");
-    s = s.write("    b .Lrd_c1\n");
-    s = s.write(".Lrd_c1d:\n");
-    s = s.write("    mov x0, x23\n");            // cap = count
-    s = s.write("    bl __fern_arr_box\n");       // -> data ptr in x0 (cap + len written)
-    s = s.write("    mov x20, x0\n");            // array ptr P
-    // pass 2: fill
-    s = s.write("    mov x19, #0\n");            // offset
-    s = s.write("    mov x23, #0\n");            // element index
-    s = s.write(".Lrd_p2:\n");
-    s = s.write("    cmp x19, x22\n");
-    s = s.write("    b.ge .Lrd_p2d\n");
-    s = s.write("    add x10, x21, x19\n");
-    if (darwin) {
-        s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
-    } else {
-        s = s.write("    add x10, x10, #19\n");   // name ptr
-    }
-    s = s.write("    ldrb w11, [x10]\n");
-    s = s.write("    cmp w11, #46\n");
-    s = s.write("    b.ne .Lrd_p2t\n");
-    s = s.write("    ldrb w11, [x10, #1]\n");
-    s = s.write("    cbz w11, .Lrd_p2a\n");
-    s = s.write("    cmp w11, #46\n");
-    s = s.write("    b.ne .Lrd_p2t\n");
-    s = s.write("    ldrb w11, [x10, #2]\n");
-    s = s.write("    cbz w11, .Lrd_p2a\n");
-    s = s.write(".Lrd_p2t:\n");
-    s = s.write("    mov x11, #0\n");            // strlen
-    s = s.write(".Lrd_p2sl:\n");
-    s = s.write("    ldrb w12, [x10, x11]\n");
-    s = s.write("    cbz w12, .Lrd_p2sd\n");
-    s = s.write("    add x11, x11, #1\n");
-    s = s.write("    b .Lrd_p2sl\n");
-    s = s.write(".Lrd_p2sd:\n");
-    s = s.write("    mov x24, x10\n");           // name ptr (survives alloc)
-    s = s.write("    str x11, [sp, #-16]!\n");   // len
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldr x11, [sp], #16\n");     // len
-    s = s.write("    str x24, [x0]\n");          // box.data
-    s = s.write("    str x11, [x0, #8]\n");      // box.len
-    s = s.write("    add x12, x23, #1\n");
-    s = s.write("    str x0, [x20, x12, lsl #3]\n"); // P[index+1] = box
-    s = s.write("    add x23, x23, #1\n");
-    s = s.write(".Lrd_p2a:\n");
-    s = s.write("    add x12, x21, x19\n");
-    s = s.write("    ldrh w11, [x12, #16]\n");
-    s = s.write("    add x19, x19, x11\n");
-    s = s.write("    b .Lrd_p2\n");
-    s = s.write(".Lrd_p2d:\n");
-    s = s.write("    mov x0, #16\n");            // Result Ok
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0]\n");           // Ok
-    s = s.write("    str x20, [x0, #8]\n");
-    s = s.write("    b .Lrd_ret\n");
-    s = s.write(".Lrd_err:\n");
-    // x0 = -errno from openat (the only route here — x19 is still the
-    // ORIGINAL path box; its dents-scan repurposing happens later). Real
-    // IoError payload instead of NULL (#4624).
-    s = s.write("    neg x0, x0\n    mov x1, x19\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
-    s = s.write(".Lrd_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_read_dir, .-__fern_read_dir\n");
-
-    // __fern_remove_dir_all(x0 = path box) → Result[(), IoError].
-    // Recursive rm -rf, mirror of asm.fern. arm64 syscalls:
-    // openat=56, getdents64=61, close=57, unlinkat=35.
-    s = s.write(".globl __fern_remove_dir_all\n");
-    s = s.write(".type __fern_remove_dir_all, %function\n");
-    s = s.write("__fern_remove_dir_all:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // path box
-    s = s.write("    ldr x20, [x19]\n");        // path data
-    s = s.write("    ldr x21, [x19, #8]\n");    // path len
-    s = s.write("    add x0, x21, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x19, x0\n");           // pathz (reuse x19)
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lrda_copy:\n");
-    s = s.write("    cmp x9, x21\n");
-    s = s.write("    b.ge .Lrda_cpd\n");
-    s = s.write("    ldrb w10, [x20, x9]\n");
-    s = s.write("    strb w10, [x19, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lrda_copy\n");
-    s = s.write(".Lrda_cpd:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x19, x21]\n");
-    // openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY). arm64
-    // O_DIRECTORY=040000=16384 (NOT the x86 65536, which is
-    // O_DIRECT on arm64 — see the same note in __fern_read_dir).
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");
-    }
-    s = s.write("    mov x1, x19\n");
-    if (darwin) {
-        s = s.write("    ldr x2, =1048576\n");   // O_DIRECTORY (Darwin)
-    } else {
-        s = s.write("    mov x2, #16384\n");
-    }
-    s = s.write("    mov x3, #0\n");
-    s = s.write("    mov x8, #56\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.ge .Lrda_dir\n");
-    s = s.write("    cmn x0, #2\n");             // x0 == -2 (ENOENT)?
-    s = s.write("    b.eq .Lrda_ok\n");
-    s = s.write("    cmn x0, #20\n");            // x0 == -20 (ENOTDIR)?
-    s = s.write("    b.ne .Lrda_err\n");
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");        // unlinkat(file)
-    } else {
-        s = s.write("    mov x0, #-100\n");      // unlinkat(file)
-    }
-    s = s.write("    mov x1, x19\n");
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #35\n");            // unlinkat
-    s = s.write("    svc #0\n");
-    s = s.write("    b .Lrda_ok\n");
-    s = s.write(".Lrda_dir:\n");
-    s = s.write("    mov x20, x0\n");            // fd
-    s = s.write("    ldr x0, =65536\n");         // 64 KiB getdents buffer
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");            // buf
-    // Darwin getdirentries64 basep scratch (see __fern_read_dir);
-    // x24 is free until the iteration loop's name ptr.
-    if (darwin) {
-        s = s.write("    mov x0, #8\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x24, x0\n");        // basep scratch
-    }
-    s = s.write("    mov x22, #0\n");            // total
-    s = s.write(".Lrda_g:\n");
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    add x1, x21, x22\n");
-    s = s.write("    ldr x2, =65536\n");
-    s = s.write("    sub x2, x2, x22\n");
-    if (darwin) {
-        s = s.write("    mov x3, x24\n");        // basep (getdirentries64)
-    }
-    s = s.write("    mov x8, #61\n");            // getdents64 (-> getdirentries64 on Darwin)
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.le .Lrda_gd\n");
-    s = s.write("    add x22, x22, x0\n");
-    s = s.write("    b .Lrda_g\n");
-    s = s.write(".Lrda_gd:\n");
-    s = s.write("    mov x23, #0\n");            // offset
-    s = s.write(".Lrda_it:\n");
-    s = s.write("    cmp x23, x22\n");
-    s = s.write("    b.ge .Lrda_itd\n");
-    s = s.write("    add x10, x21, x23\n");
-    if (darwin) {
-        s = s.write("    add x10, x10, #21\n");   // name ptr (Darwin)
-    } else {
-        s = s.write("    add x10, x10, #19\n");   // name ptr
-    }
-    s = s.write("    ldrb w11, [x10]\n");
-    s = s.write("    cmp w11, #46\n");
-    s = s.write("    b.ne .Lrda_ch\n");
-    s = s.write("    ldrb w11, [x10, #1]\n");
-    s = s.write("    cbz w11, .Lrda_adv\n");
-    s = s.write("    cmp w11, #46\n");
-    s = s.write("    b.ne .Lrda_ch\n");
-    s = s.write("    ldrb w11, [x10, #2]\n");
-    s = s.write("    cbz w11, .Lrda_adv\n");
-    s = s.write(".Lrda_ch:\n");
-    s = s.write("    mov x24, x10\n");           // name ptr (survives alloc/recursion)
-    s = s.write("    mov x9, #0\n");             // plen = strlen(pathz)
-    s = s.write(".Lrda_pl:\n");
-    s = s.write("    ldrb w11, [x19, x9]\n");
-    s = s.write("    cbz w11, .Lrda_pld\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lrda_pl\n");
-    s = s.write(".Lrda_pld:\n");
-    s = s.write("    mov x13, #0\n");            // nlen = strlen(name)
-    s = s.write(".Lrda_nl:\n");
-    s = s.write("    ldrb w11, [x24, x13]\n");
-    s = s.write("    cbz w11, .Lrda_nld\n");
-    s = s.write("    add x13, x13, #1\n");
-    s = s.write("    b .Lrda_nl\n");
-    s = s.write(".Lrda_nld:\n");
-    // child data buf = plen + 1 + nlen. Save plen/nlen across alloc
-    // in callee-saved-ish: stash on stack (x9=plen, x13=nlen).
-    s = s.write("    stp x9, x13, [sp, #-16]!\n");
-    s = s.write("    add x0, x9, x13\n");
-    s = s.write("    add x0, x0, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldp x9, x13, [sp], #16\n");
-    s = s.write("    mov x1, x0\n");             // child data buf
-    s = s.write("    mov x12, #0\n");            // copy pathz[0..plen]
-    s = s.write(".Lrda_cc1:\n");
-    s = s.write("    cmp x12, x9\n");
-    s = s.write("    b.ge .Lrda_cc1d\n");
-    s = s.write("    ldrb w11, [x19, x12]\n");
-    s = s.write("    strb w11, [x1, x12]\n");
-    s = s.write("    add x12, x12, #1\n");
-    s = s.write("    b .Lrda_cc1\n");
-    s = s.write(".Lrda_cc1d:\n");
-    s = s.write("    mov w11, #47\n");           // '/'
-    s = s.write("    strb w11, [x1, x9]\n");
-    s = s.write("    mov x12, #0\n");            // copy name at plen+1
-    s = s.write(".Lrda_cc2:\n");
-    s = s.write("    cmp x12, x13\n");
-    s = s.write("    b.ge .Lrda_cc2d\n");
-    s = s.write("    ldrb w11, [x24, x12]\n");
-    s = s.write("    add x14, x9, #1\n");
-    s = s.write("    add x14, x14, x12\n");
-    s = s.write("    strb w11, [x1, x14]\n");
-    s = s.write("    add x12, x12, #1\n");
-    s = s.write("    b .Lrda_cc2\n");
-    s = s.write(".Lrda_cc2d:\n");
-    s = s.write("    add x14, x9, x13\n");       // child len = plen+nlen+1
-    s = s.write("    add x14, x14, #1\n");
-    // build child string box; preserve data ptr (x1) + len (x14)
-    s = s.write("    stp x1, x14, [sp, #-16]!\n");
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldp x1, x14, [sp], #16\n");
-    s = s.write("    str x1, [x0]\n");           // data
-    s = s.write("    str x14, [x0, #8]\n");      // len
-    s = s.write("    mov x0, x0\n");
-    s = s.write("    bl __fern_remove_dir_all\n"); // recurse (x0 = childbox)
-    s = s.write(".Lrda_adv:\n");
-    s = s.write("    add x12, x21, x23\n");
-    s = s.write("    ldrh w11, [x12, #16]\n");
-    s = s.write("    add x23, x23, x11\n");
-    s = s.write("    b .Lrda_it\n");
-    s = s.write(".Lrda_itd:\n");
-    s = s.write("    mov x0, x20\n");            // close(fd)
-    s = s.write("    mov x8, #57\n");
-    s = s.write("    svc #0\n");
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");        // rmdir via unlinkat
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #128\n");       // AT_REMOVEDIR (Darwin)
-    } else {
-        s = s.write("    mov x0, #-100\n");      // rmdir via unlinkat
-        s = s.write("    mov x1, x19\n");
-        s = s.write("    mov x2, #512\n");       // AT_REMOVEDIR
-    }
-    s = s.write("    mov x8, #35\n");
-    s = s.write("    svc #0\n");
-    s = s.write(".Lrda_ok:\n");
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str xzr, [x0]\n");          // tag = 0 (Ok)
-    s = s.write("    str xzr, [x0, #8]\n");      // unit payload
-    s = s.write("    b .Lrda_ret\n");
-    s = s.write(".Lrda_err:\n");
-    // x0 = -errno from the initial openat (the only route here);
-    // x19/x21 = NUL-terminated path copy + length (both live). Real
-    // IoError payload instead of NULL (#4624).
-    s = s.write("    neg x0, x0\n    mov x22, x0\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x21, [x0, #8]\n    mov x1, x0\n    mov x0, x22\n    bl __fern_io_error\n    mov x21, x0\n    mov x0, #16\n    bl __fern_alloc\n    mov x1, #1\n    str x1, [x0]\n    str x21, [x0, #8]\n");
-    s = s.write(".Lrda_ret:\n");
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_remove_dir_all, .-__fern_remove_dir_all\n");
+    // __fern_read_dir and __fern_remove_dir_all are Fern runtime functions now
+    // (#2649): asmcore.rt_src_read_dir / rt_src_remove_dir_all, emitted in the
+    // fs bundle above rather than here. They were the last two entries on the
+    // "shape-diverging, needs a per-target body" list, and both grounds turned
+    // out to be table rows over the existing floor — Darwin's getdirentries64
+    // 4th out-param is just __syscall4, and its dirent name offset is a
+    // direntoff row.
 
     // __fern_remove_file is a Fern runtime function now (#2649) too — see the
     // note above __fern_read_file; emitted in the fs bundle, not here.
@@ -6851,11 +6473,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // module so the inter-procedural RC analysis threads each helper's call to
     // io_error as an ordinary call-graph edge (io_error consumes its fresh path
     // arg; the helpers hand it a fresh copy, never their borrowed `path`). This
-    // mirrors asm_ir's bundle exactly. The register-ABI hand-asm __fern_io_error
-    // stays: read_dir / remove_dir_all / open_fd still call it, and those two ARE
-    // the shape-diverging ones — Darwin's getdirentries64 takes a 4th out-param
-    // getdents64 has no equivalent of.
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("temp_dir") || s.has_need("stat")) {
+    // mirrors asm_ir's bundle exactly. read_dir / remove_dir_all joined it: the
+    // 4th out-param Darwin's getdirentries64 wants is just __syscall4, and the
+    // dirent name offset is a direntoff row. The register-ABI hand-asm
+    // __fern_io_error stays only for open_fd.
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt); }
@@ -6863,6 +6485,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec(tgt); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
+        if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
+        if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

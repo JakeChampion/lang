@@ -21,10 +21,10 @@ import (
 //
 // The wasm e2e is the over-release arbiter (natives' bump probe is
 // insensitive to small-block reclaim — their segregated freelist arena
-// isn't measured by __heap_bump_bytes, so the leak never showed there; the
-// plan's "natives elide these closures" note was wrong, the IR is identical
-// on all backends — see the plan's closure[] bullet). On wasm the leak was
-// unbounded (3264 -> 320064 across 100x N); after the fix the high-water
+// isn't measured by __heap_bump_bytes, so the leak does not show there. The
+// natives do NOT elide these closures — the IR is identical on all backends,
+// see the plan's closure[] bullet). On wasm an unreclaimed closure array
+// grows unbounded (3264 -> 320064 across 100x N); reclaimed, the high-water
 // plateaus (freelist warmup, like rc string concat) and is flat across 10x
 // N. The adversarial aliased / shared-closure cases pin 0 over-releases on
 // every backend.

@@ -5071,8 +5071,8 @@ func fbinMnemonic(k ssa.OpKind) (string, bool) {
 //
 // These are the canonical IEEE codes, NOT the unsigned integer ones. On
 // ordered operands the two sets agree exactly (lo≡mi, hi≡gt, hs≡ge), which
-// is why the unsigned codes this used to emit passed every finite-valued
-// test. They diverge on NaN: `fcmp` marks unordered with N=0 Z=0 C=1 V=1, so
+// is why unsigned codes here pass every finite-valued test. They diverge on
+// NaN: `fcmp` marks unordered with N=0 Z=0 C=1 V=1, so
 // `hi` (C && !Z) and `hs` (C) both read TRUE where every ordered comparison
 // against a NaN must be false. `0.0/0.0 <= x` therefore printed "T" here and
 // "F" under the interpreter and both native backends.

@@ -3,9 +3,9 @@ package e2e
 import "testing"
 
 // utf8ValidateProgram pins std/utf8's `is_valid_utf8` against the
-// definition it used to be implemented as (#5634, decision D9).
+// reference definition (#5634, decision D9).
 //
-// The scan was a loop over `utf8_decode_at`, which returns
+// A scan written as a loop over `utf8_decode_at` returns
 // `Option[(i32, i32)]` — so it allocated and refcounted a tuple box per
 // codepoint, ~48 ms for a 346 KB body. It now checks continuation bytes
 // inline. That is only a safe swap if it accepts *exactly* the same

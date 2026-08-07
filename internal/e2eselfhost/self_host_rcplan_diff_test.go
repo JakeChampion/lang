@@ -351,9 +351,9 @@ function main(): i32 { return go(); }`,
 		{
 			// NESTED (loop-body) reuse: the canonical FBIP shape — donor `a`
 			// and recipient `b` both declared in the while body, paired every
-			// iteration. Previously the self-host dump under-reported this
-			// (fn.body-top-level only); now both compilers walk the nested
-			// block. reuseSources keys on the recipient struct-lit position.
+			// iteration. Both compilers walk the nested block; a
+			// fn.body-top-level-only dump under-reports it. reuseSources keys
+			// on the recipient struct-lit position.
 			name: "nested-loop-reuse",
 			src: `struct P { x: i32, y: i32 }
 function loopr(): i32 {
@@ -525,9 +525,9 @@ function main(): i32 { return f(1); }`,
 		{
 			// FREE-ELIGIBLE for a builtin-enum local (found by the widened
 			// bug-hunt): `var r: Result[i32[], i32] = Ok([5,6])` matched below.
-			// The self-host used to emit nothing — its eligibility type-switch
-			// had no arm for the builtin Option/Result enums, so the annotated
-			// local fell through unrecognised. Now rc_fe_is_builtin_enum makes
+			// An eligibility type-switch with no arm for the builtin
+			// Option/Result enums lets the annotated local fall through
+			// unrecognised and emits nothing. rc_fe_is_builtin_enum makes
 			// it eligible, matching native's `r`.
 			name: "fe-builtin-enum-result",
 			src: `function f(): i32 {

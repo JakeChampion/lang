@@ -318,13 +318,11 @@ const (
 	// becomes dead, the pair allocation goes away with it.
 	OpMakeEnv // (cap_0 ... cap_{n-1}) → i32 (env ptr or 0)
 
-	// Dedicated refcount ops (#4402 opt 2). Every rc-inc / rc-dec /
-	// is-unique probe used to be an OpCallDirect to the matching
-	// runtime helper, invisible to IR passes except by Str match.
-	// The dedicated kinds make rc traffic structurally visible
-	// (dup/drop fusion, token threading) and give backends a seam
-	// to inline the fast path (sentinel test + in-place RMW) with
-	// the helper call as the fallback body.
+	// Dedicated refcount ops (#4402 opt 2), rather than an OpCallDirect to
+	// the matching runtime helper. Dedicated kinds make rc traffic
+	// structurally visible to IR passes (dup/drop fusion, token threading)
+	// and give backends a seam to inline the fast path (sentinel test +
+	// in-place RMW) with the helper call as the fallback body.
 	//
 	// All three are pass-through-shaped like the helpers they
 	// replace: one pointer popped, one word pushed (rc_inc / rc_dec
@@ -2465,7 +2463,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			// 2 = vtable.
 			fn.Params = []ast.Param{{Name: "__dcell", Type: ast.NumberType{}}}
 			// NULL-guard the cell pointer. The drop sites zero-init a `dyn`
-			// slot (Phase 1d-v), so the first loop-iteration reinit drop and a
+			// slot, so the first loop-iteration reinit drop and a
 			// never-assigned slot at exit pass cell==0; on the natives that
 			// would segfault on the cell[0] deref below (wasm address 0 reads
 			// 0 harmlessly, so the inline helper needs no guard). `if (cell !=
@@ -5003,7 +5001,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		b.deferSlots = append(b.deferSlots, slot)
 		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
 	}
-	// Phase 1d-v safety net: zero-init every array-typed local
+	// safety net: zero-init every array-typed local
 	// slot at function entry. The function-exit dec sweep (in
 	// `emitRcDecLocalsAtExit`) visits every declared
 	// array-typed local regardless of whether its Var statement
@@ -5343,7 +5341,7 @@ func (b *builder) emitRepackPairAsHeapBox(payloadWidth int) error {
 			storeOp = Op{Kind: OpStore, Width: WidthPtr}
 		}
 	}
-	// Phase 1e-enums-ii: the reboxed pair carries the same 8-byte
+	// the reboxed pair carries the same 8-byte
 	// rc header as emitEnumNew (rc=1 at [base+0]; data = base+8;
 	// tag / payload stores shift by rcHeaderBytes). Without it,
 	// the dec sweep that enum-ii's predicate widening enables
@@ -5441,11 +5439,12 @@ func (b *builder) payloadWidthForCalleeReturn(retType ast.Type) int {
 // paramVerdict is THE per-(function, param) ownership classification (#4478):
 // one ladder, consulted by both the definition side (paramOwnedByDefault) and
 // the call site (calleeParamOwnedByDefault), so the two can never disagree on
-// which params carry the owned-by-default inc/dec pair. It replaces the
-// paramBorrowable / paramOwnedByDefault / calleeParamOwnedByDefault predicate
-// trio, whose def/call agreement was previously by convention (each site
-// re-intersecting paramEscapes / readOnlyComparators / trmcFuncs /
-// trmcConsumeSafe). The consumed-threaded promotion (rc.consumedParams) stays
+// which params carry the owned-by-default inc/dec pair. One ladder rather
+// than separate def-side and call-side predicates, each re-intersecting
+// paramEscapes / readOnlyComparators / trmcFuncs / trmcConsumeSafe: that
+// shape makes agreement a convention rather than a guarantee.
+//
+// The consumed-threaded promotion (rc.consumedParams) stays
 // a separate def-side-only table: it changes only callee-internal reclamation,
 // never the call ABI, and is checked alongside the verdict at its sites.
 type paramVerdict uint8
@@ -5554,13 +5553,12 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 		}
 	}
 	offsets, size := payloadLayout(payloadTypes, payloadCount, b.ptrW)
-	// Phase 1e-enums-i: enum variant boxes grow an 8-byte rc
+	// enum variant boxes grow an 8-byte rc
 	// header to match the array / struct layout. Alloc bumps by
 	// `rcHeaderBytes`; rc=1 lives at `[base + 0]`; the returned
 	// data pointer is `base + rcHeaderBytes`. Per-field offsets
 	// shift by `rcHeaderBytes` so we keep using the same
-	// baseSlot (storing `base`) — same accounting as the
-	// StructLit migration in Phase 1e-struct-i.
+	// baseSlot (storing `base`) — the same accounting StructLit uses.
 	const rcHeaderBytes = 8
 	// General FBIP reuse (computeReuseSources): a dead, owned enum local D of
 	// the same type/box-class is reused in place for this variant construction.
@@ -7177,7 +7175,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if !ok {
 			return fmt.Errorf("ir: var %q has no slot (compiler bug)", n.Name)
 		}
-		// Phase 1d: when the init expression aliases an existing
+		// when the init expression aliases an existing
 		// array (i.e. it's a bare ident load of an array-typed
 		// variable), bump the refcount so the new binding owns
 		// its own reference. Fresh allocations (array literals,
@@ -8953,7 +8951,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(el); err != nil {
 				return err
 			}
-			// Phase 1d-viii: array-element initialisation is an
+			// array-element initialisation is an
 			// alias-creating site when the element type is also
 			// array-shaped — e.g. `var matrix: u8[][] = [inner];`
 			// stores `inner`'s pointer into the matrix's slot 0,
@@ -9077,7 +9075,7 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(elem); err != nil {
 				return err
 			}
-			// Phase 1d-viii: tuple element is a struct-lit-style
+			// tuple element is a struct-lit-style
 			// alias site. See the StructLit case below for the
 			// gating rationale.
 			//
@@ -9105,7 +9103,7 @@ func (b *builder) expr(e ast.Expr) error {
 		// store/load round-trip. Wide / pointer fields are
 		// 8-byte-aligned within the heap object.
 		//
-		// Phase 1e-struct-i: user-allocated struct values carry
+		// user-allocated struct values carry
 		// an 8-byte rc header before `data`, mirroring the
 		// array layout's rc-at-`data-8` convention so
 		// `__fern_rc_inc/dec` work uniformly. The alloc bumps
@@ -9233,18 +9231,16 @@ func (b *builder) expr(e ast.Expr) error {
 			if err := b.expr(f.Value); err != nil {
 				return err
 			}
-			// Phase 1d-viii: struct field initialisation is an
+			// struct field initialisation is an
 			// alias-creating site. `Holder { items: existing }`
 			// stores `existing`'s pointer into the struct's
 			// slot — the struct now co-owns the reference, so
 			// the rc bumps. Same gating as the Var / Assign /
 			// closure-capture sites: only fires when the
 			// initialiser is alias-shaped (Ident, FieldAccess,
-			// Index) and the field type is an array. Strings /
-			// structs / enums / closures join in Phase 1e along
-			// with their matching drop handlers.
+			// Index) and the field type is an array.
 			//
-			// Phase 4 move-on-construction: when this field consumes an
+			// Move-on-construction: when this field consumes an
 			// owned rc local at its last use (b.rc.moveSites set by
 			// markConstructionMoves), skip the inc — the local's
 			// reference is moved into the field and its exit-sweep dec is
@@ -9319,10 +9315,9 @@ func (b *builder) expr(e ast.Expr) error {
 		// list, which a backend can fetch from the AST when packing
 		// the env block.
 		//
-		// Phase 1d-vii: each captured array-typed alias gets an
-		// inc — the closure's env now co-owns the reference
-		// alongside the outer scope's local. Phase 1e's drop
-		// handlers will dec captures when the closure itself is
+		// Each captured array-typed alias gets an inc: the closure's
+		// env co-owns the reference alongside the outer scope's local.
+		// The drop handlers dec captures when the closure itself is
 		// reclaimed.
 		for _, capExpr := range n.Captures {
 			if err := b.expr(capExpr); err != nil {
@@ -10245,9 +10240,9 @@ func (b *builder) stashOwnedStringOperand(e ast.Expr) (int32, error) {
 // right helper on EVERY ptrW: two-word ABIs (wasm + arm64-TwoWord) consume
 // the (data,len) pair, and native single-word (x86_64) frees the buffer at
 // rc==1 (else defers to __fern_rc_dec) — its inline-tag / SSO / literal
-// guards make it safe for short strings that never heap-allocated. Native
-// previously used the dec-only __fern_rc_dec here, which decremented but
-// never freed, so a nested/chained concat leaked one buffer per join
+// guards make it safe for short strings that never heap-allocated. The
+// dec-only __fern_rc_dec is not a substitute: it never frees, so a
+// nested/chained concat leaks one buffer per join
 // (docs/IR-SELFCOMPILE-OOM-FINDINGS.md).
 func (b *builder) decStashedStringTemps(slots ...int32) {
 	for _, sl := range slots {
@@ -11963,8 +11958,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	// __rc_inc / __rc_dec — refcount helpers exposed as Lang
 	// builtins. Lower to the dedicated rc ops (#4402 opt 2) with
 	// the runtime-side name so backends pick up the matching gate
-	// flag. Both accept a u8[] today; Phase 1e will widen to
-	// strings / structs / enums / closures. See docs/RC-PERCEUS-PLAN.md.
+	// flag. Both accept a u8[] only. See docs/RC-PERCEUS-PLAN.md.
 	if (id.Name == "__rc_inc" || id.Name == "__rc_dec") && len(n.Args) == 1 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
 			if err := b.expr(n.Args[0]); err != nil {
@@ -13228,9 +13222,9 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 //     ones overwrite them. For a carried-over field (`name: p.name`) the
 //     eval-inc and this drop balance, so its rc is unchanged; for a
 //     REPLACED field the old reference reaches rc 0 and its buffer/box is
-//     freed (5f — no longer the leak-but-never-UAF flat dec). This is
-//     SOUND, not the deferred-alias hazard the old note feared, precisely
-//     because construction inc's the new field: any live alias of the old
+//     freed (5f). Freeing here is SOUND rather than a deferred-alias
+//     hazard precisely because construction inc's the new field: any live
+//     alias of the old
 //     buffer (including one read in the self-overwrite RHS,
 //     `items: ident(p.items)`) holds a counted reference, so the freeing
 //     drop only reclaims the genuine last one (the field's own is_unique
@@ -13281,7 +13275,7 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	// 1. Evaluate every field value into a single-word temp. These reads
 	//    of the OLD p (still live in slot idx) all complete before the
 	//    box is reused below. Pointer fields are retained here exactly
-	//    as normal StructLit construction does (Phase 1d-viii).
+	//    as normal StructLit construction does.
 	type fieldTemp struct {
 		name    string
 		slot    int32
@@ -13570,11 +13564,9 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	//    is reused (reads of the old c, still live in slot idx, complete
 	//    first), taking the SAME alias inc emitEnumNew takes — the reused
 	//    box owns its pointer payloads exactly like a fresh one, and its
-	//    drop dec's them either way. This used to skip the inc, on the
-	//    (once-true, now stale) grounds that emitEnumNew didn't inc
-	//    either; Slice 1b gave the fresh path its payload inc and left
-	//    this one behind, so `c = Some(arr[i])` in a loop handed the box
-	//    an uncounted element and the array's drop freed it underneath.
+	//    drop dec's them either way. Skipping the inc hands the box an
+	//    uncounted element, and the donor's drop frees it underneath —
+	//    `c = Some(arr[i])` in a loop is the shape that exposes it.
 	type argTemp struct {
 		slot int32
 		typ  ast.Type
@@ -13695,7 +13687,7 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 
 // localNameUnique reports whether `name` has exactly one declaration in
 // the current function's locals — i.e. it is not shadowed by a same-name
-// `var` in a sibling/nested scope. The Phase 1d-v zero-init safety net
+// `var` in a sibling/nested scope. The zero-init safety net
 // keys on name (`zeroSeen[v.Name]`), so a unique name's single slot is
 // guaranteed zero-initialised at function entry; a shadowed name has
 // multiple distinct slots sharing one name-keyed zero, only one of which
@@ -14058,10 +14050,10 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 	// dropFnNameFor declines a SCALAR-payload enum (enumNeedsDrop false: no
 	// pointer payload to recurse into), so a flat rc_dec here would leak its
 	// box. Route through emitOwnedEnumDrop (generated __drop_enum_<Name> →
-	// is_unique-gated variant-plan box_free) — reclaiming a loop-var reinit /
-	// reassign of e.g. `Box{ Val(i32), Empty }` that previously leaked one box
-	// per iteration, and reusing it on wasm (the gen-fn box_free reuses where
-	// an inline one wouldn't). Callers gate on owned-ness, so pass eligible=true;
+	// is_unique-gated variant-plan box_free), which reclaims a loop-var reinit
+	// / reassign of e.g. `Box{ Val(i32), Empty }` and reuses on wasm (the
+	// gen-fn box_free reuses where an inline one wouldn't). Callers gate on
+	// owned-ness, so pass eligible=true;
 	// the is_unique gate is the final safety net.
 	if et, ok := ty.(ast.EnumType); ok {
 		b.emitOwnedEnumDrop(idx, et, true)
@@ -14596,18 +14588,16 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 // freed.
 func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	if at, ok := t.(ast.ArrayType); ok {
-		// Reuse `dropStructField`'s ladder rather than the flat
-		// `__fern_arr_dec` this used to emit unconditionally. That helper
-		// frees the BUFFER and nothing else, so an array field whose
-		// elements are rc-tracked lost every element when the field was
-		// replaced — `b.items = b.items.with(0, …)` on a struct field leaked
-		// one element box per call, unbounded, on all three compiled
-		// backends. (A bare local array is fine: its receiver is a
-		// reassign-to-self move, so `cow_inplace` takes the in-place branch
-		// and the overwritten element's own drop is the sole release. Only
-		// the copy branch — which a struct-field read forces by leaving the
-		// buffer at rc >= 2 — retains the elements, and only this release
-		// was failing to give those retains back.)
+		// Use `dropStructField`'s ladder, not the flat `__fern_arr_dec`:
+		// that helper frees the BUFFER and nothing else, so an array field
+		// with rc-tracked elements would leak every element on replacement.
+		//
+		// A struct-field read leaves the buffer at rc >= 2, forcing
+		// `cow_inplace`'s copy branch, which retains the elements — this
+		// release is what gives those retains back. A bare local array does
+		// not need the ladder: its receiver is a reassign-to-self move, so
+		// cow_inplace takes the in-place branch and the overwritten element's
+		// own drop is the sole release.
 		b.dropStructField(at)
 		return
 	}
@@ -14826,29 +14816,26 @@ func (b *builder) assign(n *ast.Assign) error {
 		if err != nil {
 			return err
 		}
-		// Phase 1d: same alias-bump as the Var-binding path —
+		// same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
 		// new binding needs its own rc. Move-on-alias skips the inc
 		// at a move site (see the Var path).
 		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] {
 			b.emitAliasInc(n.Value)
 		}
-		// Phase 1d-vi: dec the old value of `y` before
+		// dec the old value of `y` before
 		// overwriting it. `y` previously held some array
 		// reference (whose rc was bumped by the var-binding
 		// site that filled it); the reassignment ends that
 		// binding's ownership, so the dec balances the prior
-		// inc. Without this, every `y = x;` orphans the
-		// previous allocation — Phase 1's bump allocator
-		// absorbs the leak, but Phase 2's mutate-or-copy
-		// rc check needs accurate counts.
+		// inc. Without it, every `y = x;` orphans the previous
+		// allocation, and the mutate-or-copy rc check needs
+		// accurate counts.
 		//
 		// Gating on `*ast.ArrayType` matches the inc side
-		// (`needsRcIncOnAlias`). Phase 1e widens to strings
-		// / structs / enums / closures together with their
-		// matching inc sites.
+		// (`needsRcIncOnAlias`).
 		//
-		// Phase 3 step 2: a self-mutating map reassignment
+		// A self-mutating map reassignment
 		// `m = m.set(...)` / `m = m.clear()` needs a COW-AWARE
 		// dec. The map mutators copy-on-write through
 		// __map_cow_inplace, which (unlike array push) does NOT
@@ -14999,19 +14986,16 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the box twice — the own-struct-param move-and-rebind double-free.
 				// No drop: the callee owns it.
 				//
-				// ARRAY targets reach here too (#6013). This comment used to say
-				// they "took the rc-gated __fern_arr_dec branch above, which is
-				// double-free-safe" — it is not. rc-gating only means the free
-				// happens at rc==0, and after the move there is no reference left
-				// to spend: `c = wr(c, …)` with `wr(own buf: i32[])` hands the
-				// slot's only reference to the callee, which returns it (the
-				// cow_inplace rc==1 path returns the SAME pointer), so the dec
-				// takes the live buffer from 1 to 0 and frees what the caller just
-				// stored. It read as correct because a freed-then-immediately-
-				// reused block still holds its old bytes: the same program was
-				// right with two calls and returned a corrupted length with four.
-				// The self-append / self-map / construction-move shapes are
-				// unaffected — their RHS is a method call or constructor, never an
+				// ARRAY targets reach here too, and rc-gating does not make a
+				// drop safe for them (#6013): after the move there is no
+				// reference left to spend. `c = wr(c, …)` with
+				// `wr(own buf: i32[])` hands the slot's only reference to the
+				// callee, which returns the SAME pointer on cow_inplace's rc==1
+				// path, so a dec would take the live buffer from 1 to 0 and free
+				// what the caller just stored.
+				//
+				// Self-append / self-map / construction-move shapes are
+				// unaffected: their RHS is a method call or constructor, never an
 				// `own`-flagged user function, so callConsumesIdent is false.
 			} else if sety, isSE := structOrEnumTypeOfLocal(t.Name, b); isSE && ast.RcFreeEnabled && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, sety)) {
 				// Struct / enum reassignment-overwrite — `s = Other{...}` /
@@ -15105,7 +15089,7 @@ func (b *builder) assign(n *ast.Assign) error {
 			// the same __fern_str_dec this branch would have. Dec'ing again
 			// here would over-release. See isSelfStrAppendLocal.
 		} else if isStringTypeOfLocal(t.Name, b) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
-			// Phase 1e-strings: dec the OLD string buffer before the
+			// dec the OLD string buffer before the
 			// overwrite, mirroring the exit-sweep string branch (emitDec)
 			// and gated identically (RcFreeEnabled && freeEligible). A
 			// reassignment ends the old binding's ownership exactly like a
@@ -15394,12 +15378,12 @@ func (b *builder) assign(n *ast.Assign) error {
 
 // needsRcIncOnAlias returns true iff `e` is an alias expression
 // (a load of an existing reference) whose result is an array
-// type. Used by Phase 1d to decide when to splice in
+// type. Decides when to splice in
 // __fern_rc_inc: array literals, function-call returns, and
 // push results all yield rc=1 ownership; only loads of existing
 // references share an existing reference and need the bump.
 // Other pointer-shaped types (string / struct / enum / closure)
-// will join this in Phase 1e.
+// are not covered here.
 //
 // Alias shapes:
 //   - *ast.Ident       — variable load
@@ -15420,10 +15404,9 @@ func (b *builder) assign(n *ast.Assign) error {
 // balance, and a missing dec is preferable to a spurious one
 // on a non-pointer slot.
 //
-// Phase 1e-struct-iv: rc-tracked set now includes user
-// structs in addition to arrays. The matching inc widening
-// (Phase 1e-struct-ii) ensures every aliasing event that
-// bumped the rc gets a balancing dec when `y` is overwritten.
+// The rc-tracked set covers user structs as well as arrays, and the inc
+// side covers the same set — so every aliasing event that bumped the rc
+// gets a balancing dec when `y` is overwritten.
 // isSelfCowRebind reports whether `value` is a self-rebinding COW mutation of
 // `targetName`: `m = m.insert(..)` / `m = m.cleared()` / `a = a.with(..)` /
 // `a = a.append(..)`. Every one returns the SAME handle when the receiver is
@@ -15641,7 +15624,7 @@ func isArrayTypeOfLocal(name string, b *builder) bool {
 
 // isStringTypeOfLocal reports whether the named param / local is
 // declared with a string type. Drives the string dec-on-overwrite in
-// assign() (Phase 1e-strings) — kept separate from isArrayTypeOfLocal
+// assign() — kept separate from isArrayTypeOfLocal
 // because the string dec uses the two-word-aware str_dec helper, not
 // the single-word rc_dec the array/struct/enum/closure path emits.
 func isStringTypeOfLocal(name string, b *builder) bool {
@@ -16947,7 +16930,7 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 // wasmbin/runtime.go) checks `[arr-8] == 1 && [arr-12] > oldLen`
 // to decide whether it can mutate `arr` in place. On the fast
 // path it bumps rc to 2 and writes len, returning the same
-// pointer; the surrounding Phase 1d-vi dec-on-overwrite then
+// pointer; the surrounding dec-on-overwrite then
 // drops rc back to 1, leaving the caller's slot owning rc=1 of
 // a freshly extended array. On the slow path the helper allocs
 // a new buffer, copies the old payload, sets new rc=1, len, cap,

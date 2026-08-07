@@ -83,8 +83,8 @@ func TestCharTypeArm64(t *testing.T) {
 // `to_upper(c: char)` would collide with `to_upper(s: string)` in the same
 // module. The method form also makes the receiver TYPE carry the meaning,
 // which is the whole point of D2 — `c.to_upper()` and `s.to_upper()` are
-// visibly different operations where previously both sides were `i32` and
-// only a naming convention separated them.
+// visibly different operations, rather than both being `i32` with only a
+// naming convention separating them.
 //
 // Case mapping on a `char` is SIMPLE: a 1→N expansion has no single scalar
 // to return, so `ß` maps to itself here while `"ß".to_upper()` is `"SS"`.

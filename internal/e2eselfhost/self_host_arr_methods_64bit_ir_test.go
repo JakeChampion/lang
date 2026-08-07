@@ -9,8 +9,7 @@ import (
 )
 
 // TestSelfHostArrMethods64bitIR is the correctness gate for METHODS that return
-// f64[] / i64[] on the wasm IR backend. Such methods previously bailed the whole
-// module to the AST backend; now the array registries record them keyed
+// f64[] / i64[] on the wasm IR backend. The array registries record them keyed
 // "<Type>.<method>" (f64arr_ret_fns_of / i64arr_ret_fns_of) so the call site
 // element-width-tracks the result (expr_is_f64arr / expr_is_i64arr / the
 // arr_index_is_* method-call cases) and a later x[i] reads an 8-byte f64/i64.

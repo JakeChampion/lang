@@ -1825,14 +1825,10 @@ func WasiFilesystemTypesOpenAtInstanceTypeBody() []byte {
 }
 
 // FsFeatures is the set of wasi:filesystem/types methods a core module
-// imports. It replaces the five-way mode enum this used to be: the
-// stream directions and the path mutators are INDEPENDENT — a program
-// can read files and make directories without writing either — so a
-// program's needs are a subset of a set, not one of a fixed list.
-//
-// The enum was already at its limit with three via-stream methods and
-// five hand-picked bodies; part 2's three path mutators would have made
-// it forty.
+// imports. A set rather than a mode enum because the stream directions
+// and the path mutators are INDEPENDENT — a program can read files and
+// make directories without writing either — so its needs are a subset of
+// a set, not one of a fixed list.
 type FsFeatures struct {
 	OpenAt bool // open-at
 	Read   bool // read-via-stream

@@ -32,7 +32,7 @@ func TestFormatSimpleFunction(t *testing.T) {
 
 // The contextual function modifiers — `fip` / `fbip` (bare + graded) and
 // `async` — carry checked semantics (E053/E068; the P3 async export), so
-// the formatter must re-emit them. They used to be silently dropped.
+// the formatter must re-emit them rather than drop them silently.
 func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{`fip function f(x: i32): i32 { return x; }`, "fip function f(x: i32): i32 {\n  return x;\n}\n"},
@@ -546,8 +546,8 @@ func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
 
 // A generic *method* spells its type parameters in leading position,
 // before the receiver, so the receiver type can reference them. The
-// formatter previously dropped the clause, leaving an unbounded `T`
-// that failed to typecheck.
+// formatter must keep the clause; dropping it leaves an unbounded `T`
+// that fails to typecheck.
 func TestFormatGenericMethodRoundTrip(t *testing.T) {
 	src := `struct Box[T] { xs: T[] }
 pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
@@ -678,9 +678,9 @@ func TestFormatFStringRoundTrip(t *testing.T) {
 
 // `defer` statements round-trip through the formatter — for both
 // bare-call expressions and method-call expressions on a receiver.
-// The method-call shape was previously eaten silently because the
-// statement printer's switch had no `case *ast.Defer` arm; the
-// result was an empty line where `defer r.close();` had stood.
+// The method-call shape needs its own `case *ast.Defer` arm in the
+// statement printer's switch, or it is eaten silently, leaving an
+// empty line where `defer r.close();` stood.
 func TestFormatDeferRoundTrip(t *testing.T) {
 	srcs := []string{
 		`function f(): void { defer cleanup(); }`,
@@ -808,11 +808,10 @@ return 0;
 	}
 }
 
-// Imports round-trip through the formatter — previously
-// dropped silently because the Format loop only walked
-// structs / enums / unions / consts / funcs. Without this,
-// `fern -fmt -w` would have stripped every import line and
-// the fmt-check CI gate would fail.
+// Imports round-trip through the formatter. A Format loop that walks
+// only structs / enums / unions / consts / funcs drops them silently,
+// so `fern -fmt -w` strips every import line and the fmt-check CI gate
+// fails.
 func TestFormatImportsRoundTrip(t *testing.T) {
 	got := formatSrc(t, `import "std/string";
 import "std/i32";
@@ -863,8 +862,8 @@ function main(): i32 {
 }
 
 // Union types (`type X = A | B | C;`) round-trip through the
-// formatter — previously dropped silently because no
-// `formatUnionDecl` path existed. Members preserved in source
+// formatter, which needs a `formatUnionDecl` path or they are dropped
+// silently. Members preserved in source
 // order so the checker desugar's variant-tag assignment stays
 // stable across `fern -fmt -w` edits.
 func TestFormatUnionDeclRoundTrip(t *testing.T) {

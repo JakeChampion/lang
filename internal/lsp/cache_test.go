@@ -110,9 +110,9 @@ func TestPublishDiagnostics_FirstPublishAlwaysFiresEvenWhenEmpty(t *testing.T) {
 	// Regression for the playground "clean source clears the
 	// Problems panel" test: a clean document's didOpen must emit
 	// publishDiagnostics([]) so the client knows to render the
-	// no-problems state. The dedup check was previously eating
-	// this because lastDiags[uri] defaulted to nil and
-	// diagnosticsEqual treats nil as equal to []Diagnostic{}.
+	// no-problems state. The dedup check eats this if lastDiags[uri]
+	// defaults to nil, because diagnosticsEqual treats nil as equal to
+	// []Diagnostic{}.
 	src := "function main(): i32 { return 0; }\n"
 	s := NewServer()
 

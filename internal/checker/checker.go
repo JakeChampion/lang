@@ -1924,12 +1924,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// payload and whose len is `len(s)`.
 	//
 	// The view borrows: it must not outlive the string it aliases.
-	// That used to be free — under the bump arena the payload lived
-	// until teardown — but reference counting can release the string
-	// while a view still points at it, so the escape rule is now the
-	// same open question as `str`'s (#4814) rather than a non-issue.
-	// Uses that keep the view local to a frame where the owner is
-	// live, which is the common shape, are unaffected.
+	// Reference counting can release the string while a view still
+	// points at it, so the escape rule is the same open question as
+	// `str`'s (#4814). Uses that keep the view local to a frame where
+	// the owner is live — the common shape — are unaffected.
 	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
 	// `s.len()` — IR intercepts the rewritten
 	// `__method_string_len(s)` call and emits OpStrLen so a
@@ -13858,14 +13856,12 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 // call. Reads the IsVariantCall flag the checker stamps on every
 // variant-resolved call.
 //
-// The gate exists to keep `postSettleType`'s Call branch from
-// firing on non-variant calls that happen to return Option[T] /
-// Result[T, E]. For example, `f(p: boolean[]): Option[i32]` called
-// as `f([true])` used to be refreshed as `Option[boolean[]]`
-// because the gate didn't distinguish variant constructors from
-// regular calls. The previous case-sensitivity heuristic (callee
-// Ident starts with an upper-case letter) matched Lang's naming
-// convention but wasn't a guarantee; the explicit flag is.
+// The gate exists to keep `postSettleType`'s Call branch from firing on
+// non-variant calls that happen to return Option[T] / Result[T, E]:
+// without it, `f(p: boolean[]): Option[i32]` called as `f([true])`
+// refreshes as `Option[boolean[]]`. The flag is explicit because a
+// case-sensitivity heuristic (callee Ident starts upper-case) only
+// matches the naming convention, it does not guarantee it.
 func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
 func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
@@ -14373,9 +14369,8 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 	}
 	// Prepend an `init();` call when the user defined one
 	// (docs/PLATFORM-RESEARCH.md Rec §3). The return value is
-	// currently dropped — Phase 1 init() is side-effect-only;
-	// Phase 2 will thread the result as a `state` parameter
-	// to handle. `init` is the BARE name; if a module import
+	// dropped: init() is side-effect-only, and nothing threads its
+	// result to handle. `init` is the BARE name; if a module import
 	// qualifies it, modload rewrites the call separately.
 	var stmts []ast.Stmt
 	if hasInitDecl(prog) {

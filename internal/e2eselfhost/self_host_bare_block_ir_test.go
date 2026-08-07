@@ -12,8 +12,8 @@ import (
 // scope) through the self-hosted x86-64 compiler on both the AST path and
 // the IR path. The self-host Stmt union has no StmtBlock, so the parser
 // desugars a statement-position `{` to `if (true) { ... }` (the same trick
-// `loop` uses for `while (true)`). Previously such a block parsed as
-// StmtUnknown and its inner statements were silently dropped (issue #2821).
+// `loop` uses for `while (true)`). Parsing it as StmtUnknown silently drops
+// its inner statements (issue #2821).
 func TestSelfHostBareBlockIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

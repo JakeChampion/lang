@@ -413,8 +413,7 @@ func TestEmitEarlyReturnChainRetOnFalseArm(t *testing.T) {
 
 // TestEmitRelooperPhiAtMerge — a 5-block CFG that the shape-
 // specific classifiers don't recognise but contains a phi at
-// a merge. The relooper should now lower it (this test
-// previously asserted rejection; the rejection is gone).
+// a merge. The relooper must lower it, not reject it.
 //
 //	entry ─brif c─→ a ─br─→ cb ─br─→ d ─ret
 //	          └─→ b ─br─↗
