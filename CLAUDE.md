@@ -427,7 +427,14 @@ zeroing, not the other consumers. Entry-zeroing alone is green (402s);
 box-only free is green (390s); adding the field drop segfaults. The
 remaining 4000 is the field buffers, and closing it means explaining
 why the deep drop is unsafe when the credit already proves the name
-fresh and non-escaping.
+fresh and non-escaping. **Two theories are already eliminated**: the
+other consumers of `slot_is_reclaimable_struct` (scoping the sweep +
+entry-zeroing alone still segfaults), and NODEEP visibility — the
+theory that `slot_nodeep`'s exact-name lookup silently loses the
+marker for a retired slot. Making that lookup prefix-aware is inert
+(every consumer emits while the name is live) and, with the marker
+visible, granting the deep drop STILL segfaults. Whatever it is, it is
+not the guard being bypassed.
 
 **Re-measure before quoting any figure in this area.** FIVE
 attributions have now been wrong. Four of #6127's own: three because a
