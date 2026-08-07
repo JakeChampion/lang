@@ -2732,7 +2732,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // Gate: the union of every fs helper that calls it (the manual
     // dependency-marking fragility #2649 tracks — keep this in sync with
     // the call sites below).
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
             || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
             || s.has_need("temp_dir")) {
         var sh_nf: ShapeRefOut = shape_ref(s, "NotFound");
@@ -5499,6 +5499,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n");
             s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_write_file\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("write_file");
+        } else if (o.kind_tag == 224) {  // write_file_exec
+            // Identical shuffle; the only difference is the helper it calls,
+            // which opens 0755 rather than 0644 (#6133).
+            s = s.write("    popq %rsi\n    popq %rdi\n");
+            s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_write_file_exec\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("write_file_exec");
         } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_remove_dir_all
             // (#2649) via the stack ABI — pushes a fresh Result[(), IoError]. The helper is
@@ -6878,7 +6884,7 @@ pub function all_runtime_need_roots(): string[] {
         // edge-handler — linked its library units against undefined
         // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
         // Filesystem + process:
-        "stat", "read_dir", "remove_file", "remove_dir_all", "write_file",
+        "stat", "read_dir", "remove_file", "remove_dir_all", "write_file", "write_file_exec",
         "temp_dir", "open_file", "reader", "subprocess",
         // stdin / argv:
         "read_all_stdin", "arg_at",
@@ -7241,7 +7247,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // Pre-intern the IoError variant shapes for __fern_io_error (#4370) —
     // same reasoning as FileStat above; keep the gate in sync with the
     // helper's own (the union of the fs needs).
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file")
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file")
             || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")
             || s.has_need("temp_dir")) {
         var ioePre1: ShapeRefOut = shape_ref(s, "NotFound");
@@ -7320,7 +7326,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // The freestanding allocator + RC runtime, only when the program allocates.
     // i32.to_string() allocates its box even in an otherwise heap-free program,
     // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
-    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
+    if (s.has_need("heap") || s.has_need("i32_to_string") || s.has_need("u32_to_string") || s.has_need("str_to_i32") || s.has_need("chr") || s.has_need("print_int") || s.has_need("read_int") || s.has_need("read_all_stdin") || s.has_need("str_read_line") || s.has_need("putchar") || s.has_need("strbuf") || s.has_need("reader") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_dir_all") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_file") || s.has_need("env") || s.has_need("stat") || s.has_need("subprocess")) { s = emit_ir_runtime(s); }
     // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
     // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
     // inside the heap gate — a heap-free program still lowers `exit`, which
@@ -7574,13 +7580,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("write_file") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("remove_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64"); }
+        if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64"); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(); }

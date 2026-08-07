@@ -726,6 +726,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
 	}
+	if g.usesWriteFileExec {
+		g.emitWriteFileRuntimeMode("__fern_write_file_exec", "0755", "x", "0755")
+	}
 	if g.usesRemoveDirAll {
 		g.emitRemoveDirAllRuntime()
 	}
@@ -1097,6 +1100,10 @@ type generator struct {
 	// `__fern_io_error(errno, path) → IoError box` helper.
 	usesReadFile  bool
 	usesWriteFile bool
+	// usesWriteFileExec is write_file_exec — write_file with the
+	// executable bit. Its own flag so a program that never asks for
+	// one does not carry the second helper body (#6133).
+	usesWriteFileExec bool
 	// usesRemoveDirAll pulls in the recursive `rm -rf` runtime
 	// (`__fern_remove_dir_all(path) → Option[IoError]`) — the
 	// x86-64 sibling of arm64-ssa's emitRemoveDirAllHelper. It's
@@ -1406,6 +1413,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "write_file":
 		g.usesWriteFile = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "write_file_exec":
+		g.usesWriteFileExec = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	case "remove_dir_all":
@@ -2795,6 +2806,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_file"
 		case "write_file":
 			target = "__fern_write_file"
+		case "write_file_exec":
+			target = "__fern_write_file_exec"
 		case "remove_dir_all":
 			target = "__fern_remove_dir_all"
 		case "remove_file":
@@ -9496,10 +9509,21 @@ func (g *generator) emitReadFileRuntime() {
 //	tag=0 (Some) → payload@+8 = IoError box ptr
 //	tag=1 (None) → 8-byte box, no payload
 func (g *generator) emitWriteFileRuntime() {
+	g.emitWriteFileRuntimeMode("__fern_write_file", "0644", "", "")
+}
+
+// emitWriteFileRuntimeMode is emitWriteFileRuntime parameterised by symbol and
+// creation mode, so `write_file` (0644) and `write_file_exec` (0755) share one
+// body rather than a copy that can drift. `mode` is an octal literal, as GAS
+// reads a leading zero. `sfx` keeps the two copies' `.Lwf*` labels distinct —
+// without it a program using both emits each label twice, and the assembler
+// either rejects it or, worse, resolves the second copy's branches into the
+// first copy's body (#6133).
+func (g *generator) emitWriteFileRuntimeMode(sym, mode, sfx, fixupMode string) {
 	g.line("")
-	g.line(".globl __fern_write_file")
-	g.line(".type __fern_write_file, @function")
-	g.label("__fern_write_file")
+	g.line(".globl " + sym)
+	g.line(".type " + sym + ", @function")
+	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")                           // path byte ptr (materialised)
@@ -9517,27 +9541,40 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
 	g.emit("mov edx, 577")
-	g.emit("mov r10d, 0644")
+	g.emit("mov r10d, " + mode)
 	g.emitSyscall(257)
 	g.emit("test rax, rax")
-	g.emit("js .Lwf_err_open")
+	g.emit("js .Lwf_err_open" + sfx)
 	g.emit("mov r13, rax") // fd
 
 	g.emit("xor r15, r15")
-	g.label(".Lwf_loop")
+	g.label(".Lwf_loop" + sfx)
 	g.emit("cmp r15, r14")
-	g.emit("jge .Lwf_done")
+	g.emit("jge .Lwf_done" + sfx)
 	g.emit("mov edi, r13d")
 	g.emit("lea rsi, [r12 + r15]")
 	g.emit("mov rdx, r14")
 	g.emit("sub rdx, r15")
 	g.emitSyscall(1)
 	g.emit("test rax, rax")
-	g.emit("js .Lwf_err_close")
+	g.emit("js .Lwf_err_close" + sfx)
 	g.emit("add r15, rax")
-	g.emit("jmp .Lwf_loop")
+	g.emit("jmp .Lwf_loop" + sfx)
 
-	g.label(".Lwf_done")
+	g.label(".Lwf_done" + sfx)
+	if fixupMode != "" {
+		// openat's mode applies only when it CREATES the file, so writing
+		// over a stale output leaves the old mode — for write_file_exec
+		// that means an unrunnable binary, the very failure it removes.
+		// fchmod(fd, mode) before close; its result is ignored, as the
+		// bytes are already written and a mode failure must not turn a
+		// successful write into an Err. Plain write_file passes "" here
+		// and keeps preserving an existing file's mode, matching
+		// os.WriteFile in the interpreter. (#6133)
+		g.emit("mov edi, r13d")
+		g.emit("mov esi, " + fixupMode)
+		g.emitSyscall(91) // fchmod
+	}
 	g.emit("mov edi, r13d")
 	g.emitSyscall(3)
 	// Result.Ok(()): 16-byte box, tag=0, unit payload @+8. The unit
@@ -9548,20 +9585,20 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")     // tag = 0 (Ok)
 	g.emit("mov qword ptr [rax + 8], 0") // unit payload
-	g.emit("jmp .Lwf_return")
+	g.emit("jmp .Lwf_return" + sfx)
 
-	g.label(".Lwf_err_close")
+	g.label(".Lwf_err_close" + sfx)
 	g.emit("neg rax")
 	g.emit("mov r14, rax") // errno
 	g.emit("mov edi, r13d")
 	g.emitSyscall(3)
-	g.emit("jmp .Lwf_err_dispatch")
+	g.emit("jmp .Lwf_err_dispatch" + sfx)
 
-	g.label(".Lwf_err_open")
+	g.label(".Lwf_err_open" + sfx)
 	g.emit("neg rax")
 	g.emit("mov r14, rax")
 
-	g.label(".Lwf_err_dispatch")
+	g.label(".Lwf_err_dispatch" + sfx)
 	g.emit("mov edi, r14d")
 	g.emit("mov rsi, [rbp - 64]") // original path string value (heap or inline)
 	g.emit("call __fern_io_error")
@@ -9571,7 +9608,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("mov dword ptr [rax], 1") // tag = 1 (Err)
 	g.emit("mov [rax + 8], r14")
 
-	g.label(".Lwf_return")
+	g.label(".Lwf_return" + sfx)
 	g.emit("add rsp, 24")
 	g.emit("pop r15")
 	g.emit("pop r14")
@@ -9580,7 +9617,7 @@ func (g *generator) emitWriteFileRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __fern_write_file, .-__fern_write_file")
+	g.line(".size " + sym + ", .-" + sym)
 }
 
 // emitRemoveDirAllRuntime emits

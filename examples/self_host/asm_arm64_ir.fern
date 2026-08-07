@@ -884,6 +884,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // reverse — the same shuffle the two-arg string helpers do.
             s = s.need("heap"); s = s.need("write_file");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_write_file\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 224) {  // write_file_exec
+            // Identical shuffle; the only difference is the helper it calls,
+            // which opens 0755 rather than 0644 (#6133).
+            s = s.need("heap"); s = s.need("write_file_exec");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_write_file_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 172) {  // remove_dir_all
             // [pathbox] -> recursively rm -rf the named dir tree, push a fresh
             // Result[(), IoError] box (asm_arm64.emit_runtime's __fern_remove_dir_all,
@@ -6934,11 +6939,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // stays: read_dir / remove_dir_all / open_fd still call it, and those two ARE
     // the shape-diverging ones — Darwin's getdirentries64 takes a 4th out-param
     // getdents64 has no equivalent of.
-    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("remove_file") || s.has_need("temp_dir") || s.has_need("stat")) {
+    if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("temp_dir") || s.has_need("stat")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_read_file(tgt); }
         if (s.has_need("write_file")) { fs_src = fs_src + " " + asmcore.rt_src_write_file(tgt); }
+        if (s.has_need("write_file_exec")) { fs_src = fs_src + " " + asmcore.rt_src_write_file_exec(tgt); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file(tgt); }
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);

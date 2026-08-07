@@ -1504,6 +1504,13 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         }
         if (util.index_of_str(ids, "subprocess") >= 0) { return "subprocess"; }
         if (util.index_of_str(ids, "timer_fd") >= 0) { return "timer_fd"; }
+        // write_file_exec (#6133) — WASI preview1's path_open has no mode
+        // argument and the component-model filesystem has no permission bits
+        // either, so the executable bit is simply not expressible. A clean
+        // endpoint naming the builtin, rather than silently writing a file
+        // that is not executable, which is the failure the builtin exists to
+        // remove.
+        if (util.index_of_str(ids, "write_file_exec") >= 0) { return "write_file_exec"; }
         // proc_fork / proc_waitpid / proc_exec (#5686) — the crash-only trio.
         // A wasm component is a single instance with no process model: there is
         // nothing to fork and no child to reap. Same endpoint treatment as

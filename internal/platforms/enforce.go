@@ -69,16 +69,17 @@ var gatedBuiltins = map[string]string{
 	"udp_send":     "tcp",
 
 	// Filesystem.
-	"read_file":      "fs",
-	"write_file":     "fs",
-	"open_reader":    "fs",
-	"open_writer":    "fs",
-	"open_appender":  "fs",
-	"stat":           "fs",
-	"read_dir":       "fs",
-	"remove_file":    "fs",
-	"remove_dir_all": "fs",
-	"temp_dir":       "fs",
+	"read_file":       "fs",
+	"write_file":      "fs",
+	"write_file_exec": "fs",
+	"open_reader":     "fs",
+	"open_writer":     "fs",
+	"open_appender":   "fs",
+	"stat":            "fs",
+	"read_dir":        "fs",
+	"remove_file":     "fs",
+	"remove_dir_all":  "fs",
+	"temp_dir":        "fs",
 }
 
 // GatedBuiltin reports the capability gating the named builtin, if any.

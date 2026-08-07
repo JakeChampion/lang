@@ -1449,6 +1449,30 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// write_file_exec(path, content): Result[void, IoError] —
+	// write_file, but the file is created EXECUTABLE (0755 rather
+	// than 0644).
+	//
+	// It exists because a compiler that emits a finished binary has
+	// to be able to produce a runnable one, and `write_file` cannot:
+	// `bin/fern-selfhost -target arm64 -o out.bin` wrote 0644, where
+	// the native CLI writes 0755 and chmods. A non-executable binary
+	// run under qemu exits 1 with no output, which is indistinguishable
+	// from a program that ran and returned 1 — that cost one
+	// investigation a completely fabricated reproduction before
+	// anyone thought to check the mode (#6133).
+	//
+	// New native-only runtime surface, so it is a debt entry against
+	// the convergence freeze (#4451) until the self-host emitters
+	// carry it too — which this change does, because fern.fern calls
+	// it and the self-host compiler compiles fern.fern.
+	c.info.FuncSigs["write_file_exec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// Streaming I/O constructors. open_reader / open_writer /
 	// open_appender all return `Result[Reader|Writer, IoError]`
 	// — the runtime helpers do the path_open / open(2) and

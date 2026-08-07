@@ -6006,7 +6006,7 @@ pub function builtin_function_names(): string[] {
         "stdin", "stdout", "stderr", "read_line", "read_int", "read_all_stdin",
         "open_reader", "open_writer", "open_appender",
         // filesystem
-        "read_file", "write_file", "read_dir", "remove_dir_all", "remove_file",
+        "read_file", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
         "stat", "temp_dir",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
