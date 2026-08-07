@@ -1,0 +1,23 @@
+// spec: AB-03
+//
+// Writing past the end aborts. Worth pinning separately from the read:
+// a read that escapes the check returns a wrong value, while a write
+// that escapes it corrupts whatever lives after the array, and the two
+// go through different code in every backend.
+//
+// The write is `.with(i, v)` because a subscript is read-only after
+// construction — `xs[7] = 9` is E056 and never reaches the bounds
+// check at all. docs/ARRAY-BOUNDS.md used the subscript form in its own
+// example until this case needed one that runs.
+import "std/i32";
+
+function put(xs: i32[], i: i32, v: i32): i32[] {
+    return xs.with(i, v);
+}
+
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var ys: i32[] = put(xs, 7, 9);
+    print(ys.len().to_string());
+    return 0;
+}

@@ -2,16 +2,23 @@
 
 Status: policy doc.
 
-Indexing an array or slice out of range — `xs[i]` or `xs[i] = v` where
-`i < 0` or `i >= len` — **aborts the program** on every backend. It
-never reads or writes past the end and never returns a garbage value.
+Indexing an array or slice out of range — `xs[i]` or `xs.with(i, v)`
+where `i < 0` or `i >= len` — **aborts the program** on every backend.
+It never reads or writes past the end and never returns a garbage
+value.
 
 ```
 var xs: i32[] = [10, 20, 30];
-xs[5]        // aborts: index 5 out of range [0, 3)
-xs[0 - 1]    // aborts: negative index
-xs[7] = 9    // aborts: out-of-range write
+xs[5]                // aborts: index 5 out of range [0, 3)
+xs[0 - 1]            // aborts: negative index
+xs = xs.with(7, 9)   // aborts: out-of-range write
 ```
+
+The write is spelled `.with(i, v)` rather than `xs[i] = v`: a subscript
+is read-only after construction, so the assignment form never reaches
+the bounds check — the checker rejects it first with `E056`. This
+document showed `xs[7] = 9` until `spec/semantics.md` required an
+example that runs.
 
 This is the same "no silent corruption" stance as the rest of the
 language. Reading uninitialised adjacent memory (what an unchecked

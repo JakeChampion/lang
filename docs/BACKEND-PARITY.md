@@ -247,6 +247,32 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
+### Tail-call optimisation — wired on every backend
+
+The `ir.TailCallOptimize` pass runs on x86-64, arm64, and wasm (the same
+one-line wiring in each), so every backend gets O(1) stack depth on self-tail
+recursion.
+
+### Pointer-width handling on arm64-darwin's high heap — how it works
+
+All pointer-shaped values (string / array / struct / enum / slice / tuple)
+round-trip through 8-byte slots on arm64-darwin's high heap. Two pieces drive
+that:
+
+- **`WidthPtr`**, a sentinel on `Op.Width` in the IR, which each backend resolves
+  to its own heap-pointer width — 4 on wasm32, 8 on arm64.
+- **`ast.IsPointerType`**, the type-side classifier, which drives stride / offset
+  / store-width selection in `payloadSlotSize`, `structFieldLayout`,
+  `tupleElemLayout`, `arrayElemStoreOp`, and `ast.ElemSizeBytesFor`.
+
+Map operations (`set` / `get_or` / `has` / `delete` / `iter` / `len` / `keys` /
+`values`) cover all combinations of i32 / string K/V. Closures with captures
+lower on every backend (`OpMakeClosure` / `OpMakeEnv` / `OpCallClosureDirect` —
+see `arm64.go:emitMakeClosureOrEnv` and the x86-64 mirror); the `ptrW`-aware
+capture layout from `closureconv` lines up with the load side (`payloadLoadOp`
+on a CaptureRef emits `WidthPtr`). Coverage: 8 `TestArm64Closure*` cases, with
+matching counts on x86-64 and wasm.
+
 ### arm64-darwin heap-address truncation in Map runtime — RESOLVED
 
 **Resolution**: the `core/map` runtime is now `usize`-pointered

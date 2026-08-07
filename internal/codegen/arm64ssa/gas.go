@@ -464,6 +464,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_dec":      emitArrDecHelper,
 	"__fern_drop_arr_str": emitDropArrStrHelper,
 	"__str_idx":           emitStrIdxHelper,
+	"__fern_memchr":       emitMemchrHelper,
 	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
 	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
@@ -2191,6 +2192,48 @@ func emitStrIdxHelper(w func(string, ...any)) {
 	w("\tsvc #0")
 	w(".Lssa_stridx_ok:")
 	w("\tadd x0, x0, x1") // base + idx (byte stride)
+	w("\tret")
+}
+
+// emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the
+// first `byte` at or after `from`, or -1 (docs/ATLAS-PLATFORM-PLAN.md §3).
+//
+// SCALAR here, unlike the two native arm64 emitters, which serve the same op
+// with a NEON kernel. This backend needed it at all only because std/string's
+// single-byte search now routes through the intrinsic: before that adoption no
+// module reachable from this target called it, so the missing entry cost
+// nothing and was invisible. It surfaced as a LINK error — `branch to undefined
+// label "fn___fern_memchr"` — not a wrong answer, which is the good failure
+// mode for a missing helper.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], not the two-word box the native arm64 backend uses, so the three
+// arguments land in x0/x1/x2 with no slot arithmetic. Leaf: no frame.
+func emitMemchrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_memchr"))
+	w("\tldur w3, [x0, #-4]") // len
+	// A byte outside 0..255 can never occur in the haystack. ONE unsigned
+	// compare covers both ends: a negative arrives as a huge unsigned.
+	w("\tcmp x1, #255")
+	w("\tb.hi .Lssa_memchr_none")
+	// `from` clamps at 0 rather than trapping, matching the interpreter.
+	w("\tcmp x2, #0")
+	w("\tb.ge .Lssa_memchr_scan")
+	w("\tmov x2, #0")
+	w(".Lssa_memchr_scan:")
+	w("\tcmp w2, w3")
+	w("\tb.ge .Lssa_memchr_none")
+	w("\tldrb w4, [x0, x2]")
+	w("\tcmp w4, w1")
+	w("\tb.eq .Lssa_memchr_found")
+	w("\tadd x2, x2, #1")
+	w("\tb .Lssa_memchr_scan")
+	w(".Lssa_memchr_found:")
+	w("\tmov x0, x2")
+	w("\tret")
+	w(".Lssa_memchr_none:")
+	w("\tmov x0, #-1")
 	w("\tret")
 }
 

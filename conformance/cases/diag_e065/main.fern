@@ -1,3 +1,5 @@
+// spec: ML-04
+//
 // Pins E065. The program is the example from that code's entry
 // in the diagnostic catalogue (`fern explain E065`), so this case
 // also checks the catalogue's example really does produce the error

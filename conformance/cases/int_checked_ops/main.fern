@@ -1,0 +1,30 @@
+// spec: IS-09
+//
+// The checked operators turn overflow into a value: Some(result) when
+// the exact result fits the operand type, None when it does not. `/?`
+// and `%?` also answer None for a zero divisor and for the one
+// overflowing signed division, MIN / -1 — the two inputs where the
+// unchecked forms have to invent an answer rather than compute one.
+import "std/i32";
+
+function show(o: Option[i32]): string {
+    match (o) {
+        Some(v) => { return v.to_string(); },
+        None => { return "none"; },
+    }
+}
+
+function id(n: i32): i32 { return n; }
+
+function main(): i32 {
+    print(show(id(40) +? 2));
+    print(show(id(2147483647) +? 1));
+    print(show(id(0 - 2147483647 - 1) -? 1));
+    print(show(id(100000) *? 100000));
+    print(show(id(84) /? 0));
+    print(show(id(0 - 2147483647 - 1) /? (0 - 1)));
+    print(show(id(85) %? 43));
+    print(show(id(1) <<? 32));
+    print(show(id(1) <<? 4));
+    return 0;
+}

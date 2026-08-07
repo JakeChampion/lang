@@ -16,7 +16,10 @@ passes: `TestSelfHostPerModuleFixpointX86_64` (env-gated,
 per-module-emits the whole compiler (35 units) in ~998 s with **no arena OOM**,
 and gen0 == gen1 byte-identically across all 35 units (per-module emit is
 self-reproducing). Measured gen1 peak: **~7.6 GB RSS per emit window** — under
-the 8 GiB arena ceiling that the leaked large blocks previously blew past. So
+the 8 GiB arena ceiling that the leaked large blocks previously blew past.
+(That measurement was taken against the 8 GiB arena of the time. The arena is
+**16 GiB** now, so read ~7.6 GB as comfortable headroom, not as 0.4 GB of it.)
+So
 **the arena wall is no longer the slice-2 blocker**; the only remaining slice-2
 obstacle is the *CI-affordability* of the gen1 per-module fixpoint (serial
 ~16.6 min > a 13-min shard; 2-way parallel needs ~15 GB → OOM-risky on a 16 GB

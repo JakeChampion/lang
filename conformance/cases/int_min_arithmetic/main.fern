@@ -1,3 +1,6 @@
+// spec: IS-06
+// spec: IS-07
+//
 // The arithmetic corners around the smallest i32, where implementations of
 // the same language routinely disagree.
 //

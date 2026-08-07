@@ -1,0 +1,18 @@
+// spec: AB-04
+//
+// Slice CONSTRUCTION is checked, not just element access (#5419).
+// Without this check an oversized `hi` built a view extending past its
+// source, and every later access compared against the view's own
+// length — so the whole overhang was readable through an index that
+// looked in range.
+import "std/i32";
+
+function view(xs: i32[], lo: i32, hi: i32): [i32] {
+    return xs[lo:hi];
+}
+
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    print(view(xs, 0, 5).len().to_string());
+    return 0;
+}

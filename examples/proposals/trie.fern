@@ -1,0 +1,814 @@
+// examples/proposals/trie.fern — proposal turn, drawn line 51:
+// "A trie that stores strings and answers prefix queries and longest-common-prefix."
+//
+// The children of a node are a *sorted edge list* — two parallel arrays, one
+// of label bytes and one of target node indices — rather than a fixed slot per
+// letter. That costs a binary search per step and buys three things: the trie
+// accepts any byte, so it is not quietly an a-z structure; a node costs what
+// its fan-out costs rather than a flat 26 or 256 slots; and walking the edges
+// in array order IS lexicographic order, so `keys()` comes out sorted without
+// a sort. The third is the one that matters for testing, because it means the
+// ordering claim is structural and can be checked against an independent
+// oracle instead of against the same comparator that produced it.
+//
+// Every query here is answered twice: once by walking the trie, and once by a
+// brute-force scan over the plain `string[]` the corpus was built from. The
+// tests assert the two agree, over every prefix of every word plus deliberate
+// non-members — which is a stronger claim than any hand-written expectation
+// table, and does not have to be re-derived when the corpus changes.
+//
+// Three edge cases carry most of the risk and each has its own test: the empty
+// string is a legitimate key (it makes the root terminal, and it is a prefix
+// of everything), a key that is a proper prefix of another key must not
+// swallow it, and the LCP of a set containing a key that is a prefix of the
+// rest is that key — not the empty string, and not one byte further.
+//
+// The build loop is also an allocation probe. Arrays are immutable, so
+// `nodes.with(i, n)` is a copy unless the runtime can see it holds the only
+// reference and mutate in place. Whether a threaded accumulator like this one
+// is linear or quadratic is therefore a real question with a measurable
+// answer, and main() reports it rather than asserting a number.
+//
+// `collect` threads a `string[]` accumulator through a recursive call, which
+// is the shape #6425 was found in: the superseded array buffer is not
+// reclaimed on a grow when the append happens inside a callee. The trie is
+// correct regardless — the leak is invisible to output — so nothing here
+// works around it, and the tests below say nothing about allocation.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// A node owns a sorted edge list: `labels[i]` is the byte on the edge to
+// `kids[i]`. `terminal` says a key ends here; `count` is the number of
+// distinct keys in this subtree, which is what makes a prefix count an O(len)
+// walk instead of an O(subtree) traversal.
+struct Node { labels: i32[], kids: i32[], terminal: boolean, count: i32 }
+
+struct Trie { nodes: Node[] }
+
+function empty_node(): Node {
+    return Node { labels: [], kids: [], terminal: false, count: 0 };
+}
+
+// Node 0 is the root and always exists, so an empty trie is one node, not
+// zero. That keeps `node_for("")` from needing a special case.
+function new_trie(): Trie {
+    return Trie { nodes: [empty_node()] };
+}
+
+// ------------------------------------------------------------- edges
+
+// Binary search, valid because labels is maintained sorted by with_edge.
+// Returns the target node index, or -1 when the node has no such edge.
+function edge_of(n: Node, b: i32): i32 {
+    var lo: i32 = 0;
+    var hi: i32 = n.labels.len() - 1;
+    while (lo <= hi) {
+        var mid: i32 = (lo + hi) / 2;
+        var v: i32 = n.labels[mid];
+        if (v == b) { return n.kids[mid]; }
+        if (v < b) { lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return -1;
+}
+
+// Splice a new edge into sorted position. The caller has already established
+// that `b` is absent, so this never has to handle a replacement.
+function with_edge(n: Node, b: i32, target: i32): Node {
+    var labels: i32[] = [];
+    var kids: i32[] = [];
+    var placed: boolean = false;
+    var i: i32 = 0;
+    while (i < n.labels.len()) {
+        if (!placed && n.labels[i] > b) {
+            labels = labels.append(b);
+            kids = kids.append(target);
+            placed = true;
+        }
+        labels = labels.append(n.labels[i]);
+        kids = kids.append(n.kids[i]);
+        i = i + 1;
+    }
+    if (!placed) {
+        labels = labels.append(b);
+        kids = kids.append(target);
+    }
+    return Node { labels: labels, kids: kids, terminal: n.terminal, count: n.count };
+}
+
+// ------------------------------------------------------------ insert
+
+// Insert is idempotent: a duplicate returns the trie unchanged, counts
+// included. Checking membership up front is what makes that true, and it is
+// also what lets the count bump be a single unconditional pass over the path
+// afterwards rather than a conditional one interleaved with node creation.
+function insert(t: Trie, w: string): Trie {
+    if (contains(t, w)) { return t; }
+
+    var nodes: Node[] = t.nodes;
+    var path: i32[] = [0];
+    var cur: i32 = 0;
+    var i: i32 = 0;
+    while (i < w.len()) {
+        var b: i32 = w[i] as i32;
+        var nxt: i32 = edge_of(nodes[cur], b);
+        if (nxt < 0) {
+            nxt = nodes.len();
+            nodes = nodes.append(empty_node());
+            nodes = nodes.with(cur, with_edge(nodes[cur], b, nxt));
+        }
+        cur = nxt;
+        path = path.append(cur);
+        i = i + 1;
+    }
+
+    nodes = nodes.with(cur, Node {
+        labels: nodes[cur].labels,
+        kids: nodes[cur].kids,
+        terminal: true,
+        count: nodes[cur].count,
+    });
+
+    var p: i32 = 0;
+    while (p < path.len()) {
+        var at: i32 = path[p];
+        nodes = nodes.with(at, Node {
+            labels: nodes[at].labels,
+            kids: nodes[at].kids,
+            terminal: nodes[at].terminal,
+            count: nodes[at].count + 1,
+        });
+        p = p + 1;
+    }
+    return Trie { nodes: nodes };
+}
+
+// ------------------------------------------------------------ lookup
+
+// The node reached by walking `p` from the root, or -1 if the path runs out of
+// edges. Every query below is this walk plus a one-line reading of the node it
+// lands on, which is the whole point of the structure.
+function node_for(t: Trie, p: string): i32 {
+    var cur: i32 = 0;
+    var i: i32 = 0;
+    while (i < p.len()) {
+        var nxt: i32 = edge_of(t.nodes[cur], p[i] as i32);
+        if (nxt < 0) { return -1; }
+        cur = nxt;
+        i = i + 1;
+    }
+    return cur;
+}
+
+function contains(t: Trie, w: string): boolean {
+    var at: i32 = node_for(t, w);
+    if (at < 0) { return false; }
+    return t.nodes[at].terminal;
+}
+
+function has_prefix(t: Trie, p: string): boolean {
+    return node_for(t, p) >= 0;
+}
+
+function count_prefix(t: Trie, p: string): i32 {
+    var at: i32 = node_for(t, p);
+    if (at < 0) { return 0; }
+    return t.nodes[at].count;
+}
+
+function size(t: Trie): i32 {
+    return t.nodes[0].count;
+}
+
+// ----------------------------------------------------------- listing
+
+// Depth-first, emitting a terminal node's key before descending into its
+// children. Because the edge list is sorted and a proper prefix is
+// lexicographically smaller than anything extending it, that visit order is
+// exactly ascending byte order — no sort anywhere in this file's hot path.
+function collect(t: Trie, at: i32, prefix: string, out_in: string[]): string[] {
+    var out: string[] = out_in;
+    if (t.nodes[at].terminal) { out = out.append(prefix); }
+    var i: i32 = 0;
+    while (i < t.nodes[at].labels.len()) {
+        var b: i32 = t.nodes[at].labels[i];
+        out = collect(t, t.nodes[at].kids[i], prefix + byte_str(b), out);
+        i = i + 1;
+    }
+    return out;
+}
+
+function byte_str(b: i32): string {
+    var buf: u8[] = [b as u8];
+    return string_from_bytes_unchecked(buf);
+}
+
+function keys(t: Trie): string[] {
+    return collect(t, 0, "", []);
+}
+
+// The keys under `p`, still sorted. Note the walk starts from `p`'s node, so
+// the cost is the size of the answer and not the size of the trie.
+function keys_with_prefix(t: Trie, p: string): string[] {
+    var at: i32 = node_for(t, p);
+    if (at < 0) { return []; }
+    return collect(t, at, p, []);
+}
+
+// ------------------------------------------------- longest common prefix
+
+// Descend while the path is forced: one outgoing edge and no key ending here.
+// The terminal check is the subtle half — if a key ends at this node then that
+// key is in the set, so the common prefix cannot be any longer than it.
+function lcp(t: Trie): string {
+    if (size(t) == 0) { return ""; }
+    var out: string = "";
+    var cur: i32 = 0;
+    while (!t.nodes[cur].terminal && t.nodes[cur].labels.len() == 1) {
+        out = out + byte_str(t.nodes[cur].labels[0]);
+        cur = t.nodes[cur].kids[0];
+    }
+    return out;
+}
+
+// The longest key that is a prefix of `q` — the dictionary lookup a router or
+// a tokenizer wants. Walking q once and remembering the deepest terminal seen
+// answers it in O(len(q)), where a scan over the key set is O(keys x len).
+function longest_prefix_of(t: Trie, q: string): Option[string] {
+    var best: i32 = -1;
+    var cur: i32 = 0;
+    if (t.nodes[0].terminal) { best = 0; }
+    var i: i32 = 0;
+    while (i < q.len()) {
+        var nxt: i32 = edge_of(t.nodes[cur], q[i] as i32);
+        if (nxt < 0) { break; }
+        cur = nxt;
+        if (t.nodes[cur].terminal) { best = i + 1; }
+        i = i + 1;
+    }
+    if (best < 0) { return None; }
+    return Some(q.take(best).to_owned());
+}
+
+// -------------------------------------------------------- the oracle
+
+// Everything below re-answers the queries above by scanning the corpus the
+// trie was built from. These are deliberately dumb: no shared helpers with the
+// trie, no cleverness to get wrong.
+
+function bf_contains(words: string[], w: string): boolean {
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (words[i] == w) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function bf_count_prefix(words: string[], p: string): i32 {
+    var seen: string[] = [];
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (words[i].starts_with(p) && !bf_contains(seen, words[i])) {
+            seen = seen.append(words[i]);
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// Byte-wise lexicographic compare: -1, 0, 1. A shorter string that is a prefix
+// of a longer one sorts first, which is the convention `collect` produces.
+function str_cmp(a: string, b: string): i32 {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        var x: i32 = a[i] as i32;
+        var y: i32 = b[i] as i32;
+        if (x < y) { return -1; }
+        if (x > y) { return 1; }
+        i = i + 1;
+    }
+    if (a.len() < b.len()) { return -1; }
+    if (a.len() > b.len()) { return 1; }
+    return 0;
+}
+
+// Insertion sort with dedup, built by append so it does not depend on `.with`
+// over a string[] — the oracle should share as little machinery as possible
+// with what it is checking.
+function bf_sorted_unique(words: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var w: string = words[i];
+        if (!bf_contains(out, w)) {
+            var next: string[] = [];
+            var placed: boolean = false;
+            var j: i32 = 0;
+            while (j < out.len()) {
+                if (!placed && str_cmp(out[j], w) > 0) {
+                    next = next.append(w);
+                    placed = true;
+                }
+                next = next.append(out[j]);
+                j = j + 1;
+            }
+            if (!placed) { next = next.append(w); }
+            out = next;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function bf_keys_with_prefix(words: string[], p: string): string[] {
+    var sorted: string[] = bf_sorted_unique(words);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < sorted.len()) {
+        if (sorted[i].starts_with(p)) { out = out.append(sorted[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function bf_lcp(words: string[]): string {
+    var u: string[] = bf_sorted_unique(words);
+    if (u.len() == 0) { return ""; }
+    var pre: string = u[0];
+    var i: i32 = 1;
+    while (i < u.len()) {
+        var n: i32 = pre.len();
+        if (u[i].len() < n) { n = u[i].len(); }
+        var k: i32 = 0;
+        while (k < n && pre[k] == u[i][k]) { k = k + 1; }
+        pre = pre.take(k).to_owned();
+        i = i + 1;
+    }
+    return pre;
+}
+
+function bf_longest_prefix_of(words: string[], q: string): Option[string] {
+    var best: i32 = -1;
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (q.starts_with(words[i]) && words[i].len() > best) {
+            best = words[i].len();
+        }
+        i = i + 1;
+    }
+    if (best < 0) { return None; }
+    return Some(q.take(best).to_owned());
+}
+
+// ------------------------------------------------------------ corpora
+
+// Chosen so the interesting structural cases are all present: "car" is a
+// proper prefix of "card" and "cart"; "do" of "dog"; "a" is a single byte;
+// "" is absent here and inserted only by the test that is about it.
+function corpus(): string[] {
+    return ["car", "card", "cart", "carts", "cat", "dog", "do", "door", "a", "ax"];
+}
+
+// Strings that must all read as non-members, including proper prefixes of real
+// members ("ca", "ca" is a prefix but not a key) and extensions of them.
+function non_members(): string[] {
+    return ["ca", "c", "carts2", "doo", "b", "axe", "dogs", "", "z"];
+}
+
+function build(words: string[]): Trie {
+    var t: Trie = new_trie();
+    var i: i32 = 0;
+    while (i < words.len()) {
+        t = insert(t, words[i]);
+        i = i + 1;
+    }
+    return t;
+}
+
+// Every prefix of every corpus word, plus the empty prefix and some junk. This
+// is the query set the agreement tests sweep.
+function all_prefixes(words: string[]): string[] {
+    var out: string[] = [""];
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var k: i32 = 1;
+        while (k <= words[i].len()) {
+            var p: string = words[i].take(k).to_owned();
+            if (!bf_contains(out, p)) { out = out.append(p); }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return out.append("zz").append("carx").append("dot");
+}
+
+function join(xs: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------- tests
+
+function test_membership_agrees_with_a_scan(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (!contains(t, words[i])) {
+            return test.fail("inserted key absent: " + words[i]);
+        }
+        i = i + 1;
+    }
+
+    var qs: string[] = all_prefixes(words);
+    var j: i32 = 0;
+    while (j < qs.len()) {
+        if (contains(t, qs[j]) != bf_contains(words, qs[j])) {
+            return test.fail("membership disagrees on \"" + qs[j] + "\": trie "
+                + contains(t, qs[j]).to_string() + ", scan "
+                + bf_contains(words, qs[j]).to_string());
+        }
+        j = j + 1;
+    }
+
+    var nm: string[] = non_members();
+    var k: i32 = 0;
+    while (k < nm.len()) {
+        if (contains(t, nm[k])) {
+            return test.fail("non-member reads as present: \"" + nm[k] + "\"");
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+function test_prefix_queries_agree_with_a_scan(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+    var qs: string[] = all_prefixes(words);
+
+    var i: i32 = 0;
+    while (i < qs.len()) {
+        var p: string = qs[i];
+        var want: i32 = bf_count_prefix(words, p);
+        var got: i32 = count_prefix(t, p);
+        if (got != want) {
+            return test.fail("count_prefix(\"" + p + "\") = " + got.to_string()
+                + ", scan says " + want.to_string());
+        }
+        if (has_prefix(t, p) != (want > 0)) {
+            return test.fail("has_prefix(\"" + p + "\") = "
+                + has_prefix(t, p).to_string() + ", but " + want.to_string()
+                + " keys carry it");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The ordering claim: keys() is sorted because of how the trie is walked, and
+// the oracle sorts explicitly. Comparing them checks both the contents and the
+// order in one assertion.
+function test_keys_come_out_sorted_and_deduped(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+    var got: string[] = keys(t);
+    var want: string[] = bf_sorted_unique(words);
+    if (join(got) != join(want)) {
+        return test.fail("keys() = [" + join(got) + "], want [" + join(want) + "]");
+    }
+    if (got.len() != size(t)) {
+        return test.fail("keys() has " + got.len().to_string()
+            + " entries but size() says " + size(t).to_string());
+    }
+    return test.pass();
+}
+
+function test_keys_with_prefix_agrees_with_a_filter(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+    var qs: string[] = all_prefixes(words);
+
+    var i: i32 = 0;
+    while (i < qs.len()) {
+        var p: string = qs[i];
+        var got: string[] = keys_with_prefix(t, p);
+        var want: string[] = bf_keys_with_prefix(words, p);
+        if (join(got) != join(want)) {
+            return test.fail("keys_with_prefix(\"" + p + "\") = [" + join(got)
+                + "], want [" + join(want) + "]");
+        }
+        if (got.len() != count_prefix(t, p)) {
+            return test.fail("keys_with_prefix(\"" + p + "\") listed "
+                + got.len().to_string() + " but count_prefix says "
+                + count_prefix(t, p).to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// A key that is a proper prefix of another must survive as its own key. This
+// is the case a naive implementation loses, because the node is on the path to
+// the longer key and looks like an interior node.
+function test_a_key_that_is_a_prefix_of_another_survives(): test.TestOutcome {
+    var t: Trie = build(["card", "car"]);
+    if (!contains(t, "car")) { return test.fail("\"car\" lost behind \"card\""); }
+    if (!contains(t, "card")) { return test.fail("\"card\" lost"); }
+    if (contains(t, "ca")) { return test.fail("\"ca\" invented as a key"); }
+    if (size(t) != 2) { return test.fail("size = " + size(t).to_string() + ", want 2"); }
+
+    // ... and in the other insertion order, which is the ordering a naive
+    // implementation gets right by accident.
+    var u: Trie = build(["car", "card"]);
+    if (join(keys(t)) != join(keys(u))) {
+        return test.fail("insertion order changed the key set: ["
+            + join(keys(t)) + "] vs [" + join(keys(u)) + "]");
+    }
+    return test.pass();
+}
+
+function test_the_empty_string_is_a_key(): test.TestOutcome {
+    var t: Trie = build(["", "a", "ab"]);
+    if (!contains(t, "")) { return test.fail("\"\" not stored"); }
+    if (size(t) != 3) { return test.fail("size = " + size(t).to_string() + ", want 3"); }
+    if (count_prefix(t, "") != 3) {
+        return test.fail("the empty prefix should cover all 3 keys, got "
+            + count_prefix(t, "").to_string());
+    }
+    if (join(keys(t)) != ",a,ab") {
+        return test.fail("keys() = [" + join(keys(t)) + "], want the empty key first");
+    }
+    // The empty string is a prefix of everything, so with it in the set the
+    // longest common prefix is empty however similar the other keys are.
+    if (lcp(t) != "") {
+        return test.fail("lcp with \"\" present = \"" + lcp(t) + "\", want \"\"");
+    }
+    // And a trie WITHOUT it must not claim to hold it.
+    var u: Trie = build(["a", "ab"]);
+    if (contains(u, "")) { return test.fail("\"\" reads as present when never inserted"); }
+    return test.pass();
+}
+
+function test_lcp_agrees_with_a_scan(): test.TestOutcome {
+    // Each row is a key set; the oracle derives the expected answer, so adding
+    // a row needs no hand-computed value.
+    var sets: string[] = ["car|card|cart", "car|card|car", "dog|dodge|do",
+        "a", "abc", "x|y", "same|same", "prefix|prefixed|prefixes"];
+    var i: i32 = 0;
+    while (i < sets.len()) {
+        var words: string[] = sets[i].split("|");
+        var t: Trie = build(words);
+        var got: string = lcp(t);
+        var want: string = bf_lcp(words);
+        if (got != want) {
+            return test.fail("lcp of [" + sets[i] + "] = \"" + got
+                + "\", scan says \"" + want + "\"");
+        }
+        i = i + 1;
+    }
+
+    if (lcp(new_trie()) != "") { return test.fail("lcp of the empty trie is not \"\""); }
+    if (lcp(build(["solo"])) != "solo") {
+        return test.fail("lcp of one key should be that key, got \""
+            + lcp(build(["solo"])) + "\"");
+    }
+    // The case the walk's terminal check exists for: "do" is a key, so the
+    // common prefix stops there even though every key continues "do...".
+    if (lcp(build(["do", "dog", "door"])) != "do") {
+        return test.fail("lcp ran past a terminal node: \""
+            + lcp(build(["do", "dog", "door"])) + "\"");
+    }
+    return test.pass();
+}
+
+function test_longest_prefix_match_agrees_with_a_scan(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+    var qs: string[] = ["cartsx", "card", "cards", "ca", "doors", "dog", "d",
+        "axes", "a", "", "zebra", "carting"];
+    var i: i32 = 0;
+    while (i < qs.len()) {
+        var got: Option[string] = longest_prefix_of(t, qs[i]);
+        var want: Option[string] = bf_longest_prefix_of(words, qs[i]);
+        var gs: string = match (got) { Some(v) => "Some(" + v + ")", None => "None" };
+        var ws: string = match (want) { Some(v) => "Some(" + v + ")", None => "None" };
+        if (gs != ws) {
+            return test.fail("longest_prefix_of(\"" + qs[i] + "\") = " + gs
+                + ", scan says " + ws);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Duplicates must be free: the same key twice leaves the structure byte-for-
+// byte where it was, counts included. Getting this wrong inflates every prefix
+// count without changing any answer that only reads terminal flags, which is
+// why the count is checked and not just membership.
+function test_duplicate_inserts_change_nothing(): test.TestOutcome {
+    var words: string[] = corpus();
+    var t: Trie = build(words);
+    var before_keys: string = join(keys(t));
+    var before_nodes: i32 = t.nodes.len();
+    var before_size: i32 = size(t);
+
+    var again: Trie = build(words);
+    again = insert(again, "car");
+    again = insert(again, "car");
+    again = insert(again, "a");
+
+    if (join(keys(again)) != before_keys) {
+        return test.fail("re-inserting changed the key set");
+    }
+    if (again.nodes.len() != before_nodes) {
+        return test.fail("re-inserting allocated nodes: " + before_nodes.to_string()
+            + " -> " + again.nodes.len().to_string());
+    }
+    if (size(again) != before_size) {
+        return test.fail("re-inserting changed size: " + before_size.to_string()
+            + " -> " + size(again).to_string());
+    }
+    if (count_prefix(again, "car") != count_prefix(t, "car")) {
+        return test.fail("re-inserting inflated a prefix count: "
+            + count_prefix(t, "car").to_string() + " -> "
+            + count_prefix(again, "car").to_string());
+    }
+    return test.pass();
+}
+
+// A trie is a set, so the order it was filled in must not be observable. This
+// checks the strongest form: the node array is the same size too, meaning the
+// shape is identical and not merely the answers.
+function test_insertion_order_is_not_observable(): test.TestOutcome {
+    var words: string[] = corpus();
+    var fwd: Trie = build(words);
+
+    var rev: string[] = [];
+    var i: i32 = words.len() - 1;
+    while (i >= 0) {
+        rev = rev.append(words[i]);
+        i = i - 1;
+    }
+    var bwd: Trie = build(rev);
+
+    if (join(keys(fwd)) != join(keys(bwd))) {
+        return test.fail("reversed insertion changed keys(): [" + join(keys(fwd))
+            + "] vs [" + join(keys(bwd)) + "]");
+    }
+    if (lcp(fwd) != lcp(bwd)) {
+        return test.fail("reversed insertion changed lcp");
+    }
+    if (fwd.nodes.len() != bwd.nodes.len()) {
+        return test.fail("reversed insertion changed the node count: "
+            + fwd.nodes.len().to_string() + " vs " + bwd.nodes.len().to_string());
+    }
+    var qs: string[] = all_prefixes(words);
+    var j: i32 = 0;
+    while (j < qs.len()) {
+        if (count_prefix(fwd, qs[j]) != count_prefix(bwd, qs[j])) {
+            return test.fail("reversed insertion changed count_prefix(\""
+                + qs[j] + "\")");
+        }
+        j = j + 1;
+    }
+    return test.pass();
+}
+
+// The edge list is sorted at every node, which is the invariant `keys()`
+// ordering rests on and `edge_of`'s binary search requires. Checking it
+// directly means a violation is reported where it happens rather than as a
+// mysterious lookup miss.
+function test_edge_lists_stay_sorted(): test.TestOutcome {
+    var t: Trie = build(corpus());
+    var n: i32 = 0;
+    while (n < t.nodes.len()) {
+        var labels: i32[] = t.nodes[n].labels;
+        if (labels.len() != t.nodes[n].kids.len()) {
+            return test.fail("node " + n.to_string() + ": " + labels.len().to_string()
+                + " labels but " + t.nodes[n].kids.len().to_string() + " kids");
+        }
+        var i: i32 = 1;
+        while (i < labels.len()) {
+            if (labels[i - 1] >= labels[i]) {
+                return test.fail("node " + n.to_string() + ": labels out of order at "
+                    + i.to_string());
+            }
+            i = i + 1;
+        }
+        n = n + 1;
+    }
+    return test.pass();
+}
+
+// Bytes outside a-z are not special-cased anywhere, and this is the test that
+// keeps it that way. A high byte (0xC3) exercises the u8-to-i32 widening in
+// edge_of, which would silently sign-extend if it went through i8.
+function test_any_byte_is_a_valid_label(): test.TestOutcome {
+    var words: string[] = ["a b", "a-b", "a/b", "A", "\t", "9"];
+    var t: Trie = build(words);
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (!contains(t, words[i])) {
+            return test.fail("byte-y key lost: \"" + words[i] + "\"");
+        }
+        i = i + 1;
+    }
+    if (size(t) != words.len()) {
+        return test.fail("size = " + size(t).to_string() + ", want "
+            + words.len().to_string());
+    }
+    // Uppercase sorts before lowercase, digits before both: keys() must
+    // reflect byte order, not any notion of alphabetical order.
+    var want: string[] = bf_sorted_unique(words);
+    if (join(keys(t)) != join(want)) {
+        return test.fail("byte ordering wrong: [" + join(keys(t)) + "], want ["
+            + join(want) + "]");
+    }
+
+    var hi: Trie = build(["é", "éx", "e"]);
+    if (!contains(hi, "é")) { return test.fail("a key with a high byte was lost"); }
+    if (contains(hi, "e©")) { return test.fail("a high byte matched the wrong path"); }
+    if (count_prefix(hi, "é") != 2) {
+        return test.fail("high-byte prefix count = "
+            + count_prefix(hi, "é").to_string() + ", want 2");
+    }
+    return test.pass();
+}
+
+// ------------------------------------------------------------- probe
+
+// Build a trie of n generated keys and read something off it, so nothing is
+// dead code. The keys share prefixes heavily, which is the realistic shape.
+function churn(n: i32): i32 {
+    var t: Trie = new_trie();
+    var i: i32 = 0;
+    while (i < n) {
+        t = insert(t, "key" + (i % 97).to_string() + "/" + i.to_string());
+        i = i + 1;
+    }
+    return size(t) + t.nodes.len() + count_prefix(t, "key1");
+}
+
+function main(): i32 {
+    eprint("trie — sorted edge lists, prefix queries, longest common prefix");
+
+    var t: Trie = build(corpus());
+    eprint("corpus: " + join(corpus()));
+    eprint("keys:   " + join(keys(t)));
+    eprint("nodes:  " + t.nodes.len().to_string() + " for " + size(t).to_string() + " keys");
+    eprint("lcp(car*):     \"" + lcp(build(["car", "card", "cart"])) + "\"");
+    eprint("keys under ca: " + join(keys_with_prefix(t, "ca")));
+    eprint("count \"do\":    " + count_prefix(t, "do").to_string());
+
+    var lp: Option[string] = longest_prefix_of(t, "cartsx");
+    eprint("longest prefix of cartsx: "
+        + match (lp) { Some(v) => "\"" + v + "\"", None => "none" });
+
+    // Arrays are immutable, so the threaded `nodes` accumulator is a copy per
+    // update unless the runtime sees a unique reference and writes in place.
+    // Reported rather than asserted, and deliberately NOT read as a ratio: two
+    // measurements in one process are not comparable, because the second gets
+    // to recycle everything the first freed. (Reading a pair like this as if
+    // it were a scaling curve is how #6425 was mis-attributed on the first
+    // pass.) A real scaling claim needs one round count per process, which is
+    // what internal/e2e/alloc_scaling_test.go does.
+    var base: i64 = __heap_bump_bytes();
+    var a: i32 = churn(200);
+    var after_n: i64 = __heap_bump_bytes();
+    var b: i32 = churn(400);
+    var after_2n: i64 = __heap_bump_bytes();
+    eprint("churn(200) sum=" + a.to_string() + " bump=" + (after_n - base).to_string());
+    eprint("churn(400) sum=" + b.to_string() + " bump=" + (after_2n - after_n).to_string());
+
+    var r: test.TestRunner = test.test_new("trie");
+    r = r.it("membership agrees with a scan", test_membership_agrees_with_a_scan);
+    r = r.it("prefix queries agree with a scan", test_prefix_queries_agree_with_a_scan);
+    r = r.it("keys come out sorted and deduped", test_keys_come_out_sorted_and_deduped);
+    r = r.it("keys_with_prefix agrees with a filter", test_keys_with_prefix_agrees_with_a_filter);
+    r = r.it("a key that is a prefix of another survives", test_a_key_that_is_a_prefix_of_another_survives);
+    r = r.it("the empty string is a key", test_the_empty_string_is_a_key);
+    r = r.it("lcp agrees with a scan", test_lcp_agrees_with_a_scan);
+    r = r.it("longest prefix match agrees with a scan", test_longest_prefix_match_agrees_with_a_scan);
+    r = r.it("duplicate inserts change nothing", test_duplicate_inserts_change_nothing);
+    r = r.it("insertion order is not observable", test_insertion_order_is_not_observable);
+    r = r.it("edge lists stay sorted", test_edge_lists_stay_sorted);
+    r = r.it("any byte is a valid label", test_any_byte_is_a_valid_label);
+    return r.finish();
+}
