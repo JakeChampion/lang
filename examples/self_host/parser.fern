@@ -3969,6 +3969,12 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
         if (p.peek_punct() == ",") { p = p.advance(); }
         var kvv: string = p.peek_ident();
         if (kvv.len() > 0) { p = p.advance(); }
+        // Trailing comma: `for (k, v,) in m`. The binder is a comma-separated
+        // list like any other and takes one, so the native parser accepts it
+        // (#6358) — this side was left behind, and since the lookahead below
+        // is positional the stray `,` shifted both `)` and `in` one token
+        // right, so neither matched and the iter expression started at `)`.
+        if (p.peek_punct() == ",") { p = p.advance(); }
         if (p.peek_punct() == ")") { p = p.advance(); }
         if (p.peek_ident() == "in") { p = p.advance(); }
         // Suppress trailing struct-literal parsing — the `{` that
