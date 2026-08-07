@@ -7832,11 +7832,33 @@ function e032_stmts(stmts: parser.Stmt[], lastfn: string[], s: Scope): Diag[] {
 // method" rule: `impl Display for i32 { }` is valid because i32 already carries
 // to_string). A -1 with no in-block method_names entry is the missing-method
 // E021; a hit additionally drives the signature check.
+// e021_mangled_ty maps a QUALIFIED source type name (`mod.Name`) onto the
+// flattened bundle's spelling (`mod__Name`). An impl records its type as
+// WRITTEN — `impl Display for bigint.BigInt` keeps the dot — while modload
+// mangles every non-entry decl, so the same type's receiver methods are
+// stored under `bigint__BigInt`. Comparing the two spellings directly never
+// matches. Unqualified names (`i32`, a local struct) contain no dot and
+// pass through unchanged, which is why the seven `impl Display for i32 { }`
+// in core/cmp never hit this and the first STRUCT to use the empty-impl
+// idiom did.
+function e021_mangled_ty(t: string): string {
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] == 46) { return t[0:i] + "__" + t[i + 1:t.len()]; }   // 46 = '.'
+        i = i + 1;
+    }
+    return t;
+}
+
 function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
+    var mty: string = e021_mangled_ty(ty);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var f: parser.FuncDecl = mod.funcs[i];
-        if (f.receiver_type.len() > 0 && f.name == m && util.base_type_name(f.receiver_type) == ty) { return i; }
+        if (f.receiver_type.len() > 0 && f.name == m) {
+            var rt: string = util.base_type_name(f.receiver_type);
+            if (rt == ty || rt == mty) { return i; }
+        }
         i = i + 1;
     }
     return 0 - 1;
@@ -7862,13 +7884,22 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
     // Trait's post-self param count must equal the impl method's param count
     // (the impl peeled its own `self` into the receiver).
     if (req.params.len() - 1 != impl_fn.params.len()) { return false; }
+    // `Self` is substituted with the impl's type AS WRITTEN, but in a
+    // flattened bundle an imported type's methods spell their params with the
+    // mangled name — `bigint__BigInt` where the impl says `bigint.BigInt`. So
+    // accept either spelling rather than only the source one. Being permissive
+    // here is the right direction for a check whose whole contract (above) is
+    // to stay silent unless it can compare with certainty.
+    var mty: string = e021_mangled_ty(impl_type);
     var i: i32 = 1;
     while (i < req.params.len()) {
-        var want: string = parser.subst_self(req.params[i].type_name, impl_type);
-        if (want != impl_fn.params[i - 1].type_name) { return false; }
+        var got: string = impl_fn.params[i - 1].type_name;
+        if (parser.subst_self(req.params[i].type_name, impl_type) != got
+            && parser.subst_self(req.params[i].type_name, mty) != got) { return false; }
         i = i + 1;
     }
-    if (parser.subst_self(req.ret_type, impl_type) != impl_fn.ret_type) { return false; }
+    if (parser.subst_self(req.ret_type, impl_type) != impl_fn.ret_type
+        && parser.subst_self(req.ret_type, mty) != impl_fn.ret_type) { return false; }
     return true;
 }
 
