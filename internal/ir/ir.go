@@ -12096,6 +12096,21 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
+	// above, and ArgTypes is load-bearing here for the same reason: `string`
+	// is two operand slots on arm64 and wasm, one on x86-64.
+	if id.Name == "__ascii_run" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_ascii_run", I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __heap_mark() / __heap_release_to(mark) — the one-level arena
 	// checkpoint pair. Same runtime-helper shape as __heap_bump_bytes so each
 	// backend rewinds its own cursor and snapshots its own freelist heads.
