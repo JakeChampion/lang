@@ -7506,11 +7506,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 		if !pairFormScrutinee && !consumeScrut && consumeOwnedName == "" {
+			bns := make([][]string, 0, len(n.Arms))
 			bts := make([][]ast.Type, 0, len(n.Arms))
 			for _, arm := range n.Arms {
+				bns = append(bns, arm.Bindings)
 				bts = append(bts, arm.BindingTypes)
 			}
-			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bts, nil)
+			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, nil)
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -8259,11 +8261,13 @@ func (b *builder) expr(e ast.Expr) error {
 		// completes (value-consuming position; see reclaimableMatchScrutinee).
 		// Gated additionally on the RESULT being non-pointer (resultType): a
 		// pointer result could alias an extracted payload, so it's left alone.
+		bns := make([][]string, 0, len(n.Arms))
 		bts := make([][]ast.Type, 0, len(n.Arms))
 		for _, arm := range n.Arms {
+			bns = append(bns, arm.Bindings)
 			bts = append(bts, arm.BindingTypes)
 		}
-		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bts, resultType)
+		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bns, bts, resultType)
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
