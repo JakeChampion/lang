@@ -44,6 +44,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
 		"    var xs: i32[] = [1, 2];\n" +
 		"    if (xs.reverse().concat(xs).len() != 4) { return 6; }\n" +
+		"    if (xs[0:1].len() != 1) { return 7; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -58,7 +59,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	asm := string(out)
 
 	for _, leaf := range []string{"random_bytes", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
-		"arr_reverse", "arr_concat"} {
+		"arr_reverse", "arr_concat", "arr_slice"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -80,8 +81,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	// env has no syscall at all: it reads __fern_envp through the __raw_environ
 	// op. The .bss slot must still be emitted — _start's save is gated on `heap`,
 	// not on `env`, so a heap program that never calls env() stores here too.
-	// arr_reverse / arr_concat allocate their fresh box through __raw_arr_box,
-	// which is the one array primitive that stays a call.
+	// arr_reverse / arr_concat / arr_slice allocate their fresh box through
+	// __raw_arr_box, which is the one array primitive that stays a call.
 	if !strings.Contains(asm, "bl __fern_arr_box") {
 		t.Error("__raw_arr_box did not emit the __fern_arr_box call")
 	}
@@ -139,6 +140,8 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
 		"    match (temp_dir(\"lockin\")) { Ok(_) => {}, Err(_) => { return 4; } }\n" +
 		"    match (stat(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 5; } }\n" +
+		"    var xs: i32[] = [1, 2];\n" +
+		"    if (xs[0:1].len() != 1) { return 6; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -192,5 +195,25 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		if !strings.Contains(asm, "    mov x16, #1\n    mov x0, #"+status+"\n    svc #0x80\n") {
 			t.Errorf("the exit(%s) abort path still traps through the Linux vector on Mach-O", status)
 		}
+	}
+	// arr_slice's trap is the OTHER exit path: not the hand-asm abort darwinize
+	// rewrites, but a Fern __syscall3 whose number arrives on the stack. It
+	// therefore goes through the ldr-x16 form above rather than `mov x16, #1`,
+	// and it is the reason asmcore.sysno needed an `exit` row at all.
+	if !strings.Contains(asm, "__fn___fern_arr_slice:") {
+		t.Error("__fn___fern_arr_slice not defined — the Fern helper did not lower for Darwin")
+	}
+	if strings.Contains(asm, "\n__fern_arr_slice:") {
+		t.Error("the register-ABI hand-asm __fern_arr_slice is back")
+	}
+	// The exit NUMBER is a pushed operand, so a wrong asmcore.sysno row is
+	// invisible everywhere else: darwinize never sees it (it rewrites `mov x8`,
+	// not a stack push), and the Linux leg would stay green. Pin the pair —
+	// Darwin's exit is 1, and 93 (Linux's) must not be what gets pushed.
+	if !strings.Contains(asm, "    mov x0, #1\n    str x0, [sp, #-16]!\n    mov x0, #134\n") {
+		t.Error("arr_slice's trap does not push Darwin's exit number (1) ahead of status 134")
+	}
+	if strings.Contains(asm, "    mov x0, #93\n    str x0, [sp, #-16]!\n    mov x0, #134\n") {
+		t.Error("arr_slice's trap pushes Linux's exit number (93) in Mach-O output")
 	}
 }

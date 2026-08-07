@@ -15,14 +15,23 @@ reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `__fern_io_error`, then `env`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
-by the target. The **array producers** `xs.reverse()` / `xs.concat(ys)`
-followed — the first non-syscall helpers to move, and arch-independent (one
-source, no target parameter) over the `__raw_arr_box` + `__raw_array` pair.
+by the target. The **array producers** followed — the first non-syscall helpers
+to move, all three over the `__raw_arr_box` + `__raw_array` pair:
+`xs.reverse()` / `xs.concat(ys)` arch-independent (one source, no target
+parameter), and `a[start:end]` with one, because its bounds check traps.
+
+That trap is worth recording, because it read as a blocker and was not.
+`__fern_oob_abort` is only `exit(134)`, which the existing `__syscall3`
+sub-floor already expresses — so "there is no Fern expression for abort" was
+true and beside the point. All it cost was an `exit` row in `asmcore.sysno`
+(60 / 93 / 1); `darwinize`'s `darwin_sysno` already mapped `93 -> 1`. No new
+intrinsic, no new IR op, no new backend code. Before reaching for a primitive,
+check whether the floor already says the thing.
+
 What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
-`__fern_map_*`, `__fern_arr_push`, `arr_slice` — whose bounds check traps to
-`__fern_oob_abort`, and there is no Fern expression for "abort"), the arm64
+`__fern_map_*`, `__fern_arr_push`), the arm64
 leaves whose Darwin form diverges in SHAPE rather than in constants (the
 clocks, `read_dir`, `remove_dir_all`), and the
 per-backend wasm helper bundles. This is the architecture document the end goal of
