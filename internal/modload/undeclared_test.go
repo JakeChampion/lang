@@ -164,3 +164,80 @@ func TestEditDistance(t *testing.T) {
 		}
 	}
 }
+
+// A method is exported under its bare name and lives in the same public set
+// as plain functions, because method dispatch resolves visibility through it.
+// But `mod.method(x)` is not a call anyone can write: the reference mangles to
+// `mod__method`, which nothing declares, so it used to surface as an "undefined
+// identifier" from the checker with no mention of the receiver form.
+//
+// Two paths reach it, and both are covered here. Writing the method's name
+// module-qualified is the common one — the reader knows the name and guesses
+// the syntax. A typo NEAR a method name is the other, and it was the worse
+// failure: the did-you-mean offered the method, and taking that advice landed
+// on the first error again under a different code. Advice that does not work
+// is worse than no advice.
+func TestMethodIsNotOfferedAsAModuleFunction(t *testing.T) {
+	lib := `pub function (n: i32) doubled(): i32 { return n * 2; }
+pub function plain_fn(): i32 { return 1; }
+pub function (n: i32) both(): i32 { return n; }
+pub function both(v: i32): i32 { return v; }
+`
+	cases := []struct {
+		name      string
+		src       string
+		want      string
+		notSubstr string
+	}{
+		{
+			name: "method written module-qualified names the receiver form",
+			src:  `import "./lib";` + "\n" + `function main(): i32 { return lib.doubled(2); }`,
+			want: "lib.doubled is a method — call it on the value: `x.doubled(…)`",
+		},
+		{
+			// The regression: the suggestion must not hand back a spelling
+			// that fails, so it names the receiver form instead.
+			name:      "a typo near a method does not suggest a module call",
+			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.doubld(2); }`,
+			want:      "\"doubled\" is a method, call it on the value: `x.doubled(…)`",
+			notSubstr: `did you mean "doubled"?`,
+		},
+		{
+			// A plain function is unaffected — it keeps the ordinary
+			// suggestion, and must not be described as a method.
+			name:      "a typo near a plain function keeps the ordinary suggestion",
+			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.plan_fn(); }`,
+			want:      `did you mean "plain_fn"?`,
+			notSubstr: "is a method",
+		},
+		{
+			// A name declared BOTH ways is a real module call, so the
+			// method-only path must not swallow it.
+			name:      "a name that is also a plain function still resolves",
+			src:       `import "./lib";` + "\n" + `function main(): i32 { return lib.both(2); }`,
+			want:      "",
+			notSubstr: "is a method",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadWithLib(t, tc.src, lib)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got:\n%s", err.Error())
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected an error")
+			}
+			got := err.Error()
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("wanted %q in:\n%s", tc.want, got)
+			}
+			if tc.notSubstr != "" && strings.Contains(got, tc.notSubstr) {
+				t.Fatalf("did not want %q in:\n%s", tc.notSubstr, got)
+			}
+		})
+	}
+}
