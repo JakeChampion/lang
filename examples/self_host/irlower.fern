@@ -12212,16 +12212,13 @@ function iife_returns_fresh_array(e: parser.Expr): boolean {
 // branch with a small-literal branch (`{ 5000000000 } else { 1 }`), so every
 // return is checked. A fully-small-literal i64 expression (whose i64-ness comes
 // only from the binding annotation) isn't caught here and stays on the AST path.
+//
+// Width comes from infer_expr_width alone. It reads a literal's SUFFIX ahead of
+// its magnitude, which a second magnitude-only test cannot do: `2147484571u32`
+// is past i32-max and still 32 bits wide.
 function iife_any_return_i64(st: parser.Stmt, s: LowerState): boolean {
     match (st) {
-        parser.StmtReturn(r) => {
-            if (infer_expr_width(r.value, s) == 64) { return true; }
-            match (r.value) {
-                parser.ExprNumber(num) => { if (!num.is_float && literal_is_i64(num.text)) { return true; } },
-                _ => {}
-            }
-            return false;
-        },
+        parser.StmtReturn(r) => { return infer_expr_width(r.value, s) == 64; },
         parser.StmtIf(iff) => {
             var k: i32 = 0;
             while (k < iff.then_body.len()) { if (iife_any_return_i64(iff.then_body[k], s)) { return true; } k = k + 1; }
