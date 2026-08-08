@@ -20878,6 +20878,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     while (j < st.locals.len()) {
         var live_credit: boolean = slot_is_reclaimable_struct(st, j);
         var scoped_credit: boolean = !live_credit && slot_is_reclaimable_struct_scoped(st, j);
+        // A scoped slot deep-drops only when the move scan could type-check it.
+        var scoped_deep_ok: boolean = scoped_credit
+            && util.index_of_str(st.reclaimable_names, "FLDCHECKED:" + reclaim_slot_name(st, j)) >= 0;
         if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
@@ -20915,7 +20918,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // run it under gdb —
             //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
             //       -out-dir OUT -func-budget 100 -unit-range 0:8
-            st = emit_struct_field_drops(st, j);
+            if (!scoped_credit || scoped_deep_ok) { st = emit_struct_field_drops(st, j); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -25705,6 +25708,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
         if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
+        // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
+        // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
+        // with this witness: without a type there is no move check, and granting the
+        // drop anyway trapped the wasm-hosted compiler in
+        // __struct_drop_irlower__LowerState (an un-annotated call-bound LowerState
+        // local, dec'ing a moved-out field). Live-credit slots are unaffected — they
+        // keep exactly the verdict they had before any of this.
+        else if (mvsty != "") { out = out.append("FLDCHECKED:" + out[mvi]); }
         mvi = mvi + 1;
     }
     // Fresh scalar-tuple locals (`var t = (3, 4)`): credited under a "TUP:" prefix
