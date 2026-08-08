@@ -291,10 +291,20 @@ type module struct {
 	// the module loads. The rewriter uses them to gate cross-module
 	// references. publicEnums also covers `pub type Tok = A | B;`
 	// unions because the parser desugars unions to enums.
-	publicFuncs   map[string]bool
-	publicStructs map[string]bool
-	publicConsts  map[string]bool
-	publicEnums   map[string]bool
+	publicFuncs map[string]bool
+	// publicMethods is the subset of publicFuncs declared with a receiver.
+	// They live in publicFuncs because method dispatch resolves visibility
+	// through it, but they cannot be CALLED module-qualified — so the
+	// did-you-mean path has to tell them apart from plain functions or it
+	// suggests a name that fails differently. See reportUndeclared.
+	publicMethods map[string]bool
+	// publicPlainFuncs is the receiverless subset. A module may declare both
+	// a method and a plain function under one name; only the latter makes
+	// `mod.name(…)` a real call.
+	publicPlainFuncs map[string]bool
+	publicStructs    map[string]bool
+	publicConsts     map[string]bool
+	publicEnums      map[string]bool
 	// allConsts is the pre-mangle name set of every const in this
 	// module (public or private). The visibility-error path uses it
 	// to decide whether `mod.X` should suggest `pub function X`
@@ -438,21 +448,23 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	}
 
 	mod := &module{
-		path:          path,
-		name:          importLocalName(path),
-		manglePrefix:  importLocalName(path) + "__",
-		prog:          prog,
-		imports:       map[string]*module{},
-		importPaths:   map[string]string{},
-		publicFuncs:   map[string]bool{},
-		publicStructs: map[string]bool{},
-		publicConsts:  map[string]bool{},
-		publicEnums:   map[string]bool{},
-		allConsts:     map[string]bool{},
-		allDecls:      map[string]bool{},
-		reexports:     map[string]string{},
-		reexportTypes: map[string]string{},
-		packageScoped: map[string]bool{},
+		path:             path,
+		name:             importLocalName(path),
+		manglePrefix:     importLocalName(path) + "__",
+		prog:             prog,
+		imports:          map[string]*module{},
+		importPaths:      map[string]string{},
+		publicFuncs:      map[string]bool{},
+		publicMethods:    map[string]bool{},
+		publicPlainFuncs: map[string]bool{},
+		publicStructs:    map[string]bool{},
+		publicConsts:     map[string]bool{},
+		publicEnums:      map[string]bool{},
+		allConsts:        map[string]bool{},
+		allDecls:         map[string]bool{},
+		reexports:        map[string]string{},
+		reexportTypes:    map[string]string{},
+		packageScoped:    map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
 		// Stamp every FuncDecl with the path of the module that
@@ -463,6 +475,11 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		fn.SourceModule = path
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
+			if fn.Receiver != nil {
+				mod.publicMethods[fn.Name] = true
+			} else {
+				mod.publicPlainFuncs[fn.Name] = true
+			}
 		}
 		mod.allDecls[fn.Name] = true
 		if fn.PackageScoped {
@@ -1622,8 +1639,30 @@ func (r *rewriter) packageScopedOK(mod *module, name string, pos ast.Position) (
 // "function or const") so the message reads at the site rather than
 // describing the checker.
 func (r *rewriter) reportUndeclared(mod *module, name, kind string, pos ast.Position) {
+	hint := didYouMean(name, mod.exportedNames())
+	// A method is exported under its bare name but is not callable
+	// module-qualified, so offering it as a plain did-you-mean sends the
+	// reader from this error straight into an E001 on the name it just
+	// told them to write. Name the receiver form instead — that is the
+	// spelling that works.
+	if hint == "" {
+		if m := closest(name, mod.methodNames()); m != "" {
+			hint = fmt.Sprintf(" — %q is a method, call it on the value: `x.%s(…)`", m, m)
+		}
+	}
 	r.errs = append(r.errs, fmt.Errorf("%s:%s: module %q has no %s %q%s",
-		r.modPath, pos, mod.name, kind, name, didYouMean(name, mod.exportedNames())))
+		r.modPath, pos, mod.name, kind, name, hint))
+}
+
+// methodNames is the exported receiver methods, for the hint above. Sorted so
+// the suggestion is deterministic.
+func (m *module) methodNames() []string {
+	out := make([]string, 0, len(m.publicMethods))
+	for n := range m.publicMethods {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // exportedNames is every name this module makes visible to importers, for
@@ -1634,6 +1673,12 @@ func (m *module) exportedNames() []string {
 		for n := range set {
 			seen[n] = true
 		}
+	}
+	// Methods are in publicFuncs for visibility, but `mod.method(x)` is not a
+	// call anyone can write — suggesting one here would be advice that fails.
+	// reportUndeclared offers them separately, in their receiver form.
+	for n := range m.publicMethods {
+		delete(seen, n)
 	}
 	out := make([]string, 0, len(seen))
 	for n := range seen {
@@ -1648,6 +1693,16 @@ func (m *module) exportedNames() []string {
 // the threshold tight matters more than coverage: a wrong suggestion on a
 // name the reader typed correctly costs more than no suggestion.
 func didYouMean(name string, candidates []string) string {
+	best := closest(name, candidates)
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (did you mean %q?)", best)
+}
+
+// closest is the nearest candidate within the same tight edit-distance
+// threshold didYouMean uses, or "" when nothing is close enough.
+func closest(name string, candidates []string) string {
 	best, bestD := "", 0
 	max := len(name)/3 + 1
 	for _, c := range candidates {
@@ -1656,10 +1711,7 @@ func didYouMean(name string, candidates []string) string {
 			best, bestD = c, d
 		}
 	}
-	if best == "" {
-		return ""
-	}
-	return fmt.Sprintf(" (did you mean %q?)", best)
+	return best
 }
 
 func editDistance(a, b string) int {
@@ -1689,6 +1741,16 @@ func editDistance(a, b string) int {
 }
 
 func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
+	// A method is exported and visible, but `mod.name(x)` is not how it is
+	// called — the reference mangles to a symbol nothing declares, so letting
+	// it through hands the reader an "undefined identifier mod__name" from
+	// the checker with no mention of the receiver form they actually want.
+	// Reported here, where the module is still in hand to say so.
+	if mod.publicMethods[fn] && !mod.publicPlainFuncs[fn] {
+		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a method — call it on the value: `x.%s(…)`",
+			r.modPath, pos, mod.name, fn, fn))
+		return
+	}
 	if mod.publicFuncs[fn] {
 		return
 	}

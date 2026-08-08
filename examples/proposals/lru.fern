@@ -1,0 +1,453 @@
+// examples/proposals/lru.fern — proposal turn, drawn line 57:
+// "An LRU cache with a capacity bound and a hit/miss report."
+//
+// The cache is a recency-ordered array, most-recently-used first. A hit moves
+// its entry to the front; a put inserts at the front and drops the tail when
+// that would exceed the capacity. Arrays are immutable, so every operation
+// returns a new cache rather than mutating one — which makes the "same
+// sequence gives the same state" property below trivially checkable, since
+// there is no hidden state to diverge.
+//
+// The thing worth being careful about is that **most tests of an LRU cache
+// pass against a FIFO cache**. Capacity is respected by both. Hit and miss
+// counts agree on any sequence with no repeated reads. Eviction happens at the
+// right time in both. The single behaviour that separates them is that a READ
+// must promote — get the least-recently-used entry and it should survive the
+// next insertion, where a FIFO evicts it anyway because insertion order never
+// changed. So that gets its own test, written to fail against a FIFO, and the
+// randomised comparison below is run against an oracle that models recency
+// explicitly with timestamps rather than by reusing this file's ordering.
+//
+// The oracle is deliberately the slow, obvious implementation: it stamps every
+// touch with a clock and evicts the minimum by linear scan. It shares no code
+// with the cache, so agreement over a swept operation sequence is evidence
+// rather than a tautology.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// Byte-wise lexicographic compare. `>` is not defined on strings, and the
+// sorted key set below needs an order that does not depend on the cache's.
+function str_gt(a: string, b: string): boolean {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        var x: i32 = a[i] as i32;
+        var y: i32 = b[i] as i32;
+        if (x != y) { return x > y; }
+        i = i + 1;
+    }
+    return a.len() > b.len();
+}
+
+struct Entry { key: string, val: i32 }
+
+// entries[0] is the most recently used. hits/misses count only get() calls —
+// a put is neither, which is the convention that makes hits + misses equal the
+// number of reads and so makes a hit RATE meaningful.
+struct Cache { entries: Entry[], cap: i32, hits: i32, misses: i32 }
+
+function cache_new(cap: i32): Cache {
+    return Cache { entries: [], cap: cap, hits: 0, misses: 0 };
+}
+
+function index_of_key(c: Cache, k: string): i32 {
+    var i: i32 = 0;
+    while (i < c.entries.len()) {
+        if (c.entries[i].key == k) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Rebuild with the entry at `at` moved to the front, order otherwise intact.
+function promote(es: Entry[], at: i32): Entry[] {
+    var out: Entry[] = [es[at]];
+    var i: i32 = 0;
+    while (i < es.len()) {
+        if (i != at) { out = out.append(es[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// A hit promotes. That single line is the whole difference from a FIFO, and
+// the reason test_a_read_promotes exists.
+function get(c: Cache, k: string): (Cache, Option[i32]) {
+    var at: i32 = index_of_key(c, k);
+    if (at < 0) {
+        return (Cache { entries: c.entries, cap: c.cap, hits: c.hits,
+            misses: c.misses + 1 }, None);
+    }
+    var v: i32 = c.entries[at].val;
+    return (Cache { entries: promote(c.entries, at), cap: c.cap,
+        hits: c.hits + 1, misses: c.misses }, Some(v));
+}
+
+// Put of an existing key updates in place and promotes — it does not evict,
+// and it does not grow the cache. Put of a new key inserts at the front and
+// evicts the tail if that overflows.
+//
+// A non-positive capacity stores nothing at all rather than being treated as
+// unbounded: "cap 0" meaning "infinite" is the kind of default that turns a
+// bounded cache into a memory leak in production.
+function put(c: Cache, k: string, v: i32): Cache {
+    if (c.cap <= 0) { return c; }
+    var at: i32 = index_of_key(c, k);
+    var kept: Entry[] = [];
+    if (at >= 0) {
+        var i: i32 = 0;
+        while (i < c.entries.len()) {
+            if (i != at) { kept = kept.append(c.entries[i]); }
+            i = i + 1;
+        }
+    } else {
+        // Trim from the tail until there is room for one more.
+        var n: i32 = c.entries.len();
+        var drop_from: i32 = c.cap - 1;
+        var j: i32 = 0;
+        while (j < n && j < drop_from) { kept = kept.append(c.entries[j]); j = j + 1; }
+    }
+    var next: Entry[] = [Entry { key: k, val: v }];
+    var m: i32 = 0;
+    while (m < kept.len()) { next = next.append(kept[m]); m = m + 1; }
+    return Cache { entries: next, cap: c.cap, hits: c.hits, misses: c.misses };
+}
+
+function contains(c: Cache, k: string): boolean { return index_of_key(c, k) >= 0; }
+
+// The recency order, front first — the state the oracle is compared against.
+function order(c: Cache): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < c.entries.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + c.entries[i].key + "=" + c.entries[i].val.to_string();
+        i = i + 1;
+    }
+    return out;
+}
+
+// Hit rate in tenths of a percent, so the report carries a real number without
+// needing floats (which would drag in the wasm libm gap, #6404).
+function hit_rate_milli(c: Cache): i32 {
+    var total: i32 = c.hits + c.misses;
+    if (total == 0) { return 0; }
+    return (c.hits * 1000) / total;
+}
+
+// -------------------------------------------------------------- oracle
+
+// The slow, obvious model: a flat list plus a last-touched stamp per key.
+// Eviction scans for the minimum stamp. No shared code with the cache above.
+struct Model { keys: string[], vals: i32[], used: i32[], cap: i32, clock: i32,
+    hits: i32, misses: i32 }
+
+function model_new(cap: i32): Model {
+    return Model { keys: [], vals: [], used: [], cap: cap, clock: 0, hits: 0, misses: 0 };
+}
+
+function model_find(m: Model, k: string): i32 {
+    var i: i32 = 0;
+    while (i < m.keys.len()) { if (m.keys[i] == k) { return i; } i = i + 1; }
+    return -1;
+}
+
+function model_get(m: Model, k: string): (Model, Option[i32]) {
+    var at: i32 = model_find(m, k);
+    if (at < 0) {
+        return (Model { keys: m.keys, vals: m.vals, used: m.used, cap: m.cap,
+            clock: m.clock, hits: m.hits, misses: m.misses + 1 }, None);
+    }
+    return (Model { keys: m.keys, vals: m.vals, used: m.used.with(at, m.clock + 1),
+        cap: m.cap, clock: m.clock + 1, hits: m.hits + 1, misses: m.misses }, Some(m.vals[at]));
+}
+
+function model_put(m: Model, k: string, v: i32): Model {
+    if (m.cap <= 0) { return m; }
+    var at: i32 = model_find(m, k);
+    if (at >= 0) {
+        return Model { keys: m.keys, vals: m.vals.with(at, v), used: m.used.with(at, m.clock + 1),
+            cap: m.cap, clock: m.clock + 1, hits: m.hits, misses: m.misses };
+    }
+    var keys: string[] = m.keys;
+    var vals: i32[] = m.vals;
+    var used: i32[] = m.used;
+    if (keys.len() >= m.cap) {
+        // Evict the minimum stamp — the least recently used, by definition
+        // rather than by position.
+        var lo: i32 = 0;
+        var i: i32 = 1;
+        while (i < used.len()) { if (used[i] < used[lo]) { lo = i; } i = i + 1; }
+        var nk: string[] = []; var nv: i32[] = []; var nu: i32[] = [];
+        var j: i32 = 0;
+        while (j < keys.len()) {
+            if (j != lo) { nk = nk.append(keys[j]); nv = nv.append(vals[j]); nu = nu.append(used[j]); }
+            j = j + 1;
+        }
+        keys = nk; vals = nv; used = nu;
+    }
+    return Model { keys: keys.append(k), vals: vals.append(v), used: used.append(m.clock + 1),
+        cap: m.cap, clock: m.clock + 1, hits: m.hits, misses: m.misses };
+}
+
+// The model's key set, sorted, so it can be compared against the cache's
+// without the two agreeing on order (they deliberately do not — the model
+// keeps insertion order and stamps recency separately).
+function model_keys_sorted(m: Model): string {
+    var ks: string[] = [];
+    var i: i32 = 0;
+    while (i < m.keys.len()) {
+        var w: string = m.keys[i];
+        var next: string[] = [];
+        var placed: boolean = false;
+        var j: i32 = 0;
+        while (j < ks.len()) {
+            if (!placed && str_gt(ks[j], w)) { next = next.append(w); placed = true; }
+            next = next.append(ks[j]);
+            j = j + 1;
+        }
+        if (!placed) { next = next.append(w); }
+        ks = next;
+        i = i + 1;
+    }
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < ks.len()) { if (k > 0) { out = out + ","; } out = out + ks[k]; k = k + 1; }
+    return out;
+}
+
+function cache_keys_sorted(c: Cache): string {
+    var m: Model = model_new(c.cap);
+    var i: i32 = 0;
+    while (i < c.entries.len()) {
+        m = Model { keys: m.keys.append(c.entries[i].key), vals: m.vals, used: m.used,
+            cap: m.cap, clock: m.clock, hits: m.hits, misses: m.misses };
+        i = i + 1;
+    }
+    return model_keys_sorted(m);
+}
+
+// --------------------------------------------------------------- tests
+
+// The load-bearing one. A FIFO cache passes every other test in this file;
+// it fails this. Reading "a" makes it the most recent, so inserting "d" must
+// evict "b" — the oldest READ — not "a", the oldest INSERT.
+function test_a_read_promotes(): test.TestOutcome {
+    var c: Cache = cache_new(3);
+    c = put(c, "a", 1);
+    c = put(c, "b", 2);
+    c = put(c, "c", 3);
+    var (c2, got) = get(c, "a");
+    c = c2;
+    match (got) {
+        Some(v) => { if (v != 1) { return test.fail("a read back as " + v.to_string()); } },
+        None => { return test.fail("a was missing before any eviction"); },
+    }
+    c = put(c, "d", 4);
+    if (!contains(c, "a")) {
+        return test.fail("the promoted key was evicted — this is FIFO, not LRU");
+    }
+    if (contains(c, "b")) {
+        return test.fail("b survived, but it was the least recently used");
+    }
+    if (order(c) != "d=4,a=1,c=3") {
+        return test.fail("recency order is \"" + order(c) + "\", want \"d=4,a=1,c=3\"");
+    }
+    return test.pass();
+}
+
+// A randomised sequence compared against the timestamp model. The generator is
+// a fixed LCG so a failure is reproducible, and the key space is small
+// relative to the capacity so evictions actually happen — a sweep over unique
+// keys would never exercise the interesting path.
+function test_matches_the_timestamp_model(): test.TestOutcome {
+    var caps: i32[] = [1, 2, 3, 5, 8];
+    var ci: i32 = 0;
+    while (ci < caps.len()) {
+        var c: Cache = cache_new(caps[ci]);
+        var m: Model = model_new(caps[ci]);
+        var seed: i32 = 12345 + caps[ci];
+        var step: i32 = 0;
+        while (step < 400) {
+            seed = (seed * 1103515245 + 12345) % 2147483647;
+            if (seed < 0) { seed = 0 - seed; }
+            var k: string = "k" + (seed % 12).to_string();
+            if (seed % 3 == 0) {
+                var (c2, gv) = get(c, k);
+                var (m2, mv) = model_get(m, k);
+                c = c2; m = m2;
+                var gs: string = match (gv) { Some(v) => v.to_string(), None => "-" };
+                var ms: string = match (mv) { Some(v) => v.to_string(), None => "-" };
+                if (gs != ms) {
+                    return test.fail("cap=" + caps[ci].to_string() + " step=" + step.to_string()
+                        + " get(" + k + ") gave " + gs + ", model says " + ms);
+                }
+            } else {
+                c = put(c, k, seed % 1000);
+                m = model_put(m, k, seed % 1000);
+            }
+            if (c.entries.len() > caps[ci]) {
+                return test.fail("cap=" + caps[ci].to_string() + " exceeded at step "
+                    + step.to_string() + ": " + c.entries.len().to_string() + " entries");
+            }
+            if (cache_keys_sorted(c) != model_keys_sorted(m)) {
+                return test.fail("cap=" + caps[ci].to_string() + " step=" + step.to_string()
+                    + " residency diverged:\n  cache [" + cache_keys_sorted(c)
+                    + "]\n  model [" + model_keys_sorted(m) + "]");
+            }
+            if (c.hits != m.hits || c.misses != m.misses) {
+                return test.fail("cap=" + caps[ci].to_string() + " counters diverged: cache "
+                    + c.hits.to_string() + "/" + c.misses.to_string() + ", model "
+                    + m.hits.to_string() + "/" + m.misses.to_string());
+            }
+            step = step + 1;
+        }
+        ci = ci + 1;
+    }
+    return test.pass();
+}
+
+// Every get is exactly one hit or one miss, and a put is neither. Without
+// that, a hit rate is not a rate of anything.
+function test_counters_account_for_every_read(): test.TestOutcome {
+    var c: Cache = cache_new(2);
+    var reads: i32 = 0;
+    c = put(c, "a", 1);
+    c = put(c, "b", 2);
+    var i: i32 = 0;
+    while (i < 20) {
+        var (c2, _) = get(c, "k" + (i % 4).to_string());
+        c = c2; reads = reads + 1;
+        c = put(c, "p" + i.to_string(), i);
+        i = i + 1;
+    }
+    var (c3, _) = get(c, "a");
+    c = c3; reads = reads + 1;
+    if (c.hits + c.misses != reads) {
+        return test.fail("hits+misses = " + (c.hits + c.misses).to_string()
+            + " but there were " + reads.to_string() + " reads");
+    }
+    if (c.hits < 0 || c.misses < 0) { return test.fail("a counter went negative"); }
+    // Hit rate is derived from those counters, so it cannot exceed 1000.
+    if (hit_rate_milli(c) > 1000) {
+        return test.fail("hit rate " + hit_rate_milli(c).to_string() + " exceeds 1000");
+    }
+    if (hit_rate_milli(cache_new(4)) != 0) {
+        return test.fail("an unread cache reported a non-zero hit rate");
+    }
+    return test.pass();
+}
+
+// Re-putting a key updates it and promotes it, without changing the size.
+function test_put_of_an_existing_key_updates_and_promotes(): test.TestOutcome {
+    var c: Cache = cache_new(3);
+    c = put(c, "a", 1);
+    c = put(c, "b", 2);
+    c = put(c, "c", 3);
+    c = put(c, "a", 99);
+    if (c.entries.len() != 3) {
+        return test.fail("re-put grew the cache to " + c.entries.len().to_string());
+    }
+    if (order(c) != "a=99,c=3,b=2") {
+        return test.fail("order after re-put is \"" + order(c) + "\", want \"a=99,c=3,b=2\"");
+    }
+    // The update must be visible, and must not have counted as a read.
+    var before: i32 = c.hits + c.misses;
+    var (c2, got) = get(c, "a");
+    match (got) {
+        Some(v) => { if (v != 99) { return test.fail("stale value " + v.to_string()); } },
+        None => { return test.fail("a vanished after re-put"); },
+    }
+    if (before != 0) { return test.fail("puts were counted as reads: " + before.to_string()); }
+    if (c2.hits != 1) { return test.fail("the read did not count as a hit"); }
+    return test.pass();
+}
+
+function test_capacity_edges(): test.TestOutcome {
+    // cap 1: every new key evicts the previous one.
+    var one: Cache = cache_new(1);
+    one = put(one, "a", 1);
+    one = put(one, "b", 2);
+    if (one.entries.len() != 1 || !contains(one, "b") || contains(one, "a")) {
+        return test.fail("cap 1 holds \"" + order(one) + "\"");
+    }
+    // cap 0 stores nothing — and is NOT treated as unbounded.
+    var zero: Cache = cache_new(0);
+    zero = put(zero, "a", 1);
+    zero = put(zero, "b", 2);
+    if (zero.entries.len() != 0) {
+        return test.fail("cap 0 stored " + zero.entries.len().to_string() + " entries");
+    }
+    var (z2, got) = get(zero, "a");
+    match (got) { Some(_) => { return test.fail("cap 0 returned a value"); }, None => {}, }
+    if (z2.misses != 1) { return test.fail("cap 0 did not count the read as a miss"); }
+    // A negative capacity behaves as 0 rather than wrapping into something huge.
+    var neg: Cache = put(cache_new(-3), "a", 1);
+    if (neg.entries.len() != 0) { return test.fail("negative cap stored entries"); }
+    return test.pass();
+}
+
+// Same sequence, same state — there is no hidden mutable state to diverge,
+// and this is what says so.
+function test_the_same_sequence_gives_the_same_state(): test.TestOutcome {
+    var a: Cache = cache_new(4);
+    var b: Cache = cache_new(4);
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: string = "k" + (i * 7 % 9).to_string();
+        if (i % 4 == 0) {
+            var (a2, _) = get(a, k);
+            var (b2, _) = get(b, k);
+            a = a2; b = b2;
+        } else {
+            a = put(a, k, i);
+            b = put(b, k, i);
+        }
+        i = i + 1;
+    }
+    if (order(a) != order(b)) {
+        return test.fail("diverged: \"" + order(a) + "\" vs \"" + order(b) + "\"");
+    }
+    if (a.hits != b.hits || a.misses != b.misses) {
+        return test.fail("counters diverged");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("lru — recency-ordered cache with a capacity bound and a hit/miss report");
+
+    var c: Cache = cache_new(3);
+    var script: string[] = ["p:a:1", "p:b:2", "p:c:3", "g:a", "p:d:4", "g:b", "g:c", "g:a", "p:e:5"];
+    var i: i32 = 0;
+    while (i < script.len()) {
+        var f: string[] = script[i].split(":");
+        if (f[0] == "p") {
+            c = put(c, f[1], f[2].parse_int_or(0));
+            eprint("put " + f[1] + "=" + f[2] + "  -> [" + order(c) + "]");
+        } else {
+            var (c2, got) = get(c, f[1]);
+            c = c2;
+            eprint("get " + f[1] + "     -> "
+                + match (got) { Some(v) => "hit " + v.to_string(), None => "miss   " }
+                + "  [" + order(c) + "]");
+        }
+        i = i + 1;
+    }
+    eprint("hits=" + c.hits.to_string() + " misses=" + c.misses.to_string()
+        + " rate=" + hit_rate_milli(c).to_string() + "/1000");
+
+    var r: test.TestRunner = test.test_new("lru");
+    r = r.it("a read promotes", test_a_read_promotes);
+    r = r.it("matches the timestamp model", test_matches_the_timestamp_model);
+    r = r.it("counters account for every read", test_counters_account_for_every_read);
+    r = r.it("put of an existing key updates and promotes", test_put_of_an_existing_key_updates_and_promotes);
+    r = r.it("capacity edges", test_capacity_edges);
+    r = r.it("the same sequence gives the same state", test_the_same_sequence_gives_the_same_state);
+    return r.finish();
+}
