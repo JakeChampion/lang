@@ -285,7 +285,10 @@ struct SsaResult { asm: string, ok: boolean }
 // wasm-component targets always fall back. Register allocation is always on for
 // the native path.
 function try_ssa(funcs: parser.FuncDecl[], structs: parser.StructDecl[], target: string): SsaResult {
-    if (target != "x86-64" && target != "arm64" && target != "arm64-android" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
+    // `x86-64-asm` is `x86-64` stopped before the assembler, not a different
+    // pipeline, so -ssa has to reach it too — otherwise -ssa is unobservable
+    // on the only target that still emits text.
+    if (target != "x86-64" && target != "x86-64-asm" && target != "arm64" && target != "arm64-android" && target != "wasm") { return SsaResult { asm: "", ok: false }; }
     // The set of user-defined function names the SSA backend can `call`, and
     // the subset that return a pointer (so their call results are 64-bit).
     // Lambda bindings `var f = function(...){...}` lift to top-level functions

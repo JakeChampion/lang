@@ -237,10 +237,10 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFu
 		t.Fatalf("write src: %v", err)
 	}
 	asmPath := filepath.Join(dir, "prog.s")
-	out, err := exec.Command(fernBin, "-target", "x86-64", srcPath, stdlibRoot, "-o", asmPath).CombinedOutput()
+	out, err := exec.Command(fernBin, "-target", "x86-64-asm", srcPath, stdlibRoot, "-o", asmPath).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "x86-64", srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "x86-64-asm", srcPath, stdlibRoot, out))
 	}
 	binPath := filepath.Join(dir, "prog")
 	// The flags every other self-host x86 link uses (linkSelfHostAsm's small

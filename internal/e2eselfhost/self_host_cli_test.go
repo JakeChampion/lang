@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -38,8 +39,15 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	// runDriver runs the CLI with args and returns (stdout, exitcode).
+	//
+	// Selects `x86-64-asm` when the caller names no target, because these
+	// cases assert on GAS TEXT and then hand it to gcc. The default target,
+	// `x86-64`, assembles and links in-process and would hand them an ELF.
 	runDriver := func(t *testing.T, args ...string) ([]byte, int) {
 		t.Helper()
+		if !slices.Contains(args, "-target") {
+			args = append([]string{"-target", "x86-64-asm"}, args...)
+		}
 		cmd := exec.Command(fernBin, args...)
 		out, _ := cmd.Output()
 		return out, cmd.ProcessState.ExitCode()
