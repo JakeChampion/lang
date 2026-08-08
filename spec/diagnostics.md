@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**56 of 74** codes are pinned by a conformance case. The table
+**57 of 74** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -112,7 +112,7 @@ language does not have. It is deleted.
 | `E065` | returning a `str` view of a function-local string | `diag_e065` |
 | `E066` | target does not provide a required capability | — |
 | `E067` | a `@must_consume` value was not consumed on every path | `diag_e067` |
-| `E068` | `fip` / `fbip` function fails IR allocation verification | — |
+| `E068` | `fip` / `fbip` function fails IR allocation verification | `diag_e068` |
 | `E069` | a 32-bit value was reinterpreted as a pointer-shaped type | — |
 | `E070` | a dependency package reaches a capability it was not granted | — |
 | `E071` | a literal outside the Unicode scalar range was cast to `char` | — |

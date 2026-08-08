@@ -4,7 +4,7 @@ Status: normative. This directory defines observable Fern behaviour by
 example. A change to a case's expected output is a change to the
 language, and should be reviewed as one.
 
-`cases/` holds 437 self-contained programs, each a directory with the
+`cases/` holds 438 self-contained programs, each a directory with the
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it:
 `internal/interp`, the three native backends (x86-64, arm64, wasm), and
@@ -49,7 +49,8 @@ A case is a directory `cases/<name>/`. Contents:
 | `stdin` | no | Bytes fed to the program's stdin. |
 | `match` | no | `exact` (default) or `contains`. |
 | `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. |
-| `expected.error` | no | Marks a **compile-error case** — see below. |
+| `expected.error` | no | Marks a **compile-error case** — the front end must reject it. See below. |
+| `expected.lowering-error` | no | Marks a **lowering-error case** — the front end must ACCEPT it and lowering must reject it. See below. |
 | `meta` | no | Justifies a case that asserts less than the maximum — see below. Required exactly when the case does. |
 | `reclaim-observable` | no | Marks a case whose output deliberately DIFFERS with reclamation off, so the free-off gates invert for it rather than requiring a match. Contents are prose explaining why; only the file's presence is read. |
 
@@ -74,6 +75,34 @@ declarative coverage of the rejection paths behind the `E0NN` codes.
 Such a case must carry none of `expected.stdout`, `expected.exit`,
 `stdin`, `match` or `backends`; those are ignored on this path, and a
 case that sets one is asserting something that is not being checked.
+It must not carry a `meta` waiver either: a waiver justifies asserting
+less than byte-exact output on all four backends, and a rejection case
+asserts no output at all.
+
+### Lowering-error cases
+
+Not every rejection is a front-end rejection. `E068` — a `fbip`
+function that allocates without a donor to reuse — is reported by
+`internal/ir/fip_verify.go` during lowering, after the checker has
+already accepted the program, so an `expected.error` case can never
+reach it: that path stops at the type check.
+
+A case carrying `expected.lowering-error` asserts **both** halves. The
+front end must accept the program, and `ir.LowerWith` must then reject
+it with an error containing the file's trimmed contents. Asserting only
+the second half would let a program the checker already rejects
+masquerade as a lowering rule, which is the confusion the separate
+sidecar exists to prevent — the runner reports that case by name and
+says to move it to `expected.error`.
+
+It runs at **both pointer widths**. A lowering rejection that fires on
+one target and not the other is a portability defect in its own right,
+so a case that holds at only one width fails rather than passing
+quietly.
+
+The same exclusivity rules apply as for `expected.error`: no run
+sidecars, and a case cannot carry both files — which stage rejects a
+program is precisely what these cases pin, and it cannot be two.
 
 ### A program that aborts cannot opt into wasm
 

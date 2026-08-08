@@ -88,7 +88,7 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 			continue
 		}
 		f := loadFixture(t, dir)
-		if f.compileError || !f.backends[backend] {
+		if f.rejectionCase() || !f.backends[backend] {
 			continue
 		}
 		t.Run(f.name, func(t *testing.T) { fn(t, f) })

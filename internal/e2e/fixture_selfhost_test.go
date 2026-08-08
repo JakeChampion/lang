@@ -344,7 +344,7 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 			continue
 		}
 		f := loadFixture(t, abs)
-		if f.compileError || !f.backends[leg.backend] || (leg.skipStdin && f.stdin != "") {
+		if f.rejectionCase() || !f.backends[leg.backend] || (leg.skipStdin && f.stdin != "") {
 			skipped++
 			continue
 		}

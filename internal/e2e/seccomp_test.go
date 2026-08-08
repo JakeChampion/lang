@@ -378,7 +378,7 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 			t.Fatalf("abs %s: %v", name, err)
 		}
 		f := loadFixture(t, dir)
-		if f.compileError {
+		if f.rejectionCase() {
 			continue // never produces a binary
 		}
 		ran++
