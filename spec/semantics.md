@@ -54,9 +54,8 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**32 of 36** claims are pinned by a conformance case. Of the four
-that are not, **three are freedoms** — see below — and one is a gap the
-corpus format cannot currently reach.
+**33 of 36** claims are pinned by a conformance case. The remaining
+**three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
 
@@ -72,7 +71,8 @@ asserts an output and the whole content of the claim is that no
 particular output is owed. The distinction is worth keeping visible:
 a `—` is work someone should do, and a `n/a` is a decision someone
 already made. Collapsing them would turn three deliberate choices into
-three apparent oversights, and hide the one real gap among them.
+three apparent oversights, which is what a bare `—` would have made
+of them.
 
 ## Claims
 
@@ -109,37 +109,38 @@ three apparent oversights, and hide the one real gap among them.
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`) | `diag_e063` |
 | `ML-04` | `docs/MODE-LATTICE.md` | A `str` view of a function-local string may not be returned (`E065`) | `diag_e065` |
 | `ML-05` | `docs/MODE-LATTICE.md` | Using an owned parameter after it is consumed is rejected (`E050`) | `diag_e050` |
-| `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | — |
+| `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | `diag_e068` |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 
-## The one gap, and why the format cannot reach it
+## Every gap this index opened with is now closed
 
-`ML-06` is the `fbip` allocation rule behind `E068`, and it is not
-unpinned for want of writing a case. A case with an `expected.error`
-file is **not run**: it must fail the front-end — parse, module load,
-or type check — and the captured error is matched against the file.
-`E068` is not a front-end error. It is reported by
-`internal/ir/fip_verify.go` during lowering, after the checker has
-already accepted the program, so a compile-error case never reaches
-it and a runnable case cannot be built from a program that does not
-compile.
-
-Closing it means either teaching the corpus format about errors
-raised past the front end, or moving the `fbip` allocation check
-forward into the checker. Both are decisions, not omissions, which is
-why the row says `—` and this section says why.
-
-Every other claim that was a gap when this index landed is now pinned:
 `IS-10`, `IS-11`, `ML-05`, `MC-01` and `MC-02` were all *rejections*
 exercised only by a Go test under `internal/checker`. That is coverage
 of `internal/`, and `docs/NATIVE-CONVERGENCE.md` makes the self-host
-compiler the definition once the freeze preconditions (#4451) go
-green — at which point a Go test measures the wrong thing. `E050` and
-`E067` were also two of the three codes `spec/diagnostics.md` listed as
-unpinned, so those rows closed in both indexes at once.
+compiler the definition once the freeze preconditions (#4451) go green
+— at which point a Go test measures the wrong implementation. `E050`
+and `E067` were also two of the three codes `spec/diagnostics.md`
+listed as unpinned, so those rows closed in both indexes at once.
+
+`ML-06` was the interesting one, because it was not unpinned for want
+of writing a case. `E068` is reported by `internal/ir/fip_verify.go`
+during *lowering*, after the checker has already accepted the program,
+and a case with an `expected.error` file stops at the type check — so
+the format itself could not express the claim. Rather than move the
+`fbip` check forward into the checker to suit the test format, the
+format grew an `expected.lowering-error` sidecar that asserts both
+halves: the front end must accept the program and lowering must reject
+it. A program the checker already rejects is reported by name and told
+to move to `expected.error`, because which stage rejects a program is
+exactly what these cases pin.
+
+The lesson is worth keeping: an unpinnable claim is sometimes a fact
+about the harness rather than about the language, and writing down
+which of the two it is — rather than a bare `—` — is what made the
+next step obvious.
 
 ## The store, and the first thing said about it
 

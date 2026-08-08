@@ -37,6 +37,41 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 			want:  `also carries "expected.stdout"`,
 		},
 		{
+			name: "both rejection kinds at once",
+			files: map[string]string{
+				"main.fern":               "",
+				"expected.error":          "E001",
+				"expected.lowering-error": "E068",
+			},
+			want: "cannot be two stages",
+		},
+		{
+			name: "lowering-error case with a run sidecar",
+			files: map[string]string{
+				"main.fern":               "",
+				"expected.lowering-error": "E068",
+				"expected.exit":           "1",
+			},
+			want: `also carries "expected.exit"`,
+		},
+		{
+			name: "empty expected.lowering-error",
+			files: map[string]string{
+				"main.fern":               "",
+				"expected.lowering-error": "  \n",
+			},
+			want: "expected.lowering-error is empty",
+		},
+		{
+			name: "rejection case with a waiver to justify nothing",
+			files: map[string]string{
+				"main.fern":      "",
+				"expected.error": "E001",
+				"meta":           "waiver: harness-limit\nreason: n/a\n",
+			},
+			want: "asserts no output",
+		},
+		{
 			name:  "empty expected.error",
 			files: map[string]string{"main.fern": "", "expected.error": "  \n"},
 			want:  "expected.error is empty",
@@ -176,6 +211,13 @@ func TestCheckCaseFormatAccepts(t *testing.T) {
 				"expected.exit":   "0\n",
 				"stdin":           "",
 				"match":           "exact\n",
+			},
+		},
+		{
+			name: "lowering-error case",
+			files: map[string]string{
+				"main.fern":               "function main(): i32 { return 0; }",
+				"expected.lowering-error": "E068\n",
 			},
 		},
 		{

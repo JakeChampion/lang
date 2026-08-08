@@ -30,6 +30,16 @@
 // declarative coverage of the checker's rejection paths. Such fixtures
 // ignore expected.stdout / expected.exit / stdin / match / backends.
 //
+// Lowering-error fixtures: `expected.lowering-error` is the sibling for
+// a rejection the front end does NOT make. Such a fixture must be
+// ACCEPTED by parse / module-load / type-check and then rejected by
+// ir.LowerWith, at both pointer widths. E068 (a `fbip` function that
+// allocates without a donor to reuse) is the case in point: it comes
+// out of internal/ir/fip_verify.go during lowering, so the front-end
+// path above can never reach it. Asserting both halves is what stops a
+// program the checker already rejects from masquerading as a lowering
+// rule.
+//
 // Backend exit-code note: native and interp backends propagate main's
 // return value straight to the process exit code (full 0..255). A
 // preview-2 wasm host only surfaces 0/1 through `wasi:cli/exit`, so we
@@ -44,6 +54,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +68,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
@@ -71,8 +83,12 @@ type fixtureSpec struct {
 	exact        bool     // true → byte-for-byte stdout match
 	wantExit     int
 	backends     map[string]bool
-	compileError bool   // true → expected to fail the front-end
-	wantError    string // required substring of the compile error
+	compileError bool // true → expected to fail the front-end
+	// loweringError → expected to PASS the front-end and fail during
+	// lowering. Kept separate from compileError because which stage
+	// rejected the program is exactly what such a case asserts.
+	loweringError bool
+	wantError     string // required substring of the compile error
 
 	// reclaimObservable marks a case whose output is DELIBERATELY different
 	// with reclamation off — a case about the allocator rather than about the
@@ -85,6 +101,15 @@ type fixtureSpec struct {
 }
 
 var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
+
+// rejectionCase reports whether the fixture asserts a diagnostic rather
+// than a run. Such a case has no output, no exit code and no backends,
+// so every runner that walks the corpus expecting to execute something
+// has to skip it. One predicate rather than a growing disjunction: a
+// third rejection kind would otherwise be skipped only by accident of
+// its empty backends set, which is the kind of implicit coupling that
+// lets a new case break a gate nobody thought to run.
+func (f *fixtureSpec) rejectionCase() bool { return f.compileError || f.loweringError }
 
 func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	t.Helper()
@@ -102,6 +127,19 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 		f.wantError = strings.TrimSpace(raw)
 		if f.wantError == "" {
 			t.Fatalf("%s: expected.error file is empty", f.name)
+		}
+		return f
+	}
+
+	// Lowering-error fixture: expected to PASS the front-end and fail
+	// during lowering. The two halves are both the point — a program the
+	// checker already rejects would be pinning a front-end rule, and
+	// belongs in expected.error.
+	if raw, ok := readOptionalFile(dir, "expected.lowering-error"); ok {
+		f.loweringError = true
+		f.wantError = strings.TrimSpace(raw)
+		if f.wantError == "" {
+			t.Fatalf("%s: expected.lowering-error file is empty", f.name)
 		}
 		return f
 	}
@@ -201,6 +239,29 @@ func TestFernFixtures(t *testing.T) {
 						t.Errorf("compile error does not contain %q\nfull error:\n%s", f.wantError, errText)
 					}
 				})
+				return
+			}
+			if f.loweringError {
+				// Both widths: a lowering rejection that fires on one
+				// target and not the other is a portability defect in its
+				// own right, so the case has to hold at each.
+				for _, w := range []int{4, 8} {
+					w := w
+					t.Run(fmt.Sprintf("lower%d", w), func(t *testing.T) {
+						errText, stage := runFixtureLoweringError(f.mainPath, w)
+						switch stage {
+						case loweringRejected:
+							if !strings.Contains(errText, f.wantError) {
+								t.Errorf("lowering error does not contain %q\nfull error:\n%s", f.wantError, errText)
+							}
+						case frontEndRejected:
+							t.Errorf("the front end rejected this program, so it pins a front-end rule and belongs "+
+								"in expected.error rather than expected.lowering-error\nfront-end error:\n%s", errText)
+						case loweredCleanly:
+							t.Errorf("expected lowering to fail with %q, but the program lowered cleanly", f.wantError)
+						}
+					})
+				}
 				return
 			}
 			for _, backend := range allBackends {
@@ -347,6 +408,40 @@ func runFixtureCompileError(mainPath string) (string, bool) {
 		return err.Error(), true
 	}
 	return "", false
+}
+
+// loweringStage is which stage a lowering-error fixture actually
+// reached. Distinguishing "the checker rejected it" from "lowering
+// rejected it" is the whole reason this path exists: only the second
+// is what such a case claims.
+type loweringStage int
+
+const (
+	loweringRejected loweringStage = iota
+	frontEndRejected
+	loweredCleanly
+)
+
+// runFixtureLoweringError requires the front end to accept the program
+// and lowering to reject it. Unlike the front-end path this is
+// per-pointer-width, because lowering is where the target starts to
+// matter.
+func runFixtureLoweringError(mainPath string, ptrW int) (string, loweringStage) {
+	prog, _, err := modload.Load(mainPath)
+	if err != nil {
+		return err.Error(), frontEndRejected
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		return err.Error(), frontEndRejected
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		return err.Error(), frontEndRejected
+	}
+	if _, err := ir.LowerWith(prog, info, ptrW); err != nil {
+		return err.Error(), loweringRejected
+	}
+	return "", loweredCleanly
 }
 
 func linkAsm(t *testing.T, gcc, asm string, flags ...string) string {

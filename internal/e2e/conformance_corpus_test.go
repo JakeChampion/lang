@@ -31,7 +31,9 @@ var (
 	// to DIFFER). It is read by fixture_test.go and rc_freelist_test.go, so it
 	// is a real sidecar — it was just never registered here, which made the
 	// case that introduced it fail this format check.
-	allSidecars = append([]string{"expected.error", "meta", "reclaim-observable"}, runSidecars...)
+	allSidecars = append([]string{
+		"expected.error", "expected.lowering-error", "meta", "reclaim-observable",
+	}, runSidecars...)
 )
 
 // Waiver kinds a case may claim in its `meta` file. A waiver says why the
@@ -129,14 +131,28 @@ func checkCaseFormat(dir string) ([]string, error) {
 
 	// Compile-error cases take a different path through the loader, which
 	// ignores every run-oriented sidecar.
-	if present["expected.error"] {
-		if strings.TrimSpace(read("expected.error")) == "" {
-			report("expected.error is empty — it must hold the required substring of the diagnostic")
+	if present["expected.error"] && present["expected.lowering-error"] {
+		report("carries both expected.error and expected.lowering-error — a case pins the stage that " +
+			"rejects it, and it cannot be two stages")
+		return problems, nil
+	}
+	for _, kind := range []string{"expected.error", "expected.lowering-error"} {
+		if !present[kind] {
+			continue
+		}
+		if strings.TrimSpace(read(kind)) == "" {
+			report("%s is empty — it must hold the required substring of the diagnostic", kind)
 		}
 		for _, s := range runSidecars {
 			if present[s] {
-				report("compile-error case also carries %q, which is ignored on this path", s)
+				report("%s case also carries %q, which is ignored on this path", kind, s)
 			}
+		}
+		// A rejection case cannot weaken — it asserts one diagnostic and
+		// runs on no backend — so there is nothing for a waiver to justify.
+		if present["meta"] {
+			report("%s case carries a `meta` waiver, but a rejection case asserts no output "+
+				"to weaken", kind)
 		}
 		return problems, nil
 	}

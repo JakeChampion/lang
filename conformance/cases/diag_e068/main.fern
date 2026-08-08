@@ -1,0 +1,24 @@
+// spec: ML-06
+//
+// Pins E068. A `fbip` function claims to allocate nothing: every
+// construction in its body must take over a dead, uniquely-owned donor
+// of the same shape rather than asking the allocator for a fresh box.
+// `mk` has no donor to reuse, so its one struct literal is a fresh site
+// and exceeds the allowance of 0.
+//
+// This is the first case in the corpus that pins a rule the FRONT END
+// does not enforce. E068 is reported by internal/ir/fip_verify.go
+// during lowering, after the checker has already accepted the program,
+// so the ordinary `expected.error` path — which stops at the type
+// check — could never reach it. `expected.lowering-error` exists for
+// exactly this, and requires both halves: the front end must accept
+// this program and lowering must reject it.
+struct P { x: i32, y: i32 }
+
+fbip function mk(a: i32): P {
+    return P { x: a, y: a + 1 };   // error[E068]: fresh box, no donor
+}
+
+function main(): i32 {
+    return mk(1).x;
+}

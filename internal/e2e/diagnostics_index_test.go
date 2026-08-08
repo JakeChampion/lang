@@ -32,7 +32,11 @@ const (
 var (
 	indexRowRe = regexp.MustCompile(`^\|\s*` + "`" + `([A-Z]\d+)` + "`" + `\s*\|(.*)\|\s*(.*?)\s*\|$`)
 	codeRe     = regexp.MustCompile(`error\[([A-Z]\d+)\]`)
-	countRe    = regexp.MustCompile(`\*\*(\d+) of (\d+)\*\* codes are pinned`)
+	// A lowering-stage diagnostic is not formatted through diag.Format —
+	// it comes out of the IR pass as `LINE:COL: E0NN: …`, so the code is
+	// bare rather than wrapped in `error[…]`.
+	loweringCodeRe = regexp.MustCompile(`^\s*\d+:\d+: ([A-Z]\d+):`)
+	countRe        = regexp.MustCompile(`\*\*(\d+) of (\d+)\*\* codes are pinned`)
 )
 
 type indexRow struct {
@@ -86,8 +90,8 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 		default:
 			name := strings.Trim(r.pin, "`")
 			if _, ok := emitted[name]; !ok {
-				t.Errorf("%s: %s names conformance case %q, which is not a compile-error case",
-					diagIndexPath, r.code, name)
+				t.Errorf("%s: %s names conformance case %q, which is neither a compile-error nor a "+
+					"lowering-error case", diagIndexPath, r.code, name)
 				continue
 			}
 			if !contains(emitted[name], r.code) {
@@ -111,9 +115,9 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 	}
 }
 
-// codesByCase runs every compile-error case in the corpus through the
-// real CLI and records the codes it reports. The CLI is used rather than
-// the in-process front end because only the formatted output carries the
+// codesByCase runs every rejection case in the corpus through the real
+// CLI and records the codes it reports. The CLI is used rather than the
+// in-process front end because only the formatted output carries the
 // codes — the aggregate error value does not.
 func codesByCase(t *testing.T) map[string][]string {
 	t.Helper()
@@ -129,14 +133,31 @@ func codesByCase(t *testing.T) map[string][]string {
 			continue
 		}
 		dir := filepath.Join(conformanceCases, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, "expected.error")); err != nil {
+		main := filepath.Join(dir, "main.fern")
+
+		// A compile-error case is rejected by the front end, so `-check`
+		// reaches it. A lowering-error case is accepted by the front end
+		// and rejected during codegen, so it needs a real compile —
+		// `-check` would report nothing and the case would read as
+		// emitting no code at all.
+		var cmd *exec.Cmd
+		switch {
+		case fileExists(filepath.Join(dir, "expected.error")):
+			cmd = exec.Command(bin, "-check", main)
+		case fileExists(filepath.Join(dir, "expected.lowering-error")):
+			cmd = exec.Command(bin, "-target", "x86-64", "-o", filepath.Join(t.TempDir(), "prog"), main)
+		default:
 			continue
 		}
-		cmd := exec.Command(bin, "-check", filepath.Join(dir, "main.fern"))
 		blob, _ := cmd.CombinedOutput()
 		var codes []string
 		for _, m := range codeRe.FindAllStringSubmatch(string(blob), -1) {
 			if !contains(codes, m[1]) {
+				codes = append(codes, m[1])
+			}
+		}
+		for _, ln := range strings.Split(string(blob), "\n") {
+			if m := loweringCodeRe.FindStringSubmatch(ln); m != nil && !contains(codes, m[1]) {
 				codes = append(codes, m[1])
 			}
 		}
@@ -147,6 +168,11 @@ func codesByCase(t *testing.T) map[string][]string {
 		t.Fatalf("no compile-error cases found — the gate is not running")
 	}
 	return out
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func explanationCodes(t *testing.T) []string {
