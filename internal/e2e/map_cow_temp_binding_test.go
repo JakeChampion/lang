@@ -191,12 +191,14 @@ func TestMapCowTempBindingNoUnderflowArm64(t *testing.T) {
 // freelist could NOT recycle — so it is host-independent, unlike RSS (see
 // docs/LOCAL-DEV-LOOP.md on the THP 12x spread).
 //
-// x86-64 ONLY. arm64 leaks ~42 B per string-keyed insert in the DIRECT form
-// too — measured on stock main at 4576 / 16352 / 66528 B for 100 / 400 / 1600
-// iterations, identical before and after this change (#6243) — so a flatness
-// assertion there measures that pre-existing churn, not this one. The leak
-// this pins is 1328 B an iteration, thirty times larger, and x86-64 shows it
-// against a genuinely flat baseline.
+// x86-64 ONLY. arm64 still leaks 16 B per string-keyed INSERT in the direct
+// form: `set` is the one Map method that keeps the boxed key cell, and on an
+// OVERWRITE it keeps the key it already had and drops the incoming one on the
+// floor — the remaining half of #6243, whose read half (get / has / get_or /
+// delete) is pinned flat on every target by
+// TestMapStringKeyLookupHeapFlat* below. So a flatness assertion here would
+// measure that, not this. The leak this pins is 1328 B an iteration, eighty
+// times larger, and x86-64 shows it against a genuinely flat baseline.
 const mapCowTempBindingHeapProg = `
 import "core/map";
 import "std/i32";
@@ -227,5 +229,79 @@ function main(): i32 {
 func TestMapCowTempBindingHeapFlatX86_64(t *testing.T) {
 	if _, got := compileAndRunX86_64(t, mapCowTempBindingHeapProg); got != 42 {
 		t.Fatalf("x86-64 got %d, want 42 (2 = the temporary-bound insert loop leaks per iteration)", got)
+	}
+}
+
+// Memory: a string-keyed LOOKUP loop must stay flat on every target.
+//
+// On the two-word string ABI — wasm32, and arm64 under TwoWordOverride — a
+// string map key does not fit the runtime's pointer-wide key slot, so the
+// lowering boxes it into a cell and passes the cell pointer through. `set`
+// keeps that cell; every read method (get / has / get_or / delete) does not,
+// and freeLookupKeyCell exists to reclaim it. It was gated on `ptrW != 4`,
+// on the belief that boxing was wasm-only — but boxing keys off the two-word
+// ABI, which arm64 also runs under. So on arm64 every string-keyed lookup
+// allocated a 16-byte cell and freed nothing, plus another 16 when the key was
+// a fresh temporary whose buffer also went unreleased: 32 B per iteration of a
+// loop like this one, unbounded, and invisible on x86-64, which does not box
+// (#6243).
+//
+// Both key shapes are exercised because they leaked independently: a literal
+// key leaked only the cell, a built one leaked the cell AND the string.
+// Measured on arm64-darwin before the fix — 16 B/iter and 32 B/iter
+// respectively, exactly linear over n = 100 / 200 / 400 / 800; after it, 1360
+// and 1424 bytes flat at every n.
+//
+// NO wasm leg, even though wasm32 is the other two-word target and this loop
+// leaks the same 16 B/iter there (measured 2480 -> 13680 for n = 100 -> 800,
+// byte-identical module before and after this change). Its Map lowering never
+// reaches freeLookupKeyCell at all, so that is a second instance of the same
+// leak behind a different path — a follow-up, not something this fix covers.
+// The x86-64 leg does not box string keys (isStringForBoxing is false without
+// the two-word ABI), so it pins the flat baseline this must not disturb.
+//
+// __heap_bump_bytes() is the bump allocator's high-water mark — what the
+// freelist could NOT recycle — so it is host-independent, unlike RSS.
+const mapStringKeyLookupHeapProg = `
+import "core/map";
+import "std/i32";
+
+function lookups(n: i32): i64 {
+    var m: Map[string, i32] = map_new(64);
+    m = m.insert("k7", 1);
+    var sink: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        // Literal key: leaks the boxed cell alone.
+        sink = sink + m.get_or("k7", 0);
+        if (m.has("k7")) { sink = sink + 1; }
+        // Built key: leaks the cell AND the string buffer behind it.
+        sink = sink + m.get_or("k" + (i % 32).to_string(), 0);
+        i = i + 1;
+    }
+    if (sink < 0) { return 0 - 1; }
+    return __heap_bump_bytes();
+}
+
+function main(): i32 {
+    // Same map, 8x the iterations. A per-iteration leak shows up as growth in
+    // the cumulative high-water mark; recycled churn does not.
+    var few: i64 = lookups(100);
+    var many: i64 = lookups(800);
+    if (few < 0) { return 1; }
+    if (many > few) { return 2; }
+    return 42;
+}
+`
+
+func TestMapStringKeyLookupHeapFlatArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapStringKeyLookupHeapProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (2 = the string-keyed lookup loop leaks per iteration)", got)
+	}
+}
+
+func TestMapStringKeyLookupHeapFlatX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapStringKeyLookupHeapProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (2 = the string-keyed lookup loop leaks per iteration)", got)
 	}
 }

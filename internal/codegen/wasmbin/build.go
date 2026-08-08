@@ -201,10 +201,23 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("wasmbin: lower: %w", err)
 	}
-	// The shared IR optimisation pipeline — the same passes every
-	// backend runs, so a change here lights up on all of them at
-	// once. See each pass's doc comment in internal/ir for the
-	// rationale on the ordering.
+	// The IR optimisation pipeline. MOSTLY shared with the native backends —
+	// TailCallOptimize, Defunctionalise, ElideClosurePair,
+	// InlineZeroCaptureClosures, FuseTee, FlattenBranches, OptimizeCleanup and
+	// EliminateDeadCode all run there too, so a change to one of those lights
+	// up everywhere. The exceptions are `ir.Inline` (twice, around
+	// Defunctionalise) and the IR-level dead-function cull below, which are
+	// wasm-only: both add or remove whole functions, and the natives still walk
+	// their AST and IR functions by PARALLEL INDEX (`ip.Funcs[i]`), which that
+	// invalidates. #4377 slice 2 is the name-keyed walk that would let them run
+	// there as well.
+	//
+	// This comment used to claim the whole list was "the same passes every
+	// backend runs" while the natives ran almost none of it, which is how the
+	// gap #4377 was filed for stayed invisible. If you add a pass here, either
+	// wire it into internal/codegen/{x86_64,arm64} too or say here why it
+	// cannot be. See each pass's doc comment in internal/ir for the ordering
+	// rationale.
 	ir.TailCallOptimize(ip)
 	ir.Inline(ip)
 	// Wasm closure pair: 8 bytes total, env_ptr at offset 4.

@@ -306,8 +306,14 @@ jobs:
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
   # and this ~4-min job would gate all 28 of them on an artifact nobody
   # downloads (no upload here — nothing consumes fern.fern outside this job).
-  # continue-on-error at the test step so a flaky test (e.g. a qemu-aarch64
-  # float blip) is non-fatal; the build step itself stays strict.
+  # The test step is STRICT. It used to carry continue-on-error so a flaky
+  # qemu-aarch64 blip could not fail the lane, but that flag does not
+  # distinguish a flake from a defect: it swallowed every failure in all four
+  # ISOLATED_DRIVER_TESTS, and the check run reported `success` on a step that
+  # had printed `--- FAIL`. TestSelfHostArm64DarwinBuilds failed that way for an
+  # unknown number of runs with no visible signal (#6164) — a lane that cannot
+  # go red is not a gate. A test that is genuinely flaky belongs in
+  # QUARANTINED_TESTS, by name and with its issue, where it is visible.
   cli:
     needs: build
     name: cli-driver-tests-x86_64
@@ -355,7 +361,6 @@ jobs:
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       - name: run isolated fern.fern driver tests (in-process, local cache)
-        continue-on-error: true
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
         run: |
@@ -822,4 +827,19 @@ jobs:
       # adding a shard here without updating the matrix (or vice versa) fails
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
+        id: verify
         run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=20 aarch64=8
+      # The verifier can only see that a marker is ABSENT, so it names all three
+      # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
+      # opposite responses, and #6038 has been read as the apt-stall for
+      # occurrences on x86_64, a lane that runs no apt install. The job record
+      # distinguishes them and is reachable from here, so ask it. Advisory: it
+      # cannot change the verdict (the step above already failed) and exits 0
+      # even when the API is unreachable. The 20 must match the shard job's
+      # timeout-minutes — TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout
+      # fails if they drift.
+      - name: why did a shard leave no outcome
+        if: failure() && steps.verify.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20

@@ -99,6 +99,19 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// were actually written (OR of 8 bytes != 0 → the syscall filled
 		// the buffer; a zero OR would mean it silently failed).
 		{"random_bytes", `function main(): i32 { var b: string = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		// Static aggregate constant (#6149) — a struct literal of constants is
+		// interned as a __DATA block whose first word is an ABSOLUTE pointer to
+		// the shape string. dyld slides a PIE image, so that word needs an
+		// LC_DYLD_INFO_ONLY rebase opcode; without one the shape compare in the
+		// match fails, both arms fall through, and the synthesized fall-off-the-
+		// end block returns 0 (#6259). Only an EXECUTED binary catches that —
+		// the structural half of this test is happy either way — and only with
+		// ASLR on, which is why running it under lldb reports a pass.
+		{"const_agg_union", `struct Add { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Lit;
+function eval(e: Expr): i32 { match (e) { Add(a) => { return a.l + a.r; }, Lit(l) => { return l.v; } } }
+function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42},
 	}
 
 	// darwinKnownGaps names the cases this path does NOT yet handle, each with
@@ -108,12 +121,7 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// silent skip list (which is how the whole exec half of this test went
 	// unrun for as long as it did).
 	darwinKnownGaps := map[string]string{
-		"stat_file": "module is not IR-eligible on the arm64 IR path (no AST emitter left to fall back to)",
-		// Found by the assembler's undefined-label refusal: the darwin runtime
-		// emits no __fern_tcp_listen, and the assembler used to patch the call
-		// to a wild offset instead of refusing it.
-		"tcp_listen_close": "darwin runtime does not emit __fern_tcp_listen",
-		"udp_send":         "returns 94, not the sent byte count",
+		"udp_send": "returns 94, not the sent byte count",
 	}
 
 	// runCase: emit `src` via the self-host CLI for arm64-darwin straight to
@@ -237,8 +245,13 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 	// Linux). stat_file: a regular file reports is_file + its size; stat_dir:
 	// a directory reports is_dir; stat_missing: a bad path hits the Err arm
 	// (needs the errno normalization too).
+	// fs.size is i64, so it needs an explicit narrow to leave an i32 function.
+	// Without the `as i32` this case was simply ill-typed — the native compiler
+	// rejects it with E002 — and the self-host reported it as "module is not IR-
+	// eligible", which read as an IR-subset gap and was recorded as one for as
+	// long as the lane could not go red (#6164).
 	runCase("stat_file",
-		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size; } return 1; }, Err(e) => { return 99; } } }`,
+		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size as i32; } return 1; }, Err(e) => { return 99; } } }`,
 		len(rfContent))
 	runCase("stat_dir",
 		`function main(): i32 { match (stat("`+dir+`")) { Ok(fs) => { if (fs.is_dir) { return 7; } return 1; }, Err(e) => { return 99; } } }`,

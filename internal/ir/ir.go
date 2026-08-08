@@ -17727,10 +17727,18 @@ func (b *builder) boxIntoCellSlot(arg ast.Expr, t ast.Type, slotLabel string) (i
 // drop). When the key was a FRESH owned temporary (a concat / literal /
 // call rather than an Ident / field / index alias the caller still
 // owns), its string buffer is also reclaimed via __fern_str_dec first.
-// wasm-only: cellSlot is only produced when the key was boxed (string K
-// on wasm32). A cellSlot < 0 (unboxed native key) is a no-op.
+// cellSlot < 0 means the key was NOT boxed, so there is nothing to reclaim:
+// every caller initialises it to -1 and only assigns when it boxes, which
+// makes it the complete guard. It used to be paired with `b.ptrW != 4`, on
+// the belief that boxing was wasm32-only — but boxing keys off
+// isStringForBoxing, i.e. off the two-word string ABI, which arm64 also runs
+// under (TwoWordOverride). So on arm64 every string-keyed get / has / delete /
+// get_or allocated a 16-byte key cell and freed nothing: 16 B per lookup, plus
+// another 16 when the key was a fresh temporary whose buffer also went
+// unreleased. Unbounded in a loop, and invisible on x86-64, which does not box
+// (#6243).
 func (b *builder) freeLookupKeyCell(cellSlot int32, keyArg ast.Expr, kType ast.Type) {
-	if cellSlot < 0 || b.ptrW != 4 {
+	if cellSlot < 0 {
 		return
 	}
 	if _, isStr := kType.(ast.StringType); isStr && !needsRcIncOnAlias(keyArg, b) {
