@@ -1,0 +1,446 @@
+// examples/proposals/di.fern — proposal turn, drawn line 256:
+// "A tiny dependency-injection container resolving a graph of constructors."
+//
+// A provider is a name, a list of dependency names, and a constructor closure
+// taking the resolved dependency values. Resolving a name walks the graph
+// depth-first, constructs each dependency before its dependent, and caches
+// what it built.
+//
+// That cache is the whole point, and it is what most hand-written resolvers
+// get wrong. A plain recursive resolve() is correct on a tree and quietly
+// wrong on a DIAMOND: with `app` depending on `a` and `b`, both depending on
+// `config`, the naive version constructs `config` twice and hands out two
+// different instances. Every value is still "right", the program still runs,
+// and the two halves of it disagree about state forever. So the load-bearing
+// test is not that resolution succeeds — it is that each provider's
+// constructor ran EXACTLY ONCE, which the resolver's construction log makes
+// countable.
+//
+// The other two things a container must do are fail well. A missing
+// dependency has to name both the absent provider and who asked for it,
+// because "no provider for Logger" in an app with forty providers is a search
+// rather than a diagnosis. A cycle has to be reported as a cycle, with the
+// path, rather than as a stack overflow — and the self-edge (`a` needs `a`)
+// is the case a `visiting` set catches only if it is consulted before the
+// cache, which is easy to get backwards.
+//
+// What was built is checked against an independent reachability walk, and the
+// ORDER against the declared edges directly — every dependency must appear
+// before its dependent. Both are derived from the graph rather than from the
+// resolver's traversal, so agreement is evidence and not a restatement.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// The constructor takes its dependencies' values, in the order they were
+// declared, and returns this provider's value.
+struct Provider { name: string, deps: string[], make: (i32[]) => i32 }
+
+struct Container { providers: Provider[] }
+
+// Resolution state, threaded rather than mutated: `names`/`vals` are the
+// singleton cache, `order` records construction order for the checks, and
+// `stack` is the active path, which is both the cycle detector and the thing
+// that makes a cycle error readable.
+struct State { names: string[], vals: i32[], order: string[], stack: string[], err: string }
+
+function find_provider(c: Container, name: string): i32 {
+    var i: i32 = 0;
+    while (i < c.providers.len()) {
+        if (c.providers[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function cached(s: State, name: string): i32 {
+    var i: i32 = 0;
+    while (i < s.names.len()) {
+        if (s.names[i] == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function on_stack(s: State, name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.stack.len()) {
+        if (s.stack[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function join(xs: string[], sep: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + sep; }
+        out = out + xs[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// Depth-first resolve. Returns the state and the value; on failure the state
+// carries the first error and the value is 0.
+//
+// The order of the three checks at the top is load-bearing:
+//   1. an error already recorded — stop, so the FIRST failure is reported
+//      rather than the last;
+//   2. the cycle check, BEFORE the cache — a name on the active path has not
+//      been built yet, so consulting the cache first would miss a self-edge
+//      and recurse forever;
+//   3. the cache — a name already built is returned, never rebuilt. This is
+//      the singleton guarantee.
+function resolve(c: Container, s_in: State, name: string, wanted_by: string): (State, i32) {
+    var s: State = s_in;
+    if (s.err.len() > 0) { return (s, 0); }
+
+    if (on_stack(s, name)) {
+        var path: string = join(s.stack, " -> ") + " -> " + name;
+        return (State { names: s.names, vals: s.vals, order: s.order, stack: s.stack,
+            err: "cycle: " + path }, 0);
+    }
+
+    var hit: i32 = cached(s, name);
+    if (hit >= 0) { return (s, s.vals[hit]); }
+
+    var pi: i32 = find_provider(c, name);
+    if (pi < 0) {
+        var who: string = wanted_by;
+        if (who.len() == 0) { who = "(root)"; }
+        return (State { names: s.names, vals: s.vals, order: s.order, stack: s.stack,
+            err: "no provider for \"" + name + "\", wanted by " + who }, 0);
+    }
+
+    s = State { names: s.names, vals: s.vals, order: s.order,
+        stack: s.stack.append(name), err: s.err };
+
+    var args: i32[] = [];
+    var d: i32 = 0;
+    while (d < c.providers[pi].deps.len()) {
+        var (s2, v) = resolve(c, s, c.providers[pi].deps[d], name);
+        s = s2;
+        if (s.err.len() > 0) { return (s, 0); }
+        args = args.append(v);
+        d = d + 1;
+    }
+
+    var made: i32 = (c.providers[pi].make)(args);
+
+    // Pop the path, cache the value, and record that this one was built.
+    var popped: string[] = [];
+    var k: i32 = 0;
+    while (k < s.stack.len() - 1) { popped = popped.append(s.stack[k]); k = k + 1; }
+
+    return (State { names: s.names.append(name), vals: s.vals.append(made),
+        order: s.order.append(name), stack: popped, err: s.err }, made);
+}
+
+function new_state(): State {
+    return State { names: [], vals: [], order: [], stack: [], err: "" };
+}
+
+// ------------------------------------------------------------- oracle
+
+// Breadth-first walk of everything reachable from `root`. Deliberately NOT a
+// topological sort: several orders are valid, so comparing against one of them
+// would fail on a correct resolver that picked another. The test uses this for
+// the set — what must and must not be built — and checks ordering separately
+// against the declared edges.
+function reachable(c: Container, root: string): string[] {
+    var seen: string[] = [];
+    var queue: string[] = [root];
+    while (queue.len() > 0) {
+        var n: string = queue[0];
+        var rest: string[] = [];
+        var i: i32 = 1;
+        while (i < queue.len()) { rest = rest.append(queue[i]); i = i + 1; }
+        queue = rest;
+
+        var already: boolean = false;
+        var j: i32 = 0;
+        while (j < seen.len()) { if (seen[j] == n) { already = true; } j = j + 1; }
+        if (!already) {
+            seen = seen.append(n);
+            var pi: i32 = find_provider(c, n);
+            if (pi >= 0) {
+                var d: i32 = 0;
+                while (d < c.providers[pi].deps.len()) {
+                    queue = queue.append(c.providers[pi].deps[d]);
+                    d = d + 1;
+                }
+            }
+        }
+    }
+    return seen;
+}
+
+function position(xs: string[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == name) { return i; } i = i + 1; }
+    return -1;
+}
+
+// --------------------------------------------------------- test graphs
+
+// The diamond: app -> {a, b} -> config. `config` must be built once.
+function diamond(): Container {
+    return Container { providers: [
+        Provider { name: "config", deps: [], make: (xs: i32[]) => 10 },
+        Provider { name: "a", deps: ["config"], make: (xs: i32[]) => xs[0] + 1 },
+        Provider { name: "b", deps: ["config"], make: (xs: i32[]) => xs[0] + 2 },
+        Provider { name: "app", deps: ["a", "b"], make: (xs: i32[]) => xs[0] * 100 + xs[1] },
+    ] };
+}
+
+function chain(): Container {
+    return Container { providers: [
+        Provider { name: "one", deps: [], make: (xs: i32[]) => 1 },
+        Provider { name: "two", deps: ["one"], make: (xs: i32[]) => xs[0] * 2 },
+        Provider { name: "four", deps: ["two"], make: (xs: i32[]) => xs[0] * 2 },
+        Provider { name: "eight", deps: ["four"], make: (xs: i32[]) => xs[0] * 2 },
+    ] };
+}
+
+// --------------------------------------------------------------- tests
+
+// The property that separates a memoizing container from a naive recursive
+// one. Both produce the same VALUES on this graph; only one builds `config`
+// once. `order` records every construction, so a duplicate is visible.
+function test_a_shared_dependency_is_built_once(): test.TestOutcome {
+    var (s, v) = resolve(diamond(), new_state(), "app", "");
+    if (s.err.len() > 0) { return test.fail("resolve failed: " + s.err); }
+    if (v != 1112) {
+        return test.fail("app resolved to " + v.to_string() + ", want 1112");
+    }
+    var built: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.order.len()) { if (s.order[i] == "config") { built = built + 1; } i = i + 1; }
+    if (built != 1) {
+        return test.fail("config was constructed " + built.to_string()
+            + " times, want 1 — this container is not memoizing");
+    }
+    if (s.order.len() != 4) {
+        return test.fail("built " + s.order.len().to_string() + " providers ["
+            + join(s.order, ",") + "], want 4");
+    }
+    return test.pass();
+}
+
+// Every dependency is constructed before whatever needs it. Checked against
+// the reachable set from an independent traversal, not against the resolver's
+// own order.
+function test_dependencies_are_built_before_dependents(): test.TestOutcome {
+    var graphs: Container[] = [diamond(), chain()];
+    var roots: string[] = ["app", "eight"];
+    var g: i32 = 0;
+    while (g < graphs.len()) {
+        var (s, _) = resolve(graphs[g], new_state(), roots[g], "");
+        if (s.err.len() > 0) { return test.fail("resolve failed: " + s.err); }
+
+        // Everything reachable was built, and nothing else was.
+        var reach: string[] = reachable(graphs[g], roots[g]);
+        if (s.order.len() != reach.len()) {
+            return test.fail("built [" + join(s.order, ",") + "] but reachable is ["
+                + join(reach, ",") + "]");
+        }
+        var r: i32 = 0;
+        while (r < reach.len()) {
+            if (position(s.order, reach[r]) < 0) {
+                return test.fail("reachable provider \"" + reach[r] + "\" was never built");
+            }
+            r = r + 1;
+        }
+        // The ordering claim itself.
+        var p: i32 = 0;
+        while (p < graphs[g].providers.len()) {
+            var me: i32 = position(s.order, graphs[g].providers[p].name);
+            if (me >= 0) {
+                var d: i32 = 0;
+                while (d < graphs[g].providers[p].deps.len()) {
+                    var dep: i32 = position(s.order, graphs[g].providers[p].deps[d]);
+                    if (dep < 0 || dep > me) {
+                        return test.fail("\"" + graphs[g].providers[p].name
+                            + "\" was built before its dependency \""
+                            + graphs[g].providers[p].deps[d] + "\": [" + join(s.order, ",") + "]");
+                    }
+                    d = d + 1;
+                }
+            }
+            p = p + 1;
+        }
+        g = g + 1;
+    }
+    return test.pass();
+}
+
+// A cycle is an error with a path, not a stack overflow. The self-edge is
+// included because it only works if the cycle check runs BEFORE the cache
+// lookup — the ordering the resolver's comment calls out.
+function test_cycles_are_reported_with_their_path(): test.TestOutcome {
+    var two: Container = Container { providers: [
+        Provider { name: "a", deps: ["b"], make: (xs: i32[]) => 1 },
+        Provider { name: "b", deps: ["a"], make: (xs: i32[]) => 2 },
+    ] };
+    var (s1, _) = resolve(two, new_state(), "a", "");
+    if (!s1.err.starts_with("cycle:")) {
+        return test.fail("two-node cycle gave: \"" + s1.err + "\"");
+    }
+    if (!s1.err.contains("a -> b -> a")) {
+        return test.fail("cycle path is not readable: \"" + s1.err + "\"");
+    }
+
+    var self: Container = Container { providers: [
+        Provider { name: "s", deps: ["s"], make: (xs: i32[]) => 1 },
+    ] };
+    var (s2, _) = resolve(self, new_state(), "s", "");
+    if (!s2.err.starts_with("cycle:")) {
+        return test.fail("self-edge gave: \"" + s2.err + "\"");
+    }
+    if (!s2.err.contains("s -> s")) {
+        return test.fail("self-edge path is not readable: \"" + s2.err + "\"");
+    }
+
+    // A longer cycle reached through a valid prefix: the healthy part still
+    // builds, and the error still names the loop rather than the entry point.
+    var deep: Container = Container { providers: [
+        Provider { name: "root", deps: ["x"], make: (xs: i32[]) => 1 },
+        Provider { name: "x", deps: ["y"], make: (xs: i32[]) => 1 },
+        Provider { name: "y", deps: ["x"], make: (xs: i32[]) => 1 },
+    ] };
+    var (s3, _) = resolve(deep, new_state(), "root", "");
+    if (!s3.err.contains("x -> y -> x")) {
+        return test.fail("deep cycle path is \"" + s3.err + "\"");
+    }
+    return test.pass();
+}
+
+// A missing provider names both the absent name and who wanted it. Without
+// the second half the message is a search, not a diagnosis.
+function test_a_missing_provider_names_who_wanted_it(): test.TestOutcome {
+    var c: Container = Container { providers: [
+        Provider { name: "app", deps: ["logger"], make: (xs: i32[]) => 1 },
+    ] };
+    var (s, _) = resolve(c, new_state(), "app", "");
+    if (!s.err.contains("no provider for \"logger\"")) {
+        return test.fail("missing dep error is \"" + s.err + "\"");
+    }
+    if (!s.err.contains("wanted by app")) {
+        return test.fail("error does not say who wanted it: \"" + s.err + "\"");
+    }
+    // A missing ROOT has no requester, and must say so rather than printing
+    // an empty name.
+    var (s2, _) = resolve(c, new_state(), "nope", "");
+    if (!s2.err.contains("wanted by (root)")) {
+        return test.fail("missing root error is \"" + s2.err + "\"");
+    }
+    return test.pass();
+}
+
+// Resolving twice from the same state reuses the cache and constructs
+// nothing new — the property a container relies on to hand the SAME instance
+// to every later caller.
+function test_resolving_again_builds_nothing(): test.TestOutcome {
+    var (s1, v1) = resolve(diamond(), new_state(), "app", "");
+    if (s1.err.len() > 0) { return test.fail("first resolve failed: " + s1.err); }
+    var built_first: i32 = s1.order.len();
+
+    var (s2, v2) = resolve(diamond(), s1, "app", "");
+    if (s2.err.len() > 0) { return test.fail("second resolve failed: " + s2.err); }
+    if (v2 != v1) {
+        return test.fail("second resolve gave " + v2.to_string() + ", first gave " + v1.to_string());
+    }
+    if (s2.order.len() != built_first) {
+        return test.fail("second resolve built " + (s2.order.len() - built_first).to_string()
+            + " more providers");
+    }
+    // Resolving an interior node is also free.
+    var (s3, va) = resolve(diamond(), s2, "a", "");
+    if (s3.order.len() != built_first) { return test.fail("resolving \"a\" rebuilt something"); }
+    if (va != 11) { return test.fail("a = " + va.to_string() + ", want 11"); }
+    return test.pass();
+}
+
+function test_degenerate_graphs(): test.TestOutcome {
+    var empty: Container = Container { providers: [] };
+    var (s, _) = resolve(empty, new_state(), "anything", "");
+    if (!s.err.contains("no provider")) { return test.fail("empty container: \"" + s.err + "\""); }
+
+    var solo: Container = Container { providers: [
+        Provider { name: "only", deps: [], make: (xs: i32[]) => 42 },
+    ] };
+    var (s2, v) = resolve(solo, new_state(), "only", "");
+    if (s2.err.len() > 0) { return test.fail("solo failed: " + s2.err); }
+    if (v != 42) { return test.fail("solo gave " + v.to_string()); }
+    if (s2.order.len() != 1) { return test.fail("solo built " + s2.order.len().to_string()); }
+
+    // A provider depending on the same name twice gets it once, and the
+    // constructor still receives two arguments.
+    var twice: Container = Container { providers: [
+        Provider { name: "base", deps: [], make: (xs: i32[]) => 5 },
+        Provider { name: "pair", deps: ["base", "base"], make: (xs: i32[]) => xs[0] + xs[1] },
+    ] };
+    var (s3, p) = resolve(twice, new_state(), "pair", "");
+    if (s3.err.len() > 0) { return test.fail("duplicate dep failed: " + s3.err); }
+    if (p != 10) { return test.fail("pair = " + p.to_string() + ", want 10"); }
+    var builds: i32 = 0;
+    var i: i32 = 0;
+    while (i < s3.order.len()) { if (s3.order[i] == "base") { builds = builds + 1; } i = i + 1; }
+    if (builds != 1) { return test.fail("base built " + builds.to_string() + " times, want 1"); }
+    return test.pass();
+}
+
+// A failure must not leave half-built state that a later resolve trusts.
+function test_a_failed_resolve_reports_the_first_error(): test.TestOutcome {
+    var c: Container = Container { providers: [
+        Provider { name: "app", deps: ["good", "missing"], make: (xs: i32[]) => 1 },
+        Provider { name: "good", deps: [], make: (xs: i32[]) => 7 },
+    ] };
+    var (s, _) = resolve(c, new_state(), "app", "");
+    if (!s.err.contains("no provider for \"missing\"")) {
+        return test.fail("expected the missing-dep error, got \"" + s.err + "\"");
+    }
+    // "good" legitimately built before the failure was reached; what must NOT
+    // happen is "app" being recorded as built.
+    if (position(s.order, "app") >= 0) {
+        return test.fail("app was recorded as built despite failing");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("di — a container resolving a graph of constructors");
+
+    var (s, v) = resolve(diamond(), new_state(), "app", "");
+    eprint("diamond: app = " + v.to_string() + "  built [" + join(s.order, ", ") + "]");
+    var (s2, v2) = resolve(chain(), new_state(), "eight", "");
+    eprint("chain:   eight = " + v2.to_string() + "  built [" + join(s2.order, ", ") + "]");
+
+    var bad: Container = Container { providers: [
+        Provider { name: "a", deps: ["b"], make: (xs: i32[]) => 1 },
+        Provider { name: "b", deps: ["a"], make: (xs: i32[]) => 2 },
+    ] };
+    var (s3, _) = resolve(bad, new_state(), "a", "");
+    eprint("cycle:   " + s3.err);
+
+    var miss: Container = Container { providers: [
+        Provider { name: "app", deps: ["logger"], make: (xs: i32[]) => 1 },
+    ] };
+    var (s4, _) = resolve(miss, new_state(), "app", "");
+    eprint("missing: " + s4.err);
+
+    var r: test.TestRunner = test.test_new("di");
+    r = r.it("a shared dependency is built once", test_a_shared_dependency_is_built_once);
+    r = r.it("dependencies are built before dependents", test_dependencies_are_built_before_dependents);
+    r = r.it("cycles are reported with their path", test_cycles_are_reported_with_their_path);
+    r = r.it("a missing provider names who wanted it", test_a_missing_provider_names_who_wanted_it);
+    r = r.it("resolving again builds nothing", test_resolving_again_builds_nothing);
+    r = r.it("degenerate graphs", test_degenerate_graphs);
+    r = r.it("a failed resolve reports the first error", test_a_failed_resolve_reports_the_first_error);
+    return r.finish();
+}
