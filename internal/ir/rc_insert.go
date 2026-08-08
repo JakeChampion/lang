@@ -295,8 +295,11 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 //     box this lowering stores in ptrSlot and dispatches on via OpMatchTag);
 //   - every NAMED arm binding is non-pointer, so no pointer payload is
 //     extracted into a binding that would outlive (and alias) the freed box.
-//     A `_` position is exempt: it extracts nothing, and the generated
-//     per-enum drop releases that payload variant-aware and deep;
+//     The drop here is DEEP (__drop_enum_<Name> releases payloads), so a
+//     surviving binding dangles rather than merely leaking — this refusal is a
+//     soundness requirement, not the conservatism the self-host's shallow-dec
+//     sibling was widened out of. A `_` position is exempt: it extracts
+//     nothing;
 //   - for the expression form, the RESULT is non-pointer too (`resultType`;
 //     pass nil for the statement form, which yields no value).
 //
