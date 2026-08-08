@@ -388,7 +388,7 @@ function parse_dec_i64(s: string): i64 {
 // out of the integer place is the next bit); round on the next bit + a
 // sticky flag (buffer remainder, or digits truncated at parse). Assemble-
 // time only, so the O(digits × exponent) shifting cost is irrelevant.
-// Keep in sync with x86_gas_parse_f64 (x86_gas.fern) and arm64_parse_f64
+// Keep in sync with x86_gas_parse_f64 (x86_native.fern) and arm64_parse_f64
 // (arm64_native.fern) — the three assemblers are deliberately import-free,
 // so the algorithm is mirrored, not shared.
 pub function parse_f64(s: string): f64 {

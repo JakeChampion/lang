@@ -14,7 +14,7 @@
 // examples/self_host/arm64_encode.fern — a self-hosted AArch64 (arm64)
 // machine-code encoder: one function per instruction form, each appending
 // the 4-byte fixed-width little-endian encoding to an `i32[]` byte buffer.
-// It is the arm64 counterpart of x86_encode.fern and the assembler half of
+// It is the arm64 counterpart of x86_native.fern PART 1 and the assembler half of
 // the arm64-darwin native-binary path (the container half is macho.fern),
 // mirroring the Go reference internal/native/arm64/arm64.go.
 //
@@ -26,7 +26,7 @@
 // encode -> wrap -> run pipeline can be proven before the full instruction
 // surface lands.
 //
-// Conventions (matching x86_encode.fern / elf.fern):
+// Conventions (matching x86_native.fern / elf.fern):
 //   * A byte buffer is an `i32[]` of values in 0..255; each encoder appends
 //     to it and returns the (possibly grown) buffer (`buf = f(buf, …)`).
 //   * Instruction *word* helpers (`arm64_*_word`) return the 32-bit
@@ -367,7 +367,7 @@ function arm64_bl(buf: i32[], rel: i32): i32[] {
 //
 // Arm64Asm threads the code buffer plus a label table (name -> byte
 // offset) and a fixup queue for branches whose target is not yet placed.
-// It is the arm64 counterpart of X86Asm in x86_encode.fern. Branch
+// It is the arm64 counterpart of X86Asm in x86_native.fern. Branch
 // displacements are PC-relative to the branch instruction itself, so a
 // fixup records the instruction's byte offset and resolve patches with
 // rel = target_off - instr_off. fix_kinds distinguishes the immediate
@@ -1448,14 +1448,14 @@ function arm64_cvtf(buf: i32[], rd_fp: i32, rn_gpr: i32, w: boolean, unsigned: b
 // examples/self_host/arm64_gas.fern — a self-hosted AArch64 GAS-text
 // assembler: it parses an assembly-text subset into machine-code bytes via
 // the arm64_encode.fern encoders + named-label assembler (Arm64Asm). It is
-// the arm64 counterpart of x86_gas.fern and the text->bytes step that lets
+// the arm64 counterpart of x86_native.fern PART 2 and the text->bytes step that lets
 // the arm64-darwin native path turn `asm_arm64`-style assembly into a
 // runnable Mach-O (via macho.fern) with no external `as`/`clang`.
 //
 // This module `import`s nothing but depends on the names defined in
 // arm64_encode.fern (the encoders + Arm64Asm), so a build / test
 // concatenates the two (plus macho.fern) the same way the x86 gas slices
-// concatenate x86_encode.fern.
+// concatenate x86_native.fern.
 //
 // Supported subset (the canonical AArch64 GAS spellings):
 //   mov Xd, #imm | mov Xd, Xm | movz/movk Xd, #imm{, lsl #s}

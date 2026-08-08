@@ -143,9 +143,8 @@ func TestSelfHostParseF64Watbin(t *testing.T) {
 func TestSelfHostParseF64X86Gas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	enc := mustRead(t, "../../examples/self_host/x86_encode.fern")
-	gas := mustRead(t, "../../examples/self_host/x86_gas.fern")
-	prog := "import \"std/io\";\n" + string(enc) + "\n" + string(gas) + "\n" +
+	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
+	prog := "import \"std/io\";\n" + string(nat) + "\n" +
 		strings.ReplaceAll(parseF64DriverBody, "PARSE", "x86_gas_parse_f64")
 	runParseF64Driver(t, gcc, runner, dir, "pf64_x86gas", prog)
 }

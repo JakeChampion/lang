@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -38,8 +39,15 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	// runDriver runs the CLI with args and returns (stdout, exitcode).
+	//
+	// Selects `x86-64-asm` when the caller names no target, because these
+	// cases assert on GAS TEXT and then hand it to gcc. The default target,
+	// `x86-64`, assembles and links in-process and would hand them an ELF.
 	runDriver := func(t *testing.T, args ...string) ([]byte, int) {
 		t.Helper()
+		if !slices.Contains(args, "-target") {
+			args = append([]string{"-target", "x86-64-asm"}, args...)
+		}
 		cmd := exec.Command(fernBin, args...)
 		out, _ := cmd.Output()
 		return out, cmd.ProcessState.ExitCode()
@@ -709,7 +717,7 @@ function main(): i32 {
 		// is a false positive. This is the bundle-wide FP guard the
 		// differential corpus can't express, mirroring the manual
 		// "fern -check over every module" validation prior slices used.
-		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "elf.fern", "fern.fern"} {
+		for _, m := range []string{"asmcore.fern", "lexer.fern", "parser.fern", "checker.fern", "flatten.fern", "interp.fern", "printer.fern", "astwalk.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "arm64_native.fern", "x86_native.fern", "elf.fern", "fern.fern"} {
 			combined, _ := exec.Command(fernBin, "-check", filepath.Join(dir, m)).CombinedOutput()
 			if strings.Contains(string(combined), "error[E001]") {
 				t.Errorf("-check on self-host module %s reported a spurious E001:\n%s", m, combined)

@@ -15,7 +15,7 @@ import (
 // retain on the new one. Since #5972 deleted the register-backend AST emitters
 // that bail is a hard error on x86-64 / arm64 ("module is not IR-eligible; the
 // AST emitter is no longer reachable from this driver"), and on wasm it was the
-// first mode-0 decliner — `a.code = x86_mov_r32_imm32(…)` in x86_encode.fern.
+// first mode-0 decliner — `a.code = x86_mov_r32_imm32(…)` in x86_native.fern.
 //
 // What lowers now, and the ownership rules (see the arm's comment):
 //
@@ -61,7 +61,7 @@ function main(): i32 { var s: S = S { code: [], n: 0 }; var o: i32[] = [7, 8, 9]
 		17,
 	},
 	{
-		// Repeated replacement, the x86_encode.fern shape: the field is
+		// Repeated replacement, the x86_native.fern shape: the field is
 		// reassigned in a loop and read after. Each replaced buffer leaks (by
 		// design, above), but the value read must be the LAST one stored.
 		"set-in-loop",

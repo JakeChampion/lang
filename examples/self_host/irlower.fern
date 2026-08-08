@@ -14443,7 +14443,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 //
                                 // This is what used to bail to the AST emitter, and is
                                 // the first mode-0 wasm decliner: `a.code = enc(…)` in
-                                // x86_encode.fern.
+                                // x86_native.fern.
                                 var fmft: string = decl_field_type(s.structs, fsty, fname);
                                 var fm_is_arr: boolean = is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.structs, fmft);
                                 var fidx: i32 = s.field_index_in(fsty, fname);

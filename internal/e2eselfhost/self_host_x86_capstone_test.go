@@ -11,7 +11,7 @@ import (
 // TestSelfHostX86Capstone is the milestone of the native-binary track: it
 // takes the AT&T assembly the self-hosted compiler (asm.fern) emits for a
 // real Fern program, feeds that text through the self-hosted GAS front-end
-// (x86_gas.fern) + ELF writer (elf.fern), and runs the resulting binary
+// (x86_native.fern PART 2) + ELF writer (elf.fern), and runs the resulting binary
 // NATIVELY on x86-64 — with no external `as` or `ld` anywhere.
 //
 //   - Stage A: build asm_run.fern (source -> AT&T asm) via the Go
@@ -41,10 +41,9 @@ func TestSelfHostX86Capstone(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_run.fern", "wasm_run.fern")
 	asmRun := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "asm_run")
 	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-	enc := mustRead(t, "../../examples/self_host/x86_encode.fern")
-	gas := mustRead(t, "../../examples/self_host/x86_gas.fern")
+	nat := mustRead(t, "../../examples/self_host/x86_native.fern")
 	elf := mustRead(t, "../../examples/self_host/elf.fern")
-	prelude := string(enc) + "\n" + string(gas) + "\n" + string(elf) + "\n"
+	prelude := string(nat) + "\n" + string(elf) + "\n"
 
 	// Build the (constant) driver once.
 	driverWat := runCapture(t, gcc, runner, wasmRun, []byte(prelude+x86CapstoneDriver))

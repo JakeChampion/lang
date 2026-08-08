@@ -1,5 +1,18 @@
 # Toolchain self-hosting plan
 
+> **Update — the SELF-HOST compiler now matches on Linux.** Everything
+> below describes the *native* (Go) compiler, which reached the
+> no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had
+> only reached it for `-target arm64` / `-target arm64-darwin`;
+> `-target x86-64` still emitted `.s` for an external assembler. It now
+> assembles and links in-process too, via `examples/self_host/x86_native.fern`
+> (the merged encoder + GAS front-end, the x86 sibling of
+> `arm64_native.fern`) and `elf.fern`. `-target x86-64-asm` is the escape
+> hatch that still emits GAS text — the shape a harness assembling with its
+> own toolchain wants, and the only way to observe the emitter in isolation.
+> This closes precondition 2 of the backend-retirement list in
+> `NATIVE-CONVERGENCE.md §3a`.
+
 > **Status (2026-05-28): all phases complete.** The default build of
 > `fern -o out src.fern` now requires **no binary on `$PATH` other than
 > the `fern` compiler itself** for any supported target — arm64-Linux,

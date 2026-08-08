@@ -1,0 +1,3057 @@
+// examples/self_host/x86_native.fern — the x86-64 Linux native-binary
+// backend as a single module: the x86-64 machine-code encoder + named-
+// label assembler (was x86_encode.fern) and the GAS-text front-end (was
+// x86_gas.fern). Merged into one module so the unified fern CLI can
+// `import "./x86_native"` and drive emit -> assemble -> ELF without
+// cross-module bare references — the same reason arm64_native.fern is one
+// module. The container half is elf.fern. The pieces stay logically
+// separable; the section banners below mark the former file boundaries.
+
+// ============================================================
+// PART 1 — x86-64 encoder + named-label assembler
+// ============================================================
+
+// Formerly examples/self_host/x86_encode.fern — x86-64 machine-code
+// encoding primitives for the self-hosted *native* backend (slice 2a of the
+// native-binary track; the container half is elf.fern). This is the
+// assembler half: it turns instructions into the raw bytes an ELF .text
+// section holds, mirroring internal/native/x86_64/asm.go.
+//
+// Strategy (matching the wasm binary track): the eventual native emitter
+// will *assemble the already-tested asm.fern text* — tokenize → parse →
+// encode — rather than duplicate asm.fern's instruction selection. This
+// slice provides the lowest layer that work builds on: the byte-level
+// encoders for a core integer + syscall instruction subset, enough to
+// assemble (with elf.fern) a runnable exit(N) program end-to-end.
+//
+// Conventions (matching leb128.fern / wat_encode.fern / elf.fern):
+//   * A byte buffer is an `i32[]` of values in 0..255; each encoder
+//     appends to it and returns the (possibly grown) buffer.
+//   * This module is intentionally **import-free** so the native emitter
+//     can `import "./x86_encode"` and the unit test can concatenate it
+//     with a driver `main()` for the single-module wasm_run driver.
+//
+// Register numbering (System V / Intel low-3-bit encoding, shared between
+// the 32-bit eXX and 64-bit rXX views — only the prefix/opcode picks the
+// operand size). Slice 2a covers the 8 base registers (0..7); the
+// extended registers r8..r15 (which need REX.R / REX.B) come in a later
+// slice.
+
+function x86_rax(): i32 { return 0; }
+function x86_rcx(): i32 { return 1; }
+function x86_rdx(): i32 { return 2; }
+function x86_rbx(): i32 { return 3; }
+function x86_rsp(): i32 { return 4; }
+function x86_rbp(): i32 { return 5; }
+function x86_rsi(): i32 { return 6; }
+function x86_rdi(): i32 { return 7; }
+
+// x86_rex_w is the REX.W prefix (0x48): "this is a 64-bit operation" with
+// no extended-register bits (the operands are r0..r7).
+function x86_rex_w(): i32 { return 72; }
+
+// x86_rex builds a REX prefix byte 0x40 | W<<3 | R<<2 | X<<1 | B, setting
+// the extension bits from the register numbers: REX.R for a ModR/M reg
+// field >= 8, REX.X for a SIB index >= 8, REX.B for the ModR/M rm / SIB
+// base / opcode-embedded register >= 8. Pass w=1 for 64-bit ops. Registers
+// r8..r15 are numbered 8..15; the low 3 bits go in the ModR/M / SIB
+// fields (which already mask with & 7).
+function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
+    var v: i32 = 64; // 0x40
+    if (w != 0) { v = v | 8; }
+    if (reg >= 8) { v = v | 4; }
+    if (index >= 8) { v = v | 2; }
+    if (base >= 8) { v = v | 1; }
+    return v;
+}
+
+// x86_le32 appends the 4 bytes of `v`, little-endian (for imm32 / disp32).
+// `>>` is arithmetic; the `& 255` after each shift discards sign-extended
+// high bits, so the result is correct for any 32-bit value.
+function x86_le32(buf: i32[], v: i32): i32[] {
+    buf = buf.append(v & 255);
+    buf = buf.append((v >> 8) & 255);
+    buf = buf.append((v >> 16) & 255);
+    buf = buf.append((v >> 24) & 255);
+    return buf;
+}
+
+// x86_modrm builds a ModR/M byte: (mod << 6) | (reg << 3) | rm. mod=3
+// (0b11) selects the register-direct form (rm names a register, not a
+// memory operand).
+function x86_modrm(md: i32, reg: i32, rm: i32): i32 {
+    return ((md & 3) << 6) | ((reg & 7) << 3) | (rm & 7);
+}
+
+// ---- instruction encoders ----
+
+// x86_mov_r32_imm32: `mov <reg32>, imm32` — opcode 0xB8+rd then imm32.
+// The 32-bit write zero-extends into the full 64-bit register, which is
+// the cheapest way to load a small constant (e.g. a syscall number). For
+// r8..r15 a REX.B prefix (no W) extends the embedded register.
+function x86_mov_r32_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    if (reg >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
+    }
+    buf = buf.append(184 + (reg & 7)); // 0xB8 + rd
+    return x86_le32(buf, imm);
+}
+
+// x86_mov_r64_imm32: `movq $imm, <reg>` — REX.W + 0xC7 /0 id. The immediate
+// is SIGN-extended; x86_mov_r32_imm32 above zero-extends and is correct only
+// for immediates known non-negative.
+function x86_mov_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg));
+    buf = buf.append(199); // 0xC7
+    buf = buf.append(x86_modrm(3, 0, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_mov_r64_r64: `mov <dst>, <src>` (64-bit) — REX.W + 0x89 /r, where
+// the ModR/M reg field is the source and r/m is the destination.
+function x86_mov_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(137); // 0x89
+    buf = buf.append(x86_modrm(3, src, dst));
+    return buf;
+}
+
+// x86_add_r64_r64: `add <dst>, <src>` (64-bit) — REX.W + 0x01 /r.
+function x86_add_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(1); // 0x01
+    buf = buf.append(x86_modrm(3, src, dst));
+    return buf;
+}
+
+// x86_sub_r64_r64: `sub <dst>, <src>` (64-bit) — REX.W + 0x29 /r.
+function x86_sub_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(41); // 0x29
+    buf = buf.append(x86_modrm(3, src, dst));
+    return buf;
+}
+
+// x86_push_r64: `push <reg>` — 0x50+rd (a REX.B prefix for r8..r15;
+// push defaults to 64-bit, so no REX.W).
+function x86_push_r64(buf: i32[], reg: i32): i32[] {
+    if (reg >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B = 0x41
+    }
+    return buf.append(80 + (reg & 7)); // 0x50 + rd
+}
+
+// x86_push_imm32: `push $imm` (0x68 id) — push a sign-extended imm32.
+function x86_push_imm32(buf: i32[], imm: i32): i32[] {
+    buf = buf.append(104); // 0x68
+    return x86_le32(buf, imm);
+}
+
+// x86_pop_r64: `pop <reg>` — 0x58+rd (REX.B for r8..r15).
+function x86_pop_r64(buf: i32[], reg: i32): i32[] {
+    if (reg >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
+    }
+    return buf.append(88 + (reg & 7)); // 0x58 + rd
+}
+
+// x86_syscall: the 2-byte `syscall` instruction (0x0F 0x05).
+function x86_syscall(buf: i32[]): i32[] {
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(5);  // 0x05
+    return buf;
+}
+
+// x86_ret: `ret` (0xC3).
+function x86_ret(buf: i32[]): i32[] {
+    return buf.append(195); // 0xC3
+}
+
+// x86_leave: `leave` (0xC9) — mov rsp, rbp ; pop rbp, the standard frame
+// teardown asm.fern emits.
+function x86_leave(buf: i32[]): i32[] {
+    return buf.append(201); // 0xC9
+}
+
+// ---- more integer ops (slice 2h) ----
+
+// x86_unary_r64 encodes a single-register group op: REX.W + opcode +
+// ModR/M(3, slash, reg). inc/dec use 0xFF (slash 0/1); neg/div/idiv use
+// 0xF7 (slash 3/6/7).
+function x86_unary_r64(buf: i32[], opcode: i32, slash: i32, reg: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, slash, reg));
+    return buf;
+}
+
+// x86_inc_r64 / x86_dec_r64 / x86_neg_r64 / x86_div_r64 / x86_idiv_r64.
+function x86_inc_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 0, reg); }
+function x86_dec_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 1, reg); }
+function x86_neg_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 3, reg); }
+function x86_div_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 6, reg); }
+function x86_idiv_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 7, reg); }
+
+// x86_cqo: `cqo` (0x48 0x99) — sign-extend rax into rdx:rax before idiv.
+function x86_cqo(buf: i32[]): i32[] {
+    buf = buf.append(x86_rex_w());
+    buf = buf.append(153); // 0x99
+    return buf;
+}
+
+// x86_binop_r64_r64 encodes a `<op> <dst>, <src>` reg-reg form: REX.W +
+// opcode + ModR/M(3, src, dst). Used by and (0x21) / or (0x09) / xor
+// (0x31), matching add (0x01) / sub (0x29)'s shape.
+function x86_binop_r64_r64(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, 0, dst));
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, src, dst));
+    return buf;
+}
+
+function x86_and_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 33, dst, src); }
+function x86_or_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 9, dst, src); }
+function x86_xor_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 49, dst, src); }
+
+// x86_test_r64_r64: `test <a>, <b>` (REX.W + 0x85 /r). TEST is symmetric;
+// the reg field is `b`, r/m is `a`.
+function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.append(x86_rex(1, b, 0, a));
+    buf = buf.append(133); // 0x85
+    buf = buf.append(x86_modrm(3, b, a));
+    return buf;
+}
+
+// x86_test_r64_imm32: `testq $imm32, <reg>` — REX.W F7 /0 id. GNU as picks
+// the shorter A9 form for rax; F7 /0 encodes every register uniformly.
+function x86_test_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg));
+    buf = buf.append(247); // 0xF7
+    buf = buf.append(x86_modrm(3, 0, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_imul_r64_r64: `imul <dst>, <src>` (REX.W + 0x0F 0xAF /r). Note the
+// operand convention is reg=dst, r/m=src — the reverse of add/and.
+function x86_imul_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(175); // 0xAF
+    buf = buf.append(x86_modrm(3, dst, src));
+    return buf;
+}
+
+// x86_shl_r64_imm8: `shl <reg>, imm8` (REX.W + 0xC1 /4 ib).
+function x86_shl_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_shift_r64_imm8(buf, 4, reg, imm);
+}
+
+// x86_shift_r64_imm8: `<shift>q $imm8, <reg>` (REX.W + 0xC1 /slash ib),
+// the immediate-count sibling of x86_shift_r64_cl (shl 4, shr 5, sar 7).
+function x86_shift_r64_imm8(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, slash, reg));
+    return buf.append(imm & 255);
+}
+
+// x86_sar_r64_imm8: `sarq $imm8, <reg>` (REX.W + 0xC1 /7 ib).
+function x86_sar_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_shift_r64_imm8(buf, 7, reg, imm);
+}
+
+// x86_shr_r64_imm8: `shrq $imm8, <reg>` (REX.W + 0xC1 /5 ib) — the 64-bit
+// sibling of x86_shr_r32_imm8. asm.fern's freelist size-class computation
+// (`shrq $3, %rcx`) needs the full-width logical shift.
+function x86_shr_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, 5, reg));
+    buf = buf.append(imm & 255);
+    return buf;
+}
+
+// x86_bt_r64_imm8: `btq $imm8, <reg>` (REX.W 0F BA /4 ib) — copies the
+// selected bit into CF. asm.fern emits it (with a following jc) for the RC
+// sentinel-bit test in the array-push fast path.
+function x86_bt_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(186); // 0xBA
+    buf = buf.append(x86_modrm(3, 4, reg));
+    buf = buf.append(imm & 255);
+    return buf;
+}
+
+// ---- memory operands (slice 2e) ----
+//
+// A memory operand `[base + disp]` is encoded by the ModR/M byte's mod/rm
+// fields plus an optional SIB byte and displacement. Two registers need
+// special handling:
+//   * rsp (rm=100) is the SIB escape — any `[rsp + …]` needs a SIB byte
+//     (scale=0, index=100=none, base=100=rsp);
+//   * rbp (rm=101) can't use mod=00 (that encoding means RIP-relative), so
+//     `[rbp]` is emitted as mod=01 with a zero disp8.
+// mod selects the displacement size: 00 = none, 01 = disp8, 10 = disp32.
+// Slice 2e covers the base registers (0..7); index/scale addressing is a
+// later need.
+
+// x86_sib builds a SIB byte: (scale << 6) | (index << 3) | base.
+function x86_sib(scale: i32, index: i32, base: i32): i32 {
+    return ((scale & 3) << 6) | ((index & 7) << 3) | (base & 7);
+}
+
+// x86_emit_mem appends the ModR/M (+ optional SIB + displacement) for a
+// memory operand `[base + disp]` with the given ModR/M `reg` field (the
+// other operand — a register for load/store).
+function x86_emit_mem(buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
+    var b: i32 = base & 7;
+    var is_rsp: boolean = (b == 4); // SIB escape
+    var is_rbp: boolean = (b == 5); // no mod=00 form
+
+    var md: i32 = 2;        // default: disp32
+    var has_disp8: boolean = false;
+    if (disp == 0 && !is_rbp) {
+        md = 0;             // no displacement
+    } else if (disp >= (0 - 128) && disp <= 127) {
+        md = 1;             // disp8
+        has_disp8 = true;
+    }
+
+    buf = buf.append(x86_modrm(md, reg, b));
+    if (is_rsp) {
+        buf = buf.append(x86_sib(0, 4, 4)); // [rsp], no index
+    }
+    if (has_disp8) {
+        buf = buf.append(disp & 255);
+    } else {
+        if (md == 2) {
+            buf = x86_le32(buf, disp);
+        }
+    }
+    return buf;
+}
+
+// x86_mov_load_r64: `mov <dst>, [base + disp]` — REX.W + 0x8B /r.
+function x86_mov_load_r64(buf: i32[], dst: i32, base: i32, disp: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, base));
+    buf = buf.append(139); // 0x8B
+    return x86_emit_mem(buf, dst, base, disp);
+}
+
+// x86_mov_store_r64: `mov [base + disp], <src>` — REX.W + 0x89 /r.
+function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, 0, base));
+    buf = buf.append(137); // 0x89
+    return x86_emit_mem(buf, src, base, disp);
+}
+
+// x86_mov_store_imm32: `movq $imm32, disp(%base[,%index,scale])` — a 64-bit
+// immediate-to-memory store (REX.W C7 /0 + mem operand + sign-extended imm32).
+// asm.fern emits it for the array-box header init (`movq $1, 8(%rax)` — the
+// refcount) and similar constant stores. x86_gas_movq previously mis-routed a
+// `$imm` source into its immediate-to-REGISTER branch regardless of the
+// destination, so `movq $1, 8(%rax)` emitted `mov $1, %edi` (clobbering %rdi)
+// and dropped the store — corrupting every freshly-boxed array's count field,
+// which crashed the string-keyed-map compare (mapstr).
+function x86_mov_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, 0, ix, base));
+    buf = buf.append(199); // 0xC7 /0
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return x86_le32(buf, imm);
+}
+
+// x86_movl_store_imm32: `movl $imm32, disp(%base)` (C7 /0 m32 id, no
+// REX.W) — the 32-bit sibling of x86_mov_store_imm32. asm.fern emits it
+// to zero a freed box's 32-bit refcount field (`movl $0, -8(%rax)`).
+function x86_movl_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, 0, ix, base);
+    buf = buf.append(199); // 0xC7 /0
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return x86_le32(buf, imm);
+}
+
+// x86_alu_store_r64: `<alu>q %src, disp(%base)` — the store-form ALU
+// (add 0x01 / sub 0x29 / cmp 0x39) with a memory destination, the mirror
+// of x86_alu_load_r64. asm.fern emits the cmp form for the array-push
+// capacity check (`cmpq %rcx, -16(%rax)`).
+function x86_alu_store_r64(buf: i32[], opcode: i32, src: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, src, ix, base));
+    buf = buf.append(opcode);
+    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
+}
+
+// ---- SIB index addressing (slice 2j) ----
+//
+// `[base + index*scale + disp]` needs a SIB byte (ModR/M rm = 100). The
+// scale field encodes 1/2/4/8 as 0/1/2/3. base rbp/r13 still forces a
+// disp8 (no mod=00 form), as in x86_emit_mem.
+
+// x86_lea_idx_nobase: `lea disp(,%index,scale), <dst>` — REX.W 8D with a
+// SIB whose base field is 101 (no base) and mod=00, so a disp32 always
+// follows. Element-offset computation.
+function x86_lea_idx_nobase(buf: i32[], dst: i32, index: i32, scale: i32, disp: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, index, 0));
+    buf = buf.append(141); // 0x8D
+    buf = buf.append(x86_modrm(0, dst, 4)); // SIB follows
+    buf = buf.append(x86_sib(x86_scale_bits(scale), index, 5)); // base 101 = none
+    return x86_le32(buf, disp);
+}
+
+// x86_scale_bits maps a scale (1/2/4/8) to its 2-bit SIB field.
+function x86_scale_bits(scale: i32): i32 {
+    if (scale == 2) { return 1; }
+    if (scale == 4) { return 2; }
+    if (scale == 8) { return 3; }
+    return 0; // scale 1 (or default)
+}
+
+// x86_emit_mem_idx appends the ModR/M + SIB (+ displacement) for
+// `[base + index*scale + disp]` with the given ModR/M `reg` field.
+function x86_emit_mem_idx(buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
+    var b: i32 = base & 7;
+    var is_rbp: boolean = (b == 5);
+    var md: i32 = 2;
+    var has_disp8: boolean = false;
+    if (disp == 0 && !is_rbp) {
+        md = 0;
+    } else {
+        if (disp >= (0 - 128) && disp <= 127) {
+            md = 1;
+            has_disp8 = true;
+        }
+    }
+    buf = buf.append(x86_modrm(md, reg, 4)); // rm = 100 -> SIB
+    buf = buf.append(x86_sib(x86_scale_bits(scale), index, base));
+    if (has_disp8) {
+        buf = buf.append(disp & 255);
+    } else {
+        if (md == 2) {
+            buf = x86_le32(buf, disp);
+        }
+    }
+    return buf;
+}
+
+// x86_mov_load_r64_idx: `mov <dst>, [base + index*scale + disp]`.
+function x86_mov_load_r64_idx(buf: i32[], dst: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, index, base));
+    buf = buf.append(139); // 0x8B
+    return x86_emit_mem_idx(buf, dst, base, index, scale, disp);
+}
+
+// x86_mov_store_r64_idx: `mov [base + index*scale + disp], <src>`.
+function x86_mov_store_r64_idx(buf: i32[], base: i32, index: i32, scale: i32, disp: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, src, index, base));
+    buf = buf.append(137); // 0x89
+    return x86_emit_mem_idx(buf, src, base, index, scale, disp);
+}
+
+// ---- byte ops (slice 2k) ----
+//
+// Byte (8-bit) memory ops reuse the ModR/M + SIB encoding (x86_emit_mem /
+// _idx) with byte opcodes and a W=0 REX that's emitted only when needed
+// (an extended reg/base/index, or — for a byte register operand — when it
+// is spl..dil (4..7), which require a REX to disambiguate from ah..bh).
+// movzbq's destination is 64-bit, so it always carries REX.W.
+
+// x86_byte_mem_rex emits the (optional) REX for a byte memory op.
+function x86_byte_mem_rex(buf: i32[], w: i32, reg: i32, has_index: boolean, index: i32, base: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(w, reg, ix, base);
+    var force: boolean = (w == 0 && reg >= 4 && reg <= 7); // spl..dil
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    return buf;
+}
+
+// x86_byte_mem_operand appends the ModR/M (+SIB+disp), index or not.
+function x86_byte_mem_operand(buf: i32[], reg: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    if (has_index) {
+        return x86_emit_mem_idx(buf, reg, base, index, scale, disp);
+    }
+    return x86_emit_mem(buf, reg, base, disp);
+}
+
+// x86_movb_imm_mem: `movb $imm8, mem` (0xC6 /0 ib).
+function x86_movb_imm_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, 0, has_index, index, base);
+    buf = buf.append(198); // 0xC6
+    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+    return buf.append(imm & 255);
+}
+
+// x86_movb_reg_mem: `movb <reg8>, mem` (0x88 /r) — byte store.
+function x86_movb_reg_mem(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
+    buf = buf.append(136); // 0x88
+    return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
+}
+
+// x86_movb_mem_reg: `movb mem, <reg8>` (0x8A /r) — byte load.
+function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
+    buf = buf.append(138); // 0x8A
+    return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
+}
+
+// x86_movzbq_mem: `movzbq mem, <dst64>` (REX.W 0F B6 /r) — zero-extend a
+// byte load into a 64-bit register.
+function x86_movzbq_mem(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    buf = x86_byte_mem_rex(buf, 1, dst, has_index, index, base);
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(182); // 0xB6
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_movzbq_reg: `movzbq <src8>, <dst64>` (REX.W 0F B6 /r, reg-direct).
+function x86_movzbq_reg(buf: i32[], dst: i32, src8: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, src8));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(182); // 0xB6
+    buf = buf.append(x86_modrm(3, dst, src8));
+    return buf;
+}
+
+// x86_cmpb_imm_reg8: `cmpb $imm8, <reg8>` (0x80 /7 ib).
+function x86_cmpb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(128); // 0x80
+    buf = buf.append(x86_modrm(3, 7, reg8));
+    return buf.append(imm & 255);
+}
+
+// ---- push/pop memory + 3-operand imul (slice 2l) ----
+
+// x86_push_mem: `push mem` (0xFF /6) — push a memory operand.
+function x86_push_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(0, 0, ix, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(255); // 0xFF
+    return x86_byte_mem_operand(buf, 6, base, has_index, index, scale, disp);
+}
+
+// x86_pop_mem: `pop mem` (0x8F /0).
+function x86_pop_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    var rex: i32 = x86_rex(0, 0, ix, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(143); // 0x8F
+    return x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
+}
+
+// x86_imul_r64_r64_imm32: `imul <dst>, <src>, imm32` (0x69 /r id) — the
+// three-operand form (reg=dst, r/m=src, then imm32).
+function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(105); // 0x69
+    buf = buf.append(x86_modrm(3, dst, src));
+    return x86_le32(buf, imm);
+}
+
+// x86_setcc_reg8: `set<cc> <reg8>` (0F 90+cc /0) — store the condition
+// flag as a 0/1 byte. `op` is the second opcode byte (e.g. 0x9C setl).
+// reg8 spl..dil (4..7) need a REX to disambiguate from ah..bh.
+function x86_setcc_reg8(buf: i32[], op: i32, reg8: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(op);
+    buf = buf.append(x86_modrm(3, 0, reg8));
+    return buf;
+}
+
+// x86_alu_load_r64: `<op> <dst>, mem` with a memory *source* — the
+// load-form ALU (add 0x03, sub 0x2B, cmp 0x3B; reg=dst, r/m=mem).
+function x86_alu_load_r64(buf: i32[], opcode: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(opcode);
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// ---- SSE double + .double constants (slice 2n) ----
+//
+// asm.fern uses scalar-double SSE for f64: a `.double` constant in
+// .rodata loaded with `movsd sym(%rip)`, the value shuttled to/from a GPR
+// with `movq %xmm,%gpr` / `movq %gpr,%xmm`, arithmetic with
+// addsd/subsd/mulsd/divsd, and int<->float conversions cvttsd2si /
+// cvtsi2sd. xmm registers are numbered 0..15 (REX.R/.B for xmm8..15).
+
+// x86_le64_i64 appends the 8 little-endian bytes of an i64 (e.g. the
+// IEEE-754 bits of a .double constant).
+function x86_le64_i64(buf: i32[], v: i64): i32[] {
+    buf = buf.append((v & 255) as i32);
+    buf = buf.append(((v >> 8) & 255) as i32);
+    buf = buf.append(((v >> 16) & 255) as i32);
+    buf = buf.append(((v >> 24) & 255) as i32);
+    buf = buf.append(((v >> 32) & 255) as i32);
+    buf = buf.append(((v >> 40) & 255) as i32);
+    buf = buf.append(((v >> 48) & 255) as i32);
+    buf = buf.append(((v >> 56) & 255) as i32);
+    return buf;
+}
+
+// x86_movq_gpr_to_xmm: `movq <gpr>, <xmm>` (66 REX.W 0F 6E /r) — move the
+// raw 64 bits from a GPR into an xmm (reg=xmm, r/m=gpr).
+function x86_movq_gpr_to_xmm(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(110); // 0x6E
+    buf = buf.append(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_movq_xmm_to_gpr: `movq <xmm>, <gpr>` (66 REX.W 0F 7E /r).
+function x86_movq_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(126); // 0x7E
+    buf = buf.append(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_sse_pfx_rr: a prefixed two-byte-opcode reg-reg SSE op
+// `<pfx> 0F <op> /r` with a direct ModR/M. The prefix selects the operand
+// flavour: F2 = scalar double, F3 = scalar single. REX only for xmm8..15.
+function x86_sse_pfx_rr(buf: i32[], pfx: i32, opcode: i32, dst: i32, src: i32): i32[] {
+    buf = buf.append(pfx);
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, dst, src));
+    return buf;
+}
+
+// x86_sse_rr: a scalar-double reg-reg op `<op> <dst>, <src>` (F2 0F op /r;
+// addsd 0x58, subsd 0x5C, mulsd 0x59, divsd 0x5E).
+function x86_sse_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    return x86_sse_pfx_rr(buf, 242, opcode, dst, src); // 0xF2
+}
+
+// x86_cvtsd2ss narrows a double to a single (F2 0F 5A /r); x86_cvtss2sd is
+// the widening inverse (F3 0F 5A /r).
+function x86_cvtsd2ss(buf: i32[], dst: i32, src: i32): i32[] {
+    return x86_sse_pfx_rr(buf, 242, 90, dst, src); // 0xF2 … 0x5A
+}
+
+function x86_cvtss2sd(buf: i32[], dst: i32, src: i32): i32[] {
+    return x86_sse_pfx_rr(buf, 243, 90, dst, src); // 0xF3 … 0x5A
+}
+
+// x86_movd_gpr_to_xmm: `movd <xmm>, <gpr32>` (66 0F 6E /r) — the 32-bit
+// sibling of x86_movq_gpr_to_xmm.
+function x86_movd_gpr_to_xmm(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, xmm, 0, gpr);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(110); // 0x6E
+    return buf.append(x86_modrm(3, xmm, gpr));
+}
+
+// x86_movd_xmm_to_gpr: `movd <gpr32>, <xmm>` (66 0F 7E /r) — the inverse.
+function x86_movd_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, xmm, 0, gpr);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(126); // 0x7E
+    return buf.append(x86_modrm(3, xmm, gpr));
+}
+
+// ---- bit-count (Haswell baseline: BMI1 + SSE4.2) ----
+//
+// lzcnt / tzcnt / popcnt share one shape: F3 [REX.W] 0F <op> /r, direct
+// ModR/M. Below the baseline LZCNT/TZCNT decode as bsr/bsf and give wrong
+// answers silently, where POPCNT faults — see docs/BACKEND-PARITY.md.
+function x86_bitcnt_rr(buf: i32[], opcode: i32, w: i32, dst: i32, src: i32): i32[] {
+    buf = buf.append(243); // 0xF3
+    var rex: i32 = x86_rex(w, dst, 0, src);
+    if (w == 1 || rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(opcode);
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+function x86_lzcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
+    return x86_bitcnt_rr(buf, 189, w, dst, src); // 0xBD
+}
+
+function x86_tzcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
+    return x86_bitcnt_rr(buf, 188, w, dst, src); // 0xBC
+}
+
+function x86_popcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
+    return x86_bitcnt_rr(buf, 184, w, dst, src); // 0xB8
+}
+
+// x86_shift_r64_cl: `<shift>q %cl, <reg>` — REX.W + D3 /slash (shl 4,
+// shr 5, sar 7). Variable count in %cl, as against the imm8 forms
+// (x86_shift_r64_imm8).
+function x86_shift_r64_cl(buf: i32[], slash: i32, reg: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg));
+    buf = buf.append(211); // 0xD3
+    return buf.append(x86_modrm(3, slash, reg));
+}
+
+// x86_byte_alu_rr: a byte ALU op `<op> <src8>, <dst8>` (AT&T order), direct
+// ModR/M — `andb` 0x20, `orb` 0x08. REX is forced when either operand is
+// 4..7 so the encoding selects spl/bpl/sil/dil, not ah/ch/dh/bh.
+function x86_byte_alu_rr(buf: i32[], opcode: i32, dst8: i32, src8: i32): i32[] {
+    var rex: i32 = x86_rex(0, src8, 0, dst8);
+    var force: boolean = (dst8 >= 4 && dst8 <= 7) || (src8 >= 4 && src8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(opcode);
+    return buf.append(x86_modrm(3, src8, dst8));
+}
+
+// ---- x87 ----
+//
+// The transcendentals (exp / log / sin / cos / pow) lower here because SSE
+// has none. The surface reduces to three operand shapes, so it is three
+// helpers rather than one function per mnemonic.
+
+// x86_x87_op: a fixed two-byte x87 instruction with no operand
+// (fld1 D9 E8, fyl2x D9 F1, f2xm1 D9 F0, fscale D9 FD, frndint D9 FC,
+// fsin D9 FE, fcos D9 FF, fldl2e D9 EA, fldln2 D9 ED).
+function x86_x87_op(buf: i32[], b0: i32, b1: i32): i32[] {
+    buf = buf.append(b0);
+    return buf.append(b1);
+}
+
+// x86_x87_sti: an x87 instruction taking a stack register, encoded as a
+// base second byte plus the register index (fld %st(i) D9 C0+i, fxch
+// %st(i) D9 C8+i, fstp %st(i) DD D8+i, faddp DE C0+i, fsubr DC E8+i).
+function x86_x87_sti(buf: i32[], b0: i32, base: i32, i: i32): i32[] {
+    buf = buf.append(b0);
+    return buf.append(base + i);
+}
+
+// x86_x87_mem: an x87 instruction addressing a 64-bit memory operand,
+// `<b0> /slash` over base+disp (fldl DD /0, fstpl DD /3, fmull DC /1).
+// REX.B only when the base is r8..r15; the emitter only ever spills these
+// through %rsp, but encoding it correctly costs one branch.
+function x86_x87_mem(buf: i32[], b0: i32, slash: i32, base: i32, disp: i32): i32[] {
+    if (base >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, base));
+    }
+    buf = buf.append(b0);
+    return x86_emit_mem(buf, slash, base, disp);
+}
+
+// x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
+// double to a signed 64-bit integer.
+function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
+    return x86_cvttsd2si_w(buf, 1, gpr, xmm);
+}
+
+// x86_cvttsd2si_w is x86_cvttsd2si with an explicit operand width. The
+// 32-bit form truncates to 32 bits and zeroes the upper half, so the width
+// is load-bearing, not a choice of encoding.
+function x86_cvttsd2si_w(buf: i32[], w: i32, gpr: i32, xmm: i32): i32[] {
+    buf = buf.append(242); // 0xF2
+    var rex: i32 = x86_rex(w, gpr, 0, xmm);
+    if (w == 1 || rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(44); // 0x2C
+    return buf.append(x86_modrm(3, gpr, xmm));
+}
+
+// x86_cvtsi2sd: `cvtsi2sd <xmm>, <gpr>` (F2 REX.W 0F 2A /r) — convert a
+// signed 64-bit integer to a double.
+function x86_cvtsi2sd(buf: i32[], xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(242); // 0xF2
+    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(42); // 0x2A
+    buf = buf.append(x86_modrm(3, xmm, gpr));
+    return buf;
+}
+
+// x86_ucomisd: `ucomisd <a>, <b>` (66 0F 2E /r) — ordered double compare,
+// setting EFLAGS for the setCC / jCC that follow.
+function x86_ucomisd(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, a, 0, b);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(46); // 0x2E
+    buf = buf.append(x86_modrm(3, a, b));
+    return buf;
+}
+
+// x86_movsd_store: `movsd mem, <xmm>` (F2 0F 11 /r) — store a double.
+function x86_movsd_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, xmm: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(242); // 0xF2
+    var rex: i32 = x86_rex(0, xmm, ix, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(17); // 0x11
+    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
+}
+
+// x86_movsd_load: `movsd <xmm>, mem` (F2 0F 10 /r) — load a double.
+function x86_movsd_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(242); // 0xF2
+    var rex: i32 = x86_rex(0, xmm, ix, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(16); // 0x10
+    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
+}
+
+// x86_movsd_rr: `movsd <dst>, <src>` reg-reg (F2 0F 10 /r, ModR/M direct).
+function x86_movsd_rr(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(242); // 0xF2
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(16); // 0x10
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
+// uses to load a .double constant from .rodata.
+function x86_movsd_load_rip_label(a: X86Asm, xmm: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(242) }; // 0xF2
+    if (xmm >= 8) {
+        a = X86Asm { ...a, code: a.code.append(x86_rex(0, xmm, 0, 0)) }; // REX.R
+    }
+    a = X86Asm { ...a, code: a.code.append(15) }; // 0x0F
+    a = X86Asm { ...a, code: a.code.append(16) }; // 0x10
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, xmm, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) }; // placeholder disp32
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// ---- immediate ALU (slice 2b) ----
+
+// x86_alu_r64_imm32 encodes the `<op> <reg>, imm32` group-1 form:
+// REX.W + 0x81 /digit, where `slash` is the opcode-extension in the
+// ModR/M reg field (0 = add, 5 = sub, 7 = cmp). imm32 little-endian.
+// The full imm32 form (vs the compact 0x83 /digit imm8) keeps the
+// encoder uniform for any constant.
+function x86_alu_r64_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
+    buf = buf.append(129); // 0x81
+    buf = buf.append(x86_modrm(3, slash, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_add_r64_imm32: `add <reg>, imm32` (0x81 /0).
+function x86_add_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 0, reg, imm);
+}
+
+// x86_sub_r64_imm32: `sub <reg>, imm32` (0x81 /5).
+function x86_sub_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 5, reg, imm);
+}
+
+// x86_cmp_r64_imm32: `cmp <reg>, imm32` (0x81 /7).
+function x86_cmp_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
+    return x86_alu_r64_imm32(buf, 7, reg, imm);
+}
+
+// x86_cmp_r64_r64: `cmp <a>, <b>` (64-bit) — REX.W + 0x39 /r.
+function x86_cmp_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
+    buf = buf.append(x86_rex(1, b, 0, a));
+    buf = buf.append(57); // 0x39
+    buf = buf.append(x86_modrm(3, b, a));
+    return buf;
+}
+
+// ---- control flow (slice 2b) ----
+//
+// Near branches take a 32-bit displacement relative to the *next*
+// instruction: rel32 = target_offset - (branch_offset + branch_length).
+// Backward branches (target already emitted) can compute this directly;
+// forward branches need a fixup pass (a later slice's label table).
+
+// Condition codes for the 0F 8x near-jcc opcodes.
+function x86_cc_e(): i32 { return 4; }   // je  / jz
+function x86_cc_ne(): i32 { return 5; }  // jne / jnz
+function x86_cc_l(): i32 { return 12; }  // jl  (signed <)
+function x86_cc_ge(): i32 { return 13; } // jge (signed >=)
+function x86_cc_le(): i32 { return 14; } // jle (signed <=)
+function x86_cc_g(): i32 { return 15; }  // jg  (signed >)
+function x86_cc_b(): i32 { return 2; }   // jb  (unsigned <,  CF=1)
+function x86_cc_ae(): i32 { return 3; }  // jae (unsigned >=, CF=0)
+function x86_cc_be(): i32 { return 6; }  // jbe (unsigned <=)
+function x86_cc_a(): i32 { return 7; }   // ja  (unsigned >)
+function x86_cc_s(): i32 { return 8; }   // js  (sign set)
+function x86_cc_ns(): i32 { return 9; }  // jns (sign clear)
+function x86_cc_p(): i32 { return 10; }  // jp  (parity, NaN tests)
+
+// x86_movabsq: `movabs <reg>, imm64` (REX.W 0xB8+rd io) — load a full
+// 64-bit immediate (heap addresses, IEEE-754 bit patterns, wide masks).
+function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
+    buf = buf.append(x86_rex(1, 0, 0, reg)); // REX.W (+ REX.B for r8..r15)
+    buf = buf.append(184 + (reg & 7));       // 0xB8 + rd
+    return x86_le64_i64(buf, imm);
+}
+
+// ---- 32-bit ALU + extends + cmov (slice 2q) ----
+//
+// asm.fern's runtime uses 32-bit (`l`-suffixed) ops for the alloc bump /
+// map probing / byte-string scanning, plus cmov for min/max and the
+// sign/zero-extend loads. 32-bit ops carry a REX only when an operand is
+// r8..r15 (no REX.W); the result zero-extends into the full 64-bit reg.
+
+// x86_mov_load_rip_label: `movq sym(%rip), <dst>` (REX.W 8B /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
+// uses to load a .bss/.data global (e.g. the heap pointer).
+function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_alu_load_rip_label: `<alu>q sym(%rip), <dst>` — the load-form ALU
+// (cmp 0x3B / add 0x03 / sub 0x2B) with a rip-relative source and a deferred
+// fixup, the ALU sibling of x86_mov_load_rip_label. asm.fern emits this for e.g.
+// `cmpq __fern_heap_end(%rip), %rdi` in the bump allocator; without a rip-aware
+// path x86_gas_alu encoded it as base %rax (mod=00 rm=000), comparing against
+// [%rax] instead of the symbol, so the alloc bounds check misfired.
+function x86_alu_load_rip_label(a: X86Asm, opcode: i32, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(opcode) };
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_movl_load_rip_label: `movl sym(%rip), <dst32>` (8B /r, no REX.W,
+// ModR/M mod=00 rm=101) with a deferred rip-relative fixup — the 32-bit
+// sibling of x86_mov_load_rip_label. asm.fern reads the
+// __fern_rc_underflow counter this way.
+function x86_movl_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: x86_rex_opt(a.code, dst, 0, 0) };
+    a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_incl_rip_label: `incl sym(%rip)` (FF /0 m32, ModR/M mod=00 rm=101)
+// with a deferred rip-relative fixup — asm.fern bumps the 32-bit
+// __fern_rc_underflow diagnostic counter this way in the RC dec glue.
+function x86_incl_rip_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // RIP-relative, /0
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
+// mod=00 rm=101) with a deferred rip-relative fixup.
+function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(137) }; // 0x89
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_movl_store_rip_label: `movl <src32>, sym(%rip)` (89 /r, no REX.W) —
+// the 32-bit sibling of x86_mov_store_rip_label, for a 32-bit global.
+function x86_movl_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
+    if (src >= 8) {
+        a = X86Asm { ...a, code: a.code.append(x86_rex(0, src, 0, 0)) }; // REX.R
+    }
+    a = X86Asm { ...a, code: a.code.append(137) }; // 0x89
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+}
+
+// x86_alu_store_rip_label: `<alu>q <src>, sym(%rip)` — the store-form ALU
+// (add 0x01 / sub 0x29 / cmp 0x39) against a rip-relative global.
+function x86_alu_store_rip_label(a: X86Asm, opcode: i32, src: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(opcode) };
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+}
+
+// x86_incq_rip_label: `incq sym(%rip)` (REX.W FF /0) — the 64-bit sibling
+// of x86_incl_rip_label.
+function x86_incq_rip_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex_w()) };
+    a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // /0, RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+}
+
+// x86_rex_opt pushes a REX byte only if any extension bit is set (w must
+// be 0 here — used for the 32-bit / byte ops whose default size needs no
+// prefix unless an extended register is involved).
+function x86_rex_opt(buf: i32[], reg: i32, index: i32, base: i32): i32[] {
+    var rex: i32 = x86_rex(0, reg, index, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    return buf;
+}
+
+// x86_alu_r32_imm32: `<op>l $imm, <reg32>` group-1 (0x81 /digit id):
+// add /0, and /4, sub /5, cmp /7.
+function x86_alu_r32_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
+    buf = x86_rex_opt(buf, 0, 0, reg);
+    buf = buf.append(129); // 0x81
+    buf = buf.append(x86_modrm(3, slash, reg));
+    return x86_le32(buf, imm);
+}
+
+// x86_binop_r32_r32: `<op>l <src>, <dst>` reg-reg (32-bit): add 0x01,
+// sub 0x29, and 0x21, or 0x09, xor 0x31, cmp 0x39 (reg=src, r/m=dst).
+function x86_binop_r32_r32(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = x86_rex_opt(buf, src, 0, dst);
+    buf = buf.append(opcode);
+    return buf.append(x86_modrm(3, src, dst));
+}
+
+// x86_shr_r32_imm8: `shrl $imm8, <reg32>` (0xC1 /5 ib).
+function x86_shr_r32_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
+    buf = x86_rex_opt(buf, 0, 0, reg);
+    buf = buf.append(193); // 0xC1
+    buf = buf.append(x86_modrm(3, 5, reg));
+    return buf.append(imm & 255);
+}
+
+// x86_mov_r32_r32: `movl <src>, <dst>` (0x89 /r, 32-bit).
+function x86_mov_r32_r32(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = x86_rex_opt(buf, src, 0, dst);
+    buf = buf.append(137); // 0x89
+    return buf.append(x86_modrm(3, src, dst));
+}
+
+// x86_movl_store: `movl <src>, mem` (0x89 /r) — 32-bit store.
+function x86_movl_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, src: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, src, ix, base);
+    buf = buf.append(137); // 0x89
+    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
+}
+
+// x86_movl_load: `movl mem, <dst>` (0x8B /r) — 32-bit load (zero-extends).
+function x86_movl_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_rex_opt(buf, dst, ix, base);
+    buf = buf.append(139); // 0x8B
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_testb_imm_reg8: `testb $imm8, <reg8>` (0xF6 /0 ib).
+function x86_testb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
+    var rex: i32 = x86_rex(0, 0, 0, reg8);
+    var force: boolean = (reg8 >= 4 && reg8 <= 7);
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(246); // 0xF6
+    buf = buf.append(x86_modrm(3, 0, reg8));
+    return buf.append(imm & 255);
+}
+
+// x86_testb_reg8_reg8: `testb <a>, <b>` (0x84 /r).
+function x86_testb_reg8_reg8(buf: i32[], a: i32, b: i32): i32[] {
+    var rex: i32 = x86_rex(0, b, 0, a);
+    var force: boolean = (a >= 4 && a <= 7) || (b >= 4 && b <= 7);
+    if (rex != 64 || force) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(132); // 0x84
+    return buf.append(x86_modrm(3, b, a));
+}
+
+// x86_cmovcc_r64_r64: `cmov<cc> <dst>, <src>` (REX.W 0F 40+cc /r).
+function x86_cmovcc_r64_r64(buf: i32[], cc: i32, dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(15);           // 0x0F
+    buf = buf.append(64 + (cc & 15)); // 0x40 + cc
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_movslq_load: `movslq mem, <dst>` (REX.W 0x63 /r) — sign-extend a
+// 32-bit memory operand into a 64-bit register.
+function x86_movslq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(99); // 0x63
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// x86_movslq_rr: `movslq <src32>, <dst64>` (REX.W 0x63 /r, reg-direct) —
+// sign-extend a 32-bit register into a 64-bit one (asm.fern widens the
+// i32 `.len()` result with `movslq %eax, %rax`).
+function x86_movslq_rr(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(x86_rex(1, dst, 0, src));
+    buf = buf.append(99); // 0x63
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_movzwq_load: `movzwq mem, <dst>` (REX.W 0F B7 /r) — zero-extend a
+// 16-bit memory operand into a 64-bit register.
+function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(x86_rex(1, dst, ix, base));
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(183); // 0xB7
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
+// ---- string ops + xorpd (slice 2q, runtime memcpy/memset/zeroing) ----
+
+// x86_cld: `cld` (0xFC) — clear the direction flag before a rep move.
+function x86_cld(buf: i32[]): i32[] {
+    return buf.append(252); // 0xFC
+}
+
+// x86_rep_stosb: `rep stosb` (0xF3 0xAA) — fill rcx bytes at [rdi] with al
+// (memset); the runtime zeroes allocations with it.
+function x86_rep_stosb(buf: i32[]): i32[] {
+    buf = buf.append(243); // 0xF3
+    return buf.append(170); // 0xAA
+}
+
+// x86_rep_movsb: `rep movsb` (0xF3 0xA4) — copy rcx bytes [rsi]->[rdi]
+// (memcpy).
+function x86_rep_movsb(buf: i32[]): i32[] {
+    buf = buf.append(243); // 0xF3
+    return buf.append(164); // 0xA4
+}
+
+// x86_rep_stosq: `rep stosq` (0xF3 REX.W 0xAB) — store rax into rcx 8-byte
+// slots at [rdi]. Zeroes a freshly allocated buffer.
+function x86_rep_stosq(buf: i32[]): i32[] {
+    buf = buf.append(243); // 0xF3
+    buf = buf.append(x86_rex_w());
+    return buf.append(171); // 0xAB
+}
+
+// x86_rep_movsq: `rep movsq` (0xF3 REX.W 0xA5) — copy rcx 8-byte slots
+// [rsi] -> [rdi], the 64-bit sibling of x86_rep_movsb.
+function x86_rep_movsq(buf: i32[]): i32[] {
+    buf = buf.append(243); // 0xF3
+    buf = buf.append(x86_rex_w());
+    return buf.append(165); // 0xA5
+}
+
+// x86_sqrtsd: `sqrtsd <src>, <dst>` (F2 0F 51 /r) — scalar-double sqrt
+// (reg=dst, r/m=src).
+function x86_sqrtsd(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(242); // 0xF2
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(81); // 0x51
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_roundsd: `roundsd $mode, <src>, <dst>` (66 0F 3A 0B /r ib) — round a
+// double per `mode` (1 floor, 2 ceil, 3 trunc). SSE4.1.
+function x86_roundsd(buf: i32[], dst: i32, src: i32, mode: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(58); // 0x3A
+    buf = buf.append(11); // 0x0B
+    buf = buf.append(x86_modrm(3, dst, src));
+    return buf.append(mode & 255);
+}
+
+// x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
+// `xorpd %x,%x` zeroes an xmm register.
+function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(87); // 0x57
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
+// signed displacement. 6 bytes total.
+function x86_jcc_rel32(buf: i32[], cc: i32, rel: i32): i32[] {
+    buf = buf.append(15);             // 0x0F
+    buf = buf.append(128 + (cc & 15)); // 0x80 + cc
+    return x86_le32(buf, rel);
+}
+
+// x86_je_rel32 / x86_jne_rel32: the two most common conditionals.
+function x86_je_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_e(), rel);
+}
+function x86_jne_rel32(buf: i32[], rel: i32): i32[] {
+    return x86_jcc_rel32(buf, x86_cc_ne(), rel);
+}
+
+// x86_jmp_rel32: an unconditional near jump (0xE9 cd). 5 bytes total.
+function x86_jmp_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.append(233); // 0xE9
+    return x86_le32(buf, rel);
+}
+
+// x86_branch_rel computes the rel32 a branch at `branch_off` (the offset
+// of its first opcode byte) needs to reach `target_off`, given the
+// branch's total encoded length `branch_len` (6 for jcc, 5 for jmp/call).
+function x86_branch_rel(target_off: i32, branch_off: i32, branch_len: i32): i32 {
+    return target_off - (branch_off + branch_len);
+}
+
+// ---- forward references (slice 2c) ----
+//
+// A forward branch can't know its rel32 when emitted (the target isn't
+// laid down yet). The standard fix: emit a placeholder rel32 (zeros),
+// remember where the rel32 field starts, and patch it once the target
+// offset is known. x86_patch_rel32 is that patch; the label/fixup table a
+// text assembler needs is built on top of it.
+
+// x86_call_rel32: a near `call` (0xE8 cd) with a 32-bit signed
+// displacement. 5 bytes total — same rel math as jmp.
+function x86_call_rel32(buf: i32[], rel: i32): i32[] {
+    buf = buf.append(232); // 0xE8
+    return x86_le32(buf, rel);
+}
+
+// x86_patch_rel32 overwrites the 4 little-endian rel32 bytes already in
+// `buf` starting at offset `at` (the rel32 field of a previously-emitted
+// branch placeholder). Used to resolve a forward reference once its
+// target offset is known.
+function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
+    buf = buf.with(at, rel & 255);
+    buf = buf.with(at + 1, (rel >> 8) & 255);
+    buf = buf.with(at + 2, (rel >> 16) & 255);
+    buf = buf.with(at + 3, (rel >> 24) & 255);
+    return buf;
+}
+
+// x86_rel_to computes the rel32 to patch into a placeholder whose rel32
+// field starts at `patch_off`, to reach `target_off`. The branch's next
+// instruction is 4 bytes past the rel32 field, so
+// rel = target_off - (patch_off + 4) — independent of opcode length, so
+// it works for jcc / jmp / call alike given that branch's rel32 offset.
+function x86_rel_to(target_off: i32, patch_off: i32): i32 {
+    return target_off - (patch_off + 4);
+}
+
+// ---- named-label assembler (slice 2d) ----
+//
+// A reusable label/fixup table over the patch primitive: this is the API
+// a text assembler (asm.fern GAS text -> bytes) calls instead of doing
+// offset bookkeeping by hand. Branches name a label; backward labels (the
+// target already has an offset) are patched immediately, forward ones are
+// queued and resolved by x86_resolve once every label is placed.
+//
+// State lives in an X86Asm struct: the code buffer, parallel label
+// name/offset arrays (linear lookup — label counts per function are
+// small), and parallel fixup patch-offset / target-name arrays. Raw
+// instructions still go straight through the encoders into `a.code`
+// (`a.code = x86_mov_r32_imm32(a.code, ...)`); only branches that target a
+// label go through this layer.
+
+pub struct X86Asm {
+    code: i32[],
+    rodata: i32[],
+    bss_size: i32,
+    // Absolute 8-byte data relocations — a `.quad <label>` in .rodata, how
+    // a constant aggregate holds a pointer to a string literal. Unlike the
+    // rel32 code fixups these need the virtual address, so x86_resolve_data
+    // resolves them separately once the load address is known.
+    dfix_offs: i32[],
+    dfix_names: string[],
+    lab_names: string[],
+    lab_secs: i32[],
+    lab_offs: i32[],
+    fix_offs: i32[],
+    fix_names: string[],
+    // Mnemonics (or mnemonic+operand shapes) the GAS front-end did not
+    // recognise. A non-empty list means the byte stream is INCOMPLETE —
+    // instructions were dropped — so drivers must fail instead of writing
+    // the corrupt executable (SH-005; the arm64 assembler's `p.unknown`
+    // is the model — see fern.fern's -target arm64 check).
+    unknown: string[],
+}
+
+// x86_asm_new returns an empty assembler state.
+function x86_asm_new(): X86Asm {
+    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], unknown: [] };
+}
+
+// x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
+// boundary the ELF data image uses (so a rip-relative reference to .rodata
+// resolves to the same offset the loader maps it at).
+function x86_align8(n: i32): i32 {
+    var p: i32 = n;
+    while ((p % 8) != 0) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// x86_label records `name` at the current .text offset (section 0).
+function x86_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
+    a = X86Asm { ...a, lab_secs: a.lab_secs.append(0) };
+    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
+    return a;
+}
+
+// x86_rodata_label records `name` at the current .rodata offset (section
+// 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
+function x86_rodata_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
+    a = X86Asm { ...a, lab_secs: a.lab_secs.append(1) };
+    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.rodata.len()) };
+    return a;
+}
+
+// x86_rodata_quad appends an 8-byte little-endian value (lo + hi 32-bit
+// halves) to .rodata — a `.quad` constant.
+function x86_rodata_quad(a: X86Asm, lo: i32, hi: i32): X86Asm {
+    a = X86Asm { ...a, rodata: x86_le32(a.rodata, lo) };
+    a = X86Asm { ...a, rodata: x86_le32(a.rodata, hi) };
+    return a;
+}
+
+// x86_bss_label records `name` at the current .bss offset (section 2).
+// .bss is zero-init memory not present in the file: only the running size
+// advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
+function x86_bss_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
+    a = X86Asm { ...a, lab_secs: a.lab_secs.append(2) };
+    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.bss_size) };
+    return a;
+}
+
+// x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
+// `.align` reservation in the .bss section).
+function x86_bss_skip(a: X86Asm, n: i32): X86Asm {
+    a = X86Asm { ...a, bss_size: a.bss_size + n };
+    return a;
+}
+
+// x86_label_idx returns the index of `name` in the label table, or -1.
+function x86_label_idx(a: X86Asm, name: string): i32 {
+    var i: i32 = 0;
+    while (i < a.lab_names.len()) {
+        if (a.lab_names[i] == name) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_label_off returns the in-section offset of a .text label `name`, or
+// -1 if not yet placed. (Used for the immediate backward-branch patch,
+// which only targets .text — .rodata offsets aren't final until resolve.)
+pub function x86_label_off(a: X86Asm, name: string): i32 {
+    var i: i32 = x86_label_idx(a, name);
+    if (i < 0 || a.lab_secs[i] != 0) {
+        return 0 - 1;
+    }
+    return a.lab_offs[i];
+}
+
+// x86_final_off resolves `name` to its offset (from .text start) in the
+// final image, given the padded .text length (the .rodata base). .text
+// labels keep their offset; .rodata labels sit at padded_text + their
+// .rodata offset; .bss labels sit just past .rodata (padded_text +
+// rodata_len + their .bss offset), matching the ELF's in-memory layout
+// (.bss is the zero-init region after the file content).
+function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
+    var i: i32 = x86_label_idx(a, name);
+    if (i < 0) {
+        return 0 - 1;
+    }
+    if (a.lab_secs[i] == 1) {
+        return padded_text + a.lab_offs[i];
+    }
+    if (a.lab_secs[i] == 2) {
+        return padded_text + a.rodata.len() + a.lab_offs[i];
+    }
+    return a.lab_offs[i];
+}
+
+// x86_fixup_or_patch handles the rel32 of a branch placeholder just
+// emitted into a.code: the rel32 field starts at a.code.len()-4. If the
+// target is an already-placed .text label, patch immediately; otherwise
+// queue a fixup for x86_resolve.
+function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
+    var patch_off: i32 = a.code.len() - 4;
+    var target: i32 = x86_label_off(a, name);
+    if (target >= 0) {
+        a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off)) };
+    } else {
+        a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+        a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    }
+    return a;
+}
+
+// x86_lea_rip_label emits `lea <dst>, [rip + label]` (REX.W 8D /r, ModR/M
+// mod=00 rm=101 = RIP-relative) with a placeholder disp32, and queues a
+// fixup. The displacement is rip-relative to the next instruction —
+// exactly x86_rel_to's math — so it shares the resolve path with branches.
+// Always deferred: a .rodata target's final offset isn't known until the
+// whole .text is emitted.
+function x86_lea_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
+    a = X86Asm { ...a, code: a.code.append(141) }; // 0x8D
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) }; // placeholder disp32
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    return a;
+}
+
+// x86_jcc_label emits a conditional jump to a (possibly forward) label.
+function x86_jcc_label(a: X86Asm, cc: i32, name: string): X86Asm {
+    a = X86Asm { ...a, code: x86_jcc_rel32(a.code, cc, 0) }; // placeholder rel32
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_jmp_label emits an unconditional jump to a label.
+function x86_jmp_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, code: x86_jmp_rel32(a.code, 0) };
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_call_reg: `call *<reg>` — FF /2, direct ModR/M. Closure and dyn-trait
+// dispatch land here.
+function x86_call_reg(buf: i32[], reg: i32): i32[] {
+    if (reg >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
+    }
+    buf = buf.append(255); // 0xFF
+    return buf.append(x86_modrm(3, 2, reg));
+}
+
+// x86_call_mem: `call *disp(%base)` — FF /2 over a memory operand, for a
+// callee pointer still in a stack slot.
+function x86_call_mem(buf: i32[], base: i32, disp: i32): i32[] {
+    if (base >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, base)); // REX.B
+    }
+    buf = buf.append(255); // 0xFF
+    return x86_emit_mem(buf, 2, base, disp);
+}
+
+// x86_jmp_reg: `jmp *<reg>` — FF /4, the tail-call sibling of x86_call_reg.
+function x86_jmp_reg(buf: i32[], reg: i32): i32[] {
+    if (reg >= 8) {
+        buf = buf.append(x86_rex(0, 0, 0, reg)); // REX.B
+    }
+    buf = buf.append(255); // 0xFF
+    return buf.append(x86_modrm(3, 4, reg));
+}
+
+// x86_call_label emits a call to a label.
+function x86_call_label(a: X86Asm, name: string): X86Asm {
+    a = X86Asm { ...a, code: x86_call_rel32(a.code, 0) };
+    return x86_fixup_or_patch(a, name);
+}
+
+// x86_gas_is_symbol reports whether a directive operand names a label
+// rather than a numeric literal — i.e. it starts with a character that
+// cannot begin a number (`.L0`, `.S3`, `__fn_main`).
+function x86_gas_is_symbol(tok: string): boolean {
+    if (tok.len() == 0) { return false; }
+    var c: i32 = tok[0] as i32;
+    if (c == 45 || c == 36) { return false; }             // '-' / '$'
+    if (c >= 48 && c <= 57) { return false; }             // '0'..'9'
+    return true;
+}
+
+// x86_rodata_quad_sym lays down an 8-byte placeholder in .rodata and
+// queues an absolute relocation against `name`, patched by
+// x86_resolve_data once the load address is known.
+function x86_rodata_quad_sym(a: X86Asm, name: string): X86Asm {
+    var off: i32 = a.rodata.len();
+    a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
+    a = X86Asm { ...a, dfix_offs: a.dfix_offs.append(off) };
+    return X86Asm { ...a, dfix_names: a.dfix_names.append(name) };
+}
+
+// x86_resolve_data patches the absolute `.quad <label>` relocations, which
+// x86_resolve cannot: a rel32 branch needs only body offsets, an absolute
+// pointer needs the virtual address the image loads at. Call after
+// x86_resolve with the .text vaddr; body offsets map linearly onto virtual
+// addresses from there, because .text and the data blob share one PT_LOAD.
+// An unresolvable name is recorded, not patched as 0.
+pub function x86_resolve_data(a: X86Asm, text_vaddr: i32): X86Asm {
+    var padded_text: i32 = x86_align8(a.code.len());
+    var i: i32 = 0;
+    while (i < a.dfix_offs.len()) {
+        var name: string = a.dfix_names[i];
+        var target: i32 = x86_final_off(a, name, padded_text);
+        if (target < 0) {
+            a = X86Asm { ...a, unknown: a.unknown.append(".quad " + name) };
+        } else {
+            var at: i32 = a.dfix_offs[i];
+            var abs: i64 = (text_vaddr as i64) + (target as i64);
+            var j: i32 = 0;
+            while (j < 8) {
+                a = X86Asm { ...a, rodata: a.rodata.with(at + j, ((abs >> ((j * 8) as i64)) & (255 as i64)) as i32) };
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// x86_resolve patches every queued fixup (forward branches and all
+// rip-relative lea references) now that every label is placed. .rodata
+// targets resolve against the padded .text length — the offset the ELF
+// data image places .rodata at. Call once after emitting the whole
+// program; afterwards a.code + a.rodata are the final sections.
+function x86_resolve(a: X86Asm): X86Asm {
+    var padded_text: i32 = x86_align8(a.code.len());
+    var i: i32 = 0;
+    while (i < a.fix_offs.len()) {
+        var patch_off: i32 = a.fix_offs[i];
+        var target: i32 = x86_final_off(a, a.fix_names[i], padded_text);
+        // A missing label is -1; patching that as a displacement branches
+        // into the ELF header, so refuse rather than emit it (#6045).
+        if (target < 0) {
+            a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
+        } else {
+            a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off)) };
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// ============================================================
+// PART 2 — GAS-text front-end
+// ============================================================
+
+// ---- string helpers ----
+//
+// Hand-rolled rather than taken from std/string, as arm64_native.fern does:
+// this module must work both as an import and concatenated into a driver by
+// its unit tests, and an `import "std/string"` breaks the second.
+
+function x86_str_indexof(s: string, sub: string): i32 {
+    var n: i32 = s.len();
+    var m: i32 = sub.len();
+    if (m == 0) { return 0; }
+    if (m > n) { return 0 - 1; }
+    var i: i32 = 0;
+    while (i <= n - m) {
+        var j: i32 = 0;
+        var ok: boolean = true;
+        while (j < m) {
+            if (s[i + j] != sub[j]) { ok = false; j = m; }
+            else { j = j + 1; }
+        }
+        if (ok) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function x86_str_starts_with(s: string, pre: string): boolean {
+    var m: i32 = pre.len();
+    if (m > s.len()) { return false; }
+    var i: i32 = 0;
+    while (i < m) {
+        if (s[i] != pre[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function x86_str_contains(s: string, sub: string): boolean {
+    return x86_str_indexof(s, sub) >= 0;
+}
+
+function x86_str_split(s: string, sep: string): string[] {
+    var out: string[] = [];
+    var m: i32 = sep.len();
+    if (m == 0) { out = out.append(s); return out; }
+    var n: i32 = s.len();
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= n - m) {
+        var hit: boolean = true;
+        var j: i32 = 0;
+        while (j < m) {
+            if (s[i + j] != sep[j]) { hit = false; j = m; }
+            else { j = j + 1; }
+        }
+        if (hit) {
+            out = out.append(s[start:i]);
+            i = i + m;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    out = out.append(s[start:n]);
+    return out;
+}
+
+// Formerly examples/self_host/x86_gas.fern — a GAS (AT&T) assembly
+// front-end for the self-hosted x86-64 backend.
+// It tokenizes the assembly text asm.fern emits and drives the byte
+// encoders + label/.rodata API in x86_native.fern, producing an X86Asm
+// whose `code` / `rodata` sections elf.fern wraps into a runnable binary —
+// the final wiring that removes the external `as` + `ld` step.
+//
+// Coverage is the whole surface the IR emitter produces: integer/pointer, byte and 32-bit ALU, jmp/jCC,
+// setCC/cmovCC, the SSE scalar-double set plus the f32 conversions, the
+// bit-count group (lzcnt/tzcnt/popcnt — Haswell baseline, see
+// docs/BACKEND-PARITY.md), and the x87 stack unit the transcendentals
+// lower to. Operand forms: `%reg`, `$imm`, `disp(%base)`,
+// `disp(%base,%index,scale)`, `sym(%rip)`, `%st(N)`, and bare
+// branch-target labels. AT&T operand order is `op src, dst` (the reverse
+// of the encoder's dst,src).
+//
+// Anything not recognised — mnemonic, operand shape, or directive — is
+// recorded in `unknown` rather than dropped (SH-005): a dropped instruction
+// is a corrupt byte stream, not a missing feature, so drivers must refuse to
+// write the executable.
+//
+// Import-free, like the other native-binary modules: the eventual emitter
+// `import`s x86_encode + this, and the unit test concatenates them.
+
+// GasMem is a parsed memory operand: rip-relative (`sym(%rip)`, carrying
+// the label), or `disp(%base)`, or `disp(%base,%index,scale)` (has_index).
+struct GasMem {
+    is_rip: boolean,
+    label: string,
+    base: i32,
+    disp: i32,
+    has_index: boolean,
+    index: i32,
+    scale: i32,
+    // `disp(,%index,scale)` — index and scale with no base register, encoded
+    // as a SIB with base field 101, mod=00 and a disp32. A distinct
+    // addressing mode, not base 0: the empty base parses to -1, which the
+    // encoders would mask to a real register.
+    no_base: boolean,
+}
+
+// x86_gas_trim strips leading/trailing spaces (32) AND tabs (9). The
+// self-host string `trim` only removes spaces, but asm.fern indents with
+// tabs, so the mnemonic-splitting relies on this.
+function x86_gas_trim(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9)) {
+        a = a + 1;
+    }
+    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9)) {
+        b = b - 1;
+    }
+    return s[a:b] + "";
+}
+
+// x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
+function x86_gas_reg(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()] + "";
+    }
+    if (s == "rax") { return 0; }
+    if (s == "rcx") { return 1; }
+    if (s == "rdx") { return 2; }
+    if (s == "rbx") { return 3; }
+    if (s == "rsp") { return 4; }
+    if (s == "rbp") { return 5; }
+    if (s == "rsi") { return 6; }
+    if (s == "rdi") { return 7; }
+    if (s == "r8") { return 8; }
+    if (s == "r9") { return 9; }
+    if (s == "r10") { return 10; }
+    if (s == "r11") { return 11; }
+    if (s == "r12") { return 12; }
+    if (s == "r13") { return 13; }
+    if (s == "r14") { return 14; }
+    if (s == "r15") { return 15; }
+    // 32-bit GP register names (`%eax`, …) map to the same register numbers as
+    // their 64-bit counterparts — asm.fern emits the 32-bit form for e.g. the
+    // cvttsd2si destination (`cvttsd2si %xmm0, %eax`). Without these the token
+    // resolved to -1, encoding a garbage reg field (7) + REX.R, so the truncated
+    // result landed in %rdi not %eax (the capstone float / int-convert path).
+    if (s == "eax") { return 0; }
+    if (s == "ecx") { return 1; }
+    if (s == "edx") { return 2; }
+    if (s == "ebx") { return 3; }
+    if (s == "esp") { return 4; }
+    if (s == "ebp") { return 5; }
+    if (s == "esi") { return 6; }
+    if (s == "edi") { return 7; }
+    if (s == "r8d") { return 8; }
+    if (s == "r9d") { return 9; }
+    if (s == "r10d") { return 10; }
+    if (s == "r11d") { return 11; }
+    if (s == "r12d") { return 12; }
+    if (s == "r13d") { return 13; }
+    if (s == "r14d") { return 14; }
+    if (s == "r15d") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_reg8 maps an 8-bit register token (`%al`, `al`, …) to its
+// number, or -1. spl/bpl/sil/dil (4..7) and r8b..r15b (8..15) included.
+function x86_gas_reg8(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()] + "";
+    }
+    if (s == "al") { return 0; }
+    if (s == "cl") { return 1; }
+    if (s == "dl") { return 2; }
+    if (s == "bl") { return 3; }
+    if (s == "spl") { return 4; }
+    if (s == "bpl") { return 5; }
+    if (s == "sil") { return 6; }
+    if (s == "dil") { return 7; }
+    if (s == "r8b") { return 8; }
+    if (s == "r9b") { return 9; }
+    if (s == "r10b") { return 10; }
+    if (s == "r11b") { return 11; }
+    if (s == "r12b") { return 12; }
+    if (s == "r13b") { return 13; }
+    if (s == "r14b") { return 14; }
+    if (s == "r15b") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_st maps an x87 stack-register token to its index: `%st(N)` to N,
+// and a bare `%st` to 0 (the AT&T spelling of the stack top). Anything else
+// yields 0, which is the top of stack — the operand the emitter uses when it
+// writes the bare form.
+function x86_gas_st(tok: string): i32 {
+    var open: i32 = x86_str_indexof(tok, "(");
+    if (open < 0) { return 0; }
+    var close: i32 = x86_str_indexof(tok, ")");
+    if (close <= open + 1) { return 0; }
+    return x86_gas_atoi(x86_gas_trim(tok[open + 1:close]));
+}
+
+// x86_gas_reg32 maps a 32-bit register token (`%eax`, `%r8d`, …) to its
+// number 0..15, or -1.
+function x86_gas_reg32(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()] + "";
+    }
+    if (s == "eax") { return 0; }
+    if (s == "ecx") { return 1; }
+    if (s == "edx") { return 2; }
+    if (s == "ebx") { return 3; }
+    if (s == "esp") { return 4; }
+    if (s == "ebp") { return 5; }
+    if (s == "esi") { return 6; }
+    if (s == "edi") { return 7; }
+    if (s == "r8d") { return 8; }
+    if (s == "r9d") { return 9; }
+    if (s == "r10d") { return 10; }
+    if (s == "r11d") { return 11; }
+    if (s == "r12d") { return 12; }
+    if (s == "r13d") { return 13; }
+    if (s == "r14d") { return 14; }
+    if (s == "r15d") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
+// reg->mem (store), all 32-bit.
+function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+        if (x86_str_contains(dst, "(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+            if (mi.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+            a = X86Asm { ...a, code: x86_movl_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
+            return a;
+        }
+        a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) };
+        return a;
+    }
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (!src_mem && !dst_mem) { // reg -> reg
+        a = X86Asm { ...a, code: x86_mov_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) };
+        return a;
+    }
+    if (src_mem && !dst_mem) { // mem -> reg (load)
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (m.is_rip) { // `movl sym(%rip), %reg32` — rip-relative + fixup
+            return x86_movl_load_rip_label(a, x86_gas_reg32(dst), m.label);
+        }
+        a = X86Asm { ...a, code: x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    if (!src_mem && dst_mem) { // reg -> mem (store)
+        var m2: GasMem = x86_gas_parse_mem(dst);
+        if (m2.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+        if (m2.is_rip) { // `movl %reg32, sym(%rip)`
+            return x86_movl_store_rip_label(a, x86_gas_reg32(src), m2.label);
+        }
+        a = X86Asm { ...a, code: x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src)) };
+        return a;
+    }
+    return a;
+}
+
+// x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
+// the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
+function x86_gas_alu32(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) {
+        a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src)) };
+        return a;
+    }
+    a = X86Asm { ...a, code: x86_binop_r32_r32(a.code, regop, x86_gas_reg32(dst), x86_gas_reg32(src)) };
+    return a;
+}
+
+// x86_gas_is_xmm reports whether a token names an xmm register.
+function x86_gas_is_xmm(tok: string): boolean {
+    return x86_str_contains(tok, "xmm");
+}
+
+// x86_gas_xmm maps an xmm token (`%xmm0`, `xmm12`, …) to its number 0..15,
+// or -1.
+function x86_gas_xmm(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 37) { // '%'
+        s = s[1:s.len()] + "";
+    }
+    if (s.len() < 4) {
+        return 0 - 1;
+    }
+    if (s[0] != 120 || s[1] != 109 || s[2] != 109) { // "xmm"
+        return 0 - 1;
+    }
+    var v: i32 = 0;
+    var i: i32 = 3;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        if (c >= 48 && c <= 57) {
+            v = v * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+// Correctly-rounding decimal -> f64 (SH-004): round-to-nearest, ties to
+// even, bit-exact with strtod / the GNU-as path. Mirrored VERBATIM from
+// watbin.fern's parse_f64 machinery (pf64_*) — the assemblers are
+// deliberately import-free, so the algorithm is kept in sync by hand,
+// like the emit layers. See watbin.fern for the algorithm commentary.
+// pf64_div2 halves the fraction buffer 0.B (grade-school left-to-right),
+// returning the new buffer. May append one digit; drops a leading zero by
+// signalling via the first element sentinel — the caller adjusts dp, so
+// this returns the raw halved digits INCLUDING a possible leading zero.
+function pf64_div2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var r: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.len()) {
+        var cur: i32 = r * 10 + b[i];
+        out = out.append(cur / 2);
+        r = cur % 2;
+        i = i + 1;
+    }
+    if (r != 0) { out = out.append(5); }
+    return out;
+}
+
+// pf64_mul2 doubles the fraction buffer 0.B (right-to-left with carry).
+// A carry out of the front means the value reached [1, 2): the caller
+// consumes it as the next binary digit. Returns carry * 1000000 + ... no —
+// Fern has no multi-return here; the carry is prepended as a FIRST element
+// (0 or 1) and the caller splits it off.
+function pf64_mul2(b: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(0); i = i + 1; }
+    var carry: i32 = 0;
+    var j: i32 = b.len() - 1;
+    while (j >= 0) {
+        var cur: i32 = b[j] * 2 + carry;
+        out = out.with(j, cur % 10);
+        carry = cur / 10;
+        j = j - 1;
+    }
+    var res: i32[] = [carry];
+    var k: i32 = 0;
+    while (k < out.len()) { res = res.append(out[k]); k = k + 1; }
+    return res;
+}
+
+// pf64_sub returns b[from : upto) as a fresh array (slices are a distinct
+// type here, so buffer trims copy).
+function pf64_sub(b: i32[], from: i32, upto: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = from;
+    while (i < upto) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+// pf64_all_zero reports whether every digit in b is zero.
+function pf64_all_zero(b: i32[]): boolean {
+    var i: i32 = 0;
+    while (i < b.len()) {
+        if (b[i] != 0) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function parse_f64_bits(s: string): i64 {
+    var i: i32 = 0;
+    var neg: boolean = false;
+    if (s.len() > 0 && s[0] == 45) { neg = true; i = 1; }
+    else if (s.len() > 0 && s[0] == 43) { i = 1; }
+    var signbit: i64 = 0;
+    if (neg) { var one: i64 = 1; signbit = one << 63; }
+    // Collect significant digits (cap 40 — beyond that only stickiness
+    // matters) and the decimal point position: value = 0.digits × 10^dp.
+    var digits: i32[] = [];
+    var dp: i32 = 0;
+    var sticky: boolean = false;
+    var started: boolean = false;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+        var d: i32 = (s[i] as i32) - 48;
+        if (started || d != 0) {
+            started = true;
+            if (digits.len() < 40) { digits = digits.append(d); }
+            else { if (d != 0) { sticky = true; } }
+            dp = dp + 1;
+        }
+        i = i + 1;
+    }
+    if (i < s.len() && s[i] == 46) {        // '.'
+        i = i + 1;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            var fd: i32 = (s[i] as i32) - 48;
+            if (started || fd != 0) {
+                started = true;
+                if (digits.len() < 40) { digits = digits.append(fd); }
+                else { if (fd != 0) { sticky = true; } }
+            } else {
+                dp = dp - 1;                // leading fraction zero shifts the point
+            }
+            i = i + 1;
+        }
+    }
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {   // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        var exp: i32 = 0;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
+            i = i + 1;
+        }
+        if (eneg) { dp = dp - exp; } else { dp = dp + exp; }
+    }
+    // Trailing zeros in the significand carry no information; trimming
+    // keeps the sticky/remainder tests honest.
+    while (digits.len() > 0 && digits[digits.len() - 1] == 0) {
+        digits = pf64_sub(digits, 0, digits.len() - 1);
+    }
+    if (digits.len() == 0) { return signbit; }          // ±0.0
+    // Decimal-magnitude clamps keep the shift loops bounded: |value| is in
+    // [10^(dp-1), 10^dp), so dp > 310 overflows every double and dp < -350
+    // underflows below half the minimum subnormal.
+    if (dp > 310) { var inf: i64 = 2047; return signbit | (inf << 52); }
+    if (dp < 0 - 350) { return signbit; }
+    // Binary-normalize 0.digits × 10^dp into v × 2^bexp with v in [0.5, 1).
+    // While the decimal point is right of the front (value >= 1), halve;
+    // while the value is below 0.5, double. dp reaches 0 first, then the
+    // leading-digit test finishes the job.
+    var bexp: i32 = 0;
+    while (dp > 0) {
+        var hb: i32[] = pf64_div2(digits);
+        if (hb.len() > 0 && hb[0] == 0) {
+            digits = pf64_sub(hb, 1, hb.len());
+            dp = dp - 1;
+        } else {
+            digits = hb;
+        }
+        bexp = bexp + 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+    }
+    while (dp < 0 || (digits.len() > 0 && digits[0] < 5)) {
+        var db: i32[] = pf64_mul2(digits);
+        if (db[0] != 0) {
+            // Carry out of the fraction: 2×0.D >= 1, i.e. C.D' × 10^dp.
+            // Renormalize as 0.(C D') × 10^(dp+1) — the carry becomes the
+            // new leading digit and the point advances. (Only reachable
+            // while dp < 0: at dp == 0 the loop only runs when the lead
+            // digit is < 5, so doubling cannot carry.)
+            digits = db;
+            dp = dp + 1;
+        } else {
+            digits = pf64_sub(db, 1, db.len());
+        }
+        bexp = bexp - 1;
+        while (digits.len() > 0 && digits[digits.len() - 1] == 0) { digits = pf64_sub(digits, 0, digits.len() - 1); }
+        if (digits.len() == 0) { return signbit; }
+    }
+    // v in [0.5, 1), value = v × 2^bexp = 1.f × 2^(bexp-1): biased exponent
+    // E = bexp + 1022. E >= 2047 overflows; E <= 0 goes subnormal with
+    // 52 + E mantissa bits; below -1 it is under half the minimum
+    // subnormal and rounds to zero.
+    var e: i32 = bexp + 1022;
+    if (e >= 2047) { var inf2: i64 = 2047; return signbit | (inf2 << 52); }
+    var nbits: i32 = 53;
+    if (e <= 0) { nbits = 52 + e; }
+    if (nbits < 0) { return signbit; }
+    var mant: i64 = 0;
+    var k2: i32 = 0;
+    while (k2 < nbits) {
+        var mb: i32[] = pf64_mul2(digits);
+        mant = mant * 2 + (mb[0] as i64);
+        digits = pf64_sub(mb, 1, mb.len());
+        k2 = k2 + 1;
+    }
+    // Round to nearest, ties to even: round bit is the next binary digit;
+    // sticky is any remainder (or parse-time truncation).
+    var rb: i32[] = pf64_mul2(digits);
+    var roundbit: i32 = rb[0];
+    var rest: i32[] = pf64_sub(rb, 1, rb.len());
+    var st: boolean = sticky || !pf64_all_zero(rest);
+    if (roundbit == 1 && (st || (mant & 1) == 1)) { mant = mant + 1; }
+    if (e <= 0) {
+        // Subnormal: the E field is 0 and `bits = mant` — and a subnormal
+        // that rounded up to 2^52 IS the smallest normal (E=1, f=0), which
+        // this encoding produces arithmetically.
+        return signbit | mant;
+    }
+    var full: i64 = 1;
+    full = full << 53;
+    if (mant == full) {
+        // 1.111…1 rounded up to 10.00…0: renormalize.
+        mant = mant / 2;
+        e = e + 1;
+        if (e >= 2047) { var inf3: i64 = 2047; return signbit | (inf3 << 52); }
+    }
+    var hidden: i64 = 1;
+    hidden = hidden << 52;
+    return signbit | ((e as i64) << 52) | (mant - hidden);
+}
+
+// x86_gas_parse_f64 parses a `.double` operand into the nearest f64.
+function x86_gas_parse_f64(s: string): f64 {
+    return f64_from_bits(parse_f64_bits(s));
+}
+
+// x86_gas_ascii appends the bytes of a `.ascii "…"` directive's string to
+// `buf`, processing the common C escapes (\n \t \r \0 \\ \"). The string
+// is the part between the first `"` and the closing unescaped `"`.
+function x86_gas_ascii(buf: i32[], line: string): i32[] {
+    var q1: i32 = x86_str_indexof(line, "\"");
+    if (q1 < 0) {
+        return buf;
+    }
+    var i: i32 = q1 + 1;
+    while (i < line.len()) {
+        var c: i32 = line[i] as i32;
+        if (c == 34) { // closing '"'
+            return buf;
+        }
+        if (c == 92 && i + 1 < line.len()) { // backslash escape
+            i = i + 1;
+            var e: i32 = line[i] as i32;
+            if (e == 110) { c = 10; }        // \n
+            else { if (e == 116) { c = 9; }  // \t
+            else { if (e == 114) { c = 13; } // \r
+            else { if (e == 48) { c = 0; }   // \0
+            else { c = e; } } } }            // \\ \" and any other -> literal
+        }
+        buf = buf.append(c & 255);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// x86_gas_atoi parses a decimal integer token, tolerating a leading `$`
+// (immediate sigil) and a leading `-`.
+function x86_gas_atoi(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 36) { // '$'
+        s = s[1:s.len()] + "";
+    }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i32 = 0;
+    // `0x…` hex (mirrors x86_gas_atoi64). Without this the `x` was skipped as a
+    // non-digit and the hex digits read as DECIMAL — e.g. `$0x22` (the mmap
+    // MAP_PRIVATE|MAP_ANONYMOUS flags asm.fern emits) parsed to 22, not 34, so
+    // the heap mmap got bad flags (EBADF) and every alloc-using program's
+    // runtime OOM-exited 137 (the capstone string / heap cases).
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + d; }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            if (c >= 48 && c <= 57) {
+                v = v * 10 + (c - 48);
+            }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// x86_gas_atoi64 parses a signed 64-bit integer token (decimal or `0x…`
+// hex, optional `$` sigil and `-`), for movabsq's imm64. Two's-complement
+// wraps give the right bits for INT64_MIN.
+function x86_gas_atoi64(tok: string): i64 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == 36) { // '$'
+        s = s[1:s.len()] + "";
+    }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s.len() > 0 && s[0] == 45) { // '-'
+        neg = true;
+        i = 1;
+    }
+    var v: i64 = 0;
+    if (i + 1 < s.len() && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) { // 0x
+        i = i + 2;
+        while (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            var d: i32 = 0 - 1;
+            if (c >= 48 && c <= 57) { d = c - 48; }
+            else { if (c >= 97 && c <= 102) { d = c - 97 + 10; }
+            else { if (c >= 65 && c <= 70) { d = c - 65 + 10; } } }
+            if (d >= 0) { v = v * 16 + (d as i64); }
+            i = i + 1;
+        }
+    } else {
+        while (i < s.len()) {
+            var c: i32 = s[i] as i32;
+            if (c >= 48 && c <= 57) { v = v * 10 + ((c - 48) as i64); }
+            i = i + 1;
+        }
+    }
+    if (neg) {
+        return 0 - v;
+    }
+    return v;
+}
+
+// x86_gas_parse_mem parses a memory operand `disp(%base)` / `(%base)` /
+// `disp(%base,%index,scale)` / `sym(%rip)`.
+function x86_gas_parse_mem(op: string): GasMem {
+    var lp: i32 = x86_str_indexof(op, "(");
+    if (lp < 0) {
+        // Not a memory operand — defensive fallback (avoids an op[0:-1]
+        // corrupt slice); callers gate on `.contains("(")` so this is rare.
+        return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
+    }
+    var disp_str: str = op[0:lp];
+    var inner: str = op[lp + 1:op.len() - 1]; // between ( and )
+    if (inner == "%rip") {
+        return GasMem { is_rip: true, label: disp_str + "", base: 0, disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
+    }
+    var d: i32 = 0;
+    if (disp_str.len() > 0) {
+        d = x86_gas_atoi(disp_str);
+    }
+    var parts: string[] = x86_str_split(inner, ",");
+    if (parts.len() >= 3) {
+        var b0: string = x86_gas_trim(parts[0]);
+        var bb: i32 = x86_gas_reg(b0);
+        var ix: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        var sc: i32 = x86_gas_atoi(x86_gas_trim(parts[2]));
+        return GasMem { is_rip: false, label: "", base: bb, disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
+    }
+    // Two-element SIB `(%base,%index)` — an implicit scale of 1 (asm.fern emits
+    // this for byte-element indexing, e.g. `movzbl (%rax,%rcx), %eax`). Without
+    // this the whole `%base,%index` string resolved to a single -1 register.
+    if (parts.len() == 2) {
+        var bb2: i32 = x86_gas_reg(x86_gas_trim(parts[0]));
+        var ix2: i32 = x86_gas_reg(x86_gas_trim(parts[1]));
+        return GasMem { is_rip: false, label: "", base: bb2, disp: d, has_index: true, index: ix2, scale: 1, no_base: x86_gas_trim(parts[0]).len() == 0 };
+    }
+    return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trim(inner)), disp: d, has_index: false, index: 0, scale: 1, no_base: false };
+}
+
+// x86_gas_movq dispatches the movq operand shapes (AT&T src, dst),
+// including the SSE forms movq %gpr,%xmm and movq %xmm,%gpr.
+function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
+    var src_xmm: boolean = x86_gas_is_xmm(src);
+    var dst_xmm: boolean = x86_gas_is_xmm(dst);
+    if (dst_xmm && !src_xmm) { // movq %gpr, %xmm
+        a = X86Asm { ...a, code: x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) };
+        return a;
+    }
+    if (src_xmm && !dst_xmm) { // movq %xmm, %gpr
+        a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst)) };
+        return a;
+    }
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
+        if (x86_str_contains(dst, "(")) { // $imm -> mem (e.g. `movq $1, 8(%rax)`)
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+            if (mi.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+            a = X86Asm { ...a, code: x86_mov_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
+            return a;
+        }
+        // Must SIGN-extend (REX.W C7 /0 id), not the zero-extending 32-bit
+        // B8+r id — `movq $-1, %rax` is -1, not 4294967295. An immediate too
+        // wide for a signed 32-bit field takes the 10-byte movabsq.
+        var iv: i64 = x86_gas_atoi64(src);
+        if (iv >= (0 - 2147483648) as i64 && iv <= (2147483647) as i64) {
+            a = X86Asm { ...a, code: x86_mov_r64_imm32(a.code, x86_gas_reg(dst), iv as i32) };
+        } else {
+            a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), iv) };
+        }
+        return a;
+    }
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (!src_mem && !dst_mem) { // reg -> reg
+        a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
+        return a;
+    }
+    if (src_mem && !dst_mem) { // mem -> reg (load)
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (m.is_rip) {
+            return x86_mov_load_rip_label(a, x86_gas_reg(dst), m.label);
+        }
+        if (m.has_index) {
+            a = X86Asm { ...a, code: x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp) };
+        } else {
+            a = X86Asm { ...a, code: x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp) };
+        }
+        return a;
+    }
+    if (!src_mem && dst_mem) { // reg -> mem (store)
+        var m2: GasMem = x86_gas_parse_mem(dst);
+        if (m2.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+        if (m2.is_rip) {
+            return x86_mov_store_rip_label(a, x86_gas_reg(src), m2.label);
+        }
+        if (m2.has_index) {
+            a = X86Asm { ...a, code: x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src)) };
+        } else {
+            a = X86Asm { ...a, code: x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src)) };
+        }
+        return a;
+    }
+    // mem -> mem has no x86 encoding, so reaching here means the operand
+    // shapes were misparsed; record rather than drop (SH-005).
+    return X86Asm { ...a, unknown: a.unknown.append("movq " + src + ", " + dst) };
+}
+
+// x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp):
+// `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
+function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> reg
+        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
+        return a;
+    }
+    if (x86_str_contains(src, "(")) { // mem -> reg (load-form ALU)
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        var op: i32 = 3; // add 0x03
+        if (slash == 5) { op = 43; } // sub 0x2B
+        if (slash == 7) { op = 59; } // cmp 0x3B
+        if (m.is_rip) { // `<alu>q sym(%rip), %reg` — rip-relative + fixup
+            return x86_alu_load_rip_label(a, op, x86_gas_reg(dst), m.label);
+        }
+        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    if (x86_str_contains(dst, "(")) { // reg -> mem (store-form ALU: add 0x01 / sub 0x29 / cmp 0x39)
+        var sm: GasMem = x86_gas_parse_mem(dst);
+        if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+        var sop: i32 = 1; // add 0x01
+        if (slash == 5) { sop = 41; } // sub 0x29
+        if (slash == 7) { sop = 57; } // cmp 0x39
+        if (sm.is_rip) {
+            return x86_alu_store_rip_label(a, sop, x86_gas_reg(src), sm.label);
+        }
+        a = X86Asm { ...a, code: x86_alu_store_r64(a.code, sop, x86_gas_reg(src), sm.base, sm.has_index, sm.index, sm.scale, sm.disp) };
+        return a;
+    }
+    var d: i32 = x86_gas_reg(dst);
+    var s: i32 = x86_gas_reg(src);
+    if (slash == 0) {
+        a = X86Asm { ...a, code: x86_add_r64_r64(a.code, d, s) };
+    } else {
+        if (slash == 5) {
+            a = X86Asm { ...a, code: x86_sub_r64_r64(a.code, d, s) };
+        } else {
+            a = X86Asm { ...a, code: x86_cmp_r64_r64(a.code, d, s) };
+        }
+    }
+    return a;
+}
+
+// x86_gas_logic dispatches andq/orq/xorq: `$imm, %reg` uses the group-1
+// imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
+function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) {
+        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
+        return a;
+    }
+    a = X86Asm { ...a, code: x86_binop_r64_r64(a.code, regop, x86_gas_reg(dst), x86_gas_reg(src)) };
+    return a;
+}
+
+// x86_gas_top_comma returns the index of the first comma at paren depth 0
+// (the operand separator), or -1. A comma inside `(%base,%index,scale)`
+// must not split the operands, so this skips parenthesised commas.
+function x86_gas_top_comma(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        if (c == 40) { // '('
+            depth = depth + 1;
+        } else {
+            if (c == 41) { // ')'
+                depth = depth - 1;
+            } else {
+                if (c == 44 && depth == 0) { // ','
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_gas_movb dispatches movb's three shapes: $imm->mem, reg8->mem (store),
+// mem->reg8 (load), in AT&T src, dst order.
+function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == 36) { // $imm -> mem
+        var m: GasMem = x86_gas_parse_mem(dst);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+        a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
+        return a;
+    }
+    if (x86_str_contains(src, "(")) { // mem -> reg8 (load)
+        var ms: GasMem = x86_gas_parse_mem(src);
+        if (ms.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (ms.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movb_mem_reg(a.code, x86_gas_reg8(dst), ms.base, ms.has_index, ms.index, ms.scale, ms.disp) };
+        return a;
+    }
+    // reg8 -> mem (store)
+    var md: GasMem = x86_gas_parse_mem(dst);
+    if (md.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+    if (md.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+    a = X86Asm { ...a, code: x86_movb_reg_mem(a.code, x86_gas_reg8(src), md.base, md.has_index, md.index, md.scale, md.disp) };
+    return a;
+}
+
+// x86_gas_movzbq dispatches movzbq: mem->reg64 or reg8->reg64.
+function x86_gas_movzbq(a: X86Asm, src: string, dst: string): X86Asm {
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movzbq_mem(a.code, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    a = X86Asm { ...a, code: x86_movzbq_reg(a.code, x86_gas_reg(dst), x86_gas_reg8(src)) };
+    return a;
+}
+
+// x86_gas_emit assembles one instruction line (mnemonic + operand text).
+function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
+    // zero-operand
+    if (mnem == "ret") { a = X86Asm { ...a, code: x86_ret(a.code) }; return a; }
+    if (mnem == "syscall") { a = X86Asm { ...a, code: x86_syscall(a.code) }; return a; }
+    if (mnem == "leave") { a = X86Asm { ...a, code: x86_leave(a.code) }; return a; }
+    if (mnem == "cqto") { a = X86Asm { ...a, code: x86_cqo(a.code) }; return a; }
+    if (mnem == "cld") { a = X86Asm { ...a, code: x86_cld(a.code) }; return a; }
+    // A dropped string-op leaves memory uninitialised, which surfaces far
+    // from here — so an unrecognised suffix is recorded, not ignored (SH-005).
+    if (mnem == "rep") {
+        if (rest == "stosq") { a = X86Asm { ...a, code: x86_rep_stosq(a.code) }; return a; }
+        if (rest == "stosb") { a = X86Asm { ...a, code: x86_rep_stosb(a.code) }; return a; }
+        if (rest == "movsq") { a = X86Asm { ...a, code: x86_rep_movsq(a.code) }; return a; }
+        if (rest == "movsb") { a = X86Asm { ...a, code: x86_rep_movsb(a.code) }; return a; }
+        return X86Asm { ...a, unknown: a.unknown.append("rep " + rest) };
+    }
+    // setCC <reg8>: store a condition flag as 0/1.
+    if (mnem == "sete" || mnem == "setz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setne" || mnem == "setnz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setl") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setle") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setg") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setge") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setb") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setbe") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "seta") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setae") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "sets") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setp") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 154, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setnp") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 155, x86_gas_reg8(rest)) }; return a; }
+    if (mnem == "setns") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)) }; return a; }
+    // branch / call: one operand = a label
+    // A `*` operand means INDIRECT — through a register or stack slot — not
+    // a branch to a label of that name.
+    if (mnem == "call" || mnem == "jmp") {
+        if (rest.len() > 0 && rest[0] == 42) { // '*'
+            var ind: string = x86_gas_trim(rest[1:rest.len()]);
+            if (x86_str_contains(ind, "(")) {
+                var cm: GasMem = x86_gas_parse_mem(ind);
+                if (cm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + ind) }; }
+                if (cm.is_rip || cm.has_index || mnem == "jmp") {
+                    return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) };
+                }
+                a = X86Asm { ...a, code: x86_call_mem(a.code, cm.base, cm.disp) };
+                return a;
+            }
+            var ireg: i32 = x86_gas_reg(ind);
+            if (ireg < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) }; }
+            if (mnem == "jmp") { a = X86Asm { ...a, code: x86_jmp_reg(a.code, ireg) }; }
+            else { a = X86Asm { ...a, code: x86_call_reg(a.code, ireg) }; }
+            return a;
+        }
+        if (mnem == "jmp") { return x86_jmp_label(a, rest); }
+        return x86_call_label(a, rest);
+    }
+    if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
+    if (mnem == "jne" || mnem == "jnz") { return x86_jcc_label(a, x86_cc_ne(), rest); }
+    if (mnem == "jge") { return x86_jcc_label(a, x86_cc_ge(), rest); }
+    if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
+    if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
+    if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
+    if (mnem == "jb" || mnem == "jc") { return x86_jcc_label(a, x86_cc_b(), rest); }
+    if (mnem == "jae" || mnem == "jnc") { return x86_jcc_label(a, x86_cc_ae(), rest); }
+    if (mnem == "jbe") { return x86_jcc_label(a, x86_cc_be(), rest); }
+    if (mnem == "ja") { return x86_jcc_label(a, x86_cc_a(), rest); }
+    if (mnem == "js") { return x86_jcc_label(a, x86_cc_s(), rest); }
+    if (mnem == "jns") { return x86_jcc_label(a, x86_cc_ns(), rest); }
+    if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
+    // one-operand: push/pop take a register or a memory operand
+    if (mnem == "pushq") {
+        if (rest.len() > 0 && rest[0] == 36) { // $imm
+            a = X86Asm { ...a, code: x86_push_imm32(a.code, x86_gas_atoi(rest)) };
+        } else {
+            if (x86_str_contains(rest, "(")) {
+                var pm: GasMem = x86_gas_parse_mem(rest);
+                if (pm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
+                if (pm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + rest) }; }
+                a = X86Asm { ...a, code: x86_push_mem(a.code, pm.base, pm.has_index, pm.index, pm.scale, pm.disp) };
+            } else {
+                a = X86Asm { ...a, code: x86_push_r64(a.code, x86_gas_reg(rest)) };
+            }
+        }
+        return a;
+    }
+    if (mnem == "popq") {
+        if (x86_str_contains(rest, "(")) {
+            var qm: GasMem = x86_gas_parse_mem(rest);
+            if (qm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
+            if (qm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + rest) }; }
+            a = X86Asm { ...a, code: x86_pop_mem(a.code, qm.base, qm.has_index, qm.index, qm.scale, qm.disp) };
+        } else {
+            a = X86Asm { ...a, code: x86_pop_r64(a.code, x86_gas_reg(rest)) };
+        }
+        return a;
+    }
+    // imulq: 3-operand `$imm, %src, %dst` or 2-operand `%src, %dst`.
+    if (mnem == "imulq") {
+        var c1: i32 = x86_gas_top_comma(rest);
+        var op0: string = x86_gas_trim(rest[0:c1]);
+        var remn: str = rest[c1 + 1:rest.len()];
+        var c2: i32 = x86_gas_top_comma(remn);
+        if (c2 >= 0) {
+            var rs: string = x86_gas_trim(remn[0:c2]);       // %src
+            var rd: string = x86_gas_trim(remn[c2 + 1:remn.len()]); // %dst
+            a = X86Asm { ...a, code: x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0)) };
+        } else {
+            a = X86Asm { ...a, code: x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0)) };
+        }
+        return a;
+    }
+    // roundsd $mode, %src, %dst — three operands (imm, xmm, xmm).
+    if (mnem == "roundsd") {
+        var rc1: i32 = x86_gas_top_comma(rest);
+        var rmode: string = x86_gas_trim(rest[0:rc1]);
+        var rrem: str = rest[rc1 + 1:rest.len()];
+        var rc2: i32 = x86_gas_top_comma(rrem);
+        var rsrc: string = x86_gas_trim(rrem[0:rc2]);
+        var rdst: string = x86_gas_trim(rrem[rc2 + 1:rrem.len()]);
+        a = X86Asm { ...a, code: x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode)) };
+        return a;
+    }
+    if (mnem == "incq") {
+        if (x86_str_contains(rest, "(")) {
+            var iq: GasMem = x86_gas_parse_mem(rest);
+            if (iq.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
+            if (!iq.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("incq " + rest) }; }
+            return x86_incq_rip_label(a, iq.label);
+        }
+        a = X86Asm { ...a, code: x86_inc_r64(a.code, x86_gas_reg(rest)) };
+        return a;
+    }
+    // incl sym(%rip) — the 32-bit rip-relative memory increment asm.fern emits
+    // for the __fern_rc_underflow diagnostic counter. Register/other-memory
+    // incl forms don't arise in the emitted runtime.
+    if (mnem == "incl") {
+        var im: GasMem = x86_gas_parse_mem(rest);
+        if (im.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
+        if (im.is_rip) { return x86_incl_rip_label(a, im.label); }
+        return X86Asm { ...a, unknown: a.unknown.append("incl " + rest) };
+    }
+    if (mnem == "decq") { a = X86Asm { ...a, code: x86_dec_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    if (mnem == "idivq") { a = X86Asm { ...a, code: x86_idiv_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    // x87, handled as one block parsing its own operands (like imulq /
+    // roundsd above) so the stack-register and memory forms stay next to
+    // the no-operand ones they interleave with.
+    if (mnem == "f2xm1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 240) }; return a; }
+    if (mnem == "fyl2x") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 241) }; return a; }
+    if (mnem == "fld1") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 232) }; return a; }
+    if (mnem == "fldl2e") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 234) }; return a; }
+    if (mnem == "fldln2") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 237) }; return a; }
+    if (mnem == "frndint") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 252) }; return a; }
+    if (mnem == "fscale") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 253) }; return a; }
+    if (mnem == "fsin") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 254) }; return a; }
+    if (mnem == "fcos") { a = X86Asm { ...a, code: x86_x87_op(a.code, 217, 255) }; return a; }
+    // `faddp` with no operand is `faddp %st, %st(1)` — DE C0+1.
+    if (mnem == "faddp") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 222, 192, 1) }; return a; }
+    if (mnem == "fld") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 192, x86_gas_st(rest)) }; return a; }
+    if (mnem == "fxch") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 217, 200, x86_gas_st(rest)) }; return a; }
+    if (mnem == "fstp") { a = X86Asm { ...a, code: x86_x87_sti(a.code, 221, 216, x86_gas_st(rest)) }; return a; }
+    // `fsubr %st, %st(i)` — DC E8+i. AT&T reverses the x87 non-pop subtract
+    // mnemonics, so this is taken from GNU as, not from the name.
+    if (mnem == "fsubr") {
+        var fci: i32 = x86_gas_top_comma(rest);
+        if (fci < 0) { return X86Asm { ...a, unknown: a.unknown.append("fsubr " + rest) }; }
+        var fdst: string = x86_gas_trim(rest[fci + 1:rest.len()]);
+        a = X86Asm { ...a, code: x86_x87_sti(a.code, 220, 232, x86_gas_st(fdst)) };
+        return a;
+    }
+    // 64-bit memory forms: `fldl` DD /0, `fstpl` DD /3, `fmull` DC /1.
+    if (mnem == "fldl" || mnem == "fstpl" || mnem == "fmull") {
+        var fm: GasMem = x86_gas_parse_mem(rest);
+        if (fm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
+        if (fm.is_rip || fm.has_index) {
+            return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) };
+        }
+        var fb: i32 = 221; // 0xDD
+        var fslash: i32 = 0;
+        if (mnem == "fstpl") { fslash = 3; }
+        if (mnem == "fmull") { fb = 220; fslash = 1; } // 0xDC
+        a = X86Asm { ...a, code: x86_x87_mem(a.code, fb, fslash, fm.base, fm.disp) };
+        return a;
+    }
+    // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
+    var ci: i32 = x86_gas_top_comma(rest);
+    if (ci < 0) {
+        // Unknown / unsupported single-operand mnemonic: RECORD it (SH-005).
+        // Dropping the instruction silently produced a corrupt executable
+        // with no diagnostic; drivers check `a.unknown` after assembly.
+        return X86Asm { ...a, unknown: a.unknown.append(mnem) };
+    }
+    var src: string = x86_gas_trim(rest[0:ci]);
+    var dst: string = x86_gas_trim(rest[ci + 1:rest.len()]);
+    if (mnem == "leaq") {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.is_rip) { // `leaq sym(%rip), %reg`
+            return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+        }
+        // `leaq disp(%base)` / `disp(%base,%index,scale)` — a plain address
+        // computation (lea 0x8D, same reg-mem encoding as the ALU loads). asm.fern
+        // emits this for stack-local addresses, e.g. `leaq -32(%rbp), %rdi` (the
+        // buffer __fern_str_eq zeroes with rep stosq). This handler previously
+        // assumed EVERY leaq source was a rip-relative label, so a base+disp lea
+        // got a bogus rip fixup (an empty label → address 0) and loaded a garbage
+        // pointer — which crashed the string-keyed-map compare (mapstr).
+        if (m.no_base) { // `leaq disp(,%index,scale), %reg` — index/scale only
+            a = X86Asm { ...a, code: x86_lea_idx_nobase(a.code, x86_gas_reg(dst), m.index, m.scale, m.disp) };
+            return a;
+        }
+        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, 141, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
+    if (mnem == "movabsq" || mnem == "movabs") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
+    if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
+    if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
+    if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
+    if (mnem == "testq") {
+        if (src.len() > 0 && src[0] == 36) { // `testq $imm, %reg` — bit-mask test
+            a = X86Asm { ...a, code: x86_test_r64_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) };
+            return a;
+        }
+        a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
+        return a;
+    }
+    // testl (32-bit test reg,reg) — asm.fern emits it for zero/nonzero checks on
+    // 32-bit values (map bucket counts / indices, all zero-extended). Was
+    // unhandled, so the test was dropped and the following jz/jnz read stale
+    // flags → the string-keyed-map lookup took the wrong branch and dereferenced
+    // a null key (SIGSEGV). The operands are zero-extended, so the full-width
+    // testq gives the same ZF; route to it (as movzbl routes to movzbq).
+    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    // Either `%cl` (variable count, D3 /slash) or an immediate (C1 /slash).
+    // Anything else is recorded: a register name read through the immediate
+    // parser yields 0, i.e. a silent shift by zero.
+    if (mnem == "shlq" || mnem == "shrq" || mnem == "sarq") {
+        var sl: i32 = 4; // shl
+        if (mnem == "shrq") { sl = 5; }
+        if (mnem == "sarq") { sl = 7; }
+        if (src == "%cl") {
+            a = X86Asm { ...a, code: x86_shift_r64_cl(a.code, sl, x86_gas_reg(dst)) };
+            return a;
+        }
+        if (src.len() > 0 && src[0] == 36) { // '$'
+            a = X86Asm { ...a, code: x86_shift_r64_imm8(a.code, sl, x86_gas_reg(dst), x86_gas_atoi(src)) };
+            return a;
+        }
+        return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src) };
+    }
+    if (mnem == "btq") { a = X86Asm { ...a, code: x86_bt_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
+    if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
+    if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
+    if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
+    if (mnem == "andb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 32, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
+    if (mnem == "orb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 8, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
+    // The `l` forms are not routed to the `q` ones the way testl is: the
+    // count differs by width (lzcntl counts from bit 31, lzcntq from 63).
+    if (mnem == "lzcntl") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    if (mnem == "lzcntq") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "tzcntl") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    if (mnem == "tzcntq") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "popcntl") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    if (mnem == "popcntq") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (mnem == "cvtsd2ss") { a = X86Asm { ...a, code: x86_cvtsd2ss(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "cvtss2sd") { a = X86Asm { ...a, code: x86_cvtss2sd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    // movd moves f32 bits between a GPR and an xmm; which direction depends on
+    // which operand is the xmm.
+    if (mnem == "movd") {
+        if (x86_gas_is_xmm(dst)) {
+            a = X86Asm { ...a, code: x86_movd_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg32(src)) };
+        } else {
+            a = X86Asm { ...a, code: x86_movd_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg32(dst)) };
+        }
+        return a;
+    }
+    if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
+    if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
+    // movzbl (byte -> 32-bit dest, zero-extended) — asm.fern emits it for the
+    // char/byte load `s[i]`. The zero-extended value is identical to movzbq's
+    // (the upper 32 bits are cleared either way), so route to the same encoder;
+    // without this the mnemonic was unhandled and no load was emitted.
+    if (mnem == "movzbl") { return x86_gas_movzbq(a, src, dst); }
+    if (mnem == "movsd") {
+        if (x86_str_contains(dst, "(")) { // store: movsd %xmm, mem
+            var sm: GasMem = x86_gas_parse_mem(dst);
+            if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
+            a = X86Asm { ...a, code: x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src)) };
+            return a;
+        }
+        if (!x86_str_contains(src, "(")) { // reg-reg: movsd %xmm, %xmm
+            a = X86Asm { ...a, code: x86_movsd_rr(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) };
+            return a;
+        }
+        // load into xmm (dst is xmm) from memory / rip
+        var lm: GasMem = x86_gas_parse_mem(src);
+        if (lm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (lm.is_rip) {
+            return x86_movsd_load_rip_label(a, x86_gas_xmm(dst), lm.label);
+        }
+        a = X86Asm { ...a, code: x86_movsd_load(a.code, x86_gas_xmm(dst), lm.base, lm.has_index, lm.index, lm.scale, lm.disp) };
+        return a;
+    }
+    if (mnem == "addsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 88, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "subsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "mulsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "divsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    // minsd (0x5D) / maxsd (0x5F): asm.fern's float runtime (fmin/fmax
+    // helpers) emits these; they were silently DROPPED until the SH-005
+    // unknown check caught them in the capstone — the helpers assembled
+    // corrupt but the happy path never executed them.
+    if (mnem == "minsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 93, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "maxsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 95, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "ucomisd") { a = X86Asm { ...a, code: x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "xorpd") { a = X86Asm { ...a, code: x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "sqrtsd") { a = X86Asm { ...a, code: x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    // cvttsd2si's destination is a GPR of either width; the 32-bit spelling
+    // (`%eax`) is the one the emitter writes almost always.
+    if (mnem == "cvttsd2si") {
+        var d32: i32 = x86_gas_reg32(dst);
+        if (d32 >= 0) { // `%eax` — 32-bit destination, no REX.W
+            a = X86Asm { ...a, code: x86_cvttsd2si_w(a.code, 0, d32, x86_gas_xmm(src)) };
+            return a;
+        }
+        var d64: i32 = x86_gas_reg(dst);
+        if (d64 < 0) { return X86Asm { ...a, unknown: a.unknown.append("cvttsd2si " + dst) }; }
+        a = X86Asm { ...a, code: x86_cvttsd2si_w(a.code, 1, d64, x86_gas_xmm(src)) };
+        return a;
+    }
+    if (mnem == "cvtsi2sd") { a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) }; return a; }
+    // 32-bit ALU + moves + extends + cmov + testb (slice 2q).
+    if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
+    if (mnem == "addl") { return x86_gas_alu32(a, 0, 1, src, dst); }
+    if (mnem == "subl") { return x86_gas_alu32(a, 5, 41, src, dst); }
+    if (mnem == "andl") { return x86_gas_alu32(a, 4, 33, src, dst); }
+    if (mnem == "orl") { return x86_gas_alu32(a, 1, 9, src, dst); }
+    if (mnem == "xorl") { return x86_gas_alu32(a, 6, 49, src, dst); }
+    if (mnem == "cmpl") { return x86_gas_alu32(a, 7, 57, src, dst); }
+    if (mnem == "shrl") { a = X86Asm { ...a, code: x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) }; return a; }
+    if (mnem == "testb") {
+        if (src.len() > 0 && src[0] == 36) {
+            a = X86Asm { ...a, code: x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
+        } else {
+            a = X86Asm { ...a, code: x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src)) };
+        }
+        return a;
+    }
+    // The operand-size suffix is optional on cmov in AT&T and the emitter
+    // writes both spellings (`cmovneq` at asm_ir.fern:5293), so strip a
+    // trailing `q` before matching. Every operand here is 64-bit.
+    var cmv: string = mnem;
+    if (cmv.len() > 5 && cmv[0:4] == "cmov" && cmv[cmv.len() - 1] == 113) { // 'q'
+        cmv = cmv[0:cmv.len() - 1] + "";
+    }
+    if (cmv == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovg") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovge") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovb") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_b(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovbe") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_be(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmova") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_a(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovae") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ae(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmove" || cmv == "cmovz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    if (cmv == "cmovne" || cmv == "cmovnz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    // movsxd is the AT&T spelling GNU as also accepts for movslq — same
+    // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
+    if (mnem == "movslq" || mnem == "movsxd") {
+        if (x86_str_contains(src, "(")) {
+            var sm: GasMem = x86_gas_parse_mem(src);
+            if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+            if (sm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+            a = X86Asm { ...a, code: x86_movslq_load(a.code, x86_gas_reg(dst), sm.base, sm.has_index, sm.index, sm.scale, sm.disp) };
+        } else {
+            a = X86Asm { ...a, code: x86_movslq_rr(a.code, x86_gas_reg(dst), x86_gas_reg32(src)) };
+        }
+        return a;
+    }
+    if (mnem == "movzwq") {
+        var zm: GasMem = x86_gas_parse_mem(src);
+        if (zm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (zm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp) };
+        return a;
+    }
+    if (mnem == "cmpb") {
+        if (src.len() > 0 && src[0] == 36) {
+            a = X86Asm { ...a, code: x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
+            return a;
+        }
+        // Only the $imm, %reg8 form is encoded; any other operand shape
+        // was silently dropped (SH-005) — record it.
+        return X86Asm { ...a, unknown: a.unknown.append("cmpb " + src) };
+    }
+    // Unsupported two-operand mnemonic (grown in later slices): RECORD it
+    // (SH-005) — a dropped instruction means the byte stream is corrupt,
+    // so drivers fail on `a.unknown` instead of writing the executable.
+    return X86Asm { ...a, unknown: a.unknown.append(mnem) };
+}
+
+// x86_gas_directive_ignorable reports whether a directive can be dropped
+// without shifting anything: symbol-table metadata (`.globl` / `.weak` /
+// `.type` / `.size`) the in-process linker does not consume, and `.align`
+// in .text, where the emitter's own layout — not the assembler's — decides
+// instruction placement. Everything else must be handled or recorded.
+function x86_gas_directive_ignorable(line: string): boolean {
+    return x86_str_starts_with(line, ".globl") || x86_str_starts_with(line, ".weak")
+        || x86_str_starts_with(line, ".type") || x86_str_starts_with(line, ".size")
+        || x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".file")
+        || x86_str_starts_with(line, ".ident") || x86_str_starts_with(line, ".p2align");
+}
+
+// x86_gas_comment_start returns the index of the `#` that begins a comment,
+// or -1. A `#` inside a string literal is data: truncating there shortens
+// the string and shifts every .rodata symbol after it.
+function x86_gas_comment_start(line: string): i32 {
+    var i: i32 = 0;
+    var in_str: boolean = false;
+    while (i < line.len()) {
+        var c: i32 = line[i] as i32;
+        if (in_str) {
+            // A backslash escapes the next character, so an escaped quote
+            // does not end the string.
+            if (c == 92) { i = i + 2; continue; }
+            if (c == 34) { in_str = false; }
+        } else {
+            if (c == 34) { in_str = true; }
+            else if (c == 35) { return i; } // '#'
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// x86_gas_assemble parses a whole GAS program and returns the resolved
+// X86Asm (code + rodata). Lines are classified as label (`name:`),
+// directive (`.…`), or instruction; `#` begins a comment.
+pub function x86_gas_assemble(src: string): X86Asm {
+    var a: X86Asm = x86_asm_new();
+    var section: i32 = 0; // 0 = .text, 1 = .rodata
+    var lines: string[] = x86_str_split(src, "\n");
+    var li: i32 = 0;
+    while (li < lines.len()) {
+        var raw: string = lines[li];
+        li = li + 1;
+        var hash: i32 = x86_gas_comment_start(raw);
+        if (hash >= 0) {
+            raw = raw[0:hash] + "";
+        }
+        var line: string = x86_gas_trim(raw);
+        if (line.len() == 0) {
+            continue;
+        }
+        // label prefix: `name:` possibly followed by more on the same
+        // line (asm.fern emits `.L0: .double 84.0`). A label is a single
+        // token (no space / paren / comma) before the first ':'.
+        var colon: i32 = x86_str_indexof(line, ":");
+        if (colon > 0) {
+            var before: str = line[0:colon];
+            if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
+                if (section == 1) {
+                    a = x86_rodata_label(a, before);
+                } else if (section == 2) {
+                    a = x86_bss_label(a, before);
+                } else {
+                    a = x86_label(a, before);
+                }
+                line = x86_gas_trim(line[colon + 1:line.len()]);
+                if (line.len() == 0) {
+                    continue;
+                }
+            }
+        }
+        // directive: `.…`
+        if (line[0] == 46) { // '.'
+            if (x86_str_starts_with(line, ".section")) {
+                if (x86_str_contains(line, ".rodata")) {
+                    section = 1;
+                } else if (x86_str_contains(line, ".bss")) {
+                    section = 2;
+                } else if (x86_str_contains(line, ".data")) {
+                    section = 1; // initialised data -> emit bytes like rodata
+                } else {
+                    section = 0;
+                }
+            } else if (line == ".text") {
+                section = 0;
+            } else if (line == ".bss") {
+                // The bare section shorthands, alongside `.section .bss`.
+                section = 2;
+            } else if (line == ".data") {
+                section = 1;
+            } else if (x86_str_starts_with(line, ".quad")) {
+                var qop: string = x86_gas_trim(line[6:line.len()]);
+                if (section == 2) {
+                    a = x86_bss_skip(a, 8); // zero-init quad reserves 8 bytes
+                } else if (x86_gas_is_symbol(qop)) {
+                    // `.quad <label>` — an absolute pointer to another
+                    // symbol. Queued as a relocation; read as a number it
+                    // would be 0.
+                    a = x86_rodata_quad_sym(a, qop);
+                } else {
+                    a = x86_rodata_quad(a, x86_gas_atoi(qop), 0);
+                }
+            } else if (x86_str_starts_with(line, ".long")) {
+                // `.long a, b, …`: each comma-separated value as 4 little-endian
+                // bytes. The IR emitters lay an f64 constant down as two `.long`
+                // halves (exact bits, so the encoding is assembler-independent —
+                // see const_f64). Splitting the comma list keeps a single
+                // labelled directive; ignoring it (the pre-#5434 behaviour)
+                // silently dropped the 8 rodata bytes and shifted everything
+                // after — the SH-005 hazard class.
+                var lrest: string = x86_gas_trim(line[6:line.len()]);
+                var ltok: string = "";
+                var lci: i32 = 0;
+                while (lci < lrest.len()) {
+                    if (lrest[lci] == 44) {   // ','
+                        a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
+                        ltok = "";
+                    } else {
+                        ltok = ltok + lrest[lci:lci + 1];
+                    }
+                    lci = lci + 1;
+                }
+                if (x86_gas_trim(ltok).len() > 0) {
+                    a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(x86_gas_trim(ltok))) };
+                }
+            } else if (x86_str_starts_with(line, ".double")) {
+                a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(line[8:line.len()])))) };
+            } else if (x86_str_starts_with(line, ".ascii")) {
+                a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
+            } else if (x86_str_starts_with(line, ".skip") || x86_str_starts_with(line, ".zero") || x86_str_starts_with(line, ".space")) {
+                // Reserve N zero bytes; `.zero` / `.space` are the SSA
+                // backend's spellings. In an initialised section the bytes
+                // must be laid down, or every later symbol shifts.
+                var zn: i32 = x86_gas_atoi(x86_gas_trim(line[x86_str_indexof(line, " "):line.len()]));
+                if (section == 2) {
+                    a = x86_bss_skip(a, zn);
+                } else if (section == 1) {
+                    var zi: i32 = 0;
+                    while (zi < zn) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; zi = zi + 1; }
+                }
+            } else if (x86_str_starts_with(line, ".byte")) {
+                // A single byte of initialised data; dropping it shifts
+                // every later .rodata symbol (SH-005).
+                a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(line[5:line.len()])) & 255) };
+            } else if (x86_str_starts_with(line, ".align")) {
+                var an: i32 = x86_gas_atoi(x86_gas_trim(line[6:line.len()]));
+                if (an > 0) {
+                    if (section == 2) {
+                        while ((a.bss_size % an) != 0) { a = x86_bss_skip(a, 1); }
+                    } else if (section == 1) {
+                        while ((a.rodata.len() % an) != 0) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; }
+                    }
+                }
+            } else if (!x86_gas_directive_ignorable(line)) {
+                // Every directive above either lays bytes down or moves a
+                // section cursor, so an unrecognised one that silently does
+                // neither shifts every symbol after it (SH-005).
+                a = X86Asm { ...a, unknown: a.unknown.append(line) };
+            }
+            continue;
+        }
+        // instruction: mnemonic + operand text
+        var sp: i32 = x86_str_indexof(line, " ");
+        var mnem: string = line;
+        var rest: string = "";
+        if (sp >= 0) {
+            mnem = line[0:sp] + "";
+            rest = x86_gas_trim(line[sp + 1:line.len()]);
+        }
+        a = x86_gas_emit(a, mnem, rest);
+    }
+    return x86_resolve(a);
+}
