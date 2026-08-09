@@ -11614,15 +11614,15 @@ func (b *builder) call(n *ast.Call) error {
 		for _, p := range lam.Params {
 			ft.Params = append(ft.Params, p.Type)
 		}
-		for _, a := range n.Args {
-			if err := b.expr(a); err != nil {
-				return err
-			}
+		slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
+		if err != nil {
+			return err
 		}
 		if err := b.expr(lam); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
+		b.emitArgTempDrops(slots, types)
 		return nil
 	}
 	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
@@ -11643,15 +11643,15 @@ func (b *builder) call(n *ast.Call) error {
 			ft = userSig
 		}
 		if ft != nil {
-			for _, a := range n.Args {
-				if err := b.expr(a); err != nil {
-					return err
-				}
+			slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
+			if err != nil {
+				return err
 			}
 			if err := b.expr(mc); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
+			b.emitArgTempDrops(slots, types)
 			return nil
 		}
 	}
@@ -12758,6 +12758,31 @@ func (b *builder) callBody(n *ast.Call) error {
 		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
 			b.resultIsCountedStringAlias(id.Name, b.exprType(n))) &&
 		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+	// The same reclaim for a call THROUGH a function-typed local or param
+	// (#6460). `h([1, 2])` leaked its argument outright — frees=0, not one
+	// short — where the identical literal handed to a named function is
+	// reclaimed. That is how you call a callback, a comparator, a visitor or
+	// a middleware handler, so the leak is on the ordinary path.
+	//
+	// The name-keyed oracles cannot be consulted: nothing names which closure
+	// the value holds. They are also not what carries the safety here.
+	//   - resultCannotAliasArg: a CONCRETE SCALAR result cannot BE or CONTAIN
+	//     the argument, so the callee cannot hand it back. This is the same
+	//     restriction the direct path leans on, and it is the one whose
+	//     widening to pointer results segfaulted the differential oracle
+	//     before — it stays exactly as narrow here.
+	//   - A closure cannot retain the argument in a CAPTURE: E049 makes a
+	//     reference-typed capture read-only ("it could close a reference
+	//     cycle"), so `cap = xs` does not compile. A named callee has no
+	//     equivalent route either — no globals, and both `a[i] = v` and
+	//     `p.f = v` are checker errors.
+	//   - `own` cannot appear on a function VALUE's parameter: ast.FuncType
+	//     carries a bare []Type, so the erased signature has no consuming
+	//     position and the callee never reclaims the argument itself. The
+	//     ownedByCalleeAt suppression below reads false for every position,
+	//     which is the right answer rather than a missing one.
+	reclaimIndirectArgTemps := ast.RcFreeEnabled && calleeIsLocal &&
+		resultCannotAliasArg(b.exprType(n))
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
 	// An `own` (consuming) parameter takes ownership of its argument, so the
@@ -12781,7 +12806,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
-		if reclaimArgTemps && !toOwnParam {
+		if (reclaimArgTemps || reclaimIndirectArgTemps) && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
 			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the
@@ -12791,25 +12816,11 @@ func (b *builder) callBody(n *ast.Call) error {
 			// gate in emitOwnedSlotDrop only frees a uniquely-owned rc==1
 			// result, and the enclosing call's concrete-scalar result
 			// (resultCannotAliasArg) means it can't hand the arg back.
-			tt, ok := b.freshOwnedRcTempType(a)
-			if !ok {
-				tt, ok = b.ownedCallResultType(a)
-			}
-			if !ok {
-				tt, ok = b.appendCopyTempType(a)
+			slot, tt, ok, err := b.stashOwnedArgTemp(a)
+			if err != nil {
+				return err
 			}
 			if ok {
-				// Evaluate into a scratch slot (typed so two-word strings
-				// store/load correctly), then reload for the call. Records
-				// the slot for the post-call dec below.
-				slot := b.allocSlot()
-				b.locals[fmt.Sprintf("__argtmp_%d", slot)] = slot
-				b.scratchType[slot] = tt
-				if err := b.expr(a); err != nil {
-					return err
-				}
-				b.emit(Op{Kind: OpStoreLocal, I32: slot})
-				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				argTempSlots = append(argTempSlots, slot)
 				argTempTypes = append(argTempTypes, tt)
 				continue
@@ -12954,7 +12965,82 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: sig}})
+	// Release the fresh owned temps stashed for this call (#6460).
+	b.emitArgTempDrops(argTempSlots, argTempTypes)
 	return nil
+}
+
+// emitIndirectCallArgs lowers the arguments of an INDIRECT (closure) call,
+// stashing each fresh owned rc temp in a scratch slot so the caller can
+// release it once the call has consumed it (#6460). Returns the slots and
+// their types; an empty result means nothing to release.
+//
+// Reclaim is gated on a concrete-scalar result for the reasons spelled out at
+// reclaimIndirectArgTemps: the result cannot be or contain the argument, a
+// closure cannot retain it in a capture (E049), and a function VALUE has no
+// `own` position for the callee to reclaim it through.
+func (b *builder) emitIndirectCallArgs(args []ast.Expr, resultType ast.Type) ([]int32, []ast.Type, error) {
+	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(resultType)
+	var slots []int32
+	var types []ast.Type
+	for _, a := range args {
+		if reclaim {
+			slot, tt, ok, err := b.stashOwnedArgTemp(a)
+			if err != nil {
+				return nil, nil, err
+			}
+			if ok {
+				slots = append(slots, slot)
+				types = append(types, tt)
+				continue
+			}
+		}
+		if err := b.expr(a); err != nil {
+			return nil, nil, err
+		}
+	}
+	return slots, types, nil
+}
+
+// stashOwnedArgTemp evaluates call argument `a` into a scratch slot when it is
+// a FRESH owned rc temp — a literal construction, a fresh-returning call, or
+// an `.append` copy — and leaves its value on the operand stack for the call.
+// Reports the slot and type so the caller can release it once the call has
+// consumed it; ok is false for any other argument shape, which is then left
+// for the caller to lower normally.
+//
+// The slot is typed so a two-word string stores and reloads at the right
+// width. Shared by the direct-call arg loop and emitIndirectCallArgs — the
+// classification is the same question in both, only the admission gate around
+// it differs.
+func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
+	tt, ok := b.freshOwnedRcTempType(a)
+	if !ok {
+		tt, ok = b.ownedCallResultType(a)
+	}
+	if !ok {
+		tt, ok = b.appendCopyTempType(a)
+	}
+	if !ok {
+		return 0, nil, false, nil
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__argtmp_%d", slot)] = slot
+	b.scratchType[slot] = tt
+	if err := b.expr(a); err != nil {
+		return 0, nil, false, err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	return slot, tt, true, nil
+}
+
+// emitArgTempDrops releases the temps emitIndirectCallArgs stashed. Net-zero
+// on the operand stack, so the call's result sitting underneath is untouched.
+func (b *builder) emitArgTempDrops(slots []int32, types []ast.Type) {
+	for i, slot := range slots {
+		b.emitOwnedSlotDrop(slot, types[i])
+	}
 }
 
 // localFuncType returns the static FuncType of the named local. Calls

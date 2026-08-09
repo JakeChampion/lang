@@ -3919,6 +3919,61 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The safety boundary of the closure-call arg reclaim (#6460). Each
+		// closure here HANDS BACK its argument — as the result, inside a
+		// struct, inside an array — so the caller's fresh temp is still live
+		// after the call and must NOT be released. The gate is the result
+		// TYPE: only a concrete scalar admits the reclaim, and every callee
+		// below returns something pointer-shaped, so all of them decline.
+		//
+		// The reads after each call are the point: a premature release would
+		// hand the buffer to the freelist, the next construction would recycle
+		// it, and the sum would come out wrong even where the underflow
+		// counter stayed quiet.
+		name: "closure_call_arg_handed_back_is_not_reclaimed",
+		src: `
+import "core/int";
+import "std/i32";
+struct Hold { xs: i32[] }
+function main(): i32 {
+    var idf: (i32[]) => i32[] = (xs: i32[]) => xs;
+    var wrap: (i32[]) => Hold = (xs: i32[]) => Hold { xs: xs };
+    var nest: (i32[]) => i32[][] = (xs: i32[]) => [xs];
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var a: i32[] = idf([1, 2, 3]);
+        var b: Hold = wrap([4, 5, 6]);
+        var c: i32[][] = nest([7, 8, 9]);
+        t = t + a[0] + a[2] + b.xs[1] + c[0][2];
+        r = r + 1;
+    }
+    return (t - 360) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A closure whose result IS a scalar — so the reclaim fires — called
+		// with an argument that is a live LOCAL rather than a fresh temp. Only
+		// a freshly-allocating shape is stashed and released; an aliased local
+		// must be left alone, or the binding it is still read through is freed
+		// underneath it.
+		name: "closure_call_arg_alias_is_left_alone",
+		src: `
+import "core/int";
+import "std/i32";
+function main(): i32 {
+    var len: (i32[]) => i32 = (xs: i32[]) => xs.len();
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var a: i32[] = [1, 2, 3];
+        t = t + len(a) + len(a) + a[1];
+        r = r + 1;
+    }
+    return (t - 160) + __rc_underflow_count();
+}`,
+	},
+	{
 		// The reclaiming shape: a struct holding a capturing closure, built
 		// and discarded in a loop so the freed pair / env / capture blocks are
 		// recycled into the next round. An over-release here hands a live
