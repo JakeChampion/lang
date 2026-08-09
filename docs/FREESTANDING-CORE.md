@@ -114,10 +114,15 @@ Two consequences worth knowing:
   of an omission.
 
 The entry point is deliberately unspecified: `HandlerKinds` is empty, because a
-freestanding artifact is a set of exported symbols its embedder calls rather than
-something entered at `main`. That is closer to the existing `-shared` / `-export` path
-than to any handler kind, and #6510 settles it — declaring a shape now would be
-inventing one.
+freestanding artifact is not entered at `main`. #6510 settles the shape.
+
+**There is more than one shape, and #6510 must not foreclose on the second.** A
+freestanding artifact can be a *guest* — a set of exported symbols its embedder calls,
+closer to the existing `-shared` / `-export` path than to any handler kind — or it can
+be the *host*, entered at a reset vector, owning the vector table and the MMU. Fern
+targets both (`docs/BARE-METAL-PLAN.md`). The guest shape is the near-term one and the
+right thing to build first; hard-coding it as *the* freestanding shape is what turns the
+host shape into a rewrite instead of a second descriptor field.
 
 ## Adding a builtin
 

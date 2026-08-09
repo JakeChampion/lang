@@ -133,9 +133,10 @@ var environments = map[string]environment{
 
 	// No host at all. Everything a program can still reach is
 	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
-	// and every judgement call. No entry point either — a freestanding
-	// artifact is a set of exported symbols its embedder calls, which
-	// #6510 settles.
+	// and every judgement call. No entry point either: a freestanding
+	// artifact is either a guest (exported symbols its embedder calls)
+	// or the host (entered at a reset vector), so #6510 needs to leave
+	// room for both — docs/BARE-METAL-PLAN.md.
 	"freestanding": {},
 }
 
