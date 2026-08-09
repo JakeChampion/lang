@@ -86,7 +86,7 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
-	for _, sym := range []string{"call __fern_tcp_connect", "call __fern_tcp_send", "call __fern_tcp_recv", "call __fern_tcp_close", "call __fern_tcp_pollable"} {
+	for _, sym := range []string{"call __fern_tcp_connect", "call __fern_tcp_send", "call __fern_tcp_recv", "call __fn___fern_tcp_close", "call __fern_tcp_pollable"} {
 		if !strings.Contains(string(asm), sym) {
 			t.Errorf("emitted asm missing %q (tcp op did not lower through the IR path)", sym)
 		}

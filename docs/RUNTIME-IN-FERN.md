@@ -15,7 +15,8 @@ reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `__fern_io_error`, then `env`, and finally `open_fd` — the Reader/Writer
 opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
-one now). Each is ONE source across all three native
+one now), and the two socket leaves that take only an fd (`tcp_close`,
+`tcp_accept`). Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -378,18 +379,16 @@ emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
 
 ## What is left on the register backends, and what each needs
 
-Audited against the code at `48fd88cd`, per helper and **per target**, because
+Audited per helper and **per target**, because
 the interesting question for the next slice is not "which helpers are
 hand-written" but "which of them the floor can already express".
 
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_close` | `close` | 1 | `__syscall3` |
-| `tcp_accept` | `accept` | 3 | `__syscall3` |
 | `tcp_connect` | `socket` + `connect` | 3 each | `__syscall3` |
 | `tcp_listen` | `socket` + `bind` + `listen` | 3 each | `__syscall3` |
 | `tcp_recv` | `read` | 3 | `__syscall3` |
-| `tcp_send` | `write` | 3 | `__syscall3` |
+| `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
 | `sleep_ms` (Linux) | `nanosleep` | 2 | `__syscall3` |
 | `proc_waitpid` | `wait4` | 4 | `__syscall4` |
@@ -399,12 +398,22 @@ hand-written" but "which of them the floor can already express".
 | `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | **needs `__syscall5`** |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
-`tcp_pollable` issues no syscall at all. The remaining non-leaf entries
+`tcp_close` and `tcp_accept` have since moved (they take only an fd, so nothing
+had to be marshalled); `tcp_pollable` issues no syscall at all. The remaining
+non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
 
 So `__syscall5` has **three** consumers, and adding it is the enabling step for
 `poll`, `proc_fork` on Linux, and Darwin's sleep.
+
+`tcp_send` and `tcp_recv` are a different kind of blocked: their syscall is a
+plain 3-argument `write` / `read`, but they need the **data pointer of a
+`string`**, and the floor only runs the other way — `__raw_string(data, len)`
+builds a string from raw bytes and nothing reads one back out. Expressing them
+today means copying the payload byte-by-byte on every call, which is a straight
+loss on a send path. What they want is the inverse bridge (a `__raw_data`), not
+a wider syscall wrapper.
 
 Darwin's `fork` is the second helper after `monotonic_ns` that stays
 hand-written on principle rather than for want of a syscall wrapper: it reports

@@ -868,9 +868,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_recv\n    str x0, [sp, #-16]!\n");
             s = s.need("heap");
         } else if (o.kind_tag == 196) {  // tcp_close
-            // [fd] -> __fern_tcp_close(x0=fd) -> 0 / -errno.
+            // [fd] IS param[0] already, so the stack ABI needs no marshalling.
+            // -> 0 / -errno. The need is marked (as x86-64 always did) because
+            // the Fern helper is emitted need-gated, outside emit_rt_net.
             s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_close\n    str x0, [sp, #-16]!\n");
+            s = s.need("tcp_close");
+            s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 197) {  // tcp_pollable
             // [fd] -> __fern_tcp_pollable(x0=fd) -> fd (native identity).
             s = s.need("heap");
@@ -880,9 +883,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_listen\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
-            // [listener fd] -> __fern_tcp_accept(x0=fd) -> connection fd / -errno.
+            // [listener fd] IS param[0] already. -> connection fd / -errno.
             s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_accept\n    str x0, [sp, #-16]!\n");
+            s = s.need("tcp_accept");
+            s = s.write("    bl __fn___fern_tcp_accept\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
             // [fd, str box] -> write(2) the box's bytes to the fd -> i32 bytes /
             // -errno. Inline (no helper): len=box[8], data=box[0]; write=64.
@@ -4854,17 +4858,6 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_tcp_listen, .-__fern_tcp_listen\n");
 
-    // __fern_tcp_accept(x0 = listener fd) → conn fd or -errno.
-    // accept(fd, NULL, NULL) — peer address not needed. Leaf.
-    s = s.write(".globl __fern_tcp_accept\n");
-    s = s.write(".type __fern_tcp_accept, %function\n");
-    s = s.write("__fern_tcp_accept:\n");
-    s = s.write("    mov x1, #0\n");            // addr = NULL
-    s = s.write("    mov x2, #0\n");            // addrlen = NULL
-    s = s.write("    mov x8, #202\n");          // accept
-    s = s.write("    svc #0\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_accept, .-__fern_tcp_accept\n");
 
     // __fern_tcp_recv(x0 = fd, x1 = max) → string box {data, len}.
     // Allocates max bytes, read()s into them, boxes (data, len). On
@@ -4912,14 +4905,6 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_tcp_send, .-__fern_tcp_send\n");
 
-    // __fern_tcp_close(x0 = fd) → 0 or -errno. close(2) wrapper. Leaf.
-    s = s.write(".globl __fern_tcp_close\n");
-    s = s.write(".type __fern_tcp_close, %function\n");
-    s = s.write("__fern_tcp_close:\n");
-    s = s.write("    mov x8, #57\n");           // close
-    s = s.write("    svc #0\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_close, .-__fern_tcp_close\n");
 
     // __fern_tcp_connect(x0 = host_be, x1 = port) → connected fd or -errno.
     // socket(AF_INET, SOCK_STREAM, 0) #198; build sockaddr_in {family,
@@ -6442,6 +6427,17 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // getentropy differ only in the number, which `tgt` supplies.
     if (s.has_need("random_i32")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32(tgt), s.struct_decls, s);
+    }
+    // tcp_close / tcp_accept: the two socket leaves that take only an fd
+    // (#2649). Need-gated HERE rather than in emit_rt_net, which runs only under
+    // the heap gate and emits its helpers unconditionally — neither of these
+    // allocates, so a program that closes a socket without otherwise touching
+    // the heap must still get them.
+    if (s.has_need("tcp_close")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("tcp_accept")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

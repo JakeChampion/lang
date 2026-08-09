@@ -594,14 +594,7 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_tcp_close appends __fern_tcp_close(%rdi = fd) -> 0 / -errno: close(2).
-function emit_ir_tcp_close(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_tcp_close:\n");
-    s = s.write("    movq $3, %rax\n");              // close (fd in %rdi)
-    s = s.write("    syscall\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
 
 // emit_ir_tcp_recv appends __fern_tcp_recv(%rdi = fd, %rsi = max) -> a self-host
 // string box {data@0, len@8} of up to `max` bytes read. Mirrors the self-host
@@ -709,18 +702,7 @@ function emit_ir_tcp_listen(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_tcp_accept appends __fern_tcp_accept(%rdi = listener fd) -> the accepted
-// connection fd (or -errno) in %rax. accept(2) [#43] with NULL/NULL addr/addrlen;
-// the listener fd is already in %rdi. Leaf (no frame, no alloc).
-function emit_ir_tcp_accept(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_tcp_accept:\n");
-    s = s.write("    xorq %rsi, %rsi\n");            // addr = NULL
-    s = s.write("    xorq %rdx, %rdx\n");            // addrlen = NULL
-    s = s.write("    movq $43, %rax\n");             // accept
-    s = s.write("    syscall\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_tcp_accept is a Fern runtime function (#2649): asmcore.rt_src_tcp_accept — accept(2) with a NULL addr/addrlen.
 
 // __fern_open_fd is a Fern runtime function (#2649): asmcore.rt_src_open_fd,
 // emitted via emit_ir_runtime_fern_fn and gated on the open_file need. It
@@ -4504,8 +4486,8 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_poll",
         "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
-        "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
-        "__fern_tcp_recv", "__fern_tcp_send", "__fern_tcp_listen", "__fern_tcp_accept",
+        "__fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
+        "__fern_tcp_recv", "__fern_tcp_send", "__fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
@@ -5205,8 +5187,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_recv\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("tcp_recv");
         } else if (o.kind_tag == 196) {  // tcp_close
-            // [fd]; __fern_tcp_close(%rdi=fd) -> 0 / -errno.
-            s = s.write("    popq %rdi\n    call __fern_tcp_close\n    pushq %rax\n");
+            // [fd] IS param[0] already, so the stack ABI needs no marshalling:
+            // call, drop the arg slot, push the result. 0 / -errno.
+            s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("tcp_close");
         } else if (o.kind_tag == 197) {  // tcp_pollable
             // [fd]; __fern_tcp_pollable(%rdi=fd) -> the fd unchanged (native's
@@ -5218,8 +5201,8 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rdi\n    call __fern_tcp_listen\n    pushq %rax\n");
             s = s.need("tcp_listen");
         } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
-            // [listener fd]; __fern_tcp_accept(%rdi=fd) -> connection fd / -errno.
-            s = s.write("    popq %rdi\n    call __fern_tcp_accept\n    pushq %rax\n");
+            // [listener fd] IS param[0] already. -> connection fd / -errno.
+            s = s.write("    call __fn___fern_tcp_accept\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("tcp_accept");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
             // [fd, str box]; write(2) the box's bytes to the fd -> i32 bytes /
@@ -7655,11 +7638,17 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("wasm_poll")) { s = emit_ir_wasm_poll(s); }
     if (s.has_need("tcp_connect")) { s = emit_ir_tcp_connect(s); }
     if (s.has_need("tcp_pollable")) { s = emit_ir_tcp_pollable(s); }
-    if (s.has_need("tcp_close")) { s = emit_ir_tcp_close(s); }
+    if (s.has_need("tcp_close")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), all_structs, s);
+    }
     if (s.has_need("tcp_recv")) { s = emit_ir_tcp_recv(s); }
     if (s.has_need("tcp_send")) { s = emit_ir_tcp_send(s); }
     if (s.has_need("tcp_listen")) { s = emit_ir_tcp_listen(s); }
-    if (s.has_need("tcp_accept")) { s = emit_ir_tcp_accept(s); }
+    if (s.has_need("tcp_accept")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), all_structs, s);
+    }
     if (s.has_need("open_file")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_open_fd("x86_64"), all_structs, s);
