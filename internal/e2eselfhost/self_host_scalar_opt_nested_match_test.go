@@ -22,6 +22,13 @@ import (
 // flat analysis cannot, and the flat analysis takes it exactly when precise-drop
 // stands down. Widening BOTH would put two credits on one box — the failure mode
 // #6480 shipped and CI caught as `__rc_underflow_count() == -1`.
+//
+// That same argument is what lets `is_opt` admit a CALL init
+// (`fresh_scalar_option_call_init`, via the OPTFRESH registry now threaded into
+// `precise_drop_names`) alongside the inline ctor. `consumed_scalar_enum_frees`
+// already admits both, so the two analyses cover the identical candidate set and
+// split it purely on where the match sits. The two `*_flat_control` rows below
+// are the ones that would catch it if that split ever stopped holding.
 
 // The fn-scoped nested spelling: precise_drop_names' own class, and the row this
 // closes. `__rc_underflow_count()` is the return value, so an over-release shows
@@ -52,6 +59,54 @@ const scalarOptNestedWhileSrc = `function round(i: i32): i32 {
         match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
         k = k + 1;
     }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    if (x == 999999) { return 90; }
+    return __rc_underflow_count();
+}
+`
+
+// Bound from a CALL to an OPTFRESH-proven producer rather than an inline ctor.
+// `is_opt` reaches this only because `precise_drop_names` now takes the registry
+// (`opt_fresh`) and admits `fresh_scalar_option_call_init` beside
+// `fresh_scalar_option_init` — the same pair `consumed_scalar_enum_frees` admits
+// for its own FLAT-match half of the shape.
+const scalarOptCallNestedIfSrc = `function mk(i: i32): Option[i32] {
+    if (i < 0) { return None; }
+    return Some(i + 1);
+}
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var o: Option[i32] = mk(i);
+    if (i >= 0) {
+        match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    if (x == 999999) { return 90; }
+    return __rc_underflow_count();
+}
+`
+
+// The call-init FLAT control — `consumed_scalar_enum_frees`' half. Admitting the
+// call init into `is_opt` must not give this row a SECOND credit, and only the
+// underflow counter would show it if it did.
+const scalarOptCallFlatSrc = `function mk(i: i32): Option[i32] {
+    if (i < 0) { return None; }
+    return Some(i + 1);
+}
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var o: Option[i32] = mk(i);
+    match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
     return acc;
 }
 function main(): i32 {
@@ -143,7 +198,9 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"nested_in_if", scalarOptNestedIfSrc},
 		{"nested_in_while", scalarOptNestedWhileSrc},
+		{"call_init_nested_in_if", scalarOptCallNestedIfSrc},
 		{"flat_control", scalarOptFlatSrc},
+		{"call_init_flat_control", scalarOptCallFlatSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
