@@ -74,6 +74,32 @@ are what caught it; they read as "did the module bail to the AST path" but they
 double as the only guard against codegen bloat, and raising them to accommodate
 a migration would discard exactly the signal they exist to give.
 
+### First instalment on that precondition: the push/pop peephole
+
+`asm_ir.peephole_push_pop` folds an adjacent `pushq`/`popq` into the move it
+actually is, removing **20% of the emitted lines** on the compiler's own source
+(1,860,341 → 1,484,006) for 1.3% of compile time. It is a post-pass over the
+emitted text rather than a change to instruction selection, so it needs no
+clobber analysis: `popq Y` reads what the line above it just pushed, which makes
+the pair `Y := X` whatever either line was *meant* for.
+
+That is an instalment, not the fix. What it does NOT touch is the shape that
+dominates a binary op — the operand pair left one instruction apart once the
+inner pair folds:
+
+```asm
+pushq -8(%rbp)          movq -16(%rbp), %rcx
+movq -16(%rbp), %rcx    movq -8(%rbp), %rax     # not done: needs clobber analysis
+popq %rax
+```
+
+Reaching that one means proving no instruction between the push and the pop
+changes the pushed source, which is a real analysis (implicit writes make a
+mnemonic blocklist unsafe — `idivq %rcx` clobbers `%rax` while naming neither).
+Worth roughly as much again. Re-measure `arr_push` before assuming the two
+together clear the bar: 353 instructions less 20% is still ~280 against 27, so
+the gap is one that instruction selection, not peepholes, has to close.
+
 One rule the attempt did establish, which applies to any future raw op: **it
 must push a result.** Every raw op is typed `i32` and the statement lowering
 emits a drop, so an op that consumes operands without pushing one unbalances
