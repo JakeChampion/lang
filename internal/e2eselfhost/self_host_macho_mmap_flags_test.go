@@ -18,6 +18,24 @@ func movzX3(imm16 uint32) []byte {
 	return []byte{byte(w), byte(w >> 8), byte(w >> 16), byte(w >> 24)}
 }
 
+// hasMovzImm reports whether raw contains `movz xN, #imm16` for ANY destination
+// register.
+//
+// The mmap checks can pin x3, because that IS mmap's flags argument — the ABI
+// fixes the register. The openat flag translation cannot: it happens inside
+// __fern_open_fd, which is compiled Fern (#2649), so which register holds the
+// value is a register-allocation detail. Pinning one made this test fail on a
+// migration that changed nothing observable.
+func hasMovzImm(raw []byte, imm16 uint32) bool {
+	for rd := uint32(0); rd <= 30; rd++ {
+		w := 0xD2800000 | (imm16 << 5) | rd
+		if bytes.Contains(raw, []byte{byte(w), byte(w >> 8), byte(w >> 16), byte(w >> 24)}) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestSelfHostArm64DarwinMmapFlags pins #6042: the arena mmap's flag word is a
 // per-OS constant, and nothing downstream translates it.
 //
@@ -60,10 +78,9 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 	darwinFlags := movzX3(0x1002) // MAP_ANON | MAP_PRIVATE          (XNU)
 	linuxFlags := movzX3(0x4022)  // MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE
 
-	// `movz x23, #1537` — O_WRONLY|O_CREAT|O_TRUNC on XNU, the translation
-	// __fern_open_fd applies to the Linux 577 the IR hands it. Present only on
-	// the darwin emit. (MOVZ 64-bit, Rd = x23.)
-	darwinOTrunc := []byte{0x37, 0xC0, 0x80, 0xD2}
+	// 1537 = O_WRONLY|O_CREAT|O_TRUNC on XNU, the translation __fern_open_fd
+	// applies to the Linux 577 the IR hands it. Present only on the darwin emit.
+	const darwinOTrunc = 1537
 
 	for _, tc := range []struct {
 		target  string
@@ -72,7 +89,7 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 		// openWant/openNotWant: the openat flag translation, checked the same
 		// way — present on darwin, absent on linux.
 		openWant    bool
-		openPresent []byte
+		openPresent uint32
 	}{
 		{"arm64-darwin", darwinFlags, linuxFlags, true, darwinOTrunc},
 		{"arm64", linuxFlags, darwinFlags, false, darwinOTrunc},
@@ -94,8 +111,8 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 			if bytes.Contains(raw, tc.notWant) {
 				t.Errorf("-target %s: emitted binary still contains the OTHER platform's mmap flags (% x)", tc.target, tc.notWant)
 			}
-			if got := bytes.Contains(raw, tc.openPresent); got != tc.openWant {
-				t.Errorf("-target %s: openat O_TRUNC translation present = %v, want %v (% x)", tc.target, got, tc.openWant, tc.openPresent)
+			if got := hasMovzImm(raw, tc.openPresent); got != tc.openWant {
+				t.Errorf("-target %s: openat O_TRUNC translation (movz xN, #%d) present = %v, want %v", tc.target, tc.openPresent, got, tc.openWant)
 			}
 		})
 	}

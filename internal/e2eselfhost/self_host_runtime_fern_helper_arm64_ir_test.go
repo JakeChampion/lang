@@ -49,6 +49,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
+		// open_writer is BOUND, not matched: Result[Writer, IoError] destructuring
+		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
+		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
+		"    if (random_i32() == 0) { return 12; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -73,7 +77,12 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// The directory pair (#2649) — the last two off the shape-diverging
 		// list. Darwin's getdirentries64 4th out-param is __syscall4 and its
 		// dirent name offset is a direntoff row, so no per-target body.
-		"read_dir", "remove_dir_all"} {
+		"read_dir", "remove_dir_all",
+		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_fd
+		// carries the Darwin open-flag translation the hand-asm did inline; it
+		// has to stay a run-time check because irlower picks the flags and has
+		// no target, so the Linux emit here simply has no translation to make.
+		"random_i32", "open_fd"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -107,8 +116,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	// The fs leaves call a Fern __fern_io_error bundled with them, rather than
 	// inlining the five-way errno classification — the "dependencies are the
-	// call graph" shape #2649 is aiming at. The register-ABI hand-asm sibling
-	// still exists for open_fd, so assert the Fern one specifically.
+	// call graph" shape #2649 is aiming at. open_fd was the last leaf holding
+	// the register-ABI hand-asm sibling alive; it is deleted now.
 	if !strings.Contains(asm, "bl __fn___fern_io_error") {
 		t.Error("the migrated fs leaves do not call the bundled Fern __fern_io_error")
 	}
@@ -181,6 +190,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
+		// open_writer is BOUND, not matched: Result[Writer, IoError] destructuring
+		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
+		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
+		"    if (random_i32() == 0) { return 12; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
