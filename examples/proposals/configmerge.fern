@@ -1,0 +1,627 @@
+// examples/proposals/configmerge.fern — proposal turn, drawn line 255:
+// "A configuration merger that layers defaults, file and environment with
+// precedence."
+//
+// Layering is a monoid, and saying so is not decoration — it is what makes the
+// thing testable without a table of expected outputs. `overlay(base, top)` is
+// last-write-wins, the empty layer is its identity, and it is ASSOCIATIVE, so
+// `(defaults · file) · env` and `defaults · (file · env)` must agree for every
+// stack. A merger that special-cases the env layer, or that folds in the wrong
+// direction for one of the three, breaks associativity long before it breaks
+// any single expected value — and it breaks it on stacks nobody wrote a case
+// for. Idempotence (`a · a == a`) catches the mirror-image bug of a merge that
+// duplicates rather than replaces.
+//
+// The independent oracle is TOP-DOWN RESOLUTION: to find a key, walk the
+// layers from highest precedence down and take the first that has it. That is
+// the definition of precedence, it shares no code with the fold, and it is
+// checked for every key in the union of the corpus.
+//
+// Three things a config merger gets wrong in the field, each with its own test:
+//
+//   - **An empty string is a VALUE, not an absence.** `FERN_LOG=` must override
+//     a non-empty default with the empty string. Implementations that model
+//     "missing" as `""` silently ignore it, and the bug only shows up in
+//     production when somebody deliberately blanks a setting.
+//   - **PROVENANCE has to be right.** Reporting which layer won is most of why
+//     anyone wants a merger (`--show-origin`), and it is separately wrong-able:
+//     a value can come from the right layer while the label says another. It is
+//     checked against the same top-down walk that produces the value.
+//   - **An invalid typed value is an ERROR, not the default.** `port=banana`
+//     falling back to 8080 is the worst possible behaviour: the program runs,
+//     on the wrong port, silently. `get_int` distinguishes absent (use the
+//     default) from present-and-unparseable (report it).
+//
+// The environment mapping (`FERN_DB_HOST` ↔ `db.host`) is checked as a
+// BIJECTION over the names it accepts — round-trip in both directions, and
+// distinct names to distinct keys — rather than by a handful of examples. It
+// rejects anything outside its charset rather than mangling it, so a stray
+// `FERN_SOME-VAR` is not silently turned into a key.
+//
+// Within a single layer a repeated key takes its LAST entry, matching how a
+// config file's later line wins over an earlier one.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+struct Entry { key: string, value: string }
+struct Layer { name: string, entries: Entry[] }
+// A resolved setting, with the layer it came from.
+struct Resolved { key: string, value: string, from: string }
+
+// ------------------------------------------------------------- ordering
+
+// Byte-wise `<` on strings: `<` is not defined for string in Fern, and the
+// merge needs a total order so its output is comparable rather than
+// insertion-ordered.
+function str_lt(a: string, b: string): boolean {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return (a[i] as i32) < (b[i] as i32); }
+        i = i + 1;
+    }
+    return a.len() < b.len();
+}
+
+function sort_resolved(rs: Resolved[]): Resolved[] {
+    var out: Resolved[] = rs;
+    var i: i32 = 1;
+    while (i < out.len()) {
+        var j: i32 = i;
+        while (j > 0 && str_lt(out[j].key, out[j - 1].key)) {
+            var a: Resolved = out[j - 1];
+            var b: Resolved = out[j];
+            out = out.with(j - 1, b);
+            out = out.with(j, a);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- merge
+
+function index_of_key(rs: Resolved[], k: string): i32 {
+    var i: i32 = 0;
+    while (i < rs.len()) {
+        if (rs[i].key == k) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// A layer flattened to resolved settings, later entries beating earlier ones.
+function as_resolved(l: Layer): Resolved[] {
+    var out: Resolved[] = [];
+    var i: i32 = 0;
+    while (i < l.entries.len()) {
+        var e: Entry = l.entries[i];
+        var at: i32 = index_of_key(out, e.key);
+        var r: Resolved = Resolved { key: e.key, value: e.value, from: l.name };
+        if (at < 0) { out = out.append(r); } else { out = out.with(at, r); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The monoid operation: `top` wins, and carries its provenance with it.
+function overlay(base: Resolved[], top: Resolved[]): Resolved[] {
+    var out: Resolved[] = base;
+    var i: i32 = 0;
+    while (i < top.len()) {
+        var at: i32 = index_of_key(out, top[i].key);
+        if (at < 0) { out = out.append(top[i]); } else { out = out.with(at, top[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Layers are given in increasing precedence: defaults, then file, then env.
+function merge_all(ls: Layer[]): Resolved[] {
+    var acc: Resolved[] = [];
+    var i: i32 = 0;
+    while (i < ls.len()) { acc = overlay(acc, as_resolved(ls[i])); i = i + 1; }
+    return sort_resolved(acc);
+}
+
+// --------------------------------------------------------------- oracle
+
+// Precedence, by definition: walk the layers from the highest down and take
+// the first that HAS the key. Shares no code with the fold above.
+function resolve(ls: Layer[], k: string): Resolved {
+    var i: i32 = ls.len() - 1;
+    while (i >= 0) {
+        var l: Layer = ls[i];
+        var found: boolean = false;
+        var v: string = "";
+        var j: i32 = 0;
+        while (j < l.entries.len()) {
+            if (l.entries[j].key == k) { found = true; v = l.entries[j].value; }
+            j = j + 1;
+        }
+        if (found) { return Resolved { key: k, value: v, from: l.name }; }
+        i = i - 1;
+    }
+    return Resolved { key: k, value: "", from: "<absent>" };
+}
+
+function all_keys(ls: Layer[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < ls.len()) {
+        var j: i32 = 0;
+        while (j < ls[i].entries.len()) {
+            var k: string = ls[i].entries[j].key;
+            var seen: boolean = false;
+            var m: i32 = 0;
+            while (m < out.len()) { if (out[m] == k) { seen = true; } m = m + 1; }
+            if (!seen) { out = out.append(k); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------- the env mapping
+
+// The result of the env-name mapping: whether the name is one of ours, and
+// the config key it denotes if so.
+struct MappedKey { ok: boolean, key: string }
+
+// `FERN_DB_HOST` -> `db.host`. Returns "" for a name this mapping does not
+// accept, rather than mangling it into a key that looks plausible.
+function env_to_key(name: string): MappedKey {
+    if (!name.starts_with("FERN_")) { return MappedKey { ok: false, key: "" }; }
+    if (name.len() == 5) { return MappedKey { ok: false, key: "" }; }
+    var buf: u8[] = [];
+    var i: i32 = 5;
+    while (i < name.len()) {
+        var c: u8 = name[i];
+        if (c == 95) { buf = buf.append(46); }
+        else if (c >= 65 && c <= 90) { buf = buf.append(((c as i32) + 32) as u8); }
+        else if (c >= 48 && c <= 57) { buf = buf.append(c); }
+        else { return MappedKey { ok: false, key: "" }; }
+        i = i + 1;
+    }
+    return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
+}
+
+// The inverse: `db.host` -> `FERN_DB_HOST`.
+function key_to_env(k: string): MappedKey {
+    if (k.len() == 0) { return MappedKey { ok: false, key: "" }; }
+    var buf: u8[] = [70, 69, 82, 78, 95]; // "FERN_"
+    var i: i32 = 0;
+    while (i < k.len()) {
+        var c: u8 = k[i];
+        if (c == 46) { buf = buf.append(95); }
+        else if (c >= 97 && c <= 122) { buf = buf.append(((c as i32) - 32) as u8); }
+        else if (c >= 48 && c <= 57) { buf = buf.append(c); }
+        else { return MappedKey { ok: false, key: "" }; }
+        i = i + 1;
+    }
+    return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
+}
+
+// Build the env layer from `NAME=value` strings, dropping names the mapping
+// does not accept.
+function env_layer(vars: string[]): Layer {
+    var es: Entry[] = [];
+    var i: i32 = 0;
+    while (i < vars.len()) {
+        var at: i32 = vars[i].index_of("=");
+        if (at >= 0) {
+            var name: string = vars[i][0:at].to_owned();
+            var val: string = vars[i][at + 1 : vars[i].len()].to_owned();
+            var m: MappedKey = env_to_key(name);
+            if (m.ok) { es = es.append(Entry { key: m.key, value: val }); }
+        }
+        i = i + 1;
+    }
+    return Layer { name: "env", entries: es };
+}
+
+// -------------------------------------------------------- typed getters
+
+// Absent is not the same as unparseable: the first uses the default, the
+// second is a reportable error. Collapsing them is how a program ends up
+// listening on the wrong port without saying anything.
+struct IntGet { ok: boolean, value: i32, err: string }
+
+function parse_i32_strict(s: string): IntGet {
+    if (s.len() == 0) { return IntGet { ok: false, value: 0, err: "empty" }; }
+    var neg: boolean = false;
+    var i: i32 = 0;
+    if (s[0] == 45) { neg = true; i = 1; }
+    if (i >= s.len()) { return IntGet { ok: false, value: 0, err: "no digits" }; }
+    var v: i32 = 0;
+    while (i < s.len()) {
+        var c: u8 = s[i];
+        if (c < 48 || c > 57) { return IntGet { ok: false, value: 0, err: "not a number" }; }
+        v = v * 10 + ((c as i32) - 48);
+        i = i + 1;
+    }
+    if (neg) { v = 0 - v; }
+    return IntGet { ok: true, value: v, err: "" };
+}
+
+function get_int(rs: Resolved[], key: string, dflt: i32): IntGet {
+    var at: i32 = index_of_key(rs, key);
+    if (at < 0) { return IntGet { ok: true, value: dflt, err: "" }; }
+    var p: IntGet = parse_i32_strict(rs[at].value);
+    if (!p.ok) {
+        return IntGet { ok: false, value: dflt,
+            err: key + "=\"" + rs[at].value + "\" is not an integer" };
+    }
+    return p;
+}
+
+// ---------------------------------------------------------------- corpus
+
+function entry(k: string, v: string): Entry { return Entry { key: k, value: v }; }
+
+// Stacks chosen for the shapes that break a fold: disjoint layers, total
+// shadowing, an empty layer in each position, a repeated key inside one layer,
+// and an empty-string value overriding a non-empty default.
+function stacks(): Layer[][] {
+    var out: Layer[][] = [];
+
+    var d1: Layer = Layer { name: "defaults", entries: [entry("db.host", "localhost"),
+        entry("db.port", "5432"), entry("log", "info")] };
+    var f1: Layer = Layer { name: "file", entries: [entry("db.host", "db.internal"),
+        entry("timeout", "30")] };
+    var e1: Layer = Layer { name: "env", entries: [entry("db.port", "6543")] };
+    out = out.append([d1, f1, e1]);
+
+    // Disjoint layers: nothing shadows anything.
+    out = out.append([Layer { name: "defaults", entries: [entry("a", "1")] },
+        Layer { name: "file", entries: [entry("b", "2")] },
+        Layer { name: "env", entries: [entry("c", "3")] }]);
+
+    // Total shadowing: the top layer wins every key.
+    out = out.append([d1, Layer { name: "file", entries: [entry("db.host", "f"),
+        entry("db.port", "f"), entry("log", "f")] },
+        Layer { name: "env", entries: [entry("db.host", "e"), entry("db.port", "e"),
+            entry("log", "e")] }]);
+
+    var empty: Layer = Layer { name: "empty", entries: [] };
+    out = out.append([empty, f1, e1]);
+    out = out.append([d1, empty, e1]);
+    out = out.append([d1, f1, empty]);
+    out = out.append([empty, empty, empty]);
+
+    // A repeated key inside one layer: the last entry wins.
+    out = out.append([Layer { name: "defaults", entries: [entry("k", "first"),
+        entry("k", "second"), entry("k", "third")] }, empty, empty]);
+
+    // The empty string as a real value, overriding a non-empty default.
+    out = out.append([Layer { name: "defaults", entries: [entry("log", "info")] },
+        Layer { name: "file", entries: [] },
+        Layer { name: "env", entries: [entry("log", "")] }]);
+
+    return out;
+}
+
+function resolved_equal(a: Resolved[], b: Resolved[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i].key != b[i].key || a[i].value != b[i].value || a[i].from != b[i].from) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+function show(rs: Resolved[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < rs.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + rs[i].key + "=\"" + rs[i].value + "\"(" + rs[i].from + ")";
+        i = i + 1;
+    }
+    return out;
+}
+
+function env_names(): string[] {
+    return ["FERN_DB_HOST", "FERN_DB_PORT", "FERN_LOG", "FERN_A", "FERN_A1",
+        "FERN_X_Y_Z", "FERN_PORT2", "FERN_9"];
+}
+
+// ----------------------------------------------------------------- tests
+
+// The fold agrees with top-down resolution, key by key, including provenance.
+function test_the_merge_agrees_with_top_down_resolution(): test.TestOutcome {
+    var ss: Layer[][] = stacks();
+    var i: i32 = 0;
+    while (i < ss.len()) {
+        var merged: Resolved[] = merge_all(ss[i]);
+        var keys: string[] = all_keys(ss[i]);
+        if (merged.len() != keys.len()) {
+            return test.fail("stack " + i.to_string() + ": merged " + merged.len().to_string()
+                + " settings but the layers mention " + keys.len().to_string() + " keys");
+        }
+        var j: i32 = 0;
+        while (j < keys.len()) {
+            var want: Resolved = resolve(ss[i], keys[j]);
+            var at: i32 = index_of_key(merged, keys[j]);
+            if (at < 0) {
+                return test.fail("stack " + i.to_string() + ": \"" + keys[j] + "\" is missing");
+            }
+            if (merged[at].value != want.value) {
+                return test.fail("stack " + i.to_string() + ": \"" + keys[j] + "\" merged to \""
+                    + merged[at].value + "\", top-down says \"" + want.value + "\"");
+            }
+            if (merged[at].from != want.from) {
+                return test.fail("stack " + i.to_string() + ": \"" + keys[j]
+                    + "\" is credited to " + merged[at].from + ", top-down says " + want.from);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Provenance stated as its own property: the winning layer is the
+// highest-precedence one that HAS the key, whatever the value turned out to be.
+function test_the_winning_layer_is_the_highest_one_that_has_the_key(): test.TestOutcome {
+    var ss: Layer[][] = stacks();
+    var i: i32 = 0;
+    while (i < ss.len()) {
+        var merged: Resolved[] = merge_all(ss[i]);
+        var j: i32 = 0;
+        while (j < merged.len()) {
+            var expect: string = "";
+            var l: i32 = ss[i].len() - 1;
+            while (l >= 0) {
+                var has: boolean = false;
+                var m: i32 = 0;
+                while (m < ss[i][l].entries.len()) {
+                    if (ss[i][l].entries[m].key == merged[j].key) { has = true; }
+                    m = m + 1;
+                }
+                if (has && expect == "") { expect = ss[i][l].name; }
+                l = l - 1;
+            }
+            if (merged[j].from != expect) {
+                return test.fail("stack " + i.to_string() + ": \"" + merged[j].key
+                    + "\" credited to " + merged[j].from + ", highest layer holding it is "
+                    + expect);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Associativity. A merger that special-cases one layer, or folds the wrong
+// way for it, breaks this on stacks nobody wrote an expected value for.
+function test_overlay_is_associative(): test.TestOutcome {
+    var ss: Layer[][] = stacks();
+    var i: i32 = 0;
+    while (i < ss.len()) {
+        if (ss[i].len() == 3) {
+            var a: Resolved[] = as_resolved(ss[i][0]);
+            var b: Resolved[] = as_resolved(ss[i][1]);
+            var c: Resolved[] = as_resolved(ss[i][2]);
+            var left: Resolved[] = sort_resolved(overlay(overlay(a, b), c));
+            var right: Resolved[] = sort_resolved(overlay(a, overlay(b, c)));
+            if (!resolved_equal(left, right)) {
+                return test.fail("stack " + i.to_string() + " is not associative:\n  (a.b).c = "
+                    + show(left) + "\n  a.(b.c) = " + show(right));
+            }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The empty layer is an identity on both sides, and overlaying a layer on
+// itself changes nothing.
+function test_identity_and_idempotence(): test.TestOutcome {
+    var ss: Layer[][] = stacks();
+    var none: Resolved[] = [];
+    var i: i32 = 0;
+    while (i < ss.len()) {
+        var j: i32 = 0;
+        while (j < ss[i].len()) {
+            var a: Resolved[] = as_resolved(ss[i][j]);
+            if (!resolved_equal(sort_resolved(overlay(none, a)), sort_resolved(a))) {
+                return test.fail("empty is not a left identity for " + ss[i][j].name);
+            }
+            if (!resolved_equal(sort_resolved(overlay(a, none)), sort_resolved(a))) {
+                return test.fail("empty is not a right identity for " + ss[i][j].name);
+            }
+            if (!resolved_equal(sort_resolved(overlay(a, a)), sort_resolved(a))) {
+                return test.fail("overlay is not idempotent for " + ss[i][j].name);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// A key no layer mentions stays absent — it does not appear with an empty
+// value, which is the shape that makes "unset" and "set to empty" collide.
+function test_an_absent_key_stays_absent(): test.TestOutcome {
+    var ss: Layer[][] = stacks();
+    var i: i32 = 0;
+    while (i < ss.len()) {
+        var merged: Resolved[] = merge_all(ss[i]);
+        if (index_of_key(merged, "no.such.key") >= 0) {
+            return test.fail("stack " + i.to_string() + " invented a key");
+        }
+        var r: Resolved = resolve(ss[i], "no.such.key");
+        if (r.from != "<absent>") {
+            return test.fail("top-down reported " + r.from + " for a key nobody has");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The classic one: an empty string is a value and must override a non-empty
+// default, distinguishably from the key being unset.
+function test_an_empty_value_overrides_a_default(): test.TestOutcome {
+    var ls: Layer[] = [Layer { name: "defaults", entries: [entry("log", "info")] },
+        Layer { name: "env", entries: [entry("log", "")] }];
+    var merged: Resolved[] = merge_all(ls);
+    var at: i32 = index_of_key(merged, "log");
+    if (at < 0) { return test.fail("\"log\" disappeared"); }
+    if (merged[at].value != "") {
+        return test.fail("\"log\" is \"" + merged[at].value + "\", want the empty string");
+    }
+    if (merged[at].from != "env") {
+        return test.fail("\"log\" credited to " + merged[at].from + ", want env");
+    }
+    // And the env layer built from a real `NAME=` string behaves the same.
+    var el: Layer = env_layer(["FERN_LOG="]);
+    if (el.entries.len() != 1 || el.entries[0].value != "") {
+        return test.fail("FERN_LOG= did not produce an empty-string setting");
+    }
+    return test.pass();
+}
+
+// A repeated key within one layer takes its last entry.
+function test_the_last_entry_in_a_layer_wins(): test.TestOutcome {
+    var l: Layer = Layer { name: "file", entries: [entry("k", "first"),
+        entry("k", "second"), entry("k", "third")] };
+    var rs: Resolved[] = as_resolved(l);
+    if (rs.len() != 1) {
+        return test.fail("three entries for one key produced " + rs.len().to_string()
+            + " settings, want 1");
+    }
+    if (rs[0].value != "third") {
+        return test.fail("\"k\" is \"" + rs[0].value + "\", want \"third\"");
+    }
+    return test.pass();
+}
+
+// The env mapping is a bijection over the names it accepts: it round-trips in
+// both directions and never sends two names to one key.
+function test_the_env_mapping_is_a_bijection(): test.TestOutcome {
+    var ns: string[] = env_names();
+    var keys: string[] = [];
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        var m: MappedKey = env_to_key(ns[i]);
+        if (!m.ok) { return test.fail("\"" + ns[i] + "\" was rejected"); }
+        var back: MappedKey = key_to_env(m.key);
+        if (!back.ok || back.key != ns[i]) {
+            return test.fail("\"" + ns[i] + "\" -> \"" + m.key + "\" -> \"" + back.key + "\"");
+        }
+        var j: i32 = 0;
+        while (j < keys.len()) {
+            if (keys[j] == m.key) {
+                return test.fail("two names both map to \"" + m.key + "\"");
+            }
+            j = j + 1;
+        }
+        keys = keys.append(m.key);
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Names outside the mapping's charset are rejected rather than mangled into a
+// plausible-looking key.
+function test_names_outside_the_charset_are_rejected(): test.TestOutcome {
+    var bad: string[] = ["DB_HOST", "FERN_", "FERN_SOME-VAR", "FERN_lower",
+        "FERN_HAS SPACE", "fern_db_host", ""];
+    var i: i32 = 0;
+    while (i < bad.len()) {
+        var m: MappedKey = env_to_key(bad[i]);
+        if (m.ok) {
+            return test.fail("\"" + bad[i] + "\" was accepted as \"" + m.key + "\"");
+        }
+        i = i + 1;
+    }
+    // And such a variable contributes nothing to the env layer.
+    var el: Layer = env_layer(["FERN_SOME-VAR=1", "DB_HOST=2", "FERN_OK=3"]);
+    if (el.entries.len() != 1 || el.entries[0].key != "ok") {
+        return test.fail("the env layer picked up a name it should have dropped");
+    }
+    return test.pass();
+}
+
+// Absent uses the default; present-and-unparseable is an error, not the
+// default. Getting this wrong is how a program runs on the wrong port quietly.
+function test_an_invalid_value_is_an_error_not_the_default(): test.TestOutcome {
+    var rs: Resolved[] = merge_all([Layer { name: "file",
+        entries: [entry("port", "8080"), entry("bad", "banana"), entry("neg", "-7"),
+            entry("blank", ""), entry("trail", "12x")] }]);
+
+    var absent: IntGet = get_int(rs, "missing", 99);
+    if (!absent.ok || absent.value != 99) {
+        return test.fail("an absent key should use the default");
+    }
+    var good: IntGet = get_int(rs, "port", 99);
+    if (!good.ok || good.value != 8080) {
+        return test.fail("\"port\" parsed to " + good.value.to_string());
+    }
+    var negative: IntGet = get_int(rs, "neg", 99);
+    if (!negative.ok || negative.value != 0 - 7) {
+        return test.fail("\"neg\" parsed to " + negative.value.to_string());
+    }
+    var invalid: string[] = ["bad", "blank", "trail"];
+    var i: i32 = 0;
+    while (i < invalid.len()) {
+        var g: IntGet = get_int(rs, invalid[i], 99);
+        if (g.ok) {
+            return test.fail("\"" + invalid[i] + "\" was accepted as "
+                + g.value.to_string() + " instead of reported");
+        }
+        if (!g.err.contains(invalid[i])) {
+            return test.fail("the error for \"" + invalid[i] + "\" does not name the key: "
+                + g.err);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("configmerge — defaults, file and environment, in that order");
+
+    var defaults: Layer = Layer { name: "defaults", entries: [entry("db.host", "localhost"),
+        entry("db.port", "5432"), entry("log", "info"), entry("timeout", "60")] };
+    var file: Layer = Layer { name: "file", entries: [entry("db.host", "db.internal"),
+        entry("timeout", "30")] };
+    var env: Layer = env_layer(["FERN_DB_PORT=6543", "FERN_LOG=", "PATH=/usr/bin",
+        "FERN_BAD-NAME=x"]);
+
+    var merged: Resolved[] = merge_all([defaults, file, env]);
+    var i: i32 = 0;
+    while (i < merged.len()) {
+        eprint("  " + merged[i].key + " = \"" + merged[i].value + "\"   (" + merged[i].from + ")");
+        i = i + 1;
+    }
+    var port: IntGet = get_int(merged, "db.port", 5432);
+    eprint("  db.port as an integer: " + port.value.to_string());
+    var log: IntGet = get_int(merged, "log", 0);
+    eprint("  log as an integer: " + log.err);
+
+    var r: test.TestRunner = test.test_new("configmerge");
+    r = r.it("the merge agrees with top-down resolution", test_the_merge_agrees_with_top_down_resolution);
+    r = r.it("the winning layer is the highest one that has the key", test_the_winning_layer_is_the_highest_one_that_has_the_key);
+    r = r.it("overlay is associative", test_overlay_is_associative);
+    r = r.it("identity and idempotence", test_identity_and_idempotence);
+    r = r.it("an absent key stays absent", test_an_absent_key_stays_absent);
+    r = r.it("an empty value overrides a default", test_an_empty_value_overrides_a_default);
+    r = r.it("the last entry in a layer wins", test_the_last_entry_in_a_layer_wins);
+    r = r.it("the env mapping is a bijection", test_the_env_mapping_is_a_bijection);
+    r = r.it("names outside the charset are rejected", test_names_outside_the_charset_are_rejected);
+    r = r.it("an invalid value is an error not the default", test_an_invalid_value_is_an_error_not_the_default);
+    return r.finish();
+}
