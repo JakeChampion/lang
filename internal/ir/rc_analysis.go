@@ -1560,6 +1560,19 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return true
 	case *ast.Index:
+		// The fresh-owned-container argument again, one expression form
+		// over: `mk_strs()[0]` has no local to reclaim the container, so the
+		// index lowering retains the loaded element and deep-drops the
+		// container, netting the element to this expression's own single
+		// reference. The conservative taint would strand that retain — the
+		// same 304 B/round → 64 B/round half-fix the field read went through.
+		// Gated on exactly the predicate that lowering uses. A string index
+		// yields a scalar byte and a slice index a borrowed view, so neither
+		// is this shape; maps stay out for the reason the field case gives.
+		if !x.IsString && !x.IsSlice && b.freshOwnedIndexContainer(x.Array) &&
+			!isMapType(b.exprType(x)) {
+			return false
+		}
 		return true
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer

@@ -12,10 +12,22 @@ three clocks, and the whole fs family) over the `__syscall3` / `__syscall4` /
 `__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08 they are
 reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `write_file` / `remove_file` / `temp_dir` / `stat` with their shared
-`__fern_io_error`, then `env`. Each is ONE source across all three native
+`__fern_io_error`, then `env`, and finally `open_fd` — the Reader/Writer
+opener, and the last leaf that had kept a register-ABI hand-asm
+`__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
+one now). Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
-by the target. The **array producers** followed — the first non-syscall helpers
+by the target.
+
+`open_fd` is the one place a target key was not enough. Its openat flags are a
+PARAMETER, not a constant: irlower picks them per builtin (`open_reader` /
+`open_writer` / `open_appender`) and has no target, so the op site passes the
+Linux value everywhere and Darwin has to translate at run time — the same two
+comparisons the hand-asm did, now in Fern, emitted only for `arm64-darwin`.
+Getting this wrong is invisible until it corrupts data: untranslated,
+`open_writer` asks XNU for O_CREAT-without-O_TRUNC and an overwrite leaves the
+old file's trailing bytes (#6042). The **array producers** followed — the first non-syscall helpers
 to move, all three over the `__raw_arr_box` + `__raw_array` pair:
 `xs.reverse()` / `xs.concat(ys)` arch-independent (one source, no target
 parameter), and `a[start:end]` with one, because its bounds check traps.

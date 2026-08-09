@@ -94,3 +94,15 @@
 # (expected 127) read 47 and 111 under #6008 and now read 255 and 127 — measured
 # on the self-host x86-64 leg, which has no exit cap, since this one still
 # cannot see them.
+
+# --- fresh-owned-container read: not reclaimed by the self-host ------------
+# Same bug, same measured value, on all three legs — see the x86-64 sibling for
+# the split measurements and why a plain container drop would be a
+# use-after-free rather than a leak. #6491.
+#
+# This one IS measurable here: the case's divergence is in stdout, not an exit
+# code, so the WASI exit cap does not hide it.
+#
+#     got:  8361 / 16762 / grows
+#     want: 8361 / 16762 / flat
+alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat

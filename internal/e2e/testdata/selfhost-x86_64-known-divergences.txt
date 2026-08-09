@@ -64,3 +64,29 @@
 # never x86-64-specific — all three self-host backends had the same single-read
 # shape, and the wasm leg only looked clean because it sets skipStdin and so
 # never asked. Keep that in mind before reading a lane's silence as coverage.
+
+# --- fresh-owned-container read: not reclaimed by the self-host ------------
+# `alloc_flat_index_of_fresh_container` reports the allocator's fresh-byte
+# SHAPE for a value read out of a container nothing names (`mk()[i]`,
+# `mk().field`). Native reclaims the container at the read; the self-host does
+# not, on any of its three legs.
+#
+#     got:  8361 / 16762 / grows
+#     want: 8361 / 16762 / flat
+#
+# The two VALUES agree — the self-host computes the right answer and simply
+# never reclaims. Split and run through the self-host CLI, both halves diverge:
+# the index shape reads 4181 / 8382 / grows and the field shape 4180 / 8380 /
+# grows, so this is one missing mechanism rather than two coincidences.
+#
+# Native pairs a retain of the loaded value with an is_unique-gated deep drop of
+# the container — the value aliases the buffer being freed, so a plain drop
+# would be a use-after-free. The self-host sources carry none of that machinery
+# (no __arr_idx / fresh_owned / owned_call_result anywhere in
+# examples/self_host), which is the RECLAIM half docs/RC-PERCEUS-SELF-HOST-PORT.md
+# still has open. Tracked as #6491.
+#
+# Worth knowing while porting: the sibling `alloc_flat_under_reclaim` PASSES
+# here. That case lets the whole allocation die, which the self-host handles;
+# this one keeps the element alive while the container dies, which it does not.
+alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat
