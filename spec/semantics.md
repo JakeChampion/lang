@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**33 of 36** claims are pinned by a conformance case. The remaining
+**34 of 37** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -114,6 +114,7 @@ of them.
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
+| `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |
 
 ## Every gap this index opened with is now closed
 

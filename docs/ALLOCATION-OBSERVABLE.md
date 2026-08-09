@@ -70,13 +70,11 @@ bump allocator — it is a tree-walking evaluator over Go values — so
 above is unobservable. This is a deliberate hole, not a defect: giving
 the interpreter a fake arena to measure would make it report numbers
 that describe nothing. A conformance case for an allocation claim
-therefore restricts `backends` to the codegen targets — and today
-`alloc_flat_under_reclaim` excludes wasm as well, for the separate and
-tracked reason below.
+therefore restricts `backends` to the three codegen targets.
 
 ## The claims
 
-Both are stated over the *shape*, and both are pinned — see
+All are stated over the *shape*, and all are pinned — see
 `spec/semantics.md`.
 
 - **AL-01.** A loop whose body allocates and lets the allocation die
@@ -89,6 +87,11 @@ Both are stated over the *shape*, and both are pinned — see
   round count. Without this half, AL-01 is satisfiable by a program that
   allocates nothing at all, and a conformance case that passes for the
   wrong reason is worse than none.
+- **AL-03.** The AL-01 shape again, allocating a closure environment per
+  round rather than a string. Separate because it is reclaimed by a
+  separate helper: #6423 was one stale constant duplicated across
+  `__fern_str_dec` and `__fern_closure_drop`, and a case that only
+  allocated strings would have left the second half silent.
 
 ## What it found immediately
 
@@ -101,18 +104,32 @@ Sampling the counter around `rounds(50)`, `rounds(100)` and
 | --- | --- | --- | --- |
 | x86-64 | 32 | 0 | 0 |
 | arm64 | 48 | 0 | 0 |
-| wasm | 1600 | 3200 | 6400 |
+| wasm, before #6423 | 1600 | 3200 | 6400 |
+| wasm, after | 32 | 0 | 0 |
 
 The natives pay a bounded warm-up and then serve every later round off
-the freelist. wasm is exactly 32 bytes per round, forever: the string is
-never returned to a freelist, so a long-running program on this shape
-walks the arena to exhaustion (exit 125) instead of reaching a steady
-state. Filed as #6423; `alloc_flat_under_reclaim` carries an
-`implementation-gap` waiver naming it, so the case widens to wasm on its
-own terms when the leak is fixed.
+the freelist. wasm was exactly 32 bytes per round, forever — a
+long-running program on that shape walked the arena to exhaustion
+(exit 125) instead of reaching a steady state.
 
-Ten minutes of having a contract found a leak that had been invisible
-because nothing could express the property it violates.
+The cause was one constant. `__fern_str_dec` and `__fern_closure_drop`
+still tested a 64 KiB low-address floor carried over from a WASI memory
+layout, while `__fern_str_inc` reaches `__fern_rc_inc`, which had already
+moved to `rcLowAddrGuard`. On the preview-2 layout every heap object sits
+below 64 KiB, so incs happened and decs returned early: a heap string's
+refcount only ever went up, and its buffer never reached the freelist.
+Arrays were unaffected — `__fern_arr_dec` was already on the correct
+floor — which is why the leak looked string-shaped.
+
+It was **known and written down**: `buildStrAppendBody` carried a comment
+calling the asymmetry "a leftover from the WASI layout, which keeps that
+helper from freeing sub-64K heap strings", and reasoned that its own path
+was safe. It was, and the leak stayed anyway, because nothing turned the
+observation into a failing test. `alloc_flat_under_reclaim` is now that
+test, and it runs on wasm.
+
+Ten minutes of having a contract found a leak that had been visible in a
+comment for months.
 
 ## What this deliberately does not say
 
