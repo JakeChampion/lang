@@ -5585,3 +5585,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   NOTE the probes here return `__rc_underflow_count()`, so `fern -interp` is NOT
   an oracle for them — it has no rc runtime and exits 1 on every one. The counter
   is the detector; comparing against interp reports a false failure.
+
+- 2026-08-09: **The scalar Option from a CALL, nested match — the row #6503 left
+  open.** #6503 gave `is_opt` the scrutinee-is-a-borrow reading but it still
+  admitted only `fresh_scalar_option_init`, so an OPTFRESH-proven producer call
+  stayed at 4000. `precise_drop_names` now takes the registry (`opt_fresh`,
+  supplied as `optfresh_call_names_of(...)` at both call sites) and admits
+  `fresh_scalar_option_call_init` beside the inline ctor.
+
+  | `Option[i32]`, fn-scoped, from a call | before | after |
+  |---|---|---|
+  | match nested in an `if` | 4000, `frees=0` | **0** |
+  | flat control (the other analysis's half) | 0 | 0 |
+
+  The disjointness argument is unchanged and is the whole reason this is safe:
+  `is_opt` is only ever set when `!body_has_top_level_match`, and
+  `consumed_scalar_enum_frees` already admitted BOTH inits. So the two analyses
+  now cover the identical candidate set and split it purely on where the match
+  sits — nested to precise-drop, flat to the index lookup. Both `*_flat_control`
+  rows in the suite are there to catch that split failing, and only the underflow
+  counter would show it.
+
+  **Still open:** the BLOCK-scoped spellings (local declared inside a loop) stay
+  at 16000 whatever the init, because `precise_drop_names` runs over the fn's
+  top-level statements and never reaches them. That is a third mechanism, not a
+  wider admission.
+
+  VERIFIED: `TestSelfHostScalarOptNestedMatchX86_64` grew the call-init nested row
+  and its flat control (6 rows now), `TestSelfHostPerModuleEmitAllFixpointX86_64`
+  (417.75 s, run FIRST), 26 targeted suites 0 skips. Refs #6319 #6360 #4451.

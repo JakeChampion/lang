@@ -20494,7 +20494,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[], opt_fresh: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -20569,8 +20569,11 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // rc-headered box (opt_make / opt_none) is shallow-freed after the
                 // statement holding its last use. The emission re-checks the slot
                 // (opt_type_of_slot + type_is_scalar_option) before freeing.
+                // A call to an OPTFRESH-proven producer counts as fresh here on the
+                // same footing as an inline ctor, which is what consumed_scalar_enum_frees
+                // already does for its own (FLAT-match) half of this shape.
                 var is_opt: boolean = false;
-                if (!is_lit && fresh_scalar_option_init(v)) {
+                if (!is_lit && (fresh_scalar_option_init(v) || fresh_scalar_option_call_init(v, opt_fresh))) {
                     is_opt = !body_has_top_level_match(body, v.name);
                 }
                 // A fresh rc-PAYLOAD Option/Result (`var o = Some([..])` / `Ok(P{..})`).
@@ -36971,7 +36974,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.f64arr_ret_fns, sg.i64arr_ret_fns, sg.borrowable_params);
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.f64arr_ret_fns, sg.i64arr_ret_fns, sg.borrowable_params, optfresh_call_names_of(sg.opt_fresh_ret_fns));
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -44086,7 +44089,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         head = head + "\n";
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs));
+    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs), optfresh_call_names_of(opt_fresh_ret_fns_of(funcs, structs)));
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
