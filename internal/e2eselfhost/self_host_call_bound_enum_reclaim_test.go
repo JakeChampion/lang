@@ -337,7 +337,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"rcpayload_direct_no_match", cbeRcPayloadDirectNoMatchSrc, 38},
 		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -391,6 +390,19 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 	// leaves live is not, because the exit sweep does not reach the retired slot
 	// name. That is the block-scoped-slot class — the one that segfaults gen1
 	// when granted more (#6285 / #6375) — and a distinct follow-up.
+	// Result[<flat scalar array>, _] declared inside the loop: the same partial
+	// close the Option spelling gets, via unmatched_optarr_ann_is. The Err
+	// payload is stranded by construction (emit_optarr_deep_free frees the
+	// payload only on tag==0, and tag 0 is Ok), which is the trade
+	// mixed_result_err_path_strands_only_the_payload already pins.
+	t.Run("rcpayload_direct_no_match_partial", func(t *testing.T) {
+		allocs, frees, live := counts(t, "rcpayload_direct_no_match", cbeRcPayloadDirectNoMatchSrc, 38)
+		if frees != 600 || live != 8800 {
+			t.Errorf("rcpayload_direct_no_match: allocs=%d frees=%d live_bytes=%d — want frees=600 live_bytes=8800 "+
+				"(was 800/0/35200 before the credit widened to Result)", allocs, frees, live)
+		}
+	})
+
 	t.Run("optarr_loop_scope_partial", func(t *testing.T) {
 		allocs, frees, live := counts(t, "optarr_loop_scope_partial", cbeOptArrLoopScopeSrc, 38)
 		if frees != 600 || live != 8800 {

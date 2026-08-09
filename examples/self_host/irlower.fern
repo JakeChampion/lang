@@ -30477,6 +30477,50 @@ function optarr_ann_is(type_name: string): boolean {
     return is_leaksafe_array_field(inner);
 }
 
+// unmatched_optarr_ann_is: optarr_ann_is widened to Result (#6360). Kept
+// SEPARATE from optarr_ann_is so the reassigned+match class it gates is
+// untouched — this predicate is read only by collect_unmatched_optarr_names.
+//
+// `Result[<leak-safe scalar array>, _]` is admissible for the same reason the
+// Option spelling is: emit_optarr_deep_free dispatches on the RUNTIME tag, and
+// tag 0 is Some AND Ok (lower_match: `want = 1` for None and Err alike,
+// irlower.fern), so the Ok buffer is released on the Ok path and the box on
+// every path. A non-scalar Err payload is stranded, not dangled — the same
+// trade cbeMixedErrPathSrc already pins, and strictly better than leaking the
+// box as well.
+function unmatched_optarr_ann_is(type_name: string): boolean {
+    if (optarr_ann_is(type_name)) { return true; }
+    if (type_name.len() < 9) { return false; }
+    if (type_name[0:7] != "Result[") { return false; }
+    if (type_name[type_name.len() - 1] != 93) { return false; }   // 93 = ']'
+    return is_leaksafe_array_field(opt_payload_type(type_name, "Ok"));
+}
+
+// unmatched_optarr_init_is_fresh: optarr_init_is_fresh plus the Result
+// spellings. `Err(<anything>)` is admitted because the box still needs
+// releasing and the Ok-only payload free cannot reach an Err payload.
+function unmatched_optarr_init_is_fresh(e: parser.Expr): boolean {
+    if (optarr_init_is_fresh(e)) { return true; }
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Ok" && c.args.len() == 1) {
+                        match (c.args[0]) {
+                            parser.ExprArray(_) => { return true; },
+                            _ => { return false; }
+                        }
+                    }
+                    if (cid.name == "Err" && c.args.len() == 1) { return true; }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 // optarr_init_is_fresh: `Some(<fresh scalar array literal>)` or `None`. A bare
 // ident payload would alias a live local whose own sweep also frees the buffer.
 function optarr_init_is_fresh(e: parser.Expr): boolean {
@@ -30709,8 +30753,8 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], acc: string[]): st
     while (vi < stmts.len()) {
         match (stmts[vi]) {
             parser.StmtVar(v) => {
-                if (optarr_ann_is(v.type_name)
-                    && optarr_init_is_fresh(v.init)
+                if (unmatched_optarr_ann_is(v.type_name)
+                    && unmatched_optarr_init_is_fresh(v.init)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [])) {
                     a = push_str_unique(a, v.name);
