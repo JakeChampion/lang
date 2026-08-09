@@ -62,6 +62,16 @@ type Descriptor struct {
 	// (e.g. native arm64, x86-64). Today purely declarative;
 	// Phase 3 wires it to runtime binding-fetch glue.
 	Bindings []string
+
+	// NoBackend marks a target that is DECLARED and type-checkable
+	// but that no codegen backend emits yet, so `fern -check
+	// -target NAME` works and compiling is a clear refusal rather
+	// than a fall-through to "unknown target". The freestanding
+	// target lands this way on purpose (#6509): the constraint is
+	// worth enforcing before there is anything to enforce it on,
+	// so the codegen that follows (#6510, #6511) is written
+	// against a compiler that already rejects what it may not do.
+	NoBackend bool
 }
 
 // table is the per-target descriptor registry. Keys match the
@@ -122,6 +132,32 @@ var table = map[string]Descriptor{
 		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"main"},
 		Bindings:     nil,
+	},
+	"freestanding": {
+		Name: "freestanding",
+		Description: "No host — no kernel, no syscalls, no process. Type-checkable " +
+			"today; no backend emits for it yet (#6506).",
+		// The whole point of the target: it grants nothing a host
+		// would have to provide. Everything a program can still
+		// reach here is in platforms.coreBuiltins — the allocation
+		// surface, pure computation, and the readiness helpers —
+		// with the rule and every judgement call recorded in
+		// docs/FREESTANDING-CORE.md.
+		//
+		// This is the entry that gives the capability tables their
+		// teeth. Against the six hosted targets `log` / `now` /
+		// `env` / `random` are granted by all of them, so gating
+		// them rejects nothing; here they reject.
+		Capabilities: nil,
+		// No entry point. A hosted artifact is entered at `main` or
+		// `handle`; a freestanding one is a set of exported symbols
+		// its embedder calls, which is closer to the existing
+		// -shared / -export path than to any handler kind. #6510
+		// settles it — declaring a shape here first would be
+		// inventing one.
+		HandlerKinds: nil,
+		Bindings:     nil,
+		NoBackend:    true,
 	},
 	"wasi-http": {
 		Name:        "wasi-http",

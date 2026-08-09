@@ -112,12 +112,23 @@ func TestDescriptorStringIsHumanReadable(t *testing.T) {
 }
 
 // TestNoTargetMissesLogCapability — `log` is the absolute
-// minimum capability every target needs to surface error
-// output. Tests that we don't accidentally ship a target
-// with an empty Capabilities list.
+// minimum capability every HOSTED target needs to surface
+// error output. Tests that we don't accidentally ship a
+// target with an empty Capabilities list.
+//
+// A freestanding target is the deliberate exception, and the
+// only one: it has no host to log to, and an empty capability
+// set is its entire point (#6509). Keying the exemption on
+// NoBackend rather than the name means the day something
+// emits for it, this invariant applies again — at which point
+// "where does a freestanding artifact put a panic message?"
+// is a question with a real answer instead of an omission.
 func TestNoTargetMissesLogCapability(t *testing.T) {
 	for _, name := range Targets() {
 		d := ForTarget(name)
+		if d.NoBackend {
+			continue
+		}
 		if !HasCapability(name, "log") {
 			t.Errorf("target %q is missing the `log` capability: %v", name, d.Capabilities)
 		}
