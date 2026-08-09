@@ -67,7 +67,7 @@ back exactly as today.
 stack IR (`ir.fern` / `irlower.fern`) that is now the default lowering path
 (goal 1). Native takes the other route: it lowers AST → `ir.Op[]` and then
 **lifts** that stack stream into SSA (`internal/ssa/lift.go`'s `LiftFromIR`)
-ahead of its optimiser and the `wasm-ssa` backend. Lifting from the IR makes
+ahead of its optimiser and the `-backend ssa` (wasm) backend. Lifting from the IR makes
 SSA a clean *downstream* layer over the IR the compiler already produces —
 so it inherits the IR's (now ~100%) coverage instead of re-deriving it in a
 second all-or-nothing frontend.

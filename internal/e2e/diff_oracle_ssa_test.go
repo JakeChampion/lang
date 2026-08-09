@@ -1,11 +1,11 @@
 // Differential-execution oracle for the experimental SSA-direct
-// backend (`-target arm64-ssa`).
+// backend (`-target arm64 -backend ssa`).
 //
 // The oracles in diff_oracle_test.go and printable_stdout_test.go
 // cover arm64, x86_64 and wasmbin — every backend that lowers
 // straight from the IR. Neither covers the SSA path:
-// `internal/ssa`'s `LiftFromIR` feeds only `-target arm64-ssa` and
-// `-target wasm-ssa`, so nothing the generator produces ever reached
+// `internal/ssa`'s `LiftFromIR` feeds only `-target arm64 -backend ssa` and
+// `-target wasm -backend ssa`, so nothing the generator produces ever reached
 // the lift or the SSA register allocator. That blind spot is not
 // hypothetical: #5729 (the lift dropping an `ir.OpLoad`'s 64-bit
 // width, corrupting every `i64[]` element read) and #5725 (the
@@ -67,7 +67,7 @@ import (
 const diffOracleSSAMinRunRatio = 0.4
 
 // TestDifferential_Arm64SSAStdout runs the printable fernsmith
-// corpus through `-target arm64-ssa` and asserts the resulting
+// corpus through `-target arm64 -backend ssa` and asserts the resulting
 // binary's stdout matches the interpreter's, the same contract the
 // other backends are held to in TestDifferential_PrintableStdout.
 //
@@ -116,7 +116,7 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 }
 
 // TestDifferential_Arm64SSAExitByte runs the exit-code fernsmith
-// corpus through `-target arm64-ssa` and asserts the binary's exit
+// corpus through `-target arm64 -backend ssa` and asserts the binary's exit
 // code matches the interpreter's, the same contract the other
 // backends are held to in TestDifferential_LangsmithMain.
 //
@@ -169,7 +169,7 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 }
 
 // ssaRun is one compile-and-run of a generated program through
-// `-target arm64-ssa`.
+// `-target arm64 -backend ssa`.
 type ssaRun struct {
 	stdout string
 	diag   diagInfo
@@ -182,7 +182,7 @@ func (r ssaRun) signalOrNormal() string {
 	return r.diag.signal
 }
 
-// runArm64SSAOrSkip compiles src with `-target arm64-ssa` and runs
+// runArm64SSAOrSkip compiles src with `-target arm64 -backend ssa` and runs
 // the binary, returning its stdout and post-mortem details. A
 // compile failure SKIPS: the documented experimental-backend
 // contract is that an op the SSA path doesn't cover yet is a clean
@@ -197,7 +197,7 @@ func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string) ssaRun {
 		t.Fatalf("write src: %v", err)
 	}
 	outPath := filepath.Join(dir, "main.bin")
-	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", outPath, srcPath)
+	emit := exec.Command(bin, "-target", "arm64", "-backend", "ssa", "-o", outPath, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	if err := emit.Run(); err != nil {

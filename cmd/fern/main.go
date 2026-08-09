@@ -603,7 +603,7 @@ func shouldUseASCII(force bool) bool {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), freestanding (no host at all — type-checks against an empty capability set; no backend emits for it yet, see docs/FREESTANDING-CORE.md), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), freestanding (no host at all — type-checks against an empty capability set; no backend emits for it yet, see docs/FREESTANDING-CORE.md)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
@@ -613,6 +613,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
+	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm and -target arm64. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
 	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
@@ -885,7 +886,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
+	code, err := run(srcPath, *out, *target, *backend, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -1208,7 +1209,7 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1255,11 +1256,25 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	// it reached for rather than this. Without the check the target would fall
 	// through to the "unknown target" error below, which would be a lie: the
 	// descriptor exists and `-check` against it works.
+	// `-backend` selects an alternate emitter for the SAME target, so an
+	// unsupported combination is rejected by name rather than silently
+	// falling through to the default emitter — which would produce a
+	// working binary that is not the one asked for.
+	switch backend {
+	case "":
+	case "ssa":
+		if target != "wasm" && target != "arm64" {
+			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64, wasm)", target)
+		}
+	default:
+		return 1, fmt.Errorf("unknown -backend %q (want ssa, or omit it for the target's default emitter)", backend)
+	}
+
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
 	}
 
-	if target == "wasm-ssa" {
+	if backend == "ssa" && target == "wasm" {
 		// Experimental SSA-direct backend (internal/codegen/wasmssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR
 		// → ssa.Optimize → wasmssa.EmitModule. Covers i32/i64/f32/
@@ -1275,11 +1290,11 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		//     `wasmtime run prog.wasm` (no --invoke). main must
 		//     have signature () -> i32 for the canonical lift.
 		if outPath == "" {
-			return 1, fmt.Errorf("-target wasm-ssa requires -o OUTPUT")
+			return 1, fmt.Errorf("-backend ssa requires -o OUTPUT")
 		}
 		bin, err := buildWasmSSA(prog, info)
 		if err != nil {
-			return 1, fmt.Errorf("wasm-ssa: %v", err)
+			return 1, fmt.Errorf("wasm/ssa: %v", err)
 		}
 		if componentWrapCli {
 			// Wrap as a wasi:cli/run-exporting component. The
@@ -1297,7 +1312,7 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		return 0, nil
 	}
 
-	if target == "arm64-ssa" {
+	if backend == "ssa" && target == "arm64" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR →
 		// ssa.Optimize → arm64ssa.EmitAsmModule, then links the same in-process
@@ -1309,14 +1324,14 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 		// this is the path the binary-size epic widens until the self-host
 		// compiler itself can be built through it.
 		if outPath == "" {
-			return 1, fmt.Errorf("-target arm64-ssa requires -o OUTPUT")
+			return 1, fmt.Errorf("-backend ssa requires -o OUTPUT")
 		}
 		asm, err := buildArm64SSA(prog, info)
 		if err != nil {
-			return 1, fmt.Errorf("arm64-ssa: %v", err)
+			return 1, fmt.Errorf("arm64/ssa: %v", err)
 		}
 		if err := linkNative(asm, outPath, "", "", nil); err != nil {
-			return 1, fmt.Errorf("arm64-ssa link: %v", err)
+			return 1, fmt.Errorf("arm64/ssa link: %v", err)
 		}
 		return 0, nil
 	}

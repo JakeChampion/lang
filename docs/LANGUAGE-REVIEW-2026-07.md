@@ -769,7 +769,7 @@ optimization → backend emit. The IR is a linear, WASM-flavored structured
 stack machine (~80 ops, `block`/`loop`/`br_if`), explicitly *not* SSA —
 a full SSA framework was built (`internal/ssa`, ~21 KLOC, ~469 tests) and
 then **shelved** for production (`SSA-DECISION.md`), surviving only in
-experimental `arm64-ssa`/`wasm-ssa` targets. Optimizer passes: inlining,
+experimental `-backend ssa` (arm64)/`-backend ssa` (wasm) targets. Optimizer passes: inlining,
 const-prop/fold, copy-prop, strength reduction, tail-call optimization
 (all backends), branch flattening, dead-code/dead-function elimination,
 tree shaking, closure defunctionalisation (Roc-style lambda sets), plus

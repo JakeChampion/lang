@@ -177,14 +177,22 @@ function main(): i32 {
 	}
 }
 
-// Unknown targets (e.g. experimental backends without a descriptor)
-// skip enforcement entirely.
+// A target with no descriptor skips enforcement entirely — the fallback
+// that lets a name Enforce has never heard of pass through rather than
+// erroring.
+//
+// This used to be demonstrated with "wasm-ssa", which was a real
+// -target value at the time. That was the bug, not the illustration:
+// the SSA backends had no descriptor, so choosing one silently opted a
+// build out of the capability gate. They are `-backend ssa` on an
+// ordinary target now (#6536), so the only names left without a
+// descriptor are genuine typos.
 func TestEnforceUnknownTargetSkips(t *testing.T) {
 	src := `function main(): i32 {
     var r = subprocess("/bin/echo", [], "");
     return r.exit_code;
 }`
-	if vs := platforms.Enforce(prepared(t, src, false), "wasm-ssa"); vs != nil {
+	if vs := platforms.Enforce(prepared(t, src, false), "no-such-target"); vs != nil {
 		t.Fatalf("unknown target should skip enforcement, got %+v", vs)
 	}
 }

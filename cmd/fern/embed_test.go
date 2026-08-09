@@ -64,7 +64,7 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "prog")
-	code, err := run(src, bin, "x86-64", "", false, false, "qemu-aarch64",
+	code, err := run(src, bin, "x86-64", "", "", false, false, "qemu-aarch64",
 		false, false, false, nil, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("build: code=%d err=%v", code, err)
@@ -155,7 +155,7 @@ func TestEmbedEnumerationReachesTheBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "prog")
-	code, err := run(src, bin, "x86-64", "", false, false, "qemu-aarch64",
+	code, err := run(src, bin, "x86-64", "", "", false, false, "qemu-aarch64",
 		false, false, false, nil, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("build: code=%d err=%v", code, err)
