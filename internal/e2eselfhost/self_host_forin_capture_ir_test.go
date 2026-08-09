@@ -80,6 +80,24 @@ struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32
 		{"forin-free-fn-iter-binder",
 			`function items(): i32[] { return [10, 20, 30]; } struct H { f: (i32) => i32, id: i32 } function g(): i32 { var acc: i32 = 0; for x in items() { var h: H = H { f: function (q: i32): i32 { return q + x; }, id: x }; acc = acc + h.f(1) + h.id; } return acc; } function main(): i32 { return g(); }`,
 			123, ".Lir_g"},
+		// `for (k, v) in m` binds TWO names, encoded comma-joined ("k,v") like a
+		// tuple destructure. Neither half was recognised as an enclosing local
+		// (collect_bound_stmt appended the joined string) and neither resolved a
+		// type (the StmtFor arm compares against the joined name), so a lambda
+		// capturing one read as capture-free: it took the no-capture `$wrap`
+		// trampoline lift, where the name resolves against the MODULE rather
+		// than being captured, and the module bailed on a `<fn>$clo` nothing
+		// built. The pair is the iterated Map's key and value type.
+		//
+		// The closure-array case is the shape fernsmith seed 407 contains.
+		{"forin-kv-binder-fn-field",
+			`import "core/map";
+struct H { f: (i32) => i32, id: i32 } function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var acc: i32 = 0; for (k, v) in m { var h: H = H { f: function (q: i32): i32 { return q + k + v; }, id: v }; acc = acc + h.f(1) + h.id; } return acc; }`,
+			65, ".Lir_main"},
+		{"forin-kv-binder-closure-array",
+			`import "core/map";
+function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); var acc: i32 = 0; for (k, v) in m { var fs: ((i32) => i32)[] = [function (a: i32): i32 { return a + v; }, function (b: i32): i32 { return b + k; }]; acc = acc + fs[0](1) + fs[1](1); } return acc; }`,
+			13, ".Lir_main"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

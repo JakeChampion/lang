@@ -217,31 +217,34 @@ pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
     return acc;
 }
 
+// append_bound_name appends a binder name, splitting the comma-joined form the
+// multi-name binders use — a tuple destructure `var (a, b) = t` ("a,b", #5173)
+// and a two-binding `for (k, v) in m` ("k,v"). Unsplit, neither name is
+// recognised as an enclosing local, so a lambda reading one reads as
+// capture-free: it takes the no-capture `$wrapN` lift and resolves the name
+// against the module instead of capturing it.
+function append_bound_name(acc: string[], name: string): string[] {
+    var has_comma: boolean = false;
+    var ci: i32 = 0;
+    while (ci < name.len()) { if (name[ci] == 44) { has_comma = true; } ci = ci + 1; }
+    if (!has_comma) { return acc.append(name); }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= name.len()) {
+        if (i == name.len() || name[i] == 44) {
+            var piece: string = name[start : i] + "";
+            if (piece.len() > 0) { acc = acc.append(piece); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
 pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
-        parser.StmtVar(v) => {
-            // A tuple-destructure `var (a, b) = t` is encoded comma-joined
-            // ("a,b"); split so each bound name is recognised as an enclosing
-            // local — else a lambda capturing one declines the closure lift
-            // (lambda_captures' encl gate) and the module miscompiles on the
-            // AST path (#5173). A plain name (no comma) appends unchanged.
-            var has_comma: boolean = false;
-            var vci: i32 = 0;
-            while (vci < v.name.len()) { if (v.name[vci] == 44) { has_comma = true; } vci = vci + 1; }
-            if (!has_comma) { return acc.append(v.name); }
-            var start: i32 = 0;
-            var ci2: i32 = 0;
-            while (ci2 <= v.name.len()) {
-                if (ci2 == v.name.len() || v.name[ci2] == 44) {
-                    var piece: string = v.name[start : ci2] + "";
-                    if (piece.len() > 0) { acc = acc.append(piece); }
-                    start = ci2 + 1;
-                }
-                ci2 = ci2 + 1;
-            }
-            return acc;
-        },
+        parser.StmtVar(v) => { return append_bound_name(acc, v.name); },
         parser.StmtReturn(_) => { return acc; },
         parser.StmtExpr(_) => { return acc; },
         parser.StmtIf(i) => {
@@ -302,7 +305,7 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = acc.append(f.var_name);
+            acc = append_bound_name(acc, f.var_name);
             var i: i32 = 0;
             while (i < f.body.len()) {
                 acc = collect_bound_stmt(f.body[i], acc);

@@ -46714,6 +46714,28 @@ function tuple_tag_i32_only(t: string): boolean {
 // lift-side body walkers (the fn-gates keep consequences to a declined or
 // extra lift, never a miscompile: the lifted capture param only labels the
 // hoisted function's parameter).
+// map_kv_type returns the KEY or VALUE type of a `Map[K, V]` type string, or ""
+// when the type is not a Map. The split is on the top-level comma, so a nested
+// `Map[i32, Pair[i32, i32]]` keeps its own brackets.
+function map_kv_type(mty: string, want_key: boolean): string {
+    if (mty.len() <= 5 || mty[0:4] != "Map[") { return ""; }
+    var inner: string = mty[4 : mty.len() - 1] + "";
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var pos: i32 = 0 - 1;
+    while (i < inner.len()) {
+        if (inner[i] == 91) { depth = depth + 1; }
+        if (inner[i] == 93) { depth = depth - 1; }
+        if (inner[i] == 44 && depth == 0 && pos < 0) { pos = i; }
+        i = i + 1;
+    }
+    if (pos <= 0) { return ""; }
+    if (want_key) { return inner[0 : pos] + ""; }
+    var vstart: i32 = pos + 1;
+    while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
+    return inner[vstart : inner.len()] + "";
+}
+
 function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
     var i: i32 = 0;
     while (i < body.len()) {
@@ -46774,6 +46796,23 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // FIELD miscompiles (silent wrong values — the f5/f4 probes).
                 // A capture only labels the hoisted fn's param, so a miss
                 // stays a declined lift, never a miscompile.
+                // `for (k, v) in m` binds two names, encoded comma-joined, so
+                // the single-binder test below never matches either of them and
+                // a lambda capturing one resolved "" — the whole module fell to
+                // the AST path. The pair is a Map's key and value type.
+                if (rc_fe_is_destructure(fr.var_name)) {
+                    var kvn: string[] = rc_fe_split_csv(fr.var_name);
+                    var kvi: i32 = util.index_of_str(kvn, name);
+                    if (kvi >= 0) {
+                        match (fr.iter) {
+                            parser.ExprIdent(kvid) => {
+                                var kvt: string = map_kv_type(cap_type_at(kvid.name, fd, depth, structs, mfuncs), kvi == 0);
+                                if (kvt.len() > 0) { return kvt; }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
                 if (fr.var_name == name) {
                     var ity: string = "";
                     match (fr.iter) {
@@ -46808,27 +46847,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                                     if ((itfa.field == "keys" || itfa.field == "values") && itc.args.len() == 0) {
                                         match (itfa.obj) {
                                             parser.ExprIdent(itmid) => {
-                                                var mty: string = cap_type_at(itmid.name, fd, depth, structs, mfuncs);
-                                                if (mty.len() > 5 && mty[0:4] == "Map[") {
-                                                    var inner: string = mty[4 : mty.len() - 1] + "";
-                                                    var cdepth: i32 = 0;
-                                                    var ci2: i32 = 0;
-                                                    var cpos: i32 = 0 - 1;
-                                                    while (ci2 < inner.len()) {
-                                                        if (inner[ci2] == 91) { cdepth = cdepth + 1; }
-                                                        if (inner[ci2] == 93) { cdepth = cdepth - 1; }
-                                                        if (inner[ci2] == 44 && cdepth == 0 && cpos < 0) { cpos = ci2; }
-                                                        ci2 = ci2 + 1;
-                                                    }
-                                                    if (cpos > 0) {
-                                                        if (itfa.field == "keys") { ity = inner[0 : cpos] + ""; }
-                                                        else {
-                                                            var vstart: i32 = cpos + 1;
-                                                            while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
-                                                            ity = inner[vstart : inner.len()] + "";
-                                                        }
-                                                    }
-                                                }
+                                                ity = map_kv_type(cap_type_at(itmid.name, fd, depth, structs, mfuncs), itfa.field == "keys");
                                             },
                                             _ => {}
                                         }
