@@ -289,6 +289,12 @@ it.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
+- **Capabilities** — two independent systems. `internal/platforms` gates what a
+  *target* provides (the OS boundary; E066 post-tree-shake) —
+  `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.
+  `internal/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
+  **A new builtin usually needs classifying in both**; a completeness test in each
+  fails when one is missed.
 
 ## Keeping this file small
 

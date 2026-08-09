@@ -8,6 +8,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
@@ -279,6 +280,78 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 				t.Fatalf("%s on wasi-http: violations = %+v, want one stdout violation", name, vs)
 			}
 		})
+	}
+}
+
+// The completeness contract at the TARGET level (#6508), mirroring the
+// one internal/caps holds at the package level. Every user-callable
+// builtin the checker pre-declares is either gated on a capability or
+// explicitly core — a new one that is neither fails here rather than
+// silently landing on the hosted side of the freestanding boundary.
+//
+// The checker registry is the right universe because Enforce only runs
+// for COMPILED targets; the interpreter is not a target and has no
+// descriptor.
+func TestClassificationCoversCheckerRegistry(t *testing.T) {
+	prog, err := parser.Parse("function main(): void {}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range info.FuncSigs {
+		if name == "main" || strings.HasPrefix(name, "__") {
+			continue
+		}
+		_, gated := platforms.GatedBuiltin(name)
+		core := platforms.CoreBuiltin(name)
+		if !gated && !core {
+			t.Errorf("builtin %q is unclassified: gate it in gatedBuiltins or declare it core in coreBuiltins (docs/FREESTANDING-CORE.md)", name)
+		}
+		if gated && core {
+			t.Errorf("builtin %q is both gated and core", name)
+		}
+	}
+}
+
+// argv exists only because a process was exec'd, so it is a capability
+// of its own rather than part of `env`: the proxy world has envp and no
+// argv. This is the same shape as the stdout finding in #6507.
+func TestEnforceArgsNotOnProxyWorld(t *testing.T) {
+	src := `function main(): i32 { var a: string[] = args(); return 0; }`
+	for _, target := range []string{"arm64", "arm64-darwin", "arm64-android", "x86-64", "wasm"} {
+		t.Run(target, func(t *testing.T) {
+			if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+				t.Errorf("%s: unexpected violations: %+v", target, vs)
+			}
+		})
+	}
+	t.Run("wasi-http", func(t *testing.T) {
+		vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+		if len(vs) != 1 || vs[0].Capability != "args" {
+			t.Fatalf("violations = %+v, want one args violation", vs)
+		}
+	})
+}
+
+// `env` and `random` are granted by every descriptor, so wiring them
+// into the gate table rejects nothing today — they exist for the target
+// that will not grant them.
+func TestEnforceEnvAndRandomUniversal(t *testing.T) {
+	srcs := map[string]string{
+		"env":    `function main(): i32 { var v = env("HOME"); return 0; }`,
+		"random": `function main(): i32 { return random_i32(); }`,
+	}
+	for name, src := range srcs {
+		for _, target := range platforms.Targets() {
+			t.Run(name+"/"+target, func(t *testing.T) {
+				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
+				}
+			})
+		}
 	}
 }
 
