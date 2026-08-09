@@ -53,10 +53,11 @@ check whether the floor already says the thing.
 What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
 core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
-`__fern_map_*`, `__fern_arr_push`), Darwin's `monotonic_ns` alone, and the
-per-backend wasm helper bundles. **The "shape-diverging leaves" category is
-now empty** — see below; every entry that was in it turned out to be table
-rows over the existing floor.
+`__fern_map_*`, `__fern_arr_push`), the net/proc/timer leaves (audited below),
+and the per-backend wasm helper bundles. Two helpers stay hand-written on
+principle rather than for want of a wrapper, both on Darwin: `monotonic_ns`
+(`mrs cntvct_el0` is not a syscall) and `fork` (it reports failure in the carry
+flag and marks the child in `x1`, and Fern can read neither).
 
 ## The hot core needs better codegen first, not better expressiveness
 
@@ -377,37 +378,53 @@ emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
 
 ## What is left on the register backends, and what each needs
 
-Audited against the code at `ca576fc8`, because the interesting question for
-the next slice is not "which helpers are hand-written" but "which of them the
-floor can already express". The answer is: **all but one**.
+Audited against the code at `48fd88cd`, per helper and **per target**, because
+the interesting question for the next slice is not "which helpers are
+hand-written" but "which of them the floor can already express".
 
-| still hand-asm | syscall | args | floor |
+| still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
 | `tcp_close` | `close` | 1 | `__syscall3` |
 | `tcp_accept` | `accept` | 3 | `__syscall3` |
-| `tcp_connect` / `tcp_listen` / `tcp_recv` | socket/bind/listen/connect/recvfrom | ≤3 | `__syscall3` |
+| `tcp_connect` | `socket` + `connect` | 3 each | `__syscall3` |
+| `tcp_listen` | `socket` + `bind` + `listen` | 3 each | `__syscall3` |
+| `tcp_recv` | `read` | 3 | `__syscall3` |
 | `tcp_send` | `write` | 3 | `__syscall3` |
-| `poll` | `poll` | 2 (+ a built pollfd array) | `__syscall3` |
-| `timer_fd` | `timerfd_*` | 4 | `__syscall4` |
-| `proc_fork` | `clone` | 0 | `__syscall3` |
-| `proc_waitpid` | `wait4` | 2 | `__syscall3` |
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
 | `sleep_ms` (Linux) | `nanosleep` | 2 | `__syscall3` |
-| **`sleep_ms` (Darwin)** | **`select`** | **5** | **needs `__syscall5`** |
+| `proc_waitpid` | `wait4` | 4 | `__syscall4` |
+| `timer_fd` | `timerfd_create` + `timerfd_settime` | 2, 4 | `__syscall4` |
+| `poll` | `poll` (x86) / **`ppoll`** (arm64) | 3 / **5** | **needs `__syscall5`** |
+| `sleep_ms` (Darwin) | **`select`** | **5** | **needs `__syscall5`** |
+| `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | **needs `__syscall5`** |
+| **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
 `tcp_pollable` issues no syscall at all. The remaining non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
 
-**Do not read syscall arity off the registers the hand-asm touches.** Doing
-that here gave `tcp_send` six arguments and `proc_exec` six; both are three,
-and the extra registers are scratch in their byte-copy loops. Read the syscall
-number and count the arguments it actually takes.
+So `__syscall5` has **three** consumers, and adding it is the enabling step for
+`poll`, `proc_fork` on Linux, and Darwin's sleep.
 
-So `__syscall5` buys exactly one thing — Darwin's sleep — and nothing else in
-this table is waiting on the floor. The long entries are long because they
-build a struct (`sockaddr_in`, `pollfd[]`, `argv`) before the call, which is
-`__raw_alloc` + `__raw_store8` work, not a missing primitive.
+Darwin's `fork` is the second helper after `monotonic_ns` that stays
+hand-written on principle rather than for want of a syscall wrapper: it reports
+failure in the **carry flag** and distinguishes child from parent by **x1**,
+and Fern can read neither. A `__syscall*` intrinsic returns one integer.
+
+### Two ways this audit went wrong before it went right
+
+Both are cheap to repeat, so they are worth naming.
+
+**Do not read arity off the registers a hand-asm body touches.** That gave
+`tcp_send` and `proc_exec` six arguments each; both are three, and the extra
+registers are scratch in their byte-copy loops.
+
+**Do not audit one target and generalise.** The first version of this table was
+read off the x86-64 bodies alone and got three rows wrong, because arm64 Linux
+reaches for a different syscall where x86-64 has a simpler one: `poll` becomes
+`ppoll`, `fork` becomes `clone`, and both jump from three arguments to five.
+It concluded `__syscall5` had a single consumer when it has three — the exact
+inversion of the decision it was meant to inform. Read all three bodies.
 
 ## Validation strategy per slice
 
