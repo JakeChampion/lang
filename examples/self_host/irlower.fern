@@ -1460,6 +1460,22 @@ pub function lit_has_i64_suffix(e: parser.Expr): boolean {
     return false;
 }
 
+// lit_is_i32_min_magnitude reports whether `e` is the bare literal 2147483648 —
+// i32::MIN's magnitude, the one value literal_is_i64 calls too big for i32 that
+// a leading `-` brings back into range. A suffixed literal is excluded: the
+// suffix is the declared width and outranks the magnitude.
+pub function lit_is_i32_min_magnitude(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(num) => {
+            if (num.is_float) { return false; }
+            if (num.suffix.len() > 0) { return false; }
+            return num.text == "2147483648";
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function literal_is_i64(text: string): boolean {
     var n: i32 = text.len();
     if (n > 10) { return true; }
@@ -6796,6 +6812,14 @@ pub function infer_expr_width(e: parser.Expr, s: LowerState): i32 {
             return 32;
         },
         parser.ExprUnary(u) => {
+            // `-2147483648` is i32::MIN, not a 64-bit value: literal_is_i64
+            // judges the operand's MAGNITUDE, and 2147483648 exceeds i32-max
+            // only because the sign has not been applied yet. Without this the
+            // negation infers 64, StmtVar i64-backs the slot despite an
+            // explicit `: i32`, and the arithmetic runs unwrapped — `0 - a`
+            // answered 2147483648 rather than i32::MIN (#6396). An `: i64`
+            // binding is unaffected: StmtVar tests the annotation first.
+            if (u.op == "-" && lit_is_i32_min_magnitude(u.operand)) { return 32; }
             if (u.op == "-") { return infer_expr_width(u.operand, s); }
             if (u.op == "as_i64" || u.op == "as_u64") { return 64; }
             // `inner?` is i64-width when the Option/Result payload is i64/u64, so an
@@ -26053,6 +26077,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         out = out.append("OPTARR:" + ofa[ofai]);
         ofai = ofai + 1;
     }
+    // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
+    // exit sweep; see collect_unmatched_optarr_names for why the two sets
+    // cannot overlap.
+    var ufa: string[] = collect_unmatched_optarr_names(body, []);
+    var ufai: i32 = 0;
+    while (ufai < ufa.len()) {
+        out = out.append("OPTARR:" + ufa[ufai]);
+        ufai = ufai + 1;
+    }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
     // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
@@ -30575,6 +30608,50 @@ function optarr_ann_is(type_name: string): boolean {
     return is_leaksafe_array_field(inner);
 }
 
+// unmatched_optarr_ann_is: optarr_ann_is widened to Result (#6360). Kept
+// SEPARATE from optarr_ann_is so the reassigned+match class it gates is
+// untouched — this predicate is read only by collect_unmatched_optarr_names.
+//
+// `Result[<leak-safe scalar array>, _]` is admissible for the same reason the
+// Option spelling is: emit_optarr_deep_free dispatches on the RUNTIME tag, and
+// tag 0 is Some AND Ok (lower_match: `want = 1` for None and Err alike,
+// irlower.fern), so the Ok buffer is released on the Ok path and the box on
+// every path. A non-scalar Err payload is stranded, not dangled — the same
+// trade cbeMixedErrPathSrc already pins, and strictly better than leaking the
+// box as well.
+function unmatched_optarr_ann_is(type_name: string): boolean {
+    if (optarr_ann_is(type_name)) { return true; }
+    if (type_name.len() < 9) { return false; }
+    if (type_name[0:7] != "Result[") { return false; }
+    if (type_name[type_name.len() - 1] != 93) { return false; }   // 93 = ']'
+    return is_leaksafe_array_field(opt_payload_type(type_name, "Ok"));
+}
+
+// unmatched_optarr_init_is_fresh: optarr_init_is_fresh plus the Result
+// spellings. `Err(<anything>)` is admitted because the box still needs
+// releasing and the Ok-only payload free cannot reach an Err payload.
+function unmatched_optarr_init_is_fresh(e: parser.Expr): boolean {
+    if (optarr_init_is_fresh(e)) { return true; }
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Ok" && c.args.len() == 1) {
+                        match (c.args[0]) {
+                            parser.ExprArray(_) => { return true; },
+                            _ => { return false; }
+                        }
+                    }
+                    if (cid.name == "Err" && c.args.len() == 1) { return true; }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 // optarr_init_is_fresh: `Some(<fresh scalar array literal>)` or `None`. A bare
 // ident payload would alias a live local whose own sweep also frees the buffer.
 function optarr_init_is_fresh(e: parser.Expr): boolean {
@@ -30781,6 +30858,53 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // exactly as the sibling collectors use it — body_unsafe_for cannot be substituted
 // here, because it reads a bare-ident match SCRUTINEE as an escape and so refuses
 // every match-consumed Option outright.
+// collect_unmatched_optarr_names: the OTHER uncovered quadrant of the
+// rc-payload Option family (#6360) — a `Option[<flat scalar array>]` local that
+// is NEITHER reassigned NOR consumed by a match, so neither
+// collect_fresh_optarr_names (which requires reassignment) nor
+// consumed_rcpayload_option_frees (which requires a sole consuming match) ever
+// looks at it. Measured: `var v: Option[i32[]] = Some([..])` with no match
+// leaks 35200 over 100 rounds at frees=0, while the byte-identical shape WITH a
+// match is flat at 0 — the match was the entire reclaim.
+//
+// Credited under the SAME "OPTARR:" tag, so the exit sweep, the entry-zeroing
+// in arr_slots_of and slot_is_reclaimable_optarr all pick it up unchanged. The
+// loop-rebind consumer cannot fire for these names because they are never
+// reassigned, which is exactly what makes sharing the tag safe.
+//
+// body_unsafe_for is the right escape gate HERE, and is the one the sibling
+// collector cannot use: it reads a bare-ident match scrutinee as an escape, so
+// it refuses every match-consumed Option outright — which is precisely the set
+// this collector must exclude. Disjointness from both match analyses is
+// therefore a property of the gate, not a separate check that could drift.
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (unmatched_optarr_ann_is(v.type_name)
+                    && unmatched_optarr_init_is_fresh(v.init)
+                    && util.index_of_str(reassigned, v.name) < 0
+                    && !body_unsafe_for(stmts, v.name, [])) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, a); a = collect_unmatched_optarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
 function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -46163,6 +46287,30 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
         },
         parser.ExprIndex(ix) => {
             return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked, ty: ix.ty };
+        },
+        // The aggregate literals. A call reached only through one of these was
+        // left un-substituted, so the binding's name survived the caller's
+        // post-rewrite check, the lift declined, and the lambda fell to the
+        // escaping-closure path — which names a `<fn>$clo` nothing hoisted.
+        parser.ExprArray(arr) => {
+            var ael: parser.Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < arr.elements.len()) { ael = ael.append(subst_fcall_expr(arr.elements[ai], fname, lname, capargs)); ai = ai + 1; }
+            return parser.ExprArray { elements: ael };
+        },
+        parser.ExprTuple(tu) => {
+            var tel: parser.Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) { tel = tel.append(subst_fcall_expr(tu.elements[ti], fname, lname, capargs)); ti = ti + 1; }
+            return parser.ExprTuple { elements: tel, line: tu.line, col: tu.col };
+        },
+        parser.ExprStructLit(sl) => {
+            var fvals: parser.Expr[] = [];
+            var fi: i32 = 0;
+            while (fi < sl.field_values.len()) { fvals = fvals.append(subst_fcall_expr(sl.field_values[fi], fname, lname, capargs)); fi = fi + 1; }
+            var nbase: parser.Expr = sl.base;
+            if (sl.has_base) { nbase = subst_fcall_expr(sl.base, fname, lname, capargs); }
+            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
         },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };

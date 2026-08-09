@@ -193,6 +193,37 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// The string-element half of the same family (#6407). `.with` skipped
+		// every element retain/release for a `string[]` — strings were not in
+		// arrElemIsRcTracked — so each round leaked the whole receiver: the
+		// escape analysis has no counted store to key on, taints the receiver
+		// through the `a[j]` projection, and drops it out of freeEligible. One
+		// `.with` therefore cost N+1 blocks per round, not one element.
+		//
+		// Constant in n: each round builds, updates and discards one array.
+		name: "string-array-with",
+		decls: `import "std/i32";
+function mks(): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < 8) { out = out.append("kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; }
+    return out;
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: string[] = mks();
+        a = a.with(3, a[5]);
+        t = t + a.len();
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// A struct-update spread whose base is a FRESH value. `T { ...b, f: v }`
 		// where `b` is a LOCAL borrows the base — the local releases at its own
 		// scope exit, so the construction must not — but that reasoning does

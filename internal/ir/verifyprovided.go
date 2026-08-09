@@ -82,6 +82,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_args":                   {0, rWord},
 	"__fern_arr_cow_inplace":        {2, rWord},
 	"__fern_arr_cow_inplace_ptr":    {2, rWord},
+	"__fern_arr_cow_inplace_str":    {2, rWord},
 	"__fern_arr_dec":                {2, rWord},
 	"__fern_arr_push_grow":          {3, rWord},
 	"__fern_arr_push_grow_move_ptr": {3, rWord},

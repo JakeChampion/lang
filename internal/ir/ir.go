@@ -342,6 +342,11 @@ const (
 	// EmitLineMarkers lower-option is set (native -g), so ordinary builds —
 	// and the self-host byte-identical fixpoint — never see it.
 	OpLine // () → () (source-line marker; Pos is the payload)
+
+	// opKindCount is one past the last op, not an op itself. It exists so
+	// a pass over "every op kind" picks up a new one wherever it is added
+	// in this block.
+	opKindCount
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack
@@ -17131,8 +17136,8 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	if stride == 0 {
 		stride = 4
 	}
-	// An array of single-word rc-tracked pointer elements (struct / enum /
-	// array / tuple / closure) needs rc bookkeeping the scalar path skips:
+	// An array of rc-tracked elements (struct / enum / array / tuple /
+	// closure / string) needs rc bookkeeping the scalar path skips:
 	//   - the COPY branch of the CoW helper must retain each copied element
 	//     (the pointer-aware __fern_arr_cow_inplace_ptr does this), else the
 	//     fresh buffer shares the receiver's elements at unchanged rc and
@@ -17140,7 +17145,7 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	//   - overwriting index i must drop the OLD element there (it is being
 	//     replaced) and retain the NEW value if it is an alias.
 	// Scalar-element arrays keep the byte-identical straight-line path.
-	rcTracked := arrElemIsRcTracked(elemType)
+	rcTracked := rcTrackedSlotType(elemType)
 	storeOp, storeWidth := arraySetStoreOp(elemType, b.ptrW)
 	idxHelper := "__arr_idx"
 	switch stride {
@@ -17189,9 +17194,15 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
+	// Element-retain on the CoW copy, keyed like emitArrayPush's grow-helper
+	// selection: a two-word (data, len) string element walks through
+	// __fern_str_inc, everything else is a single word __fern_rc_inc guards.
 	cowHelper := "__fern_arr_cow_inplace"
 	if rcTracked {
 		cowHelper = "__fern_arr_cow_inplace_ptr"
+		if _, isStr := elemType.(ast.StringType); isStr && b.twoWordStrings() {
+			cowHelper = "__fern_arr_cow_inplace_str"
+		}
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: cowHelper, I32: 2})
 	bufSlot := b.allocSlot()
@@ -17221,7 +17232,17 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 		if ast.RcFreeEnabled {
 			b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})
 			b.emit(Op{Kind: OpLoad, Width: storeWidth})
-			b.dropStructField(elemType)
+			if _, isStr := elemType.(ast.StringType); isStr {
+				// The buffer's own walk-drop releases string elements with
+				// __fern_str_dec (__fern_drop_arr_str), so the element this
+				// store replaces takes the same release. dropStructField's
+				// native single-word arm would emit __fern_rc_dec, which
+				// stops at rc 0 without freeing and orphans the buffer.
+				b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			} else {
+				b.dropStructField(elemType)
+			}
 		}
 		// Store the new element value.
 		b.emit(Op{Kind: OpLoadLocal, I32: addrSlot})

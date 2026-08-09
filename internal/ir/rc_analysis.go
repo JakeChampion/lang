@@ -1187,14 +1187,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 					// stays reclaimable and only a direct-Ident element
 					// keeps the taint (escapeOwned, the Array_push rule).
 					//
-					// STRING elements are NOT counted there (the rcTracked
-					// gate in emitArraySet excludes them — no inc, no
-					// old-element drop), so they keep the full escape taint;
-					// a scalar element can't alias but also can't strand
+					// A scalar element can't alias but also can't strand
 					// anything, so the escape walk's pointer gate already
 					// no-ops it.
 					if len(s.Args) == 3 {
-						if len(s.TypeArgs) == 1 && arrElemIsRcTracked(s.TypeArgs[0]) {
+						if len(s.TypeArgs) == 1 && rcTrackedSlotType(s.TypeArgs[0]) {
 							escapeOwned(s.Args[2])
 						} else {
 							escape(s.Args[2])

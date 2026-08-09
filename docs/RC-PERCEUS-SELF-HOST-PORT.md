@@ -5013,8 +5013,15 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   **The live list is #6360, now down to its STRING rows.** The class was "an
   enum local bound from a CALL is never reclaimed" — `frees=0`, exactly x2.0 per
-  doubling, native clean on every row. Two thirds of it has closed: #6416 took
-  the scalar payload, #6451 the rc payload.
+  doubling, native clean on every row. Most of it has closed: #6392 / #6416 took
+  the scalar payload, #6451 the rc payload bound from a call and consumed by a
+  match, and #6448 the rc-payload local that no match consumes.
+
+  **#6448 covers the DIRECT init only — measured, because its title reads
+  wider.** `var o: Option[i32[]] = Some([..])` with no match is reclaimed
+  (`frees=798/800`); the same shape bound from a producer call is untouched
+  (`frees=0`, 35200). So "no match" and "call init" are ORTHOGONAL dimensions of
+  one class, and only three of their four cells are closed.
 
   What that left is best read as a 2x2, because "rc payload leaks" is the wrong
   summary and cost a wrong turn before it was measured:
@@ -5024,7 +5031,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | rc | direct | 0 — already deep-freed, buffer and all |
   | rc | call | 35200 — closed by #6451 |
   | scalar | direct | 0 |
-  | scalar | call | 0 — closed by #6416 |
+  | scalar | call | 0 — closed by #6392 / #6416 |
 
   The rc payload was never what defeated reclaim. `rcpayload_option_cand` reads
   the CONSTRUCTED variant off the init: `Some([..])` is visible, `mk(i)` is not,
@@ -5032,8 +5039,22 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   because a specific variant was admitted. `emit_opt_tagged_payload_drop` guards
   that same release on `op_opt_tag() == 0`.
 
-  **Still open — one class, two rows, and the split is about the freshness
-  proof rather than about the leak:**
+  **Still open — one class, two ORTHOGONAL dimensions.** Measured at the merge
+  of #6451 and #6448, `Result[i32[], E]` from a call, 100 rounds x 4:
+
+  | Err | consumed by a match | self-host |
+  |---|---|---|
+  | scalar | yes | **0** — closed by #6451 |
+  | scalar | no | 35200, `frees=0` |
+  | string | yes | 35200, `frees=0` |
+  | string | no | 35200, `frees=0` |
+
+  So the two open dimensions are:
+
+  1. **no consuming match**, for a CALL init. #6451's admission requires a
+     `sole_top_level_match_idx`, and #6448's no-match class does not admit a
+     call init — neither reaches this cell.
+  2. **a string payload**, below.
 
   - `Result[i32[], string]` from a call — 35200, `frees=0`. Needs a two-way tag
     dispatch (`__fern_rc_dec` on the Ok arm, `__fern_str_free` on the Err arm).
@@ -5074,8 +5095,41 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the loop. So the array ctor takes a counted reference. Strings are the shape
   where that is NOT assumed, which is exactly why the direct path gates them.
 
-  **The block-scoped bare-name struct credit is HALF closed** (#6375, 8800 →
-  4000): the BOX is reclaimed, the field drop is not. Three fixpoint runs, one
+  **That issue's own attribution is wrong, and the correction is the useful
+  part.** It concluded "call-binding is the trigger" and "the match is
+  irrelevant" — both measured only on the call-bound rows, where both hold.
+  Varying the match on the DIRECT row inverts it:
+
+  | shape | binding | match | self-host |
+  |---|---|---|---|
+  | `Result[i32[], string]` | direct `Ok([..])` | yes | 0 |
+  | `Result[i32[], string]` | direct `Ok([..])` | **no** | **35200** |
+  | `Result[i32[], string]` | call | yes | **35200** |
+
+  The consuming match is the ENTIRE reclaim mechanism for an rc-payload
+  Option/Result local; call-binding is one of two independent ways to fall
+  outside it. The emitted asm agrees — two `__fern_arr_dec` in `round()` on the
+  direct+match build, no release at all in the others.
+
+  **The uncovered quadrant is the non-reassigned local that no match consumes.**
+  `consumed_rcpayload_option_frees` needs a sole consuming match AND a
+  statically known variant (a call's variant is not, which is the same reason
+  `fresh_scalar_option_call_init` restricts to scalar payloads);
+  `collect_fresh_optarr_names` ("OPTARR:") deliberately requires REASSIGNMENT,
+  as the complement of the match analyses. Closing it needs either a runtime
+  variant guard in the payload drop or a new exit-sweep credit — and the latter
+  is the operation that segfaulted gen1 twice, so the fixpoint runs first.
+  All three rows are pinned in `TestSelfHostCallBoundEnumReclaimX86_64`,
+  including the direct+match control, so a fix cannot land unnoticed the way
+  #6291's did.
+
+  **The block-scoped bare-name struct credit is CLOSED** (#6375 then #6408).
+  The paragraphs below describe the investigation while the field drop was
+  still withheld; #6408 landed the fix they point at — `expr_unsafe_for` and
+  `moves_fields_expr` now read a bare non-scalar `name.field` as a MOVE rather
+  than a borrow. Kept for the method, not as a live item.
+
+  (Historical, #6375: the BOX was reclaimed and the field drop was not.) Three fixpoint runs, one
   variable each, located the culprit as `__struct_drop_<T>` on a block-scoped
   slot — not the box dec, not the entry-zeroing, not the credit's other
   consumers. Entry-zeroing alone is green (402 s); box-only free is green

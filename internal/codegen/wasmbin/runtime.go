@@ -769,6 +769,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__memcpy")
 					needs.add("__fern_rc_inc")
+				case "__fern_arr_cow_inplace_str":
+					needs.add("__fern_arr_cow_inplace_str")
+					needs.add("__fern_alloc")
+					needs.add("__memcpy")
+					needs.add("__fern_str_inc")
+					needs.add("__fern_rc_inc") // str_inc's heap path calls it
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
@@ -1627,9 +1633,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// (arr, stride) → new_data. Phase 2b mutate-or-copy
 		// helper for `arr[i] = v`. Internalises the rc
 		// bookkeeping so the IR-side emit doesn't have to
-		// coordinate with __fern_rc_dec's low-address guard
-		// (which short-circuits on raw wasm where heap
-		// addresses sit below 0x10000):
+		// coordinate with __fern_rc_dec's low-address guard:
 		//   - rc == 1 → return arr unchanged.
 		//   - rc >  1 → alloc fresh buffer with the same
 		//     cap+len, memcpy the payload, dec arr's rc
@@ -1650,6 +1654,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrCowInPlacePtrBody,
+	},
+	"__fern_arr_cow_inplace_str": {
+		// (arr, stride) → new_data. Two-word string[] variant of
+		// __fern_arr_cow_inplace_ptr (#6407): the COPY path
+		// __fern_str_inc's each copied (data, len) pair — matching the
+		// __fern_drop_arr_str walk that releases them. See
+		// buildArrCowInPlaceStrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrCowInPlaceStrBody,
 	},
 	"__fern_drop_arr_ptr": {
 		// (ptr, stride) → ptr. Phase 3 step 3 drop handler for
@@ -2512,7 +2526,8 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 0)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalTee(body, 2)
-		// if buf u>= 0x10000 (covers null + low-address): free it.
+		// if buf is at or above the rc guard (covers null + every static
+		// region): free it.
 		body = inst.InstI32Const(body, rcLowAddrGuard)
 		body = numeric.InstI32GeU(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -2665,9 +2680,11 @@ func buildClosureDropBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// low-address guard → return f
+	// low-address guard → return f. See rcLowAddrGuard: the floor is the
+	// start of the string pool, not 64 KiB — every heap object lands at or
+	// above it and every static region below.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -2724,9 +2741,14 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// low-address guard → return data
+	// low-address guard → return data. See rcLowAddrGuard: the floor is the
+	// start of the string pool. It read 0x10000 (64 KiB) until #6423 — a
+	// leftover from the WASI layout — while __fern_str_inc reaches
+	// __fern_rc_inc, which already used the correct floor. Incs therefore
+	// happened and decs did not, so a heap string's refcount only ever went
+	// up and its buffer never returned to the freelist.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -3141,13 +3163,9 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32And(body)
 		body = inst.InstBrIf(body, 0)
 		// Below the rc guard: a literal in the data segment (or a static
-		// closure cell), never rc-owned. See rcLowAddrGuard. This floor
-		// is deliberately LOWER than __fern_str_dec's own 0x10000 (a
-		// leftover from the WASI layout, which keeps that helper from
-		// freeing sub-64K heap strings). The asymmetry is safe in this
-		// direction: the fast path frees nothing, it only mutates a
-		// buffer the rc says is uniquely held, and the fallback's
-		// str_dec keeps its existing (leak-not-free) behaviour there.
+		// closure cell), never rc-owned. See rcLowAddrGuard — the same
+		// floor __fern_str_dec uses, so a buffer this path declines to
+		// grow in place is one the fallback's str_dec will reclaim.
 		body = inst.InstLocalGet(body, 0)
 		body = inst.InstI32Const(body, rcLowAddrGuard)
 		body = numeric.InstI32LtU(body)
@@ -4344,9 +4362,8 @@ func arrPushGrowStrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 
 // buildArrCowInPlaceBody — (arr, stride) → new_data. Wasm32
 // counterpart of arm64.go's emitArrCowInPlaceRuntime + x86_64's.
-// Internalises rc bookkeeping so the IR-side emit avoids the
-// __fern_rc_dec low-address guard pitfall (heap addresses sit
-// below 0x10000 on raw wasm so the guard would skip every dec).
+// Internalises rc bookkeeping so the IR-side emit does not have to
+// coordinate with __fern_rc_dec's low-address guard at all.
 //
 // Locals: 0=arr, 1=stride (params); 2=len, 3=cap,
 // 4=headerBytes, 5=base.
@@ -4456,9 +4473,24 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 // dec). Locals: 0=arr, 1=stride (params); 2=len, 3=cap, 4=headerBytes,
 // 5=new_data, 6=i.
 func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
+	return arrCowInPlaceRetainBody(helperIdxs, false)
+}
+
+// buildArrCowInPlaceStrBody — the two-word string[] sibling of
+// buildArrCowInPlacePtrBody (#6407): identical apart from the retain loop,
+// which __fern_str_inc's each copied (data@+0, len@+4) pair instead of
+// __fern_rc_inc'ing a single word. A string element's inline tag lives in
+// `len`, so the single-word retain would dereference an inline string's
+// character bytes as a heap pointer.
+func buildArrCowInPlaceStrBody(helperIdxs map[string]uint32) []byte {
+	return arrCowInPlaceRetainBody(helperIdxs, true)
+}
+
+func arrCowInPlaceRetainBody(helperIdxs map[string]uint32, strForm bool) []byte {
 	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	rcinc := helperIdxs["__fern_rc_inc"]
+	strinc := helperIdxs["__fern_str_inc"]
 	var body []byte
 	// Fast path: rc == 1 → return arr (in-place; elements already owned).
 	body = inst.InstLocalGet(body, 0)
@@ -4558,15 +4590,34 @@ func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 2)
 		body = numeric.InstI32GeS(body)
 		body = inst.InstBrIf(body, 1)
-		// __fern_rc_inc(mem[base + i*stride]); drop result
-		body = inst.InstLocalGet(body, 5)
-		body = inst.InstLocalGet(body, 6)
-		body = inst.InstLocalGet(body, 1)
-		body = numeric.InstI32Mul(body)
-		body = numeric.InstI32Add(body)
-		body = memory.InstI32Load(body, 2, 0)
-		body = inst.InstCall(body, rcinc)
-		body = inst.InstDrop(body)
+		if strForm {
+			// __fern_str_inc(mem[base+i*stride], mem[base+i*stride+4]); drop both
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0) // data
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 4) // len (offset +4)
+			body = inst.InstCall(body, strinc)
+			body = inst.InstDrop(body)
+			body = inst.InstDrop(body)
+		} else {
+			// __fern_rc_inc(mem[base + i*stride]); drop result
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstCall(body, rcinc)
+			body = inst.InstDrop(body)
+		}
 		// i = i + 1; continue
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstI32Const(body, 1)
@@ -4963,7 +5014,7 @@ func buildRcIsUniqueBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// ptr < 0x10000 → 0 (low-address guard)
+	// ptr below the rc guard → 0 (low-address guard)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)

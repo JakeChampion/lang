@@ -1,0 +1,41 @@
+// spec: AL-03
+//
+// The same reclaim shape as `alloc_flat_under_reclaim`, but the thing
+// allocated per round is a CLOSURE ENVIRONMENT rather than a string.
+//
+// It is a separate case because it is reclaimed by a separate helper.
+// The wasm leak of #6423 was one stale constant duplicated in two
+// places — `__fern_str_dec` and `__fern_closure_drop` — and a case that
+// only allocated strings proved nothing about the second. Both were
+// measured leaking at 32 and 16 fresh bytes per round respectively, and
+// fixing one would have left the other silent.
+import "std/i32";
+import "std/i64";
+import "core/int";
+
+function round(n: i32): i32 {
+    var k: i32 = n;
+    var f = function (): i32 { return k + 1; };
+    return f();
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

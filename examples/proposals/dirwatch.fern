@@ -50,9 +50,10 @@ struct Entry { name: string, size: i64, sum: i32 }
 // where they are two different files. `sort_by` with the module's own
 // `string_cmp` is the case-sensitive one.
 //
-// Sorting a string[] currently leaks its string buffers (#6407): `sort_by`
-// reaches `.with` through its insertion-sort base case, and `.with` on a
-// string[] takes the scalar path because arrElemIsRcTracked omits StringType.
+// Sorting a string[] still leaks the sorted array itself: handing one back
+// through a borrowed param — which every `sort_by` delegation does — strands
+// the whole array, 16 elements plus the buffer per call. (The `.with` half of
+// this, #6407, is fixed; what is left is the return-through-param taint.)
 // Nothing here works around it — the tool wants sorted output and says so —
 // but a long-running watcher polling on a timer would grow, so the reference
 // belongs next to the call rather than in an issue nobody reads from here.
