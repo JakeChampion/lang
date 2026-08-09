@@ -26052,6 +26052,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         out = out.append("OPTARR:" + ofa[ofai]);
         ofai = ofai + 1;
     }
+    // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
+    // exit sweep; see collect_unmatched_optarr_names for why the two sets
+    // cannot overlap.
+    var ufa: string[] = collect_unmatched_optarr_names(body, []);
+    var ufai: i32 = 0;
+    while (ufai < ufa.len()) {
+        out = out.append("OPTARR:" + ufa[ufai]);
+        ufai = ufai + 1;
+    }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
     // arrays. Credited "ARRTUP:" so slot_is_reclaimable_arrtup routes the loop-rebind
@@ -30674,6 +30683,53 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // exactly as the sibling collectors use it — body_unsafe_for cannot be substituted
 // here, because it reads a bare-ident match SCRUTINEE as an escape and so refuses
 // every match-consumed Option outright.
+// collect_unmatched_optarr_names: the OTHER uncovered quadrant of the
+// rc-payload Option family (#6360) — a `Option[<flat scalar array>]` local that
+// is NEITHER reassigned NOR consumed by a match, so neither
+// collect_fresh_optarr_names (which requires reassignment) nor
+// consumed_rcpayload_option_frees (which requires a sole consuming match) ever
+// looks at it. Measured: `var v: Option[i32[]] = Some([..])` with no match
+// leaks 35200 over 100 rounds at frees=0, while the byte-identical shape WITH a
+// match is flat at 0 — the match was the entire reclaim.
+//
+// Credited under the SAME "OPTARR:" tag, so the exit sweep, the entry-zeroing
+// in arr_slots_of and slot_is_reclaimable_optarr all pick it up unchanged. The
+// loop-rebind consumer cannot fire for these names because they are never
+// reassigned, which is exactly what makes sharing the tag safe.
+//
+// body_unsafe_for is the right escape gate HERE, and is the one the sibling
+// collector cannot use: it reads a bare-ident match scrutinee as an escape, so
+// it refuses every match-consumed Option outright — which is precisely the set
+// this collector must exclude. Disjointness from both match analyses is
+// therefore a property of the gate, not a separate check that could drift.
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (optarr_ann_is(v.type_name)
+                    && optarr_init_is_fresh(v.init)
+                    && util.index_of_str(reassigned, v.name) < 0
+                    && !body_unsafe_for(stmts, v.name, [])) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, a); a = collect_unmatched_optarr_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
 function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);

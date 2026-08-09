@@ -224,6 +224,54 @@ function main(): i32 {
     return x % 83;
 }`
 
+// --- the Option half, CLOSED by the unmatched-OPTARR credit -----------------
+//
+// `Option[<flat scalar array>]`, non-reassigned, no consuming match: neither
+// collect_fresh_optarr_names (requires reassignment) nor
+// consumed_rcpayload_option_frees (requires a sole consuming match) looked at
+// it, so it was reclaimed nowhere. collect_unmatched_optarr_names credits it
+// under the same "OPTARR:" tag, which routes it through the existing exit
+// sweep and entry-zeroing.
+//
+// Function-scoped, single bind: 200/200, 0 — fully closed.
+const cbeOptArrFnScopeSrc = `function round(r: i32): i32 {
+    var v: Option[i32[]] = Some([r, r + 1, r + 2]);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { acc = acc + 1; i = i + 1; }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
+// The same shape declared INSIDE the loop: 35200 -> 8800. Six of the eight
+// objects a call allocates are now released; the pair the FINAL iteration
+// leaves live is not, because the exit sweep does not reach the retired slot
+// name. That is the block-scoped-slot class, which is the one that segfaults
+// gen1 when granted more (#6285 / #6375) — a distinct follow-up, not this
+// credit's job. Pinned at its measured value so the improvement cannot silently
+// regress and the remainder cannot be silently forgotten.
+const cbeOptArrLoopScopeSrc = `function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var v: Option[i32[]] = Some([i, i + 1, i + 2]);
+        acc = acc + 1;
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
 func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -268,6 +316,7 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		// The control for the rc-payload family: the same payload kind that
 		// leaks in the two cases below reclaims fully when a match consumes it.
 		{"rcpayload_direct_with_match", cbeRcPayloadDirectMatchSrc, 72},
+		{"optarr_fnscope_no_match", cbeOptArrFnScopeSrc, 38},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
@@ -334,6 +383,21 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		if allocs-frees != 200 {
 			t.Errorf("allocs-frees=%d, want exactly 200 — the stranded set must be the Err strings and "+
 				"nothing else (allocs=%d frees=%d live=%d)", allocs-frees, allocs, frees, live)
+		}
+	})
+
+	// The same Option shape declared INSIDE the loop: 35200 -> 8800. Six of the
+	// eight objects a call allocates are released; the pair the FINAL iteration
+	// leaves live is not, because the exit sweep does not reach the retired slot
+	// name. That is the block-scoped-slot class — the one that segfaults gen1
+	// when granted more (#6285 / #6375) — and a distinct follow-up.
+	t.Run("optarr_loop_scope_partial", func(t *testing.T) {
+		allocs, frees, live := counts(t, "optarr_loop_scope_partial", cbeOptArrLoopScopeSrc, 38)
+		if frees != 600 || live != 8800 {
+			t.Errorf("optarr_loop_scope_partial: allocs=%d frees=%d live_bytes=%d — want frees=600 live_bytes=8800.\n"+
+				"Was 800/0/35200 before the unmatched-OPTARR credit. If live_bytes is now 0 the block-scoped "+
+				"remainder has closed too: move this into the live_bytes==0 table and update #6360.",
+				allocs, frees, live)
 		}
 	})
 }
