@@ -1,0 +1,15 @@
+// A value-position `match` whose arms are an enum PAYLOAD binding and a CALL.
+// The desugared IIFE's return-type tag is picked from the arms' syntax alone,
+// and neither shape names a width there, so the tag fell to i32 while the body
+// yielded i64 — and being non-empty it also stopped the return-type inference
+// revisiting the lambda. The binding's annotation is what supplies the width
+// (#6468).
+function widen(v: i64): i64 { return v; }
+
+function main(): i32 {
+    var big: i64 = (match ((1i64) /? (0i64)) { Some(w) => w, None => widen(5000000000i64) });
+    var some: i64 = (match ((9000000000i64) /? (2i64)) { Some(w) => w, None => widen(0i64) });
+    if (big != 5000000000i64) { return 1; }
+    if (some != 4500000000i64) { return 2; }
+    return 0;
+}
