@@ -116,13 +116,3 @@
 # `-1 => …` is declined — again the shape the native parser had.
 smallest_int_literal 6394 self-host: `return -<literal at the i32 limit>` does not lower
 negative_literal_patterns 6394 self-host: negative literal patterns do not lower
-
-# --- i32 arithmetic through a negated literal (#6396) ----------------------
-# `int_min_arithmetic`: `var a: i32 = -2147483648;` is accepted by the
-# self-host and then computed in 64 BITS — the annotation is ignored, and
-# `0 - a` reads 2147483648 where every native backend reads -2147483648.
-# Not a bail: it compiles and answers wrong. The same value written
-# `0 - 2147483647 - 1` is correct, so the two spellings of one number
-# disagree. Ordinary i32 overflow (`2147483647 + 1`, `* 2`) wraps correctly,
-# so truncation is not missing in general — `a` is simply not an i32.
-int_min_arithmetic 6396 self-host: a negated out-of-i32-magnitude literal widens to 64 bits
