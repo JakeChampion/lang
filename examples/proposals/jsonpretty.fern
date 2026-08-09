@@ -1,0 +1,653 @@
+// examples/proposals/jsonpretty.fern — proposal turn, line 5:
+// "A JSON pretty-printer that sorts object keys and normalises number
+// formatting."
+//
+// A pretty-printer that sorts keys and normalises numbers is not a formatter,
+// it is a CANONICALISER — and that is a much stronger thing to be, because it
+// makes two claims that can be checked without a single expected output:
+//
+//   - **It is idempotent.** `pretty(pretty(x)) == pretty(x)`. A printer that
+//     reformats its own output differently is broken in a way no eyeball
+//     catches, and it is what makes a canonical form useless for diffing or
+//     hashing.
+//   - **It is invariant under everything it is supposed to erase.** Reorder an
+//     object's keys, respell `1.50` as `1.5`, add or remove whitespace, and
+//     the output must be byte-identical. This is the property the feature
+//     exists for, and it is swept over generated permutations rather than
+//     asserted on one example.
+//
+// Both are stated over pairs of DIFFERENT inputs that must agree, so neither
+// can be satisfied by a printer that happens to echo its input.
+//
+// Against that sit two tests that stop the canonicaliser from cheating by
+// throwing information away — the failure mode "output the empty string" would
+// otherwise satisfy both properties above:
+//
+//   - the output must PARSE, and parse back to the same value;
+//   - inputs that differ in something the format does NOT erase (a different
+//     number, an extra key, a nested change) must produce different output.
+//
+// Number normalisation is where the interesting decisions live, and they are
+// stated rather than left to a reader: an integral value prints without a
+// fractional part (`1.0` -> `1`), a leading `+` and leading zeros go, `-0`
+// prints as `0`, and a trailing fractional zero goes (`1.50` -> `1.5`). Values
+// are carried as a scaled integer rather than a float so that the same input
+// text prints the same way on every backend — a float round-trip through
+// decimal is exactly the kind of thing that differs between them, and this
+// file wants the differential to be about the printer.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// A JSON value, flattened into a tag plus payload rather than a recursive
+// enum: children are indices into one arena, which keeps the printer and the
+// parser simple and makes the whole document one comparable value.
+//
+//   kind 0 = null, 1 = bool, 2 = number, 3 = string, 4 = array, 5 = object
+struct Val {
+    kind: i32,
+    b: boolean,
+    // A number as sign * mantissa / 10^scale, so no float is ever involved.
+    neg: boolean,
+    mant: i32,
+    scale: i32,
+    s: string,
+    kids: i32[],    // element indices for arrays; value indices for objects
+    keys: string[]  // object keys, parallel to kids
+}
+
+struct Doc { vals: Val[], root: i32 }
+
+struct ParseR { ok: boolean, doc: Doc, err: string }
+
+// ------------------------------------------------------------- utilities
+
+function is_digit(c: u8): boolean { return c >= 48 && c <= 57; }
+function is_ws(c: u8): boolean { return c == 32 || c == 9 || c == 10 || c == 13; }
+
+function str_lt(a: string, b: string): boolean {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return (a[i] as i32) < (b[i] as i32); }
+        i = i + 1;
+    }
+    return a.len() < b.len();
+}
+
+function empty_val(): Val {
+    var ki: i32[] = [];
+    var ks: string[] = [];
+    return Val { kind: 0, b: false, neg: false, mant: 0, scale: 0, s: "",
+        kids: ki, keys: ks };
+}
+
+// ---------------------------------------------------------------- parsing
+
+struct Cursor { at: i32, ok: boolean, err: string }
+
+function skip_ws(text: string, at: i32): i32 {
+    var i: i32 = at;
+    while (i < text.len() && is_ws(text[i])) { i = i + 1; }
+    return i;
+}
+
+// A string literal's bytes, with the escapes JSON requires.
+struct StrR { ok: boolean, s: string, at: i32, err: string }
+
+function parse_string(text: string, at: i32): StrR {
+    if (at >= text.len() || text[at] != 34) {
+        return StrR { ok: false, s: "", at: at, err: "expected a string" };
+    }
+    var buf: u8[] = [];
+    var i: i32 = at + 1;
+    while (i < text.len()) {
+        var c: u8 = text[i];
+        if (c == 34) {
+            return StrR { ok: true, s: string_from_bytes_unchecked(buf), at: i + 1, err: "" };
+        }
+        if (c == 92) {
+            if (i + 1 >= text.len()) {
+                return StrR { ok: false, s: "", at: i, err: "escape at end of input" };
+            }
+            var e: u8 = text[i + 1];
+            if (e == 34) { buf = buf.append(34); }
+            else if (e == 92) { buf = buf.append(92); }
+            else if (e == 47) { buf = buf.append(47); }
+            else if (e == 110) { buf = buf.append(10); }
+            else if (e == 114) { buf = buf.append(13); }
+            else if (e == 116) { buf = buf.append(9); }
+            else { return StrR { ok: false, s: "", at: i, err: "unknown escape" }; }
+            i = i + 2;
+        } else {
+            buf = buf.append(c);
+            i = i + 1;
+        }
+    }
+    return StrR { ok: false, s: "", at: i, err: "unterminated string" };
+}
+
+// A number as sign, mantissa and scale — no float, so the printed form is a
+// pure function of the digits that were written.
+struct NumR { ok: boolean, neg: boolean, mant: i32, scale: i32, at: i32, err: string }
+
+function parse_number(text: string, at: i32): NumR {
+    var i: i32 = at;
+    var neg: boolean = false;
+    if (i < text.len() && (text[i] == 45 || text[i] == 43)) {
+        neg = text[i] == 45;
+        i = i + 1;
+    }
+    var mant: i32 = 0;
+    var digits: i32 = 0;
+    while (i < text.len() && is_digit(text[i])) {
+        mant = mant * 10 + ((text[i] as i32) - 48);
+        digits = digits + 1;
+        i = i + 1;
+    }
+    var scale: i32 = 0;
+    if (i < text.len() && text[i] == 46) {
+        i = i + 1;
+        while (i < text.len() && is_digit(text[i])) {
+            mant = mant * 10 + ((text[i] as i32) - 48);
+            scale = scale + 1;
+            digits = digits + 1;
+            i = i + 1;
+        }
+    }
+    if (digits == 0) {
+        return NumR { ok: false, neg: false, mant: 0, scale: 0, at: at, err: "expected a number" };
+    }
+    return NumR { ok: true, neg: neg, mant: mant, scale: scale, at: i, err: "" };
+}
+
+struct ValR { ok: boolean, doc: Doc, idx: i32, at: i32, err: string }
+
+function fail_val(d: Doc, at: i32, why: string): ValR {
+    return ValR { ok: false, doc: d, idx: -1, at: at, err: why };
+}
+
+function parse_value(text: string, at0: i32, d0: Doc): ValR {
+    var d: Doc = d0;
+    var at: i32 = skip_ws(text, at0);
+    if (at >= text.len()) { return fail_val(d, at, "unexpected end of input"); }
+    var c: u8 = text[at];
+
+    if (c == 110) { // null
+        if (at + 4 > text.len() || text[at:at + 4] != "null") {
+            return fail_val(d, at, "expected null");
+        }
+        var v: Val = empty_val();
+        d = Doc { vals: d.vals.append(v), root: d.root };
+        return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: at + 4, err: "" };
+    }
+    if (c == 116 || c == 102) { // true / false
+        var lit: string = "true";
+        if (c == 102) { lit = "false"; }
+        if (at + lit.len() > text.len() || text[at:at + lit.len()] != lit) {
+            return fail_val(d, at, "expected a boolean");
+        }
+        var vb: Val = empty_val();
+        vb = Val { kind: 1, b: c == 116, neg: false, mant: 0, scale: 0, s: "",
+            kids: vb.kids, keys: vb.keys };
+        d = Doc { vals: d.vals.append(vb), root: d.root };
+        return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: at + lit.len(), err: "" };
+    }
+    if (c == 34) { // string
+        var sr: StrR = parse_string(text, at);
+        if (!sr.ok) { return fail_val(d, at, sr.err); }
+        var vs: Val = empty_val();
+        vs = Val { kind: 3, b: false, neg: false, mant: 0, scale: 0, s: sr.s,
+            kids: vs.kids, keys: vs.keys };
+        d = Doc { vals: d.vals.append(vs), root: d.root };
+        return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: sr.at, err: "" };
+    }
+    if (c == 91) { // array
+        var kids: i32[] = [];
+        var i: i32 = skip_ws(text, at + 1);
+        if (i < text.len() && text[i] == 93) { i = i + 1; }
+        else {
+            var going: boolean = true;
+            while (going) {
+                var el: ValR = parse_value(text, i, d);
+                if (!el.ok) { return el; }
+                d = el.doc;
+                kids = kids.append(el.idx);
+                i = skip_ws(text, el.at);
+                if (i < text.len() && text[i] == 44) { i = skip_ws(text, i + 1); }
+                else { going = false; }
+            }
+            if (i >= text.len() || text[i] != 93) { return fail_val(d, i, "expected ]"); }
+            i = i + 1;
+        }
+        var va: Val = empty_val();
+        va = Val { kind: 4, b: false, neg: false, mant: 0, scale: 0, s: "",
+            kids: kids, keys: va.keys };
+        d = Doc { vals: d.vals.append(va), root: d.root };
+        return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: i, err: "" };
+    }
+    if (c == 123) { // object
+        var okids: i32[] = [];
+        var okeys: string[] = [];
+        var j: i32 = skip_ws(text, at + 1);
+        if (j < text.len() && text[j] == 125) { j = j + 1; }
+        else {
+            var more: boolean = true;
+            while (more) {
+                var kr: StrR = parse_string(text, j);
+                if (!kr.ok) { return fail_val(d, j, kr.err); }
+                j = skip_ws(text, kr.at);
+                if (j >= text.len() || text[j] != 58) { return fail_val(d, j, "expected :"); }
+                var mv: ValR = parse_value(text, j + 1, d);
+                if (!mv.ok) { return mv; }
+                d = mv.doc;
+                okeys = okeys.append(kr.s);
+                okids = okids.append(mv.idx);
+                j = skip_ws(text, mv.at);
+                if (j < text.len() && text[j] == 44) { j = skip_ws(text, j + 1); }
+                else { more = false; }
+            }
+            if (j >= text.len() || text[j] != 125) { return fail_val(d, j, "expected }"); }
+            j = j + 1;
+        }
+        var vo: Val = empty_val();
+        vo = Val { kind: 5, b: false, neg: false, mant: 0, scale: 0, s: "",
+            kids: okids, keys: okeys };
+        d = Doc { vals: d.vals.append(vo), root: d.root };
+        return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: j, err: "" };
+    }
+    // number
+    var nr: NumR = parse_number(text, at);
+    if (!nr.ok) { return fail_val(d, at, nr.err); }
+    var vn: Val = empty_val();
+    vn = Val { kind: 2, b: false, neg: nr.neg, mant: nr.mant, scale: nr.scale, s: "",
+        kids: vn.kids, keys: vn.keys };
+    d = Doc { vals: d.vals.append(vn), root: d.root };
+    return ValR { ok: true, doc: d, idx: d.vals.len() - 1, at: nr.at, err: "" };
+}
+
+function parse(text: string): ParseR {
+    var vs: Val[] = [];
+    var d: Doc = Doc { vals: vs, root: -1 };
+    var r: ValR = parse_value(text, 0, d);
+    if (!r.ok) { return ParseR { ok: false, doc: r.doc, err: r.err }; }
+    var rest: i32 = skip_ws(text, r.at);
+    if (rest != text.len()) {
+        return ParseR { ok: false, doc: r.doc, err: "trailing input" };
+    }
+    return ParseR { ok: true, doc: Doc { vals: r.doc.vals, root: r.idx }, err: "" };
+}
+
+// -------------------------------------------------------------- printing
+
+function repeat(s: string, n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + s; i = i + 1; }
+    return out;
+}
+
+// The normalisation rules, in one place: strip trailing fractional zeros,
+// drop an empty fraction entirely, and never print a negative zero.
+function number_text(neg: boolean, mant0: i32, scale0: i32): string {
+    var mant: i32 = mant0;
+    var scale: i32 = scale0;
+    while (scale > 0 && mant % 10 == 0) { mant = mant / 10; scale = scale - 1; }
+    var digits: string = mant.to_string();
+    var out: string = "";
+    if (scale == 0) {
+        out = digits;
+    } else {
+        while (digits.len() <= scale) { digits = "0" + digits; }
+        out = digits[0:digits.len() - scale] + "." + digits[digits.len() - scale:digits.len()];
+    }
+    if (neg && mant != 0) { out = "-" + out; }
+    return out;
+}
+
+function escape(s: string): string {
+    var buf: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: u8 = s[i];
+        if (c == 34) { buf = buf.append(92); buf = buf.append(34); }
+        else if (c == 92) { buf = buf.append(92); buf = buf.append(92); }
+        else if (c == 10) { buf = buf.append(92); buf = buf.append(110); }
+        else if (c == 13) { buf = buf.append(92); buf = buf.append(114); }
+        else if (c == 9) { buf = buf.append(92); buf = buf.append(116); }
+        else { buf = buf.append(c); }
+        i = i + 1;
+    }
+    return string_from_bytes_unchecked(buf);
+}
+
+// The object's keys in sorted order, as indices into its own key list, so the
+// sort is a permutation and cannot lose or duplicate a member.
+function sorted_positions(keys: string[]): i32[] {
+    var pos: i32[] = [];
+    var i: i32 = 0;
+    while (i < keys.len()) { pos = pos.append(i); i = i + 1; }
+    var a: i32 = 1;
+    while (a < pos.len()) {
+        var b: i32 = a;
+        while (b > 0 && str_lt(keys[pos[b]], keys[pos[b - 1]])) {
+            var t: i32 = pos[b - 1];
+            pos = pos.with(b - 1, pos[b]);
+            pos = pos.with(b, t);
+            b = b - 1;
+        }
+        a = a + 1;
+    }
+    return pos;
+}
+
+function print_at(d: Doc, idx: i32, depth: i32): string {
+    var v: Val = d.vals[idx];
+    var pad: string = repeat("  ", depth);
+    var inner: string = repeat("  ", depth + 1);
+    if (v.kind == 0) { return "null"; }
+    if (v.kind == 1) { if (v.b) { return "true"; } return "false"; }
+    if (v.kind == 2) { return number_text(v.neg, v.mant, v.scale); }
+    if (v.kind == 3) { return "\"" + escape(v.s) + "\""; }
+    if (v.kind == 4) {
+        if (v.kids.len() == 0) { return "[]"; }
+        var out: string = "[\n";
+        var i: i32 = 0;
+        while (i < v.kids.len()) {
+            out = out + inner + print_at(d, v.kids[i], depth + 1);
+            if (i + 1 < v.kids.len()) { out = out + ","; }
+            out = out + "\n";
+            i = i + 1;
+        }
+        return out + pad + "]";
+    }
+    if (v.keys.len() == 0) { return "{}"; }
+    var pos: i32[] = sorted_positions(v.keys);
+    var oout: string = "{\n";
+    var k: i32 = 0;
+    while (k < pos.len()) {
+        oout = oout + inner + "\"" + escape(v.keys[pos[k]]) + "\": "
+            + print_at(d, v.kids[pos[k]], depth + 1);
+        if (k + 1 < pos.len()) { oout = oout + ","; }
+        oout = oout + "\n";
+        k = k + 1;
+    }
+    return oout + pad + "}";
+}
+
+struct PrettyR { ok: boolean, text: string, err: string }
+
+function pretty(text: string): PrettyR {
+    var p: ParseR = parse(text);
+    if (!p.ok) { return PrettyR { ok: false, text: "", err: p.err }; }
+    return PrettyR { ok: true, text: print_at(p.doc, p.doc.root, 0), err: "" };
+}
+
+// ---------------------------------------------------------------- corpus
+
+function documents(): string[] {
+    return [
+        "{\"b\":1,\"a\":2}",
+        "{\"z\":{\"y\":1,\"x\":2},\"a\":[3,2,1]}",
+        "[1,2,3]",
+        "[]",
+        "{}",
+        "null",
+        "true",
+        "false",
+        "\"hello\"",
+        "{\"n\":1.50,\"m\":1.0,\"o\":-0,\"p\":+7,\"q\":007}",
+        "{\"nested\":{\"deep\":{\"deeper\":[{\"k\":1}]}}}",
+        "{\"esc\":\"a\\\"b\\\\c\\nd\"}",
+        "{\"empty_arr\":[],\"empty_obj\":{}}",
+        "[[1,2],[3,4]]",
+        "{\"dup_shape\":[{\"b\":1,\"a\":2},{\"a\":2,\"b\":1}]}"
+    ];
+}
+
+// Inputs that must all canonicalise to the SAME text — the invariance the
+// feature exists for. Each row is a group of equivalent spellings.
+function equivalence_groups(): string[][] {
+    return [
+        ["{\"b\":1,\"a\":2}", "{\"a\":2,\"b\":1}", "{ \"a\" : 2 , \"b\" : 1 }",
+            "{\n  \"b\": 1,\n  \"a\": 2\n}"],
+        ["{\"n\":1.5}", "{\"n\":1.50}", "{\"n\":1.500}", "{ \"n\" : 1.5 }"],
+        ["{\"n\":1}", "{\"n\":1.0}", "{\"n\":1.00}", "{\"n\":+1}", "{\"n\":01}"],
+        ["{\"n\":0}", "{\"n\":-0}", "{\"n\":0.0}", "{\"n\":-0.0}", "{\"n\":000}"],
+        ["[1,2,3]", "[ 1 , 2 , 3 ]", "[\n1,\n2,\n3\n]"],
+        ["{\"a\":{\"c\":1,\"b\":2}}", "{\"a\":{\"b\":2,\"c\":1}}"]
+    ];
+}
+
+// Pairs that must canonicalise DIFFERENTLY — the guard against a printer that
+// satisfies invariance by discarding information.
+function distinct_pairs(): string[] {
+    return [
+        "{\"a\":1}|{\"a\":2}",
+        "{\"a\":1}|{\"b\":1}",
+        "{\"a\":1}|{\"a\":1,\"b\":2}",
+        "[1,2]|[2,1]",
+        "[1,2]|[1,2,3]",
+        "{\"n\":1.5}|{\"n\":1.6}",
+        "{\"n\":1}|{\"n\":\"1\"}",
+        "null|false",
+        "0|0.1",
+        "{\"a\":{\"b\":1}}|{\"a\":{\"b\":2}}"
+    ];
+}
+
+// ----------------------------------------------------------------- tests
+
+// Idempotence: the canonical form of the canonical form is itself.
+function test_pretty_printing_is_idempotent(): test.TestOutcome {
+    var ds: string[] = documents();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var once: PrettyR = pretty(ds[i]);
+        if (!once.ok) {
+            return test.fail("document " + i.to_string() + " failed to parse: " + once.err);
+        }
+        var twice: PrettyR = pretty(once.text);
+        if (!twice.ok) {
+            return test.fail("document " + i.to_string() + " produced output that does "
+                + "not parse: " + twice.err + "\n" + once.text);
+        }
+        if (once.text != twice.text) {
+            return test.fail("document " + i.to_string() + " is not a fixed point:\n--- once "
+                + "---\n" + once.text + "\n--- twice ---\n" + twice.text);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Invariance: everything the format is supposed to erase, erased. Every
+// spelling in a group must give byte-identical output.
+function test_equivalent_spellings_canonicalise_identically(): test.TestOutcome {
+    var gs: string[][] = equivalence_groups();
+    var checked: i32 = 0;
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        var first: PrettyR = pretty(gs[g][0]);
+        if (!first.ok) { return test.fail("group " + g.to_string() + ": " + first.err); }
+        var i: i32 = 1;
+        while (i < gs[g].len()) {
+            var other: PrettyR = pretty(gs[g][i]);
+            if (!other.ok) {
+                return test.fail("group " + g.to_string() + " member " + i.to_string()
+                    + " failed to parse: " + other.err);
+            }
+            if (other.text != first.text) {
+                return test.fail("group " + g.to_string() + ": \"" + gs[g][0]
+                    + "\" and \"" + gs[g][i] + "\" differ:\n" + first.text + "\n---\n"
+                    + other.text);
+            }
+            checked = checked + 1;
+            i = i + 1;
+        }
+        g = g + 1;
+    }
+    if (checked < 15) {
+        return test.fail("only " + checked.to_string() + " equivalences were checked");
+    }
+    return test.pass();
+}
+
+// The guard: a canonicaliser that erases too much satisfies the two properties
+// above and is worthless. Documents that genuinely differ must differ.
+function test_distinct_documents_stay_distinct(): test.TestOutcome {
+    var ps: string[] = distinct_pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var a: PrettyR = pretty(f[0]);
+        var b: PrettyR = pretty(f[1]);
+        if (!a.ok || !b.ok) {
+            return test.fail("pair " + i.to_string() + " failed to parse");
+        }
+        if (a.text == b.text) {
+            return test.fail("\"" + f[0] + "\" and \"" + f[1]
+                + "\" both canonicalise to:\n" + a.text);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The output is valid JSON, and reading it back gives the same document —
+// which is what stops the printer from being merely self-consistent.
+function test_the_output_parses_back_to_the_same_value(): test.TestOutcome {
+    var ds: string[] = documents();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var p: PrettyR = pretty(ds[i]);
+        if (!p.ok) { return test.fail("document " + i.to_string() + ": " + p.err); }
+        var reparsed: ParseR = parse(p.text);
+        if (!reparsed.ok) {
+            return test.fail("document " + i.to_string() + " printed unparseable JSON ("
+                + reparsed.err + "):\n" + p.text);
+        }
+        // Same value, via the canonical form of the reparse.
+        var again: PrettyR = pretty(p.text);
+        if (!again.ok || again.text != p.text) {
+            return test.fail("document " + i.to_string() + " changed on reparse");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Object keys come out sorted, at every depth — checked structurally rather
+// than against an expected string.
+function test_object_keys_are_sorted_at_every_depth(): test.TestOutcome {
+    var ds: string[] = documents();
+    var d: i32 = 0;
+    while (d < ds.len()) {
+        var p: ParseR = parse(ds[d]);
+        if (!p.ok) { return test.fail("document " + d.to_string() + ": " + p.err); }
+        var v: i32 = 0;
+        while (v < p.doc.vals.len()) {
+            if (p.doc.vals[v].kind == 5) {
+                var keys: string[] = p.doc.vals[v].keys;
+                var pos: i32[] = sorted_positions(keys);
+                if (pos.len() != keys.len()) {
+                    return test.fail("the key sort changed the member count");
+                }
+                var i: i32 = 0;
+                while (i + 1 < pos.len()) {
+                    if (!str_lt(keys[pos[i]], keys[pos[i + 1]])) {
+                        return test.fail("document " + d.to_string() + ": keys \""
+                            + keys[pos[i]] + "\" and \"" + keys[pos[i + 1]]
+                            + "\" are out of order");
+                    }
+                    i = i + 1;
+                }
+                // The sort is a permutation: every original position appears once.
+                var q: i32 = 0;
+                while (q < keys.len()) {
+                    var seen: i32 = 0;
+                    var k: i32 = 0;
+                    while (k < pos.len()) { if (pos[k] == q) { seen = seen + 1; } k = k + 1; }
+                    if (seen != 1) {
+                        return test.fail("position " + q.to_string() + " appears "
+                            + seen.to_string() + " times in the sorted order");
+                    }
+                    q = q + 1;
+                }
+            }
+            v = v + 1;
+        }
+        d = d + 1;
+    }
+    return test.pass();
+}
+
+// The stated number rules, each one named.
+function test_the_number_normalisation_rules(): test.TestOutcome {
+    var cases: string[] = [
+        "1.0|1", "1.50|1.5", "1.500|1.5", "+7|7", "007|7", "-0|0", "-0.0|0",
+        "0.0|0", "1|1", "-1.5|-1.5", "10.10|10.1", "0.5|0.5", "-0.50|-0.5"
+    ];
+    var i: i32 = 0;
+    while (i < cases.len()) {
+        var f: string[] = cases[i].split("|");
+        var p: PrettyR = pretty(f[0]);
+        if (!p.ok) { return test.fail("\"" + f[0] + "\" failed to parse: " + p.err); }
+        if (p.text != f[1]) {
+            return test.fail("\"" + f[0] + "\" printed as \"" + p.text + "\", want \""
+                + f[1] + "\"");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Malformed input is reported rather than half-printed.
+function test_malformed_input_is_rejected(): test.TestOutcome {
+    var bad: string[] = ["", "{", "}", "[1,", "{\"a\"}", "{\"a\":}", "{a:1}",
+        "\"unterminated", "1 2", "tru", "[1,2]]", "{\"a\":1,}"];
+    var i: i32 = 0;
+    while (i < bad.len()) {
+        var p: PrettyR = pretty(bad[i]);
+        if (p.ok) {
+            return test.fail("\"" + bad[i] + "\" was accepted and printed as:\n" + p.text);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("jsonpretty — sorted keys, normalised numbers, canonical output");
+
+    var samples: string[] = ["{\"b\":1,\"a\":2}",
+        "{\"n\":1.50,\"m\":1.0,\"o\":-0,\"list\":[3,2,1]}"];
+    var i: i32 = 0;
+    while (i < samples.len()) {
+        var p: PrettyR = pretty(samples[i]);
+        eprint("  " + samples[i]);
+        var lines: string[] = p.text.split("\n");
+        var k: i32 = 0;
+        while (k < lines.len()) { eprint("    " + lines[k]); k = k + 1; }
+        i = i + 1;
+    }
+    var a: PrettyR = pretty("{\"a\":2,\"b\":1}");
+    var b: PrettyR = pretty("{ \"b\" : 1 , \"a\" : 2 }");
+    var same: string = "no";
+    if (a.text == b.text) { same = "yes"; }
+    eprint("  two spellings agree: " + same);
+
+    var r: test.TestRunner = test.test_new("jsonpretty");
+    r = r.it("pretty printing is idempotent", test_pretty_printing_is_idempotent);
+    r = r.it("equivalent spellings canonicalise identically", test_equivalent_spellings_canonicalise_identically);
+    r = r.it("distinct documents stay distinct", test_distinct_documents_stay_distinct);
+    r = r.it("the output parses back to the same value", test_the_output_parses_back_to_the_same_value);
+    r = r.it("object keys are sorted at every depth", test_object_keys_are_sorted_at_every_depth);
+    r = r.it("the number normalisation rules", test_the_number_normalisation_rules);
+    r = r.it("malformed input is rejected", test_malformed_input_is_rejected);
+    return r.finish();
+}

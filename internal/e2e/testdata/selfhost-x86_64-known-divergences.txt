@@ -97,3 +97,27 @@
 # here. That case lets the whole allocation die, which the self-host handles;
 # this one keeps the element alive while the container dies, which it does not.
 alloc_flat_index_of_fresh_container 6491 self-host: a POINTER element / field read out of a container nothing names is never reclaimed — grows, native flat
+
+# --- array-store element: the move is not ported ---------------------------
+# `alloc_flat_array_push_bound_elem` reports the allocator's fresh-byte SHAPE
+# for an element BOUND to a local before being pushed — `var v = …;
+# xs = xs.append(v)` — against the same value pushed inline.
+#
+#     got:  3700 / 7400 / grows
+#     want: 3700 / 7400 / flat
+#
+# The two VALUES agree, so this is the #6491 signature again: the self-host
+# computes the right answer and never reclaims.
+#
+# Native treats the element as a MOVE when it is an owned rc local at its last
+# use — the retain is skipped and the buffer's deep drop is the single release
+# (#6532). Before that the element took BOTH a retain and an escape taint, and
+# the taint suppressed the balancing release. The self-host has neither half:
+# nothing in examples/self_host corresponds to markConstructionMoves / moveSites
+# for an array store, so the element keeps its retain and nothing gives it back.
+#
+# The case covers two shapes deliberately, and a partial port will still fail
+# it: the direct `xs.append(v)`, and the push nested in a struct literal's field
+# (`d = Doc { ...d, vals: d.vals.append(v) }`), which native missed until the
+# move walk learned to descend into container operands. Tracked as #6535.
+alloc_flat_array_push_bound_elem 6535 self-host: a bound array-store element keeps its retain and is never released — grows, native flat

@@ -888,7 +888,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 200) {  // tcp_listen (#4371)
             // [port] -> __fern_tcp_listen(x0=port) -> listener fd / -errno.
             s = s.need("heap");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_tcp_listen\n    str x0, [sp, #-16]!\n");
+            s = s.need("tcp_listen");
+            s = s.write("    bl __fn___fern_tcp_listen\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 201) {  // tcp_accept (#4371)
             // [listener fd] IS param[0] already. -> connection fd / -errno.
             s = s.need("heap");
@@ -2416,7 +2417,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -4635,60 +4636,7 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
 // emit_rt_net emits the socket primitives (tcp listen / accept / recv / send /
 // close / connect / pollable, udp_send) plus __fern_alloc_u8.
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    s = s.write("__fern_tcp_listen:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // port (callee-save)
-    s = s.write("    mov x0, #2\n");            // AF_INET
-    s = s.write("    mov x1, #1\n");            // SOCK_STREAM
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #198\n");          // socket
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Ltcpl_err\n");
-    s = s.write("    mov x20, x0\n");           // listener fd
-    // sockaddr_in (16 bytes) on the stack. Linux: sin_family is a
-    // u16 at offset 0. Darwin: sin_len (u8, =16) at 0, sin_family
-    // (u8) at 1. sin_port (htons) at 2, sin_addr (=0) at 4, sin_zero
-    // at 8 either way.
-    s = s.write("    sub sp, sp, #16\n");
-    if (darwin) {
-        s = s.write("    mov w0, #16\n");
-        s = s.write("    strb w0, [sp]\n");     // sin_len
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strb w0, [sp, #1]\n"); // sin_family
-    } else {
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
-    }
-    s = s.write("    rev16 w0, w19\n");         // htons(port)
-    s = s.write("    strh w0, [sp, #2]\n");
-    s = s.write("    str wzr, [sp, #4]\n");     // sin_addr = INADDR_ANY
-    s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    mov x1, sp\n");
-    s = s.write("    mov x2, #16\n");
-    s = s.write("    mov x8, #200\n");          // bind
-    s = s.write("    svc #0\n");
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Ltcpl_err\n");
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    mov x1, #128\n");          // backlog
-    s = s.write("    mov x8, #201\n");          // listen
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Ltcpl_err\n");
-    s = s.write("    mov x0, x20\n");           // return listener fd
-    s = s.write("    b .Ltcpl_done\n");
-    s = s.write(".Ltcpl_err:\n");               // x0 holds -errno
-    s = s.write(".Ltcpl_done:\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_listen, .-__fern_tcp_listen\n");
-
+    // tcp_listen is Fern now (#2649) — see the migrated-helpers section.
 
     // __fern_tcp_recv(x0 = fd, x1 = max) → string box {data, len}.
     // Allocates max bytes, read()s into them, boxes (data, len). On
@@ -6292,6 +6240,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.
     if (s.has_need("timer_fd")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd(tgt), s.struct_decls, s);
+    }
+    // tcp_listen: socket + bind + listen. The sockaddr_in's only per-target
+    // difference is its first two bytes (XNU has sin_len), which sockaddr_head
+    // supplies.
+    if (s.has_need("tcp_listen")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
