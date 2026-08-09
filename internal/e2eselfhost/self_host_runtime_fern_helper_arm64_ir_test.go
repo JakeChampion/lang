@@ -53,6 +53,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
 		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
+		// The two socket leaves that take only an fd. The probe is emitted, not
+		// run, so a bogus fd is fine — this only has to make the ops lower.
+		"    if (tcp_close(999) == 0) { return 13; }\n" +
+		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -82,7 +86,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// carries the Darwin open-flag translation the hand-asm did inline; it
 		// has to stay a run-time check because irlower picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
-		"random_i32", "open_fd"} {
+		"random_i32", "open_fd",
+		// The socket leaves that take only an fd (#2649). The rest of the tcp
+		// family is still hand-asm: tcp_send is blocked on a string-data-pointer
+		// bridge the floor does not have, not on a syscall.
+		"tcp_close", "tcp_accept"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -194,6 +202,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
 		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
+		// The two socket leaves that take only an fd. The probe is emitted, not
+		// run, so a bogus fd is fine — this only has to make the ops lower.
+		"    if (tcp_close(999) == 0) { return 13; }\n" +
+		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
