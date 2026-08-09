@@ -1,0 +1,460 @@
+// examples/proposals/editscript.fern — proposal turn, drawn line 70:
+// "An edit-distance (Levenshtein) implementation that prints the edit script."
+//
+// The distance is the easy half and the boring half. Any DP table gets it
+// right, and a wrong one is caught by a handful of known values. The SCRIPT is
+// where implementations actually break, because a backtrace can be off by one,
+// can attribute a substitution to the wrong pair of characters, or can emit a
+// sequence whose cost does not match the number the same function returned —
+// and every one of those still prints something that looks like an edit script.
+//
+// So the load-bearing test is not a table of expected distances. It is that
+// **applying the script to the source produces the target, exactly**, for every
+// pair in a swept corpus. A script is a claim about how to turn one string into
+// another; the only honest way to check it is to carry the claim out. Paired
+// with "the script's cost equals the reported distance", that pins both halves
+// against each other: the number cannot drift from the operations, and the
+// operations cannot drift from the strings.
+//
+// The distance itself is then checked against the recursive DEFINITION of
+// Levenshtein rather than against hand-picked values — exponential and
+// obviously correct, run on short inputs, which is what an oracle is for. On
+// top of that sit the metric laws (identity, symmetry, the triangle
+// inequality) which hold for every pair regardless of implementation and so
+// can be swept over the whole corpus cheaply.
+//
+// One thing this deliberately does NOT do: operate on codepoints. Every index
+// here is a byte, so `d("café", "cafe")` is 2 — the two bytes of U+00E9
+// replaced by one — not the 1 a codepoint-aware version would report. That is
+// the honest description of what the algorithm is doing, and the corpus keeps
+// a high-byte pair in it so the byte semantics are exercised rather than
+// accidentally avoided. A codepoint version is a different function with a
+// different oracle, not a tweak to this one.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// op is one of "keep", "sub", "ins", "del". `from` is the source character
+// (empty for an insert), `to` the target character (empty for a delete).
+struct Edit { op: string, from: string, to: string }
+
+function char_at(s: string, i: i32): string {
+    var buf: u8[] = [s[i]];
+    return string_from_bytes_unchecked(buf);
+}
+
+function min3(a: i32, b: i32, c: i32): i32 {
+    var m: i32 = a;
+    if (b < m) { m = b; }
+    if (c < m) { m = c; }
+    return m;
+}
+
+// ------------------------------------------------------------------- DP
+
+// The full (n+1) x (m+1) table, flattened. Kept whole rather than reduced to
+// two rows because the backtrace needs every cell — the space-saving version
+// is the one that cannot print a script, which is the whole point here.
+function table(a: string, b: string): i32[] {
+    var n: i32 = a.len();
+    var m: i32 = b.len();
+    var d: i32[] = [];
+    var i: i32 = 0;
+    while (i <= n * m + n + m) { d = d.append(0); i = i + 1; }
+
+    var r: i32 = 0;
+    while (r <= n) { d = d.with(r * (m + 1), r); r = r + 1; }
+    var c: i32 = 0;
+    while (c <= m) { d = d.with(c, c); c = c + 1; }
+
+    r = 1;
+    while (r <= n) {
+        c = 1;
+        while (c <= m) {
+            var cost: i32 = 1;
+            if (a[r - 1] == b[c - 1]) { cost = 0; }
+            var best: i32 = min3(
+                d[(r - 1) * (m + 1) + c] + 1,          // delete a[r-1]
+                d[r * (m + 1) + (c - 1)] + 1,          // insert b[c-1]
+                d[(r - 1) * (m + 1) + (c - 1)] + cost); // keep or substitute
+            d = d.with(r * (m + 1) + c, best);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return d;
+}
+
+function distance(a: string, b: string): i32 {
+    var d: i32[] = table(a, b);
+    return d[a.len() * (b.len() + 1) + b.len()];
+}
+
+// Backtrace from the bottom-right corner. The tie-break order (diagonal, then
+// delete, then insert) is arbitrary but must be CONSISTENT — a backtrace that
+// picks differently on the way back than the table did on the way forward
+// produces a script whose cost exceeds the distance, which is exactly what
+// test_the_scripts_cost_equals_the_distance catches.
+function script(a: string, b: string): Edit[] {
+    var d: i32[] = table(a, b);
+    var m: i32 = b.len();
+    var r: i32 = a.len();
+    var c: i32 = m;
+    var rev: Edit[] = [];
+
+    while (r > 0 || c > 0) {
+        if (r > 0 && c > 0) {
+            var cost: i32 = 1;
+            if (a[r - 1] == b[c - 1]) { cost = 0; }
+            if (d[r * (m + 1) + c] == d[(r - 1) * (m + 1) + (c - 1)] + cost) {
+                var op: string = "sub";
+                if (cost == 0) { op = "keep"; }
+                rev = rev.append(Edit { op: op, from: char_at(a, r - 1), to: char_at(b, c - 1) });
+                r = r - 1;
+                c = c - 1;
+                continue;
+            }
+        }
+        if (r > 0 && d[r * (m + 1) + c] == d[(r - 1) * (m + 1) + c] + 1) {
+            rev = rev.append(Edit { op: "del", from: char_at(a, r - 1), to: "" });
+            r = r - 1;
+            continue;
+        }
+        rev = rev.append(Edit { op: "ins", from: "", to: char_at(b, c - 1) });
+        c = c - 1;
+    }
+
+    var out: Edit[] = [];
+    var i: i32 = rev.len() - 1;
+    while (i >= 0) { out = out.append(rev[i]); i = i - 1; }
+    return out;
+}
+
+// Carry the script out. This is the function that turns the script from a
+// decoration into a claim: `apply(a, script(a, b))` must be `b`.
+function apply(a: string, edits: Edit[]): string {
+    var out: string = "";
+    var pos: i32 = 0;
+    var i: i32 = 0;
+    while (i < edits.len()) {
+        var e: Edit = edits[i];
+        if (e.op == "keep" || e.op == "sub") {
+            out = out + e.to;
+            pos = pos + 1;
+        } else if (e.op == "del") {
+            pos = pos + 1;
+        } else {
+            out = out + e.to;
+        }
+        i = i + 1;
+    }
+    // Anything the script never consumed is a bug in the script, not something
+    // to paper over by appending the remainder.
+    if (pos != a.len()) { return "<script consumed " + pos.to_string()
+        + " of " + a.len().to_string() + ">"; }
+    return out;
+}
+
+// The number of operations that are not keeps — the script's own cost.
+function script_cost(edits: Edit[]): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < edits.len()) { if (edits[i].op != "keep") { n = n + 1; } i = i + 1; }
+    return n;
+}
+
+function render(edits: Edit[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < edits.len()) {
+        if (i > 0) { out = out + " "; }
+        if (edits[i].op == "keep") { out = out + "=" + edits[i].from; }
+        else if (edits[i].op == "sub") { out = out + edits[i].from + ">" + edits[i].to; }
+        else if (edits[i].op == "del") { out = out + "-" + edits[i].from; }
+        else { out = out + "+" + edits[i].to; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- oracle
+
+// The recursive definition, memo-free. Exponential and obviously correct — the
+// point of an oracle is that you can read it and believe it, so it is a
+// transcription of the textbook recurrence and nothing else.
+function bf_distance(a: string, b: string): i32 {
+    if (a.len() == 0) { return b.len(); }
+    if (b.len() == 0) { return a.len(); }
+    var cost: i32 = 1;
+    if (a[a.len() - 1] == b[b.len() - 1]) { cost = 0; }
+    var ta: string = a.take(a.len() - 1).to_owned();
+    var tb: string = b.take(b.len() - 1).to_owned();
+    return min3(bf_distance(ta, b) + 1, bf_distance(a, tb) + 1, bf_distance(ta, tb) + cost);
+}
+
+// Pairs kept short enough for the exponential oracle, but covering the shapes
+// that break backtraces: equal strings, a prefix, a suffix, a pure insert, a
+// pure delete, an interior substitution, a full replacement, and the empty
+// string on each side.
+function pairs(): string[] {
+    return ["kitten|sitting", "flaw|lawn", "|", "a|", "|a", "abc|abc", "abc|abcd",
+        "abcd|abc", "abc|xbc", "abc|axc", "abc|abx", "ab|ba", "aaa|aa", "xyz|abc",
+        "book|back", "café|cafe", "hello|jello", "a|bbbb", "bbbb|a", "sunday|saturday"];
+}
+
+// ----------------------------------------------------------------- tests
+
+// The load-bearing one: the script is a claim about how to reach b from a, so
+// carry it out and compare.
+function test_applying_the_script_reproduces_the_target(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var a: string = f[0];
+        var b: string = f[1];
+        var got: string = apply(a, script(a, b));
+        if (got != b) {
+            return test.fail("script for \"" + a + "\" -> \"" + b + "\" produced \""
+                + got + "\"; script was [" + render(script(a, b)) + "]");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The other half of the pincer: the operations must cost what the number says.
+// A backtrace that wanders off the optimal path still reproduces the target —
+// only the cost gives it away.
+function test_the_scripts_cost_equals_the_distance(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var d: i32 = distance(f[0], f[1]);
+        var c: i32 = script_cost(script(f[0], f[1]));
+        if (c != d) {
+            return test.fail("\"" + f[0] + "\" -> \"" + f[1] + "\": distance "
+                + d.to_string() + " but the script costs " + c.to_string()
+                + " [" + render(script(f[0], f[1])) + "]");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The DP agrees with the recursive definition.
+function test_the_table_agrees_with_the_recursive_definition(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        // The oracle is exponential; keep it to pairs it can finish.
+        if (f[0].len() <= 8 && f[1].len() <= 8) {
+            var got: i32 = distance(f[0], f[1]);
+            var want: i32 = bf_distance(f[0], f[1]);
+            if (got != want) {
+                return test.fail("\"" + f[0] + "\" -> \"" + f[1] + "\": DP says "
+                    + got.to_string() + ", the definition says " + want.to_string());
+            }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Levenshtein is a metric. These hold for every pair whatever the
+// implementation, so they sweep the whole corpus and cost nothing.
+function test_it_is_a_metric(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var words: string[] = [];
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        words = words.append(f[0]);
+        words = words.append(f[1]);
+        i = i + 1;
+    }
+
+    var x: i32 = 0;
+    while (x < words.len()) {
+        // Identity of indiscernibles, both directions.
+        if (distance(words[x], words[x]) != 0) {
+            return test.fail("d(\"" + words[x] + "\", itself) != 0");
+        }
+        var y: i32 = 0;
+        while (y < words.len()) {
+            var dxy: i32 = distance(words[x], words[y]);
+            if (dxy == 0 && words[x] != words[y]) {
+                return test.fail("d = 0 for distinct \"" + words[x] + "\" and \"" + words[y] + "\"");
+            }
+            if (dxy != distance(words[y], words[x])) {
+                return test.fail("asymmetric: \"" + words[x] + "\" vs \"" + words[y] + "\"");
+            }
+            // Bounded by the longer string.
+            var longest: i32 = words[x].len();
+            if (words[y].len() > longest) { longest = words[y].len(); }
+            if (dxy > longest) {
+                return test.fail("d = " + dxy.to_string() + " exceeds the longer length "
+                    + longest.to_string());
+            }
+            y = y + 1;
+        }
+        x = x + 1;
+    }
+
+    // Triangle inequality over every triple in a smaller set — n^3, so the
+    // words are drawn from the first few rather than all of them.
+    var small: string[] = ["", "a", "ab", "abc", "bc", "xyz", "abcd"];
+    var p: i32 = 0;
+    while (p < small.len()) {
+        var q: i32 = 0;
+        while (q < small.len()) {
+            var r: i32 = 0;
+            while (r < small.len()) {
+                if (distance(small[p], small[r]) >
+                    distance(small[p], small[q]) + distance(small[q], small[r])) {
+                    return test.fail("triangle inequality broken via \"" + small[q] + "\"");
+                }
+                r = r + 1;
+            }
+            q = q + 1;
+        }
+        p = p + 1;
+    }
+    return test.pass();
+}
+
+// The boundary rows are the string lengths, and a script against the empty
+// string is all inserts or all deletes — the two cases a backtrace that
+// assumes both indices are positive gets wrong.
+function test_the_empty_string_cases(): test.TestOutcome {
+    var words: string[] = ["", "a", "hello", "café"];
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var w: string = words[i];
+        if (distance(w, "") != w.len()) {
+            return test.fail("d(\"" + w + "\", \"\") = " + distance(w, "").to_string());
+        }
+        if (distance("", w) != w.len()) {
+            return test.fail("d(\"\", \"" + w + "\") = " + distance("", w).to_string());
+        }
+        if (apply(w, script(w, "")) != "") {
+            return test.fail("deleting all of \"" + w + "\" did not give \"\"");
+        }
+        if (apply("", script("", w)) != w) {
+            return test.fail("inserting all of \"" + w + "\" did not give it back");
+        }
+        var s: Edit[] = script(w, "");
+        var j: i32 = 0;
+        while (j < s.len()) {
+            if (s[j].op != "del") { return test.fail("script to \"\" contains a " + s[j].op); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Equal strings produce an all-keep script of exactly the right length —
+// the case where a backtrace can silently emit substitutions of a character
+// for itself and still reproduce the target at the right cost of zero.
+function test_equal_strings_produce_all_keeps(): test.TestOutcome {
+    var words: string[] = ["", "a", "abc", "hello world", "café", "aaaa"];
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var s: Edit[] = script(words[i], words[i]);
+        if (s.len() != words[i].len()) {
+            return test.fail("\"" + words[i] + "\": script has " + s.len().to_string()
+                + " ops for " + words[i].len().to_string() + " bytes");
+        }
+        var j: i32 = 0;
+        while (j < s.len()) {
+            if (s[j].op != "keep") {
+                return test.fail("\"" + words[i] + "\" op " + j.to_string() + " is "
+                    + s[j].op + ", want keep");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Every operation refers to the characters actually at play: a keep or a sub
+// names the source and target bytes at that position, a delete names a source
+// byte, an insert a target byte. A script can reproduce the target with the
+// right cost while attributing operations to the wrong characters, which makes
+// it useless as a diff.
+function test_operations_name_the_right_characters(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var a: string = f[0];
+        var b: string = f[1];
+        var s: Edit[] = script(a, b);
+        var ai: i32 = 0;
+        var bi: i32 = 0;
+        var j: i32 = 0;
+        while (j < s.len()) {
+            var e: Edit = s[j];
+            if (e.op == "keep") {
+                if (e.from != char_at(a, ai) || e.to != char_at(b, bi)) {
+                    return test.fail("keep at " + j.to_string() + " names \"" + e.from
+                        + "\"/\"" + e.to + "\", source has \"" + char_at(a, ai) + "\"");
+                }
+                if (e.from != e.to) { return test.fail("a keep with differing characters"); }
+                ai = ai + 1; bi = bi + 1;
+            } else if (e.op == "sub") {
+                if (e.from != char_at(a, ai) || e.to != char_at(b, bi)) {
+                    return test.fail("sub at " + j.to_string() + " names the wrong pair");
+                }
+                if (e.from == e.to) { return test.fail("a sub of a character for itself"); }
+                ai = ai + 1; bi = bi + 1;
+            } else if (e.op == "del") {
+                if (e.from != char_at(a, ai)) { return test.fail("del names the wrong character"); }
+                ai = ai + 1;
+            } else {
+                if (e.to != char_at(b, bi)) { return test.fail("ins names the wrong character"); }
+                bi = bi + 1;
+            }
+            j = j + 1;
+        }
+        if (ai != a.len() || bi != b.len()) {
+            return test.fail("\"" + a + "\" -> \"" + b + "\": script covers " + ai.to_string()
+                + "/" + bi.to_string() + " of " + a.len().to_string() + "/" + b.len().to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("editscript — Levenshtein, and the script checked by carrying it out");
+
+    var demos: string[] = ["kitten|sitting", "sunday|saturday", "flaw|lawn"];
+    var i: i32 = 0;
+    while (i < demos.len()) {
+        var f: string[] = demos[i].split("|");
+        var s: Edit[] = script(f[0], f[1]);
+        eprint("  " + f[0] + " -> " + f[1] + "  d=" + distance(f[0], f[1]).to_string()
+            + "  cost=" + script_cost(s).to_string());
+        eprint("    " + render(s));
+        eprint("    apply: \"" + apply(f[0], s) + "\"");
+        i = i + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("editscript");
+    r = r.it("applying the script reproduces the target", test_applying_the_script_reproduces_the_target);
+    r = r.it("the script's cost equals the distance", test_the_scripts_cost_equals_the_distance);
+    r = r.it("the table agrees with the recursive definition", test_the_table_agrees_with_the_recursive_definition);
+    r = r.it("it is a metric", test_it_is_a_metric);
+    r = r.it("the empty string cases", test_the_empty_string_cases);
+    r = r.it("equal strings produce all keeps", test_equal_strings_produce_all_keeps);
+    r = r.it("operations name the right characters", test_operations_name_the_right_characters);
+    return r.finish();
+}
