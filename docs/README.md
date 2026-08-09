@@ -95,7 +95,7 @@ so explicitly.
 | `SSA-DECISION.md` | [policy] | SSA shelved for production native backends (2026-05-31). |
 | `SELFHOST-SSA-DECISION.md` | [policy] | Stack IR is the single production lowering (2026-07-03, #4391). |
 | `SELFHOST-SSA-ALWAYS.md` | [record] | SSA-always-on plan — shelved by the decision above. |
-| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation (experimental `-target arm64-ssa`; #4112). |
+| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation (experimental `-target arm64 -backend ssa`; #4112). |
 | `SSA-CLOSURE-DISPATCH.md` | [plan] | Closure dispatch on the SSA path (#4112). |
 | `SSA-RC-RUNTIME.md` | [plan] | RC runtime helpers on the SSA path (#4112). |
 | `WASM-COMPONENT-GENERATOR.md` | [plan] | Generative component builder for the self-host wasm backend (#4368, poss. subsumed by #4315). |
