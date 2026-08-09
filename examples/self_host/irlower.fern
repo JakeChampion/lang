@@ -47284,7 +47284,17 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
     // scalar — `w(3)` bare-dispatched the box and SIGSEGV'd, turning a bail into
     // a crash. The coarse "fn" tag is what a hand-written fn-returning function
     // carries, so this is the same declaration, not a special case.
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
+    // The arms are USER code, so they get the same `return <lambda>` desugar the
+    // worklist gives a source function (`var $lamret$N = <lambda>; return
+    // $lamret$N;`) — a BRANCH-position returned lambda is out of reach of
+    // hoist_escaping_closure, which only claims a body whose LAST statement is
+    // the return, so the arm lambda kept asking for a `<nm>$clo` nothing built.
+    // Through the local binding it lifts to a uniquely-named `<nm>$cloN` box
+    // instead, one per arm. The lifted `__lam_N` / `$cloN` bodies drained onto
+    // the worklist do NOT get this (#5281), which is why it is applied here
+    // rather than at the drain.
+    var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false };
     var ncall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: nm, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
