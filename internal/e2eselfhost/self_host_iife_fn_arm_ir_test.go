@@ -1,7 +1,10 @@
 package e2eselfhost
 
 import (
+	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -128,6 +131,27 @@ var iifeFnArmCases = []struct {
 	// all-bare-fn-name one keeps the #3574 fn-pointer-array classification.
 	{"arm-array-nocapture-unchanged", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
 	{"arm-array-bare-fnnames-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
+	// The IIFE is not the whole value but sits INSIDE one — an array element, a
+	// struct field, a call argument. try_fn_field_value owns every such position
+	// and had no case for an IIFE, so its arm lambdas were never boxed: the two
+	// array cases compiled and SIGSEGV'd (the plain elements stayed bare fn
+	// pointers while the hoisted IIFE element yielded a box, #5071's mixed ABI
+	// one container out), and the field / argument cases bailed on a `<fn>$clo`
+	// nothing built. All four are reduced from the shapes fernsmith seeds 74 and
+	// 491 actually contain.
+	//
+	// payload-capture is the one that needs the IIFE's OWN bindings to count as
+	// captures: the arm lambda reads the match arm's payload, which is invisible
+	// to lambda_captures against the enclosing function, so the lambda read as
+	// capture-free — the array then looked uniform when it was not.
+	{"arm-array-iife-element-capturing", "function gen(p1: i32, c: boolean): i32 { var xs: ((i32) => i32)[] = [((a: i32) => a), (if (c) { ((x: i32) => (x + p1)) } else { ((y: i32) => p1) })]; return xs[1i32](3i32); } function main(): i32 { return gen(4i32, true) & 63i32; }", 7},
+	{"arm-array-iife-element-payload-capture", "function main(): i32 { var v2: Option[i32] = Some(5i32); var xs: ((i32) => i32)[] = [((z: i32) => z), (match (v2) { Some(p) => ((x: i32) => (x + p)), None => ((y: i32) => y) })]; return xs[1i32](2i32) & 63i32; }", 7},
+	{"struct-field-iife-arms", "struct H { f: (i32) => i32 } function main(): i32 { var n: i32 = 4i32; var h: H = H { f: (if (true) { ((x: i32) => (x + n)) } else { ((y: i32) => y) }) }; return h.f(3i32) & 63i32; }", 7},
+	{"call-arg-iife-arms", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { var n: i32 = 6i32; return apply((if (true) { ((x: i32) => (x + n)) } else { ((y: i32) => y) }), 3i32) & 63i32; }", 9},
+	// The guard on the other side: an IIFE element whose arms capture NOTHING
+	// leaves the array on the bare fn-pointer representation, elements and all.
+	{"arm-array-iife-element-nocapture-unchanged", "function main(): i32 { var xs: ((i32) => i32)[] = [((a: i32) => (a + 1i32)), (if (true) { ((x: i32) => (x * 2i32)) } else { ((y: i32) => y) })]; return (xs[0i32](1i32) + xs[1i32](3i32)) & 63i32; }", 8},
+
 	// The lambda-returning-lambda the tail-return hoist owns: the per-entry
 	// desugar must leave it alone (#5281 regressed exactly this shape).
 	{"curry-tail-return-unchanged", "function curry(a: i32): (i32) => ((i32) => i32) { return ((b: i32) => ((c: i32) => (a + b + c))); } function main(): i32 { var g: (i32) => ((i32) => i32) = curry(1i32); var h: (i32) => i32 = g(2i32); return h(3i32) & 63i32; }", 6},
@@ -182,6 +206,58 @@ func TestSelfHostIIFEFnArmIRArm64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// TestSelfHostIIFEFnArmWasmIR — the wasm leg of the same corpus. The lift and
+// the box lowering live in irlower.fern, which every backend shares, so a case
+// that regresses only here is a wasm-side dispatch bug rather than a lift one.
+func TestSelfHostIIFEFnArmWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host IIFE fn-arm wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	for _, name := range []string{
+		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
+		"ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern",
+	} {
+		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range iifeFnArmCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(driverBin, "-ir")
+			} else {
+				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
+			}
+			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			wat, err := cmd.Output()
+			if err != nil || len(wat) == 0 {
+				t.Fatalf("driver failed for %q: %v", tc.name, err)
+			}
+			watFile := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			rcmd := exec.Command("wasmtime", "run", watFile)
+			_ = rcmd.Run()
+			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
+			}
+			if got := rcmd.ProcessState.ExitCode(); got != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, got, tc.exit)
 			}
 		})
 	}
