@@ -1,0 +1,413 @@
+// examples/proposals/pipeline.fern — proposal turn, drawn line 191:
+// "A pipeline that composes fallible steps with `Result` and `?`, reporting
+// the first failure."
+//
+// The whole point of `?` is SHORT-CIRCUITING, and short-circuiting is the part
+// that cannot be tested by looking at the return value. A pipeline that runs
+// every stage, collects the failures and returns the first one produces
+// exactly the same `Err` as one that stops at the first — same variant, same
+// payload, same everything. The difference is only visible in what ran.
+//
+// So every stage records itself in a trace it carries, and a failure carries
+// the trace as it stood when the stage gave up. "Stages after the failure did
+// not run" is then a property of the returned value, checkable directly, and
+// it is the load-bearing test here.
+//
+// The second one is a differential between two spellings of the same
+// composition: the pipeline written with `?`, and the same pipeline written
+// with an explicit `match` that returns `Err(e)` by hand. They must agree on
+// the value, on the fault, and on the trace, for every pipeline in the corpus.
+// `?` is a language feature doing control flow, and the honest way to check it
+// is against the control flow it stands for.
+//
+// On top sit the laws that make a pipeline composable at all — associativity
+// of concatenation, and a stage that does nothing being an identity — plus the
+// two failure-reporting properties that are easy to get backwards: when
+// several stages would fail, the FIRST one is reported, and the fault arrives
+// unchanged rather than re-wrapped by each frame it passes through.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// What flows through the pipeline. `ran` is the trace: each stage appends its
+// own name, so what executed is part of the value rather than a side effect
+// nothing can observe.
+struct Ctx { value: i32, ran: string[] }
+
+// A failure: which stage, why, and the trace as it stood when it gave up.
+struct Fault { step: string, why: string, ran: string[] }
+
+struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
+
+// ------------------------------------------------------------- the stages
+
+function note(c: Ctx, name: string): Ctx {
+    return Ctx { value: c.value, ran: c.ran.append(name) };
+}
+
+// Adds `n`, always succeeds.
+function adder(name: string, n: i32): Stage {
+    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+        var t: Ctx = note(c, name);
+        return Ok(Ctx { value: t.value + n, ran: t.ran });
+    } };
+}
+
+// Doubles, always succeeds.
+function doubler(name: string): Stage {
+    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+        var t: Ctx = note(c, name);
+        return Ok(Ctx { value: t.value * 2, ran: t.ran });
+    } };
+}
+
+// Always fails. Notes itself first: a stage that ran and failed did run.
+function failer(name: string, why: string): Stage {
+    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+        var t: Ctx = note(c, name);
+        return Err(Fault { step: name, why: why, ran: t.ran });
+    } };
+}
+
+// Fails only when the value has grown past `limit`.
+function guard(name: string, limit: i32): Stage {
+    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] {
+        var t: Ctx = note(c, name);
+        if (t.value > limit) {
+            return Err(Fault { step: name, why: "over " + limit.to_string(), ran: t.ran });
+        }
+        return Ok(t);
+    } };
+}
+
+// Does nothing at all, and does not even record itself — the identity the
+// composition law below is stated against.
+function nop(name: string): Stage {
+    return Stage { name: name, run: function (c: Ctx): Result[Ctx, Fault] { return Ok(c); } };
+}
+
+// ----------------------------------------------------------- the pipeline
+
+// The version under test. `?` unwinds to this function's return, handing the
+// caller the fault the stage produced.
+function run_pipeline(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
+    var c: Ctx = input;
+    var i: i32 = 0;
+    while (i < stages.len()) {
+        c = stages[i].run(c)?;
+        i = i + 1;
+    }
+    return Ok(c);
+}
+
+// The same composition with the control flow written out. The oracle for `?`
+// is the code `?` stands for.
+function run_explicit(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
+    var c: Ctx = input;
+    var i: i32 = 0;
+    while (i < stages.len()) {
+        match (stages[i].run(c)) {
+            Err(e) => { return Err(e); },
+            Ok(next) => { c = next; }
+        }
+        i = i + 1;
+    }
+    return Ok(c);
+}
+
+function concat_stages(a: Stage[], b: Stage[]): Stage[] {
+    var out: Stage[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+// ---------------------------------------------------------------- corpus
+
+function fresh(): Ctx { var none: string[] = []; return Ctx { value: 1, ran: none }; }
+
+// Pipelines chosen for where the failure sits: nowhere, first, middle, last,
+// twice, and a value-dependent guard that only trips part way through.
+function pipelines(): Stage[][] {
+    var out: Stage[][] = [];
+    out = out.append([adder("a", 2), doubler("b"), adder("c", 5)]);
+    out = out.append([failer("boom", "immediate"), adder("a", 2), doubler("b")]);
+    out = out.append([adder("a", 2), failer("boom", "middle"), doubler("b")]);
+    out = out.append([adder("a", 2), doubler("b"), failer("boom", "last")]);
+    out = out.append([adder("a", 2), failer("first", "one"), failer("second", "two")]);
+    out = out.append([adder("a", 10), guard("g", 5), doubler("b")]);
+    out = out.append([adder("a", 1), guard("g", 100), doubler("b")]);
+    var empty: Stage[] = [];
+    out = out.append(empty);
+    out = out.append([nop("n")]);
+    out = out.append([doubler("b"), doubler("b"), doubler("b"), doubler("b")]);
+    return out;
+}
+
+function names_of(ss: Stage[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < ss.len()) { out = out.append(ss[i].name); i = i + 1; }
+    return out;
+}
+
+function strings_equal(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+function show(xs: string[]): string {
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i];
+        i = i + 1;
+    }
+    return out + "]";
+}
+
+// A flat, comparable rendering of an outcome, so two runs can be compared in
+// one place instead of by matching twice at every call site.
+function describe(r: Result[Ctx, Fault]): string {
+    match (r) {
+        Ok(c) => { return "ok value=" + c.value.to_string() + " ran=" + show(c.ran); },
+        Err(e) => { return "err step=" + e.step + " why=" + e.why + " ran=" + show(e.ran); }
+    }
+}
+
+// ----------------------------------------------------------------- tests
+
+// `?` against the control flow it stands for, over every pipeline.
+function test_the_try_operator_matches_the_explicit_match(): test.TestOutcome {
+    var ps: Stage[][] = pipelines();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var a: string = describe(run_pipeline(ps[i], fresh()));
+        var b: string = describe(run_explicit(ps[i], fresh()));
+        if (a != b) {
+            return test.fail("pipeline " + i.to_string() + " differs:\n  ?     " + a
+                + "\n  match " + b);
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The load-bearing one: nothing after the failure ran. Invisible in the
+// returned fault, which is why the trace exists.
+function test_no_stage_runs_after_the_failure(): test.TestOutcome {
+    var ps: Stage[][] = pipelines();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        match (run_pipeline(ps[i], fresh())) {
+            Ok(c) => { },
+            Err(e) => {
+                // Which stage failed, by position.
+                var at: i32 = -1;
+                var k: i32 = 0;
+                while (k < ps[i].len()) {
+                    if (at < 0 && ps[i][k].name == e.step) { at = k; }
+                    k = k + 1;
+                }
+                if (at < 0) {
+                    return test.fail("pipeline " + i.to_string() + " blamed \"" + e.step
+                        + "\", which is not in it");
+                }
+                // Every stage up to and including it ran; nothing after did.
+                // `nop` never records itself, so it is skipped on both sides.
+                var want: string[] = [];
+                var m: i32 = 0;
+                while (m <= at) {
+                    if (ps[i][m].name != "n") { want = want.append(ps[i][m].name); }
+                    m = m + 1;
+                }
+                if (!strings_equal(e.ran, want)) {
+                    return test.fail("pipeline " + i.to_string() + " failed at \"" + e.step
+                        + "\" but ran " + show(e.ran) + ", want " + show(want));
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// When more than one stage would fail, the FIRST is reported.
+function test_the_first_failure_wins(): test.TestOutcome {
+    var ss: Stage[] = [adder("a", 2), failer("first", "one"), failer("second", "two"),
+        failer("third", "three")];
+    match (run_pipeline(ss, fresh())) {
+        Ok(c) => { return test.fail("a pipeline of failures succeeded"); },
+        Err(e) => {
+            if (e.step != "first") {
+                return test.fail("reported \"" + e.step + "\", want \"first\"");
+            }
+            if (e.why != "one") { return test.fail("reported why=\"" + e.why + "\""); }
+            if (e.ran.len() != 2) {
+                return test.fail("ran " + show(e.ran) + ", want just the adder and the first");
+            }
+        }
+    }
+    return test.pass();
+}
+
+// On success every stage runs exactly once, in order.
+function test_success_runs_every_stage_in_order(): test.TestOutcome {
+    var ps: Stage[][] = pipelines();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        match (run_pipeline(ps[i], fresh())) {
+            Err(e) => { },
+            Ok(c) => {
+                var want: string[] = [];
+                var k: i32 = 0;
+                while (k < ps[i].len()) {
+                    if (ps[i][k].name != "n") { want = want.append(ps[i][k].name); }
+                    k = k + 1;
+                }
+                if (!strings_equal(c.ran, want)) {
+                    return test.fail("pipeline " + i.to_string() + " ran " + show(c.ran)
+                        + ", want " + show(want));
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The fault arrives as the stage produced it, not re-wrapped on the way out.
+function test_the_fault_propagates_unchanged(): test.TestOutcome {
+    var ss: Stage[] = [adder("a", 1), doubler("b"), failer("boom", "a distinctive reason")];
+    match (run_pipeline(ss, fresh())) {
+        Ok(c) => { return test.fail("the pipeline succeeded"); },
+        Err(e) => {
+            if (e.step != "boom") { return test.fail("step is \"" + e.step + "\""); }
+            if (e.why != "a distinctive reason") {
+                return test.fail("why is \"" + e.why + "\"");
+            }
+            if (!strings_equal(e.ran, ["a", "b", "boom"])) {
+                return test.fail("ran " + show(e.ran));
+            }
+        }
+    }
+    return test.pass();
+}
+
+// Concatenating pipelines is associative — the law that lets a pipeline be
+// built out of sub-pipelines without changing what it does.
+function test_composition_is_associative(): test.TestOutcome {
+    var ps: Stage[][] = pipelines();
+    var a: i32 = 0;
+    while (a < ps.len()) {
+        var b: i32 = 0;
+        while (b < ps.len()) {
+            var c: i32 = 0;
+            while (c < ps.len()) {
+                var left: Stage[] = concat_stages(concat_stages(ps[a], ps[b]), ps[c]);
+                var right: Stage[] = concat_stages(ps[a], concat_stages(ps[b], ps[c]));
+                var lr: string = describe(run_pipeline(left, fresh()));
+                var rr: string = describe(run_pipeline(right, fresh()));
+                if (lr != rr) {
+                    return test.fail("(" + a.to_string() + "," + b.to_string() + ","
+                        + c.to_string() + ") is not associative:\n  " + lr + "\n  " + rr);
+                }
+                c = c + 1;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return test.pass();
+}
+
+// A stage that does nothing is an identity, wherever it is inserted.
+function test_a_nop_stage_is_an_identity(): test.TestOutcome {
+    var ps: Stage[][] = pipelines();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var base: string = describe(run_pipeline(ps[i], fresh()));
+        var at: i32 = 0;
+        while (at <= ps[i].len()) {
+            // Rebuild the pipeline with a nop spliced in at `at`.
+            var with_nop: Stage[] = [];
+            var k: i32 = 0;
+            while (k < ps[i].len()) {
+                if (k == at) { with_nop = with_nop.append(nop("n")); }
+                with_nop = with_nop.append(ps[i][k]);
+                k = k + 1;
+            }
+            if (at == ps[i].len()) { with_nop = with_nop.append(nop("n")); }
+            var got: string = describe(run_pipeline(with_nop, fresh()));
+            if (got != base) {
+                return test.fail("pipeline " + i.to_string() + " changed when a nop was "
+                    + "inserted at " + at.to_string() + ":\n  " + base + "\n  " + got);
+            }
+            at = at + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The empty pipeline returns its input untouched.
+function test_the_empty_pipeline_is_the_input(): test.TestOutcome {
+    var empty: Stage[] = [];
+    match (run_pipeline(empty, fresh())) {
+        Err(e) => { return test.fail("the empty pipeline failed: " + e.step); },
+        Ok(c) => {
+            if (c.value != 1) { return test.fail("value became " + c.value.to_string()); }
+            if (c.ran.len() != 0) { return test.fail("something ran: " + show(c.ran)); }
+        }
+    }
+    return test.pass();
+}
+
+// A value-dependent failure trips only when the value actually reaches it,
+// so the trace and the fault both depend on what came before.
+function test_a_guard_trips_on_the_value_it_sees(): test.TestOutcome {
+    var trips: Stage[] = [adder("a", 10), guard("g", 5)];
+    match (run_pipeline(trips, fresh())) {
+        Ok(c) => { return test.fail("the guard let 11 through a limit of 5"); },
+        Err(e) => {
+            if (e.step != "g") { return test.fail("blamed \"" + e.step + "\""); }
+        }
+    }
+    var passes: Stage[] = [adder("a", 1), guard("g", 100)];
+    match (run_pipeline(passes, fresh())) {
+        Err(e) => { return test.fail("the guard rejected 2 against a limit of 100"); },
+        Ok(c) => {
+            if (c.value != 2) { return test.fail("value is " + c.value.to_string()); }
+        }
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("pipeline — fallible stages composed with Result and ?");
+
+    var ps: Stage[][] = pipelines();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        eprint("  " + show(names_of(ps[i])) + "  ->  " + describe(run_pipeline(ps[i], fresh())));
+        i = i + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("pipeline");
+    r = r.it("the try operator matches the explicit match", test_the_try_operator_matches_the_explicit_match);
+    r = r.it("no stage runs after the failure", test_no_stage_runs_after_the_failure);
+    r = r.it("the first failure wins", test_the_first_failure_wins);
+    r = r.it("success runs every stage in order", test_success_runs_every_stage_in_order);
+    r = r.it("the fault propagates unchanged", test_the_fault_propagates_unchanged);
+    r = r.it("composition is associative", test_composition_is_associative);
+    r = r.it("a nop stage is an identity", test_a_nop_stage_is_an_identity);
+    r = r.it("the empty pipeline is the input", test_the_empty_pipeline_is_the_input);
+    r = r.it("a guard trips on the value it sees", test_a_guard_trips_on_the_value_it_sees);
+    return r.finish();
+}

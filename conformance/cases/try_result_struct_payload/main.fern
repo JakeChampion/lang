@@ -1,0 +1,62 @@
+// `?` propagating an Err must hand the caller the SAME payload the callee
+// built. When the enclosing function returns its result as a (tag, payload)
+// pair, the failure path copies the payload out of the source box — and it
+// has to read it at the offset the payload's width dictates, not a fixed one.
+//
+// At ptrW == 8 a pointer-bearing E sits at offset 8, so a hardcoded `ptr + 4`
+// read half a pointer plus padding and handed back a garbage address. The
+// caller dereferenced it: SIGSEGV on both native backends, while wasm — where
+// 4 happens to be the right offset — was correct, and so was the interpreter.
+// A crash, not a leak, and invisible to any test that did not read the
+// propagated payload.
+//
+// The explicit `match` spelling of the same propagation was always correct,
+// which is why this case runs both and compares them.
+import "std/i32";
+
+struct Ctx { value: i32 }
+struct Fault { step: string, code: i32 }
+
+function failing(c: Ctx): Result[Ctx, Fault] {
+    return Err(Fault { step: "boom", code: 7 });
+}
+
+function ok_step(c: Ctx): Result[Ctx, Fault] {
+    return Ok(Ctx { value: c.value + 1 });
+}
+
+// Propagation via `?`.
+function via_try(c: Ctx): Result[Ctx, Fault] {
+    var a: Ctx = ok_step(c)?;
+    var b: Ctx = failing(a)?;
+    return Ok(b);
+}
+
+// The same control flow written out — the oracle.
+function via_match(c: Ctx): Result[Ctx, Fault] {
+    match (ok_step(c)) {
+        Err(e) => { return Err(e); },
+        Ok(a) => {
+            match (failing(a)) {
+                Err(e2) => { return Err(e2); },
+                Ok(b) => { return Ok(b); }
+            }
+        }
+    }
+}
+
+function describe(r: Result[Ctx, Fault]): string {
+    match (r) {
+        Ok(c) => { return "ok"; },
+        Err(e) => { return e.step + ":" + e.code.to_string(); }
+    }
+}
+
+function main(): i32 {
+    var t: string = describe(via_try(Ctx { value: 1 }));
+    var m: string = describe(via_match(Ctx { value: 1 }));
+    print(t);
+    print(m);
+    if (t == m) { print("agree"); } else { print("differ"); }
+    return 0;
+}
