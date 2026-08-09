@@ -389,6 +389,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "49"; }
         if (name == "listen") { return "50"; }
         if (name == "connect") { return "42"; }
+    if (name == "execve") { return "59"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         return "-1";
@@ -425,6 +426,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "104"; }
         if (name == "listen") { return "106"; }
         if (name == "connect") { return "98"; }
+        if (name == "execve") { return "59"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -449,6 +451,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "bind") { return "200"; }
     if (name == "listen") { return "201"; }
     if (name == "connect") { return "203"; }
+    if (name == "execve") { return "221"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     return "-1";
@@ -686,6 +689,23 @@ pub function rt_src_poll(t: string): string {
 // The status lands in __fern_scratch, so this joins the scratch gate.
 pub function rt_src_proc_waitpid(t: string): string {
     return "function __fern_proc_waitpid(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 0, 0); if (rc < 0) { return rc; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
+}
+
+// rt_src_proc_exec backs `proc_exec(path, args)` (#2649) — execve(2). It only
+// RETURNS on failure, with -errno; on success the process image is gone, and
+// that is the builtin's contract.
+//
+// argv is [path, args..., NULL]: the callee's argv[0] is the program path, so
+// callers pass only real arguments. envp comes from __raw_environ(), so the
+// child inherits the environment — which is why the op site still marks the
+// `env` need that emits the __fern_envp slot and _start's save.
+//
+// Fern strings are not NUL-terminated, so the path and every argument are
+// copied into fresh terminated buffers. Those are deliberately never freed: on
+// success the address space is replaced, and on failure the caller is already
+// reporting an error.
+pub function rt_src_proc_exec(t: string): string {
+    return "function __fern_proc_exec(path: string, args: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, pathz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, argv, __raw_environ()); }";
 }
 
 // rt_src_timer_fd backs `timer_fd(ms)` (#2649, syscall-leaf) → a CLOCK_MONOTONIC

@@ -744,10 +744,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("proc_waitpid");
             s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 213) {  // proc_exec
-            // [pathbox, argsbox] -> __fern_proc_exec(x0 = path, x1 = args).
-            // Only returns on failure (-errno), so the push is that value.
+            // [pathbox, argsbox] -> __fern_proc_exec(path, args). Only returns
+            // on failure (-errno), so the push is that value.
             s = s.need("heap"); s = s.need("proc_exec");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_proc_exec\n    str x0, [sp, #-16]!\n");
+            // args is on top but param[0] is path, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_proc_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; call the Fern-compiled __fn___fern_monotonic_ns
             // (asmcore.rt_src_clock, #2649) -> i64 in x0. A ZERO-ARG helper has
@@ -6183,6 +6185,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("tcp_recv")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
     }
+    // proc_exec: execve over an argv built from the args array.
+    if (s.has_need("proc_exec")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec(tgt), s.struct_decls, s);
+    }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
     // __fern_map_seed word.
@@ -6209,101 +6215,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_hash_seed, .-__fern_map_hash_seed\n");
     }
-    // __fern_proc_exec(x0 = path box, x1 = args box) -> i32 — execve. Only
-    // returns on FAILURE (-errno); on success the process image is gone, which
-    // IS the contract, the same way proc_fork's kernel return is. argv is
-    // [path, args...] so the callee's argv[0] is the program path and callers
-    // pass only real arguments; envp comes from __fern_envp (heap-gated, saved
-    // by _start) so the child inherits the environment. Strings are (data, len)
-    // boxes and not NUL-terminated, so path and every argument are copied into
-    // fresh NUL-terminated buffers that are never freed — on success the address
-    // space is replaced, on failure the caller is reporting an error.
-    if (s.has_need("proc_exec")) {
-        s = s.write(".globl __fern_proc_exec\n");
-        s = s.write(".type __fern_proc_exec, %function\n");
-        s = s.write("__fern_proc_exec:\n");
-        s = s.write("    stp x29, x30, [sp, #-96]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #16]\n");
-        s = s.write("    stp x21, x22, [sp, #32]\n");
-        s = s.write("    stp x23, x24, [sp, #48]\n");
-        s = s.write("    stp x25, x26, [sp, #64]\n");
-        s = s.write("    mov x19, x0\n");                 // path box
-        s = s.write("    mov x20, x1\n");                 // args box
-        s = s.write("    ldr x21, [x19, #8]\n");           // path length
-        s = s.write("    add x0, x21, #1\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x22, x0\n");                 // path cstr
-        s = s.write("    ldr x23, [x19]\n");               // path bytes
-        s = s.write("    mov x24, #0\n");
-        s = s.write(".Lpxa_c:\n");
-        s = s.write("    cmp x24, x21\n");
-        s = s.write("    b.ge .Lpxa_cd\n");
-        s = s.write("    ldrb w9, [x23, x24]\n");
-        s = s.write("    strb w9, [x22, x24]\n");
-        s = s.write("    add x24, x24, #1\n");
-        s = s.write("    b .Lpxa_c\n");
-        s = s.write(".Lpxa_cd:\n");
-        s = s.write("    strb wzr, [x22, x21]\n");
-        s = s.write("    ldr x21, [x20]\n");               // argc (length at +0)
-        s = s.write("    add x0, x21, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x25, x0\n");                 // argv
-        s = s.write("    str x22, [x25]\n");               // argv[0] = path cstr
-        s = s.write("    mov x24, #0\n");                 // i
-        s = s.write(".Lpxa_arg:\n");
-        s = s.write("    cmp x24, x21\n");
-        s = s.write("    b.ge .Lpxa_argd\n");
-        s = s.write("    add x9, x24, #1\n");
-        s = s.write("    ldr x26, [x20, x9, lsl #3]\n");   // element box (elems at +8)
-        s = s.write("    ldr x9, [x26, #8]\n");            // element length
-        s = s.write("    str x9, [x29, #80]\n");           // survive the alloc
-        s = s.write("    add x0, x9, #1\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x23, x0\n");                 // dst cstr
-        s = s.write("    ldr x9, [x29, #80]\n");
-        s = s.write("    ldr x10, [x26]\n");               // src bytes
-        s = s.write("    mov x11, #0\n");
-        s = s.write(".Lpxa_ac:\n");
-        s = s.write("    cmp x11, x9\n");
-        s = s.write("    b.ge .Lpxa_acd\n");
-        s = s.write("    ldrb w12, [x10, x11]\n");
-        s = s.write("    strb w12, [x23, x11]\n");
-        s = s.write("    add x11, x11, #1\n");
-        s = s.write("    b .Lpxa_ac\n");
-        s = s.write(".Lpxa_acd:\n");
-        s = s.write("    strb wzr, [x23, x9]\n");
-        s = s.write("    add x9, x24, #1\n");
-        s = s.write("    str x23, [x25, x9, lsl #3]\n");   // argv[i + 1]
-        s = s.write("    add x24, x24, #1\n");
-        s = s.write("    b .Lpxa_arg\n");
-        s = s.write(".Lpxa_argd:\n");
-        s = s.write("    add x9, x21, #1\n");
-        s = s.write("    str xzr, [x25, x9, lsl #3]\n");   // argv[argc + 1] = NULL
-        s = s.write("    mov x0, x22\n");
-        s = s.write("    mov x1, x25\n");
-        s = s.write("    adrp x2, __fern_envp\n");
-        s = s.write("    add x2, x2, :lo12:__fern_envp\n");
-        s = s.write("    ldr x2, [x2]\n");
-        if (darwin) {
-            s = s.write("    mov x16, #59\n");
-            s = s.write("    svc #0x80\n");
-            s = s.write("    b.cc .Lpxa_ret\n");
-            s = s.write("    neg x0, x0\n");
-        } else {
-            s = s.write("    mov x8, #221\n");
-            s = s.write("    svc #0\n");
-        }
-        s = s.write(".Lpxa_ret:\n");
-        s = s.write("    ldp x19, x20, [sp, #16]\n");
-        s = s.write("    ldp x21, x22, [sp, #32]\n");
-        s = s.write("    ldp x23, x24, [sp, #48]\n");
-        s = s.write("    ldp x25, x26, [sp, #64]\n");
-        s = s.write("    ldp x29, x30, [sp], #96\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_proc_exec, .-__fern_proc_exec\n");
-    }
+    // proc_exec is Fern now (#2649) — see the migrated-helpers section.
     // __fern_proc_fork() → 0 in the child, the child's pid in the parent,
     // -errno on failure — the crash-only supervision primitive
     // (docs/CRASH-ONLY-SERVE.md D2', #5686). arm64 Linux has no bare fork(2):

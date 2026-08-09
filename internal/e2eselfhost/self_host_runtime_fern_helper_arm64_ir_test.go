@@ -65,6 +65,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (tcp_listen(0) < 0) { return 18; }\n" +
 		"    if (tcp_connect(2130706433, 1) == 0) { return 19; }\n" +
 		"    if (tcp_recv(999, 4).len() != 0) { return 20; }\n" +
+		"    var av: string[] = [];\n" +
+		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -121,7 +123,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"tcp_connect",
 		// read(2) into a fresh buffer, boxed by __raw_string — the floor goes
 		// this direction, which is why recv migrates and send cannot.
-		"tcp_recv"} {
+		"tcp_recv",
+		// execve over an argv built from the args array. The one leaf whose
+		// contract is that it does NOT return on success.
+		"proc_exec"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}

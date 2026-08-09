@@ -17,7 +17,8 @@ opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
 `tcp_accept`), `sleep_ms` + `poll` over the new `__syscall5`, and
-`proc_waitpid`, `timer_fd`, `tcp_listen`, `tcp_connect`, and `tcp_recv`. Each is ONE source across all three native
+`proc_waitpid`, `timer_fd`, `tcp_listen`, `tcp_connect`, `tcp_recv`, and
+`proc_exec`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -387,7 +388,6 @@ hand-written" but "which of them the floor can already express".
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
-| `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
 | `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
@@ -430,6 +430,16 @@ syscall: it is a plain 3-argument `write`, but it needs the **data pointer of a
 copying the payload byte-by-byte on every call, which is a straight loss on a
 send path. What it wants is the inverse bridge (a `__raw_data`), not a wider
 syscall wrapper.
+
+`proc_exec` has since moved too, and it is the one entry the audit table's
+"args" column undersold: the syscall is a plain 3-argument `execve`, but the
+third argument is a `char **` the helper has to **build** — `__raw_alloc` for
+the array, a NUL-terminated copy of the path and of every element of the
+`string[]`, `__raw_store_ptr` to fill the slots, and `__raw_environ()` for
+envp. Nothing in that needed a new floor primitive, which is why it landed
+ahead of `tcp_send` despite looking like the bigger job. None of those buffers
+are freed, deliberately: on success the address space is replaced, and on
+failure the caller is already reporting an error.
 
 `tcp_recv` runs **with** that direction and so has since moved: it allocates the
 buffer itself, `read`s into it, and hands the buffer to `__raw_string` — the
