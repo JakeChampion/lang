@@ -7054,6 +7054,125 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // locals + re-passed — the RC-miscount blocker fixed in step 1). The bundle is a
 // SINGLE param rather than 23 individual params so flat's arm64 stack frame stays
 // within `stur`'s ±256 offset range (23 params overflowed it).
+// pp_at reports whether the bytes at `lo` (bounded by `hi`) are `lit`.
+//
+// Byte-at-a-time rather than `asm[lo:lo+k] == lit`: a slice comparison
+// allocates, and this runs twice per emitted line. Going through slices here
+// cost a minute of system time on the compiler's own source, all of it arena
+// growth for temporaries the comparison drops immediately.
+function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
+    var m: i32 = lit.len();
+    if (lo + m > hi) { return false; }
+    var k: i32 = 0;
+    while (k < m) {
+        if (asm[lo + k] != lit[k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// pp_eq_bytes reports whether asm[a:a_end] and asm[b:b_end] hold the same bytes.
+function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
+    if (a_end - a != b_end - b) { return false; }
+    var k: i32 = 0;
+    while (a + k < a_end) {
+        if (asm[a + k] != asm[b + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// pp_has_rsp reports whether asm[lo:hi] names %rsp.
+function pp_has_rsp(asm: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i + 4 <= hi) {
+        if (asm[i] == 37 && asm[i + 1] == 114 && asm[i + 2] == 115 && asm[i + 3] == 112) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// peephole_push_pop folds the stack machine's operand round-trips out of the
+// emitted text.
+//
+// The op loop pushes every result and pops every operand, so a value produced
+// by one op and consumed by the next travels through memory even when both
+// ends are already where they need to be:
+//
+//     pushq %rax        ->  (both lines dropped)
+//     popq %rax
+//
+//     pushq -16(%rbp)   ->  movq -16(%rbp), %rcx
+//     popq %rcx
+//
+// Only an IMMEDIATELY adjacent pair folds, which is what makes the rewrite
+// need no clobber analysis: `popq Y` reads the top of the stack, and the line
+// before it just wrote X there, so the pair is exactly `Y := X` with %rsp
+// restored — whatever either line was *meant* for. Alignment is untouched
+// because a push/pop pair is net-zero on %rsp either way.
+//
+// A source naming %rsp is left alone: the push moves %rsp, so the folded mov
+// would read a different address.
+//
+// Worth ~20% of the emitted lines on the compiler's own source. The
+// non-adjacent case — a binary op's outer operand pair, one instruction apart
+// once the inner pair folds — is deliberately not handled: it needs the
+// clobber analysis this shape avoids.
+function peephole_push_pop(asm: string): string {
+    // Re-entering strbuf is safe: `asm` is already materialised, so the buffer
+    // is drained before this reset (same contract as arm64's darwinize).
+    strbuf_reset();
+    var n: i32 = asm.len();
+    // Untouched bytes are copied in RUNS, not per line: run_start is the start
+    // of the stretch not yet appended, and only a fold breaks it. Line-at-a-time
+    // copying here cost 28% of total compile time on the compiler's own source —
+    // this pass rewrites one line in eight, so the other seven must be free.
+    var run_start: i32 = 0;
+    // The deferred push: the offset its line starts at, and its source operand's
+    // byte range. push_at < 0 means nothing is deferred.
+    var push_at: i32 = 0 - 1;
+    var src_lo: i32 = 0;
+    var src_hi: i32 = 0;
+    var ln: i32 = 0;
+    var i: i32 = 0;
+    while (i <= n) {
+        if (i == n || asm[i] == 10) {
+            var bs: i32 = ln;
+            while (bs < i && asm[bs] == 32) { bs = bs + 1; }
+            var folded: boolean = false;
+            if (push_at >= 0 && pp_at(asm, bs, i, "popq %")) {
+                var dlo: i32 = bs + 5;
+                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                if (!pp_eq_bytes(asm, src_lo, src_hi, dlo, i)) {
+                    strbuf_append("    movq ");
+                    strbuf_append(asm[src_lo:src_hi]);
+                    strbuf_append(", ");
+                    strbuf_append(asm[dlo:i]);
+                    strbuf_append("\n");
+                }
+                run_start = i + 1;
+                push_at = 0 - 1;
+                folded = true;
+            }
+            if (!folded) {
+                push_at = 0 - 1;
+                if (pp_at(asm, bs, i, "pushq ")) {
+                    var slo: i32 = bs + 6;
+                    if (!pp_has_rsp(asm, slo, i)) {
+                        push_at = ln;
+                        src_lo = slo;
+                        src_hi = i;
+                    }
+                }
+            }
+            ln = i + 1;
+        }
+        i = i + 1;
+    }
+    if (run_start < n) { strbuf_append(asm[run_start:n]); }
+    return strbuf_take();
+}
+
 pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
     return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, wp_fn_sigs(all_funcs, all_structs));
 }
@@ -7593,5 +7712,5 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("open_file")) { s = emit_ir_open_fd(s); }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     }
-    return strbuf_take();
+    return peephole_push_pop(strbuf_take());
 }
