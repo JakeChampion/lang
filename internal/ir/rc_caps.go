@@ -25,6 +25,7 @@ package ir
 //
 //	arrElemIsRcTracked  = {array, struct, enum, closure, tuple}
 //	rcTrackedSlotType   = arrElemIsRcTracked + {string}
+//	                      (also the counted-array-element set: see below)
 //	exit-sweep tracked  = rcTrackedSlotType + {dyn Trait} (dynReclaim-gated,
 //	                      see emitRcDecLocalsAtExitExcept — the safety zero
 //	                      in lowerFunc deliberately uses rcTrackedSlotType)
@@ -45,6 +46,14 @@ import (
 // static cell), tuples (headered boxes), then strings (rc-headered heap
 // buffers; the SSO inline-tag guard in __fern_rc_dec keeps short inline
 // strings safe on every non-zero ptrW).
+//
+// It doubles as the COUNTED-ARRAY-ELEMENT set: `.append` (emitArrayPush) and
+// `.with` (emitArraySet) both retain an aliased element, release the element
+// they overwrite, and copy through a retaining grow/CoW helper for exactly
+// these types, and the buffer's walk-drop releases them again. That is a
+// wider set than arrElemIsRcTracked, which answers the narrower question of
+// which elements __fern_drop_arr_ptr may dec with a single-word __fern_rc_dec
+// — a string element needs the string-aware helper instead.
 func rcTrackedSlotType(t ast.Type) bool {
 	if _, isStr := t.(ast.StringType); isStr {
 		return true
@@ -53,12 +62,13 @@ func rcTrackedSlotType(t ast.Type) bool {
 }
 
 // arrElemIsRcTracked reports whether an array element type is a
-// pointer-shaped rc-tracked value — array / struct (incl. Map) /
-// enum / closure. These are the elements __fern_drop_arr_ptr can
-// safely dec on the array's last release (each was inc'd at
-// array-literal construction). Strings are deliberately excluded:
-// they are not rc-tracked yet (the SSO native flip is in flight),
-// so they are never inc'd on insertion and must not be dec'd.
+// SINGLE-WORD pointer-shaped rc-tracked value — array / struct (incl.
+// Map) / enum / closure. These are the elements __fern_drop_arr_ptr /
+// __fern_arr_cow_inplace_ptr can walk with a bare __fern_rc_dec / _inc.
+// Strings are excluded for shape, not for tracking: they ARE counted
+// array elements (see rcTrackedSlotType), but a two-word (data, len)
+// element carries its inline tag in `len`, so it needs the string-aware
+// __fern_drop_arr_str / __fern_arr_cow_inplace_str walk instead.
 // Primitive elements (i32 etc.) are not pointers, so no drop.
 func arrElemIsRcTracked(elem ast.Type) bool {
 	switch elem.(type) {
