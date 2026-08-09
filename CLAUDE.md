@@ -35,10 +35,11 @@ edge/CLI optimisation, weigh that trade explicitly rather than assuming
 short-lived-process semantics.
 
 The reach goes below the OS as well: hosted apps, guest libraries inside someone
-else's firmware, drivers, and kernels are all targets — `docs/BARE-METAL-PLAN.md`
-for what that costs and in what order. The binding constraint there is the memory
-model, not codegen: an interrupt handler is a second context racing non-atomic
-refcounts.
+else's firmware, drivers, and kernels are all targets, anchored by the long-term
+goal of an **entire OS written in Fern** — `docs/BARE-METAL-PLAN.md` for what that
+costs and in what order. The binding constraint there is the memory model, not
+codegen: an interrupt handler is a second context racing non-atomic refcounts.
+Unscheduled; it constrains design choices today, it is not work in flight.
 
 ## Targets
 

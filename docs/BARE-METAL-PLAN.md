@@ -12,6 +12,12 @@ embedders" — **hosted applications, guest libraries linked into someone else's
 firmware, device drivers, and kernels**, with the language able to be the top of
 the artifact rather than always a guest inside one.
 
+The long-term goal that anchors this is **an entire operating system written from
+the ground up in Fern** — see the north-star section below for what it demands and
+why the memory model makes it coherent rather than fantasy. It is unscheduled, and
+deliberately so; it earns its place here as the thing the design must not
+foreclose on, not as work in flight.
+
 That is a widening of `docs/LANGUAGE-DIRECTION.md`'s positioning, which already
 said general-purpose but drew its examples from CLI tools, edge handlers and the
 self-host compiler — all hosted. Systems programming was listed as a known "poor"
@@ -164,6 +170,80 @@ three deltas to that plan:
   (`simd`). That would be the first time E066 gates a *CPU* feature rather than
   an OS one — a real widening of what the capability system means, and worth
   deciding deliberately rather than discovering.
+
+## The north star: an operating system written in Fern
+
+The long-term goal is a complete OS built from the ground up in Fern — bootloader,
+kernel, drivers, filesystem, userspace. It is not scheduled and nothing here
+depends on it, but it is the right thing to design against, because it is a
+**forcing function with an unambiguous finish line**: the self-host compiler
+running *on* FernOS, compiling Fern. Nothing gets to be hand-waved past that test.
+
+### The memory model and the OS design agree — which is why this is coherent
+
+The interrupt hazard above reads like a reason an OS is out of reach. It is the
+opposite. An OS's natural structure is **processes that share no memory**, and
+that is precisely #5366's share-nothing shape: one heap per process, no object
+graph spanning a boundary, so **RC stays non-atomic and C1 stays true even under
+a preemptive scheduler.** A context switch between processes touches no shared
+refcount because there is nothing shared to touch.
+
+So the hard part collapses to a much smaller surface than "an OS needs atomic RC":
+
+- **Userspace processes** — safe by construction, per-process heaps.
+- **The kernel's own heap** — the one genuinely shared graph, and the only place
+  the interrupt rule has to hold. Handlers own nothing shared, per above.
+
+That is a real design result, not encouragement: the memory model people assume
+disqualifies Fern from kernels is the same model that makes the process boundary
+free.
+
+### Fern on both sides of the syscall boundary
+
+Today Fern *consumes* a syscall ABI (`__syscall3`/`4`/`5`). An OS makes it the
+*provider*: trap entry, register save, dispatch, return-to-user. That is the
+`naked` / `interrupt` attribute work plus a stable ABI decision, and it is the
+point at which Fern's two roles need spelling separately.
+
+**#6529 already built the slot.** Targets are `<isa>-<environment>` with
+capabilities on the environment (`native`, `wasi`, `wasi-http`, `freestanding`).
+Kernel-mode and user-mode FernOS are two more environments —
+`arm64-fernos-kernel` grants MMIO and privileged effects and no `fs`;
+`arm64-fernos` grants the ordinary hosted set over FernOS's own syscalls. The
+capability system then does something neat: it enforces the kernel/user split at
+check time, in the same mechanism that enforces the OS boundary today.
+
+### What an OS needs that "a kernel" did not
+
+- **Physical memory.** #6511's embedder-supplied heap is the guest half. A kernel
+  *produces* memory: page-frame allocator, page tables, then the Fern heap on
+  top of that, then a fresh heap per process.
+- **DMA.** Volatile is not sufficient. A driver needs physically contiguous,
+  uncached (or explicitly cache-maintained) allocations, and physical addresses
+  distinct from virtual ones. This is an allocator feature, and it is the one
+  driver requirement the list above genuinely misses.
+- **A sanctioned raw-pointer surface.** `__raw_*` is a **self-host-compiler
+  internal** — it does not exist in `internal/` at all. An OS needs it as a
+  *language* surface, capability-gated. Being self-host-only is the right side of
+  `docs/NATIVE-CONVERGENCE.md` (new surface lands self-host-first), so this is a
+  promotion to public surface rather than a port.
+- **ELF loading**, to run userspace binaries — adjacent to the in-process linkers
+  Fern already ships, which emit ELF rather than shelling out to one.
+- **Boot protocol** — device tree, UEFI, or multiboot parsing. Ordinary Fern code
+  once volatile and memory layout exist; no new language surface.
+
+### Milestones, each producing something that runs
+
+1. Boot to a UART "hello" on qemu-virt — proves entry, layout, MMIO.
+2. Interrupts and a timer tick — proves the handler rule under real preemption.
+3. A page-frame allocator and the Fern heap on top of it.
+4. Two processes, separate heaps, preemptively scheduled — the C1 claim, tested.
+5. A filesystem and an ELF loader.
+6. The self-host compiler runs on it.
+
+Step 4 is where the design either holds or does not, and it is reachable long
+before anything resembling a usable OS. Worth getting to early for that reason
+alone.
 
 ## Sequencing
 

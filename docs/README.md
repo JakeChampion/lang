@@ -67,7 +67,7 @@ so explicitly.
 | `ROADMAP-AND-SELF-HOSTING.md` | [record] | 2026-05-15 tech-debt + self-host-readiness snapshot; live roadmap is CLAUDE.md + issues. |
 | `RESEARCH-ROADMAP.md` | [record] | Reading-order meta-index for the research docs; recommendations now filed as #4412–#4416. |
 | `FREESTANDING-CORE.md` | [policy] | Which builtins need a host and which do not; the core-vs-host rule and every judgement call (#6506). |
-| `BARE-METAL-PLAN.md` | [plan] | Scope below the OS — guest, driver and kernel postures; why the interrupt/RC memory model gates it, and the order for volatile / effect intrinsics / attributes / layout / atomics. |
+| `BARE-METAL-PLAN.md` | [plan] | Scope below the OS — guest, driver and kernel postures, and an OS in Fern as the north star; why the interrupt/RC memory model gates it, and the order for volatile / effect intrinsics / attributes / layout / atomics. |
 | `BOOTSTRAP-RESEARCH.md` | [research] | Bootstrap/trust strategy survey (Rust, Zig, Go, …). |
 | `TOOLCHAIN-SELF-HOSTING.md` | [record] | Zero-external-toolchain builds — complete for all targets. |
 | `PERFORMANCE-RESEARCH.md` | [research] | Compiler/runtime perf survey; recommendations tracked in #4412. |
