@@ -5011,10 +5011,89 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   / #6255 / #6263 / #6274 / #6285 / #6291 / #6308 / #6319 / #6336 / #6347 /
   #6375). It is no longer the live list.
 
-  **The live list is #6360, and it is now half closed.** Re-measured at
-  `09b3efe2`: the SCALAR-payload rows are 0 (#6392 / #6416), the RC-payload rows
-  still leak 35200 with `frees=0`, still exactly x2.0 per doubling. Native is
-  clean on every row.
+  **The live list is #6360, now down to its STRING rows.** The class was "an
+  enum local bound from a CALL is never reclaimed" — `frees=0`, exactly x2.0 per
+  doubling, native clean on every row. Most of it has closed: #6392 / #6416 took
+  the scalar payload, #6451 the rc payload bound from a call and consumed by a
+  match, and #6448 the rc-payload local that no match consumes.
+
+  **#6448 covers the DIRECT init only — measured, because its title reads
+  wider.** `var o: Option[i32[]] = Some([..])` with no match is reclaimed
+  (`frees=798/800`); the same shape bound from a producer call is untouched
+  (`frees=0`, 35200). So "no match" and "call init" are ORTHOGONAL dimensions of
+  one class, and only three of their four cells are closed.
+
+  What that left is best read as a 2x2, because "rc payload leaks" is the wrong
+  summary and cost a wrong turn before it was measured:
+
+  | payload | init | before #6451 |
+  |---|---|---|
+  | rc | direct | 0 — already deep-freed, buffer and all |
+  | rc | call | 35200 — closed by #6451 |
+  | scalar | direct | 0 |
+  | scalar | call | 0 — closed by #6392 / #6416 |
+
+  The rc payload was never what defeated reclaim. `rcpayload_option_cand` reads
+  the CONSTRUCTED variant off the init: `Some([..])` is visible, `mk(i)` is not,
+  and `emit_opt_payload_drop` then reads offset 8 unconditionally — sound only
+  because a specific variant was admitted. `emit_opt_tagged_payload_drop` guards
+  that same release on `op_opt_tag() == 0`.
+
+  **Still open — one class, two ORTHOGONAL dimensions.** Measured at the merge
+  of #6451 and #6448, `Result[i32[], E]` from a call, 100 rounds x 4:
+
+  | Err | consumed by a match | self-host |
+  |---|---|---|
+  | scalar | yes | **0** — closed by #6451 |
+  | scalar | no | 35200, `frees=0` |
+  | string | yes | 35200, `frees=0` |
+  | string | no | 35200, `frees=0` |
+
+  So the two open dimensions are:
+
+  1. **no consuming match**, for a CALL init. #6451's admission requires a
+     `sole_top_level_match_idx`, and #6448's no-match class does not admit a
+     call init — neither reaches this cell.
+  2. **a string payload**, below.
+
+  - `Result[i32[], string]` from a call — 35200, `frees=0`. Needs a two-way tag
+    dispatch (`__fern_rc_dec` on the Ok arm, `__fern_str_free` on the Err arm).
+    **The blocker is freshness, not dispatch.** The direct path gates a string
+    payload on its ARGUMENT being fresh (`str_local_binding_is_fresh`); a call
+    init cannot see the argument. The OPTFRESH registry already carries the
+    needed proof as its `"f"` flag — but `body_has_nonfresh_opt_success_payload`
+    proves the SUCCESS payload fresh, and here the string is the ERR payload, so
+    the flag does not cover it. Extending it means a new whole-program check
+    over Err payloads, not a reuse of the existing one.
+  - `Option[string]` from a call — **the same class, not a different defect.**
+    It first read as "reclaims partially, 800 of 2000", which suggested something
+    already frees part of it and that folding it in risked a double free. That
+    was an artifact of the PROBE: its payload was `Some("ab" + "cd")`, and the
+    concat's intermediate temporaries are freed by other machinery, which masked
+    the option boxes never being freed at all. The same shape with a LITERAL
+    payload is `allocs=800 frees=0` — the closed class's exact signature.
+    Varying one dimension separated them:
+
+    | payload | init | self-host |
+    |---|---|---|
+    | `"abcd"` literal | call | 800, **frees=0** |
+    | `"ab" + "cd"` | call | 2000, frees=800 (the 800 are the concat temporaries) |
+    | `"abcd"` literal | direct | 800 / 800, clean |
+    | `"ab" + "cd"` | direct | 2000 / 2000, clean |
+
+    So both open rows are one class — a call-init string payload — and they
+    differ only in WHERE the string sits, which decides whether the freshness
+    proof already exists: success payload (covered by the registry's `"f"` flag)
+    versus Err payload (not covered).
+
+  **Checked, so it does not get re-litigated: an ALIASED payload through a
+  producer is sound.** `function mk(a: i32[]) { return Some(a); }` called on a
+  live `shared` array admits under #6451 (OPTFRESH proves the return is a direct
+  ctor; it says nothing about the argument), and the unconditional `rc_dec` on
+  the payload is nonetheless balanced — interp / native / self-host all exit 10
+  with `allocs=51 frees=51 live_bytes=0`, and `shared` reads back intact after
+  the loop. So the array ctor takes a counted reference. Strings are the shape
+  where that is NOT assumed, which is exactly why the direct path gates them.
 
   **That issue's own attribution is wrong, and the correction is the useful
   part.** It concluded "call-binding is the trigger" and "the match is
