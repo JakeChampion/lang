@@ -5011,12 +5011,46 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   / #6255 / #6263 / #6274 / #6285 / #6291 / #6308 / #6319 / #6336 / #6347 /
   #6375). It is no longer the live list.
 
-  **The live list is #6360**: an enum local bound from a CALL is never reclaimed
-  on the self-host — `frees=0`, exactly x2.0 per doubling, and not
-  Result-specific (`Option` behaves identically). Native is clean on every row.
+  **The live list is #6360, and it is now half closed.** Re-measured at
+  `09b3efe2`: the SCALAR-payload rows are 0 (#6392 / #6416), the RC-payload rows
+  still leak 35200 with `frees=0`, still exactly x2.0 per doubling. Native is
+  clean on every row.
 
-  **The block-scoped bare-name struct credit is HALF closed** (#6375, 8800 →
-  4000): the BOX is reclaimed, the field drop is not. Three fixpoint runs, one
+  **That issue's own attribution is wrong, and the correction is the useful
+  part.** It concluded "call-binding is the trigger" and "the match is
+  irrelevant" — both measured only on the call-bound rows, where both hold.
+  Varying the match on the DIRECT row inverts it:
+
+  | shape | binding | match | self-host |
+  |---|---|---|---|
+  | `Result[i32[], string]` | direct `Ok([..])` | yes | 0 |
+  | `Result[i32[], string]` | direct `Ok([..])` | **no** | **35200** |
+  | `Result[i32[], string]` | call | yes | **35200** |
+
+  The consuming match is the ENTIRE reclaim mechanism for an rc-payload
+  Option/Result local; call-binding is one of two independent ways to fall
+  outside it. The emitted asm agrees — two `__fern_arr_dec` in `round()` on the
+  direct+match build, no release at all in the others.
+
+  **The uncovered quadrant is the non-reassigned local that no match consumes.**
+  `consumed_rcpayload_option_frees` needs a sole consuming match AND a
+  statically known variant (a call's variant is not, which is the same reason
+  `fresh_scalar_option_call_init` restricts to scalar payloads);
+  `collect_fresh_optarr_names` ("OPTARR:") deliberately requires REASSIGNMENT,
+  as the complement of the match analyses. Closing it needs either a runtime
+  variant guard in the payload drop or a new exit-sweep credit — and the latter
+  is the operation that segfaulted gen1 twice, so the fixpoint runs first.
+  All three rows are pinned in `TestSelfHostCallBoundEnumReclaimX86_64`,
+  including the direct+match control, so a fix cannot land unnoticed the way
+  #6291's did.
+
+  **The block-scoped bare-name struct credit is CLOSED** (#6375 then #6408).
+  The paragraphs below describe the investigation while the field drop was
+  still withheld; #6408 landed the fix they point at — `expr_unsafe_for` and
+  `moves_fields_expr` now read a bare non-scalar `name.field` as a MOVE rather
+  than a borrow. Kept for the method, not as a live item.
+
+  (Historical, #6375: the BOX was reclaimed and the field drop was not.) Three fixpoint runs, one
   variable each, located the culprit as `__struct_drop_<T>` on a block-scoped
   slot — not the box dec, not the entry-zeroing, not the credit's other
   consumers. Entry-zeroing alone is green (402 s); box-only free is green
