@@ -1627,9 +1627,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		// (arr, stride) → new_data. Phase 2b mutate-or-copy
 		// helper for `arr[i] = v`. Internalises the rc
 		// bookkeeping so the IR-side emit doesn't have to
-		// coordinate with __fern_rc_dec's low-address guard
-		// (which short-circuits on raw wasm where heap
-		// addresses sit below 0x10000):
+		// coordinate with __fern_rc_dec's low-address guard:
 		//   - rc == 1 → return arr unchanged.
 		//   - rc >  1 → alloc fresh buffer with the same
 		//     cap+len, memcpy the payload, dec arr's rc
@@ -2512,7 +2510,8 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 0)
 		body = memory.InstI32Load(body, 2, 0)
 		body = inst.InstLocalTee(body, 2)
-		// if buf u>= 0x10000 (covers null + low-address): free it.
+		// if buf is at or above the rc guard (covers null + every static
+		// region): free it.
 		body = inst.InstI32Const(body, rcLowAddrGuard)
 		body = numeric.InstI32GeU(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -2665,9 +2664,11 @@ func buildClosureDropBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// low-address guard → return f
+	// low-address guard → return f. See rcLowAddrGuard: the floor is the
+	// start of the string pool, not 64 KiB — every heap object lands at or
+	// above it and every static region below.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -2724,9 +2725,14 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// low-address guard → return data
+	// low-address guard → return data. See rcLowAddrGuard: the floor is the
+	// start of the string pool. It read 0x10000 (64 KiB) until #6423 — a
+	// leftover from the WASI layout — while __fern_str_inc reaches
+	// __fern_rc_inc, which already used the correct floor. Incs therefore
+	// happened and decs did not, so a heap string's refcount only ever went
+	// up and its buffer never returned to the freelist.
 	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 0x10000)
+	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 0)
@@ -3141,13 +3147,9 @@ func buildStrAppendBody(idxs map[string]uint32) []byte {
 		body = numeric.InstI32And(body)
 		body = inst.InstBrIf(body, 0)
 		// Below the rc guard: a literal in the data segment (or a static
-		// closure cell), never rc-owned. See rcLowAddrGuard. This floor
-		// is deliberately LOWER than __fern_str_dec's own 0x10000 (a
-		// leftover from the WASI layout, which keeps that helper from
-		// freeing sub-64K heap strings). The asymmetry is safe in this
-		// direction: the fast path frees nothing, it only mutates a
-		// buffer the rc says is uniquely held, and the fallback's
-		// str_dec keeps its existing (leak-not-free) behaviour there.
+		// closure cell), never rc-owned. See rcLowAddrGuard — the same
+		// floor __fern_str_dec uses, so a buffer this path declines to
+		// grow in place is one the fallback's str_dec will reclaim.
 		body = inst.InstLocalGet(body, 0)
 		body = inst.InstI32Const(body, rcLowAddrGuard)
 		body = numeric.InstI32LtU(body)
@@ -4344,9 +4346,8 @@ func arrPushGrowStrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 
 // buildArrCowInPlaceBody — (arr, stride) → new_data. Wasm32
 // counterpart of arm64.go's emitArrCowInPlaceRuntime + x86_64's.
-// Internalises rc bookkeeping so the IR-side emit avoids the
-// __fern_rc_dec low-address guard pitfall (heap addresses sit
-// below 0x10000 on raw wasm so the guard would skip every dec).
+// Internalises rc bookkeeping so the IR-side emit does not have to
+// coordinate with __fern_rc_dec's low-address guard at all.
 //
 // Locals: 0=arr, 1=stride (params); 2=len, 3=cap,
 // 4=headerBytes, 5=base.
@@ -4963,7 +4964,7 @@ func buildRcIsUniqueBody(_ map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// ptr < 0x10000 → 0 (low-address guard)
+	// ptr below the rc guard → 0 (low-address guard)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)

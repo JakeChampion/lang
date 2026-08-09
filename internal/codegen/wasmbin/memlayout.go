@@ -213,12 +213,20 @@ const (
 // and dec/free never reclaimed (so the freelist stayed empty and alloc
 // was a pure bump).
 //
-// The floor is stringStart for both inc and the dec/free/reclamation
-// helpers (__fern_rc_dec / __fern_arr_dec / __fern_drop_arr_ptr /
-// __fern_map_drop / __fern_box_free / __fern_rc_is_unique). It is the
+// The floor is stringStart for EVERY rc helper — inc and the
+// dec/free/reclamation side alike (__fern_rc_dec / __fern_arr_dec /
+// __fern_drop_arr_ptr / __fern_map_drop / __fern_box_free /
+// __fern_rc_is_unique / __fern_str_dec / __fern_closure_drop). It is the
 // correct skip threshold on every layout: it skips null + every static
 // region while catching every real heap object. The WASI/adapter layout
 // (heap above 64 KiB) is unaffected — its objects clear both thresholds.
+//
+// The last two joined the list in #6423. They kept the 0x10000 leftover
+// after the others moved, and because inc had already moved, a heap
+// string or closure env got its incs and never its frees: the refcount
+// only went up and the buffer never returned to the freelist. Partial is
+// worse than either extreme here, which is why this list is exhaustive
+// rather than illustrative.
 const rcLowAddrGuard = stringStart
 
 // Build-time proof that nothing overlaps: a region that started before its
