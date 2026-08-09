@@ -97,6 +97,40 @@ var iifeFnArmCases = []struct {
 	// as closure-returning (its arms now return a local, form (b) rather than
 	// form (a) of closure_ret_fns_of) or the caller bare-dispatches the box.
 	{"capturing-arm-bound-then-returned", "function gen(n: i32): (i32) => i32 { var w: (i32) => i32 = (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) }); return w; } function main(): i32 { var f: (i32) => i32 = gen(5i32); return f(4i32) & 63i32; }", 9},
+
+	// The same arms with the IIFE directly in RETURN position, which the case
+	// above reaches only via a local. unwrap_sole_iife_return beta-reduces a sole
+	// `return (…)()` body into the enclosing function, so the arm returns appear
+	// AFTER the pre-worklist `return <lambda>` desugar has run and nothing had
+	// walked them. The desugar now also runs per worklist entry, on everything
+	// but the tail return that hoist_escaping_closure claims (#5281).
+	{"sole-return-iife-capturing-arms", "function gen(n: i32): (i32) => i32 { return (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32); return f(4i32) & 63i32; }", 9},
+	{"sole-return-matchexpr-capturing-arms", "enum S { A, B } function gen(n: i32, e: S): (i32) => i32 { return (match (e) { A => ((x: i32) => (x + n)), B => ((y: i32) => (y * n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32, S.B); return f(4i32) & 63i32; }", 20},
+
+	// The arms hold an ARRAY of fn values rather than one. Same root cause — a
+	// capturing lambda in an un-hoisted arm is unreachable — but two more things
+	// have to hold for the result to be usable, which is why the rewrite is gated
+	// on EVERY arm being an array literal: the arms share one binding and so one
+	// dispatch ABI (a sibling arm's raw `__lam_N` pointer env-first-dispatched as
+	// a box is #5071 one container out), and the destination has to read as a
+	// closure array or `xs[i](…)` bare-calls the box pointer as code. Boxing just
+	// the capturing element turned the bail into a SIGSEGV both ways.
+	//
+	// else-branch-taken runs the OTHER arm, whose lambda does not capture and is
+	// wrapped in a `$wrap` trampoline box purely to match; mixed-cap-and-name has
+	// a bare fn name beside a capturing lambda in the same literal.
+	{"arm-array-capturing-lambda", "function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
+	{"arm-array-else-branch-taken", "function main(): i32 { var v1: i32 = 3i32; var c: boolean = false; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { [((y: i32) => (y + 10i32))] }); return xs[0i32](1i32) & 63i32; }", 11},
+	{"matchexpr-arm-array-capturing", "enum S { A, B } function main(): i32 { var v1: i32 = 3i32; var e: S = S.B; var xs: ((i32) => i32)[] = (match (e) { A => [((x: i32) => (x + v1))], B => [((y: i32) => (y * v1))] }); return xs[0i32](2i32) & 63i32; }", 6},
+	{"arm-array-mixed-cap-and-fnname", "function inc(x: i32): i32 { return x + 1i32; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1)), inc] } else { [inc, inc] }); return (xs[0i32](1i32) + xs[1i32](1i32)) & 63i32; }", 6},
+	// Regression guards for the two representations the rewrite must not touch:
+	// an all-no-capture arm array keeps its bare `__lam_N` pointers, and an
+	// all-bare-fn-name one keeps the #3574 fn-pointer-array classification.
+	{"arm-array-nocapture-unchanged", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
+	{"arm-array-bare-fnnames-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
+	// The lambda-returning-lambda the tail-return hoist owns: the per-entry
+	// desugar must leave it alone (#5281 regressed exactly this shape).
+	{"curry-tail-return-unchanged", "function curry(a: i32): (i32) => ((i32) => i32) { return ((b: i32) => ((c: i32) => (a + b + c))); } function main(): i32 { var g: (i32) => ((i32) => i32) = curry(1i32); var h: (i32) => i32 = g(2i32); return h(3i32) & 63i32; }", 6},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
