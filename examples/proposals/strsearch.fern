@@ -1,0 +1,508 @@
+// examples/proposals/strsearch.fern — proposal turn, drawn line 74:
+// "A string-search implementation (Knuth-Morris-Pratt or Boyer-Moore) with a
+// match count."
+//
+// The line offers a choice between the two algorithms. Implementing BOTH is
+// worth more than implementing either well, because it turns the test from
+// "does this agree with an oracle I also wrote" into a three-way differential:
+// KMP skips forward using what the pattern says about its own prefixes,
+// Boyer-Moore-Horspool skips using what the text says about the pattern's
+// last character, and a naive scan skips nothing. Three algorithms with
+// nothing in common but their answer, so a shared wrong answer would have to
+// be a coincidence in three unrelated shift rules.
+//
+// They are checked against each other over an EXHAUSTIVE space, not a corpus:
+// every string over {a,b} up to length 8 as the haystack (511 of them) against
+// every one up to length 3 as the needle (15), which is 7 665 pairs. A
+// hand-picked corpus tests the cases its author thought of, and the cases an
+// author thinks of are not where a shift rule goes wrong.
+//
+// On top of that sit two properties that hold whatever the implementation, and
+// that between them pin the answer completely without trusting any of the
+// three:
+//
+//   - SOUNDNESS — every reported position really does match, checked by direct
+//     byte comparison at that position;
+//   - COMPLETENESS — every position that matches is reported, checked by
+//     walking all of them.
+//
+// A search can be sound and still miss half the matches, which is exactly the
+// failure mode of a shift rule that overshoots — and it is the one a count
+// alone hides, because a too-small count looks like a text with fewer hits.
+//
+// The KMP failure table gets its own test against its DEFINITION (the longest
+// proper prefix of p[0..i] that is also a suffix of it), computed by brute
+// force. Nearly every KMP bug is a wrong table, and a wrong table still finds
+// most matches — the table is the part worth checking directly rather than
+// through the search that uses it.
+//
+// Two semantics, stated because they are what implementations disagree about:
+//
+//   - **Matches OVERLAP.** "aaaa" contains "aa" three times, not two. A
+//     non-overlapping count is a different function; the ambiguity is why the
+//     drawn line's "match count" needs saying out loud at all.
+//   - **The empty needle matches everywhere**, including at the very end, so
+//     it occurs len+1 times. The alternative (zero) makes `count` disagree
+//     with "the number of positions where the needle occurs".
+//
+// Horspool rather than full Boyer-Moore: bad-character shifts only, no
+// good-suffix rule. That is the variant in common use, and skipping the
+// good-suffix table is a stated simplification rather than a silent one. On a
+// match it shifts by one — the bad-character shift is only sound for finding
+// the NEXT non-overlapping occurrence, and overlapping is the semantics above.
+//
+// Every index here is a byte, so a multi-byte character is matched by its
+// bytes. The corpus keeps a non-ASCII needle for that reason.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ----------------------------------------------------------------- naive
+
+// The definition of "occurs at i", written out. No shift rule at all, so it
+// has nothing in common with the two below except the answer.
+function naive_find(h: string, p: string): i32[] {
+    var out: i32[] = [];
+    var m: i32 = p.len();
+    var i: i32 = 0;
+    while (i + m <= h.len()) {
+        var j: i32 = 0;
+        while (j < m && h[i + j] == p[j]) { j = j + 1; }
+        if (j == m) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------------- KMP
+
+// f[i] = the length of the longest PROPER prefix of p[0..i] that is also a
+// suffix of it. Empty pattern has no table.
+function kmp_table(p: string): i32[] {
+    var f: i32[] = [];
+    if (p.len() == 0) { return f; }
+    f = f.append(0);
+    var k: i32 = 0;
+    var i: i32 = 1;
+    while (i < p.len()) {
+        while (k > 0 && p[i] != p[k]) { k = f[k - 1]; }
+        if (p[i] == p[k]) { k = k + 1; }
+        f = f.append(k);
+        i = i + 1;
+    }
+    return f;
+}
+
+function all_positions(n: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i <= n) { out = out.append(i); i = i + 1; }
+    return out;
+}
+
+function kmp_find(h: string, p: string): i32[] {
+    var m: i32 = p.len();
+    if (m == 0) { return all_positions(h.len()); }
+    var out: i32[] = [];
+    if (m > h.len()) { return out; }
+    var f: i32[] = kmp_table(p);
+    var k: i32 = 0;
+    var i: i32 = 0;
+    while (i < h.len()) {
+        while (k > 0 && h[i] != p[k]) { k = f[k - 1]; }
+        if (h[i] == p[k]) { k = k + 1; }
+        if (k == m) {
+            out = out.append(i - m + 1);
+            // Fall back to the longest border rather than resetting, so an
+            // occurrence overlapping this one is still found.
+            k = f[k - 1];
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------- Boyer-Moore-Horspool
+
+// bc[c] = how far to shift when the text character aligned with the pattern's
+// LAST position is c: the distance from that position back to c's rightmost
+// other occurrence, or the whole pattern length when it does not occur.
+function bmh_table(p: string): i32[] {
+    var m: i32 = p.len();
+    var bc: i32[] = [];
+    var c: i32 = 0;
+    while (c < 256) { bc = bc.append(m); c = c + 1; }
+    var j: i32 = 0;
+    while (j < m - 1) {
+        bc = bc.with(p[j] as i32, m - 1 - j);
+        j = j + 1;
+    }
+    return bc;
+}
+
+function bmh_find(h: string, p: string): i32[] {
+    var m: i32 = p.len();
+    if (m == 0) { return all_positions(h.len()); }
+    var out: i32[] = [];
+    if (m > h.len()) { return out; }
+    var bc: i32[] = bmh_table(p);
+    var i: i32 = 0;
+    while (i + m <= h.len()) {
+        var j: i32 = m - 1;
+        while (j >= 0 && h[i + j] == p[j]) { j = j - 1; }
+        if (j < 0) {
+            out = out.append(i);
+            i = i + 1;
+        } else {
+            i = i + bc[h[i + m - 1] as i32];
+        }
+    }
+    return out;
+}
+
+// The count the drawn line asks for. Defined as the number of positions, so
+// it cannot drift from the positions the search reports.
+function count(h: string, p: string): i32 { return kmp_find(h, p).len(); }
+
+// ---------------------------------------------------------------- corpus
+
+// Every string over {a, b} up to `maxlen`, including the empty one. Small
+// alphabet on purpose: repetition and near-repetition are where a shift rule
+// overshoots, and a two-letter alphabet is nothing but near-repetition.
+function bin_strings(maxlen: i32): string[] {
+    var out: string[] = [""];
+    var cur: string[] = [""];
+    var len: i32 = 1;
+    while (len <= maxlen) {
+        var next: string[] = [];
+        var i: i32 = 0;
+        while (i < cur.len()) {
+            next = next.append(cur[i] + "a");
+            next = next.append(cur[i] + "b");
+            i = i + 1;
+        }
+        var k: i32 = 0;
+        while (k < next.len()) { out = out.append(next[k]); k = k + 1; }
+        cur = next;
+        len = len + 1;
+    }
+    return out;
+}
+
+// Text-shaped pairs the exhaustive {a,b} space cannot reach: a wider alphabet,
+// a needle at each boundary, a needle longer than its haystack, and a
+// multi-byte character matched by its bytes.
+function pairs(): string[] {
+    return ["abracadabra|abra", "abracadabra|cad", "abracadabra|a",
+        "hello world|world", "hello world|hello", "hello world|xyz",
+        "mississippi|issi", "mississippi|ss", "aaaaa|aa", "aaaaa|aaaaa",
+        "abc|abcd", "|a", "|", "a|", "the café is a café|café",
+        "banana|ana", "aabaabaab|aabaab", "xxxxxxxx|x"];
+}
+
+function positions_equal(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+function show(xs: i32[]): string {
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i].to_string();
+        i = i + 1;
+    }
+    return out + "]";
+}
+
+// Does `p` occur at `i`? The definition, used by the soundness and
+// completeness tests so neither leans on a search.
+function occurs_at(h: string, p: string, i: i32): boolean {
+    if (i + p.len() > h.len()) { return false; }
+    var j: i32 = 0;
+    while (j < p.len()) {
+        if (h[i + j] != p[j]) { return false; }
+        j = j + 1;
+    }
+    return true;
+}
+
+function contains_pos(xs: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == v) { return true; } i = i + 1; }
+    return false;
+}
+
+// ----------------------------------------------------------------- tests
+
+// The three-way differential over the exhaustive {a,b} space. If a shift rule
+// is wrong anywhere, it is wrong on one of these 7 665 pairs.
+function test_all_three_agree_exhaustively(): test.TestOutcome {
+    var hs: string[] = bin_strings(8);
+    var ps: string[] = bin_strings(3);
+    var checked: i32 = 0;
+    var i: i32 = 0;
+    while (i < hs.len()) {
+        var j: i32 = 0;
+        while (j < ps.len()) {
+            var want: i32[] = naive_find(hs[i], ps[j]);
+            var k: i32[] = kmp_find(hs[i], ps[j]);
+            var b: i32[] = bmh_find(hs[i], ps[j]);
+            if (!positions_equal(want, k)) {
+                return test.fail("KMP disagrees on \"" + hs[i] + "\" / \"" + ps[j]
+                    + "\": naive " + show(want) + " vs kmp " + show(k));
+            }
+            if (!positions_equal(want, b)) {
+                return test.fail("Horspool disagrees on \"" + hs[i] + "\" / \"" + ps[j]
+                    + "\": naive " + show(want) + " vs bmh " + show(b));
+            }
+            checked = checked + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    // A sweep that silently stopped generating would pass every comparison it
+    // made, so assert it made the ones it claims to.
+    if (checked < 7000) {
+        return test.fail("sweep only compared " + checked.to_string() + " pairs");
+    }
+    return test.pass();
+}
+
+// The same three-way check on the text-shaped pairs the {a,b} space misses.
+function test_all_three_agree_on_the_text_pairs(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var want: i32[] = naive_find(f[0], f[1]);
+        if (!positions_equal(want, kmp_find(f[0], f[1]))) {
+            return test.fail("KMP disagrees on \"" + f[0] + "\" / \"" + f[1]
+                + "\": naive " + show(want) + " vs kmp " + show(kmp_find(f[0], f[1])));
+        }
+        if (!positions_equal(want, bmh_find(f[0], f[1]))) {
+            return test.fail("Horspool disagrees on \"" + f[0] + "\" / \"" + f[1]
+                + "\": naive " + show(want) + " vs bmh " + show(bmh_find(f[0], f[1])));
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Soundness: every position KMP reports is a real occurrence.
+function test_every_reported_position_really_matches(): test.TestOutcome {
+    var hs: string[] = bin_strings(7);
+    var ps: string[] = bin_strings(3);
+    var i: i32 = 0;
+    while (i < hs.len()) {
+        var j: i32 = 0;
+        while (j < ps.len()) {
+            var got: i32[] = kmp_find(hs[i], ps[j]);
+            var k: i32 = 0;
+            while (k < got.len()) {
+                if (!occurs_at(hs[i], ps[j], got[k])) {
+                    return test.fail("\"" + ps[j] + "\" does not occur at "
+                        + got[k].to_string() + " in \"" + hs[i] + "\"");
+                }
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Completeness, the half a count cannot show: every position that matches is
+// reported. This is what catches a shift rule that overshoots.
+function test_no_occurrence_is_missed(): test.TestOutcome {
+    var hs: string[] = bin_strings(7);
+    var ps: string[] = bin_strings(3);
+    var i: i32 = 0;
+    while (i < hs.len()) {
+        var j: i32 = 0;
+        while (j < ps.len()) {
+            var got: i32[] = kmp_find(hs[i], ps[j]);
+            var bm: i32[] = bmh_find(hs[i], ps[j]);
+            var at: i32 = 0;
+            while (at + ps[j].len() <= hs[i].len()) {
+                if (occurs_at(hs[i], ps[j], at)) {
+                    if (!contains_pos(got, at)) {
+                        return test.fail("KMP missed \"" + ps[j] + "\" at "
+                            + at.to_string() + " in \"" + hs[i] + "\"");
+                    }
+                    if (!contains_pos(bm, at)) {
+                        return test.fail("Horspool missed \"" + ps[j] + "\" at "
+                            + at.to_string() + " in \"" + hs[i] + "\"");
+                    }
+                }
+                at = at + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The failure table against its definition. A wrong table still finds most
+// matches, so checking it through the search that uses it is not enough.
+function test_the_failure_table_matches_its_definition(): test.TestOutcome {
+    var ps: string[] = bin_strings(8);
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var p: string = ps[i];
+        var f: i32[] = kmp_table(p);
+        if (f.len() != p.len()) {
+            return test.fail("table for \"" + p + "\" has " + f.len().to_string()
+                + " entries, want " + p.len().to_string());
+        }
+        var e: i32 = 0;
+        while (e < p.len()) {
+            // The longest PROPER prefix of p[0..e] that is also its suffix,
+            // by brute force: try every length from long to short.
+            var want: i32 = 0;
+            var n: i32 = e + 1;
+            var l: i32 = n - 1;
+            while (l > 0) {
+                var same: boolean = true;
+                var k: i32 = 0;
+                while (k < l) {
+                    if (p[k] != p[n - l + k]) { same = false; }
+                    k = k + 1;
+                }
+                if (same && want == 0) { want = l; }
+                l = l - 1;
+            }
+            if (f[e] != want) {
+                return test.fail("\"" + p + "\" table[" + e.to_string() + "] = "
+                    + f[e].to_string() + ", want " + want.to_string());
+            }
+            e = e + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The bad-character table against ITS definition, the Horspool sibling of the
+// test above: the distance from the last position back to the character's
+// rightmost other occurrence, or the pattern length when it has none.
+function test_the_bad_character_table_matches_its_definition(): test.TestOutcome {
+    var ps: string[] = bin_strings(6);
+    var i: i32 = 1; // skip the empty pattern: it has no table
+    while (i < ps.len()) {
+        var p: string = ps[i];
+        var m: i32 = p.len();
+        var bc: i32[] = bmh_table(p);
+        if (bc.len() != 256) {
+            return test.fail("table has " + bc.len().to_string() + " entries, want 256");
+        }
+        var c: i32 = 0;
+        while (c < 256) {
+            var want: i32 = m;
+            var j: i32 = 0;
+            while (j < m - 1) {
+                if ((p[j] as i32) == c) { want = m - 1 - j; }
+                j = j + 1;
+            }
+            if (bc[c] != want) {
+                return test.fail("\"" + p + "\" bc[" + c.to_string() + "] = "
+                    + bc[c].to_string() + ", want " + want.to_string());
+            }
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The stated semantics: matches overlap.
+function test_matches_overlap(): test.TestOutcome {
+    if (count("aaaa", "aa") != 3) {
+        return test.fail("\"aa\" in \"aaaa\" counted " + count("aaaa", "aa").to_string()
+            + ", want 3 — overlapping matches");
+    }
+    if (count("aaa", "a") != 3) { return test.fail("\"a\" in \"aaa\" is not 3"); }
+    if (count("aaaaa", "aaa") != 3) { return test.fail("\"aaa\" in \"aaaaa\" is not 3"); }
+    if (count("abababa", "aba") != 3) { return test.fail("\"aba\" in \"abababa\" is not 3"); }
+    // Both implementations, not just the one `count` happens to use.
+    if (!positions_equal(kmp_find("aaaa", "aa"), bmh_find("aaaa", "aa"))) {
+        return test.fail("the two searches disagree on overlapping matches");
+    }
+    return test.pass();
+}
+
+// The other stated semantics: the empty needle occurs at every position
+// including the one past the end.
+function test_the_empty_needle(): test.TestOutcome {
+    if (count("abc", "") != 4) {
+        return test.fail("\"\" in \"abc\" counted " + count("abc", "").to_string() + ", want 4");
+    }
+    if (count("", "") != 1) { return test.fail("\"\" in \"\" is not 1"); }
+    if (count("", "a") != 0) { return test.fail("\"a\" in \"\" is not 0"); }
+    var ps: string[] = bin_strings(5);
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        if (count(ps[i], "") != ps[i].len() + 1) {
+            return test.fail("\"\" in \"" + ps[i] + "\" is not len+1");
+        }
+        if (!positions_equal(kmp_find(ps[i], ""), bmh_find(ps[i], ""))) {
+            return test.fail("the two searches disagree on the empty needle");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The count is the number of positions, so it cannot drift from them.
+function test_the_count_is_the_number_of_positions(): test.TestOutcome {
+    var ps: string[] = pairs();
+    var i: i32 = 0;
+    while (i < ps.len()) {
+        var f: string[] = ps[i].split("|");
+        var n: i32 = naive_find(f[0], f[1]).len();
+        if (count(f[0], f[1]) != n) {
+            return test.fail("count(\"" + f[0] + "\", \"" + f[1] + "\") = "
+                + count(f[0], f[1]).to_string() + ", but there are "
+                + n.to_string() + " positions");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("strsearch — KMP and Boyer-Moore-Horspool, checked against each other");
+
+    var demos: string[] = ["abracadabra|abra", "mississippi|issi", "aaaa|aa",
+        "the café is a café|café"];
+    var i: i32 = 0;
+    while (i < demos.len()) {
+        var f: string[] = demos[i].split("|");
+        eprint("  \"" + f[1] + "\" in \"" + f[0] + "\"");
+        eprint("    count " + count(f[0], f[1]).to_string()
+            + "  kmp " + show(kmp_find(f[0], f[1]))
+            + "  bmh " + show(bmh_find(f[0], f[1])));
+        i = i + 1;
+    }
+    eprint("  failure table for \"abracadabra\": " + show(kmp_table("abracadabra")));
+
+    var r: test.TestRunner = test.test_new("strsearch");
+    r = r.it("all three agree exhaustively", test_all_three_agree_exhaustively);
+    r = r.it("all three agree on the text pairs", test_all_three_agree_on_the_text_pairs);
+    r = r.it("every reported position really matches", test_every_reported_position_really_matches);
+    r = r.it("no occurrence is missed", test_no_occurrence_is_missed);
+    r = r.it("the failure table matches its definition", test_the_failure_table_matches_its_definition);
+    r = r.it("the bad character table matches its definition", test_the_bad_character_table_matches_its_definition);
+    r = r.it("matches overlap", test_matches_overlap);
+    r = r.it("the empty needle", test_the_empty_needle);
+    r = r.it("the count is the number of positions", test_the_count_is_the_number_of_positions);
+    return r.finish();
+}

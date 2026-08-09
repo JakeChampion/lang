@@ -653,9 +653,9 @@ func pureReadReceiverBuiltin(name string) bool {
 
 // stringParamCounted reports whether string parameter `pn` of fn is retained
 // only through counted constructions or non-retaining reads — every appearance
-// is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, or the
-// receiver of a pure-read builtin (`s.len()`). Conservative: a param qualifies
-// only when every occurrence is credited.
+// is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, the receiver
+// of a pure-read builtin (`s.len()`), or the source of a byte index / slice.
+// Conservative: a param qualifies only when every occurrence is credited.
 func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
 	safe := map[*ast.Ident]bool{}
 	mark := func(e ast.Expr) {
@@ -682,6 +682,22 @@ func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
 			for _, el := range x.Elems {
 				mark(el)
 			}
+		case *ast.Index:
+			// `p[i]` yields a u8 — a value copy that creates no reference, so
+			// the source retains nothing. structParamProjectionsSafe already
+			// credits the same read one field deep (`p.strField[i]`); without
+			// it here, any scanner that looks at a byte of its string param
+			// lost the credit, and the CALLER's binding of that function's
+			// result stayed permanently taint-ineligible. The exit sweep then
+			// emitted the dec-only __fern_rc_dec instead of the freeing
+			// __fern_arr_dec, so a KMP-shaped `var f = table(p)` leaked its
+			// whole array once per call.
+			mark(x.Array)
+		case *ast.SliceExpr:
+			// `p[a:b]` on a string copies the bytes out into a fresh buffer
+			// and leaves the source alone (__str_slice), so it retains nothing
+			// either — the slice half of the same argument.
+			mark(x.Source)
 		case *ast.Call:
 			// `s.len()` — a pure-read builtin reads the receiver and returns a
 			// scalar, retaining nothing, so the receiver occurrence is safe.
