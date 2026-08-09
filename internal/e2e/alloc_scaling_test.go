@@ -254,6 +254,29 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A fresh array handed to a CLOSURE call (#6460). The arg-temp
+		// reclaim only ever ran for a call to a NAMED function, so the same
+		// literal passed through a function-typed local or param was never
+		// released at all — `frees=0`, not one short. Calling a callback with
+		// a freshly built collection is the ordinary way to use one.
+		//
+		// Constant in n: each round builds and discards one 3-element array.
+		name: "closure-call-array-arg",
+		decls: `import "std/i32";
+function each(f: (i32[]) => i32, n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + f([1, 2, i]); i = i + 1; }
+    return t;
+}
+function churn(n: i32): i32 {
+    var h: (i32[]) => i32 = (xs: i32[]) => xs.len();
+    return each(h, n) % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// A struct-update spread whose base is a FRESH value. `T { ...b, f: v }`
 		// where `b` is a LOCAL borrows the base — the local releases at its own
 		// scope exit, so the construction must not — but that reasoning does
