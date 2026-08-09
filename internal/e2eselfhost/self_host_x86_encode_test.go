@@ -661,7 +661,7 @@ function main(): i32 {
     // S0 at 16; disp32 = 16 - (3+4) = 9.
     d.code = x86_mov_load_r64(d.code, x86_rax(), x86_rax(), 0);
     d = x86_rodata_label(d, "S0");
-    d = x86_rodata_quad(d, 42, 0);
+    d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
     if (d.code.len() != 10 || d.code[3] != 9 || d.code[4] != 0 || d.code[5] != 0 || d.code[6] != 0) { return 10; }
     if (d.rodata.len() != 8 || d.rodata[0] != 42 || d.rodata[1] != 0 || d.rodata[7] != 0) { return 11; }
@@ -750,7 +750,7 @@ function main(): i32 {
     a.code = x86_mov_r32_imm32(a.code, x86_rax(), 60);
     a.code = x86_syscall(a.code);
     a = x86_rodata_label(a, "answer");
-    a = x86_rodata_quad(a, 42, 0);                          // .quad 42
+    a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);
     var bin: i32[] = elf_static_executable_data_x86(a.code, a.rodata);
     write(string_from_bytes_unchecked(bin));

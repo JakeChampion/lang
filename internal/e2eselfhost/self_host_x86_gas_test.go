@@ -467,3 +467,30 @@ function main(): i32 {
     return 0;
 }
 `
+
+// TestSelfHostX86GasNegativeQuadRuns pins that a `.quad` carries its full 64
+// bits. The directive was parsed with the i32 `x86_gas_atoi` and paired with a
+// hardcoded zero high half, so every negative constant landed zero-extended
+// (#6458): a const-struct `i32` field of -5 read back as 4294967291, and the
+// const-aggregate header's `.quad -1` — the runtime's immortal-rc sentinel,
+// tested with `js` — landed positive, so a const aggregate was refcounted
+// rather than skipped.
+//
+// The program compares three negative quads against sign-extended immediates
+// and exits 42 only if all three round-trip; a zero-extended one fails the
+// first compare and exits 43.
+func TestSelfHostX86GasNegativeQuadRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasnegquad42", x86GasNegativeQuadDriverMain, 42)
+}
+
+// x86GasNegativeQuadDriverMain: three negative `.quad`s read back through
+// `leaq sym(%rip)` and compared against `cmpq $imm` (sign-extended).
+const x86GasNegativeQuadDriverMain = `
+function main(): i32 {
+    var src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
