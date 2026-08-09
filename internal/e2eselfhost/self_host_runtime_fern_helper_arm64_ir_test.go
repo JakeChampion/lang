@@ -60,6 +60,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    sleep_ms(1);\n" +
 		"    var pfds: i32[] = [];\n" +
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
+		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -101,7 +102,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"sleep_ms",
 		// poll reaches ppoll through __syscall5 on this target; x86-64 uses
 		// three-argument poll(2). Both are Fern.
-		"poll"} {
+		"poll",
+		// wait4 plus the shell-style status decode. Four arguments on every
+		// target and only the number moves, so no per-target fork.
+		"proc_waitpid"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}

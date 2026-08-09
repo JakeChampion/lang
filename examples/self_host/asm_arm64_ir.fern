@@ -740,9 +740,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("proc_fork");
             s = s.write("    bl __fern_proc_fork\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 212) {  // proc_waitpid
-            // [pid] -> __fern_proc_waitpid(x0 = pid) -> decoded status in x0.
+            // [pid] IS param[0] already; the stack ABI needs no marshalling.
             s = s.need("proc_waitpid");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_proc_waitpid\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 213) {  // proc_exec
             // [pathbox, argsbox] -> __fern_proc_exec(x0 = path, x1 = args).
             // Only returns on failure (-errno), so the push is that value.
@@ -2416,7 +2416,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -6332,6 +6332,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("poll")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll(tgt), s.struct_decls, s);
     }
+    // proc_waitpid: wait4 into __fern_scratch plus the status decode. Same body
+    // on every target — only the number moves — so no `darwin` fork here.
+    if (s.has_need("proc_waitpid")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid(tgt), s.struct_decls, s);
+    }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
     // __fern_map_seed word.
@@ -6488,51 +6493,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_proc_fork, .-__fern_proc_fork\n");
-    }
-    // __fern_proc_waitpid(x0 = pid) → the reaped child's status, decoded to the
-    // shell convention both native backends use:
-    //     WIFEXITED ((status & 0x7f) == 0) -> (status >> 8) & 0xff
-    //     else (signal death)              -> 128 + (status & 0x7f)
-    // so a bounds-trapping worker surfaces as 134. wait4 is asm-generic 260 on
-    // Linux / BSD 7 on Darwin (pid, &status, options=0, rusage=NULL); a failing
-    // syscall returns -errno as-is. Heap-independent, gated by its own need.
-    if (s.has_need("proc_waitpid")) {
-        s = s.write(".globl __fern_proc_waitpid\n");
-        s = s.write(".type __fern_proc_waitpid, %function\n");
-        s = s.write("__fern_proc_waitpid:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    sub sp, sp, #16\n");           // status slot
-        s = s.write("    sxtw x0, w0\n");               // pid
-        s = s.write("    mov x1, sp\n");                // &status
-        s = s.write("    mov x2, #0\n");                // options = 0
-        s = s.write("    mov x3, #0\n");                // rusage = NULL
-        if (darwin) {
-            s = s.write("    mov x16, #7\n");
-            s = s.write("    svc #0x80\n");
-            s = s.write("    b.cc .Lpw_decode\n");
-            s = s.write("    neg x0, x0\n");            // carry set: +errno -> -errno
-            s = s.write("    b .Lpw_done\n");
-            s = s.write(".Lpw_decode:\n");
-        } else {
-            s = s.write("    mov x8, #260\n");          // sys_wait4
-            s = s.write("    svc #0\n");
-            s = s.write("    cmp x0, #0\n");
-            s = s.write("    b.lt .Lpw_done\n");        // -errno -> return as-is
-        }
-        s = s.write("    ldr w9, [sp]\n");              // status word
-        s = s.write("    and w10, w9, #0x7f\n");        // termination signal (0 = exited)
-        s = s.write("    cbnz w10, .Lpw_sig\n");
-        s = s.write("    lsr w0, w9, #8\n");
-        s = s.write("    and w0, w0, #0xff\n");
-        s = s.write("    b .Lpw_done\n");
-        s = s.write(".Lpw_sig:\n");
-        s = s.write("    add w0, w10, #128\n");
-        s = s.write(".Lpw_done:\n");
-        s = s.write("    mov sp, x29\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_proc_waitpid, .-__fern_proc_waitpid\n");
     }
     // __fern_str_chars is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_chars, emitted (need-gated) in the migrated-helpers

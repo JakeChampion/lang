@@ -686,45 +686,9 @@ pub function emit_ir_proc_exec(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_proc_waitpid appends __fern_proc_waitpid(%rdi = pid) -> i32: a
-// blocking wait4(2) (syscall 61 — pid, &status, options=0, rusage=NULL, status
-// in a stack slot) plus the status-word decode both native backends use,
-//
-//     WIFEXITED ((status & 0x7f) == 0) -> (status >> 8) & 0xff
-//     else (signal death)              -> 128 + (status & 0x7f)
-//
-// the shell convention, so a bounds-trapping worker surfaces as 134. A negative
-// syscall return (-errno, e.g. -ECHILD) passes through untouched. Transcribed
-// from the native x86-64 emitProcWaitpidRuntime; allocation-free (#5686).
-pub function emit_ir_proc_waitpid(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_proc_waitpid:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");          // status slot (16 keeps rsp aligned)
-    s = s.write("    movslq %edi, %rdi\n");       // pid
-    s = s.write("    movq %rsp, %rsi\n");         // &status
-    s = s.write("    xorl %edx, %edx\n");         // options = 0
-    s = s.write("    xorl %r10d, %r10d\n");       // rusage = NULL
-    s = s.write("    movq $61, %rax\n");
-    s = s.write("    syscall\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    js .Lir_pw_done\n");         // -errno -> return as-is
-    s = s.write("    movl (%rsp), %ecx\n");       // status word
-    s = s.write("    movl %ecx, %eax\n");
-    s = s.write("    andl $127, %eax\n");
-    s = s.write("    jnz .Lir_pw_sig\n");
-    s = s.write("    movl %ecx, %eax\n");
-    s = s.write("    shrl $8, %eax\n");
-    s = s.write("    andl $255, %eax\n");
-    s = s.write("    jmp .Lir_pw_done\n");
-    s = s.write(".Lir_pw_sig:\n");
-    s = s.write("    addl $128, %eax\n");
-    s = s.write(".Lir_pw_done:\n");
-    s = s.write("    movq %rbp, %rsp\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_proc_waitpid is a Fern runtime function (#2649):
+// asmcore.rt_src_proc_waitpid — wait4 into __fern_scratch, then the
+// signal-or-exit-code decode.
 
 // emit_ir_runtime appends the array/RC/heap runtime the IR path needs, using
 // asm.fern's OWN array layout + helper bodies (transcribed verbatim from
@@ -4382,7 +4346,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_read_all_stdin",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
-        "__fern_proc_fork", "__fern_proc_waitpid", "__fern_proc_exec",
+        "__fern_proc_fork", "__fn___fern_proc_waitpid", "__fern_proc_exec",
         // random_bytes and random_i32 are Fern on BOTH register backends now
         // (#2649), so only the stack-ABI symbols exist; the register-ABI
         // __fern_random_bytes / __fern_random_i32 are gone.
@@ -5036,7 +5000,8 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.need("proc_fork");
         } else if (o.kind_tag == 212) {  // proc_waitpid
             // [pid] -> __fern_proc_waitpid(%rdi = pid) -> decoded status in %rax.
-            s = s.write("    popq %rdi\n    call __fern_proc_waitpid\n    pushq %rax\n");
+            // [pid] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_proc_waitpid\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("proc_waitpid");
         } else if (o.kind_tag == 213) {  // proc_exec
             // [pathbox, argsbox] -> __fern_proc_exec(%rdi = path, %rsi = args).
@@ -7491,7 +7456,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("map_hash_seed")) { s = emit_ir_map_hash_seed(s); }
     // fork / wait4 allocate nothing either — same heap-independent gating.
     if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
-    if (s.has_need("proc_waitpid")) { s = emit_ir_proc_waitpid(s); }
+    if (s.has_need("proc_waitpid")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86_64"), all_structs, s);
+    }
     if (s.has_need("proc_exec")) { s = emit_ir_proc_exec(s); }
     // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
     // helpers hand the kernel to write structs into (timespec for the clocks,
@@ -7504,7 +7472,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     if (s.has_need("monotonic_ns")) {

@@ -384,6 +384,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "accept") { return "43"; }
         if (name == "nanosleep") { return "35"; }
         if (name == "poll") { return "7"; }
+        if (name == "wait4") { return "61"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -413,6 +414,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getdents") { return "344"; }
         if (name == "accept") { return "30"; }
         if (name == "select") { return "93"; }
+        if (name == "wait4") { return "7"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -432,6 +434,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "accept") { return "202"; }
     if (name == "nanosleep") { return "101"; }
     if (name == "ppoll") { return "73"; }
+    if (name == "wait4") { return "260"; }
     return "-1";
 }
 
@@ -659,6 +662,21 @@ pub function rt_src_poll(t: string): string {
         call = "var tmo: i32 = 0; if (timeout_ms >= 0) { var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, timeout_ms / 1000); __raw_store_ptr(ts, 1, (timeout_ms % 1000) * 1000000); tmo = ts; } __syscall5(" + sysno(t, "ppoll") + ", buf, n, tmo, 0, 0);";
     }
     return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { var n: i32 = fds.len(); if (n <= 0) { return 0 - 1; } var buf: i32 = __raw_alloc(n * 8); var i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, fds[i]); __raw_store8(buf, i * 8 + 4, 1); __raw_store8(buf, i * 8 + 5, 0); __raw_store8(buf, i * 8 + 6, 0); __raw_store8(buf, i * 8 + 7, 0); i = i + 1; } " + call + " var j: i32 = 0; while (j < n) { if ((__raw_load8(buf, j * 8 + 6) & 1) != 0) { return j; } j = j + 1; } return 0 - 1; }";
+}
+
+// rt_src_proc_waitpid backs `proc_waitpid(pid)` (#2649, syscall-leaf) — reap a
+// child and decode its wait status the way a shell does: the termination signal
+// plus 128 if it was killed, otherwise the exit code.
+//
+// wait4(pid, &status, 0, NULL) is four arguments on every target and only the
+// number moves, so unlike sleep_ms and poll this one needs no per-target fork at
+// all. The Darwin hand-asm carried a manual carry-flag check to turn +errno into
+// -errno; that is dropped rather than ported, because darwinize already wraps
+// every __syscall* with exactly that sequence.
+//
+// The status lands in __fern_scratch, so this joins the scratch gate.
+pub function rt_src_proc_waitpid(t: string): string {
+    return "function __fern_proc_waitpid(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 0, 0); if (rc < 0) { return rc; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

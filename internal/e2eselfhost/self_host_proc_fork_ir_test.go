@@ -128,7 +128,12 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			for _, want := range []string{"bl __fern_proc_fork", "bl __fern_proc_waitpid", "mov x8, #220", "mov x8, #260"} {
+			// proc_fork is still hand-asm (Darwin's fork reports failure in the carry
+			// flag, which Fern cannot read), so it keeps `mov x8, #220`.
+			// proc_waitpid is Fern since #2649: __syscall4 loads wait4's number as
+			// an ordinary operand and pops it into x8, so the number shows up as
+			// `mov x0, #260` and the symbol carries the stack-ABI prefix.
+			for _, want := range []string{"bl __fern_proc_fork", "bl __fn___fern_proc_waitpid", "mov x8, #220", "mov x0, #260"} {
 				if !strings.Contains(asm, want) {
 					t.Errorf("emitted arm64 asm missing %q", want)
 				}
