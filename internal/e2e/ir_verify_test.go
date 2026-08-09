@@ -25,12 +25,20 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/treeshake"
 )
 
 // Both widths: wasm32 resolves WidthPtr to 4, the register backends to
 // 8, and the lowering differs enough that one can be well-formed while
 // the other is not.
 var verifyWidths = []int{4, 8}
+
+// skippedLowering records the cases corpusPrograms could not lower, keyed
+// "<case>@<ptrW>". A skip here removes a program from every gate built on
+// the helper, so it is recorded rather than discarded — see
+// TestCorpusLowersForVerification.
+var skippedLowering = map[string]string{}
 
 // corpusPrograms lowers every runnable case at both pointer widths and
 // hands each resulting program to fn.
@@ -53,6 +61,9 @@ func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)
 		if _, err := os.Stat(filepath.Join(dir, "expected.error")); err == nil {
 			continue // compile-error case: never reaches lowering
 		}
+		if _, err := os.Stat(filepath.Join(dir, "expected.lowering-error")); err == nil {
+			continue // the case IS a lowering rejection; failing to lower is the point
+		}
 		main := filepath.Join(dir, "main.fern")
 		for _, w := range verifyWidths {
 			// Re-load per width so a pass that rewrites the AST cannot
@@ -68,8 +79,29 @@ func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)
 			if err != nil {
 				continue
 			}
-			ip, err := ir.LowerWith(p, info, w)
+			// Mirror what a backend does between checking and lowering.
+			// Every omission here failed to LOWER rather than failing
+			// loudly, so it was swallowed by the skip below and the case
+			// went silently absent from every gate built on this helper:
+			// without monomorphisation a generic instantiation stays
+			// unspecialised, without the tree-shake a case importing
+			// `std/float` dies on a function no program reaches, and
+			// without DynSupported a `dyn Trait` case is refused outright
+			// at ptrW 8.
+			if err := monomorph.Run(p, info); err != nil {
+				skippedLowering[name+"@"+strconv.Itoa(w)] = "monomorph: " + err.Error()
+				continue
+			}
+			roots := append(treeshake.DynCoercionImplMethods(info),
+				treeshake.DowncastImplMethods(p, info)...)
+			treeshake.Run(p, roots...)
+			var opts []ir.LowerOption
+			if w == 8 {
+				opts = append(opts, ir.DynSupported(), ir.DynRcSupported())
+			}
+			ip, err := ir.LowerWith(p, info, w, opts...)
 			if err != nil {
+				skippedLowering[name+"@"+strconv.Itoa(w)] = err.Error()
 				continue // not every case lowers on every width
 			}
 			fn(name, w, ip)
@@ -250,4 +282,33 @@ func reachableLimit(ops []ir.Op) int {
 		}
 	}
 	return len(ops)
+}
+
+// A case corpusPrograms cannot lower is absent from every gate built on
+// it, silently — which is how 280 of 758 case/width pairs went
+// unverified. The helper ran `checker.Check` then `ir.LowerWith` with no
+// options, where a backend first monomorphises, then tree-shakes, and at
+// ptrW 8 opts into `dyn`. Every omission failed to LOWER rather than
+// failing loudly, so each one subtracted programs from the gate instead
+// of reporting anything.
+//
+// With the pipeline matched to a backend's, all 758 lower. This holds
+// that, so the next omission is a failure rather than a quiet subtraction.
+func TestCorpusLowersForVerification(t *testing.T) {
+	var lowered int
+	corpusPrograms(t, func(string, int, *ir.Program) { lowered++ })
+	if lowered == 0 {
+		t.Fatal("nothing lowered — the helper is not measuring anything")
+	}
+	if len(skippedLowering) > 0 {
+		var keys []string
+		for k := range skippedLowering {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			t.Errorf("%s did not lower, so it is in no IR gate: %s", k, skippedLowering[k])
+		}
+	}
+	t.Logf("%d case/width pairs lowered, %d skipped", lowered, len(skippedLowering))
 }

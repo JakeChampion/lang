@@ -1,0 +1,25 @@
+// spec: FS-07
+import "std/float";
+// Subtraction, negation, `!=` and `<=` on f64 — the four ordinary float
+// operations no other case reached. Operands come from a call so constant
+// folding cannot evaluate the arithmetic away and leave the ops unlowered.
+function scaled(n: i32): f64 {
+    return (n as f64) * 0.5;
+}
+
+function main(): i32 {
+    var a: f64 = scaled(15);
+    var b: f64 = scaled(5);
+    var d: f64 = a - b;
+    var neg: f64 = -d;
+
+    var flags: i32 = 0;
+    if (a != b) { flags = flags + 1; }
+    if (b <= a) { flags = flags + 2; }
+    if (neg <= b) { flags = flags + 4; }
+    if (a <= a) { flags = flags + 8; }
+
+    print(d.to_string());
+    print(neg.to_string());
+    return flags;
+}

@@ -47,11 +47,15 @@ func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 // (borrow-inference-off) RC divergence on wasm, tracked by an issue. They
 // still run under the production (borrow-on) model via TestFernFixtures on
 // all four backends — only the owned-vs-borrow differential is skipped here.
-//
-// (Empty — #2828 fixed: the owned-model enum-param fall-off drop's tag stash
-// was allocated after the function's scratch-local count was taken, leaving
-// it undeclared on wasm. audit_types_match now matches across both models.)
-var wasmBorrowInferKnownDivergent = map[string]bool{}
+var wasmBorrowInferKnownDivergent = map[string]bool{
+	// #6465: any `dyn Trait` LOCAL traps at scope exit under the owned
+	// model — `memory fault at wasm address 0xffffffff`, a [ptr-4] header
+	// read with ptr == 0. Not about argument passing: a lone local with no
+	// call fails identically. wasm keeps `dyn` as the inline two-word
+	// [data, vtable] pair where the natives box it, and the natives are
+	// clean, which fits. Older than the case that found it.
+	"dyn_trait_dispatch": true,
+}
 
 func TestWASMBorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {

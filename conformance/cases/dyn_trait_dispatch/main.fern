@@ -1,0 +1,33 @@
+// `dyn Trait` runtime dispatch — the only conformance case that runs it.
+// `dyn` had two compile-error cases (E059, E060) and no case that
+// executed a dispatch, so nothing pinned the behaviour of the vtable
+// itself: which method a call lands on, or that two concretes behind the
+// same `dyn` type reach different bodies.
+trait Shape {
+    function area(self: Self): i32;
+    function sides(self: Self): i32;
+}
+
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function sides(self: Self): i32 { return 4; }
+}
+
+struct Triangle { base: i32, height: i32 }
+impl Shape for Triangle {
+    function area(self: Self): i32 { return (self.base * self.height) / 2; }
+    function sides(self: Self): i32 { return 3; }
+}
+
+function describe(s: dyn Shape): i32 {
+    return s.area() * 10 + s.sides();
+}
+
+function main(): i32 {
+    var sq: dyn Shape = Square { side: 3 };
+    var tr: dyn Shape = Triangle { base: 4, height: 5 };
+    // 9*10+4 = 94, 10*10+3 = 103. The second method slot is what proves
+    // the call reads the vtable rather than always dispatching to slot 0.
+    return describe(sq) + describe(tr) - 155;
+}

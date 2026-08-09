@@ -239,13 +239,33 @@ func coreFixtures(op OpKind, mnemonic string) []coreFixture {
 		}
 		return out
 
-	case OpCallIndirect, OpCallDyn:
+	case OpCallIndirect:
 		var out []coreFixture
 		for _, sh := range shapes {
 			args := []ast.Type{sh.t}
 			out = append(out, coreFixture{
 				label:    sh.name + " argument and result",
 				op:       Op{Kind: op, I32: 1, Ext: &OpExt{Sig: &ast.FuncType{Params: args, Result: sh.t}}},
+				argTypes: args,
+				rType:    sh.t,
+			})
+		}
+		return out
+
+	case OpCallDyn:
+		// The signature is receiver-first and I32 is the METHOD'S VTABLE
+		// SLOT, not an argument count. A fixture where the two coincide
+		// checks neither reading, so the slot here is deliberately
+		// nothing like the argument count.
+		var out []coreFixture
+		recv := ast.NumberType{Width: 32}
+		for _, sh := range shapes {
+			args := []ast.Type{sh.t}
+			out = append(out, coreFixture{
+				label: sh.name + " argument and result",
+				op: Op{Kind: op, I32: 5, Ext: &OpExt{
+					Sig: &ast.FuncType{Params: append([]ast.Type{recv}, args...), Result: sh.t},
+				}},
 				argTypes: args,
 				rType:    sh.t,
 			})

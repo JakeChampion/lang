@@ -1,0 +1,23 @@
+// A Result whose Ok and Err payloads are both word-sized, returned
+// call-return-style. That is the shape the compiler returns in registers
+// as a (tag, payload) pair rather than boxing on the heap, so it is the
+// only spelling that reaches the pair-form Ok / Err construction. A
+// Result with a string payload takes the boxed path instead, which
+// `result_err_path` already covers.
+function checked_div(a: i32, b: i32): Result[i32, i32] {
+    if (b == 0) { return Err(7); }
+    return Ok(a / b);
+}
+
+function main(): i32 {
+    var flags: i32 = 0;
+    match (checked_div(84, 2)) {
+        Ok(v) => { if (v == 42) { flags = flags + 1; } },
+        Err(_) => { flags = flags + 16; }
+    }
+    match (checked_div(1, 0)) {
+        Ok(_) => { flags = flags + 32; },
+        Err(e) => { if (e == 7) { flags = flags + 2; } }
+    }
+    return flags;
+}

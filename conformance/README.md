@@ -4,7 +4,7 @@ Status: normative. This directory defines observable Fern behaviour by
 example. A change to a case's expected output is a change to the
 language, and should be reviewed as one.
 
-`cases/` holds 439 self-contained programs, each a directory with the
+`cases/` holds 444 self-contained programs, each a directory with the
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it:
 `internal/interp`, the three native backends (x86-64, arm64, wasm), and

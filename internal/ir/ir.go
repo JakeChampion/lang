@@ -2226,11 +2226,18 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 			// non-generic struct/enum, neither of which needs the
 			// generic-enum / tuple registry, and the worklist regenerates
 			// the body from info.Structs / info.Enums by name.
+			// With reclamation compiled out the drop-fn BODIES are never
+			// generated (the worklist below is gated on RcFreeEnabled), so
+			// naming one here leaves the vtable referencing a symbol that
+			// does not exist and the link fails. The null sentinel is what
+			// the slot already means for a concrete needing no drop, and
+			// free-off leaks by construction, so it is the right answer
+			// rather than a workaround.
 			drop := ""
-			if prim {
+			if prim && ast.RcFreeEnabled {
 				drop = "__drop_dynprim_" + concrete
 			}
-			if !prim {
+			if !prim && ast.RcFreeEnabled {
 				var ct ast.Type
 				if _, ok := info.Structs[concrete]; ok {
 					ct = ast.StructType{Name: concrete}
@@ -2467,6 +2474,10 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			// dispatch + free the cell. Slots: 0 = cell (param), 1 = data,
 			// 2 = vtable.
 			fn.Params = []ast.Param{{Name: "__dcell", Type: ast.NumberType{}}}
+			// Slots 1 and 2 are scratch, and have to be DECLARED: a
+			// backend that sizes its frame from the declared count
+			// (wasm does) would otherwise write them outside it.
+			fn.ScratchTypes = []ast.Type{ast.NumberType{}, ast.NumberType{}}
 			// NULL-guard the cell pointer. The drop sites zero-init a `dyn`
 			// slot, so the first loop-iteration reinit drop and a
 			// never-assigned slot at exit pass cell==0; on the natives that
@@ -2499,12 +2510,10 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			emit(Op{Kind: OpDrop}) // discard the ptr the dtor returns
 			emit(Op{Kind: OpEnd})
 			// __free(cell, 2*ptrW) — reclaim the box cell itself. __free is
-			// (base, size); the pushed result is meaningless, so drop it to
-			// keep the operand stack balanced.
+			// (base, size) and returns nothing, so nothing follows it.
 			emit(Op{Kind: OpLoadLocal, I32: 0})
 			emit(Op{Kind: OpConstI32, I32: int32(2 * ptrW)})
 			emit(Op{Kind: OpCallDirect, Str: "__free", I32: 2})
-			emit(Op{Kind: OpDrop})
 			emit(Op{Kind: OpEnd}) // close the cell != 0 guard
 			emit(Op{Kind: OpReturnVoid})
 			out = append(out, fn)

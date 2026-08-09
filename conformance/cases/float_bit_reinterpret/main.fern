@@ -1,0 +1,28 @@
+// The four bit-level reinterprets, in both directions and at both
+// widths. A reinterpret changes no value, so the round trip is exact and
+// the bit pattern of a normal finite float is IEEE-754's — the parts
+// `docs/FLOAT-SEMANTICS.md` leaves unspecified are NaN payloads,
+// denormals and the sign of zero, none of which appear here.
+function scaled32(n: i32): f32 {
+    return (n as f32) * 0.5;
+}
+function scaled64(n: i32): f64 {
+    return (n as f64) * 0.5;
+}
+
+function main(): i32 {
+    var f: f32 = scaled32(2);
+    var bits: i32 = f32_bits(f);
+    var back: f32 = f32_from_bits(bits);
+
+    var g: f64 = scaled64(4);
+    var wide: i64 = f64_bits(g);
+    var g2: f64 = f64_from_bits(wide);
+
+    var flags: i32 = 0;
+    if (bits == 1065353216) { flags = flags + 1; }
+    if (back == f) { flags = flags + 2; }
+    if ((wide >> 52) == 1024) { flags = flags + 4; }
+    if (g2 == g) { flags = flags + 8; }
+    return flags;
+}
