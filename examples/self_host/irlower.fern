@@ -12924,6 +12924,12 @@ function iife_payload_borrow_i32(ft: string, name: string, arm: parser.MatchArm,
 //     binding is in scope (iife_payload_borrow_i32 / iife_expr_result_is_i32).
 function iife_payload_field_bindable(ft: string, name: string, arm: parser.MatchArm, res_kind: string, s: LowerState): boolean {
     if (ft == "i32") { return true; }
+    // u32 rides the same 32-bit payload slot as i32 — op_opt_make stores a 4-byte
+    // wrapped value and the underlying StmtMatch path binds it at width, which is
+    // why the STATEMENT form of the same match already lowers. Only this gate
+    // named the width, so `match (a -? b) { Some(c) => c, … }` on u32 operands
+    // refused where the i32 spelling lowered (#6400).
+    if (ft == "u32") { return true; }
     if (ft == "i64" || ft == "f64") {
         if (iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name)) { return true; }
         // `(arith-over-payload) as i32` (`Some(x) => (x + 2) as i32`, `Some(v) =>
