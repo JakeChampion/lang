@@ -12,10 +12,22 @@ three clocks, and the whole fs family) over the `__syscall3` / `__syscall4` /
 `__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08 they are
 reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `write_file` / `remove_file` / `temp_dir` / `stat` with their shared
-`__fern_io_error`, then `env`. Each is ONE source across all three native
+`__fern_io_error`, then `env`, and finally `open_fd` — the Reader/Writer
+opener, and the last leaf that had kept a register-ABI hand-asm
+`__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
+one now). Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
-by the target. The **array producers** followed — the first non-syscall helpers
+by the target.
+
+`open_fd` is the one place a target key was not enough. Its openat flags are a
+PARAMETER, not a constant: irlower picks them per builtin (`open_reader` /
+`open_writer` / `open_appender`) and has no target, so the op site passes the
+Linux value everywhere and Darwin has to translate at run time — the same two
+comparisons the hand-asm did, now in Fern, emitted only for `arm64-darwin`.
+Getting this wrong is invisible until it corrupts data: untranslated,
+`open_writer` asks XNU for O_CREAT-without-O_TRUNC and an overwrite leaves the
+old file's trailing bytes (#6042). The **array producers** followed — the first non-syscall helpers
 to move, all three over the `__raw_arr_box` + `__raw_array` pair:
 `xs.reverse()` / `xs.concat(ys)` arch-independent (one source, no target
 parameter), and `a[start:end]` with one, because its bounds check traps.
@@ -362,6 +374,40 @@ emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
   targets `asm_ir.fern`/`asm_arm64_ir.fern`/`wasm_ir.fern` first. A helper
   that works on the IR + self-host path but not the legacy AST→asm backend is
   acceptable per the project's stated gap policy.
+
+## What is left on the register backends, and what each needs
+
+Audited against the code at `ca576fc8`, because the interesting question for
+the next slice is not "which helpers are hand-written" but "which of them the
+floor can already express". The answer is: **all but one**.
+
+| still hand-asm | syscall | args | floor |
+| --- | --- | --- | --- |
+| `tcp_close` | `close` | 1 | `__syscall3` |
+| `tcp_accept` | `accept` | 3 | `__syscall3` |
+| `tcp_connect` / `tcp_listen` / `tcp_recv` | socket/bind/listen/connect/recvfrom | ≤3 | `__syscall3` |
+| `tcp_send` | `write` | 3 | `__syscall3` |
+| `poll` | `poll` | 2 (+ a built pollfd array) | `__syscall3` |
+| `timer_fd` | `timerfd_*` | 4 | `__syscall4` |
+| `proc_fork` | `clone` | 0 | `__syscall3` |
+| `proc_waitpid` | `wait4` | 2 | `__syscall3` |
+| `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
+| `sleep_ms` (Linux) | `nanosleep` | 2 | `__syscall3` |
+| **`sleep_ms` (Darwin)** | **`select`** | **5** | **needs `__syscall5`** |
+
+`tcp_pollable` issues no syscall at all. The remaining non-leaf entries
+(`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
+machinery) are infrastructure, not migration targets.
+
+**Do not read syscall arity off the registers the hand-asm touches.** Doing
+that here gave `tcp_send` six arguments and `proc_exec` six; both are three,
+and the extra registers are scratch in their byte-copy loops. Read the syscall
+number and count the arguments it actually takes.
+
+So `__syscall5` buys exactly one thing — Darwin's sleep — and nothing else in
+this table is waiting on the floor. The long entries are long because they
+build a struct (`sockaddr_in`, `pollfd[]`, `argv`) before the call, which is
+`__raw_alloc` + `__raw_store8` work, not a missing primitive.
 
 ## Validation strategy per slice
 

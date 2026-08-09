@@ -484,16 +484,19 @@ pub function statoff(t: string, name: string): string {
 pub function oflag(t: string, name: string): string {
     if (t == "arm64-darwin") {
         if (name == "wr_creat_trunc") { return "1537"; }
+        if (name == "wr_creat_append") { return "521"; }
         if (name == "rd_directory") { return "1048576"; }
         return "0";
     }
     if (t == "x86_64") {
         if (name == "wr_creat_trunc") { return "577"; }
+        if (name == "wr_creat_append") { return "1089"; }
         if (name == "rd_directory") { return "65536"; }
         return "0";
     }
     // arm64 (Linux).
     if (name == "wr_creat_trunc") { return "577"; }
+    if (name == "wr_creat_append") { return "1089"; }
     if (name == "rd_directory") { return "16384"; }
     return "0";
 }
@@ -560,6 +563,28 @@ pub function rt_src_random_bytes(t: string): string {
 // `random_get` bundle; it has no generic syscall.
 pub function rt_src_random_i32(t: string): string {
     return "function __fern_random_i32(): i32 { var p: i32 = __raw_scratch(4); __syscall3(" + sysno(t, "getrandom") + ", p, 4, 0); return __load_i32(p); }";
+}
+
+// rt_src_open_fd backs the file half of the streaming Reader/Writer surface
+// (#4372, #2649 syscall-leaf) — one helper for open_reader (flags 0) /
+// open_writer / open_appender, returning the raw fd or -errno. NUL-terminate the
+// path, openat(AT_FDCWD, pathz, flags, mode).
+//
+// The flags arrive as a PARAMETER, not a per-target constant, because irlower
+// picks them and has no target: the op site passes the Linux value on every
+// target. So Darwin translates at run time, exactly as the hand-asm did — XNU's
+// O_CREAT/O_TRUNC/O_APPEND (0x200/0x400/0x8) match none of Linux's
+// 64/512/1024. Untranslated, open_writer asks XNU for O_CREAT-without-O_TRUNC
+// and an overwrite leaves the old file's trailing bytes (#6042). The two live
+// combinations are the only ones the op site can produce, and the Linux targets
+// get no branches at all.
+pub function rt_src_open_fd(t: string): string {
+    var xlate: string = "";
+    if (t == "arm64-darwin") {
+        xlate = "if (f == " + oflag("x86_64", "wr_creat_trunc") + ") { f = " + oflag(t, "wr_creat_trunc") + "; } "
+              + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } ";
+    }
+    return "function __fern_open_fd(path: string, flags: i32, mode: i32): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "return __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
