@@ -21634,7 +21634,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names));
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -27216,7 +27216,18 @@ function expr_is_scalarish(e: parser.Expr): boolean {
     }
 }
 
-function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[]): EnumFrees {
+// `nested_ok` admits a consuming match one block deeper (#6319). TRUE only from
+// lower_block, which is where it is NEEDED: precise_drop_names is only ever called
+// with fn.body, so it already claims the nested spelling at function scope and can
+// never reach a loop-declared local.
+//
+// Keeping the fn-scope call sites on the flat lookup is a territory boundary, not a
+// double-free guard — measured, because the obvious guess is wrong. Passing true
+// there as well does NOT over-release: the precise drop zeroes the slot, so the
+// second credit loads 0 and decs null. The boundary is kept because two analyses
+// silently claiming one local is how a real over-release gets built later, and
+// because the redundant credit buys nothing precise-drop has not already done.
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -27243,18 +27254,28 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                     || all_assigns_fresh_scalar_enum(body, v.name, structs);
                 if ((owner != "" || is_opt) && rebind_ok) {
                     // Find the single consuming match: exactly one top-level
-                    // statement whose scrutinee is the bare ident `v.name`.
-                    var match_idx: i32 = sole_top_level_match_idx(body, v.name);
-                    if (match_idx > vi) {
+                    // statement whose scrutinee is the bare ident `v.name` — or,
+                    // under `nested_ok`, the top-level statement uniquely CONTAINING
+                    // it, which is where the free then lands.
+                    var match_idx: i32 = 0 - 1;
+                    var msv: parser.Stmt[] = [];
+                    if (nested_ok) {
+                        match_idx = sole_consuming_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    } else {
+                        match_idx = sole_top_level_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = [body[match_idx]]; }
+                    }
+                    if (match_idx > vi && msv.len() == 1) {
                         // x must not be used in the match's arm bodies/guards (those
                         // uses would be a real escape/re-reference), must not be dead
                         // after the match (no later use), and must not escape anywhere
                         // outside the scrutinee mention. name_escapes_outside_stmt skips
-                        // the WHOLE match statement, so it ignores the scrutinee escape;
-                        // we separately reject any arm-body use of x. Every other
-                        // statement (incl. the construction's own init — a ctor call
-                        // does not push x) is walked for escapes.
-                        var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
+                        // the WHOLE enclosing statement, so it ignores the scrutinee
+                        // escape; we separately reject any arm-body use of x. Every
+                        // other statement (incl. the construction's own init — a ctor
+                        // call does not push x) is walked for escapes.
+                        var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
                         if (!arms_use && dead_after && !escapes) {
@@ -36797,7 +36818,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // here is what carries the fn-level admission (escape gate + sole consuming match
     // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
     // one statement.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
+    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), false);
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
         if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
@@ -37048,7 +37069,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the match. The box is freed (dec + zero) right after its match statement —
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), false);
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
