@@ -8389,12 +8389,17 @@ func (b *builder) expr(e ast.Expr) error {
 		//     allocation is a single tag word; cheap.
 		//   - Result: forward the SOURCE pointer as the return
 		//     value. The source already carries tag=Err and the E
-		//     payload at +4, and the checker has verified the E
-		//     matches the enclosing return's E, so the same heap
-		//     object satisfies both types — no reallocation.
+		//     payload, and the checker has verified the E matches
+		//     the enclosing return's E, so the same heap object
+		//     satisfies both types — no reallocation. A pair-form
+		//     enclosing function cannot forward the pointer and
+		//     copies (tag, payload) out instead.
 		//
-		// Both share the success-path payload load at ptr+4; the
-		// width comes from the checker-stamped Type.
+		// Every payload load — the success path's T, and the
+		// pair-form failure path's E — takes its offset and width
+		// from payloadLayout. The offset is NOT a constant: a
+		// pointer or other 8-byte payload sits at 8 rather than 4,
+		// because the tag occupies 0..3.
 		ptrSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__try_p_%d", ptrSlot)] = ptrSlot
 		// Reclaim a FRESH owned source box once the `?` consumes it — the
@@ -8502,12 +8507,29 @@ func (b *builder) expr(e ast.Expr) error {
 				// Forward the source heap-box's (tag,
 				// payload) onto the operand stack so
 				// OpReturnPair has the right shape.
+				//
+				// The E payload's offset and width come from payloadLayout,
+				// exactly as the success path below takes T's. A hardcoded
+				// `ptr + 4` with a default-width load is only right when a
+				// payload happens to be 4 bytes wide: at ptrW == 8 an E
+				// carrying a pointer sits at offset 8, so the fixed offset
+				// read half a pointer plus padding and handed the caller a
+				// garbage address to dereference — `f()?` propagating an
+				// `Err(Fault { step: string })` segfaulted on both natives
+				// while wasm, where 4 is the right offset, was fine.
+				errOff := int32(4)
+				errLoad := Op{Kind: OpLoad}
+				if et, ok := b.fn.ReturnType.(ast.EnumType); ok && len(et.Args) == 2 {
+					offs, _ := payloadLayout([]ast.Type{et.Args[1]}, 1, b.ptrW)
+					errOff = offs[0]
+					errLoad = payloadLoadOpFor(et.Args[1], b.ptrW)
+				}
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 				b.emit(Op{Kind: OpLoad}) // tag at ptr+0
 				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-				b.emit(Op{Kind: OpConstI32, I32: 4})
+				b.emit(Op{Kind: OpConstI32, I32: errOff})
 				b.emit(Op{Kind: OpAdd})
-				b.emit(Op{Kind: OpLoad}) // payload at ptr+4
+				b.emit(errLoad)
 				// The (tag, payload) pair is copied out for OpReturnPair, so
 				// a FRESH source box dies here rather than being forwarded —
 				// free it (tag==1 proven: Err-variant size for the heap-form
