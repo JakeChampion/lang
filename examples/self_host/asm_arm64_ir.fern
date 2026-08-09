@@ -744,10 +744,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("proc_waitpid");
             s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 213) {  // proc_exec
-            // [pathbox, argsbox] -> __fern_proc_exec(x0 = path, x1 = args).
-            // Only returns on failure (-errno), so the push is that value.
+            // [pathbox, argsbox] -> __fern_proc_exec(path, args). Only returns
+            // on failure (-errno), so the push is that value.
             s = s.need("heap"); s = s.need("proc_exec");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_proc_exec\n    str x0, [sp, #-16]!\n");
+            // args is on top but param[0] is path, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_proc_exec\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 182) {  // monotonic_ns
             // no operands; call the Fern-compiled __fn___fern_monotonic_ns
             // (asmcore.rt_src_clock, #2649) -> i64 in x0. A ZERO-ARG helper has
@@ -864,16 +866,22 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 193) {  // tcp_connect
             // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
             s = s.need("heap");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_connect\n    str x0, [sp, #-16]!\n");
+            // port is on top but param[0] is host_be, so swap before the call.
+            s = s.need("tcp_connect");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_tcp_connect\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 194) {  // tcp_send
             // [fd, str box] -> __fern_tcp_send(x0=fd, x1=box) -> bytes / -errno.
             s = s.need("heap");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_send\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
-            // [fd, max] -> __fern_tcp_recv(x0=fd, x1=max) -> string box. Allocates
+            // [fd, max] -> __fern_tcp_recv(fd, max) -> string box. Allocates
             // (calls __fern_alloc), so the heap runtime must be present.
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_recv\n    str x0, [sp, #-16]!\n");
             s = s.need("heap");
+            s = s.need("tcp_recv");
+            // max is on top but param[0] is fd, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_tcp_recv\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 196) {  // tcp_close
             // [fd] IS param[0] already, so the stack ABI needs no marshalling.
             // -> 0 / -errno. The need is marked (as x86-64 always did) because
@@ -2417,7 +2425,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -4638,38 +4646,7 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // tcp_listen is Fern now (#2649) — see the migrated-helpers section.
 
-    // __fern_tcp_recv(x0 = fd, x1 = max) → string box {data, len}.
-    // Allocates max bytes, read()s into them, boxes (data, len). On
-    // error / EOF the box has len 0.
-    s = s.write(".globl __fern_tcp_recv\n");
-    s = s.write(".type __fern_tcp_recv, %function\n");
-    s = s.write("__fern_tcp_recv:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // fd
-    s = s.write("    mov x20, x1\n");           // max
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");           // data buf
-    s = s.write("    mov x0, x19\n");
-    s = s.write("    mov x1, x21\n");
-    s = s.write("    mov x2, x20\n");
-    s = s.write("    mov x8, #63\n");           // read
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    csel x0, x0, xzr, ge\n");  // clamp -errno/EOF → 0
-    s = s.write("    mov x22, x0\n");           // len
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x21, [x0]\n");         // data@0
-    s = s.write("    str x22, [x0, #8]\n");     // len@8
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_recv, .-__fern_tcp_recv\n");
+    // tcp_recv is Fern now (#2649) — see the migrated-helpers section.
 
     // __fern_tcp_send(x0 = fd, x1 = string box) → bytes written / -errno.
     // write(fd, box.data, box.len). Leaf.
@@ -4685,57 +4662,10 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write(".size __fern_tcp_send, .-__fern_tcp_send\n");
 
 
-    // __fern_tcp_connect(x0 = host_be, x1 = port) → connected fd or -errno.
-    // socket(AF_INET, SOCK_STREAM, 0) #198; build sockaddr_in {family,
-    // htons(port), sin_addr=host_be (network order), zero}; connect #203.
-    // host_be is the IPv4 packed in network byte order. Mirrors the listen
-    // sockaddr build (incl. the Darwin sin_len byte).
-    s = s.write(".globl __fern_tcp_connect\n");
-    s = s.write(".type __fern_tcp_connect, %function\n");
-    s = s.write("__fern_tcp_connect:\n");
-    s = s.write("    stp x29, x30, [sp, #-48]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #16]\n");
-    s = s.write("    str x21, [sp, #32]\n");
-    s = s.write("    mov x19, x0\n");           // host_be
-    s = s.write("    mov x20, x1\n");           // port
-    s = s.write("    mov x0, #2\n");            // AF_INET
-    s = s.write("    mov x1, #1\n");            // SOCK_STREAM
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #198\n");          // socket
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lir_tcon_done\n");
-    s = s.write("    mov x21, x0\n");           // fd
-    s = s.write("    sub sp, sp, #16\n");       // sockaddr_in
-    if (darwin) {
-        s = s.write("    mov w0, #16\n");
-        s = s.write("    strb w0, [sp]\n");     // sin_len
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strb w0, [sp, #1]\n"); // sin_family
-    } else {
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
-    }
-    s = s.write("    rev16 w0, w20\n");         // htons(port)
-    s = s.write("    strh w0, [sp, #2]\n");
-    s = s.write("    str w19, [sp, #4]\n");     // sin_addr = host_be (network order)
-    s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
-    s = s.write("    mov x0, x21\n");
-    s = s.write("    mov x1, sp\n");
-    s = s.write("    mov x2, #16\n");
-    s = s.write("    mov x8, #203\n");          // connect
-    s = s.write("    svc #0\n");
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lir_tcon_done\n");
-    s = s.write("    mov x0, x21\n");           // return fd
-    s = s.write(".Lir_tcon_done:\n");           // x0 holds fd or -errno
-    s = s.write("    ldr x21, [sp, #32]\n");
-    s = s.write("    ldp x19, x20, [sp, #16]\n");
-    s = s.write("    ldp x29, x30, [sp], #48\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_connect, .-__fern_tcp_connect\n");
+    // tcp_connect is Fern now (#2649) — see the migrated-helpers section. Its
+    // Darwin number comes from asmcore.sysno rather than darwin_sysno, which
+    // has no row for connect (203) and so left the Mach-O emit issuing a Linux
+    // syscall through the Linux trap.
 
     // __fern_tcp_pollable(x0 = fd) → fd: a socket's readiness token IS its
     // fd on native (ppoll takes fds directly), so identity.
@@ -6247,6 +6177,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("tcp_listen")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s.struct_decls, s);
     }
+    // tcp_connect: the same sockaddr_in as tcp_listen with the address filled in.
+    if (s.has_need("tcp_connect")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
+    }
+    // tcp_recv: read(2) into a fresh buffer, boxed by __raw_string.
+    if (s.has_need("tcp_recv")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
+    }
+    // proc_exec: execve over an argv built from the args array.
+    if (s.has_need("proc_exec")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec(tgt), s.struct_decls, s);
+    }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
     // __fern_map_seed word.
@@ -6273,101 +6215,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_hash_seed, .-__fern_map_hash_seed\n");
     }
-    // __fern_proc_exec(x0 = path box, x1 = args box) -> i32 — execve. Only
-    // returns on FAILURE (-errno); on success the process image is gone, which
-    // IS the contract, the same way proc_fork's kernel return is. argv is
-    // [path, args...] so the callee's argv[0] is the program path and callers
-    // pass only real arguments; envp comes from __fern_envp (heap-gated, saved
-    // by _start) so the child inherits the environment. Strings are (data, len)
-    // boxes and not NUL-terminated, so path and every argument are copied into
-    // fresh NUL-terminated buffers that are never freed — on success the address
-    // space is replaced, on failure the caller is reporting an error.
-    if (s.has_need("proc_exec")) {
-        s = s.write(".globl __fern_proc_exec\n");
-        s = s.write(".type __fern_proc_exec, %function\n");
-        s = s.write("__fern_proc_exec:\n");
-        s = s.write("    stp x29, x30, [sp, #-96]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #16]\n");
-        s = s.write("    stp x21, x22, [sp, #32]\n");
-        s = s.write("    stp x23, x24, [sp, #48]\n");
-        s = s.write("    stp x25, x26, [sp, #64]\n");
-        s = s.write("    mov x19, x0\n");                 // path box
-        s = s.write("    mov x20, x1\n");                 // args box
-        s = s.write("    ldr x21, [x19, #8]\n");           // path length
-        s = s.write("    add x0, x21, #1\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x22, x0\n");                 // path cstr
-        s = s.write("    ldr x23, [x19]\n");               // path bytes
-        s = s.write("    mov x24, #0\n");
-        s = s.write(".Lpxa_c:\n");
-        s = s.write("    cmp x24, x21\n");
-        s = s.write("    b.ge .Lpxa_cd\n");
-        s = s.write("    ldrb w9, [x23, x24]\n");
-        s = s.write("    strb w9, [x22, x24]\n");
-        s = s.write("    add x24, x24, #1\n");
-        s = s.write("    b .Lpxa_c\n");
-        s = s.write(".Lpxa_cd:\n");
-        s = s.write("    strb wzr, [x22, x21]\n");
-        s = s.write("    ldr x21, [x20]\n");               // argc (length at +0)
-        s = s.write("    add x0, x21, #2\n");
-        s = s.write("    lsl x0, x0, #3\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x25, x0\n");                 // argv
-        s = s.write("    str x22, [x25]\n");               // argv[0] = path cstr
-        s = s.write("    mov x24, #0\n");                 // i
-        s = s.write(".Lpxa_arg:\n");
-        s = s.write("    cmp x24, x21\n");
-        s = s.write("    b.ge .Lpxa_argd\n");
-        s = s.write("    add x9, x24, #1\n");
-        s = s.write("    ldr x26, [x20, x9, lsl #3]\n");   // element box (elems at +8)
-        s = s.write("    ldr x9, [x26, #8]\n");            // element length
-        s = s.write("    str x9, [x29, #80]\n");           // survive the alloc
-        s = s.write("    add x0, x9, #1\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x23, x0\n");                 // dst cstr
-        s = s.write("    ldr x9, [x29, #80]\n");
-        s = s.write("    ldr x10, [x26]\n");               // src bytes
-        s = s.write("    mov x11, #0\n");
-        s = s.write(".Lpxa_ac:\n");
-        s = s.write("    cmp x11, x9\n");
-        s = s.write("    b.ge .Lpxa_acd\n");
-        s = s.write("    ldrb w12, [x10, x11]\n");
-        s = s.write("    strb w12, [x23, x11]\n");
-        s = s.write("    add x11, x11, #1\n");
-        s = s.write("    b .Lpxa_ac\n");
-        s = s.write(".Lpxa_acd:\n");
-        s = s.write("    strb wzr, [x23, x9]\n");
-        s = s.write("    add x9, x24, #1\n");
-        s = s.write("    str x23, [x25, x9, lsl #3]\n");   // argv[i + 1]
-        s = s.write("    add x24, x24, #1\n");
-        s = s.write("    b .Lpxa_arg\n");
-        s = s.write(".Lpxa_argd:\n");
-        s = s.write("    add x9, x21, #1\n");
-        s = s.write("    str xzr, [x25, x9, lsl #3]\n");   // argv[argc + 1] = NULL
-        s = s.write("    mov x0, x22\n");
-        s = s.write("    mov x1, x25\n");
-        s = s.write("    adrp x2, __fern_envp\n");
-        s = s.write("    add x2, x2, :lo12:__fern_envp\n");
-        s = s.write("    ldr x2, [x2]\n");
-        if (darwin) {
-            s = s.write("    mov x16, #59\n");
-            s = s.write("    svc #0x80\n");
-            s = s.write("    b.cc .Lpxa_ret\n");
-            s = s.write("    neg x0, x0\n");
-        } else {
-            s = s.write("    mov x8, #221\n");
-            s = s.write("    svc #0\n");
-        }
-        s = s.write(".Lpxa_ret:\n");
-        s = s.write("    ldp x19, x20, [sp, #16]\n");
-        s = s.write("    ldp x21, x22, [sp, #32]\n");
-        s = s.write("    ldp x23, x24, [sp, #48]\n");
-        s = s.write("    ldp x25, x26, [sp, #64]\n");
-        s = s.write("    ldp x29, x30, [sp], #96\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_proc_exec, .-__fern_proc_exec\n");
-    }
+    // proc_exec is Fern now (#2649) — see the migrated-helpers section.
     // __fern_proc_fork() → 0 in the child, the child's pid in the parent,
     // -errno on failure — the crash-only supervision primitive
     // (docs/CRASH-ONLY-SERVE.md D2', #5686). arm64 Linux has no bare fork(2):

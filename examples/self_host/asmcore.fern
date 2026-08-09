@@ -388,6 +388,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "socket") { return "41"; }
         if (name == "bind") { return "49"; }
         if (name == "listen") { return "50"; }
+        if (name == "connect") { return "42"; }
+    if (name == "execve") { return "59"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         return "-1";
@@ -423,6 +425,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "socket") { return "97"; }
         if (name == "bind") { return "104"; }
         if (name == "listen") { return "106"; }
+        if (name == "connect") { return "98"; }
+        if (name == "execve") { return "59"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -446,6 +450,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "socket") { return "198"; }
     if (name == "bind") { return "200"; }
     if (name == "listen") { return "201"; }
+    if (name == "connect") { return "203"; }
+    if (name == "execve") { return "221"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     return "-1";
@@ -613,13 +619,6 @@ pub function rt_src_open_fd(t: string): string {
 
 // rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
 // an fd (#2649, syscall-leaf) — close(2) and accept(2) with a NULL addr/addrlen.
-//
-// The rest of the tcp family stays hand-written for now. tcp_send in particular
-// is blocked on a missing bridge, not on a syscall: it needs the DATA POINTER of
-// a `string`, and the floor only goes the other way (`__raw_string` builds a
-// string from raw bytes; nothing reads one back out). Expressing it today means
-// copying the payload byte-by-byte on every send, which is a straight loss on a
-// send path.
 pub function rt_src_tcp_close(t: string): string {
     return "function __fern_tcp_close(fd: i32): i32 { return __syscall3(" + sysno(t, "close") + ", fd, 0, 0); }";
 }
@@ -692,6 +691,23 @@ pub function rt_src_proc_waitpid(t: string): string {
     return "function __fern_proc_waitpid(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 0, 0); if (rc < 0) { return rc; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
 }
 
+// rt_src_proc_exec backs `proc_exec(path, args)` (#2649) — execve(2). It only
+// RETURNS on failure, with -errno; on success the process image is gone, and
+// that is the builtin's contract.
+//
+// argv is [path, args..., NULL]: the callee's argv[0] is the program path, so
+// callers pass only real arguments. envp comes from __raw_environ(), so the
+// child inherits the environment — which is why the op site still marks the
+// `env` need that emits the __fern_envp slot and _start's save.
+//
+// Fern strings are not NUL-terminated, so the path and every argument are
+// copied into fresh terminated buffers. Those are deliberately never freed: on
+// success the address space is replaced, and on failure the caller is already
+// reporting an error.
+pub function rt_src_proc_exec(t: string): string {
+    return "function __fern_proc_exec(path: string, args: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, pathz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, argv, __raw_environ()); }";
+}
+
 // rt_src_timer_fd backs `timer_fd(ms)` (#2649, syscall-leaf) → a CLOCK_MONOTONIC
 // timerfd that becomes readable after `ms`, or -errno.
 //
@@ -731,6 +747,36 @@ function sockaddr_head(t: string, buf: string): string {
 // than an endianness-dependent word write.
 pub function rt_src_tcp_listen(t: string): string {
     return "function __fern_tcp_listen(port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd, sa, 16); if (rb < 0) { return rb; } var rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd, 128, 0); if (rl < 0) { return rl; } return fd; }";
+}
+
+// rt_src_tcp_connect backs `tcp_connect(host_be, port)` (#2649, syscall-leaf) →
+// a connected socket fd, or -errno. Same sockaddr_in as tcp_listen, with the
+// address filled in instead of INADDR_ANY.
+//
+// `host_be` arrives ALREADY in network order, so its four bytes go out in
+// little-endian order — reproducing the 32-bit word store the hand-asm did,
+// which is not the same as byte-swapping it again.
+//
+// Migrating this FIXES arm64-darwin. The hand-asm emitted `mov x8, #203`
+// (Linux connect) on both targets and relied on darwinize to remap it, but
+// darwin_sysno has no 203 row — so the Mach-O output issued Linux syscall 203
+// through the Linux trap. Baking the number per target is exactly the mechanism
+// that exists because darwinize cannot remap a number it only sees at runtime.
+pub function rt_src_tcp_connect(t: string): string {
+    return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
+}
+
+// rt_src_tcp_recv backs `tcp_recv(fd, max)` (#2649, syscall-leaf) → a string of
+// up to `max` bytes. A short read, EOF and -errno all come back as the empty
+// string: the op has no error channel, so the hand-asm clamped a negative to
+// len 0 and this keeps that.
+//
+// The direction of the floor is why recv migrates and send does not:
+// `__raw_string` builds a string over a buffer we already own, so no copy. Going
+// the other way — reading a live string's data pointer back out — has no floor
+// primitive, which is what still blocks tcp_send.
+pub function rt_src_tcp_recv(t: string): string {
+    return "function __fern_tcp_recv(fd: i32, max: i32): string { var p: i32 = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, max); if (n < 0) { n = 0; } return __raw_string(p, n); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

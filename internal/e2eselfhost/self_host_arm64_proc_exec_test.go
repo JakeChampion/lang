@@ -8,20 +8,20 @@ import (
 )
 
 // TestSelfHostArm64ProcExecRuns EXECUTES the self-host arm64
-// `__fern_proc_exec` runtime blob. Until now it had only ever been checked
-// to assemble — both emitters emit the blob (it is deliberately duplicated
-// between asm_arm64.fern's AST path and asm_arm64_ir.fern's IR path), and
-// assembling proves nothing about whether the syscall it builds is right:
-// a wrong argv pointer, a wrong register, or the wrong syscall number all
-// assemble perfectly and fail only when run.
+// `__fern_proc_exec` runtime helper. Assembling proves nothing about whether
+// the syscall it builds is right: a wrong argv pointer, a wrong register, or
+// the wrong syscall number all assemble perfectly and fail only when run.
 //
 // The program execs `/bin/sh -c "exit 9"`, so a 9 means execve really
 // replaced the process image AND argv reached the shell intact — an exec
 // that silently failed would fall through to `return 1`, and a mangled
 // argv would give the shell's usage error instead.
 //
-// The Darwin branch of the same blob (`svc #0x80` / BSD syscall 59) still
-// only assembles; there is no macOS runner in this lane.
+// The helper is Fern now (#2649), so both legs below compile the same source;
+// what still differs between them is which needs the emit plants.
+//
+// The Darwin form (BSD syscall 59) still only assembles; there is no macOS
+// runner in this lane.
 func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
@@ -39,19 +39,16 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	// The AST emitter (asm_arm64.emit_module) and the per-module IR
-	// emitter (asm_arm64_ir) carry separate copies of the runtime, so run
-	// each one.
 	for _, c := range []struct {
 		name string
 		args []string
 	}{
-		{"ast", []string{"-target", "arm64"}},
-		{"ir", []string{"-target", "arm64", "-per-module-emit", "0"}},
+		{"permodule", []string{"-target", "arm64"}},
+		{"wholeprogram", []string{"-target", "arm64", "-per-module-emit", "0"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			args := c.args
-			if c.name == "ir" {
+			if c.name == "wholeprogram" {
 				// The per-module emit only plants the runtime helpers this
 				// unit declares a need for; the whole-program union is the
 				// driver's own -per-module-needs answer.
@@ -63,8 +60,11 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 				}
 			}
 			asm := string(runDriverFile(t, x86runner, driverBin, src, args...))
-			if !strings.Contains(asm, "__fern_proc_exec") {
-				t.Fatalf("%s emit has no __fern_proc_exec runtime", c.name)
+			if !strings.Contains(asm, "__fn___fern_proc_exec:") {
+				t.Fatalf("%s emit has no Fern __fn___fern_proc_exec helper", c.name)
+			}
+			if strings.Contains(asm, "\n__fern_proc_exec:") {
+				t.Fatalf("%s: the register-ABI hand-asm __fern_proc_exec is back", c.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "proc_exec_"+c.name, asm)
 			cmd := runArm64Bin(qemu, bin)

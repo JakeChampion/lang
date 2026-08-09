@@ -17,7 +17,8 @@ opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
 `tcp_accept`), `sleep_ms` + `poll` over the new `__syscall5`, and
-`proc_waitpid`, `timer_fd`, and `tcp_listen`. Each is ONE source across all three native
+`proc_waitpid`, `timer_fd`, `tcp_listen`, `tcp_connect`, `tcp_recv`, and
+`proc_exec`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -386,10 +387,7 @@ hand-written" but "which of them the floor can already express".
 
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_connect` | `socket` + `connect` | 3 each | `__syscall3` |
-| `tcp_recv` | `read` | 3 | `__syscall3` |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
-| `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
 | `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
@@ -398,7 +396,12 @@ only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since th
 floor has no 16- or 32-bit store and the port must be big-endian regardless of
 host. Its first two bytes are the struct's one per-target difference (XNU leads
 with a `sin_len` byte where Linux has a u16 `sin_family`), which `sockaddr_head`
-supplies; `tcp_pollable` issues no syscall at all. The remaining
+supplies. `tcp_connect` reuses that head, and migrating it **fixed
+arm64-darwin**: its hand-asm emitted `mov x8, #203` (Linux `connect`) on both
+targets and relied on `darwinize` to remap it, but `darwin_sysno` has no 203
+row — so the Mach-O output issued a Linux syscall through the Linux trap.
+Baking the number per target is exactly the mechanism that exists because
+`darwinize` cannot remap a number it only sees at run time; `tcp_pollable` issues no syscall at all. The remaining
 non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
@@ -421,13 +424,30 @@ carried a manual carry-flag check to turn `+errno` into `-errno`, which is not
 ported — `darwinize` already wraps every `__syscall*` with exactly that
 sequence, so keeping it would have negated twice.
 
-`tcp_send` and `tcp_recv` are a different kind of blocked: their syscall is a
-plain 3-argument `write` / `read`, but they need the **data pointer of a
-`string`**, and the floor only runs the other way — `__raw_string(data, len)`
-builds a string from raw bytes and nothing reads one back out. Expressing them
-today means copying the payload byte-by-byte on every call, which is a straight
-loss on a send path. What they want is the inverse bridge (a `__raw_data`), not
-a wider syscall wrapper.
+`tcp_send` is blocked on the **direction** of the string bridge, not on a
+syscall: it is a plain 3-argument `write`, but it needs the **data pointer of a
+`string`**, and the floor only runs the other way. Expressing it today means
+copying the payload byte-by-byte on every call, which is a straight loss on a
+send path. What it wants is the inverse bridge (a `__raw_data`), not a wider
+syscall wrapper.
+
+`proc_exec` has since moved too, and it is the one entry the audit table's
+"args" column undersold: the syscall is a plain 3-argument `execve`, but the
+third argument is a `char **` the helper has to **build** — `__raw_alloc` for
+the array, a NUL-terminated copy of the path and of every element of the
+`string[]`, `__raw_store_ptr` to fill the slots, and `__raw_environ()` for
+envp. Nothing in that needed a new floor primitive, which is why it landed
+ahead of `tcp_send` despite looking like the bigger job. None of those buffers
+are freed, deliberately: on success the address space is replaced, and on
+failure the caller is already reporting an error.
+
+`tcp_recv` runs **with** that direction and so has since moved: it allocates the
+buffer itself, `read`s into it, and hands the buffer to `__raw_string` — the
+copy tcp_send cannot avoid never happens. An earlier revision of this table
+listed the two together as equally blocked, which had the asymmetry backwards.
+A negative return is clamped to length 0: the op has no error channel, so a
+short read, EOF and `-errno` all arrive as the empty string, exactly as the
+hand-asm's `csel ... ge` did.
 
 Darwin's `fork` is the second helper after `monotonic_ns` that stays
 hand-written on principle rather than for want of a syscall wrapper: it reports

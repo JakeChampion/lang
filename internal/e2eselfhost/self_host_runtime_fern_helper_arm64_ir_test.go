@@ -63,6 +63,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    if (tcp_listen(0) < 0) { return 18; }\n" +
+		"    if (tcp_connect(2130706433, 1) == 0) { return 19; }\n" +
+		"    if (tcp_recv(999, 4).len() != 0) { return 20; }\n" +
+		"    var av: string[] = [];\n" +
+		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -93,9 +97,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// has to stay a run-time check because irlower picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
 		"random_i32", "open_fd",
-		// The socket leaves that take only an fd (#2649). The rest of the tcp
-		// family is still hand-asm: tcp_send is blocked on a string-data-pointer
-		// bridge the floor does not have, not on a syscall.
+		// The socket leaves that take only an fd (#2649). tcp_send is the one
+		// still hand-asm, blocked on a string-data-pointer bridge the floor does
+		// not have rather than on a syscall.
 		"tcp_close", "tcp_accept",
 		// sleep_ms is the first __syscall5 consumer — but only on Darwin, which
 		// sleeps with select(2). This Linux emit reaches it through nanosleep,
@@ -112,7 +116,17 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"timer_fd",
 		// socket + bind + listen over a byte-built sockaddr_in. Its first two
 		// bytes are the one per-target difference (XNU has sin_len).
-		"tcp_listen"} {
+		"tcp_listen",
+		// Same sockaddr_in as tcp_listen with the address filled in. Migrating
+		// this fixed arm64-darwin, which had been issuing Linux connect (203)
+		// through the Linux trap because darwin_sysno has no row for it.
+		"tcp_connect",
+		// read(2) into a fresh buffer, boxed by __raw_string — the floor goes
+		// this direction, which is why recv migrates and send cannot.
+		"tcp_recv",
+		// execve over an argv built from the args array. The one leaf whose
+		// contract is that it does NOT return on success.
+		"proc_exec"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -229,6 +243,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
+		// connect is the one socket number darwin_sysno cannot remap, so the
+		// Darwin emit has to carry it from asmcore.sysno — assert below.
+		"    if (tcp_connect(2130706433, 1) == 0) { return 15; }\n" +
+		"    if (tcp_recv(999, 4).len() != 0) { return 16; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -267,6 +285,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// select, XNU's stand-in for nanosleep — and the only reason
 		// __syscall5 exists. Linux sleeps through nanosleep, which takes two.
 		{"select", "93"},
+		// connect. darwin_sysno cannot remap this one — it has no 203 row — so
+		// before the Fern migration the Mach-O emit carried Linux's number and
+		// Linux's trap. This assertion is the regression guard for that.
+		{"connect", "98"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
@@ -338,6 +360,16 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern clock did not lower for Darwin", leaf)
 		}
+	}
+	// tcp_recv gets no row in the constant table above: its number is Darwin's
+	// `read` = 3, and `mov x0, #3` matches any literal 3 in the program, so the
+	// assertion would pass whatever the sysno row said. Pin that the helper is
+	// Fern here at all instead.
+	if !strings.Contains(asm, "__fn___fern_tcp_recv:") {
+		t.Error("__fn___fern_tcp_recv not defined — the Fern helper did not lower for Darwin")
+	}
+	if strings.Contains(asm, "\n__fern_tcp_recv:") {
+		t.Error("the register-ABI hand-asm __fern_tcp_recv is back")
 	}
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")
