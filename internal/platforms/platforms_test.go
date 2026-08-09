@@ -2,8 +2,44 @@ package platforms
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
+
+// Every listed target names an environment that exists, so ForTarget
+// composes rather than panicking. This is the invariant that replaces
+// "every target spells out its own capability list".
+func TestEveryTargetComposes(t *testing.T) {
+	for _, name := range Targets() {
+		entry, ok := table[name]
+		if !ok {
+			t.Errorf("Targets() lists %q with no table entry", name)
+			continue
+		}
+		if _, ok := environments[entry.environment]; !ok {
+			t.Errorf("target %q names unknown environment %q", name, entry.environment)
+		}
+		if d := ForTarget(name); d == nil || d.Name != name {
+			t.Errorf("ForTarget(%q) did not compose", name)
+		}
+	}
+}
+
+// No two environments may carry the same capability set. Two that do
+// are one environment wearing two names — exactly the state the four
+// native targets were in before they were collapsed, where adding a
+// capability meant editing the identical list four times and missing
+// one was silent.
+func TestEnvironmentsAreDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for name, env := range environments {
+		key := strings.Join(env.capabilities, ",")
+		if prev, dup := seen[key]; dup {
+			t.Errorf("environments %q and %q have identical capability sets — collapse them", prev, name)
+		}
+		seen[key] = name
+	}
+}
 
 // TestForTargetCoversEveryCanonicalTarget — every -target=
 // value cmd/fern accepts must have a Descriptor entry. The
