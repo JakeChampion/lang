@@ -7213,7 +7213,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// alias skips the transfer inc — its exit-sweep dec is equally
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
 		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
-			!b.initIsOwnedFieldRead(n.Init) {
+			!b.isOwnedContainerRead(n.Init) {
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
@@ -8590,39 +8590,42 @@ func (b *builder) expr(e ast.Expr) error {
 		// changes the load op + which helper picks up the stride;
 		// `__str_idx` already does (i*1 + bounds-check) so we
 		// reuse it for sub-i32 owned arrays.
-		// Reclaim a FRESH owned array container consumed by a SCALAR index —
+		// Reclaim a FRESH owned array container consumed by an index —
 		// `mk(i)[1]` (mk returns a fresh i32[]) loaded element 1 and dropped
 		// the buffer on the floor, leaking it every iteration (160000 ->
 		// 1600000 in a loop). Stash the container, index off the reload, then
 		// dec it after the load via the is_unique-gated emitOwnedSlotDrop.
-		// Gated to a NON-POINTER element (resultCannotAliasArg-style): the
-		// loaded scalar can't alias the buffer, so freeing it is safe; a
-		// pointer element (`mk_strs()[1]`) would alias and is left alone. The
-		// is_unique gate additionally protects an aliased container (a callee
-		// returning its param, rc>=2 via the return-transfer inc — only
-		// dec'd, never freed). Idents / fields aren't fresh temps and lower
-		// in place. The slice index path is excluded (n.IsSlice); the STRING
-		// path takes the string-shaped stash below instead — its element is
-		// always a u8, so the same "the loaded scalar can't alias the buffer"
-		// argument applies.
+		//
+		// An rc-tracked POINTER element needs one more op, exactly as the
+		// fresh-container field read does (#6401): the loaded value aliases
+		// the buffer we are about to drop, so retain it first and let the
+		// container's deep drop net it back to this expression's single
+		// reference. Without the retain the drop would free the element out
+		// from under the result; without the drop `mk_strs()[0]` leaked the
+		// spine AND every element it did not extract (304 B a round where
+		// `var xs = mk_strs(); xs[0]` was flat). The is_unique gate carries
+		// the safety the other way: an aliased container (a callee returning
+		// its own param, rc >= 2) is only dec'd, so the retain is merely
+		// unbalanced — a leak, never a use-after-free.
+		//
+		// Idents / fields aren't fresh temps and lower in place. The slice
+		// index path is excluded (n.IsSlice); the STRING path takes the
+		// string-shaped stash below instead — its element is always a u8, so
+		// the loaded scalar cannot alias the buffer.
 		strIdxSlot := int32(-1)
 		idxContainerSlot := int32(-1)
-		if !n.IsString && !n.IsSlice && n.ElemType != nil && !ast.IsPointerType(n.ElemType) {
-			ct, ok := b.freshOwnedRcTempType(n.Array)
-			if !ok {
-				ct, ok = b.ownedCallResultType(n.Array)
-			}
-			if ok {
-				if _, isArr := ct.(ast.ArrayType); isArr {
-					idxContainerSlot = b.allocSlot()
-					b.locals[fmt.Sprintf("__idxbase_%d", idxContainerSlot)] = idxContainerSlot
-					b.scratchType[idxContainerSlot] = ct
-					if err := b.expr(n.Array); err != nil {
-						return err
-					}
-					b.emit(Op{Kind: OpStoreLocal, I32: idxContainerSlot})
-					b.emit(Op{Kind: OpLoadLocal, I32: idxContainerSlot})
+		idxRetainElem := n.ElemType != nil && rcTrackedSlotType(n.ElemType)
+		if !n.IsString && !n.IsSlice && n.ElemType != nil &&
+			(!ast.IsPointerType(n.ElemType) || idxRetainElem) {
+			if ct, ok := b.freshOwnedIndexContainerType(n.Array); ok {
+				idxContainerSlot = b.allocSlot()
+				b.locals[fmt.Sprintf("__idxbase_%d", idxContainerSlot)] = idxContainerSlot
+				b.scratchType[idxContainerSlot] = ct
+				if err := b.expr(n.Array); err != nil {
+					return err
 				}
+				b.emit(Op{Kind: OpStoreLocal, I32: idxContainerSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: idxContainerSlot})
 			}
 		}
 		if n.IsString {
@@ -8731,10 +8734,13 @@ func (b *builder) expr(e ast.Expr) error {
 			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
 			b.emit(Op{Kind: loadOp, Width: loadWidth})
 		}
-		// Dec the stashed fresh array container now that the scalar element
-		// is loaded (only set on the array-index path above). Net-zero on the
+		// Dec the stashed fresh array container now that the element is
+		// loaded (only set on the array-index path above). Net-zero on the
 		// operand stack, leaving the loaded element on top.
 		if idxContainerSlot >= 0 {
+			if idxRetainElem {
+				b.emitRetainValueOnStack(n.ElemType)
+			}
 			b.emitOwnedSlotDrop(idxContainerSlot, b.scratchType[idxContainerSlot])
 		}
 		b.decStashedStringTemps(strIdxSlot)
@@ -10231,6 +10237,13 @@ func (b *builder) callReturnType(c *ast.Call) ast.Type {
 // owned temps — freeing them would corrupt a live value, so they read
 // false. Used by the concat lowering to dec its operand intermediates.
 //
+// The exception is a read off a FRESH owned container — `mk_box().name`,
+// `mk_strs()[0]`. Those lowerings retain the loaded string and deep-drop the
+// container, so the value arrives owning its single reference and nothing
+// downstream reclaims it: `mk_box().name.len()` leaked one buffer a round
+// where `var s = mk_box().name` was flat, because only the binding site knew
+// the read was a move. A borrowing consumer has to know it too.
+//
 // The call case is what keeps `"n = " + n.to_string()` from leaking the
 // to_string buffer once per join: OpStrConcat borrows its operands and
 // copies out of them, so nothing else in the pipeline ever drops them.
@@ -10250,6 +10263,11 @@ func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
 		}
 		_, isStr := b.exprType(x).(ast.StringType)
 		return isStr
+	case *ast.FieldAccess, *ast.Index:
+		if _, isStr := b.exprType(x).(ast.StringType); !isStr {
+			return false
+		}
+		return b.isOwnedContainerRead(x)
 	}
 	return false
 }
@@ -12284,6 +12302,14 @@ func (b *builder) callBody(n *ast.Call) error {
 			// aliased return (callee handing back a param) carries the
 			// return-transfer inc, so the drop only dec's it.
 			tt, ok = b.ownedCallResultType(n.Args[0])
+		}
+		if !ok && b.isOwnedContainerRead(n.Args[0]) {
+			// `mk_box().name.len()` / `mk_strs()[0].len()`. The read itself
+			// retained the value and deep-dropped the container, so what
+			// arrives here owns its single reference and is dead once the
+			// length is read — the same dead-after-consume temp as a concat,
+			// reached by a different route.
+			tt, ok = b.exprType(n.Args[0]), true
 		}
 		if ok {
 			lenTempSlot = b.allocSlot()
@@ -14676,21 +14702,26 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpDrop})
 }
 
-// initIsOwnedFieldRead reports whether `e` is a field read off a FRESH owned
-// container — `mk_box().items`. The FieldAccess lowering already retains the
-// loaded field and deep-drops the container (#6401), so the value arrives at
-// the binding site holding its own reference. The binding's usual alias inc
-// would be a second one: `needsRcIncOnAlias` fires for any pointer-typed
-// FieldAccess, and with both incs the exit sweep's single dec left the field
-// at rc 1 forever — the container's 32 B came back and the field's 64 B did
-// not. This is a MOVE, not an alias.
-func (b *builder) initIsOwnedFieldRead(e ast.Expr) bool {
-	fa, ok := e.(*ast.FieldAccess)
-	if !ok {
-		return false
+// isOwnedContainerRead reports whether `e` reads an rc-tracked value out
+// of a FRESH owned container — `mk_box().items`, `mk_strs()[0]`. Both
+// lowerings retain the loaded value and deep-drop the container (#6401 for the
+// field, the array index alongside it), so the value arrives at the binding
+// site holding its own reference. The binding's usual alias inc would be a
+// second one: `needsRcIncOnAlias` fires for any pointer-typed field or index
+// read, and with both incs the exit sweep's single dec left the value at rc 1
+// forever — the container's bytes came back and the element's did not. This is
+// a MOVE, not an alias.
+func (b *builder) isOwnedContainerRead(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.FieldAccess:
+		return rcTrackedSlotType(b.exprType(x)) && b.freshOwnedFieldContainer(x.Target)
+	case *ast.Index:
+		if x.IsString || x.IsSlice {
+			return false
+		}
+		return rcTrackedSlotType(b.exprType(x)) && b.freshOwnedIndexContainer(x.Array)
 	}
-	t := b.exprType(fa)
-	return rcTrackedSlotType(t) && b.freshOwnedFieldContainer(fa.Target)
+	return false
 }
 
 // freshOwnedFieldContainer reports whether `target` is a struct or tuple TEMP
@@ -14716,6 +14747,30 @@ func (b *builder) freshOwnedFieldContainer(target ast.Expr) bool {
 		return true
 	}
 	return false
+}
+
+// freshOwnedIndexContainerType is freshOwnedFieldContainer's sibling for
+// `mk()[i]`: it reports the ARRAY type of a container this expression solely
+// owns, so the index lowering can reclaim it once the element is loaded. The
+// lowering, the binding site and isOwnedStringTemp must agree on which
+// containers are owned, so they ask here rather than each re-deriving it.
+func (b *builder) freshOwnedIndexContainerType(array ast.Expr) (ast.Type, bool) {
+	ct, ok := b.freshOwnedRcTempType(array)
+	if !ok {
+		ct, ok = b.ownedCallResultType(array)
+	}
+	if !ok {
+		return nil, false
+	}
+	if _, isArr := ct.(ast.ArrayType); !isArr {
+		return nil, false
+	}
+	return ct, true
+}
+
+func (b *builder) freshOwnedIndexContainer(array ast.Expr) bool {
+	_, ok := b.freshOwnedIndexContainerType(array)
+	return ok
 }
 
 // emitRetainValueOnStack retains an rc-tracked value already on the operand
