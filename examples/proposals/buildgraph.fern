@@ -1,0 +1,562 @@
+// examples/proposals/buildgraph.fern — proposal turn, drawn line 251:
+// "A build-system core that decides what to rebuild from a dependency graph
+// and timestamps."
+//
+// A build system that rebuilds everything is CORRECT. It is also useless, and
+// it passes every test that only asks "is the output up to date afterwards".
+// So the two halves are tested separately and neither is allowed to stand in
+// for the other:
+//
+//   - **Soundness** — after the build, no target is older than a dependency
+//     and none is missing. Carried out by inspecting the finished graph rather
+//     than by trusting the planner's own report.
+//   - **Minimality** — the set actually rebuilt is EXACTLY the set that had
+//     to be, computed independently as a fixpoint: start from the targets that
+//     are missing or older than a dependency, then repeatedly add anything
+//     depending on something already in the set until nothing changes. The
+//     planner walks a topological order once; the oracle iterates to a
+//     fixpoint. Two different algorithms, same answer required.
+//
+// That fixpoint is also the shape of the bug this domain is famous for:
+// checking only DIRECT dependencies. Such a planner is sound — everything it
+// rebuilds it rebuilds correctly — and it silently leaves a stale binary two
+// hops down. `test_a_change_propagates_to_every_transitive_dependent` is
+// aimed straight at it.
+//
+// Cycles get two independent detectors, Kahn's in-degree peeling and a
+// three-colour DFS, required to agree on every graph in the corpus. A cycle
+// detector that is wrong in the permissive direction turns into an infinite
+// loop rather than a diagnostic, so it is worth two implementations.
+//
+// Conventions, stated because build systems genuinely differ on them:
+//
+//   - A target is stale when it is MISSING, or when its timestamp is strictly
+//     LESS than a dependency's. Equal timestamps count as up to date — `<`,
+//     not `<=` — which matters on filesystems with coarse clocks, and is
+//     tested rather than left to the reader.
+//   - Rebuilding stamps the target with a fresh tick from a monotone clock, so
+//     it ends up strictly newer than everything it depends on.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+struct Node { name: string, deps: string[], mtime: i32, exists: boolean }
+
+// The outcome of planning: a topological order, the targets rebuilt, and
+// whether the graph was cyclic (in which case nothing is built).
+struct Plan { order: string[], rebuilt: string[], cyclic: boolean }
+
+// ------------------------------------------------------------- utilities
+
+function index_of(ns: Node[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        if (ns[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function contains(xs: string[], v: string): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == v) { return true; } i = i + 1; }
+    return false;
+}
+
+function strings_equal(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+// Set equality, order-insensitive — the rebuild set is a SET, and requiring
+// the oracle to reproduce the planner's ordering would test the wrong thing.
+function same_set(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (!contains(b, a[i])) { return false; } i = i + 1; }
+    var j: i32 = 0;
+    while (j < b.len()) { if (!contains(a, b[j])) { return false; } j = j + 1; }
+    return true;
+}
+
+function show(xs: string[]): string {
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i];
+        i = i + 1;
+    }
+    return out + "]";
+}
+
+// --------------------------------------------------- topological ordering
+
+// Kahn's algorithm, peeling nodes whose dependencies are all placed. Ties are
+// broken by declaration order so the result is deterministic across backends.
+function topo_order(ns: Node[]): Plan {
+    var order: string[] = [];
+    var placed: string[] = [];
+    var none: string[] = [];
+    var progress: boolean = true;
+    while (progress && order.len() < ns.len()) {
+        progress = false;
+        var i: i32 = 0;
+        while (i < ns.len()) {
+            if (!contains(placed, ns[i].name)) {
+                var ready: boolean = true;
+                var d: i32 = 0;
+                while (d < ns[i].deps.len()) {
+                    // A dependency outside the graph is treated as already
+                    // satisfied rather than as a cycle — it is a source file.
+                    if (index_of(ns, ns[i].deps[d]) >= 0 && !contains(placed, ns[i].deps[d])) {
+                        ready = false;
+                    }
+                    d = d + 1;
+                }
+                if (ready) {
+                    order = order.append(ns[i].name);
+                    placed = placed.append(ns[i].name);
+                    progress = true;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    if (order.len() < ns.len()) {
+        return Plan { order: none, rebuilt: none, cyclic: true };
+    }
+    return Plan { order: order, rebuilt: none, cyclic: false };
+}
+
+// The second detector: a three-colour depth-first search. Shares no code with
+// the peeling above, so agreement between them is evidence rather than a
+// tautology.
+function dfs_cyclic_from(ns: Node[], at: i32, colour: i32[]): boolean {
+    if (colour[at] == 1) { return true; }  // grey: back edge
+    if (colour[at] == 2) { return false; } // black: already cleared
+    var c: i32[] = colour.with(at, 1);
+    var d: i32 = 0;
+    while (d < ns[at].deps.len()) {
+        var to: i32 = index_of(ns, ns[at].deps[d]);
+        if (to >= 0) {
+            if (dfs_cyclic_from(ns, to, c)) { return true; }
+            c = c.with(to, 2);
+        }
+        d = d + 1;
+    }
+    return false;
+}
+
+function dfs_cyclic(ns: Node[]): boolean {
+    var colour: i32[] = [];
+    var i: i32 = 0;
+    while (i < ns.len()) { colour = colour.append(0); i = i + 1; }
+    var s: i32 = 0;
+    while (s < ns.len()) {
+        if (dfs_cyclic_from(ns, s, colour)) { return true; }
+        s = s + 1;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------- staleness
+
+// Missing, or strictly older than a dependency. Equal timestamps are up to
+// date.
+function initially_stale(ns: Node[], at: i32): boolean {
+    if (!ns[at].exists) { return true; }
+    var d: i32 = 0;
+    while (d < ns[at].deps.len()) {
+        var to: i32 = index_of(ns, ns[at].deps[d]);
+        if (to >= 0) {
+            if (!ns[to].exists) { return true; }
+            if (ns[at].mtime < ns[to].mtime) { return true; }
+        }
+        d = d + 1;
+    }
+    return false;
+}
+
+// The ORACLE: the rebuild set as a least fixpoint. Seed with everything
+// initially stale, then keep adding any target that depends on something
+// already in the set, until a pass adds nothing.
+function rebuild_closure(ns: Node[]): string[] {
+    var set: string[] = [];
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        if (initially_stale(ns, i)) { set = set.append(ns[i].name); }
+        i = i + 1;
+    }
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        var j: i32 = 0;
+        while (j < ns.len()) {
+            if (!contains(set, ns[j].name)) {
+                var d: i32 = 0;
+                while (d < ns[j].deps.len()) {
+                    if (contains(set, ns[j].deps[d])) {
+                        set = set.append(ns[j].name);
+                        grew = true;
+                        d = ns[j].deps.len();
+                    } else {
+                        d = d + 1;
+                    }
+                }
+            }
+            j = j + 1;
+        }
+    }
+    return set;
+}
+
+// ------------------------------------------------------------------ build
+
+struct Built { nodes: Node[], plan: Plan }
+
+// One pass in topological order: a target is rebuilt when it is stale or when
+// any dependency was rebuilt in this same pass. Rebuilding stamps it with the
+// next tick, leaving it strictly newer than its dependencies.
+function build(ns: Node[]): Built {
+    var plan: Plan = topo_order(ns);
+    if (plan.cyclic) { return Built { nodes: ns, plan: plan }; }
+
+    var clock: i32 = 0;
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        if (ns[i].mtime > clock) { clock = ns[i].mtime; }
+        i = i + 1;
+    }
+
+    var cur: Node[] = ns;
+    var rebuilt: string[] = [];
+    var k: i32 = 0;
+    while (k < plan.order.len()) {
+        var at: i32 = index_of(cur, plan.order[k]);
+        var need: boolean = initially_stale(cur, at);
+        var d: i32 = 0;
+        while (d < cur[at].deps.len()) {
+            if (contains(rebuilt, cur[at].deps[d])) { need = true; }
+            d = d + 1;
+        }
+        if (need) {
+            clock = clock + 1;
+            cur = cur.with(at, Node { name: cur[at].name, deps: cur[at].deps,
+                mtime: clock, exists: true });
+            rebuilt = rebuilt.append(cur[at].name);
+        }
+        k = k + 1;
+    }
+    return Built { nodes: cur, plan: Plan { order: plan.order, rebuilt: rebuilt,
+        cyclic: false } };
+}
+
+// ---------------------------------------------------------------- corpus
+
+function node(name: string, deps: string[], mtime: i32, exists: boolean): Node {
+    return Node { name: name, deps: deps, mtime: mtime, exists: exists };
+}
+
+function no_deps(): string[] { var e: string[] = []; return e; }
+
+// Graph shapes chosen for what breaks a planner: a diamond (a node reachable
+// two ways), a chain (transitive staleness), fan-in and fan-out, a missing
+// target with a fine timestamp, equal timestamps, and disconnected pieces.
+function graphs(): Node[][] {
+    var out: Node[][] = [];
+
+    // A chain a <- b <- c with a stale root: everything must rebuild.
+    out = out.append([node("a", no_deps(), 5, true),
+        node("b", ["a"], 3, true), node("c", ["b"], 4, true)]);
+
+    // The same chain, already up to date: nothing must rebuild.
+    out = out.append([node("a", no_deps(), 1, true),
+        node("b", ["a"], 2, true), node("c", ["b"], 3, true)]);
+
+    // A diamond: d depends on b and c, both on a.
+    out = out.append([node("a", no_deps(), 9, true), node("b", ["a"], 2, true),
+        node("c", ["a"], 2, true), node("d", ["b", "c"], 2, true)]);
+
+    // Fan-out from one leaf, three independent dependents.
+    out = out.append([node("lib", no_deps(), 7, true), node("x", ["lib"], 1, true),
+        node("y", ["lib"], 1, true), node("z", ["lib"], 1, true)]);
+
+    // A MISSING target whose timestamp would otherwise look current.
+    out = out.append([node("src", no_deps(), 1, true),
+        node("bin", ["src"], 99, false)]);
+
+    // Equal timestamps everywhere: up to date, not stale.
+    out = out.append([node("a", no_deps(), 4, true), node("b", ["a"], 4, true),
+        node("c", ["b"], 4, true)]);
+
+    // Disconnected components, one stale and one not.
+    out = out.append([node("p", no_deps(), 8, true), node("q", ["p"], 1, true),
+        node("r", no_deps(), 1, true), node("s", ["r"], 2, true)]);
+
+    // A dependency on something outside the graph — a source file.
+    out = out.append([node("obj", ["header.h"], 1, true)]);
+
+    // Single node, and an empty graph.
+    out = out.append([node("only", no_deps(), 1, true)]);
+    var empty: Node[] = [];
+    out = out.append(empty);
+
+    // Deep chain, stale at the far end from the root.
+    out = out.append([node("n0", no_deps(), 20, true), node("n1", ["n0"], 3, true),
+        node("n2", ["n1"], 4, true), node("n3", ["n2"], 5, true),
+        node("n4", ["n3"], 6, true)]);
+
+    return out;
+}
+
+function cyclic_graphs(): Node[][] {
+    var out: Node[][] = [];
+    out = out.append([node("a", ["a"], 1, true)]);                       // self-loop
+    out = out.append([node("a", ["b"], 1, true), node("b", ["a"], 1, true)]);
+    out = out.append([node("a", ["b"], 1, true), node("b", ["c"], 1, true),
+        node("c", ["a"], 1, true)]);
+    // A cycle hidden inside an otherwise fine graph.
+    out = out.append([node("ok", no_deps(), 1, true), node("a", ["b", "ok"], 1, true),
+        node("b", ["a"], 1, true)]);
+    return out;
+}
+
+// ----------------------------------------------------------------- tests
+
+// Soundness: afterwards, nothing is missing and nothing is older than a
+// dependency. Read off the finished graph, not off the planner's report.
+function test_after_building_everything_is_up_to_date(): test.TestOutcome {
+    var gs: Node[][] = graphs();
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        var b: Built = build(gs[g]);
+        var i: i32 = 0;
+        while (i < b.nodes.len()) {
+            if (!b.nodes[i].exists) {
+                return test.fail("graph " + g.to_string() + ": \"" + b.nodes[i].name
+                    + "\" is still missing after the build");
+            }
+            var d: i32 = 0;
+            while (d < b.nodes[i].deps.len()) {
+                var to: i32 = index_of(b.nodes, b.nodes[i].deps[d]);
+                if (to >= 0 && b.nodes[i].mtime < b.nodes[to].mtime) {
+                    return test.fail("graph " + g.to_string() + ": \"" + b.nodes[i].name
+                        + "\" is older than its dependency \"" + b.nodes[to].name + "\"");
+                }
+                d = d + 1;
+            }
+            i = i + 1;
+        }
+        g = g + 1;
+    }
+    return test.pass();
+}
+
+// Minimality: the planner's rebuild set is exactly the fixpoint closure.
+// Without this, rebuilding everything passes the soundness test above.
+function test_exactly_the_necessary_targets_are_rebuilt(): test.TestOutcome {
+    var gs: Node[][] = graphs();
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        var want: string[] = rebuild_closure(gs[g]);
+        var got: string[] = build(gs[g]).plan.rebuilt;
+        if (!same_set(got, want)) {
+            return test.fail("graph " + g.to_string() + " rebuilt " + show(got)
+                + ", the fixpoint says " + show(want));
+        }
+        g = g + 1;
+    }
+    return test.pass();
+}
+
+// The famous bug: checking only DIRECT dependencies. Touching the root of a
+// chain must rebuild every node downstream of it, not just the first.
+function test_a_change_propagates_to_every_transitive_dependent(): test.TestOutcome {
+    var chain: Node[] = [node("n0", no_deps(), 1, true), node("n1", ["n0"], 2, true),
+        node("n2", ["n1"], 3, true), node("n3", ["n2"], 4, true),
+        node("n4", ["n3"], 5, true)];
+    // Already up to date.
+    if (build(chain).plan.rebuilt.len() != 0) {
+        return test.fail("the chain rebuilt something before anything was touched");
+    }
+    // Touch the root.
+    var touched: Node[] = chain.with(0, node("n0", no_deps(), 100, true));
+    var got: string[] = build(touched).plan.rebuilt;
+    var want: string[] = ["n1", "n2", "n3", "n4"];
+    if (!same_set(got, want)) {
+        return test.fail("touching the root rebuilt " + show(got) + ", want " + show(want));
+    }
+    // Touching a MIDDLE node rebuilds only what is downstream of it.
+    var mid: Node[] = chain.with(2, node("n2", ["n1"], 100, true));
+    var got2: string[] = build(mid).plan.rebuilt;
+    if (!same_set(got2, ["n3", "n4"])) {
+        return test.fail("touching n2 rebuilt " + show(got2) + ", want [n3,n4]");
+    }
+    return test.pass();
+}
+
+// The order is a real topological order: every dependency precedes its
+// dependent, and every node appears exactly once.
+function test_the_order_is_topological(): test.TestOutcome {
+    var gs: Node[][] = graphs();
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        var p: Plan = topo_order(gs[g]);
+        if (p.cyclic) { return test.fail("graph " + g.to_string() + " reported a cycle"); }
+        if (p.order.len() != gs[g].len()) {
+            return test.fail("graph " + g.to_string() + ": order has "
+                + p.order.len().to_string() + " of " + gs[g].len().to_string() + " nodes");
+        }
+        var i: i32 = 0;
+        while (i < p.order.len()) {
+            var j: i32 = i + 1;
+            while (j < p.order.len()) {
+                if (p.order[i] == p.order[j]) {
+                    return test.fail("graph " + g.to_string() + ": \"" + p.order[i]
+                        + "\" appears twice");
+                }
+                j = j + 1;
+            }
+            var at: i32 = index_of(gs[g], p.order[i]);
+            var d: i32 = 0;
+            while (d < gs[g][at].deps.len()) {
+                var dep: string = gs[g][at].deps[d];
+                if (index_of(gs[g], dep) >= 0) {
+                    // The dependency must appear earlier.
+                    var seen: boolean = false;
+                    var k: i32 = 0;
+                    while (k < i) { if (p.order[k] == dep) { seen = true; } k = k + 1; }
+                    if (!seen) {
+                        return test.fail("graph " + g.to_string() + ": \"" + p.order[i]
+                            + "\" is placed before its dependency \"" + dep + "\"");
+                    }
+                }
+                d = d + 1;
+            }
+            i = i + 1;
+        }
+        g = g + 1;
+    }
+    return test.pass();
+}
+
+// Building twice does nothing the second time.
+function test_a_second_build_is_a_no_op(): test.TestOutcome {
+    var gs: Node[][] = graphs();
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        var once: Built = build(gs[g]);
+        var twice: Built = build(once.nodes);
+        if (twice.plan.rebuilt.len() != 0) {
+            return test.fail("graph " + g.to_string() + " rebuilt "
+                + show(twice.plan.rebuilt) + " on the second pass");
+        }
+        g = g + 1;
+    }
+    return test.pass();
+}
+
+// Two independent cycle detectors, required to agree on every graph.
+function test_the_two_cycle_detectors_agree(): test.TestOutcome {
+    var acyclic: Node[][] = graphs();
+    var i: i32 = 0;
+    while (i < acyclic.len()) {
+        if (topo_order(acyclic[i]).cyclic) {
+            return test.fail("kahn reported a cycle in acyclic graph " + i.to_string());
+        }
+        if (dfs_cyclic(acyclic[i])) {
+            return test.fail("dfs reported a cycle in acyclic graph " + i.to_string());
+        }
+        i = i + 1;
+    }
+    var cyc: Node[][] = cyclic_graphs();
+    var j: i32 = 0;
+    while (j < cyc.len()) {
+        if (!topo_order(cyc[j]).cyclic) {
+            return test.fail("kahn missed the cycle in graph " + j.to_string());
+        }
+        if (!dfs_cyclic(cyc[j])) {
+            return test.fail("dfs missed the cycle in graph " + j.to_string());
+        }
+        // A cyclic graph builds nothing rather than looping or guessing.
+        var b: Built = build(cyc[j]);
+        if (!b.plan.cyclic || b.plan.rebuilt.len() != 0) {
+            return test.fail("a cyclic graph produced a build plan");
+        }
+        j = j + 1;
+    }
+    return test.pass();
+}
+
+// A missing target is rebuilt even when its timestamp looks current — the
+// case a purely timestamp-based planner gets wrong.
+function test_a_missing_target_is_rebuilt(): test.TestOutcome {
+    var g: Node[] = [node("src", no_deps(), 1, true), node("bin", ["src"], 99, false)];
+    var b: Built = build(g);
+    if (!contains(b.plan.rebuilt, "bin")) {
+        return test.fail("the missing target was not rebuilt: " + show(b.plan.rebuilt));
+    }
+    if (contains(b.plan.rebuilt, "src")) {
+        return test.fail("an up-to-date source was rebuilt");
+    }
+    var at: i32 = index_of(b.nodes, "bin");
+    if (!b.nodes[at].exists) { return test.fail("bin still does not exist"); }
+    return test.pass();
+}
+
+// The stated tie convention: equal timestamps are up to date, so `<` and not
+// `<=`. A planner using `<=` rebuilds the world on a coarse-grained clock.
+function test_equal_timestamps_are_up_to_date(): test.TestOutcome {
+    var g: Node[] = [node("a", no_deps(), 4, true), node("b", ["a"], 4, true),
+        node("c", ["b"], 4, true)];
+    var b: Built = build(g);
+    if (b.plan.rebuilt.len() != 0) {
+        return test.fail("equal timestamps caused a rebuild of " + show(b.plan.rebuilt));
+    }
+    // One tick older IS stale, so the convention is a boundary and not an
+    // accident of everything being considered fresh.
+    var older: Node[] = g.with(1, node("b", ["a"], 3, true));
+    var b2: Built = build(older);
+    if (!same_set(b2.plan.rebuilt, ["b", "c"])) {
+        return test.fail("a one-tick-older target rebuilt " + show(b2.plan.rebuilt)
+            + ", want [b,c]");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("buildgraph — what to rebuild, from a dependency graph and timestamps");
+
+    var gs: Node[][] = graphs();
+    var i: i32 = 0;
+    while (i < gs.len()) {
+        var b: Built = build(gs[i]);
+        eprint("  graph " + i.to_string() + " order=" + show(b.plan.order)
+            + " rebuilt=" + show(b.plan.rebuilt));
+        i = i + 1;
+    }
+    var cyc: Node[][] = cyclic_graphs();
+    var j: i32 = 0;
+    while (j < cyc.len()) {
+        eprint("  cyclic " + j.to_string() + ": kahn="
+            + topo_order(cyc[j]).cyclic.to_string() + " dfs=" + dfs_cyclic(cyc[j]).to_string());
+        j = j + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("buildgraph");
+    r = r.it("after building everything is up to date", test_after_building_everything_is_up_to_date);
+    r = r.it("exactly the necessary targets are rebuilt", test_exactly_the_necessary_targets_are_rebuilt);
+    r = r.it("a change propagates to every transitive dependent", test_a_change_propagates_to_every_transitive_dependent);
+    r = r.it("the order is topological", test_the_order_is_topological);
+    r = r.it("a second build is a no op", test_a_second_build_is_a_no_op);
+    r = r.it("the two cycle detectors agree", test_the_two_cycle_detectors_agree);
+    r = r.it("a missing target is rebuilt", test_a_missing_target_is_rebuilt);
+    r = r.it("equal timestamps are up to date", test_equal_timestamps_are_up_to_date);
+    return r.finish();
+}
