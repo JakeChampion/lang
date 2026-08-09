@@ -1,0 +1,423 @@
+// examples/proposals/wordfreq.fern — proposal turn, line 1:
+// "A word-frequency counter that reports the top N words in a text, ties
+// broken alphabetically."
+//
+// From this turn on the list is walked in ORDER rather than sampled: with 48
+// of its 256 lines already built, a uniform draw collided about one time in
+// five, and re-drawing on a collision is a worse use of a turn than simply
+// taking the next unused line.
+//
+// The counting is the easy half. The ranking is where these go wrong, and the
+// tie rule is the reason: "top N by count, ties broken alphabetically" is a
+// TOTAL order, and a sort that only compares counts leaves equal-count words
+// in whatever order the hash table or the input happened to produce. That is
+// the classic bug, and it is invisible in any test whose expected output has
+// no ties in it — so the corpus is built to be mostly ties.
+//
+// Three properties carry the file:
+//
+//   - **The ranking is the total order, everywhere.** For every adjacent pair
+//     in the output, the earlier word must beat the later one by the rule:
+//     higher count, or equal count and alphabetically smaller. Checked over
+//     every prefix length N, so a comparator that is right at the top and
+//     wrong in the tail cannot hide.
+//   - **top(N) is the first N of top(all).** A top-N that re-ranks rather than
+//     truncating can disagree with itself, which is how "top 3" and "top 10"
+//     end up inconsistent about position 3. This is checked for every N.
+//   - **The counts are right**, against an independent count that rescans the
+//     text per word rather than accumulating a table.
+//
+// Two decisions stated because implementations differ, and both are tested:
+// words are compared **case-insensitively** and reported lowercased, so `The`
+// and `the` are one word; and a word is a maximal run of letters, digits and
+// apostrophes, so `don't` is one word and `end.` loses its full stop.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+struct Count { word: string, n: i32 }
+
+// ------------------------------------------------------------- tokenising
+
+function is_lower(c: u8): boolean { return c >= 97 && c <= 122; }
+function is_upper(c: u8): boolean { return c >= 65 && c <= 90; }
+function is_digit(c: u8): boolean { return c >= 48 && c <= 57; }
+
+// Letters, digits and the apostrophe. Everything else is a separator.
+function is_word_byte(c: u8): boolean {
+    return is_lower(c) || is_upper(c) || is_digit(c) || c == 39;
+}
+
+function to_lower_byte(c: u8): u8 {
+    if (is_upper(c)) { return ((c as i32) + 32) as u8; }
+    return c;
+}
+
+// Maximal runs of word bytes, lowercased.
+function words_of(text: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < text.len()) {
+        while (i < text.len() && !is_word_byte(text[i])) { i = i + 1; }
+        var buf: u8[] = [];
+        while (i < text.len() && is_word_byte(text[i])) {
+            buf = buf.append(to_lower_byte(text[i]));
+            i = i + 1;
+        }
+        if (buf.len() > 0) { out = out.append(string_from_bytes_unchecked(buf)); }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- ordering
+
+// Byte-wise `<` on strings: `<` is not defined for string in Fern, and the tie
+// rule needs a total order on words.
+function str_lt(a: string, b: string): boolean {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return (a[i] as i32) < (b[i] as i32); }
+        i = i + 1;
+    }
+    return a.len() < b.len();
+}
+
+// THE rule, in one place: higher count wins; equal counts break
+// alphabetically. Every ranking question in the file is asked of this.
+function beats(a: Count, b: Count): boolean {
+    if (a.n != b.n) { return a.n > b.n; }
+    return str_lt(a.word, b.word);
+}
+
+// ---------------------------------------------------------------- counting
+
+function index_of_word(cs: Count[], w: string): i32 {
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (cs[i].word == w) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function tally(text: string): Count[] {
+    var out: Count[] = [];
+    var ws: string[] = words_of(text);
+    var i: i32 = 0;
+    while (i < ws.len()) {
+        var at: i32 = index_of_word(out, ws[i]);
+        if (at < 0) {
+            out = out.append(Count { word: ws[i], n: 1 });
+        } else {
+            out = out.with(at, Count { word: ws[i], n: out[at].n + 1 });
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Insertion sort under `beats`, which is stable and — because `beats` is a
+// total order on distinct words — produces one canonical answer.
+function ranked(text: string): Count[] {
+    var cs: Count[] = tally(text);
+    var i: i32 = 1;
+    while (i < cs.len()) {
+        var j: i32 = i;
+        while (j > 0 && beats(cs[j], cs[j - 1])) {
+            var a: Count = cs[j - 1];
+            var b: Count = cs[j];
+            cs = cs.with(j - 1, b);
+            cs = cs.with(j, a);
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    return cs;
+}
+
+function top(text: string, n: i32): Count[] {
+    var all: Count[] = ranked(text);
+    var out: Count[] = [];
+    var i: i32 = 0;
+    while (i < all.len() && i < n) { out = out.append(all[i]); i = i + 1; }
+    return out;
+}
+
+// ---------------------------------------------------------------- oracle
+
+// The count of one word, by rescanning the text. Shares nothing with the
+// table above — no accumulation, no lookup, no ordering.
+function count_of(text: string, w: string): i32 {
+    var ws: string[] = words_of(text);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < ws.len()) { if (ws[i] == w) { n = n + 1; } i = i + 1; }
+    return n;
+}
+
+// ---------------------------------------------------------------- corpus
+
+// Mostly ties on purpose: a comparator that ignores the tie rule ranks these
+// by insertion order and looks perfectly plausible doing it.
+function texts(): string[] {
+    return [
+        "the quick brown fox jumps over the lazy dog the end",
+        // every word once — the ranking is purely alphabetical
+        "zebra yak xray walrus viper tiger snake rhino",
+        // three words, three counts, no ties
+        "a a a b b c",
+        // all tied at one, deliberately in reverse alphabetical order
+        "gamma delta charlie bravo alpha",
+        // all tied at two, reverse order again
+        "delta charlie bravo alpha delta charlie bravo alpha",
+        // case folding: The/the/THE are one word
+        "The THE the tHe cat CAT Cat",
+        // punctuation and apostrophes
+        "don't stop; don't! stop. it's -- it's",
+        // digits are word bytes
+        "r2d2 c3po r2d2 42 42 42",
+        "",
+        "   ",
+        "single",
+        // a long tail of ones under two clear winners
+        "aa aa aa bb bb cc dd ee ff gg hh ii jj kk ll mm"
+    ];
+}
+
+function show(cs: Count[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + cs[i].word + ":" + cs[i].n.to_string();
+        i = i + 1;
+    }
+    return out;
+}
+
+// ----------------------------------------------------------------- tests
+
+// The ranking is the total order, at every position — not just at the top.
+function test_the_ranking_obeys_the_tie_rule_throughout(): test.TestOutcome {
+    var ts: string[] = texts();
+    var checked: i32 = 0;
+    var t: i32 = 0;
+    while (t < ts.len()) {
+        var cs: Count[] = ranked(ts[t]);
+        var i: i32 = 0;
+        while (i + 1 < cs.len()) {
+            if (!beats(cs[i], cs[i + 1])) {
+                return test.fail("text " + t.to_string() + ": \"" + cs[i].word + "\":"
+                    + cs[i].n.to_string() + " does not beat \"" + cs[i + 1].word + "\":"
+                    + cs[i + 1].n.to_string() + " — " + show(cs));
+            }
+            checked = checked + 1;
+            i = i + 1;
+        }
+        t = t + 1;
+    }
+    if (checked < 30) {
+        return test.fail("only " + checked.to_string() + " adjacent pairs were checked");
+    }
+    return test.pass();
+}
+
+// Ties specifically: equal counts must come out alphabetically, which is the
+// half a count-only comparator gets wrong while looking right.
+function test_equal_counts_are_alphabetical(): test.TestOutcome {
+    var cs: Count[] = ranked("gamma delta charlie bravo alpha");
+    var want: string[] = ["alpha", "bravo", "charlie", "delta", "gamma"];
+    if (cs.len() != want.len()) {
+        return test.fail("expected " + want.len().to_string() + " words, got " + show(cs));
+    }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (cs[i].word != want[i] || cs[i].n != 1) {
+            return test.fail("all-tied text ranked as " + show(cs));
+        }
+        i = i + 1;
+    }
+    // The same at count two, so it is not an artefact of everything being one.
+    var cs2: Count[] = ranked("delta charlie bravo alpha delta charlie bravo alpha");
+    var j: i32 = 0;
+    while (j < want.len() - 1) {
+        if (cs2[j].word != want[j] || cs2[j].n != 2) {
+            return test.fail("all-tied-at-two ranked as " + show(cs2));
+        }
+        j = j + 1;
+    }
+    return test.pass();
+}
+
+// top(N) truncates the ranking rather than re-deriving it, so "top 3" and
+// "top 10" cannot disagree about position 3.
+function test_top_n_is_a_prefix_of_the_full_ranking(): test.TestOutcome {
+    var ts: string[] = texts();
+    var t: i32 = 0;
+    while (t < ts.len()) {
+        var all: Count[] = ranked(ts[t]);
+        var n: i32 = 0;
+        while (n <= all.len() + 2) {
+            var got: Count[] = top(ts[t], n);
+            var want_len: i32 = n;
+            if (all.len() < want_len) { want_len = all.len(); }
+            if (got.len() != want_len) {
+                return test.fail("text " + t.to_string() + ": top(" + n.to_string()
+                    + ") has " + got.len().to_string() + " entries, want "
+                    + want_len.to_string());
+            }
+            var i: i32 = 0;
+            while (i < got.len()) {
+                if (got[i].word != all[i].word || got[i].n != all[i].n) {
+                    return test.fail("text " + t.to_string() + ": top(" + n.to_string()
+                        + ") differs from the full ranking at " + i.to_string());
+                }
+                i = i + 1;
+            }
+            n = n + 1;
+        }
+        t = t + 1;
+    }
+    return test.pass();
+}
+
+// The counts agree with an independent rescan of the text.
+function test_the_counts_match_a_rescan(): test.TestOutcome {
+    var ts: string[] = texts();
+    var t: i32 = 0;
+    while (t < ts.len()) {
+        var cs: Count[] = ranked(ts[t]);
+        var i: i32 = 0;
+        while (i < cs.len()) {
+            var want: i32 = count_of(ts[t], cs[i].word);
+            if (cs[i].n != want) {
+                return test.fail("text " + t.to_string() + ": \"" + cs[i].word
+                    + "\" counted " + cs[i].n.to_string() + ", rescan says "
+                    + want.to_string());
+            }
+            i = i + 1;
+        }
+        t = t + 1;
+    }
+    return test.pass();
+}
+
+// Every word is reported exactly once, and the counts sum to the token total.
+// Together these rule out both a dropped word and a double-counted one.
+function test_every_word_appears_once_and_the_counts_sum(): test.TestOutcome {
+    var ts: string[] = texts();
+    var t: i32 = 0;
+    while (t < ts.len()) {
+        var cs: Count[] = ranked(ts[t]);
+        var total: i32 = 0;
+        var i: i32 = 0;
+        while (i < cs.len()) {
+            total = total + cs[i].n;
+            var j: i32 = i + 1;
+            while (j < cs.len()) {
+                if (cs[i].word == cs[j].word) {
+                    return test.fail("text " + t.to_string() + ": \"" + cs[i].word
+                        + "\" appears twice in the ranking");
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        if (total != words_of(ts[t]).len()) {
+            return test.fail("text " + t.to_string() + ": counts sum to "
+                + total.to_string() + ", the text has "
+                + words_of(ts[t]).len().to_string() + " words");
+        }
+        t = t + 1;
+    }
+    return test.pass();
+}
+
+// The stated case rule: comparison and reporting are lowercased.
+function test_words_are_case_folded(): test.TestOutcome {
+    var cs: Count[] = ranked("The THE the tHe cat CAT Cat");
+    if (cs.len() != 2) {
+        return test.fail("case folding produced " + cs.len().to_string()
+            + " words: " + show(cs));
+    }
+    if (cs[0].word != "the" || cs[0].n != 4) {
+        return test.fail("expected the:4 first, got " + show(cs));
+    }
+    if (cs[1].word != "cat" || cs[1].n != 3) {
+        return test.fail("expected cat:3 second, got " + show(cs));
+    }
+    return test.pass();
+}
+
+// The stated word rule: apostrophes are inside a word, punctuation is not,
+// and digits count.
+function test_the_word_boundary_rule(): test.TestOutcome {
+    var ws: string[] = words_of("don't stop; don't! stop. it's -- it's");
+    var want: string[] = ["don't", "stop", "don't", "stop", "it's", "it's"];
+    if (ws.len() != want.len()) {
+        return test.fail("tokenised to " + ws.len().to_string() + " words, want "
+            + want.len().to_string());
+    }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (ws[i] != want[i]) {
+            return test.fail("token " + i.to_string() + " is \"" + ws[i] + "\", want \""
+                + want[i] + "\"");
+        }
+        i = i + 1;
+    }
+    var digits: Count[] = ranked("r2d2 c3po r2d2 42 42 42");
+    if (digits.len() != 3) { return test.fail("digit words: " + show(digits)); }
+    if (digits[0].word != "42" || digits[0].n != 3) {
+        return test.fail("expected 42:3 first, got " + show(digits));
+    }
+    return test.pass();
+}
+
+// Empty and whitespace-only input produce an empty ranking rather than a
+// one-entry ranking of the empty word.
+function test_empty_input(): test.TestOutcome {
+    var empties: string[] = ["", "   ", "  ;; -- .. "];
+    var i: i32 = 0;
+    while (i < empties.len()) {
+        if (ranked(empties[i]).len() != 0) {
+            return test.fail("\"" + empties[i] + "\" produced "
+                + show(ranked(empties[i])));
+        }
+        if (top(empties[i], 5).len() != 0) {
+            return test.fail("top(5) of empty input is not empty");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("wordfreq — top words by count, ties broken alphabetically");
+
+    var ts: string[] = texts();
+    var i: i32 = 0;
+    while (i < ts.len()) {
+        if (ts[i].len() > 0) {
+            eprint("  top 4 of \"" + ts[i] + "\"");
+            eprint("    " + show(top(ts[i], 4)));
+        }
+        i = i + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("wordfreq");
+    r = r.it("the ranking obeys the tie rule throughout", test_the_ranking_obeys_the_tie_rule_throughout);
+    r = r.it("equal counts are alphabetical", test_equal_counts_are_alphabetical);
+    r = r.it("top n is a prefix of the full ranking", test_top_n_is_a_prefix_of_the_full_ranking);
+    r = r.it("the counts match a rescan", test_the_counts_match_a_rescan);
+    r = r.it("every word appears once and the counts sum", test_every_word_appears_once_and_the_counts_sum);
+    r = r.it("words are case folded", test_words_are_case_folded);
+    r = r.it("the word boundary rule", test_the_word_boundary_rule);
+    r = r.it("empty input", test_empty_input);
+    return r.finish();
+}
