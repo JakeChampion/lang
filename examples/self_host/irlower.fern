@@ -21570,7 +21570,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names));
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names));
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -21750,7 +21750,8 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             if (rcopt.idxs[rk] == i && rcopt.blockable[rk]) {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.n_params) {
-                    if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot); }
+                    if (rcopt.tagged[rk] && rcopt.strs[rk]) { st = emit_opt_tagged_str_payload_drop(st, rslot); }
+                    else if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot); }
                     else if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
                     else { st = emit_opt_payload_drop(st, rslot); }
                 }
@@ -26816,6 +26817,38 @@ function optfresh_names_of(reclaim: string[]): string[] {
 // (sg.opt_fresh_ret_fns, "name|ptype|flag"), for lower_func's two call sites —
 // one of which runs before the OPTFRESH seeding. Tagged rows ("RCE:" / "AAC:")
 // are skipped rather than yielding a junk name.
+// optfresh_fresh_names_of: the "OPTFRESHF:<name>" siblings of
+// optfresh_names_of — producers whose SUCCESS payload is fresh on every return.
+// A string payload is admitted only through this list (#6360).
+function optfresh_fresh_names_of(reclaim: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < reclaim.len()) {
+        var e: string = reclaim[i];
+        if (e.len() > 10 && e[0:10] == "OPTFRESHF:") { out = out.append(e[10:e.len()] + ""); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// optfresh_call_fresh_names_of is the same list from the RAW registry
+// ("name|ptype|flag"), for the lower_func call site that runs before seeding.
+function optfresh_call_fresh_names_of(entries: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:");
+        if (!tagged && e.len() > 0 && e[e.len() - 1] == 102) {   // 102 = 'f'
+            var bar: i32 = 0;
+            while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+            out = out.append(e[0:bar] + "");
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function optfresh_call_names_of(entries: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -28671,7 +28704,7 @@ struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: bo
 //
 // Annotation-only, like fresh_scalar_option_call_init: the payload spelling is
 // what proves the shape, and a call init has no literal to fall back on.
-function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[]): string {
+function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[], opt_fresh_str: string[]): string {
     var callee: string = "";
     match (v.init) {
         parser.ExprCall(c) => {
@@ -28690,6 +28723,14 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[]): st
         // None carries no payload, so the success payload is the only one.
         var pt: string = opt_payload_type(ann, "Ok");
         if (is_leaksafe_array_field(pt)) { return pt; }
+        // A STRING success payload (#6360, the last row of this class). Unlike
+        // an array it is admitted ONLY on the freshness verdict: the direct
+        // path proves it by inspecting the ctor argument
+        // (str_local_binding_is_fresh), which a call init cannot see, so the
+        // producer-level "f" flag stands in. Without it an aliased string would
+        // be freed out from under its other holder — the array case needs no
+        // such gate because its ctor takes a counted reference (verified).
+        if (pt == "string" && util.index_of_str(opt_fresh_str, callee) >= 0) { return "string"; }
         return "";
     }
     if (n >= 8 && ann[0:7] == "Result[") {
@@ -28701,13 +28742,14 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[]): st
         // every count. Same reasoning #6416 used to drop this gate from
         // fresh_scalar_option_call_init.
         var okt: string = opt_payload_type(ann, "Ok");
-        if (!is_leaksafe_array_field(okt)) { return ""; }
-        return okt;
+        if (is_leaksafe_array_field(okt)) { return okt; }
+        if (okt == "string" && util.index_of_str(opt_fresh_str, callee) >= 0) { return "string"; }
+        return "";
     }
     return "";
 }
 
-function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[]): OptRcFrees {
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], opt_fresh_str: string[]): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var strs: boolean[] = [];
@@ -28727,7 +28769,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                 // the arm by payload position, not by spelling).
                 var call_pt: string = "";
                 if (cand.variant == "") {
-                    call_pt = rcpayload_option_call_ptype(v, opt_fresh);
+                    call_pt = rcpayload_option_call_ptype(v, opt_fresh, opt_fresh_str);
                     if (call_pt != "") { cand = OptRcCand { variant: "Ok", ptype: call_pt }; }
                 }
                 if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
@@ -28848,6 +28890,40 @@ function emit_opt_tagged_payload_drop(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_opt_payload());
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-success
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
+// emit_opt_tagged_str_payload_drop — emit_opt_tagged_payload_drop with the
+// STRING release (#6360). Identical guard, one different call: a string box is
+// released by the rc-aware __fern_str_free (box + its separate data buffer on
+// asm; one inline block on wasm), not by a bare __fern_rc_dec, which would free
+// the box and strand the bytes.
+//
+// The tag guard is what makes reading offset 8 legal at all here — a None/Err
+// box has no string there — and admission has separately proved the payload
+// FRESH via the producer's OPTFRESH "f" flag, so this box is its sole owner.
+function emit_opt_tagged_str_payload_drop(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // box != 0
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some / Ok)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());                       // end if-success
     st = st.emit(ir.op_load_local(slot));
@@ -36324,6 +36400,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         var ofr_bar: i32 = 0;
         while (ofr_bar < ofr_e.len() && ofr_e[ofr_bar] != 124) { ofr_bar = ofr_bar + 1; }   // 124 = '|'
         reclaim = reclaim.append("OPTFRESH:" + ofr_e[0:ofr_bar]);
+        // #6360: the entry's trailing flag is "f" when every return's SUCCESS
+        // payload is fresh (body_has_nonfresh_opt_success_payload). Seed that
+        // verdict under its own prefix, because the line above keeps only the
+        // NAME — and a string success payload may only be freed when it is
+        // proven fresh, which is the one thing a call init cannot see for
+        // itself.
+        if (ofr_e.len() > 0 && ofr_e[ofr_e.len() - 1] == 102) {   // 102 = 'f'
+            reclaim = reclaim.append("OPTFRESHF:" + ofr_e[0:ofr_bar]);
+        }
         ofr_i = ofr_i + 1;
     }
     // #4355 slice 3: seed the STRFLDOK-admitted types (the whole-program
@@ -36529,7 +36614,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns));
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_call_fresh_names_of(sg.opt_fresh_ret_fns));
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -36914,7 +36999,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             if (rcoptfrees.idxs[roi] == j) {
                 var roslot: i32 = s.slot_of(rcoptfrees.names[roi]);
                 if (roslot >= s.n_params) {
-                    if (rcoptfrees.tagged[roi]) {
+                    if (rcoptfrees.tagged[roi] && rcoptfrees.strs[roi]) {
+                        s = emit_opt_tagged_str_payload_drop(s, roslot);
+                    } else if (rcoptfrees.tagged[roi]) {
                         s = emit_opt_tagged_payload_drop(s, roslot);
                     } else if (rcoptfrees.strs[roi]) {
                         s = emit_opt_str_payload_drop(s, roslot);
