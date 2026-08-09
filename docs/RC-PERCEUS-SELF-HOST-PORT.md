@@ -5032,7 +5032,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   because a specific variant was admitted. `emit_opt_tagged_payload_drop` guards
   that same release on `op_opt_tag() == 0`.
 
-  **Still open, and they are TWO defects rather than one:**
+  **Still open — one class, two rows, and the split is about the freshness
+  proof rather than about the leak:**
 
   - `Result[i32[], string]` from a call — 35200, `frees=0`. Needs a two-way tag
     dispatch (`__fern_rc_dec` on the Ok arm, `__fern_str_free` on the Err arm).
@@ -5043,11 +5044,26 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
     proves the SUCCESS payload fresh, and here the string is the ERR payload, so
     the flag does not cover it. Extending it means a new whole-program check
     over Err payloads, not a reuse of the existing one.
-  - `Option[string]` from a call — reclaims **PARTIALLY** (800 of 2000, where the
-    closed shapes were `frees=0`). Something already frees part of it, so this is
-    a different defect and folding it into the class above risks a double free.
-    Its success payload IS the string, so the registry's `"f"` flag does cover
-    this one — the missing piece here is diagnosis, not a freshness proof.
+  - `Option[string]` from a call — **the same class, not a different defect.**
+    It first read as "reclaims partially, 800 of 2000", which suggested something
+    already frees part of it and that folding it in risked a double free. That
+    was an artifact of the PROBE: its payload was `Some("ab" + "cd")`, and the
+    concat's intermediate temporaries are freed by other machinery, which masked
+    the option boxes never being freed at all. The same shape with a LITERAL
+    payload is `allocs=800 frees=0` — the closed class's exact signature.
+    Varying one dimension separated them:
+
+    | payload | init | self-host |
+    |---|---|---|
+    | `"abcd"` literal | call | 800, **frees=0** |
+    | `"ab" + "cd"` | call | 2000, frees=800 (the 800 are the concat temporaries) |
+    | `"abcd"` literal | direct | 800 / 800, clean |
+    | `"ab" + "cd"` | direct | 2000 / 2000, clean |
+
+    So both open rows are one class — a call-init string payload — and they
+    differ only in WHERE the string sits, which decides whether the freshness
+    proof already exists: success payload (covered by the registry's `"f"` flag)
+    versus Err payload (not covered).
 
   **Checked, so it does not get re-litigated: an ALIASED payload through a
   producer is sound.** `function mk(a: i32[]) { return Some(a); }` called on a
