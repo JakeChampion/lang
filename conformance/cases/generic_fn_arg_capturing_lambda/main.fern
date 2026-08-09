@@ -1,0 +1,25 @@
+// A fn value passed to an ERASED-GENERIC parameter and used through the result.
+// An unbounded type param is erased rather than monomorphised, so `id[T](x: T)`
+// keeps the spelling `T` and the self-host lift's fn-typed gate never saw it
+// (#6466). Both the capturing and non-capturing spellings are here: boxing at
+// the call site without binding the result as a closure turns the non-capturing
+// one from a correct answer into a crash, so it is the guard, not a formality.
+function id[T](x: T): T { return x; }
+
+function capturing(p: i32): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + p)));
+    return v(1);
+}
+
+function non_capturing(): i32 {
+    var v: (i32) => i32 = id(((a: i32) => (a + 1)));
+    return v(1);
+}
+
+function main(): i32 {
+    if (capturing(6) != 7) { return 1; }
+    if (non_capturing() != 2) { return 2; }
+    // Called twice, so a box consumed by the first dispatch would show up.
+    if (capturing(10) != 11) { return 3; }
+    return 0;
+}
