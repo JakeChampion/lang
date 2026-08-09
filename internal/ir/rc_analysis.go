@@ -1980,93 +1980,143 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 		moved[id.Name] = true
 		b.rc.moveSites[id] = true
 	}
-	switch lit := val.(type) {
-	case *ast.StructLit:
-		sd, ok := b.info.Structs[lit.TypeName]
-		if !ok {
-			return
-		}
-		for _, f := range lit.Fields {
-			// Only fields the StructLit inc's AND emitDec dec's on drop
-			// (arrElemIsRcTracked; strings excluded).
-			if arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
-				mark(f.Value)
+	// A container literal evaluates every operand unconditionally, so the
+	// caller's dominance guard for this statement covers a construction
+	// NESTED in one of those operands too — `d = Doc { ...d, vals:
+	// d.vals.append(v) }` reaches the push, and with it v's move. Only the
+	// operands the switch already visits are descended into; nothing else
+	// about the statement is walked.
+	var visit func(ast.Expr)
+	visit = func(val ast.Expr) {
+		switch lit := val.(type) {
+		case *ast.StructLit:
+			sd, ok := b.info.Structs[lit.TypeName]
+			if !ok {
+				return
 			}
-		}
-	case *ast.ArrayLit:
-		// An array of rc-tracked elements: each element is inc'd on
-		// construction and dec'd by __fern_drop_arr_ptr at the array's
-		// drop, so a moved element balances. Plain-scalar arrays never
-		// reach the element inc — mark is a no-op there (isOwnedRcLocal
-		// is false for scalars).
-		for _, el := range lit.Elems {
-			mark(el)
-		}
-	case *ast.TupleLit:
-		// A tuple with rc-tracked elements: each is inc'd on
-		// construction and dec'd by __drop_tuple_<...> at the tuple's
-		// drop (dropFnNameFor), so a moved element
-		// balances — same shape as the struct/array cases. Only mark
-		// owned rc locals; mark self-filters non-pointer elements via
-		// isOwnedRcLocal.
-		for _, el := range lit.Elems {
-			mark(el)
-		}
-	case *ast.MakeClosure:
-		// A closure capturing rc-tracked locals: each is inc'd at
-		// MakeEnv (Phase 1d-vii) and dec'd by the closure's drop
-		// (__closure_drop_<name> / __fern_closure_drop at its last
-		// reference), so a moved capture balances — same shape as the
-		// other containers. Eligibility matches hasRcCapture
-		// (arrElemIsRcTracked; strings are reclaimed by the thunk too
-		// but excluded here for the same single-word-temp reason as the
-		// struct/array cases). mark self-filters via isOwnedRcLocal.
-		// Eliding an inc only REMOVES ops, which the Defunctionalise /
-		// ElideClosurePair passes tolerate (they already treat the inc
-		// as a value-preserving pass-through when chasing alias chains);
-		// the defunc/elide unit tests + self-host VM gate this.
-		for _, cap := range lit.Captures {
-			if arrElemIsRcTracked(b.exprType(cap)) {
-				mark(cap)
+			for _, f := range lit.Fields {
+				// Only fields the StructLit inc's AND emitDec dec's on drop
+				// (arrElemIsRcTracked; strings excluded).
+				if arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+					mark(f.Value)
+				}
+				visit(f.Value)
 			}
-			// `dyn Trait` capture (docs/DYN-TRAITS.md §7.8 — closure-capture
-			// kind). A captured `dyn` is move-only (needsRcIncOnAlias declines
-			// it, so NO inc at MakeEnv), and the closure's drop thunk reclaims
-			// it (genClosureDropThunk's dyn arm), so the source local MUST be
-			// suppressed from the exit sweep — otherwise both the source-local
-			// drop AND the thunk reclaim the same cell (a use-after-free when
-			// the closure ESCAPES: the source drop frees the cell the returned
-			// closure still derefs). NATIVES ONLY (b.dynRcSupported → boxed
-			// one-word cell, single owner after the move); wasm's inline two-
-			// word `dyn` keeps its prior correct-but-leaking capture behaviour
-			// (its env copy isn't reclaimed, the thunk doesn't reclaim it, and
-			// the source local stays swept) — gating here on dynRcSupported (NOT
-			// dynReclaim, which includes wasm) keeps the suppress/reclaim pair
-			// consistent with hasRcCapture + the thunk. `mark` can't be reused —
-			// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
-			// so apply the last-use guard inline.
-			if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
-				if id, ok := cap.(*ast.Ident); ok && order.isLast(id) {
-					moved[id.Name] = true
-					b.rc.moveSites[id] = true
+		case *ast.ArrayLit:
+			// An array of rc-tracked elements: each element is inc'd on
+			// construction and dec'd by __fern_drop_arr_ptr at the array's
+			// drop, so a moved element balances. Plain-scalar arrays never
+			// reach the element inc — mark is a no-op there (isOwnedRcLocal
+			// is false for scalars).
+			for _, el := range lit.Elems {
+				mark(el)
+				visit(el)
+			}
+		case *ast.TupleLit:
+			// A tuple with rc-tracked elements: each is inc'd on
+			// construction and dec'd by __drop_tuple_<...> at the tuple's
+			// drop (dropFnNameFor), so a moved element
+			// balances — same shape as the struct/array cases. Only mark
+			// owned rc locals; mark self-filters non-pointer elements via
+			// isOwnedRcLocal.
+			for _, el := range lit.Elems {
+				mark(el)
+				visit(el)
+			}
+		case *ast.MakeClosure:
+			// A closure capturing rc-tracked locals: each is inc'd at
+			// MakeEnv (Phase 1d-vii) and dec'd by the closure's drop
+			// (__closure_drop_<name> / __fern_closure_drop at its last
+			// reference), so a moved capture balances — same shape as the
+			// other containers. Eligibility matches hasRcCapture
+			// (arrElemIsRcTracked; strings are reclaimed by the thunk too
+			// but excluded here for the same single-word-temp reason as the
+			// struct/array cases). mark self-filters via isOwnedRcLocal.
+			// Eliding an inc only REMOVES ops, which the Defunctionalise /
+			// ElideClosurePair passes tolerate (they already treat the inc
+			// as a value-preserving pass-through when chasing alias chains);
+			// the defunc/elide unit tests + self-host VM gate this.
+			for _, cap := range lit.Captures {
+				if arrElemIsRcTracked(b.exprType(cap)) {
+					mark(cap)
+				}
+				// `dyn Trait` capture (docs/DYN-TRAITS.md §7.8 — closure-capture
+				// kind). A captured `dyn` is move-only (needsRcIncOnAlias declines
+				// it, so NO inc at MakeEnv), and the closure's drop thunk reclaims
+				// it (genClosureDropThunk's dyn arm), so the source local MUST be
+				// suppressed from the exit sweep — otherwise both the source-local
+				// drop AND the thunk reclaim the same cell (a use-after-free when
+				// the closure ESCAPES: the source drop frees the cell the returned
+				// closure still derefs). NATIVES ONLY (b.dynRcSupported → boxed
+				// one-word cell, single owner after the move); wasm's inline two-
+				// word `dyn` keeps its prior correct-but-leaking capture behaviour
+				// (its env copy isn't reclaimed, the thunk doesn't reclaim it, and
+				// the source local stays swept) — gating here on dynRcSupported (NOT
+				// dynReclaim, which includes wasm) keeps the suppress/reclaim pair
+				// consistent with hasRcCapture + the thunk. `mark` can't be reused —
+				// it gates on isOwnedRcLocal, which (deliberately) excludes `dyn` —
+				// so apply the last-use guard inline.
+				if _, isDyn := b.exprType(cap).(ast.DynTraitType); isDyn && b.dynRcSupported {
+					if id, ok := cap.(*ast.Ident); ok && order.isLast(id) {
+						moved[id.Name] = true
+						b.rc.moveSites[id] = true
+					}
 				}
 			}
-		}
-	case *ast.Call:
-		// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
-		// aliased pointer payload and the enum's deep drop dec's it, so a moved
-		// last-use OWNED-LOCAL payload balances (mark self-filters via
-		// isOwnedRcLocal — own params aren't locals, so they're inc'd and
-		// balanced by the exit-sweep dec, exactly like a struct field). Only
-		// variant-constructor calls.
-		if id, ok := lit.Callee.(*ast.Ident); ok {
-			if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
-				for _, a := range lit.Args {
-					mark(a)
+		case *ast.Call:
+			// Slice 1b: an enum variant constructor — emitEnumNew now inc's an
+			// aliased pointer payload and the enum's deep drop dec's it, so a moved
+			// last-use OWNED-LOCAL payload balances (mark self-filters via
+			// isOwnedRcLocal — own params aren't locals, so they're inc'd and
+			// balanced by the exit-sweep dec, exactly like a struct field). Only
+			// variant-constructor calls.
+			if id, ok := lit.Callee.(*ast.Ident); ok {
+				if en, _, _, isVar := b.lookupVariant(id.Name); isVar && b.enumRcPayloadsEligible(en) {
+					for _, a := range lit.Args {
+						mark(a)
+					}
+				}
+				// `xs.append(v)` / `xs.with(i, v)` store the element into the
+				// buffer under the same `needsRcIncOnAlias && !moveSites` gate as
+				// an array literal's elements, and the buffer's deep drop dec's it
+				// — so a moved last-use owned local balances there too.
+				// computeFreeEligible's Array_push / Array_set arms already assume
+				// this: escapeOwned taints only a direct Ident, on the stated
+				// grounds that the moveSites shapes transfer instead of inc'ing.
+				// Without the mark the element took BOTH the inc and the taint,
+				// and the taint suppressed the release that would have balanced it.
+				if el, ok := b.storedArrayElemOperand(lit, id.Name); ok {
+					mark(el)
+					visit(el)
 				}
 			}
 		}
 	}
+	visit(val)
+}
+
+// storedArrayElemOperand returns the element operand of an array-store call
+// that retains it with the construction alias-inc — `xs.append(v)`'s value and
+// `xs.with(i, v)`'s value — together with whether `callee` is such a call.
+//
+// Only rc-tracked element types qualify (arrElemIsRcTracked): those are exactly
+// the elements the buffer's deep drop walks and dec's, which is what balances a
+// skipped inc. Strings are excluded for the same reason the StructLit arm
+// excludes them — their two-word retain/release diverges per backend.
+func (b *builder) storedArrayElemOperand(call *ast.Call, callee string) (ast.Expr, bool) {
+	var el ast.Expr
+	switch {
+	case callee == "__method_Array_push" && len(call.Args) == 2:
+		el = call.Args[1]
+	case callee == "__method_Array_set" && len(call.Args) == 3:
+		el = call.Args[2]
+	default:
+		return nil, false
+	}
+	if len(call.TypeArgs) != 1 || !arrElemIsRcTracked(call.TypeArgs[0]) {
+		return nil, false
+	}
+	return el, true
 }
 
 // computeArraySetIncs decides, for each `.with` call, whether emitArraySet
