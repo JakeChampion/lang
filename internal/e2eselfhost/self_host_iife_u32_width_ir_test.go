@@ -48,6 +48,64 @@ function main(): i32 { return ((gen_f0(5u32) >> 16u32) as i32) & 63i32; }`, 5},
     var w: u32 = (match ((2147484129u32) -? (if (true) { 2147484571u32 } else { 250u32 })) { Some(c) => c, None => 5u32 });
     return (w as i32) & 63i32;
 }`, 5},
+
+	// The LOWERING half of #6400, which the width fix above left refusing: a
+	// bare u32 Some payload (`Some(c) => c`) in a value-position match. The
+	// inlined match-expression's payload gate named i32 and nothing else, so
+	// the u32 spelling bailed where the i32 one lowered — even though a u32
+	// payload rides the same 32-bit slot and the STATEMENT form of the same
+	// match already lowered.
+	//
+	// The first row is the issue's repro verbatim. It needs the OTHER arm to be
+	// a capturing value-position `if`, which is what keeps the outer match an
+	// un-lifted IIFE and so on this gate at all — with a literal arm it takes
+	// the __lam_N hoist instead (literal-arm-control above).
+	{"issue-6400-repro", `function main(): i32 {
+    var b: boolean = true;
+    var w: u32 = (match ((2147484129u32) -? (if (true) { 2147484571u32 } else { 250u32 })) { Some(c) => c, None => (if (b) { 5u32 } else { 687u32 }) });
+    return (w as i32) & 63i32;
+}`, 5},
+	{"u32-payload-none-arm-taken", `function main(): i32 {
+    var b: boolean = true;
+    var w: u32 = (match ((100u32) -? (200u32)) { Some(c) => c, None => (if (b) { 5u32 } else { 687u32 }) });
+    return (w as i32) & 63i32;
+}`, 5},
+	{"u32-payload-some-arm-taken", `function main(): i32 {
+    var b: boolean = true;
+    var w: u32 = (match ((4000000000u32) -? (3999999995u32)) { Some(c) => c, None => (if (b) { 9u32 } else { 7u32 }) });
+    return (w as i32) & 63i32;
+}`, 5},
+	// A payload above i32-max, so the value has to survive the i32-marked
+	// result temp intact rather than being read as a negative.
+	{"u32-payload-above-i32max", `function main(): i32 {
+    var b: boolean = true;
+    var w: u32 = (match ((4294967290u32) -? (2u32)) { Some(c) => c, None => (if (b) { 9u32 } else { 7u32 }) });
+    return (w as i32) & 63i32;
+}`, 56},
+	// And the result still compares UNSIGNED after the round trip — the check
+	// that the i32 temp is a carrier and not a reinterpretation.
+	{"u32-result-compares-unsigned", `function f(): Option[u32] { return Some(4294967290u32); }
+function main(): i32 {
+    var b: boolean = true;
+    var w: u32 = (match (f()) { Some(c) => c, None => (if (b) { 9u32 } else { 7u32 }) });
+    if (w > 2147483648u32) { return 1i32; }
+    return 2i32;
+}`, 1},
+	// An Option[u32] LOCAL rather than a checked-arithmetic scrutinee, so the
+	// gate is reached through try_opt_type's annotation path too.
+	{"optu32-local-scrutinee", `function main(): i32 {
+    var b: boolean = true;
+    var o: Option[u32] = None;
+    var w: u32 = (match (o) { Some(c) => c, None => (if (b) { 9u32 } else { 7u32 }) });
+    return (w as i32) & 63i32;
+}`, 9},
+	// Control: the i32 spelling of the first row, which lowered all along. It
+	// is what made the u32 refusal a width gap rather than a shape gap.
+	{"i32-spelling-control", `function main(): i32 {
+    var b: boolean = true;
+    var w: i32 = (match ((100i32) -? (200i32)) { Some(c) => c, None => (if (b) { 5i32 } else { 687i32 }) });
+    return w & 63i32;
+}`, 28},
 }
 
 // TestSelfHostIifeU32WidthIRX86_64 drives the production x86-64 IR path.
