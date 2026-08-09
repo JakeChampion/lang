@@ -307,3 +307,37 @@ one shape: that a reclaiming loop does not grow the arena without bound.
 Reading this file as a definition of Fern Core would be the same mistake
 as reading a wasm opcode table as a definition of WebAssembly. It is the
 vocabulary. The sentences are not written yet.
+
+## Instructions the corpus does not reach
+
+`TestCoreOpsAreReachedByTheCorpus` lowers every conformance case and
+tallies the instructions that come out. This is the check
+`spec/README.md` calls the one that matters most for a normative
+document and the one that is easy to leave out: the effects gate above
+proves a row agrees with the verifier's model, and proves nothing about
+whether any Fern program produces the instruction at all. An invented
+row would read exactly like a true one.
+
+Run for the first time it found **19** unreached instructions. Fifteen
+were a corpus gap rather than a language fact, and closed by five cases
+— `float_arith_ops`, `float_width_conversion`, `float_bit_reinterpret`,
+`result_register_pair`, `dyn_trait_dispatch`. Float subtraction and
+negation, `f32`/`f64` conversion, all four bit reinterprets, the
+register-form `Ok` / `Err`, and every `dyn Trait` dispatch had **no**
+conformance coverage; `dyn` had two compile-error cases and nothing that
+ran one.
+
+Four remain, and all four are unreachable by construction: they are
+produced by IR passes that run *after* lowering, so no source program
+can be written that makes `LowerWith` emit them.
+
+| Op | Why |
+| --- | --- |
+| `local.tee` | Introduced by the tee pass, which fuses a store and a following load. Lowering emits the pair. |
+| `call_closure_direct` | Introduced by the defunctionalisation pass when a `call_indirect`'s receiver is provably monomorphic. |
+| `make_env` | Introduced by the same pass, when every reader of a closure became a `call_closure_direct` and the `{fn_idx, env_ptr}` pair is dead. |
+| `line` | Emitted only under the `EmitLineMarkers` lower option, which is native `-g`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
+
+A row here is checked in both directions: an entry the corpus has
+started reaching is reported and must be deleted, so the list shrinks as
+cases are added rather than quietly going stale.

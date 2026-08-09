@@ -656,10 +656,28 @@ func (s *stackChecker) call(i int, op Op) bool {
 		s.bail = "negative argument count"
 		return false
 	}
-	args, ok := s.callArgSlots(op)
-	if !ok {
-		s.bail = "unknown argument shape for callee " + op.Str
-		return false
+	// A dyn call's I32 is the METHOD'S VTABLE SLOT, not an argument
+	// count, so its arguments come from the signature instead — which is
+	// receiver-first, and the receiver is popped separately below.
+	var args int
+	if op.Kind == OpCallDyn {
+		sig := op.Sig()
+		if sig == nil || len(sig.Params) == 0 {
+			s.bail = "dyn call with no receiver-first signature"
+			return false
+		}
+		if anyErased(sig.Params) {
+			s.bail = "dyn call through an erased parameter type"
+			return false
+		}
+		args = s.slotCount(sig.Params[1:])
+	} else {
+		var ok bool
+		args, ok = s.callArgSlots(op)
+		if !ok {
+			s.bail = "unknown argument shape for callee " + op.Str
+			return false
+		}
 	}
 
 	switch op.Kind {
