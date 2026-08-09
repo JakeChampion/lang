@@ -7212,7 +7212,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Dead-alias cancellation (#4402 opt 1): a proven borrowed-view
 		// alias skips the transfer inc — its exit-sweep dec is equally
 		// elided (emitRcDecLocalsAtExitExcept), a net-zero pair.
-		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] {
+		if needsRcIncOnAlias(n.Init, b) && !b.rc.moveSites[n] && !b.rc.borrowedAliasSites[n] &&
+			!b.initIsOwnedFieldRead(n.Init) {
 			b.emitAliasInc(n.Init)
 		}
 		// Phase 5h: release the slot's previous value before this
@@ -9411,24 +9412,36 @@ func (b *builder) expr(e ast.Expr) error {
 				return fmt.Errorf("ir: struct %s has no field %q", st, n.Field)
 			}
 		}
-		// Reclaim a FRESH owned struct/tuple container consumed by a SCALAR
-		// field access — `mk(i).x` (mk returns a fresh struct) loaded field x
-		// and dropped the box on the floor, leaking it (240000 -> 2400000 in
-		// a loop). Stash the container, load the field off the reload, then
-		// deep-drop it after via the is_unique-gated emitOwnedSlotDrop (which
-		// also reclaims the struct's OTHER rc fields — we only took a scalar).
-		// Gated to a NON-POINTER field: the loaded scalar can't alias the box,
-		// so freeing it is safe; a pointer field (`mk().data` -> array) WOULD
-		// alias and is left alone. The is_unique gate protects an aliased
-		// container (a callee returning its param, rc>=2 — only dec'd). Idents
-		// / nested fields aren't fresh temps and lower in place.
+		// Reclaim a FRESH owned struct/tuple container consumed by a field
+		// access — `mk(i).x` (mk returns a fresh struct) loaded the field and
+		// dropped the box on the floor, leaking it. Stash the container, load
+		// the field off the reload, then deep-drop it via the is_unique-gated
+		// emitOwnedSlotDrop (which also reclaims the container's OTHER rc
+		// fields — we only took one).
+		//
+		// A POINTER field is the #6401 half, and it needs one more op than
+		// the scalar case: the loaded value ALIASES the box we are about to
+		// drop, so retain it first and let the container's deep drop net it
+		// back to this expression's single reference. Without the retain the
+		// drop would free the field out from under the result; without the
+		// drop the whole container leaked — `mk_box().items` cost 96 B a
+		// round, unbounded, where `var b = mk_box(); b.items` was flat. It is
+		// the same inc-then-deep-drop pair the struct-update spread already
+		// uses for a fresh base.
+		//
+		// The is_unique gate carries the safety in the other direction: an
+		// aliased container (a callee returning its own param, rc >= 2) is
+		// only dec'd, so the retain is merely unbalanced — a leak, never a
+		// use-after-free. Idents / nested fields aren't fresh temps and lower
+		// in place.
 		faContainerSlot := int32(-1)
-		if ft != nil && !ast.IsPointerType(ft) {
+		faRetainField := ft != nil && rcTrackedSlotType(ft)
+		if ft != nil && (!ast.IsPointerType(ft) || faRetainField) {
 			ct, ok := b.freshOwnedRcTempType(n.Target)
 			if !ok {
 				ct, ok = b.ownedCallResultType(n.Target)
 			}
-			if ok {
+			if ok && (!faRetainField || b.freshOwnedFieldContainer(n.Target)) {
 				if _, isStruct := ct.(ast.StructType); isStruct {
 					faContainerSlot = b.allocSlot()
 				} else if _, isTuple := ct.(ast.TupleType); isTuple {
@@ -9454,6 +9467,9 @@ func (b *builder) expr(e ast.Expr) error {
 		b.emit(Op{Kind: OpAdd})
 		b.emit(payloadLoadOpFor(ft, b.ptrW))
 		if faContainerSlot >= 0 {
+			if faRetainField {
+				b.emitRetainValueOnStack(ft)
+			}
 			b.emitOwnedSlotDrop(faContainerSlot, b.scratchType[faContainerSlot])
 		}
 	case *ast.BlockExpr:
@@ -14658,6 +14674,67 @@ func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
+}
+
+// initIsOwnedFieldRead reports whether `e` is a field read off a FRESH owned
+// container — `mk_box().items`. The FieldAccess lowering already retains the
+// loaded field and deep-drops the container (#6401), so the value arrives at
+// the binding site holding its own reference. The binding's usual alias inc
+// would be a second one: `needsRcIncOnAlias` fires for any pointer-typed
+// FieldAccess, and with both incs the exit sweep's single dec left the field
+// at rc 1 forever — the container's 32 B came back and the field's 64 B did
+// not. This is a MOVE, not an alias.
+func (b *builder) initIsOwnedFieldRead(e ast.Expr) bool {
+	fa, ok := e.(*ast.FieldAccess)
+	if !ok {
+		return false
+	}
+	t := b.exprType(fa)
+	return rcTrackedSlotType(t) && b.freshOwnedFieldContainer(fa.Target)
+}
+
+// freshOwnedFieldContainer reports whether `target` is a struct or tuple TEMP
+// this expression solely owns — a literal, or a call whose callee the borrow
+// analysis proved never returns one of its own parameters. It is the single
+// predicate behind the fresh-container field read (#6401): the FieldAccess
+// lowering consults it to decide whether to retain the loaded field and
+// deep-drop the container, and rhsTainted consults it to decide whether the
+// destination therefore owns what it received. They must agree, so they ask
+// here rather than each re-deriving it.
+func (b *builder) freshOwnedFieldContainer(target ast.Expr) bool {
+	ct, ok := b.freshOwnedRcTempType(target)
+	if !ok {
+		ct, ok = b.ownedCallResultType(target)
+	}
+	if !ok {
+		return false
+	}
+	switch ct.(type) {
+	case ast.StructType:
+		return !isMapType(ct)
+	case ast.TupleType:
+		return true
+	}
+	return false
+}
+
+// emitRetainValueOnStack retains an rc-tracked value already on the operand
+// stack, keyed on its static TYPE rather than a source expression (the
+// emitAliasInc sibling for sites that loaded the value themselves). Both forms
+// inc-and-pass-through, so the value survives for whatever consumes it next.
+//
+// The set is rcTrackedSlotType, not ast.IsPointerType: a `dyn Trait` value
+// carries no rc header and a slice is a borrowed view, so neither may take
+// __fern_rc_inc even though both are pointer-shaped.
+func (b *builder) emitRetainValueOnStack(t ast.Type) {
+	if !rcTrackedSlotType(t) {
+		return
+	}
+	if _, isStr := t.(ast.StringType); isStr && b.twoWordStrings() {
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_inc", I32: 1})
+		return
+	}
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 }
 
 // structUpdateBaseIsOwned reports whether a struct-update spread base is a

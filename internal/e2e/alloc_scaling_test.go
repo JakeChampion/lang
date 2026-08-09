@@ -277,6 +277,36 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// Reading a POINTER field off a call result (#6401) — `mk().items`,
+		// `config().hosts`, `parse(s).body`. The container is a temporary
+		// nobody holds, so nothing released it: 96 B a round, unbounded,
+		// while `var b = mk(); b.items` was flat. The scalar-field form of
+		// the same read was already reclaimed; the pointer form was left out
+		// because the loaded value aliases the box, which is exactly what
+		// makes it need a retain before the container's deep drop rather
+		// than no drop at all.
+		//
+		// Constant in n: each round builds one container, keeps one field
+		// and discards the rest.
+		name: "call-result-field-read",
+		decls: `import "std/i32";
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function mk_box(i: i32): Box { return Box { items: [P { a: i, b: i }, P { a: i, b: i }], tag: i }; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: P[] = mk_box(i).items;
+        t = t + a[0].a;
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// A struct-update spread whose base is a FRESH value. `T { ...b, f: v }`
 		// where `b` is a LOCAL borrows the base — the local releases at its own
 		// scope exit, so the construction must not — but that reasoning does
