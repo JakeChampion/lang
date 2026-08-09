@@ -385,6 +385,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "nanosleep") { return "35"; }
         if (name == "poll") { return "7"; }
         if (name == "wait4") { return "61"; }
+        if (name == "timerfd_create") { return "283"; }
+        if (name == "timerfd_settime") { return "286"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -435,6 +437,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "nanosleep") { return "101"; }
     if (name == "ppoll") { return "73"; }
     if (name == "wait4") { return "260"; }
+    if (name == "timerfd_create") { return "85"; }
+    if (name == "timerfd_settime") { return "86"; }
     return "-1";
 }
 
@@ -677,6 +681,23 @@ pub function rt_src_poll(t: string): string {
 // The status lands in __fern_scratch, so this joins the scratch gate.
 pub function rt_src_proc_waitpid(t: string): string {
     return "function __fern_proc_waitpid(pid: i32): i32 { var st: i32 = __raw_scratch(16); var rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid, st, 0, 0); if (rc < 0) { return rc; } var w: i32 = __load_i32(st); var sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
+}
+
+// rt_src_timer_fd backs `timer_fd(ms)` (#2649, syscall-leaf) → a CLOCK_MONOTONIC
+// timerfd that becomes readable after `ms`, or -errno.
+//
+// Two syscalls: timerfd_create, then timerfd_settime with a `struct itimerspec`
+// — four 8-byte words, {it_interval, it_value}, written through
+// __raw_store_ptr's word slots in __fern_scratch. A failed create returns before
+// the second call, so the fd is never armed behind an error.
+//
+// Darwin has no timerfd; its hand-asm answered -1 without a syscall and that is
+// kept, the same shape as poll.
+pub function rt_src_timer_fd(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_timer_fd(ms: i32): i32 { return 0 - 1; }";
+    }
+    return "function __fern_timer_fd(ms: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "timerfd_create") + ", 1, 0, 0); if (fd < 0) { return fd; } var its: i32 = __raw_scratch(32); __raw_store_ptr(its, 0, 0); __raw_store_ptr(its, 1, 0); __raw_store_ptr(its, 2, ms / 1000); __raw_store_ptr(its, 3, (ms % 1000) * 1000000); __syscall4(" + sysno(t, "timerfd_settime") + ", fd, 0, its, 0); return fd; }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
