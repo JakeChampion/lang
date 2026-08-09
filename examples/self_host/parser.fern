@@ -1051,6 +1051,28 @@ function (p: Par) peek_is_literal(): boolean {
     return false;
 }
 
+// peek_is_pat_literal is peek_is_literal widened by one token for PATTERN
+// position: the sign of a negative literal is a separate `-` punct, so the
+// one-token test declined `-1 => …` and the whole match fell to the variant
+// path and bailed (#6394). The grammar has always permitted it —
+// `LiteralPattern = [ '-' ] ( NUMBER | FLOAT ) | …`.
+//
+// Only the GATE needs widening: every literal-pattern site parses through
+// parse_binary, which already handles unary minus, so the sign folds in with
+// no change to the arms themselves.
+function (p: Par) peek_is_pat_literal(): boolean {
+    if (p.peek_is_literal()) { return true; }
+    if (p.peek_punct() != "-") { return false; }
+    if (p.pos + 1 < p.toks.len()) {
+        var t: lexer.Token = p.toks[p.pos + 1];
+        match (t) {
+            lexer.TokNumber(x) => { return true; },
+            _ => { return false; }
+        }
+    }
+    return false;
+}
+
 // peek_member_name returns the identifier at the cursor, OR a reserved
 // keyword that is nonetheless allowed in MEMBER position — currently only
 // `default` (a reserved keyword that doubles as the `Default` trait's
@@ -2446,7 +2468,7 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Par) {
             elem_kinds = elem_kinds.append(0);
             binds = binds.append(n);
             lits = lits.append(e_bool(true));
-        } else if (p.peek_is_literal()) {
+        } else if (p.peek_is_pat_literal()) {
             var (le_expr, le_p) = parse_expr(p);
             p = le_p;
             elem_kinds = elem_kinds.append(2);
@@ -3009,7 +3031,7 @@ function parse_match_expr(p: Par): IfChain {
     // `_` and desugar to an if/else-if chain (build_literal_match). The
     // decision is made once, up front, so the common enum/variant match
     // takes the normal StmtMatch path below with no extra allocation.
-    if (p.peek_is_literal()) {
+    if (p.peek_is_pat_literal()) {
         var lit_arms: LitArm[] = [];
         var lfirst: boolean = true;
         while (p.peek_punct() != "}" && !p.at_end()) {
@@ -3020,7 +3042,7 @@ function parse_match_expr(p: Par): IfChain {
             var lalt_his: Expr[] = [];
             var lalt_hrs: boolean[] = [];
             var lalt_incs: boolean[] = [];
-            if (p.peek_is_literal()) {
+            if (p.peek_is_pat_literal()) {
                 var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
                 p = la_p;
                 lalt_lits = la_lits;
@@ -3378,7 +3400,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
     // bare PatVariant("") — the empty type-name is skipped by the E028 /
     // E015 variant checks, leaving only the E026 the misplaced wildcard
     // already earns.
-    if (p.peek_is_literal()) {
+    if (p.peek_is_pat_literal()) {
         p = p.advance();
         return (p_variant("", ""), p);
     }
@@ -3688,7 +3710,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
     // `_` and desugar to an if/else-if chain (build_literal_match). The
     // decision is made once, up front, so the common enum/variant match
     // takes the normal StmtMatch path below with no extra allocation.
-    if (p.peek_is_literal()) {
+    if (p.peek_is_pat_literal()) {
         var lit_arms: LitArm[] = [];
         while (p.peek_punct() != "}" && !p.at_end()) {
             var laline: i32 = p.peek_line();
@@ -3698,7 +3720,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             var lalt_his: Expr[] = [];
             var lalt_hrs: boolean[] = [];
             var lalt_incs: boolean[] = [];
-            if (p.peek_is_literal()) {
+            if (p.peek_is_pat_literal()) {
                 var (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
                 p = la_p;
                 lalt_lits = la_lits;
