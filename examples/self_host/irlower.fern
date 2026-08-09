@@ -31234,7 +31234,7 @@ function slot_is_reclaimable_optarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTARR:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "OPTARR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
