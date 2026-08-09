@@ -873,10 +873,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_send\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
-            // [fd, max] -> __fern_tcp_recv(x0=fd, x1=max) -> string box. Allocates
+            // [fd, max] -> __fern_tcp_recv(fd, max) -> string box. Allocates
             // (calls __fern_alloc), so the heap runtime must be present.
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_recv\n    str x0, [sp, #-16]!\n");
             s = s.need("heap");
+            s = s.need("tcp_recv");
+            // max is on top but param[0] is fd, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_tcp_recv\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 196) {  // tcp_close
             // [fd] IS param[0] already, so the stack ABI needs no marshalling.
             // -> 0 / -errno. The need is marked (as x86-64 always did) because
@@ -4641,38 +4644,7 @@ function emit_rt_subprocess(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // tcp_listen is Fern now (#2649) — see the migrated-helpers section.
 
-    // __fern_tcp_recv(x0 = fd, x1 = max) → string box {data, len}.
-    // Allocates max bytes, read()s into them, boxes (data, len). On
-    // error / EOF the box has len 0.
-    s = s.write(".globl __fern_tcp_recv\n");
-    s = s.write(".type __fern_tcp_recv, %function\n");
-    s = s.write("__fern_tcp_recv:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // fd
-    s = s.write("    mov x20, x1\n");           // max
-    s = s.write("    mov x0, x20\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");           // data buf
-    s = s.write("    mov x0, x19\n");
-    s = s.write("    mov x1, x21\n");
-    s = s.write("    mov x2, x20\n");
-    s = s.write("    mov x8, #63\n");           // read
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    csel x0, x0, xzr, ge\n");  // clamp -errno/EOF → 0
-    s = s.write("    mov x22, x0\n");           // len
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x21, [x0]\n");         // data@0
-    s = s.write("    str x22, [x0, #8]\n");     // len@8
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_recv, .-__fern_tcp_recv\n");
+    // tcp_recv is Fern now (#2649) — see the migrated-helpers section.
 
     // __fern_tcp_send(x0 = fd, x1 = string box) → bytes written / -errno.
     // write(fd, box.data, box.len). Leaf.
@@ -6206,6 +6178,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // tcp_connect: the same sockaddr_in as tcp_listen with the address filled in.
     if (s.has_need("tcp_connect")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
+    }
+    // tcp_recv: read(2) into a fresh buffer, boxed by __raw_string.
+    if (s.has_need("tcp_recv")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

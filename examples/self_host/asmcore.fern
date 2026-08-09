@@ -616,13 +616,6 @@ pub function rt_src_open_fd(t: string): string {
 
 // rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
 // an fd (#2649, syscall-leaf) — close(2) and accept(2) with a NULL addr/addrlen.
-//
-// The rest of the tcp family stays hand-written for now. tcp_send in particular
-// is blocked on a missing bridge, not on a syscall: it needs the DATA POINTER of
-// a `string`, and the floor only goes the other way (`__raw_string` builds a
-// string from raw bytes; nothing reads one back out). Expressing it today means
-// copying the payload byte-by-byte on every send, which is a straight loss on a
-// send path.
 pub function rt_src_tcp_close(t: string): string {
     return "function __fern_tcp_close(fd: i32): i32 { return __syscall3(" + sysno(t, "close") + ", fd, 0, 0); }";
 }
@@ -751,6 +744,19 @@ pub function rt_src_tcp_listen(t: string): string {
 // that exists because darwinize cannot remap a number it only sees at runtime.
 pub function rt_src_tcp_connect(t: string): string {
     return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
+}
+
+// rt_src_tcp_recv backs `tcp_recv(fd, max)` (#2649, syscall-leaf) → a string of
+// up to `max` bytes. A short read, EOF and -errno all come back as the empty
+// string: the op has no error channel, so the hand-asm clamped a negative to
+// len 0 and this keeps that.
+//
+// The direction of the floor is why recv migrates and send does not:
+// `__raw_string` builds a string over a buffer we already own, so no copy. Going
+// the other way — reading a live string's data pointer back out — has no floor
+// primitive, which is what still blocks tcp_send.
+pub function rt_src_tcp_recv(t: string): string {
+    return "function __fern_tcp_recv(fd: i32, max: i32): string { var p: i32 = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, max); if (n < 0) { n = 0; } return __raw_string(p, n); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

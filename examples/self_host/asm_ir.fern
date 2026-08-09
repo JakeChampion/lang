@@ -444,46 +444,8 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 
 // __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
 
-// emit_ir_tcp_recv appends __fern_tcp_recv(%rdi = fd, %rsi = max) -> a self-host
-// string box {data@0, len@8} of up to `max` bytes read. Mirrors the self-host
-// arm64 body (the SELF-HOST string ABI, NOT native's len-prefix): alloc max,
-// read() into it, clamp -errno/EOF to len 0, then a 16-byte box [data, len].
-// Allocates, so gated on heap + tcp_recv.
-function emit_ir_tcp_recv(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_tcp_recv:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");                 // fd
-    s = s.write("    pushq %r12\n");                 // max
-    s = s.write("    pushq %r13\n");                 // data buf
-    s = s.write("    pushq %r14\n");                 // len
-    s = s.write("    movl %edi, %ebx\n");            // fd
-    s = s.write("    movq %rsi, %r12\n");            // max
-    s = s.write("    movq %r12, %rdi\n");            // buf = alloc(max)
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %rax, %r13\n");
-    s = s.write("    movl %ebx, %edi\n");            // read(fd, buf, max)
-    s = s.write("    movq %r13, %rsi\n");
-    s = s.write("    movq %r12, %rdx\n");
-    s = s.write("    movq $0, %rax\n");              // read
-    s = s.write("    syscall\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jns .Lir_trecv_ok\n");
-    s = s.write("    xorq %rax, %rax\n");            // -errno/EOF -> len 0
-    s = s.write(".Lir_trecv_ok:\n");
-    s = s.write("    movq %rax, %r14\n");            // len
-    s = s.write("    movq $16, %rdi\n");             // box = alloc(16)
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %r13, (%rax)\n");          // data@0
-    s = s.write("    movq %r14, 8(%rax)\n");         // len@8
-    s = s.write("    popq %r14\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_tcp_recv is a Fern runtime function (#2649): asmcore.rt_src_tcp_recv
+// — read(2) into a fresh buffer, boxed by __raw_string.
 
 // emit_ir_tcp_send appends __fern_tcp_send(%rdi = fd, %rsi = string box) -> bytes
 // written / -errno. Reads the self-host string box [data@0, len@8] and write()s
@@ -4222,7 +4184,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
-        "__fern_tcp_recv", "__fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
+        "__fn___fern_tcp_recv", "__fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
@@ -4928,9 +4890,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_send\n    pushq %rax\n");
             s = s.need("tcp_send");
         } else if (o.kind_tag == 195) {  // tcp_recv
-            // [fd, max]; __fern_tcp_recv(%rdi=fd, %rsi=max) -> string box (data,
-            // len) in %rax. Allocates the buffer + the box.
-            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_recv\n    pushq %rax\n");
+            // [fd, max] with max on top; the stack ABI wants param[0] (fd)
+            // lowest, so pop and re-push swapped.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_tcp_recv\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("tcp_recv");
         } else if (o.kind_tag == 196) {  // tcp_close
             // [fd] IS param[0] already, so the stack ABI needs no marshalling:
@@ -7407,7 +7370,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), all_structs, s);
     }
-    if (s.has_need("tcp_recv")) { s = emit_ir_tcp_recv(s); }
+    if (s.has_need("tcp_recv")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv("x86_64"), all_structs, s);
+    }
     if (s.has_need("tcp_send")) { s = emit_ir_tcp_send(s); }
     if (s.has_need("tcp_listen")) {
         s = s.write("    .text\n");
