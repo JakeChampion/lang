@@ -26,10 +26,10 @@ import (
 
 // gatedBuiltins maps each capability-gated runtime builtin to the
 // capability a target must list in Descriptor.Capabilities for the
-// builtin to be callable. Builtins NOT in this table (print, eprint,
-// env, now_unix_ms, math, map/array/string runtime, …) are ungated —
-// every target provides them. The async/readiness set (poll,
-// timer_fd, wasm_* pollables) is ungated by default, not by decision.
+// builtin to be callable. Builtins NOT in this table (env, math,
+// map/array/string runtime, …) are ungated — every target provides
+// them. The async/readiness set (poll, timer_fd, wasm_* pollables) is
+// ungated by default, not by decision.
 var gatedBuiltins = map[string]string{
 	// Process spawning.
 	"subprocess": "subprocess",
@@ -55,6 +55,24 @@ var gatedBuiltins = map[string]string{
 	// Blocking stdin reads (a webserver target has no stdin).
 	"read_line": "stdin",
 	"stdin":     "stdin",
+
+	// The line is `log` = somewhere to put a line of diagnostics,
+	// `stdout` = an actual stdout stream. wasi-http is why they are
+	// separate: the proxy world grants `log` and has no wasi:cli/stdout.
+	// So `write` sits on the far side of the line from `print` despite
+	// being print-without-the-newline — it names the stream, not a sink.
+	"print":   "log",
+	"eprint":  "log",
+	"stdout":  "stdout",
+	"stderr":  "stdout",
+	"write":   "stdout",
+	"putchar": "stdout",
+
+	// Clocks, and the wakeups driven by them.
+	"now_unix_ms":  "now",
+	"now_ns":       "now",
+	"monotonic_ns": "now",
+	"sleep_ms":     "now",
 
 	// Sockets.
 	"tcp_listen":   "tcp",

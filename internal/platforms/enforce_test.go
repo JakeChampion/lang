@@ -233,13 +233,62 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	}
 }
 
+// `log` and `now` are universal today — every descriptor grants both —
+// so gating them must not reject anything. The point of the gate is the
+// freestanding target that will not grant them (#6506), not a change to
+// what the six hosted targets accept.
+func TestEnforceLogAndClockUniversal(t *testing.T) {
+	srcs := map[string]string{
+		"print":  `function main(): i32 { print("hi"); return 0; }`,
+		"eprint": `function main(): i32 { eprint("hi"); return 0; }`,
+		"clock":  `function main(): i32 { return (now_unix_ms() as i32); }`,
+		"sleep":  `function main(): i32 { sleep_ms(1); return 0; }`,
+	}
+	for name, src := range srcs {
+		for _, target := range platforms.Targets() {
+			t.Run(name+"/"+target, func(t *testing.T) {
+				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
+				}
+			})
+		}
+	}
+}
+
+// The stdout STREAM is not universal: wasi-http is the proxy world,
+// which has no wasi:cli/stdout to hand out. `print` still works there
+// (it gates on `log`), which is the whole reason the two capabilities
+// are distinct.
+func TestEnforceStdoutStreamByTarget(t *testing.T) {
+	srcs := map[string]string{
+		"write":   `function main(): i32 { write("hi"); return 0; }`,
+		"putchar": `function main(): i32 { putchar(65); return 0; }`,
+		"handle":  `function main(): i32 { var w = stdout(); return 0; }`,
+	}
+	for name, src := range srcs {
+		for _, target := range []string{"arm64", "arm64-darwin", "arm64-android", "x86-64", "wasm"} {
+			t.Run(name+"/"+target, func(t *testing.T) {
+				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
+				}
+			})
+		}
+		t.Run(name+"/wasi-http", func(t *testing.T) {
+			vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+			if len(vs) != 1 || vs[0].Capability != "stdout" {
+				t.Fatalf("%s on wasi-http: violations = %+v, want one stdout violation", name, vs)
+			}
+		})
+	}
+}
+
 // Table consistency: every capability named in the gate table is
 // either provided by at least one target or is the documented
 // interp-only case (subprocess). Guards against typos like gating on
 // "filesystem" while descriptors say "fs".
 func TestGatedCapabilitiesResolvable(t *testing.T) {
 	caps := map[string]bool{}
-	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "proc_exec", "__heap_mark", "__heap_release_to"} {
+	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "proc_exec", "__heap_mark", "__heap_release_to", "print", "eprint", "write", "putchar", "stdout", "stderr", "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms"} {
 		c, ok := platforms.GatedBuiltin(name)
 		if !ok {
 			t.Errorf("expected %q to be gated", name)
