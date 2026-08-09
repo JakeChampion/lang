@@ -58,6 +58,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
+		"    var pfds: i32[] = [];\n" +
+		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -96,7 +98,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// sleeps with select(2). This Linux emit reaches it through nanosleep,
 		// so the assertion here is just that the helper is Fern at all; the
 		// Darwin test below is what pins the five-argument path.
-		"sleep_ms"} {
+		"sleep_ms",
+		// poll reaches ppoll through __syscall5 on this target; x86-64 uses
+		// three-argument poll(2). Both are Fern.
+		"poll"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}

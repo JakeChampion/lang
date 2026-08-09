@@ -383,6 +383,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "getdents") { return "217"; }
         if (name == "accept") { return "43"; }
         if (name == "nanosleep") { return "35"; }
+        if (name == "poll") { return "7"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -430,6 +431,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "getdents") { return "61"; }
     if (name == "accept") { return "202"; }
     if (name == "nanosleep") { return "101"; }
+    if (name == "ppoll") { return "73"; }
     return "-1";
 }
 
@@ -627,6 +629,36 @@ pub function rt_src_sleep_ms(t: string): string {
         return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var tv: i32 = __raw_scratch(16); __raw_store_ptr(tv, 0, ms / 1000); __raw_store_ptr(tv, 1, (ms % 1000) * 1000); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
     }
     return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, ms / 1000); __raw_store_ptr(ts, 1, (ms % 1000) * 1000000); return __syscall3(" + sysno(t, "nanosleep") + ", ts, 0, 0); }";
+}
+
+// rt_src_poll backs `poll(fds, timeout_ms)` (#2649, syscall-leaf) → the index of
+// the first POLLIN-ready fd, or -1.
+//
+// It builds a `struct pollfd[]` — {i32 fd; i16 events; i16 revents}, eight bytes
+// each — with __raw_store_ptr for the fd slot and __raw_store8 for the two
+// half-word fields, since the floor has no 16- or 32-bit store. The four
+// byte-stores after each fd are not redundant: __raw_store_ptr writes the whole
+// word, so a negative fd would sign-extend into `events`.
+//
+// The call is where the targets part. x86-64 has poll(2), three arguments.
+// arm64 Linux has only ppoll, which takes five and wants a `timespec` rather
+// than a millisecond count — so a non-negative timeout is written into
+// __fern_scratch and a negative one passes NULL, which is ppoll's "block
+// forever". Darwin has neither in a form this reaches, and the hand-asm simply
+// answered -1; that is preserved rather than quietly changed.
+pub function rt_src_poll(t: string): string {
+    var call: string = "";
+    if (t == "arm64-darwin") {
+        // No poll on this target — the hand-asm returned -1 before doing any
+        // work, so nothing below it can run.
+        return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { return 0 - 1; }";
+    }
+    if (t == "x86_64") {
+        call = "__syscall3(" + sysno(t, "poll") + ", buf, n, timeout_ms);";
+    } else {
+        call = "var tmo: i32 = 0; if (timeout_ms >= 0) { var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, timeout_ms / 1000); __raw_store_ptr(ts, 1, (timeout_ms % 1000) * 1000000); tmo = ts; } __syscall5(" + sysno(t, "ppoll") + ", buf, n, tmo, 0, 0);";
+    }
+    return "function __fern_poll(fds: i32[], timeout_ms: i32): i32 { var n: i32 = fds.len(); if (n <= 0) { return 0 - 1; } var buf: i32 = __raw_alloc(n * 8); var i: i32 = 0; while (i < n) { __raw_store_ptr(buf, i, fds[i]); __raw_store8(buf, i * 8 + 4, 1); __raw_store8(buf, i * 8 + 5, 0); __raw_store8(buf, i * 8 + 6, 0); __raw_store8(buf, i * 8 + 7, 0); i = i + 1; } " + call + " var j: i32 = 0; while (j < n) { if ((__raw_load8(buf, j * 8 + 6) & 1) != 0) { return j; } j = j + 1; } return 0 - 1; }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

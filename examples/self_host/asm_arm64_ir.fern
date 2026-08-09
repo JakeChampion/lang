@@ -835,7 +835,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // operand stack [fds, timeout]; pop timeout (x1, top) then fds box
             // ptr (x0), call __fern_poll (ppoll(2) over the fd set) -> i32 ready
             // index (or -1) in x0. Gated helper in asm_arm64.emit_runtime.
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_poll\n    str x0, [sp, #-16]!\n");
+            // timeout is on top but param[0] is fds, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_poll\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
             s = s.need("heap"); s = s.need("poll");
         } else if (o.kind_tag == 188) {  // timer_fd
             // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
@@ -2414,7 +2416,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -2455,102 +2457,16 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
             s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s.struct_decls, s);
         }
     }
-    // __fern_poll(x0 = fds box ptr, x1 = timeout_ms) -> i32 index of the first
-    // POLLIN-ready fd, or -1. The arm64 mirror of asm_ir.emit_ir_poll (x86-64),
-    // gated on the "poll" need. Reads the SELF-HOST array ABI: nfds at [ptr+0]
-    // (8-byte), element i (the fd, low 32 bits) at [ptr+(i+1)*8]. Builds a
-    // transient pollfd[] (each 8 bytes: i32 fd, i16 events, i16 revents) via
-    // __fern_alloc, requests POLLIN on each, calls ppoll(2) (#73 — arm64 has no
-    // bare `poll`), and scans revents. timeout_ms < 0 → NULL timespec (block).
-    // On Darwin the readiness path (kqueue) is not ported, so it returns -1.
     return s;
 }
 
 // emit_rt_readiness emits the readiness primitives — poll, timer_fd, and the wasm
 // pollable shims (timer_pollable, pollable_drop, block, poll).
 function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    if (s.has_need("poll")) {
-        s = s.write(".globl __fern_poll\n");
-        s = s.write(".type __fern_poll, %function\n");
-        s = s.write("__fern_poll:\n");
-        if (darwin) {
-            s = s.write("    mov x0, #-1\n");
-            s = s.write("    ret\n");
-        } else {
-            // Frame: fp/lr + callee-saves x19..x23 + a 16-byte timespec scratch
-            // at [x29, #64..79]. x19=nfds, x20=fds ptr, x21=pollfd buf, x22=i,
-            // x23=timeout_ms.
-            s = s.write("    stp x29, x30, [sp, #-80]!\n");
-            s = s.write("    mov x29, sp\n");
-            s = s.write("    stp x19, x20, [sp, #16]\n");
-            s = s.write("    stp x21, x22, [sp, #32]\n");
-            s = s.write("    stp x23, xzr, [sp, #48]\n");
-            s = s.write("    mov x20, x0\n");                 // fds ptr
-            s = s.write("    mov x23, x1\n");                 // timeout_ms
-            s = s.write("    ldr x19, [x20]\n");              // nfds = len at [ptr+0]
-            s = s.write("    cmp x19, #0\n");
-            s = s.write("    b.le .Lirpoll_none\n");
-            s = s.write("    lsl x0, x19, #3\n");             // buf = alloc(nfds*8)
-            s = s.write("    bl __fern_alloc\n");
-            s = s.write("    mov x21, x0\n");
-            s = s.write("    mov x22, #0\n");
-            s = s.write(".Lirpoll_fill:\n");
-            s = s.write("    cmp x22, x19\n");
-            s = s.write("    b.ge .Lirpoll_filled\n");
-            s = s.write("    add x9, x22, #1\n");             // i+1 (skip len slot)
-            s = s.write("    add x9, x20, x9, lsl #3\n");     // &element i (byte addr)
-            s = s.write("    ldr w0, [x9]\n");                // fd = low32 of element i
-            s = s.write("    add x10, x21, x22, lsl #3\n");   // &pollfd[i]
-            s = s.write("    str w0, [x10]\n");               // .fd
-            s = s.write("    mov w1, #1\n");
-            s = s.write("    strh w1, [x10, #4]\n");          // .events = POLLIN
-            s = s.write("    strh wzr, [x10, #6]\n");         // .revents = 0
-            s = s.write("    add x22, x22, #1\n");
-            s = s.write("    b .Lirpoll_fill\n");
-            s = s.write(".Lirpoll_filled:\n");
-            s = s.write("    cmp x23, #0\n");                 // timeout_ms < 0 → block
-            s = s.write("    b.lt .Lirpoll_infinite\n");
-            s = s.write("    mov x9, #1000\n");
-            s = s.write("    udiv x10, x23, x9\n");           // sec = ms / 1000
-            s = s.write("    msub x11, x10, x9, x23\n");      // rem ms
-            s = s.write("    ldr x12, =1000000\n");
-            s = s.write("    mul x11, x11, x12\n");           // nsec = rem * 1e6
-            s = s.write("    add x2, x29, #64\n");            // &timespec
-            s = s.write("    stp x10, x11, [x2]\n");
-            s = s.write("    b .Lirpoll_call\n");
-            s = s.write(".Lirpoll_infinite:\n");
-            s = s.write("    mov x2, #0\n");                  // NULL tmo_p → block
-            s = s.write(".Lirpoll_call:\n");
-            s = s.write("    mov x0, x21\n");                 // pollfd buf
-            s = s.write("    mov w1, w19\n");                 // nfds
-            s = s.write("    mov x3, #0\n");                  // sigmask = NULL
-            s = s.write("    mov x4, #0\n");                  // sigsetsize
-            s = s.write("    mov x8, #73\n");                 // ppoll
-            s = s.write("    svc #0\n");
-            s = s.write("    mov x22, #0\n");
-            s = s.write(".Lirpoll_scan:\n");
-            s = s.write("    cmp x22, x19\n");
-            s = s.write("    b.ge .Lirpoll_none\n");
-            s = s.write("    add x9, x21, x22, lsl #3\n");
-            s = s.write("    ldrh w0, [x9, #6]\n");           // revents
-            s = s.write("    and w0, w0, #1\n");              // POLLIN
-            s = s.write("    cbnz w0, .Lirpoll_found\n");
-            s = s.write("    add x22, x22, #1\n");
-            s = s.write("    b .Lirpoll_scan\n");
-            s = s.write(".Lirpoll_found:\n");
-            s = s.write("    mov x0, x22\n");
-            s = s.write("    b .Lirpoll_ret\n");
-            s = s.write(".Lirpoll_none:\n");
-            s = s.write("    mov x0, #-1\n");
-            s = s.write(".Lirpoll_ret:\n");
-            s = s.write("    ldp x19, x20, [sp, #16]\n");
-            s = s.write("    ldp x21, x22, [sp, #32]\n");
-            s = s.write("    ldr x23, [sp, #48]\n");
-            s = s.write("    ldp x29, x30, [sp], #80\n");
-            s = s.write("    ret\n");
-        }
-        s = s.write(".size __fern_poll, .-__fern_poll\n");
-    }
+    // poll: builds the pollfd[] and calls ppoll (arm64 Linux has no poll(2)).
+    // Fern now — asmcore.rt_src_poll, need-gated below with the other migrated
+    // helpers. Darwin has neither call in reach, and its arm answers -1 exactly
+    // as the hand-asm did.
     // __fern_timer_fd(x0 = ms) -> a CLOCK_MONOTONIC one-shot timerfd fd readable
     // after `ms` ms (or -errno), in x0. The arm64 mirror of the x86-64 helper:
     // timerfd_create(CLOCK_MONOTONIC, 0) [#85], then timerfd_settime(fd, 0,
@@ -6409,6 +6325,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // outside the heap block.
     if (s.has_need("sleep_ms")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms(tgt), s.struct_decls, s);
+    }
+    // poll: ppoll over a freshly built pollfd[] on Linux, a bare -1 on Darwin.
+    // It allocates, so it is heap-dependent — but emitted here beside the other
+    // migrated leaves rather than in emit_rt_readiness, which the hand-asm used.
+    if (s.has_need("poll")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

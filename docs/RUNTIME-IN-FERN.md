@@ -16,7 +16,8 @@ reaching **arm64** as well: `random_bytes` first, then `read_file` /
 opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
-`tcp_accept`), and `sleep_ms` over the new `__syscall5`. Each is ONE source
+`tcp_accept`), and `sleep_ms` + `poll` over the new `__syscall5`. Each is ONE
+source
 across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
@@ -393,7 +394,6 @@ hand-written" but "which of them the floor can already express".
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
 | `proc_waitpid` | `wait4` | 4 | `__syscall4` |
 | `timer_fd` | `timerfd_create` + `timerfd_settime` | 2, 4 | `__syscall4` |
-| `poll` | `poll` (x86) / **`ppoll`** (arm64) | 3 / **5** | `__syscall5` |
 | `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
@@ -403,12 +403,17 @@ non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
 
+`poll` has since moved too — the second `__syscall5` consumer, and the one that
+shows why the primitive was needed: x86-64 calls three-argument `poll(2)` while
+arm64 Linux has only `ppoll`, which takes five and wants a `timespec` instead of
+a millisecond count. Darwin has neither in reach and answers -1, as its hand-asm
+did.
+
 `__syscall5` **has since landed**, with `sleep_ms` as its first consumer — the
 leaf whose two targets disagree on the call itself, not just the number: Linux
 `nanosleep(&timespec, NULL)` against XNU
 `select(0, NULL, NULL, NULL, &timeval)`, five arguments and microseconds rather
-than nanoseconds. `poll` and `proc_fork` (Linux) are unblocked by it and not yet
-done.
+than nanoseconds. `proc_fork` (Linux) is unblocked by it and not yet done.
 
 `tcp_send` and `tcp_recv` are a different kind of blocked: their syscall is a
 plain 3-argument `write` / `read`, but they need the **data pointer of a
