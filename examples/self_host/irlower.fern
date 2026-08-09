@@ -21060,7 +21060,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var ofj: i32 = st.n_params;
     while (ofj < st.locals.len()) {
         if (!slot_list_has(keeps, ofj) && slot_is_reclaimable_optarr(st, ofj)) {
-            st = emit_optarr_deep_free(st, ofj);
+            st = emit_optarr_deep_free_err(st, ofj, slot_is_reclaimable_optarr_errstr(st, ofj));
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(ofj));
         }
@@ -26099,6 +26099,13 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var ufai: i32 = 0;
     while (ufai < ufa.len()) {
         out = out.append("OPTARR:" + ufa[ufai]);
+        // #6360: a SECOND tag when this local's Err payload is a proven-fresh
+        // string, so the sweep can fill the tag guard's else-branch for it alone.
+        // OPTARR: is shared with the reassigned+match class, whose slots earned no
+        // such proof — an unconditional Err release there would dangle.
+        if (unmatched_optarr_err_str_fresh(body, ufa[ufai], opterrfresh_call_names_of(opt_fresh_ret))) {
+            out = out.append("OPTARRERR:" + ufa[ufai]);
+        }
         ufai = ufai + 1;
     }
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
@@ -31120,6 +31127,52 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // below (#6360). Same quadrant, same gates; only the annotation and the freshness
 // test differ, and the credit is tagged "OPTSTR:" so the sweep picks the
 // __fern_str_free release rather than the flat dec.
+// unmatched_optarr_err_str_fresh: this local's declared Err payload is a string
+// AND the value it was bound from proves every Err payload fresh — an inline
+// `Err(<literal / fresh producer>)`, or a call to an ERRFRESH-registered producer
+// (#6360). Per-LOCAL rather than per-slot-class because the OPTARR credit is
+// shared with the reassigned+match class.
+function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, err_fresh: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    if (opt_payload_type(v.type_name, "Err") != "string") { return false; }
+                    if (call_init_callee_in(v.init, err_fresh)) { return true; }
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => {
+                                    if (cid.name == "Err" && c.args.len() == 1) {
+                                        match (c.args[0]) {
+                                            parser.ExprString(_) => { return true; },
+                                            _ => { return str_local_binding_is_fresh(c.args[0]); }
+                                        }
+                                    }
+                                    // `Ok(..)` inline: this binding can never hold an
+                                    // Err payload, so there is nothing to release.
+                                    return false;
+                                },
+                                _ => { return false; }
+                            }
+                        },
+                        _ => {}
+                    }
+                    return false;
+                }
+            },
+            parser.StmtIf(f) => { if (unmatched_optarr_err_str_fresh(f.then_body, name, err_fresh) || unmatched_optarr_err_str_fresh(f.else_body, name, err_fresh)) { return true; } },
+            parser.StmtWhile(w) => { if (unmatched_optarr_err_str_fresh(w.body, name, err_fresh)) { return true; } },
+            parser.StmtFor(fo) => { if (unmatched_optarr_err_str_fresh(fo.body, name, err_fresh)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_optarr_err_str_fresh(m.arms[a].body, name, err_fresh)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_strfresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -31217,6 +31270,14 @@ function collect_fresh_optarr_names(stmts: parser.Stmt[], acc: string[]): string
 // then free the option box. Mirrors emit_optarrarr_deep_free with
 // __fern_arrarr_free replaced by the flat dec.
 function emit_optarr_deep_free(se: LowerState, slot: i32): LowerState {
+    return emit_optarr_deep_free_err(se, slot, false);
+}
+
+// emit_optarr_deep_free_err: the same free with the tag guard's else-branch
+// optionally releasing an Err STRING payload (#6360). `err_str` comes from the
+// per-slot "OPTARRERR:" credit and is false for every slot the shared "OPTARR:"
+// tag covers on its own, whose Err payload carries no freshness proof.
+function emit_optarr_deep_free_err(se: LowerState, slot: i32, err_str: boolean): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -31231,6 +31292,13 @@ function emit_optarr_deep_free(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_opt_payload());               // flat scalar-array buffer
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     st = st.emit(ir.op_drop());
+    if (err_str) {
+        st = st.emit(ir.op_else());
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_opt_payload());
+        st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+        st = st.emit(ir.op_drop());
+    }
     st = st.emit(ir.op_end());                       // end if-Some
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
@@ -31286,7 +31354,7 @@ function emit_optarr_reclaim_store(se: LowerState, slot: i32): LowerState {
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
-    st = emit_optarr_deep_free(st, slot);            // free old payload + box
+    st = emit_optarr_deep_free_err(st, slot, slot_is_reclaimable_optarr_errstr(st, slot));   // free old payload + box
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
@@ -31526,6 +31594,13 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
 // fresh-payload `Option[string]` / `Result[string, _]` credited "OPTSTR:" — the
 // exit sweep frees it via emit_optstr_deep_free. No loop-rebind consumer: these
 // names are never reassigned, which is what the credit requires.
+// slot_is_reclaimable_optarr_errstr: the OPTARR slot additionally credited
+// "OPTARRERR:" — its Err payload is a proven-fresh string, so the deep free may
+// release it instead of stranding it (#6360).
+function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
+    return util.index_of_str(s.reclaimable_names, "OPTARRERR:" + reclaim_slot_name(s, i)) >= 0;
+}
+
 function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {
     return util.index_of_str(s.reclaimable_names, "OPTSTR:" + reclaim_slot_name(s, i)) >= 0;
 }
