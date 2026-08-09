@@ -649,6 +649,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // darwinize reskins this sequence for Mach-O exactly as it does
             // syscall3's.
             s = s.write("    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 228) {  // syscall5
+            // 5-arg sibling (#2649): [nr, a1..a5] with a5 on top → x4. Same
+            // `ldr x8` number-load marker, so darwinize reskins it for Mach-O
+            // exactly as it does syscall3/syscall4.
+            s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x8, [sp], #16\n    svc #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 205) {  // raw_scratch
             // [n] → the fixed static scratch buffer's address (#2649). n is a
             // size hint; discard it and push &__fern_scratch, which the kernel
@@ -1073,7 +1078,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 181) {  // sleep_ms
             // [ms] -> nanosleep(ms) (asm_arm64.emit_runtime emits __fern_sleep_ms
             // unconditionally, so no need is set). Push x0 for the drop.
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_sleep_ms\n    str x0, [sp, #-16]!\n");
+            s = s.need("sleep_ms");
+            s = s.write("    bl __fn___fern_sleep_ms\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 125) {  // map_set
             // [map, key, val] (val on top) -> __fern_map_set(x0=map,x1=k,x2=v,x3=keykind,x4=flags).
             s = s.need("maps");
@@ -2408,7 +2414,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -2449,48 +2455,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
             s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("monotonic_ns", ctgt), s.struct_decls, s);
         }
     }
-    // __fern_sleep_ms(x0 = ms) — nanosleep wrapper, no heap. Same
-    // shape as the x86 mirror but arm64 syscall numbers: nanosleep=101.
-    s = s.write(".globl __fern_sleep_ms\n");
-    s = s.write(".type __fern_sleep_ms, %function\n");
-    s = s.write("__fern_sleep_ms:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    sub sp, sp, #32\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.le .Lsm_done\n");
-    s = s.write("    mov x9, #1000\n");
-    s = s.write("    udiv x10, x0, x9\n");        // sec
-    s = s.write("    msub x11, x10, x9, x0\n");   // rem ms
-    s = s.write("    str x10, [sp]\n");           // tv_sec
-    if (darwin) {
-        // Darwin has no nanosleep syscall; sleep via
-        // select(0, NULL, NULL, NULL, &timeval). timeval = {sec, usec}
-        // at sp (sec already stored); usec = rem_ms * 1000.
-        s = s.write("    mov x12, #1000\n");
-        s = s.write("    mul x11, x11, x12\n");    // usec
-        s = s.write("    str x11, [sp, #8]\n");    // tv_usec
-        s = s.write("    mov x0, #0\n");           // nfds
-        s = s.write("    mov x1, #0\n");           // readfds
-        s = s.write("    mov x2, #0\n");           // writefds
-        s = s.write("    mov x3, #0\n");           // errorfds
-        s = s.write("    mov x4, sp\n");           // timeout
-        s = s.write("    mov x16, #93\n");         // Darwin select
-        s = s.write("    svc #0x80\n");
-    } else {
-        s = s.write("    ldr x12, =1000000\n");
-        s = s.write("    mul x11, x11, x12\n");    // tv_nsec
-        s = s.write("    str x11, [sp, #8]\n");
-        s = s.write("    mov x0, sp\n");
-        s = s.write("    mov x1, #0\n");
-        s = s.write("    mov x8, #101\n");         // nanosleep
-        s = s.write("    svc #0\n");
-    }
-    s = s.write(".Lsm_done:\n");
-    s = s.write("    mov sp, x29\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_sleep_ms, .-__fern_sleep_ms\n");
     // __fern_poll(x0 = fds box ptr, x1 = timeout_ms) -> i32 index of the first
     // POLLIN-ready fd, or -1. The arm64 mirror of asm_ir.emit_ir_poll (x86-64),
     // gated on the "poll" need. Reads the SELF-HOST array ABI: nfds at [ptr+0]
@@ -6438,6 +6402,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("tcp_accept")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept(tgt), s.struct_decls, s);
+    }
+    // sleep_ms: nanosleep on Linux, select on Darwin (XNU has no nanosleep) —
+    // the first __syscall5 consumer. Writes its timespec/timeval into
+    // __fern_scratch, so it joins that gate; allocation-free, so it is emitted
+    // outside the heap block.
+    if (s.has_need("sleep_ms")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

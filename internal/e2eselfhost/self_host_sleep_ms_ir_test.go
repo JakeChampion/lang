@@ -11,7 +11,8 @@ import (
 
 // sleepMsIRCases exercise the `sleep_ms(ms)` builtin through the IR path. It
 // lowers to a dedicated `sleep_ms` IR op (a void-with-drop op, like putchar)
-// that the x86-64 / arm64 backends emit as a call into the __fern_sleep_ms
+// that the x86-64 / arm64 backends emit as a call into the Fern-compiled
+// __fn___fern_sleep_ms
 // nanosleep helper the AST path already provides. A 1 ms sleep is fast and
 // observable only by exit code, so the program just returns a sentinel after
 // sleeping — proving the op lowered and the helper linked. wasm is excluded:
@@ -30,7 +31,7 @@ var sleepMsIRCases = []struct {
 // TestSelfHostSleepMsIRX86_64 proves each case (a) routes through the IR path
 // (asm_pathprobe_run prints "ir") and (b) compiles + runs to its exit code
 // through the production x86-64 driver (asm_run, IR default-on), with the
-// emitted asm calling __fern_sleep_ms.
+// emitted asm calling __fn___fern_sleep_ms.
 func TestSelfHostSleepMsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -45,8 +46,8 @@ func TestSelfHostSleepMsIRX86_64(t *testing.T) {
 				t.Fatalf("%s: path probe = %q, want \"ir\" (sleep_ms bailed the module to the AST path)", tc.name, probe)
 			}
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fern_sleep_ms")) {
-				t.Fatalf("%s: emitted asm has no `call __fern_sleep_ms`", tc.name)
+			if !bytes.Contains(asm, []byte("call __fn___fern_sleep_ms")) {
+				t.Fatalf("%s: emitted asm has no `call __fn___fern_sleep_ms`", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "sm_"+tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -64,7 +65,7 @@ func TestSelfHostSleepMsIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostSleepMsIRArm64 runs the same cases through the arm64 IR backend
-// under qemu (CI-gated). The arm64 op handler emits `bl __fern_sleep_ms`, whose
+// under qemu (CI-gated). The arm64 op handler emits `bl __fn___fern_sleep_ms`, whose
 // helper asm_arm64.emit_runtime already provides unconditionally.
 func TestSelfHostSleepMsIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -98,8 +99,8 @@ func TestSelfHostSleepMsIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_sleep_ms")) {
-				t.Fatalf("%s: emitted asm has no `bl __fern_sleep_ms` — sleep_ms did not lower through the arm64 IR path", tc.name)
+			if !bytes.Contains(asm, []byte("bl __fn___fern_sleep_ms")) {
+				t.Fatalf("%s: emitted asm has no `bl __fn___fern_sleep_ms` — sleep_ms did not lower through the arm64 IR path", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "sm_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

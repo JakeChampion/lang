@@ -15,8 +15,9 @@ reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `__fern_io_error`, then `env`, and finally `open_fd` — the Reader/Writer
 opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
-one now), and the two socket leaves that take only an fd (`tcp_close`,
-`tcp_accept`). Each is ONE source across all three native
+one now), the two socket leaves that take only an fd (`tcp_close`,
+`tcp_accept`), and `sleep_ms` over the new `__syscall5`. Each is ONE source
+across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -390,12 +391,10 @@ hand-written" but "which of them the floor can already express".
 | `tcp_recv` | `read` | 3 | `__syscall3` |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
-| `sleep_ms` (Linux) | `nanosleep` | 2 | `__syscall3` |
 | `proc_waitpid` | `wait4` | 4 | `__syscall4` |
 | `timer_fd` | `timerfd_create` + `timerfd_settime` | 2, 4 | `__syscall4` |
-| `poll` | `poll` (x86) / **`ppoll`** (arm64) | 3 / **5** | **needs `__syscall5`** |
-| `sleep_ms` (Darwin) | **`select`** | **5** | **needs `__syscall5`** |
-| `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | **needs `__syscall5`** |
+| `poll` | `poll` (x86) / **`ppoll`** (arm64) | 3 / **5** | `__syscall5` |
+| `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 
 `tcp_close` and `tcp_accept` have since moved (they take only an fd, so nothing
@@ -404,8 +403,12 @@ non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
 
-So `__syscall5` has **three** consumers, and adding it is the enabling step for
-`poll`, `proc_fork` on Linux, and Darwin's sleep.
+`__syscall5` **has since landed**, with `sleep_ms` as its first consumer — the
+leaf whose two targets disagree on the call itself, not just the number: Linux
+`nanosleep(&timespec, NULL)` against XNU
+`select(0, NULL, NULL, NULL, &timeval)`, five arguments and microseconds rather
+than nanoseconds. `poll` and `proc_fork` (Linux) are unblocked by it and not yet
+done.
 
 `tcp_send` and `tcp_recv` are a different kind of blocked: their syscall is a
 plain 3-argument `write` / `read`, but they need the **data pointer of a
