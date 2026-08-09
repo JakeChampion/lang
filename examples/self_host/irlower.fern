@@ -28693,9 +28693,15 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[]): st
         return "";
     }
     if (n >= 8 && ann[0:7] == "Result[") {
+        // Err is deliberately unconstrained. emit_opt_tagged_payload_drop
+        // frees the payload only under `tag == 0`, so a non-scalar Err payload
+        // is never reached: it is stranded, not dangled. Requiring a scalar Err
+        // refused `Result[T[], string]` — the idiomatic error type — and
+        // leaked the BOX as well as the payload, which is strictly worse on
+        // every count. Same reasoning #6416 used to drop this gate from
+        // fresh_scalar_option_call_init.
         var okt: string = opt_payload_type(ann, "Ok");
         if (!is_leaksafe_array_field(okt)) { return ""; }
-        if (!is_scalar_type_name(opt_payload_type(ann, "Err"))) { return ""; }
         return okt;
     }
     return "";

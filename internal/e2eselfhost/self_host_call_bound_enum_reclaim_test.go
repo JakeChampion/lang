@@ -317,6 +317,11 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		// leaks in the two cases below reclaims fully when a match consumes it.
 		{"rcpayload_direct_with_match", cbeRcPayloadDirectMatchSrc, 72},
 		{"optarr_fnscope_no_match", cbeOptArrFnScopeSrc, 38},
+		// Closed by dropping the scalar-Err requirement from
+		// rcpayload_option_call_ptype: the tagged drop frees the payload only
+		// under tag==0, so a non-scalar Err is stranded rather than dangled,
+		// and refusing the shape leaked the box as well.
+		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
@@ -332,24 +337,6 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 	// point — it forces the row to be re-measured and delisted deliberately,
 	// the way #6291 closing ARRSTRUCT/ARRTUP incidentally went unnoticed for
 	// three issues because nothing pinned it.
-	for _, tc := range []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
-			if frees != 0 || live != 35200 {
-				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want frees=0 live_bytes=35200.\n"+
-					"If this now reclaims, that is the #6360 rc-payload gap CLOSING: delete this case, "+
-					"move the shape into the live_bytes==0 table above, and update #6360.",
-					tc.name, allocs, frees, live)
-			}
-		})
-	}
-
 	// A mixed Result whose Err arm is never taken: the box is reclaimed and there
 	// is no payload to strand, so this balances exactly like the all-scalar case.
 	// It leaked 16000 at #6392.
