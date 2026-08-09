@@ -381,6 +381,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "exit") { return "60"; }
         if (name == "clock_gettime") { return "228"; }
         if (name == "getdents") { return "217"; }
+        if (name == "accept") { return "43"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -408,6 +409,7 @@ pub function sysno(t: string, name: string): string {
         // see rt_src_read_dir for why the shared body issues __syscall4 on
         // every target rather than branching on the arity.
         if (name == "getdents") { return "344"; }
+        if (name == "accept") { return "30"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -424,6 +426,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "exit") { return "93"; }
     if (name == "clock_gettime") { return "113"; }
     if (name == "getdents") { return "61"; }
+    if (name == "accept") { return "202"; }
     return "-1";
 }
 
@@ -585,6 +588,23 @@ pub function rt_src_open_fd(t: string): string {
               + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } ";
     }
     return "function __fern_open_fd(path: string, flags: i32, mode: i32): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "return __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); }";
+}
+
+// rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
+// an fd (#2649, syscall-leaf) — close(2) and accept(2) with a NULL addr/addrlen.
+//
+// The rest of the tcp family stays hand-written for now. tcp_send in particular
+// is blocked on a missing bridge, not on a syscall: it needs the DATA POINTER of
+// a `string`, and the floor only goes the other way (`__raw_string` builds a
+// string from raw bytes; nothing reads one back out). Expressing it today means
+// copying the payload byte-by-byte on every send, which is a straight loss on a
+// send path.
+pub function rt_src_tcp_close(t: string): string {
+    return "function __fern_tcp_close(fd: i32): i32 { return __syscall3(" + sysno(t, "close") + ", fd, 0, 0); }";
+}
+
+pub function rt_src_tcp_accept(t: string): string {
+    return "function __fern_tcp_accept(fd: i32): i32 { return __syscall3(" + sysno(t, "accept") + ", fd, 0, 0); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

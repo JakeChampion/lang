@@ -1,0 +1,521 @@
+// examples/proposals/wordladder.fern — proposal turn, drawn line 135:
+// "A word-ladder solver that finds the shortest chain between two words."
+//
+// A ladder solver makes two claims, and they fail independently. The chain it
+// prints must be a VALID ladder — every step a real dictionary word, every
+// consecutive pair differing in exactly one letter, starting and ending where
+// asked. And it must be the SHORTEST one. A depth-first search, or a breadth
+// -first one that marks words visited at dequeue rather than enqueue, produces
+// a chain that is perfectly valid and simply too long; printed on its own, it
+// looks like a correct answer to a harder puzzle.
+//
+// So validity and optimality are tested separately, and neither is tested by
+// comparing against a second copy of the same search.
+//
+// **Validity** is carried out rather than asserted: walk the returned chain,
+// check each word is in the dictionary, each adjacent pair differs by exactly
+// one letter, the ends are the words asked for, and no word repeats (a
+// shortest path never revisits).
+//
+// **Optimality** is checked by the Bellman condition, over the whole distance
+// matrix at once: for every reachable pair a != b,
+//
+//     d(a, b) == 1 + min over neighbours n of a of d(n, b)
+//
+// A distance function satisfying that everywhere, with d(a, a) == 0, IS the
+// shortest-path metric — there is no room for a uniformly-too-long answer,
+// which is exactly what a single "is it short enough" spot check would miss.
+// On top of it sits a genuinely different search for the short pairs: a
+// depth-limited DFS asked whether any chain shorter than the reported one
+// exists, which must always come back no.
+//
+// The cheap sweeping properties come free from the graph being undirected:
+// d(a, b) == d(b, a) for every pair, and the triangle inequality over every
+// triple. Both hold whatever the implementation, so they run over the full
+// matrix rather than a sample.
+//
+// The dictionary deliberately contains an ISLAND — two words adjacent to each
+// other and to nothing else — so "no ladder exists" is a real case rather than
+// a branch nobody reaches, and it is checked in both directions.
+//
+// Conventions, stated because solvers differ: a chain INCLUDES both endpoints,
+// so its length in steps is one less than its word count, and the ladder from
+// a word to itself is the one-word chain with zero steps. Words differing in
+// LENGTH are never adjacent, and a word is not adjacent to itself — a
+// zero-letter difference is not a one-letter difference.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// A distance meaning "no ladder". Kept well above any real distance so a
+// stray arithmetic slip on it is obvious rather than plausible.
+function unreachable(): i32 { return 1000000; }
+
+// ------------------------------------------------------------ the graph
+
+// Exactly one letter differs. Equal words differ in zero letters and are NOT
+// adjacent; words of different lengths are never adjacent.
+function differs_by_one(a: string, b: string): boolean {
+    if (a.len() != b.len()) { return false; }
+    var diff: i32 = 0;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { diff = diff + 1; }
+        i = i + 1;
+    }
+    return diff == 1;
+}
+
+function neighbours(dict: string[], at: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        if (i != at && differs_by_one(dict[at], dict[i])) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function index_of_word(dict: string[], w: string): i32 {
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        if (dict[i] == w) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// ------------------------------------------------------------------ BFS
+
+// The shortest chain as dictionary indices, endpoints included. An empty
+// result means no ladder exists.
+function shortest_chain(dict: string[], from: i32, to: i32): i32[] {
+    var none: i32[] = [];
+    if (from < 0 || to < 0) { return none; }
+    if (from == to) { return none.append(from); }
+
+    var prev: i32[] = [];
+    var seen: i32[] = [];
+    var i: i32 = 0;
+    while (i < dict.len()) { prev = prev.append(-1); seen = seen.append(0); i = i + 1; }
+
+    var queue: i32[] = [from];
+    seen = seen.with(from, 1);
+    var head: i32 = 0;
+    var found: boolean = false;
+    while (head < queue.len() && !found) {
+        var cur: i32 = queue[head];
+        head = head + 1;
+        var ns: i32[] = neighbours(dict, cur);
+        var j: i32 = 0;
+        while (j < ns.len()) {
+            var n: i32 = ns[j];
+            // Marked on ENQUEUE, not on dequeue: marking later lets a word
+            // enter the queue twice and can hand back a longer chain.
+            if (seen[n] == 0) {
+                seen = seen.with(n, 1);
+                prev = prev.with(n, cur);
+                if (n == to) { found = true; }
+                queue = queue.append(n);
+            }
+            j = j + 1;
+        }
+    }
+    if (!found) { return none; }
+
+    var rev: i32[] = [];
+    var at: i32 = to;
+    while (at != from) { rev = rev.append(at); at = prev[at]; }
+    rev = rev.append(from);
+    var out: i32[] = [];
+    var k: i32 = rev.len() - 1;
+    while (k >= 0) { out = out.append(rev[k]); k = k - 1; }
+    return out;
+}
+
+// Steps, not words: the chain length minus one, or `unreachable()`.
+function distance(dict: string[], from: i32, to: i32): i32 {
+    var c: i32[] = shortest_chain(dict, from, to);
+    if (c.len() == 0) { return unreachable(); }
+    return c.len() - 1;
+}
+
+// The full distance matrix, flattened, so the sweeping properties below can
+// read it instead of re-running the search n^3 times.
+function distance_matrix(dict: string[]): i32[] {
+    var m: i32[] = [];
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        var j: i32 = 0;
+        while (j < dict.len()) { m = m.append(distance(dict, i, j)); j = j + 1; }
+        i = i + 1;
+    }
+    return m;
+}
+
+// -------------------------------------------------- the second algorithm
+
+// Is there ANY chain from `from` to `to` in at most `budget` steps? A
+// depth-limited depth-first search — a different strategy from the frontier
+// walk above, and obviously correct, which is what an oracle has to be. Used
+// to ask whether anything SHORTER than the reported chain exists.
+function reachable_within(dict: string[], from: i32, to: i32, budget: i32, path: i32[]): boolean {
+    if (from == to) { return true; }
+    if (budget <= 0) { return false; }
+    var ns: i32[] = neighbours(dict, from);
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        var n: i32 = ns[i];
+        var on_path: boolean = false;
+        var k: i32 = 0;
+        while (k < path.len()) { if (path[k] == n) { on_path = true; } k = k + 1; }
+        if (!on_path) {
+            if (reachable_within(dict, n, to, budget - 1, path.append(n))) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------- corpus
+
+// One connected mainland plus a two-word ISLAND, so "no ladder" is a real
+// case. Four letters throughout, and a couple of words differing from several
+// others so the search has branching to get wrong.
+function dictionary(): string[] {
+    return ["cold", "cord", "card", "ward", "warm", "wold", "word", "wood",
+        "good", "gold", "golf", "wolf", "hold", "held", "hell", "hall",
+        "ball", "bald", "bold", "bolt", "boat", "coat", "cost", "cast",
+        "case", "cane", "came", "come", "core", "bore", "bone", "bane",
+        "band", "bend", "bond", "fond", "find", "fine", "wine", "vine",
+        "zzqx", "zzqy"];
+}
+
+function island(): string[] { return ["zzqx", "zzqy"]; }
+
+function is_island(w: string): boolean {
+    var xs: string[] = island();
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == w) { return true; } i = i + 1; }
+    return false;
+}
+
+function render(dict: string[], chain: i32[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < chain.len()) {
+        if (i > 0) { out = out + " -> "; }
+        out = out + dict[chain[i]];
+        i = i + 1;
+    }
+    return out;
+}
+
+// ----------------------------------------------------------------- tests
+
+// Carry the claim out: every chain the solver returns is a real ladder.
+function test_every_chain_is_a_valid_ladder(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        var j: i32 = 0;
+        while (j < dict.len()) {
+            var c: i32[] = shortest_chain(dict, i, j);
+            if (c.len() > 0) {
+                if (c[0] != i || c[c.len() - 1] != j) {
+                    return test.fail(dict[i] + " -> " + dict[j] + ": chain runs "
+                        + render(dict, c));
+                }
+                var k: i32 = 0;
+                while (k < c.len()) {
+                    if (c[k] < 0 || c[k] >= dict.len()) {
+                        return test.fail("chain leaves the dictionary: " + render(dict, c));
+                    }
+                    var m: i32 = k + 1;
+                    while (m < c.len()) {
+                        if (c[k] == c[m]) {
+                            return test.fail(dict[i] + " -> " + dict[j] + " repeats \""
+                                + dict[c[k]] + "\": " + render(dict, c));
+                        }
+                        m = m + 1;
+                    }
+                    if (k + 1 < c.len() && !differs_by_one(dict[c[k]], dict[c[k + 1]])) {
+                        return test.fail(dict[i] + " -> " + dict[j] + ": \"" + dict[c[k]]
+                            + "\" and \"" + dict[c[k + 1]] + "\" are not one letter apart");
+                    }
+                    k = k + 1;
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Optimality, stated over the whole matrix: a distance function satisfying the
+// Bellman condition everywhere IS the shortest-path metric, so a uniformly
+// too-long answer has nowhere to hide.
+function test_the_distances_satisfy_the_bellman_condition(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var n: i32 = dict.len();
+    var d: i32[] = distance_matrix(dict);
+    var a: i32 = 0;
+    while (a < n) {
+        if (d[a * n + a] != 0) {
+            return test.fail("d(" + dict[a] + ", itself) = " + d[a * n + a].to_string());
+        }
+        var b: i32 = 0;
+        while (b < n) {
+            if (a != b && d[a * n + b] != unreachable()) {
+                var best: i32 = unreachable();
+                var ns: i32[] = neighbours(dict, a);
+                var k: i32 = 0;
+                while (k < ns.len()) {
+                    var via: i32 = d[ns[k] * n + b];
+                    if (via != unreachable() && via + 1 < best) { best = via + 1; }
+                    k = k + 1;
+                }
+                if (d[a * n + b] != best) {
+                    return test.fail("d(" + dict[a] + ", " + dict[b] + ") = "
+                        + d[a * n + b].to_string() + " but the best neighbour gives "
+                        + best.to_string());
+                }
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return test.pass();
+}
+
+// The independent search: nothing shorter than the reported chain exists.
+// Limited to short pairs so the depth-limited DFS stays cheap; the Bellman
+// condition above is what covers the rest.
+function test_no_shorter_chain_exists(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var n: i32 = dict.len();
+    var d: i32[] = distance_matrix(dict);
+    var checked: i32 = 0;
+    var a: i32 = 0;
+    while (a < n) {
+        var b: i32 = 0;
+        while (b < n) {
+            var dist: i32 = d[a * n + b];
+            if (a != b && dist != unreachable() && dist <= 3) {
+                var seed: i32[] = [a];
+                if (reachable_within(dict, a, b, dist - 1, seed)) {
+                    return test.fail(dict[a] + " -> " + dict[b] + " reported " + dist.to_string()
+                        + " steps, but a chain of " + (dist - 1).to_string() + " exists");
+                }
+                // The same search must FIND one at the reported budget, or the
+                // check above is passing because the oracle finds nothing ever.
+                if (!reachable_within(dict, a, b, dist, seed)) {
+                    return test.fail("the depth-limited search could not reproduce "
+                        + dict[a] + " -> " + dict[b] + " at " + dist.to_string() + " steps");
+                }
+                checked = checked + 1;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    if (checked < 100) {
+        return test.fail("only " + checked.to_string() + " pairs were checked against the "
+            + "depth-limited search");
+    }
+    return test.pass();
+}
+
+// The graph is undirected, so the metric is symmetric.
+function test_distance_is_symmetric(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var n: i32 = dict.len();
+    var d: i32[] = distance_matrix(dict);
+    var a: i32 = 0;
+    while (a < n) {
+        var b: i32 = 0;
+        while (b < n) {
+            if (d[a * n + b] != d[b * n + a]) {
+                return test.fail("d(" + dict[a] + ", " + dict[b] + ") = "
+                    + d[a * n + b].to_string() + " but d(" + dict[b] + ", " + dict[a]
+                    + ") = " + d[b * n + a].to_string());
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return test.pass();
+}
+
+// The triangle inequality, over every triple.
+function test_the_triangle_inequality_holds(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var n: i32 = dict.len();
+    var d: i32[] = distance_matrix(dict);
+    var a: i32 = 0;
+    while (a < n) {
+        var b: i32 = 0;
+        while (b < n) {
+            if (d[a * n + b] != unreachable()) {
+                var c: i32 = 0;
+                while (c < n) {
+                    if (d[b * n + c] != unreachable()) {
+                        var direct: i32 = d[a * n + c];
+                        var via: i32 = d[a * n + b] + d[b * n + c];
+                        if (direct > via) {
+                            return test.fail(dict[a] + " -> " + dict[c] + " is "
+                                + direct.to_string() + " but going via " + dict[b]
+                                + " costs only " + via.to_string());
+                        }
+                    }
+                    c = c + 1;
+                }
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return test.pass();
+}
+
+// The island is unreachable from the mainland in both directions, and no
+// chain is invented for it.
+function test_the_island_is_unreachable(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        var j: i32 = 0;
+        while (j < dict.len()) {
+            if (is_island(dict[i]) != is_island(dict[j])) {
+                if (distance(dict, i, j) != unreachable()) {
+                    return test.fail("found a ladder " + dict[i] + " -> " + dict[j]
+                        + " across the island boundary: "
+                        + render(dict, shortest_chain(dict, i, j)));
+                }
+                if (shortest_chain(dict, i, j).len() != 0) {
+                    return test.fail("a chain was returned for an unreachable pair");
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    // The two island words ARE one letter apart, so the island is not
+    // unreachable because the adjacency test is simply broken.
+    var a: i32 = index_of_word(dict, "zzqx");
+    var b: i32 = index_of_word(dict, "zzqy");
+    if (distance(dict, a, b) != 1) {
+        return test.fail("the two island words should be one step apart");
+    }
+    return test.pass();
+}
+
+// The adjacency predicate against a brute-force letter count, including the
+// two cases solvers get wrong: a word against itself, and unequal lengths.
+function test_adjacency_matches_a_letter_count(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        var j: i32 = 0;
+        while (j < dict.len()) {
+            var n: i32 = 0;
+            var k: i32 = 0;
+            while (k < dict[i].len()) {
+                if (dict[i][k] != dict[j][k]) { n = n + 1; }
+                k = k + 1;
+            }
+            if (differs_by_one(dict[i], dict[j]) != (n == 1)) {
+                return test.fail("\"" + dict[i] + "\" / \"" + dict[j] + "\": "
+                    + n.to_string() + " letters differ");
+            }
+            j = j + 1;
+        }
+        if (differs_by_one(dict[i], dict[i])) {
+            return test.fail("\"" + dict[i] + "\" is adjacent to itself");
+        }
+        i = i + 1;
+    }
+    var uneven: string[] = ["cold", "colds", "col", ""];
+    var a: i32 = 0;
+    while (a < uneven.len()) {
+        var b: i32 = 0;
+        while (b < uneven.len()) {
+            if (uneven[a].len() != uneven[b].len() && differs_by_one(uneven[a], uneven[b])) {
+                return test.fail("\"" + uneven[a] + "\" and \"" + uneven[b]
+                    + "\" have different lengths and must not be adjacent");
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    return test.pass();
+}
+
+// The stated convention: a word to itself is the one-word chain, zero steps.
+function test_a_word_to_itself_is_a_one_word_chain(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var i: i32 = 0;
+    while (i < dict.len()) {
+        var c: i32[] = shortest_chain(dict, i, i);
+        if (c.len() != 1 || c[0] != i) {
+            return test.fail("\"" + dict[i] + "\" to itself gave " + render(dict, c));
+        }
+        if (distance(dict, i, i) != 0) {
+            return test.fail("\"" + dict[i] + "\" to itself is not zero steps");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// A word outside the dictionary has no chain, rather than an index-shaped
+// answer built from -1.
+function test_an_unknown_word_has_no_chain(): test.TestOutcome {
+    var dict: string[] = dictionary();
+    var missing: i32 = index_of_word(dict, "qqqq");
+    if (missing != -1) { return test.fail("\"qqqq\" should not be in the dictionary"); }
+    if (shortest_chain(dict, missing, 0).len() != 0) {
+        return test.fail("a chain was returned from an unknown word");
+    }
+    if (shortest_chain(dict, 0, missing).len() != 0) {
+        return test.fail("a chain was returned to an unknown word");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("wordladder — shortest chains, checked for validity and optimality");
+
+    var dict: string[] = dictionary();
+    var demos: string[] = ["cold|warm", "cold|golf", "ball|bond", "cold|zzqx"];
+    var i: i32 = 0;
+    while (i < demos.len()) {
+        var f: string[] = demos[i].split("|");
+        var a: i32 = index_of_word(dict, f[0]);
+        var b: i32 = index_of_word(dict, f[1]);
+        var c: i32[] = shortest_chain(dict, a, b);
+        if (c.len() == 0) {
+            eprint("  " + f[0] + " -> " + f[1] + ": no ladder");
+        } else {
+            eprint("  " + f[0] + " -> " + f[1] + " (" + (c.len() - 1).to_string() + " steps): "
+                + render(dict, c));
+        }
+        i = i + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("wordladder");
+    r = r.it("every chain is a valid ladder", test_every_chain_is_a_valid_ladder);
+    r = r.it("the distances satisfy the bellman condition", test_the_distances_satisfy_the_bellman_condition);
+    r = r.it("no shorter chain exists", test_no_shorter_chain_exists);
+    r = r.it("distance is symmetric", test_distance_is_symmetric);
+    r = r.it("the triangle inequality holds", test_the_triangle_inequality_holds);
+    r = r.it("the island is unreachable", test_the_island_is_unreachable);
+    r = r.it("adjacency matches a letter count", test_adjacency_matches_a_letter_count);
+    r = r.it("a word to itself is a one word chain", test_a_word_to_itself_is_a_one_word_chain);
+    r = r.it("an unknown word has no chain", test_an_unknown_word_has_no_chain);
+    return r.finish();
+}

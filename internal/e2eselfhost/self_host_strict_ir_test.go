@@ -811,14 +811,16 @@ var strictIRBailReasons = []struct {
 	// lambda, so the bail lands on a call whose callee is a lambda the source
 	// never wrote. Naming it "a lambda" sent a reader looking for one; the
 	// reason names the desugar instead. Reduced from fernsmith seed 59: a
-	// checked u32 shift with a non-literal shift amount as the scrutinee (the
-	// i32 spelling of the same program lowers).
+	// checked shift with a non-literal shift amount as the scrutinee. The
+	// payload width is what keeps it here — the i32 and u32 spellings both
+	// lower, and u64 is the width the inlined match-expression's payload gate
+	// still declines.
 	{"iife-value-block", `function main(): i32 {
-    var v: u32 = 7u32;
-    var u: u32 = (match ((490u32) <<? (v)) { Some(c) => c, None => 9u32 });
+    var v: u64 = 7u64;
+    var u: u64 = (match ((490u64) <<? (v)) { Some(c) => c, None => 9u64 });
     return (u as i32) & 255i32;
 }
-`, "main", "did not lower: immediately-invoked value block"},
+`, "main", "did not lower: `var u` bound from immediately-invoked value block"},
 	// The same desugar, but here the lambda is LIFTED to a top-level function
 	// and refuses inside its own body, so the bail names `__lam_0` and the node
 	// is the lifted return rather than the call. Two bails one line apart in the
