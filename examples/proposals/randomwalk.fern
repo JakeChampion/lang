@@ -1,0 +1,414 @@
+// examples/proposals/randomwalk.fern — proposal turn, drawn line 111:
+// "A random-walk simulation reporting the distribution of final distances."
+//
+// A simulation is an awkward thing to test, because the obvious assertions are
+// statistical and a statistical assertion is either loose enough to pass a
+// broken implementation or tight enough to fail on an unlucky seed. Neither is
+// a test. So nothing here asserts a distribution SHAPE.
+//
+// Instead the walk is pinned two ways that are exact:
+//
+//   1. An EXHAUSTIVE enumeration of all 2^n paths, checked against the closed
+//      form — the number of n-step walks ending at position k is C(n, (n+k)/2).
+//      Pascal's triangle and a path count are computed independently and must
+//      agree for every n and every k. No randomness, no tolerance.
+//   2. STRUCTURAL invariants that hold for every individual walk regardless of
+//      the random draws: the endpoint has the same parity as the step count
+//      (n steps of +/-1 can never end on the wrong parity), |endpoint| <= n,
+//      and the histogram's counts sum to the number of trials.
+//
+// The simulation is then tied to the exact model by SUPPORT rather than by
+// frequency: every endpoint the simulation produces must be one the
+// enumeration says is reachable. That catches an off-by-one in the step or the
+// bucketing — the actual bugs — without ever asserting how often anything
+// happens.
+//
+// The generator is a plain integer LCG so every backend draws the same
+// sequence and the whole file is reproducible. That also makes the one
+// trend-shaped claim safe to assert: mean distance grows with the step count,
+// which is checked on fixed seeds and so is a deterministic fact about this
+// program rather than a probabilistic one about walks in general.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// ------------------------------------------------------------ generator
+
+// A 31-bit LCG (the ANSI C constants). Integer-only and identical on every
+// backend; `next` returns the new state, `bit` takes the high bit, which is
+// the well-behaved end of an LCG — the low bits of a power-of-two-modulus LCG
+// have famously short periods, so stepping on `state % 2` would give a walk
+// that visibly alternates.
+function next(state: i32): i32 {
+    var s: i64 = ((state as i64) * 1103515245 + 12345) % 2147483648;
+    if (s < 0) { s = s + 2147483648; }
+    return s as i32;
+}
+
+function bit(state: i32): i32 {
+    if ((state / 65536) % 2 == 0) { return -1; }
+    return 1;
+}
+
+// ----------------------------------------------------------------- walk
+
+// One walk: n steps of +/-1 from 0. Returns the endpoint and the final state
+// so trials can be chained without reusing a seed.
+function walk(n: i32, seed: i32): (i32, i32) {
+    var pos: i32 = 0;
+    var s: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        s = next(s);
+        pos = pos + bit(s);
+        i = i + 1;
+    }
+    return (pos, s);
+}
+
+// Histogram over |endpoint|, indexed by distance: counts[d] is how many trials
+// finished d away from the origin. Length n+1 so every reachable distance has
+// a slot, including the ones parity forbids — a nonzero count in one of those
+// is exactly the bug the parity test looks for.
+function simulate(trials: i32, n: i32, seed: i32): i32[] {
+    var counts: i32[] = [];
+    var i: i32 = 0;
+    while (i <= n) { counts = counts.append(0); i = i + 1; }
+
+    var s: i32 = seed;
+    var t: i32 = 0;
+    while (t < trials) {
+        var (pos, s2) = walk(n, s);
+        s = s2;
+        var d: i32 = pos;
+        if (d < 0) { d = 0 - d; }
+        counts = counts.with(d, counts[d] + 1);
+        t = t + 1;
+    }
+    return counts;
+}
+
+// ------------------------------------------------------------- the oracle
+
+// Exhaustive enumeration: every one of the 2^n sign assignments, walked.
+// Returns counts indexed by (pos + n) so index 0 is position -n. Deliberately
+// brute force — it shares nothing with the closed form it is checked against.
+function enumerate(n: i32): i32[] {
+    var counts: i32[] = [];
+    var i: i32 = 0;
+    while (i <= 2 * n) { counts = counts.append(0); i = i + 1; }
+
+    var total: i32 = 1 << n;
+    var mask: i32 = 0;
+    while (mask < total) {
+        var pos: i32 = 0;
+        var b: i32 = 0;
+        while (b < n) {
+            if ((mask / (1 << b)) % 2 == 0) { pos = pos - 1; } else { pos = pos + 1; }
+            b = b + 1;
+        }
+        counts = counts.with(pos + n, counts[pos + n] + 1);
+        mask = mask + 1;
+    }
+    return counts;
+}
+
+// C(n, k) by Pascal's triangle — additions only, so no division and no
+// overflow below the i64 range this file stays inside.
+function binom(n: i32, k: i32): i64 {
+    if (k < 0 || k > n) { return 0; }
+    var row: i64[] = [1];
+    var r: i32 = 1;
+    while (r <= n) {
+        var next_row: i64[] = [1];
+        var j: i32 = 1;
+        while (j < r) { next_row = next_row.append(row[j - 1] + row[j]); j = j + 1; }
+        next_row = next_row.append(1);
+        row = next_row;
+        r = r + 1;
+    }
+    return row[k];
+}
+
+// --------------------------------------------------------------- reporting
+
+function total_of(counts: i32[]): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < counts.len()) { t = t + counts[i]; i = i + 1; }
+    return t;
+}
+
+// Mean distance in thousandths, so the trend claim carries a real number
+// without floats (which would drag in the wasm libm gap, #6404).
+function mean_distance_milli(counts: i32[]): i32 {
+    var sum: i64 = 0;
+    var n: i64 = 0;
+    var d: i32 = 0;
+    while (d < counts.len()) {
+        sum = sum + (d as i64) * (counts[d] as i64);
+        n = n + (counts[d] as i64);
+        d = d + 1;
+    }
+    if (n == 0) { return 0; }
+    return ((sum * 1000) / n) as i32;
+}
+
+function bar(count: i32, scale: i32): string {
+    var n: i32 = 0;
+    if (scale > 0) { n = (count * 40) / scale; }
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + "#"; i = i + 1; }
+    return out;
+}
+
+// ------------------------------------------------------------------ tests
+
+// The exact half. Enumeration is brute force over 2^n paths; binom is Pascal's
+// triangle. They are computed by disjoint code and must agree at every
+// position, for every n up to 14 — 16 383 paths at the top, which is the
+// largest exhaustive sweep that stays quick on every backend.
+function test_enumeration_matches_the_closed_form(): test.TestOutcome {
+    var n: i32 = 0;
+    while (n <= 14) {
+        var counts: i32[] = enumerate(n);
+        var pos: i32 = 0 - n;
+        while (pos <= n) {
+            var got: i64 = counts[pos + n] as i64;
+            // A walk ends at pos iff (n + pos) is even, with that many up-steps.
+            var want: i64 = 0;
+            if ((n + pos) % 2 == 0) { want = binom(n, (n + pos) / 2); }
+            if (got != want) {
+                return test.fail("n=" + n.to_string() + " pos=" + pos.to_string()
+                    + ": enumerated " + got.to_string() + ", C(n,k) says " + want.to_string());
+            }
+            pos = pos + 1;
+        }
+        n = n + 1;
+    }
+    return test.pass();
+}
+
+// Every path is counted exactly once: the enumeration totals 2^n.
+function test_every_path_is_counted_once(): test.TestOutcome {
+    var n: i32 = 0;
+    while (n <= 14) {
+        var got: i32 = total_of(enumerate(n));
+        var want: i32 = 1 << n;
+        if (got != want) {
+            return test.fail("n=" + n.to_string() + ": " + got.to_string()
+                + " paths enumerated, want " + want.to_string());
+        }
+        n = n + 1;
+    }
+    return test.pass();
+}
+
+// A walk of n steps of +/-1 cannot end on the wrong parity. This holds for
+// every individual walk, so it is checkable on random trials without any
+// statistics — and it is what an off-by-one in the step loop breaks.
+function test_parity_forbids_half_the_endpoints(): test.TestOutcome {
+    // In the exact model, the forbidden slots are empty.
+    var n: i32 = 0;
+    while (n <= 12) {
+        var counts: i32[] = enumerate(n);
+        var pos: i32 = 0 - n;
+        while (pos <= n) {
+            if ((n + pos) % 2 != 0 && counts[pos + n] != 0) {
+                return test.fail("n=" + n.to_string() + ": position " + pos.to_string()
+                    + " has the wrong parity but " + counts[pos + n].to_string() + " paths");
+            }
+            pos = pos + 1;
+        }
+        n = n + 1;
+    }
+    // ... and the simulation never lands in one either.
+    var ns: i32[] = [1, 2, 7, 8, 25, 40];
+    var k: i32 = 0;
+    while (k < ns.len()) {
+        var sim: i32[] = simulate(200, ns[k], 20260808 + k);
+        var d: i32 = 0;
+        while (d < sim.len()) {
+            if ((ns[k] + d) % 2 != 0 && sim[d] != 0) {
+                return test.fail("n=" + ns[k].to_string() + ": simulated "
+                    + sim[d].to_string() + " walks ending at distance " + d.to_string()
+                    + ", which parity forbids");
+            }
+            d = d + 1;
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// The distribution is symmetric: as many paths end at +k as at -k. A biased
+// step (a `>` for a `>=`, say) breaks this while leaving the total intact.
+function test_the_exact_distribution_is_symmetric(): test.TestOutcome {
+    var n: i32 = 1;
+    while (n <= 14) {
+        var counts: i32[] = enumerate(n);
+        var pos: i32 = 1;
+        while (pos <= n) {
+            if (counts[n + pos] != counts[n - pos]) {
+                return test.fail("n=" + n.to_string() + ": +" + pos.to_string() + " has "
+                    + counts[n + pos].to_string() + " paths, -" + pos.to_string() + " has "
+                    + counts[n - pos].to_string());
+            }
+            pos = pos + 1;
+        }
+        n = n + 1;
+    }
+    return test.pass();
+}
+
+// Every trial is accounted for, and no trial lands outside the walk's range.
+function test_the_histogram_conserves_trials(): test.TestOutcome {
+    var cases: i32[] = [1, 2, 3, 10, 33, 64];
+    var i: i32 = 0;
+    while (i < cases.len()) {
+        var trials: i32 = 137;
+        var sim: i32[] = simulate(trials, cases[i], 99 + i * 7);
+        if (total_of(sim) != trials) {
+            return test.fail("n=" + cases[i].to_string() + ": counts sum to "
+                + total_of(sim).to_string() + ", want " + trials.to_string());
+        }
+        if (sim.len() != cases[i] + 1) {
+            return test.fail("n=" + cases[i].to_string() + ": histogram has "
+                + sim.len().to_string() + " slots, want " + (cases[i] + 1).to_string());
+        }
+        i = i + 1;
+    }
+    // Zero trials is a valid, empty answer rather than a crash.
+    if (total_of(simulate(0, 10, 1)) != 0) { return test.fail("zero trials counted something"); }
+    // Zero steps always ends at the origin.
+    var still: i32[] = simulate(50, 0, 1);
+    if (still.len() != 1 || still[0] != 50) {
+        return test.fail("a zero-step walk did not stay at the origin");
+    }
+    return test.pass();
+}
+
+// The link between the simulation and the exact model: every endpoint the
+// simulation produces must be one the enumeration says is reachable. This is
+// the claim about the sampler that does NOT depend on how often anything
+// happens.
+function test_simulated_endpoints_are_all_reachable(): test.TestOutcome {
+    var ns: i32[] = [1, 2, 3, 5, 8, 12];
+    var k: i32 = 0;
+    while (k < ns.len()) {
+        var n: i32 = ns[k];
+        var exact: i32[] = enumerate(n);
+        var sim: i32[] = simulate(300, n, 4242 + k * 31);
+        var d: i32 = 0;
+        while (d < sim.len()) {
+            if (sim[d] > 0) {
+                // Distance d means endpoint +d or -d; at least one must be
+                // reachable in the exact model.
+                if (exact[n + d] == 0 && exact[n - d] == 0) {
+                    return test.fail("n=" + n.to_string() + ": simulated distance "
+                        + d.to_string() + " is unreachable in the exact model");
+                }
+            }
+            d = d + 1;
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// Same seed, same histogram — and a different seed must actually change
+// something, or the generator is not being consumed at all.
+function test_the_simulation_is_reproducible(): test.TestOutcome {
+    var a: i32[] = simulate(150, 20, 777);
+    var b: i32[] = simulate(150, 20, 777);
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) {
+            return test.fail("same seed diverged at distance " + i.to_string());
+        }
+        i = i + 1;
+    }
+    var c: i32[] = simulate(150, 20, 778);
+    var differs: boolean = false;
+    var j: i32 = 0;
+    while (j < a.len()) { if (a[j] != c[j]) { differs = true; } j = j + 1; }
+    if (!differs) {
+        return test.fail("a different seed produced an identical histogram — "
+            + "the generator is not being consumed");
+    }
+    return test.pass();
+}
+
+// Longer walks end further out. Asserted on fixed seeds, so this is a
+// deterministic fact about this program rather than a probabilistic one — but
+// it is still the claim that would catch a walk that never moves, or one whose
+// step count is ignored.
+function test_mean_distance_grows_with_the_step_count(): test.TestOutcome {
+    var ns: i32[] = [4, 16, 64, 256];
+    var prev: i32 = -1;
+    var i: i32 = 0;
+    while (i < ns.len()) {
+        var m: i32 = mean_distance_milli(simulate(400, ns[i], 31337));
+        if (m <= prev) {
+            return test.fail("mean distance did not grow at n=" + ns[i].to_string()
+                + ": " + m.to_string() + " vs " + prev.to_string());
+        }
+        // And it must stay inside the hard bound |endpoint| <= n.
+        if (m > ns[i] * 1000) {
+            return test.fail("mean distance " + m.to_string() + " exceeds n=" + ns[i].to_string());
+        }
+        prev = m;
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("randomwalk — 1D walk, exact enumeration as the oracle");
+
+    var n: i32 = 20;
+    var trials: i32 = 2000;
+    var sim: i32[] = simulate(trials, n, 20260809);
+    var peak: i32 = 0;
+    var d: i32 = 0;
+    while (d < sim.len()) { if (sim[d] > peak) { peak = sim[d]; } d = d + 1; }
+
+    eprint("n=" + n.to_string() + " trials=" + trials.to_string()
+        + "  mean distance=" + mean_distance_milli(sim).to_string() + "/1000");
+    d = 0;
+    while (d < sim.len()) {
+        if (sim[d] > 0) {
+            var pad: string = "";
+            if (d < 10) { pad = " "; }
+            eprint("  d=" + pad + d.to_string()
+                + " " + bar(sim[d], peak) + " " + sim[d].to_string());
+        }
+        d = d + 1;
+    }
+
+    eprint("exact distribution for n=6 (paths per endpoint):");
+    var ex: i32[] = enumerate(6);
+    var line: string = "  ";
+    var p: i32 = 0 - 6;
+    while (p <= 6) {
+        if (ex[p + 6] > 0) { line = line + p.to_string() + ":" + ex[p + 6].to_string() + " "; }
+        p = p + 1;
+    }
+    eprint(line);
+
+    var r: test.TestRunner = test.test_new("randomwalk");
+    r = r.it("enumeration matches the closed form", test_enumeration_matches_the_closed_form);
+    r = r.it("every path is counted once", test_every_path_is_counted_once);
+    r = r.it("parity forbids half the endpoints", test_parity_forbids_half_the_endpoints);
+    r = r.it("the exact distribution is symmetric", test_the_exact_distribution_is_symmetric);
+    r = r.it("the histogram conserves trials", test_the_histogram_conserves_trials);
+    r = r.it("simulated endpoints are all reachable", test_simulated_endpoints_are_all_reachable);
+    r = r.it("the simulation is reproducible", test_the_simulation_is_reproducible);
+    r = r.it("mean distance grows with the step count", test_mean_distance_grows_with_the_step_count);
+    return r.finish();
+}
