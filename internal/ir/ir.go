@@ -342,6 +342,11 @@ const (
 	// EmitLineMarkers lower-option is set (native -g), so ordinary builds —
 	// and the self-host byte-identical fixpoint — never see it.
 	OpLine // () → () (source-line marker; Pos is the payload)
+
+	// opKindCount is one past the last op, not an op itself. It exists so
+	// a pass over "every op kind" picks up a new one wherever it is added
+	// in this block.
+	opKindCount
 )
 
 // BlockType describes the type a block / loop / if leaves on the stack

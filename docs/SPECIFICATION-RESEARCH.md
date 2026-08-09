@@ -466,6 +466,29 @@ follow: keep one source of rules and derive the prose, the reference
 interpreter and the tests from it, rather than maintaining three
 artefacts that drift.
 
+**Progress, and one correction, from doing step 1.** The op set is
+written down: `spec/core.md` lists all 93 instructions with their
+operand-stack effects and immediates. Two things worth recording.
+
+- **"Define the IR's op set" is a smaller job than it sounds and a
+  bigger one than it looks.** Transcribing 93 rows is an afternoon. What
+  takes the time is that a table of opcodes is the *easiest* normative
+  document to get wrong — every row is individually plausible, and
+  nothing about reading one reveals a missing op, a deleted op, or an
+  effect off by one slot. This is the same failure the grammar's rule-
+  coverage gate exists for, one layer down.
+- **The effects are checked by running them, not by a second table.**
+  Each row's declared operand stack is built and stepped through
+  `verifystack.go` at both pointer widths — the same model the corpus
+  gate already runs over every lowered program. A second transcription
+  would have been faster to write and would have proved only that two
+  documents agree with each other. Checking at both widths is what gives
+  the string rows teeth: a row claiming one word where the op moves a
+  `(data, len)` pair passes on the natives and fails on wasm.
+
+Steps 2 and 3 — the typing rules and the store — are untouched, and
+they are where this layer's cost and its whole payoff sit.
+
 ### Layer 4 — an independent IR verifier (1 week; worth doing regardless)
 
 A well-formedness and type checker for `internal/ir` that is *not* the
