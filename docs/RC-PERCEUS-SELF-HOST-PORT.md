@@ -5498,3 +5498,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (421 s, run FIRST — gen0 == gen1
   across 35 units), plus #6467's and #6469's suites green unchanged. Refs #6319
   #6360 #4451.
+
+- 2026-08-09: **The scalar Option consumed by a nested match — precise-dropped
+  now (#6319's scalar arm).** #6127 gave the consuming match the
+  scrutinee-is-a-borrow reading but wired it to the rc-PAYLOAD kind alone,
+  deliberately ("widens exactly one class at a time"). For a SCALAR Option the
+  coarse `body_unsafe_for` still read the scrutinee as an escape, so
+  `precise_drop_names` refused, and nothing else claimed the shape:
+  `consumed_scalar_enum_frees` finds its consuming match by top-level statement
+  INDEX and cannot see one nested in an `if`. Measured at `7014ae29`, 100 rounds,
+  `__rc_underflow_count()` as the return value:
+
+  | `Option[i32]`, fn-scoped | before | after |
+  |---|---|---|
+  | match nested in an `if` | 4000, `frees=0` | **0** |
+  | match nested in a `while` | 4000, `frees=0` | **0** |
+  | flat control | 0 | 0 |
+  | option read again after the `if` | refused | refused |
+
+  The fix is one line — `is_opt` joins `is_rcopt` on the borrow reading — and it
+  is the right lever precisely because **disjointness needs no new gate**:
+  `is_opt` is only ever set when `!body_has_top_level_match`, so precise-drop
+  takes the shape exactly when the flat analysis cannot, and vice versa. The
+  alternative (widening `consumed_scalar_enum_frees`' lookup to nested, the way
+  #6480 did for the rc payload) would have needed its own complement argument, and
+  doing BOTH would put two credits on one box.
+
+  **Still open, measured on base rather than assumed:** the same shape from a CALL
+  (`var o: Option[i32] = mk(i)`) stays at 4000 — `is_opt` admits only
+  `fresh_scalar_option_init`, and `precise_drop_names` takes no `opt_fresh`
+  parameter to consult the registry with, so covering it means threading one
+  through and re-deriving the disjointness. And the BLOCK-scoped spellings
+  (declared inside a loop) stay at 16000 whatever the init, because
+  `precise_drop_names` runs over the fn's top-level statements and never reaches
+  them.
+
+  VERIFIED: `TestSelfHostScalarOptNestedMatchX86_64` (new — both nestings, the
+  flat control, and the read-after-the-`if` refusal),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (412.96 s, run FIRST), and 25
+  targeted suites 0 skips, including every nested-match, precise-drop and
+  scalar-enum neighbour. Refs #6319 #6360 #4451.
+
+  NOTE the probes here return `__rc_underflow_count()`, so `fern -interp` is NOT
+  an oracle for them — it has no rc runtime and exits 1 on every one. The counter
+  is the detector; comparing against interp reports a false failure.

@@ -20641,7 +20641,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // reading (#6127); every other candidate kind keeps the coarse walker,
                 // so this widens exactly one class at a time.
                 var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable);
-                if (!borrow_ok && is_rcopt) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable); }
+                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable); }
                 if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
