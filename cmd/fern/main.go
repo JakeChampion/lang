@@ -603,7 +603,7 @@ func shouldUseASCII(force bool) bool {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
+	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), freestanding (no host at all — type-checks against an empty capability set; no backend emits for it yet, see docs/FREESTANDING-CORE.md), wasm-ssa (experimental SSA-direct wasm core module; supports i32/i64/f32/f64, memory + alloc, string literals; pass -component-wrap-cli to lift as a wasi:cli/run component runnable via plain `wasmtime run`), or arm64-ssa (experimental SSA-direct arm64 Linux ELF using register allocation for smaller .text; covers the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — an unsupported op errors rather than miscompiles)")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
@@ -696,9 +696,14 @@ func main() {
 			d := platforms.ForTarget(name)
 			fmt.Println(d.String())
 			fmt.Printf("    capabilities: %v\n", d.Capabilities)
-			fmt.Printf("    handlers:     %v\n", d.HandlerKinds)
+			if len(d.HandlerKinds) > 0 {
+				fmt.Printf("    handlers:     %v\n", d.HandlerKinds)
+			}
 			if len(d.Bindings) > 0 {
 				fmt.Printf("    bindings:     %v\n", d.Bindings)
+			}
+			if d.NoBackend {
+				fmt.Printf("    note:         check-only — no backend emits for this target yet\n")
 			}
 		}
 		return
@@ -758,7 +763,16 @@ func main() {
 		} else {
 			path = "-"
 		}
-		if err := runCheckTarget(path); err != nil {
+		// Only an EXPLICIT -target enforces: the flag defaults to
+		// arm64, and a bare `fern -check` must keep meaning "does this
+		// type-check" rather than silently gaining a capability gate.
+		checkTarget := ""
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "target" {
+				checkTarget = *target
+			}
+		})
+		if err := runCheckTarget(path, checkTarget); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -1064,7 +1078,75 @@ func runInterp(srcPath string, argv []string) (int, error) {
 // disk; the synthetic "-" path has no on-disk source). File-path
 // callers go through the full modload pipeline so transitive imports
 // are checked too.
-func runCheck(srcPath string) error {
+// enforceTargetCapabilities runs the platforms Phase 2 gate (E066):
+// reject, before codegen, any call to a runtime builtin the target's
+// descriptor doesn't grant (`subprocess` on wasm, filesystem/tcp/stdin
+// under wasi-http, anything host-mediated under freestanding) — turning
+// mid-build "undefined label"/"unsupported" failures into positioned,
+// `fern explain`-able errors. Tree-shake first so unused imported
+// stdlib wrappers don't trip gates: this mirrors each backend's own
+// pre-shake (same dyn-dispatch roots + -shared exports; backends
+// re-shake idempotently), including wasi-http's drop of the synthesised
+// tcp_serve `main` (see internal/codegen/wasmbin/build.go).
+//
+// Returns nil when the target has no descriptor (e.g. the experimental
+// wasm-ssa) or nothing violates its capability set. NOTE this mutates
+// prog by tree-shaking it.
+func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.Info, target string, shared bool, export string) diag.Errors {
+	if platforms.ForTarget(target) == nil {
+		return nil
+	}
+	if target == "wasi-http" {
+		kept := prog.Funcs[:0]
+		for _, fn := range prog.Funcs {
+			if fn.IsSynthesisedHandlerMain {
+				continue
+			}
+			kept = append(kept, fn)
+		}
+		prog.Funcs = kept
+	}
+	extras := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
+	if shared && export != "" {
+		extras = append(extras, strings.Split(export, ",")...)
+	}
+	if target == "wasi-http" {
+		extras = append(extras, "handle", "__method_HeaderMap_append")
+	}
+	// WIT-exported functions are entry points the AST walk can't
+	// see — keep them (and what they call) in the scanned set.
+	for _, fn := range prog.Funcs {
+		if fn.ExportIface != "" || fn.ExportWITName != "" {
+			extras = append(extras, fn.Name)
+		}
+	}
+	treeshake.Run(prog, extras...)
+	vs := platforms.Enforce(prog, target)
+	if len(vs) == 0 {
+		return nil
+	}
+	var errs diag.Errors
+	for _, v := range vs {
+		ce := &checker.Error{Pos: v.Pos, Msg: v.Message(srcPath), ErrCode: "E066"}
+		// modload stamps the ENTRY module's functions with the entry
+		// source path itself; only those positions index the file the
+		// renderer displays. Violations inside imported modules
+		// (std/…, ./util, …) degrade to a position-less entry — the
+		// message names the function and module instead.
+		if v.FuncModule != "" && v.FuncModule != srcPath {
+			ce.Pos = ast.Position{}
+		}
+		errs = append(errs, ce)
+	}
+	return errs
+}
+
+// runCheck type-checks one entry module. target is the -target value
+// when the user passed one explicitly and "" otherwise: an unrequested
+// check must not start enforcing the arm64 capability set against
+// programs that check clean today, so the gate runs only on an explicit
+// `-check -target NAME`.
+func runCheck(srcPath, target string) error {
 	var prog *ast.Program
 	var formatErr func(error) error
 	if srcPath == "-" {
@@ -1114,6 +1196,12 @@ func runCheck(srcPath string) error {
 	for _, site := range prog.TodoSites {
 		fmt.Fprintf(os.Stderr, "%s:%d:%d: warning: `todo` stub remaining\n", name, site.Line, site.Col)
 	}
+	// Last, because it tree-shakes prog.
+	if target != "" {
+		if errs := enforceTargetCapabilities(name, prog, info, target, false, ""); errs != nil {
+			return formatErr(errs)
+		}
+	}
 	return nil
 }
 
@@ -1158,49 +1246,17 @@ func run(srcPath, outPath, target, cc string, runIt, native bool, qemu string, c
 	// wasi-http's drop of the synthesised tcp_serve `main` (see
 	// internal/codegen/wasmbin/build.go). Targets without a descriptor
 	// (e.g. the experimental wasm-ssa) skip enforcement.
-	if platforms.ForTarget(target) != nil {
-		if target == "wasi-http" {
-			kept := prog.Funcs[:0]
-			for _, fn := range prog.Funcs {
-				if fn.IsSynthesisedHandlerMain {
-					continue
-				}
-				kept = append(kept, fn)
-			}
-			prog.Funcs = kept
-		}
-		extras := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
-		if shared && export != "" {
-			extras = append(extras, strings.Split(export, ",")...)
-		}
-		if target == "wasi-http" {
-			extras = append(extras, "handle", "__method_HeaderMap_append")
-		}
-		// WIT-exported functions are entry points the AST walk can't
-		// see — keep them (and what they call) in the scanned set.
-		for _, fn := range prog.Funcs {
-			if fn.ExportIface != "" || fn.ExportWITName != "" {
-				extras = append(extras, fn.Name)
-			}
-		}
-		treeshake.Run(prog, extras...)
-		if vs := platforms.Enforce(prog, target); len(vs) > 0 {
-			var errs diag.Errors
-			for _, v := range vs {
-				ce := &checker.Error{Pos: v.Pos, Msg: v.Message(srcPath), ErrCode: "E066"}
-				// modload stamps the ENTRY module's functions with the
-				// entry source path itself; only those positions index
-				// the file the renderer displays. Violations inside
-				// imported modules (std/…, ./util, …) degrade to a
-				// position-less entry — the message names the function
-				// and module instead.
-				if v.FuncModule != "" && v.FuncModule != srcPath {
-					ce.Pos = ast.Position{}
-				}
-				errs = append(errs, ce)
-			}
-			return 1, e.format(errs)
-		}
+	if errs := enforceTargetCapabilities(srcPath, prog, info, target, shared, export); errs != nil {
+		return 1, e.format(errs)
+	}
+
+	// A declared-but-unemitted target refuses HERE, after enforcement, so a
+	// program that also violates the capability set gets the E066 naming what
+	// it reached for rather than this. Without the check the target would fall
+	// through to the "unknown target" error below, which would be a lie: the
+	// descriptor exists and `-check` against it works.
+	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
+		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
 	}
 
 	if target == "wasm-ssa" {

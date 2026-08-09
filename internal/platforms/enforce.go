@@ -168,12 +168,9 @@ func GatedBuiltin(name string) (string, bool) {
 // the capability — used in E066's "provided by: …" hint.
 func TargetsProviding(capability string) []string {
 	var out []string
-	for name, d := range table {
-		for _, c := range d.Capabilities {
-			if c == capability {
-				out = append(out, name)
-				break
-			}
+	for name := range table {
+		if HasCapability(name, capability) {
+			out = append(out, name)
 		}
 	}
 	sort.Strings(out)

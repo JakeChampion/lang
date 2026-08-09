@@ -89,6 +89,36 @@ differs is where the heap came from. That difference is #6511's problem, not the
 classification's. Keeping it out of the capability vocabulary is deliberate — otherwise
 every target would grant `alloc` and the capability would carry no information.
 
+## The target
+
+`-target freestanding` exists and grants nothing (#6509). It is **check-only**: the
+descriptor is declared, `fern -targets` lists it, and `fern -check -target freestanding`
+type-checks against its empty capability set — but no backend emits for it, and asking
+one to is a refusal naming the check path rather than the "unknown target" error, which
+would be false.
+
+That ordering is deliberate. The constraint becomes real before there is codegen to
+constrain, so the backend work that follows (#6510, #6511) is written against a compiler
+that already rejects what it may not do.
+
+Two consequences worth knowing:
+
+- **`-check` only enforces when you pass `-target` explicitly.** The flag defaults to
+  `arm64`, so threading it unconditionally would silently start enforcing that
+  capability set against every `fern -check` — including `subprocess`, which no compiled
+  target grants. A bare `fern -check` still means "does this type-check".
+- **`log` is no longer universal.** `TestNoTargetMissesLogCapability` exempts targets
+  marked `NoBackend`. Keyed on the flag rather than the name, so the day something emits
+  for freestanding the invariant applies again — at which point *where does a
+  freestanding artifact put a panic message?* becomes a question with an answer instead
+  of an omission.
+
+The entry point is deliberately unspecified: `HandlerKinds` is empty, because a
+freestanding artifact is a set of exported symbols its embedder calls rather than
+something entered at `main`. That is closer to the existing `-shared` / `-export` path
+than to any handler kind, and #6510 settles it — declaring a shape now would be
+inventing one.
+
 ## Adding a builtin
 
 Classify it in `internal/platforms/enforce.go`: a capability in `gatedBuiltins`, or

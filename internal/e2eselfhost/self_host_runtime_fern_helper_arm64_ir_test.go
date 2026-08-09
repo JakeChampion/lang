@@ -61,6 +61,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    var pfds: i32[] = [];\n" +
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
+		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -105,7 +106,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"poll",
 		// wait4 plus the shell-style status decode. Four arguments on every
 		// target and only the number moves, so no per-target fork.
-		"proc_waitpid"} {
+		"proc_waitpid",
+		// timerfd_create + timerfd_settime over an itimerspec in __fern_scratch.
+		"timer_fd"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}

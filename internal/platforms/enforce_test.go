@@ -247,6 +247,11 @@ func TestEnforceLogAndClockUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
+			// freestanding grants none of these on purpose; it has its
+			// own test below.
+			if platforms.ForTarget(target).NoBackend {
+				continue
+			}
 			t.Run(name+"/"+target, func(t *testing.T) {
 				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
@@ -346,11 +351,87 @@ func TestEnforceEnvAndRandomUniversal(t *testing.T) {
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
+			// freestanding grants none of these on purpose; it has its
+			// own test below.
+			if platforms.ForTarget(target).NoBackend {
+				continue
+			}
 			t.Run(name+"/"+target, func(t *testing.T) {
 				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
 				}
 			})
+		}
+	}
+}
+
+// The freestanding target is the one that gives the tables teeth
+// (#6509). `log` / `now` / `env` / `random` are granted by all six
+// hosted descriptors, so gating them rejects nothing there; here every
+// one of them rejects.
+func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
+	srcs := map[string]string{
+		"print":  `function main(): i32 { print("hi"); return 0; }`,
+		"clock":  `function main(): i32 { return (now_unix_ms() as i32); }`,
+		"env":    `function main(): i32 { var v = env("HOME"); return 0; }`,
+		"args":   `function main(): i32 { var a: string[] = args(); return 0; }`,
+		"random": `function main(): i32 { return random_i32(); }`,
+		"fs":     `function main(): i32 { var r = read_file("/etc/x"); return 0; }`,
+	}
+	for name, src := range srcs {
+		t.Run(name, func(t *testing.T) {
+			vs := platforms.Enforce(prepared(t, src, false), "freestanding")
+			if len(vs) == 0 {
+				t.Fatalf("%s: freestanding should grant no host capability, got no violations", name)
+			}
+		})
+	}
+}
+
+// The complement: a program that only computes and allocates is clean
+// on freestanding. This is the property that makes the target useful
+// rather than merely restrictive — coreBuiltins has to actually be
+// reachable.
+func TestEnforceFreestandingAllowsCore(t *testing.T) {
+	src := `function main(): i32 {
+    var b: i64 = f64_bits(1.5);
+    return ((b + 1) as i32);
+}`
+	if vs := platforms.Enforce(prepared(t, src, false), "freestanding"); len(vs) != 0 {
+		t.Fatalf("core-only program rejected on freestanding: %+v", vs)
+	}
+}
+
+// A descriptor with no backend is declared, listed and checkable — the
+// #6509 ordering, where the constraint becomes real before there is
+// codegen to constrain.
+func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
+	d := platforms.ForTarget("freestanding")
+	if d == nil {
+		t.Fatal("freestanding has no descriptor")
+	}
+	if !d.NoBackend {
+		t.Error("freestanding should be marked NoBackend until #6510/#6511 land")
+	}
+	if len(d.Capabilities) != 0 {
+		t.Errorf("freestanding grants %v, want nothing", d.Capabilities)
+	}
+	var listed bool
+	for _, n := range platforms.Targets() {
+		if n == "freestanding" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("freestanding missing from Targets(), so `fern -targets` won't show it")
+	}
+	// Every other target must still emit.
+	for _, n := range platforms.Targets() {
+		if n == "freestanding" {
+			continue
+		}
+		if platforms.ForTarget(n).NoBackend {
+			t.Errorf("target %q unexpectedly marked NoBackend", n)
 		}
 	}
 }

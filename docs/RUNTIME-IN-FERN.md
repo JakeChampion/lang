@@ -17,8 +17,7 @@ opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
 `tcp_accept`), `sleep_ms` + `poll` over the new `__syscall5`, and
-`proc_waitpid`. Each is ONE source
-across all three native
+`proc_waitpid`, and `timer_fd`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -392,7 +391,6 @@ hand-written" but "which of them the floor can already express".
 | `tcp_recv` | `read` | 3 | `__syscall3` |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
-| `timer_fd` | `timerfd_create` + `timerfd_settime` | 2, 4 | `__syscall4` |
 | `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
 | **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
 

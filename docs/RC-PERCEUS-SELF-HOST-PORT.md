@@ -5615,6 +5615,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   and its flat control (6 rows now), `TestSelfHostPerModuleEmitAllFixpointX86_64`
   (417.75 s, run FIRST), 26 targeted suites 0 skips. Refs #6319 #6360 #4451.
 
+- 2026-08-09: **The BLOCK-scoped scalar Option with a nested match — the last of
+  #6319's four quadrants.** With #6503 and #6517 in, the shape's coverage was:
+
+  | | flat match | nested match |
+  |---|---|---|
+  | fn-scoped | `consumed_scalar_enum_frees` | precise-drop (#6503/#6517) |
+  | block-scoped | `lower_block`'s per-block re-run | **16000, `frees=0`** |
+
+  `precise_drop_names` is only ever called with `fn.body`, so it can never reach a
+  loop-declared local; `lower_block` already re-runs `consumed_scalar_enum_frees`
+  per block but looked the match up by flat statement INDEX. So the last cell had
+  no owner. `consumed_scalar_enum_frees` gains `nested_ok`, TRUE only from
+  lower_block, and uses `sole_consuming_match_idx` / `consuming_match_of` (#6480's
+  helpers) there. Both inits: 16000 -> 0, `allocs == frees`, underflow 0.
+
+  **A guess this corrected.** The obvious justification for the flag — "passing
+  true at fn scope would double-free, since precise-drop already claims that
+  shape" — is WRONG, and the mutation says so: with both fn-scope call sites
+  flipped to true, every row stays balanced with underflow 0, because the precise
+  drop zeroes the slot and the second credit decs null. The flag is kept as a
+  territory boundary, not as an over-release guard: two analyses silently claiming
+  one local is how a real double free gets built later, and the redundant credit
+  buys nothing precise-drop has not already done. Recorded because the comment
+  that shipped would otherwise have asserted something measurement refutes.
+
+  VERIFIED: `TestSelfHostScalarOptNestedMatchX86_64` at 8 rows (both scopes x both
+  inits x nested/flat, plus the refusal),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (379.06 s, run FIRST), 26 targeted
+  suites 0 skips. Refs #6319 #6360 #4451.
+
 - 2026-08-09: **The fresh-owned-container READ reclaim, scalar half (#6491).**
   `mk()[i]` and `mk().f` read a value out of a container NOTHING NAMES, so the
   read is the only place it can be reclaimed — there is no slot for the exit

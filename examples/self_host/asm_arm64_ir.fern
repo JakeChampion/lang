@@ -841,7 +841,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("poll");
         } else if (o.kind_tag == 188) {  // timer_fd
             // [ms] -> __fern_timer_fd(x0=ms) -> CLOCK_MONOTONIC timerfd fd in x0.
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_timer_fd\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_timer_fd\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
             s = s.need("timer_fd");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns] -> __fern_wasm_timer_pollable(x0=ns) -> -1 (native shim) in x0.
@@ -2416,7 +2416,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -2467,56 +2467,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
     // Fern now — asmcore.rt_src_poll, need-gated below with the other migrated
     // helpers. Darwin has neither call in reach, and its arm answers -1 exactly
     // as the hand-asm did.
-    // __fern_timer_fd(x0 = ms) -> a CLOCK_MONOTONIC one-shot timerfd fd readable
-    // after `ms` ms (or -errno), in x0. The arm64 mirror of the x86-64 helper:
-    // timerfd_create(CLOCK_MONOTONIC, 0) [#85], then timerfd_settime(fd, 0,
-    // &{it_interval=0, it_value={sec, nsec}}, NULL) [#86]. itimerspec scratch at
-    // [x29,#32..63]. Allocation-free, gated on the "timer_fd" need. Darwin has no
-    // timerfd, so a -1 stub. (`ldr =1000000` rides emit_runtime's pool flush.)
-    if (s.has_need("timer_fd")) {
-        s = s.write(".globl __fern_timer_fd\n");
-        s = s.write(".type __fern_timer_fd, %function\n");
-        s = s.write("__fern_timer_fd:\n");
-        if (darwin) {
-            s = s.write("    mov x0, #-1\n");
-            s = s.write("    ret\n");
-        } else {
-            s = s.write("    stp x29, x30, [sp, #-64]!\n");
-            s = s.write("    mov x29, sp\n");
-            s = s.write("    stp x19, x20, [sp, #16]\n");
-            s = s.write("    mov x19, x0\n");                 // ms
-            s = s.write("    mov x0, #1\n");                  // CLOCK_MONOTONIC
-            s = s.write("    mov x1, #0\n");
-            s = s.write("    mov x8, #85\n");                 // timerfd_create
-            s = s.write("    svc #0\n");
-            s = s.write("    mov x20, x0\n");
-            s = s.write("    cmp x0, #0\n");
-            s = s.write("    b.lt .Lir_tfd_ret\n");           // create failed -> -errno
-            s = s.write("    str xzr, [x29, #32]\n");         // it_interval = {0,0}
-            s = s.write("    str xzr, [x29, #40]\n");
-            s = s.write("    mov x9, #1000\n");
-            s = s.write("    udiv x10, x19, x9\n");           // sec
-            s = s.write("    msub x11, x10, x9, x19\n");      // rem ms
-            s = s.write("    ldr x12, =1000000\n");
-            s = s.write("    mul x11, x11, x12\n");           // nsec
-            s = s.write("    str x10, [x29, #48]\n");
-            s = s.write("    str x11, [x29, #56]\n");
-            s = s.write("    mov x0, x20\n");                 // settime(fd, 0, &its, NULL)
-            s = s.write("    mov x1, #0\n");
-            s = s.write("    add x2, x29, #32\n");
-            s = s.write("    mov x3, #0\n");
-            s = s.write("    mov x8, #86\n");                 // timerfd_settime
-            s = s.write("    svc #0\n");
-            s = s.write("    mov x0, x20\n");                 // return fd
-            s = s.write(".Lir_tfd_ret:\n");
-            s = s.write("    ldp x19, x20, [sp, #16]\n");
-            s = s.write("    ldp x29, x30, [sp], #64\n");
-            s = s.write("    ret\n");
-        }
-        s = s.write(".size __fern_timer_fd, .-__fern_timer_fd\n");
-    }
-    // __fern_wasm_timer_pollable(x0 = ns) -> -1: no native pollable (a deadline
-    // rides poll(2)'s timeout arg). Portability shim for with_deadline.
+    // timer_fd is Fern now (#2649) — see the migrated-helpers section below.
     if (s.has_need("wasm_timer_pollable")) {
         s = s.write(".globl __fern_wasm_timer_pollable\n");
         s = s.write(".type __fern_wasm_timer_pollable, %function\n");
@@ -6336,6 +6287,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // on every target — only the number moves — so no `darwin` fork here.
     if (s.has_need("proc_waitpid")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid(tgt), s.struct_decls, s);
+    }
+    // timer_fd: timerfd_create + timerfd_settime over an itimerspec in
+    // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.
+    if (s.has_need("timer_fd")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

@@ -2,8 +2,44 @@ package platforms
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
+
+// Every listed target names an environment that exists, so ForTarget
+// composes rather than panicking. This is the invariant that replaces
+// "every target spells out its own capability list".
+func TestEveryTargetComposes(t *testing.T) {
+	for _, name := range Targets() {
+		entry, ok := table[name]
+		if !ok {
+			t.Errorf("Targets() lists %q with no table entry", name)
+			continue
+		}
+		if _, ok := environments[entry.environment]; !ok {
+			t.Errorf("target %q names unknown environment %q", name, entry.environment)
+		}
+		if d := ForTarget(name); d == nil || d.Name != name {
+			t.Errorf("ForTarget(%q) did not compose", name)
+		}
+	}
+}
+
+// No two environments may carry the same capability set. Two that do
+// are one environment wearing two names — exactly the state the four
+// native targets were in before they were collapsed, where adding a
+// capability meant editing the identical list four times and missing
+// one was silent.
+func TestEnvironmentsAreDistinct(t *testing.T) {
+	seen := map[string]string{}
+	for name, env := range environments {
+		key := strings.Join(env.capabilities, ",")
+		if prev, dup := seen[key]; dup {
+			t.Errorf("environments %q and %q have identical capability sets — collapse them", prev, name)
+		}
+		seen[key] = name
+	}
+}
 
 // TestForTargetCoversEveryCanonicalTarget — every -target=
 // value cmd/fern accepts must have a Descriptor entry. The
@@ -112,12 +148,23 @@ func TestDescriptorStringIsHumanReadable(t *testing.T) {
 }
 
 // TestNoTargetMissesLogCapability — `log` is the absolute
-// minimum capability every target needs to surface error
-// output. Tests that we don't accidentally ship a target
-// with an empty Capabilities list.
+// minimum capability every HOSTED target needs to surface
+// error output. Tests that we don't accidentally ship a
+// target with an empty Capabilities list.
+//
+// A freestanding target is the deliberate exception, and the
+// only one: it has no host to log to, and an empty capability
+// set is its entire point (#6509). Keying the exemption on
+// NoBackend rather than the name means the day something
+// emits for it, this invariant applies again — at which point
+// "where does a freestanding artifact put a panic message?"
+// is a question with a real answer instead of an omission.
 func TestNoTargetMissesLogCapability(t *testing.T) {
 	for _, name := range Targets() {
 		d := ForTarget(name)
+		if d.NoBackend {
+			continue
+		}
 		if !HasCapability(name, "log") {
 			t.Errorf("target %q is missing the `log` capability: %v", name, d.Capabilities)
 		}
