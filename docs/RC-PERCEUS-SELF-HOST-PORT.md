@@ -5121,3 +5121,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   build. And a fix that lands incidentally needs a pin or it regresses silently,
   which is why the two shapes above are now cases in
   `TestSelfHostBlockScopedClassesX86_64`.
+
+- 2026-08-09: **#6360's rc-payload call-bound rows — CLOSED, both of them.**
+  The 2026-08-07 entry's table above is a snapshot at `09b3efe2`; the two rows
+  it records as 35200 are now 0. Current state of the family, 100 rounds x 4
+  iterations, `FERN_LEAKCHECK=1`, every exit code matching `fern -interp`:
+
+  | shape | binding | match | scope | self-host |
+  |---|---|---|---|---|
+  | `Result[i32[], string]` | direct `Ok([..])` | yes | fn | 0 |
+  | `Result[i32[], string]` | direct `Ok([..])` | no | fn | 0 |
+  | `Result[i32[], string]` | call | yes | fn | 0 |
+  | `Result[i32[], string]` | call | no | fn | 0 |
+  | any of the above | — | — | **loop** | **8800** |
+
+  Two one-line gates, each refusing a shape the free was already safe for:
+
+  1. `rcpayload_option_call_ptype` required a SCALAR `Err` payload, which
+     excluded `Result[T[], string]`. `emit_opt_tagged_payload_drop` frees the
+     payload only under `tag == 0` and the box on every path, so a non-scalar
+     `Err` payload is **stranded, not dangled** — refusing the shape leaked the
+     box as well as the payload.
+  2. `unmatched_optarr_init_is_fresh` took literal constructors only, so an
+     OPTFRESH-registered producer call fell through both the unmatched credit
+     and the match analysis and reclaimed nowhere. Registry membership is the
+     same freshness proof `rcpayload_option_call_ptype` uses.
+
+  **The freshness proof is about the BOX, not the payload**, and that is worth
+  stating because it looks like a hole. `opt_fresh_ret_fns_of` admits
+  `Ok(<param array>)` — a direct constructor — so the payload dec can land on a
+  buffer the caller also holds. It does not double-free: the caller's buffer
+  reaches the producer as an ARGUMENT, which the caller-side escape analysis
+  already reads as an escape, so it carries no second credit to collide with.
+  Measured 800/800 rather than argued; pinned as
+  `optarr_aliased_payload_balances`, which asserts the balance in BOTH
+  directions so a future widening cannot turn the strand into a double free.
+
+  **What remains on #6360 is one row, and it is not this family's bug.** Every
+  loop-DECLARED shape sits at 8800 = the final iteration's box+payload, which
+  the exit sweep misses because the slot name has retired by then. That is the
+  block-scoped-slot class (#6285 / #6375), whose deep-drop half is exactly what
+  segfaulted gen1 twice.

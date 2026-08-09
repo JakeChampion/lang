@@ -26080,7 +26080,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, optfresh_call_names_of(opt_fresh_ret), []);
     var ufai: i32 = 0;
     while (ufai < ufa.len()) {
         out = out.append("OPTARR:" + ufa[ufai]);
@@ -30634,9 +30634,19 @@ function unmatched_optarr_ann_is(type_name: string): boolean {
 }
 
 // unmatched_optarr_init_is_fresh: optarr_init_is_fresh plus the Result
-// spellings. `Err(<anything>)` is admitted because the box still needs
-// releasing and the Ok-only payload free cannot reach an Err payload.
-function unmatched_optarr_init_is_fresh(e: parser.Expr): boolean {
+// spellings, plus a call to an OPTFRESH-registered producer. `Err(<anything>)`
+// is admitted because the box still needs releasing and the Ok-only payload
+// free cannot reach an Err payload.
+//
+// The call form is the same admission rcpayload_option_call_ptype makes on the
+// match-consumed side: registry membership (opt_fresh_ret_fns_of) proves every
+// return of the callee is a direct constructor, so the box is rc=1 and sole-
+// owned exactly as an inline ctor would be. An `Ok(<param array>)` producer
+// registers too and the payload dec then lands on a buffer the caller also
+// holds — but only via an argument, which the caller-side escape analysis
+// already reads as an escape, so that buffer carries no second credit to
+// collide with. Measured on `Result[i32[], string]`: 800 allocs / 800 frees.
+function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh: string[]): boolean {
     if (optarr_init_is_fresh(e)) { return true; }
     match (e) {
         parser.ExprCall(c) => {
@@ -30649,7 +30659,7 @@ function unmatched_optarr_init_is_fresh(e: parser.Expr): boolean {
                         }
                     }
                     if (cid.name == "Err" && c.args.len() == 1) { return true; }
-                    return false;
+                    return util.index_of_str(opt_fresh, cid.name) >= 0;
                 },
                 _ => { return false; }
             }
@@ -30883,7 +30893,7 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // it refuses every match-consumed Option outright — which is precisely the set
 // this collector must exclude. Disjointness from both match analyses is
 // therefore a property of the gate, not a separate check that could drift.
-function collect_unmatched_optarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -30891,18 +30901,18 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], acc: string[]): st
         match (stmts[vi]) {
             parser.StmtVar(v) => {
                 if (unmatched_optarr_ann_is(v.type_name)
-                    && unmatched_optarr_init_is_fresh(v.init)
+                    && unmatched_optarr_init_is_fresh(v.init, opt_fresh)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, a); a = collect_unmatched_optarr_names(f.else_body, a); },
-            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, a); },
-            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, a); },
+            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, opt_fresh, a); mi = mi + 1; }
             },
             _ => {}
         }

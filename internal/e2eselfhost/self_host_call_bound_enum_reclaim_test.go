@@ -248,6 +248,57 @@ function main(): i32 {
     return x % 83;
 }`
 
+// The same function-scoped shape bound from a CALL rather than an inline
+// constructor. The annotation gate always accepted it; the init gate took only
+// literal constructors, so a producer call fell through both this credit and
+// the match analysis and reclaimed nowhere. Admitting an OPTFRESH-registered
+// callee is the same freshness proof rcpayload_option_call_ptype uses on the
+// match-consumed side.
+const cbeOptArrCallNoMatchSrc = `function mk(i: i32): Result[i32[], string] {
+    if (i < 0) { return Err("neg"); }
+    return Ok([i, i + 1, i + 2]);
+}
+function round(r: i32): i32 {
+    var v: Result[i32[], string] = mk(r);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { acc = acc + 1; i = i + 1; }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
+// An OPTFRESH producer whose Ok payload is its own PARAMETER, so the payload
+// dec lands on a buffer the caller also holds. The caller's `a` reaches `mk`
+// only as an argument, which the caller-side escape analysis reads as an
+// escape, so `a` carries no second credit and the two frees cannot collide.
+// This is the case that would double-free if that were wrong, so it asserts an
+// exact balance rather than just live_bytes==0. Function-scoped on purpose: a
+// loop-scoped binding carries the separate 8800 block-scope residue, which
+// would mask the direction of any imbalance here.
+const cbeOptArrAliasedPayloadSrc = `function mk(xs: i32[]): Result[i32[], string] {
+    if (xs.len() == 0) { return Err("empty"); }
+    return Ok(xs);
+}
+function round(r: i32): i32 {
+    var a: i32[] = [r, r + 1, r + 2];
+    var v: Result[i32[], string] = mk(a);
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { acc = acc + a[1] + 3; i = i + 1; }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
 // The same shape declared INSIDE the loop: 35200 -> 8800. Six of the eight
 // objects a call allocates are now released; the pair the FINAL iteration
 // leaves live is not, because the exit sweep does not reach the retired slot
@@ -322,6 +373,9 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		// under tag==0, so a non-scalar Err is stranded rather than dangled,
 		// and refusing the shape leaked the box as well.
 		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
+		// Closed by admitting an OPTFRESH-registered call in the unmatched
+		// credit's init gate, which previously took literal constructors only.
+		{"optarr_from_call_no_match", cbeOptArrCallNoMatchSrc, 38},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
@@ -369,6 +423,18 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		if allocs-frees != 200 {
 			t.Errorf("allocs-frees=%d, want exactly 200 — the stranded set must be the Err strings and "+
 				"nothing else (allocs=%d frees=%d live=%d)", allocs-frees, allocs, frees, live)
+		}
+	})
+
+	// The aliased-payload producer. An imbalance in EITHER direction is a real
+	// defect: frees > allocs means the payload dec collided with a caller-side
+	// credit, frees < allocs means the widening lost the box.
+	t.Run("optarr_aliased_payload_balances", func(t *testing.T) {
+		allocs, frees, live := counts(t, "optarr_aliased_payload", cbeOptArrAliasedPayloadSrc, 39)
+		if allocs != frees || live != 0 {
+			t.Errorf("allocs=%d frees=%d live=%d — want an exact balance. The caller's buffer reaches "+
+				"mk only as an argument, so it carries no credit for the payload dec to collide with",
+				allocs, frees, live)
 		}
 	})
 
