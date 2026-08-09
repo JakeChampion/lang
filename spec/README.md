@@ -7,6 +7,7 @@ Status: normative, and partial.
 | `grammar.ebnf` | The syntactic grammar. Gated by `internal/grammar`. |
 | `diagnostics.md` | The index of every rejection the front-end can report, and which conformance case pins it. Gated by `TestDiagnosticsIndexIsAccurate`. |
 | `semantics.md` | The index of the behavioural rules the policy docs below state, and which conformance case pins each. Gated by `TestSemanticsIndexIsAccurate`. |
+| `core.md` | Fern Core's instruction set: every `internal/ir` op, its operand-stack effect and its immediates. Gated by `TestCoreOpsIndexIsAccurate` and `TestCoreOpEffectsMatchTheModel`. |
 
 See `docs/SPECIFICATION-RESEARCH.md` for the staged shape these are
 layers of, and §"What is not specified" below for what a reader must
@@ -100,8 +101,10 @@ maintained as living documents and a copy would drift:
 `semantics.md` is the index that ties these to tests. It extracts the
 claims each doc makes and names the conformance case that pins each one;
 the case names the claim back with a `// spec: <ID>` marker, so neither
-side can be edited out from under the other. **32 of 36** claims are
-pinned today, three are deliberate freedoms, and one is a gap.
+side can be edited out from under the other. It carries its own tally of
+how many claims are pinned, which its gate checks against the table —
+so this file does not repeat the number, having already carried a stale
+one.
 
 The docs stay where they are rather than moving here, because they are
 living documents — implementation notes, the reasoning behind a choice,
@@ -121,6 +124,11 @@ no reference-counting or ownership semantics beyond the mode-lattice
 sketch, no typing rules, no memory model. `conformance/cases` pins
 behaviour by example, which is a description of the current
 implementations' behaviour rather than a definition of the language's.
+
+`core.md` names the instructions a meaning would have to be given to,
+and stops there deliberately: it says `rc.dec` pops a pointer and pushes
+it back, not that it decrements anything. It is the vocabulary, not a
+semantics.
 
 A reader should not mistake this directory for a language definition. It
 defines what a Fern program looks like and which programs are rejected,
