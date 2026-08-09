@@ -148,6 +148,82 @@ function main(): i32 {
     return x % 83;
 }`
 
+// --- rc-PAYLOAD Option/Result: reclaimed by the consuming match, nothing else ---
+//
+// The three probes below isolate what #6360's own summary got wrong. That issue
+// concluded "call-binding is the trigger" and "the match is irrelevant", having
+// varied only the call-bound rows — where both happen to hold. Varying the match
+// on the DIRECT row shows the opposite: the consuming match is the entire reclaim
+// mechanism for an rc-payload Option/Result local, and call-binding is one of two
+// independent ways to fall outside it.
+//
+// Measured at 09b3efe2, 100 rounds x 4 iterations, exit codes matching native on
+// every row (so these are leaks, not miscompiles):
+//
+//	direct ctor + match   800/800   0        <- the mechanism
+//	direct ctor, NO match 800/0     35200
+//	from a call + match   800/0     35200
+//
+// Neither leaking shape is covered by anything: consumed_rcpayload_option_frees
+// needs a sole consuming match AND a statically known variant (a call's variant
+// is not), and collect_fresh_optarr_names ("OPTARR:") deliberately requires
+// REASSIGNMENT, as the complement of the match analyses. The uncovered quadrant
+// is the non-reassigned local that no match consumes.
+const cbeRcPayloadDirectMatchSrc = `function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
+        match (v) { Ok(a) => { acc = acc + a[0]; }, Err(_) => { acc = acc + 1; } }
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
+const cbeRcPayloadDirectNoMatchSrc = `function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
+        acc = acc + 1;
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
+const cbeRcPayloadCallMatchSrc = `function mk(i: i32): Result[i32[], string] {
+    if (i < 0) { return Err("neg"); }
+    return Ok([i, i + 1, i + 2]);
+}
+function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var v: Result[i32[], string] = mk(i);
+        match (v) { Ok(a) => { acc = acc + a[0]; }, Err(_) => { acc = acc + 1; } }
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
 func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -189,12 +265,39 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		{"option_scalar_from_call", cbeOptCallSrc, 72},
 		{"result_all_scalar_from_call", cbeResultScalarSrc, 72},
 		{"result_direct_ctor", cbeDirectSrc, 72},
+		// The control for the rc-payload family: the same payload kind that
+		// leaks in the two cases below reclaims fully when a match consumes it.
+		{"rcpayload_direct_with_match", cbeRcPayloadDirectMatchSrc, 72},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
 			if live != 0 {
 				t.Errorf("%s: live_bytes=%d, want 0 — one unfreed box per round (allocs=%d frees=%d)",
 					tc.name, live, allocs, frees)
+			}
+		})
+	}
+
+	// The uncovered quadrant, pinned at its measured value rather than left
+	// undescribed. These assert the LEAK: a fix flips the test, which is the
+	// point — it forces the row to be re-measured and delisted deliberately,
+	// the way #6291 closing ARRSTRUCT/ARRTUP incidentally went unnoticed for
+	// three issues because nothing pinned it.
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"rcpayload_direct_no_match", cbeRcPayloadDirectNoMatchSrc, 38},
+		{"rcpayload_from_call_with_match", cbeRcPayloadCallMatchSrc, 72},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allocs, frees, live := counts(t, tc.name, tc.src, tc.want)
+			if frees != 0 || live != 35200 {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want frees=0 live_bytes=35200.\n"+
+					"If this now reclaims, that is the #6360 rc-payload gap CLOSING: delete this case, "+
+					"move the shape into the live_bytes==0 table above, and update #6360.",
+					tc.name, allocs, frees, live)
 			}
 		})
 	}
