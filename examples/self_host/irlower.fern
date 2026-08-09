@@ -10355,11 +10355,12 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
 // is here. A scalar is copied out of the buffer, so nothing survives the release
 // to dangle.
 
-// owned_scalar_elem_tag reports whether an index/field type tag names a value
+// owned_scalar_field_type reports whether a declared field type names a value
 // that is COPIED out of its container rather than pointing back into it. Every
 // scalar width plus `boolean`; `string` / arrays / structs / enums are pointers
-// and are excluded.
-function owned_scalar_elem_tag(t: string): boolean {
+// and are excluded. The index read needs no such test — its "ARR:" admission
+// already restricts the container to a scalar-element array.
+function owned_scalar_field_type(t: string): boolean {
     return is_scalar_type_name(t) || t == "boolean" || t == "f32"
         || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "char";
 }
@@ -10965,7 +10966,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // double-free one. A type with no reclaimable field skips straight
             // to the box dec.
             var faown: string = "";
-            if (owned_scalar_elem_tag(decl_field_type(s.structs, sty, fa.field))) {
+            if (owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))) {
                 faown = owned_fresh_call_callee(fa.obj, "", s);
             }
             var so: LowerState = lower_expr(fa.obj, s);
@@ -11558,9 +11559,16 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // spilled so the index expression can be lowered between the two
             // reads of it, then released element-blind: every element rides the
             // freed buffer and the loaded scalar is a copy.
+            // The element is scalar BY CONSTRUCTION: an "ARR:" entry is only
+            // issued for a callee whose return type is is_leaksafe_array_field,
+            // which excludes string[] and every struct/enum array. Asking the
+            // element TAG instead would be both redundant and wrong — `ix.ty` is
+            // checker-stamped, and the emit-only drivers do not stamp it, so the
+            // reclaim fired under `fern.fern` and silently declined under
+            // `asm_run.fern`.
             var ixtag: string = ix_type_tag(ix, s);
             var ixown: string = "";
-            if (!expr_is_str(ix.array, s) && owned_scalar_elem_tag(ixtag)) {
+            if (!expr_is_str(ix.array, s)) {
                 ixown = owned_fresh_call_callee(ix.array, "ARR:", s);
             }
             var sidx: LowerState = lower_expr(ix.array, s);
