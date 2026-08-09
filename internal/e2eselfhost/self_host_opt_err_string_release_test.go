@@ -21,13 +21,11 @@ import (
 // constructor it inspects — one traversal, two verdicts — and the Err verdict gets
 // its own tagged registry row (`ERRFRESH:`, seeded as `OPTERRFRESH:`).
 //
-// SCOPE: the same strand exists in the UNMATCHED quadrant (a local no match
-// consumes), which reaches `emit_optarr_deep_free` rather than
-// `emit_opt_tagged_payload_drop`. Both measure identically — 3200/6400/12800/25600
-// at N=50/100/200/400 — but they are separate emitters, and the unmatched one is
-// shared with the reassigned+match OPTARR class, so releasing there safely needs
-// its own per-slot credit rather than an unconditional branch. `unmatched_err_string_still_strands`
-// pins it AS stranded so the remaining half stays visible and measured.
+// Both quadrants are covered. The match-consumed one fills the else-branch of
+// `emit_opt_tagged_payload_drop`; the UNMATCHED one reaches `emit_optarr_deep_free`
+// instead, and its Err release is gated per-SLOT ("OPTARRERR:") because that
+// emitter is shared with the reassigned+match OPTARR class, whose slots carry no
+// Err-freshness proof — an unconditional branch there would dangle.
 
 func TestSelfHostOptErrStringReleaseX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -191,10 +189,15 @@ function main(): i32 {
 		}
 	})
 
-	// The other half, pinned AS stranded so it stays visible. Same leak, different
-	// emitter: no consuming match, so this reaches emit_optarr_deep_free rather than
-	// emit_opt_tagged_payload_drop.
-	t.Run("unmatched_err_string_still_strands", func(t *testing.T) {
+	// The other half, closed in turn. Same leak, different emitter: no consuming
+	// match, so this reaches emit_optarr_deep_free rather than
+	// emit_opt_tagged_payload_drop, and its Err release is gated per-SLOT
+	// ("OPTARRERR:") because the OPTARR credit is shared with the reassigned+match
+	// class, whose slots carry no Err-freshness proof.
+	//
+	// This case was pinned AS a leak while that half was open, and converted here
+	// rather than deleted — which is what its failure message asked for.
+	t.Run("unmatched_err_string_is_released", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     if (i % 3 == 0) { return Err("e" + "rr"); }
     return Ok([i, i + 1]);
@@ -216,11 +219,10 @@ function main(): i32 {
     return x % 83;
 }`
 		allocs, frees, live := counts(t, "oes_err_unmatched", src)
-		if live == 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — this row is EXPECTED to still "+
-				"strand its Err strings. If it reaches 0, the unmatched quadrant grew an Err "+
-				"release too and this case should become an exact-balance assertion rather "+
-				"than being deleted", allocs, frees, live)
+		if live != 0 || allocs != frees {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance; the Err "+
+				"strings were 6400 here while only the match-consumed emitter had an Err branch",
+				allocs, frees, live)
 		}
 	})
 }

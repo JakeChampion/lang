@@ -5406,3 +5406,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (run first), and the #6360
   neighbours — unmatched optstr, call-bound string payload, the arm-escape gate,
   call-bound enum, rcpayload option call. Refs #6360 #4451.
+
+- 2026-08-09: **The Err arm's string in the UNMATCHED quadrant — the other half,
+  now closed.** The entry above released the Err payload on the match-consumed
+  path and pinned this one AS a leak. Both measured identically
+  (3200 / 6400 / 12800 / 25600 at N=50/100/200/400), which is what suggested a
+  single defect; they are separate emitters, and that distinction is the whole
+  design of this fix.
+
+  `emit_optarr_deep_free` is SHARED with the reassigned+match OPTARR class, whose
+  slots carry no Err-freshness proof, so an unconditional else-branch there would
+  dangle. The release is therefore gated per-SLOT by a second credit,
+  `"OPTARRERR:"`, seeded next to `"OPTARR:"` only when that local's declared Err
+  payload is a string AND its init proves every Err payload fresh — an inline
+  `Err(<literal / fresh producer>)`, or a call to an ERRFRESH-registered producer.
+  `unmatched_optarr_err_str_fresh` is deliberately per-LOCAL for that reason.
+
+  MEASURED: `Result[i32[], string]` unmatched 6400 -> **0**, `allocs == frees`.
+  The match-consumed row, both scalar-Err rows, the unmatched `Option[string]`
+  row, the arm-escape hazards and the aliased-Err hazard (still refused, stranded
+  at 3200) are all unchanged.
+
+  The pinned `unmatched_err_string_still_strands` case was CONVERTED to an
+  exact-balance assertion rather than deleted, which is what its own failure
+  message instructed. That is the pattern worth repeating: when a known-open half
+  is asserted as a leak, its message should say how to close the pin, so the next
+  change updates it instead of quietly dropping the coverage.
+
+  VERIFIED: `TestSelfHostOptErrStringReleaseX86_64`,
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (354 s, run first), and the five
+  #6360 neighbours. Refs #6360 #4451.
