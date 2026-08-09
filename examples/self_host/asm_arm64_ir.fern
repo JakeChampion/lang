@@ -864,7 +864,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 193) {  // tcp_connect
             // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
             s = s.need("heap");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_connect\n    str x0, [sp, #-16]!\n");
+            // port is on top but param[0] is host_be, so swap before the call.
+            s = s.need("tcp_connect");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_tcp_connect\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 194) {  // tcp_send
             // [fd, str box] -> __fern_tcp_send(x0=fd, x1=box) -> bytes / -errno.
             s = s.need("heap");
@@ -2417,7 +2420,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -4685,57 +4688,10 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write(".size __fern_tcp_send, .-__fern_tcp_send\n");
 
 
-    // __fern_tcp_connect(x0 = host_be, x1 = port) → connected fd or -errno.
-    // socket(AF_INET, SOCK_STREAM, 0) #198; build sockaddr_in {family,
-    // htons(port), sin_addr=host_be (network order), zero}; connect #203.
-    // host_be is the IPv4 packed in network byte order. Mirrors the listen
-    // sockaddr build (incl. the Darwin sin_len byte).
-    s = s.write(".globl __fern_tcp_connect\n");
-    s = s.write(".type __fern_tcp_connect, %function\n");
-    s = s.write("__fern_tcp_connect:\n");
-    s = s.write("    stp x29, x30, [sp, #-48]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #16]\n");
-    s = s.write("    str x21, [sp, #32]\n");
-    s = s.write("    mov x19, x0\n");           // host_be
-    s = s.write("    mov x20, x1\n");           // port
-    s = s.write("    mov x0, #2\n");            // AF_INET
-    s = s.write("    mov x1, #1\n");            // SOCK_STREAM
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #198\n");          // socket
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lir_tcon_done\n");
-    s = s.write("    mov x21, x0\n");           // fd
-    s = s.write("    sub sp, sp, #16\n");       // sockaddr_in
-    if (darwin) {
-        s = s.write("    mov w0, #16\n");
-        s = s.write("    strb w0, [sp]\n");     // sin_len
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strb w0, [sp, #1]\n"); // sin_family
-    } else {
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
-    }
-    s = s.write("    rev16 w0, w20\n");         // htons(port)
-    s = s.write("    strh w0, [sp, #2]\n");
-    s = s.write("    str w19, [sp, #4]\n");     // sin_addr = host_be (network order)
-    s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
-    s = s.write("    mov x0, x21\n");
-    s = s.write("    mov x1, sp\n");
-    s = s.write("    mov x2, #16\n");
-    s = s.write("    mov x8, #203\n");          // connect
-    s = s.write("    svc #0\n");
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Lir_tcon_done\n");
-    s = s.write("    mov x0, x21\n");           // return fd
-    s = s.write(".Lir_tcon_done:\n");           // x0 holds fd or -errno
-    s = s.write("    ldr x21, [sp, #32]\n");
-    s = s.write("    ldp x19, x20, [sp, #16]\n");
-    s = s.write("    ldp x29, x30, [sp], #48\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_connect, .-__fern_tcp_connect\n");
+    // tcp_connect is Fern now (#2649) — see the migrated-helpers section. Its
+    // Darwin number comes from asmcore.sysno rather than darwin_sysno, which
+    // has no row for connect (203) and so left the Mach-O emit issuing a Linux
+    // syscall through the Linux trap.
 
     // __fern_tcp_pollable(x0 = fd) → fd: a socket's readiness token IS its
     // fd on native (ppoll takes fds directly), so identity.
@@ -6246,6 +6202,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // supplies.
     if (s.has_need("tcp_listen")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s.struct_decls, s);
+    }
+    // tcp_connect: the same sockaddr_in as tcp_listen with the address filled in.
+    if (s.has_need("tcp_connect")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
     // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local

@@ -63,6 +63,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    if (tcp_listen(0) < 0) { return 18; }\n" +
+		"    if (tcp_connect(2130706433, 1) == 0) { return 19; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -112,7 +113,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"timer_fd",
 		// socket + bind + listen over a byte-built sockaddr_in. Its first two
 		// bytes are the one per-target difference (XNU has sin_len).
-		"tcp_listen"} {
+		"tcp_listen",
+		// Same sockaddr_in as tcp_listen with the address filled in. Migrating
+		// this fixed arm64-darwin, which had been issuing Linux connect (203)
+		// through the Linux trap because darwin_sysno has no row for it.
+		"tcp_connect"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -229,6 +234,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
+		// connect is the one socket number darwin_sysno cannot remap, so the
+		// Darwin emit has to carry it from asmcore.sysno — assert below.
+		"    if (tcp_connect(2130706433, 1) == 0) { return 15; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -267,6 +275,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// select, XNU's stand-in for nanosleep — and the only reason
 		// __syscall5 exists. Linux sleeps through nanosleep, which takes two.
 		{"select", "93"},
+		// connect. darwin_sysno cannot remap this one — it has no 203 row — so
+		// before the Fern migration the Mach-O emit carried Linux's number and
+		// Linux's trap. This assertion is the regression guard for that.
+		{"connect", "98"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)

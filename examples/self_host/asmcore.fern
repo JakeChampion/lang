@@ -388,6 +388,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "socket") { return "41"; }
         if (name == "bind") { return "49"; }
         if (name == "listen") { return "50"; }
+        if (name == "connect") { return "42"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         return "-1";
@@ -423,6 +424,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "socket") { return "97"; }
         if (name == "bind") { return "104"; }
         if (name == "listen") { return "106"; }
+        if (name == "connect") { return "98"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -446,6 +448,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "socket") { return "198"; }
     if (name == "bind") { return "200"; }
     if (name == "listen") { return "201"; }
+    if (name == "connect") { return "203"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     return "-1";
@@ -731,6 +734,23 @@ function sockaddr_head(t: string, buf: string): string {
 // than an endianness-dependent word write.
 pub function rt_src_tcp_listen(t: string): string {
     return "function __fern_tcp_listen(port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd, sa, 16); if (rb < 0) { return rb; } var rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd, 128, 0); if (rl < 0) { return rl; } return fd; }";
+}
+
+// rt_src_tcp_connect backs `tcp_connect(host_be, port)` (#2649, syscall-leaf) →
+// a connected socket fd, or -errno. Same sockaddr_in as tcp_listen, with the
+// address filled in instead of INADDR_ANY.
+//
+// `host_be` arrives ALREADY in network order, so its four bytes go out in
+// little-endian order — reproducing the 32-bit word store the hand-asm did,
+// which is not the same as byte-swapping it again.
+//
+// Migrating this FIXES arm64-darwin. The hand-asm emitted `mov x8, #203`
+// (Linux connect) on both targets and relied on darwinize to remap it, but
+// darwin_sysno has no 203 row — so the Mach-O output issued Linux syscall 203
+// through the Linux trap. Baking the number per target is exactly the mechanism
+// that exists because darwinize cannot remap a number it only sees at runtime.
+pub function rt_src_tcp_connect(t: string): string {
+    return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

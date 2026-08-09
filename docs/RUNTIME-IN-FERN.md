@@ -17,7 +17,7 @@ opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
 `tcp_accept`), `sleep_ms` + `poll` over the new `__syscall5`, and
-`proc_waitpid`, `timer_fd`, and `tcp_listen`. Each is ONE source across all three native
+`proc_waitpid`, `timer_fd`, `tcp_listen`, and `tcp_connect`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -386,7 +386,6 @@ hand-written" but "which of them the floor can already express".
 
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_connect` | `socket` + `connect` | 3 each | `__syscall3` |
 | `tcp_recv` | `read` | 3 | `__syscall3` |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
@@ -398,7 +397,12 @@ only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since th
 floor has no 16- or 32-bit store and the port must be big-endian regardless of
 host. Its first two bytes are the struct's one per-target difference (XNU leads
 with a `sin_len` byte where Linux has a u16 `sin_family`), which `sockaddr_head`
-supplies; `tcp_pollable` issues no syscall at all. The remaining
+supplies. `tcp_connect` reuses that head, and migrating it **fixed
+arm64-darwin**: its hand-asm emitted `mov x8, #203` (Linux `connect`) on both
+targets and relied on `darwinize` to remap it, but `darwin_sysno` has no 203
+row — so the Mach-O output issued a Linux syscall through the Linux trap.
+Baking the number per target is exactly the mechanism that exists because
+`darwinize` cannot remap a number it only sees at run time; `tcp_pollable` issues no syscall at all. The remaining
 non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
