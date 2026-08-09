@@ -1880,6 +1880,120 @@ pub function is_foldable_binary_kind(id: i32): boolean {
         || id == kind_id("gt_s") || id == kind_id("ge_s");
 }
 
+// fold_const_binaries collapses `const_i32 a; const_i32 b; <foldable bin>`
+// into a single `const_i32 (a OP b)`, repeatedly, until the op list stops
+// shrinking.
+//
+// is_foldable_binary_kind has existed since the registry landed and had no
+// consumer but its own registry test — this is that consumer. Without it the
+// stack-machine lowering emits the whole dance for a literal: `0 - 8` in a
+// helper's `__raw_addr(p, 0 - 8)` costs a const, a const, two pops, a sub and
+// a push, none of which survive folding.
+//
+// It runs on EVERY build, not just -O. constfold.fold_module is the AST-level
+// sibling and is gated behind -O (fern.fern), so a default build had no
+// constant folding at all; this one is a pure op-list rewrite with no source
+// shape to preserve, so there is nothing for a diagnostic to lose by it.
+//
+// Width and signedness ride from the BINARY op, not the operands: a folded
+// `const` inherits the width the binary was going to produce. Only i32-width
+// signed arithmetic folds — is_foldable_binary_kind excludes the float ops and
+// the unsigned compares, and this skips anything whose operands carry source
+// TEXT (op_const_i32_text), because that text is what the wide-literal path
+// splices into a 64-bit immediate and folding would discard it.
+//
+// Division and remainder by zero are NOT folded, and deliberately: Fern's
+// division is total (`x / 0 == 0`, docs/INTEGER-SEMANTICS.md) but the fold
+// would have to reproduce that exactly, and getting it wrong is a silent
+// wrong answer rather than a crash. Leaving them to the backend keeps one
+// implementation of the rule.
+pub function fold_const_binaries(ops: Op[]): Op[] {
+    var cur: Op[] = ops;
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var out: Op[] = [];
+        var i: i32 = 0;
+        while (i < cur.len()) {
+            if (i + 2 < cur.len()) {
+                var a: Op = cur[i];
+                var b: Op = cur[i + 1];
+                var o: Op = cur[i + 2];
+                if (fold_is_const_i32(a) && fold_is_const_i32(b)
+                    && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
+                    && !fold_would_divide_by_zero(o.kind_tag, fold_const_value(b))) {
+                    out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, fold_const_value(a), fold_const_value(b))));
+                    i = i + 3;
+                    changed = true;
+                } else {
+                    out = out.append(cur[i]);
+                    i = i + 1;
+                }
+            } else {
+                out = out.append(cur[i]);
+                i = i + 1;
+            }
+        }
+        cur = out;
+    }
+    return cur;
+}
+
+// fold_is_const_i32 reports whether `o` is an i32 constant this pass may read.
+//
+// Two shapes qualify. op_const_i32 (tag 1) carries its value in i32_imm and is
+// unconditionally fine. op_const_i32_text (tag 2) is what a SOURCE LITERAL
+// lowers to — it carries the literal's text so the wide / hex paths can splice
+// it verbatim — and only qualifies when that text is a plain decimal i32.
+//
+// The round-trip is the test: digits_to_i32 stops at the first non-digit and
+// accumulates without overflow checks, so it answers 0 for "0x10" and wraps
+// silently on anything too wide. Re-rendering and comparing rejects exactly the
+// cases where its answer is not the literal — hex, a suffix, a leading zero, an
+// overflow — without this pass having to know which forms exist.
+function fold_is_const_i32(o: Op): boolean {
+    if (o.kind_tag == 1) { return o.str.len() == 0; }
+    if (o.kind_tag != 2) { return false; }
+    if (o.str.len() == 0) { return false; }
+    return util.i32_to_string(util.digits_to_i32(o.str)) == o.str;
+}
+
+// fold_const_value reads the value out of whichever of the two shapes it is.
+// Only call it on an Op that fold_is_const_i32 accepted.
+function fold_const_value(o: Op): i32 {
+    if (o.kind_tag == 1) { return o.i32_imm; }
+    return util.digits_to_i32(o.str);
+}
+
+// fold_would_divide_by_zero guards the two ops whose zero divisor has a
+// defined-but-easy-to-get-wrong answer. See fold_const_binaries.
+function fold_would_divide_by_zero(k: i32, rhs: i32): boolean {
+    if (rhs != 0) { return false; }
+    return k == kind_id("div_s") || k == kind_id("rem_s");
+}
+
+// fold_binary_i32 evaluates one foldable i32 binary. The comparisons yield
+// 1 / 0, matching what the backends materialise for a boolean.
+function fold_binary_i32(k: i32, a: i32, b: i32): i32 {
+    if (k == kind_id("add")) { return a + b; }
+    if (k == kind_id("sub")) { return a - b; }
+    if (k == kind_id("mul")) { return a * b; }
+    if (k == kind_id("div_s")) { return a / b; }
+    if (k == kind_id("rem_s")) { return a % b; }
+    if (k == kind_id("and")) { return a & b; }
+    if (k == kind_id("or")) { return a | b; }
+    if (k == kind_id("xor")) { return a ^ b; }
+    if (k == kind_id("shl")) { return a << b; }
+    if (k == kind_id("shr_s")) { return a >> b; }
+    if (k == kind_id("eq")) { if (a == b) { return 1; } return 0; }
+    if (k == kind_id("ne")) { if (a != b) { return 1; } return 0; }
+    if (k == kind_id("lt_s")) { if (a < b) { return 1; } return 0; }
+    if (k == kind_id("le_s")) { if (a <= b) { return 1; } return 0; }
+    if (k == kind_id("gt_s")) { if (a > b) { return 1; } return 0; }
+    if (k == kind_id("ge_s")) { if (a >= b) { return 1; } return 0; }
+    return 0;
+}
+
 // is_commutative_kind reports whether `id` is an integer binary op whose
 // operands can be swapped without changing the result (so a peephole may
 // canonicalise operand order / fold a constant to either side). Subtraction,
