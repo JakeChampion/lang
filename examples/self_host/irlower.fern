@@ -10334,6 +10334,58 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     return s.fail();
 }
 
+// ── the fresh-owned-container READ reclaim (#6491) ───────────────────────────
+//
+// `mk()[i]` / `mk().f` read a value out of a container NOTHING NAMES, so the
+// read is the only place that container can be reclaimed — there is no slot for
+// the exit sweep to find. Native bounds both shapes; the self-host leaked the
+// whole container per evaluation (measured 184 B a round on the three-read
+// probe, exactly x2 per doubling, against 0 on all three native backends).
+//
+// This is the discarded-`mk(i);` statement reclaim one expression position over,
+// and it deliberately borrows that site's admission rather than inventing one:
+// the callee must be in the STRICT-fresh registry, so the returned box is the
+// unambiguous sole owner (rc == 1) of itself and of every field buffer. The
+// releases are the same rc-guarded helpers, so a shared box degrades to today's
+// leak instead of dangling.
+//
+// SCALAR reads only. A pointer element/field ALIASES the container about to be
+// freed, so it needs the retain-and-deep-drop pair plus a binding site that
+// takes the read as a move — three sites that have to agree, and none of them
+// is here. A scalar is copied out of the buffer, so nothing survives the release
+// to dangle.
+
+// owned_scalar_elem_tag reports whether an index/field type tag names a value
+// that is COPIED out of its container rather than pointing back into it. Every
+// scalar width plus `boolean`; `string` / arrays / structs / enums are pointers
+// and are excluded.
+function owned_scalar_elem_tag(t: string): boolean {
+    return is_scalar_type_name(t) || t == "boolean" || t == "f32"
+        || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "char";
+}
+
+// owned_fresh_call_callee: the callee NAME when `e` is a direct call to a free
+// function in the strict-fresh registry (`kind` "" for the struct entries,
+// "ARR:" for the scalar-array ones), else "". A LOCAL callee is refused — the
+// registry is keyed by declaration name and a same-named local holds an unknown
+// closure body.
+function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (s.slot_of(cid.name) >= 0) { return ""; }
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
+                    return cid.name;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // lower_expr lowers one expression, stamping the bail description on the way
 // out of a failure (see LowerState.fail_why). The dispatch itself is
 // lower_expr_dispatch; this wrapper is the only place the tag is computed, and
@@ -10905,8 +10957,37 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             if (sty == "") { return s.fail(); }
             var idx: i32 = s.field_index_in(sty, fa.field);
             if (idx < 0) { return s.fail(); }
+            // A SCALAR field read off a fresh owned struct — `mk().k`, mk in the
+            // strict-fresh registry — reclaims that box here, the index read's
+            // sibling (#6491). The deep field drop rides the same admission the
+            // discarded-`mk(i);` reclaim uses: the strict-fresh registry proves
+            // the box sole-owns every field buffer, so __struct_drop_<T> cannot
+            // double-free one. A type with no reclaimable field skips straight
+            // to the box dec.
+            var faown: string = "";
+            if (owned_scalar_elem_tag(decl_field_type(s.structs, sty, fa.field))) {
+                faown = owned_fresh_call_callee(fa.obj, "", s);
+            }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
+            if (faown != "") {
+                var fan: string = "$ocfld" + util.i32_to_string(so.locals.len());
+                so = so.add_local(fan);
+                var faslot: i32 = so.slot_of(fan);
+                so = so.mark_struct_type(faslot, sty);
+                so = so.emit(ir.op_store_local(faslot));
+                so = so.emit(ir.op_load_local(faslot));
+                if (struct_field_is_i64(s.structs, sty, idx)) { so = so.emit(ir.op_struct_get_i64(idx)); }
+                else { so = so.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx))); }
+                if (struct_fields_reusable(s.structs, sty) && struct_has_reclaim_array_field(s.structs, sty)) {
+                    so = so.emit(ir.op_load_local(faslot));
+                    so = so.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drop the rc fields
+                    so = so.emit(ir.op_drop());                                   // discard the clobbered return
+                }
+                so = so.emit(ir.op_load_local(faslot));
+                so = so.emit(ir.op_call_direct("__fern_rc_dec", 1));              // free the box
+                return so.emit(ir.op_drop());
+            }
             // An i64 field reads an 8-byte integer (i64.load); f64 an 8-byte
             // float; i32 the 4-byte path. (An i64 field in an i32 context is a
             // checker error; a valid i64 read routes through lower_i64 below.)
@@ -11471,11 +11552,39 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // (the backend computes the element address for its layout). String
             // indexing `s[i]` reads a byte → `str_index` (an i32 byte value);
             // it shares the lower-array-then-index shape, just a different op.
+            // A SCALAR element read out of a fresh owned container — `mk()[i]`,
+            // mk an "ARR:"-registered producer — reclaims that container here
+            // (#6491; see the section comment above lower_expr). The buffer is
+            // spilled so the index expression can be lowered between the two
+            // reads of it, then released element-blind: every element rides the
+            // freed buffer and the loaded scalar is a copy.
+            var ixtag: string = ix_type_tag(ix, s);
+            var ixown: string = "";
+            if (!expr_is_str(ix.array, s) && owned_scalar_elem_tag(ixtag)) {
+                ixown = owned_fresh_call_callee(ix.array, "ARR:", s);
+            }
             var sidx: LowerState = lower_expr(ix.array, s);
             if (!sidx.ok) { return sidx; }
+            var ixslot: i32 = 0 - 1;
+            if (ixown != "") {
+                var ixn: string = "$ocidx" + util.i32_to_string(sidx.locals.len());
+                sidx = sidx.add_local(ixn);
+                ixslot = sidx.slot_of(ixn);
+                sidx = sidx.emit(ir.op_store_local(ixslot));
+                sidx = sidx.emit(ir.op_load_local(ixslot));
+            }
             sidx = lower_expr(ix.index, sidx);
             if (!sidx.ok) { return sidx; }
             if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
+            if (ixslot >= 0) {
+                var ixw: i32 = 32;
+                if (ixtag == "f64") { ixw = 64; }
+                if (ix.unchecked) { sidx = sidx.emit(ir.op_arr_get_nc(ixw)); }
+                else { sidx = sidx.emit(ir.op_arr_get(ixw)); }
+                sidx = sidx.emit(ir.op_load_local(ixslot));
+                sidx = sidx.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                return sidx.emit(ir.op_drop());
+            }
             // Element width from ix_type_tag: an f64[] reads an 8-byte f64
             // (arr_get width 64 → f64.load on wasm); i32[] / string[] the 4-byte
             // i32 path. This is the SAME leaf expr_is_f64's ExprIndex case reads,

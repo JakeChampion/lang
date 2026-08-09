@@ -81,12 +81,19 @@
 #
 # Native pairs a retain of the loaded value with an is_unique-gated deep drop of
 # the container — the value aliases the buffer being freed, so a plain drop
-# would be a use-after-free. The self-host sources carry none of that machinery
-# (no __arr_idx / fresh_owned / owned_call_result anywhere in
-# examples/self_host), which is the RECLAIM half docs/RC-PERCEUS-SELF-HOST-PORT.md
-# still has open. Tracked as #6491.
+# would be a use-after-free.
+#
+# The SCALAR halves of both shapes now reclaim: `mk()[i]` / `mk().f` release the
+# container at the read when the callee is in the strict-fresh registry, which is
+# the discarded-`mk(i);` reclaim one expression position over. A scalar is copied
+# out, so it needs no retain and no agreement with the binding site.
+#
+# This case is neither of those. Its element and field are STRINGS, which alias
+# the container and so need the retain-and-deep-drop pair plus a binding that
+# takes the read as a move; and its producers build their result in a LOCAL,
+# which earns no strict-fresh entry. Both remain open under #6491.
 #
 # Worth knowing while porting: the sibling `alloc_flat_under_reclaim` PASSES
 # here. That case lets the whole allocation die, which the self-host handles;
 # this one keeps the element alive while the container dies, which it does not.
-alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat
+alloc_flat_index_of_fresh_container 6491 self-host: a POINTER element / field read out of a container nothing names is never reclaimed — grows, native flat
