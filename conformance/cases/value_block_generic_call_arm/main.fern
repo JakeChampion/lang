@@ -1,0 +1,30 @@
+// A value-position `if` whose arms CALL an erased-generic passthrough, sitting
+// where no local annotation can supply the width: a struct-literal field, a call
+// argument, an array element. The desugared IIFE's tag comes from a syntax-only
+// classifier that cannot resolve a callee, so it fell to i32 while the body
+// yielded i64 (#6468).
+//
+// `id[T](x: T): T` returns its argument, so the width is the ARGUMENT's — which
+// is what the post-parse inference now reads, the parser having no function
+// table where the tag is first guessed.
+function id[T](x: T): T { return x; }
+function pick[T](c: boolean, a: T, b: T): T { if (c) { return a; } return b; }
+function widen(v: i64): i64 { return v; }
+
+struct Box { n: i64, tag: i32 }
+
+function main(): i32 {
+    // Struct-literal field position.
+    var s: Box = Box { n: (if (true) { id(5000000000i64) } else { id(7i64) }), tag: 1 };
+    if (s.n != 5000000000i64) { return 1; }
+
+    // Call-argument position.
+    var viaArg: i64 = widen((if (false) { id(3i64) } else { pick(true, 6000000000i64, 4i64) }));
+    if (viaArg != 6000000000i64) { return 2; }
+
+    // Array-element position.
+    var xs: i64[] = [1i64, (if (true) { id(7000000000i64) } else { id(2i64) }), 3i64];
+    if (xs[1] != 7000000000i64) { return 3; }
+
+    return 0;
+}

@@ -11568,7 +11568,16 @@ function irt_is_option(s: string): boolean {
 // or "" if it can't be determined.
 function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[], structs: StructDecl[]): string {
     match (e) {
-        ExprNumber(n) => { if (n.is_float) { return "f64"; } return "i32"; },
+        // Suffix first, magnitude second — the same rule if_expr_rt and
+        // mono_infer already apply. Reading a literal by value alone calls
+        // `2147484197u32` i64 (past i32-max, well inside u32-max), and reading it
+        // by neither left every wide literal looking like an i32 (#6468).
+        ExprNumber(n) => {
+            if (n.is_float) { return "f64"; }
+            if (n.suffix.len() > 0) { return n.suffix; }
+            if (literal_is_i64(n.text)) { return "i64"; }
+            return "i32";
+        },
         ExprString(_) => { return "string"; },
         ExprBool(_) => { return "boolean"; },
         ExprIdent(id) => { return irt_param_type(params, id.name); },
@@ -11659,6 +11668,13 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[], structs: Str
                     // Result needs both type arguments which a single Ok/Err
                     // return can't supply; leave it to an annotation.
                     if (cid.name == "Ok" || cid.name == "Err") { return ""; }
+                    // An ERASED-GENERIC PASSTHROUGH (`id[T](x: T): T`) returns
+                    // its argument, so its result type is that argument's — the
+                    // declared return is the type var `T`, which names nothing on
+                    // its own. Without this, `id(902i64)` inferred "T" and the
+                    // width was lost (#6468).
+                    var pth: i32 = irt_passthrough_arg_index(funcs, cid.name);
+                    if (pth >= 0 && pth < c.args.len()) { return irt_guess(c.args[pth], params, funcs, structs); }
                     return irt_func_ret(funcs, cid.name);
                 },
                 // A METHOD call `recv.m()` — resolve the receiver's type, then
@@ -11675,6 +11691,28 @@ function irt_guess(e: Expr, params: ParamDecl[], funcs: FuncDecl[], structs: Str
         },
         _ => { return ""; }
     }
+}
+
+// irt_passthrough_arg_index returns the parameter position an ERASED-GENERIC
+// passthrough returns unchanged — the `id[T](x: T): T` shape, where the declared
+// return spelling is the same type var as a parameter's — or -1. An unbounded
+// type param is erased rather than monomorphised, so `T` survives into the
+// signature and names no type; the argument at that position is what the call
+// actually yields.
+function irt_passthrough_arg_index(funcs: FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_type.len() == 0 && funcs[i].type_param_count > 0) {
+            var p: i32 = 0;
+            while (p < funcs[i].params.len()) {
+                if (funcs[i].params[p].type_name.len() > 0 && funcs[i].params[p].type_name == funcs[i].ret_type) { return p; }
+                p = p + 1;
+            }
+            return 0 - 1;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 function irt_unify(a: string, b: string): string {
@@ -11763,6 +11801,18 @@ pub function infer_ret_types_module(mod: Module): Module {
             if (fd.ret_type == "" && fd.body.len() > 0 && fd.receiver_type.len() == 0 && fd.type_param_count == 0) {
                 var inferred: string = irt_infer_func(fd, funcs, mod.structs);
                 if (inferred != "") { funcs = irt_set_ret(funcs, i, inferred); }
+            }
+            // A LIFTED value-block lambda carries the parser's syntax-only tag,
+            // not an author's annotation — `if_expr_rt` has no function table, so
+            // an arm that calls anything falls to its "i32" default. Here the
+            // table exists, so a 64-bit body WIDENS that guess. Only `__lam_`
+            // names are eligible (they are synthesised, never written), and only
+            // narrow -> wide: the tag exists to stop contradicting the body, and
+            // narrowing one would be the contradiction in the other direction.
+            else if (fd.ret_type == "i32" && fd.body.len() > 0 && fd.receiver_type.len() == 0
+                     && fd.type_param_count == 0 && fd.name.len() > 6 && fd.name[0:6] == "__lam_") {
+                var winf: string = irt_infer_func(fd, funcs, mod.structs);
+                if (winf == "i64" || winf == "u64" || winf == "f64") { funcs = irt_set_ret(funcs, i, winf); }
             }
             i = i + 1;
         }
