@@ -249,6 +249,16 @@ func TestSimProperty_Regressions(t *testing.T) {
 		// Ready("") — no poll at all, so now_ns stays 0 and rng_state
 		// is still the raw seed.
 		{"race_failed_upstream_wins_at_t0", simRegressionRaceFailWins},
+		// A gather over three future_chains and one stall+flaky fetch —
+		// enough re-suspension that a `Pending(fd, resume)` box dies while
+		// the arm that matched it is still calling `resume`. Giving enum
+		// PAYLOADS the container-closure release of #6443 freed that env:
+		// SIGSEGV on both natives, out-of-bounds trap on wasm, across most
+		// of this file's seeds. Pinned verbatim because the synthetic
+		// spellings of "enum carries a closure" do not reproduce it — the
+		// generic instantiation plus the combinators' re-entry is the shape,
+		// and this is the smallest generator output that has it.
+		{"gather_resuspends_enum_payload_closure", simRegressionGatherResuspendClosure},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -444,3 +454,34 @@ function main(): i32 {
     return 0;
 }
 `
+
+// simRegressionGatherResuspendClosure — see the case comment above.
+const simRegressionGatherResuspendClosure = `import "std/async";
+import "std/sim";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+    var d: sim.Sim = sim.new(193102384 as i64);
+    var n: sim.Net = sim.net(d);
+    n = n.serve(1, 80, "/e0", "abcdefghij", 40000000 as i64);
+    n = n.fault_stall(1, 80, "/e0");
+    n = n.fault_flaky(1, 80, "/e0", 25);
+    var fs0: async.Future[string][] = [
+        sim.future_chain(d, 26000000 as i64, 1000000 as i64, 0, "c0_0"),
+        sim.future_chain(d, 36000000 as i64, 1000000 as i64, 1, "c0_1"),
+        n.fetch_future(1, 80, "/e0"),
+        sim.future_chain(d, 14000000 as i64, 3000000 as i64, 2, "c0_3")
+    ];
+    var g0: string[] = async.gather_on(d, fs0, "!");
+    print("g0.len=" + g0.len().to_string());
+    var i0: i32 = 0;
+    while (i0 < g0.len()) {
+        print("g0[" + i0.to_string() + "]=" + g0[i0]);
+        i0 = i0 + 1;
+    }
+    print("now=" + d.now_ns().to_string());
+    print("rng=" + d.rng_state().to_string());
+    print("hits0=" + n.hits(1, 80, "/e0").to_string());
+    return 0;
+}`
