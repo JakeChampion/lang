@@ -19,7 +19,8 @@ import (
 //
 // Scope note: STRUCTARR is a SHALLOW class — it frees element boxes, not their
 // fields — so the append path is admitted only for an element struct whose
-// fields are all scalar or `string` (struct_all_scalar_or_string_fields). That
+// fields are all scalar, `string` or `fn`
+// (struct_all_scalar_string_or_fn_fields). That
 // restriction is not caution for its own sake: the first version of this change
 // used the class's existing, fully loose field guard and broke self-compilation
 // (#6129 — gen0/gen1 diverged on unit 2_s83), because that guard also lets map /
@@ -31,9 +32,11 @@ import (
 // reclaimed its element boxes under the fully loose rule, so refusing the append
 // form made two ways of building one value disagree (28800 vs 9600 bytes over
 // 100 rounds). It is sound because the element BOX is fresh by construction —
-// structarr_elem_store_ok admits only a no-base struct literal — so the shallow
-// free releases a box the array solely owns, and the string field leaks exactly
-// as it already does on the literal path. map / option / tuple stay out.
+// structarr_elem_store_ok admits a no-base struct literal or a call to a
+// strict-fresh struct-returning function — so the shallow free releases a box
+// the array solely owns, and the string field leaks exactly as it already does
+// on the literal path. `fn` joined on the same argument (#6461). map / option /
+// tuple stay out.
 
 const structArrAppendChurnSrc = `struct P { x: i32, y: i32 }
 
@@ -170,6 +173,69 @@ func TestSelfHostStructArrAppendStrFieldReclaimX86_64(t *testing.T) {
 	}
 }
 
+// An element built by a CALL rather than an inline literal (#6461). A callee
+// whose every return is a strict-fresh struct literal hands back an rc=1 box no
+// one else holds, which is the same freshness the inline literal has one frame
+// out — so the array is still its sole owner and the element boxes must be
+// reclaimed. Before this the call form fell out of the credit entirely, taking
+// the element boxes, and everything they own, with it.
+const structArrAppendCallElemSrc = `struct P { x: i32, y: i32 }
+
+function mk(i: i32): P { return P { x: i, y: i }; }
+
+function round(): i32 {
+    var ps: P[] = [];
+    var i: i32 = 0;
+    while (i < 8) { ps = ps.append(mk(i)); i = i + 1; }
+    return ps.len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t / 100;
+}`
+
+// TestSelfHostStructArrAppendCallElemReclaimX86_64 — an append-built struct
+// array whose elements come from a strict-fresh-returning CALL reclaims its
+// element boxes, exactly as the inline-literal form does.
+func TestSelfHostStructArrAppendCallElemReclaimX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	asm := hevCompile(t, runner, driverBin, structArrAppendCallElemSrc, []string{"FERN_LEAKCHECK=1"})
+	progBin := buildBin(t, gcc, dir, "structarr_append_callelem", asm)
+	stderr, exit := hevRun(t, runner, progBin)
+	if exit != 8 {
+		t.Fatalf("program exited %d, want 8", exit)
+	}
+
+	summary := ""
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "leakcheck: ") {
+			summary = line
+		}
+	}
+	if summary == "" {
+		t.Fatal("no leakcheck summary")
+	}
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if allocs == 0 {
+		t.Fatal("program allocated nothing — the probe is not exercising the path")
+	}
+	if live != 0 {
+		t.Errorf("%s: live_bytes=%d, want 0 — an element built by a strict-fresh-returning "+
+			"call is as sole-owned as an inline literal, so its element boxes must be "+
+			"reclaimed; the leak scales with the iteration count", summary, live)
+	}
+}
+
 // TestSelfHostStructArrAppendHazardsX86_64 — the shapes the credit must still
 // REFUSE. A wrongly-granted credit frees an element box something else still
 // points at, so these are asserted through behaviour: the failure mode is a
@@ -283,6 +349,57 @@ function main(): i32 {
     return q.n + q.name.len() + ns.len();
 }`,
 			want: 8,
+		},
+		{
+			// A CALL element whose callee is NOT strict-fresh-returning: it
+			// hands back the caller's own box, so the array does not own it and
+			// freeing the elements would dangle `shared`. The registry lookup
+			// is the whole guard, and this is the shape that proves it is
+			// consulted rather than assumed.
+			name: "passthrough_call_element",
+			src: `struct N { name: string, n: i32 }
+function passthru(p: N): N { return p; }
+function main(): i32 {
+    var shared: N = N { name: "pq", n: 5 };
+    var ns: N[] = [];
+    var i: i32 = 0;
+    while (i < 3) { ns = ns.append(passthru(shared)); i = i + 1; }
+    return ns[0].n + shared.name.len();
+}`,
+			want: 7,
+		},
+		{
+			// A METHOD call element declines outright — the receiver type is
+			// not known at the scan, so the "<Base>.<method>" registry key
+			// cannot be looked up and the credit must not be granted on a
+			// guess.
+			name: "method_call_element",
+			src: `struct N { name: string, n: i32 }
+struct Src { base: i32 }
+function (s: Src) make(i: i32): N { return N { name: "zz", n: s.base + i }; }
+function main(): i32 {
+    var src: Src = Src { base: 10 };
+    var ns: N[] = [];
+    var i: i32 = 0;
+    while (i < 3) { ns = ns.append(src.make(i)); i = i + 1; }
+    return ns[2].n + ns[0].name.len();
+}`,
+			want: 14,
+		},
+		{
+			// A closure FIELD is admitted now (#6461), so the element boxes are
+			// freed and — when the type also routes field reclaim — the closure
+			// box with them. Calling a field closure back out of the reclaimed
+			// array must still be correct.
+			name: "closure_field_admitted",
+			src: `struct C { name: string, f: (i32) => i32 }
+function main(): i32 {
+    var cs: C[] = [];
+    var i: i32 = 0;
+    while (i < 3) { cs = cs.append(C { name: "ab", f: (x: i32) => x + 1 }); i = i + 1; }
+    return (cs[2].f)(3) + cs[0].name.len();
+}`,
+			want: 6,
 		},
 		{
 			// An IDENT element of a string-fielded array: the array does not
