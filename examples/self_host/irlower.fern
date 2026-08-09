@@ -15309,6 +15309,9 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (slot_is_reclaimable_optarr(sb, slot)) {
         return emit_optarr_reclaim_store(sb, slot);
     }
+    if (slot_is_reclaimable_optstr(sb, slot)) {
+        return emit_optstr_reclaim_store(sb, slot);
+    }
     if (slot_is_reclaimable_optarrarr(sb, slot)) {
         return emit_optarrarr_reclaim_store(sb, slot);
     }
@@ -17497,6 +17500,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // was lowered above and never aliases the old box: each rebind is a fresh
     // literal (opt_rebinds_all_fresh), which is what the credits require.
     if (slot_is_reclaimable_optarr(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
+    if (slot_is_reclaimable_optstr(s, slot)) { return emit_optstr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optarrarr(s, slot)) { return emit_optarrarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstruct(s, slot)) {
         return emit_optstruct_reclaim_store(se, slot, opttup_inner_type(s.locals[slot].opt_type));
@@ -21062,6 +21066,17 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         ofj = ofj + 1;
     }
+    // Unmatched Option[string] / Result[string, _] (#6360) — same sweep, string
+    // release. Disjoint from the OPTARR pass above by annotation.
+    var ostrj: i32 = st.n_params;
+    while (ostrj < st.locals.len()) {
+        if (!slot_list_has(keeps, ostrj) && slot_is_reclaimable_optstr(st, ostrj)) {
+            st = emit_optstr_deep_free(st, ostrj);
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(ostrj));
+        }
+        ostrj = ostrj + 1;
+    }
     var oaj: i32 = st.n_params;
     while (oaj < st.locals.len()) {
         if (!slot_list_has(keeps, oaj) && slot_is_reclaimable_optarrarr(st, oaj)) {
@@ -21866,7 +21881,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -26085,6 +26100,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     while (ufai < ufa.len()) {
         out = out.append("OPTARR:" + ufa[ufai]);
         ufai = ufai + 1;
+    }
+    // Same quadrant, STRING payload (#6360) — its own tag because the release is
+    // __fern_str_free, not the flat dec, and the call form needs the registry's
+    // "f" flag rather than bare membership.
+    var ufs: string[] = collect_unmatched_optstr_names(body, optfresh_fresh_call_names_of(opt_fresh_ret), []);
+    var ufsi: i32 = 0;
+    while (ufsi < ufs.len()) {
+        out = out.append("OPTSTR:" + ufs[ufsi]);
+        ufsi = ufsi + 1;
     }
     // Fresh (<tuple-with-array>)[] locals (#4365): `var xs: (i32, i32[])[] =
     // [(i, [i, i+1]), ...]` — an array whose elements are fresh tuples carrying fresh
@@ -30712,6 +30736,57 @@ function unmatched_optarr_ann_is(type_name: string): boolean {
     return is_leaksafe_array_field(opt_payload_type(type_name, "Ok"));
 }
 
+// unmatched_optstr_ann_is / unmatched_optstr_init_is_fresh: the STRING-payload
+// siblings of the two predicates below (#6360). `Option[string]` and
+// `Result[string, _]` reach the same uncovered quadrant — never reassigned, never
+// matched — and leak both box and payload there (22400 over 100 rounds on the
+// Option spelling, x2.0 per doubling, where the array spelling is flat at 0).
+//
+// The payload release is __fern_str_free rather than the flat rc-dec, which is
+// the whole reason these need their own tag: a string box carries a separate data
+// buffer and a different block class, so the array dec would free it wrongly.
+//
+// Freshness is REQUIRED here in a way the array siblings do not need it. The array
+// admission leans on the caller-side escape analysis reading an argument as an
+// escape, so an aliased buffer carries no second credit. A string does not get
+// that: op_opt_make stores its payload uncounted and a string assignment is a
+// borrow, so an aliased payload would be released under a live reference. Hence a
+// literal or a syntactically-fresh producer for the inline form, and the registry's
+// "f" flag — the same proof rcpayload_option_call_ptype uses — for the call form.
+function unmatched_optstr_ann_is(type_name: string): boolean {
+    if (opttup_inner_type(type_name) == "string") { return true; }
+    if (type_name.len() < 9) { return false; }
+    if (type_name[0:7] != "Result[") { return false; }
+    if (type_name[type_name.len() - 1] != 93) { return false; }   // 93 = ']'
+    return opt_payload_type(type_name, "Ok") == "string";
+}
+
+function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_strfresh: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (cid.name == "Some" || cid.name == "Ok") {
+                        if (c.args.len() != 1) { return false; }
+                        match (c.args[0]) {
+                            parser.ExprString(_) => { return true; },
+                            _ => { return str_local_binding_is_fresh(c.args[0]); }
+                        }
+                    }
+                    // `Err(<anything>)` on a Result[string, _]: the Ok-only payload
+                    // free cannot reach an Err payload, so the box still qualifies.
+                    if (cid.name == "Err") { return c.args.len() == 1; }
+                    return util.index_of_str(opt_strfresh, cid.name) >= 0;
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(id) => { return id.name == "None"; },
+        _ => {}
+    }
+    return false;
+}
+
 // unmatched_optarr_init_is_fresh: optarr_init_is_fresh plus the Result
 // spellings, plus a call to an OPTFRESH-registered producer. `Err(<anything>)`
 // is admitted because the box still needs releasing and the Ok-only payload
@@ -30972,6 +31047,38 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // it refuses every match-consumed Option outright — which is precisely the set
 // this collector must exclude. Disjointness from both match analyses is
 // therefore a property of the gate, not a separate check that could drift.
+// collect_unmatched_optstr_names: the STRING-payload sibling of the collector
+// below (#6360). Same quadrant, same gates; only the annotation and the freshness
+// test differ, and the credit is tagged "OPTSTR:" so the sweep picks the
+// __fern_str_free release rather than the flat dec.
+function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_strfresh: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                if (unmatched_optstr_ann_is(v.type_name)
+                    && unmatched_optstr_init_is_fresh(v.init, opt_strfresh)
+                    && util.index_of_str(reassigned, v.name) < 0
+                    && !body_unsafe_for(stmts, v.name, [])) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_strfresh, a); a = collect_unmatched_optstr_names(f.else_body, opt_strfresh, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_strfresh, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_strfresh, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_unmatched_optstr_names(m.arms[mi].body, opt_strfresh, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
 function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -31061,6 +31168,47 @@ function emit_optarr_deep_free(se: LowerState, slot: i32): LowerState {
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());                       // end if-not-null
     return st;
+}
+
+// emit_optstr_deep_free: emit_optarr_deep_free with __fern_str_free on the
+// payload (#6360). Same null-then-tag shape; the difference is the release, and
+// it is not interchangeable — a string box's data buffer is separate and its
+// block class differs from the array layout.
+function emit_optstr_deep_free(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some / Ok)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());
+    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-success
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_optstr_reclaim_store: the string sibling of emit_optarr_reclaim_store.
+// Without it the exit sweep frees only the FINAL value left in the slot and every
+// earlier iteration's box leaks — a loop-declared `var v` re-stores to the same
+// slot, so the store is where the previous one has to go.
+function emit_optstr_reclaim_store(se: LowerState, slot: i32): LowerState {
+    var scratch: string = "$osf" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = emit_optstr_deep_free(st, slot);            // free old payload + box
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
 }
 
 // emit_optarr_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD box, store new.
@@ -31303,6 +31451,14 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
         vi = vi + 1;
     }
     return a;
+}
+
+// slot_is_reclaimable_optstr: slot i holds an unmatched, never-reassigned,
+// fresh-payload `Option[string]` / `Result[string, _]` credited "OPTSTR:" — the
+// exit sweep frees it via emit_optstr_deep_free. No loop-rebind consumer: these
+// names are never reassigned, which is what the credit requires.
+function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {
+    return util.index_of_str(s.reclaimable_names, "OPTSTR:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_optarr: slot i holds a REBOUND, fresh, non-escaping
