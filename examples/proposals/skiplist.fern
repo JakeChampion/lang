@@ -1,0 +1,519 @@
+// examples/proposals/skiplist.fern — proposal turn, drawn line 59:
+// "A skip list with a deterministic level assignment for reproducibility."
+//
+// A skip list is normally randomised: each insert flips coins to decide how
+// many express lanes the new node joins. That makes the structure depend on
+// the RNG, which means two runs over the same keys can differ, a bug can hide
+// behind a seed, and there is nothing exact to test against.
+//
+// Deriving the level from the KEY instead removes all of that, and buys a
+// property randomisation cannot offer: **the structure depends only on the SET
+// of keys, not on the order they arrived in**. Insert the same keys in any
+// order and you get a byte-identical skip list. That is the strongest claim in
+// this file and the one a randomised implementation could not make.
+//
+// The level is the number of trailing zeros of a mixed hash of the key, capped
+// at MAX_LEVEL. Trailing zeros are geometrically distributed exactly the way
+// coin flips are — P(level >= k) = 2^-k — so the expected shape is the same as
+// the randomised structure; only the source of the bits changes.
+//
+// The two structural invariants get their own tests, because a skip list that
+// violates either can still answer many queries correctly:
+//
+//   1. TOWER: a node reachable at level L is reachable at every level below L.
+//      Break it and searches that descend past the gap silently miss keys.
+//   2. SUBSEQUENCE: each level's key sequence is sorted AND is a subsequence of
+//      the level beneath it. This is what makes the descend-then-advance search
+//      correct; a level that is merely sorted is not enough.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// next[l] is the index of the next node at level l, or -1. len(next) is the
+// node's height, so the tower invariant is partly structural: a node simply
+// has no slot above its level.
+struct Node { key: i32, next: i32[] }
+
+// nodes[0] is the sentinel head, which always has full height and a key below
+// every real key so no comparison has to special-case it.
+struct SkipList { nodes: Node[], max_level: i32 }
+
+function max_level(): i32 { return 8; }
+
+// A mix step (xorshift-ish, integer only) so adjacent keys do not get
+// adjacent levels. Without it, level(k) for k = 0,1,2,3… would be
+// 8,0,1,0,2,0,1,0 — a perfectly regular structure that would pass every test
+// here while being nothing like a skip list in shape.
+function mix(key: i32): i32 {
+    var h: i32 = key * 1103515245 + 12345;
+    if (h < 0) { h = 0 - h; }
+    h = h ^ (h / 65536);
+    h = h * 40503;
+    if (h < 0) { h = 0 - h; }
+    return h;
+}
+
+// Trailing zeros of the mixed hash, capped. P(level >= k) = 2^-k, the same
+// distribution the coin-flip version has.
+function level_of(key: i32): i32 {
+    var h: i32 = mix(key);
+    if (h == 0) { return max_level(); }
+    var l: i32 = 0;
+    while (l < max_level() && h % 2 == 0) { h = h / 2; l = l + 1; }
+    return l;
+}
+
+function new_list(): SkipList {
+    var next: i32[] = [];
+    var i: i32 = 0;
+    while (i <= max_level()) { next = next.append(-1); i = i + 1; }
+    // The head's key is never compared — every walk starts past it — but a
+    // value below every real key keeps that from being load-bearing.
+    return SkipList { nodes: [Node { key: -2147483647, next: next }],
+        max_level: max_level() };
+}
+
+// The rightmost node at each level whose key is < `key`. This is the search
+// path, and both insert and delete need it, so it is computed once here
+// rather than duplicated with a subtle difference in each.
+function predecessors(sl: SkipList, key: i32): i32[] {
+    var preds: i32[] = [];
+    var i: i32 = 0;
+    while (i <= sl.max_level) { preds = preds.append(0); i = i + 1; }
+
+    var cur: i32 = 0;
+    var l: i32 = sl.max_level;
+    while (l >= 0) {
+        while (true) {
+            var nxt: i32 = sl.nodes[cur].next[l];
+            if (nxt < 0) { break; }
+            if (sl.nodes[nxt].key >= key) { break; }
+            cur = nxt;
+        }
+        preds = preds.with(l, cur);
+        l = l - 1;
+    }
+    return preds;
+}
+
+function contains(sl: SkipList, key: i32): boolean {
+    var preds: i32[] = predecessors(sl, key);
+    var nxt: i32 = sl.nodes[preds[0]].next[0];
+    if (nxt < 0) { return false; }
+    return sl.nodes[nxt].key == key;
+}
+
+// Insert is idempotent — a duplicate key leaves the list untouched, which is
+// what makes the order-independence property below well defined.
+function insert(sl_in: SkipList, key: i32): SkipList {
+    if (contains(sl_in, key)) { return sl_in; }
+    var sl: SkipList = sl_in;
+    var preds: i32[] = predecessors(sl, key);
+    var lvl: i32 = level_of(key);
+
+    // The new node points where its predecessor pointed, at each of its
+    // levels; the predecessors then point at it. Built first so the node
+    // exists before anything references it.
+    var next: i32[] = [];
+    var l: i32 = 0;
+    while (l <= lvl) { next = next.append(sl.nodes[preds[l]].next[l]); l = l + 1; }
+    var at: i32 = sl.nodes.len();
+    var nodes: Node[] = sl.nodes.append(Node { key: key, next: next });
+
+    l = 0;
+    while (l <= lvl) {
+        var p: i32 = preds[l];
+        nodes = nodes.with(p, Node { key: nodes[p].key, next: nodes[p].next.with(l, at) });
+        l = l + 1;
+    }
+    return SkipList { nodes: nodes, max_level: sl.max_level };
+}
+
+// Unlink from every level that references the node. The node itself stays in
+// the array — this is an index-based structure, so removing it would
+// invalidate every other index — but nothing points at it any more.
+function remove(sl_in: SkipList, key: i32): (SkipList, boolean) {
+    if (!contains(sl_in, key)) { return (sl_in, false); }
+    var sl: SkipList = sl_in;
+    var preds: i32[] = predecessors(sl, key);
+    var target: i32 = sl.nodes[preds[0]].next[0];
+    var nodes: Node[] = sl.nodes;
+
+    var l: i32 = 0;
+    while (l <= sl.max_level) {
+        var p: i32 = preds[l];
+        if (nodes[p].next[l] == target) {
+            var beyond: i32 = -1;
+            if (l < nodes[target].next.len()) { beyond = nodes[target].next[l]; }
+            nodes = nodes.with(p, Node { key: nodes[p].key, next: nodes[p].next.with(l, beyond) });
+        }
+        l = l + 1;
+    }
+    return (SkipList { nodes: nodes, max_level: sl.max_level }, true);
+}
+
+// The keys at one level, in link order.
+function level_keys(sl: SkipList, l: i32): i32[] {
+    var out: i32[] = [];
+    var cur: i32 = sl.nodes[0].next[l];
+    while (cur >= 0) {
+        out = out.append(sl.nodes[cur].key);
+        if (l >= sl.nodes[cur].next.len()) { return out; }
+        cur = sl.nodes[cur].next[l];
+    }
+    return out;
+}
+
+function join(xs: i32[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + xs[i].to_string();
+        i = i + 1;
+    }
+    return out;
+}
+
+// Every level, rendered. Two lists with the same rendering are the same
+// structure — which is what the order-independence test compares.
+function render(sl: SkipList): string {
+    var out: string = "";
+    var l: i32 = 0;
+    while (l <= sl.max_level) {
+        out = out + "L" + l.to_string() + "[" + join(level_keys(sl, l)) + "]";
+        l = l + 1;
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- oracle
+
+function bf_contains(keys: i32[], k: i32): boolean {
+    var i: i32 = 0;
+    while (i < keys.len()) { if (keys[i] == k) { return true; } i = i + 1; }
+    return false;
+}
+
+// Sorted unique, by insertion sort. The oracle for level 0.
+function bf_sorted(keys: i32[]): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < keys.len()) {
+        var k: i32 = keys[i];
+        if (!bf_contains(out, k)) {
+            var next: i32[] = [];
+            var placed: boolean = false;
+            var j: i32 = 0;
+            while (j < out.len()) {
+                if (!placed && out[j] > k) { next = next.append(k); placed = true; }
+                next = next.append(out[j]);
+                j = j + 1;
+            }
+            if (!placed) { next = next.append(k); }
+            out = next;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function corpus(): i32[] {
+    return [42, 7, 99, 1, 13, 256, 5, 77, 300, 2, 64, 128, 31, 8, 1000];
+}
+
+function build(keys: i32[]): SkipList {
+    var sl: SkipList = new_list();
+    var i: i32 = 0;
+    while (i < keys.len()) { sl = insert(sl, keys[i]); i = i + 1; }
+    return sl;
+}
+
+// ----------------------------------------------------------------- tests
+
+// Level 0 is the whole set, sorted — checked against an independent sort.
+function test_level_zero_is_the_sorted_key_set(): test.TestOutcome {
+    var keys: i32[] = corpus();
+    var sl: SkipList = build(keys);
+    var got: string = join(level_keys(sl, 0));
+    var want: string = join(bf_sorted(keys));
+    if (got != want) {
+        return test.fail("level 0 is [" + got + "], want [" + want + "]");
+    }
+    return test.pass();
+}
+
+// Membership agrees with a scan, over the keys and over deliberate misses
+// including values adjacent to real keys.
+function test_membership_agrees_with_a_scan(): test.TestOutcome {
+    var keys: i32[] = corpus();
+    var sl: SkipList = build(keys);
+    var probes: i32[] = [42, 41, 43, 7, 0, 1, 2, 3, 99, 100, 1000, 1001, 999,
+        256, 255, 257, -5, 2147483647];
+    var i: i32 = 0;
+    while (i < probes.len()) {
+        if (contains(sl, probes[i]) != bf_contains(keys, probes[i])) {
+            return test.fail("membership disagrees on " + probes[i].to_string()
+                + ": list says " + contains(sl, probes[i]).to_string());
+        }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < keys.len()) {
+        if (!contains(sl, keys[j])) {
+            return test.fail("inserted key " + keys[j].to_string() + " not found");
+        }
+        j = j + 1;
+    }
+    return test.pass();
+}
+
+// The tower invariant: a node reachable at level L is reachable at every level
+// below. Break it and a search that descends past the gap misses the key while
+// level 0 still looks perfect.
+function test_every_level_is_a_subsequence_of_the_one_below(): test.TestOutcome {
+    var sl: SkipList = build(corpus());
+    var l: i32 = 1;
+    while (l <= sl.max_level) {
+        var upper: i32[] = level_keys(sl, l);
+        var lower: i32[] = level_keys(sl, l - 1);
+        // Sorted...
+        var s: i32 = 1;
+        while (s < upper.len()) {
+            if (upper[s - 1] >= upper[s]) {
+                return test.fail("level " + l.to_string() + " out of order at "
+                    + s.to_string() + ": [" + join(upper) + "]");
+            }
+            s = s + 1;
+        }
+        // ... and a subsequence of the level beneath, in order.
+        var u: i32 = 0;
+        var d: i32 = 0;
+        while (u < upper.len()) {
+            while (d < lower.len() && lower[d] != upper[u]) { d = d + 1; }
+            if (d >= lower.len()) {
+                return test.fail("level " + l.to_string() + " key "
+                    + upper[u].to_string() + " is missing from level "
+                    + (l - 1).to_string() + " (tower broken)");
+            }
+            d = d + 1;
+            u = u + 1;
+        }
+        l = l + 1;
+    }
+    return test.pass();
+}
+
+// The claim key-derived levels buy, and the reason for the whole design: the
+// structure depends on the SET of keys, not the insertion order. A randomised
+// skip list cannot pass this.
+function test_insertion_order_does_not_change_the_structure(): test.TestOutcome {
+    var keys: i32[] = corpus();
+    var forward: string = render(build(keys));
+
+    // Reversed.
+    var rev: i32[] = [];
+    var i: i32 = keys.len() - 1;
+    while (i >= 0) { rev = rev.append(keys[i]); i = i - 1; }
+    if (render(build(rev)) != forward) {
+        return test.fail("reversed insertion produced a different structure");
+    }
+
+    // A stride permutation, so the ordering differs from both of the above.
+    var strided: i32[] = [];
+    var step: i32 = 0;
+    while (step < 7) {
+        var j: i32 = step;
+        while (j < keys.len()) { strided = strided.append(keys[j]); j = j + 7; }
+        step = step + 1;
+    }
+    if (strided.len() != keys.len()) {
+        return test.fail("the stride permutation dropped keys");
+    }
+    if (render(build(strided)) != forward) {
+        return test.fail("a permuted insertion produced a different structure");
+    }
+
+    // Duplicates must not perturb it either.
+    var dupes: i32[] = keys;
+    var d: i32 = 0;
+    while (d < keys.len()) { dupes = dupes.append(keys[d]); d = d + 1; }
+    if (render(build(dupes)) != forward) {
+        return test.fail("re-inserting every key changed the structure");
+    }
+    return test.pass();
+}
+
+// A key's level is a function of the key alone, and the node's height matches
+// it. That is what makes the structure a function of the key set.
+function test_a_keys_level_is_a_function_of_the_key(): test.TestOutcome {
+    var k: i32 = 0;
+    while (k < 500) {
+        if (level_of(k) != level_of(k)) { return test.fail("level_of is not pure"); }
+        if (level_of(k) < 0 || level_of(k) > max_level()) {
+            return test.fail("level_of(" + k.to_string() + ") = "
+                + level_of(k).to_string() + " is out of range");
+        }
+        k = k + 1;
+    }
+    // The heights in a built list match what level_of says.
+    var sl: SkipList = build(corpus());
+    var n: i32 = 1;
+    while (n < sl.nodes.len()) {
+        var want: i32 = level_of(sl.nodes[n].key) + 1;
+        if (sl.nodes[n].next.len() != want) {
+            return test.fail("node " + sl.nodes[n].key.to_string() + " has height "
+                + sl.nodes[n].next.len().to_string() + ", level_of wants " + want.to_string());
+        }
+        n = n + 1;
+    }
+    // The distribution is geometric, not degenerate: over 500 keys some must
+    // reach level 2 or higher, or the express lanes do not exist and every
+    // search is a linear scan that still answers correctly.
+    var tall: i32 = 0;
+    var m: i32 = 0;
+    while (m < 500) { if (level_of(m) >= 2) { tall = tall + 1; } m = m + 1; }
+    if (tall < 50) {
+        return test.fail("only " + tall.to_string() + "/500 keys reach level 2 — "
+            + "the express lanes are too sparse to be a skip list");
+    }
+    return test.pass();
+}
+
+// Delete unlinks from every level, not just level 0 — the failure that leaves
+// a deleted key reachable through an express lane.
+function test_delete_unlinks_from_every_level(): test.TestOutcome {
+    var keys: i32[] = corpus();
+    var sl: SkipList = build(keys);
+
+    var i: i32 = 0;
+    while (i < keys.len()) {
+        var (after, removed) = remove(sl, keys[i]);
+        if (!removed) { return test.fail("remove reported no-op on " + keys[i].to_string()); }
+        if (contains(after, keys[i])) {
+            return test.fail(keys[i].to_string() + " still found after removal");
+        }
+        // It is gone from EVERY level, not only the one search happens to use.
+        var l: i32 = 0;
+        while (l <= after.max_level) {
+            if (bf_contains(level_keys(after, l), keys[i])) {
+                return test.fail(keys[i].to_string() + " still linked at level "
+                    + l.to_string());
+            }
+            l = l + 1;
+        }
+        // And every other key survives.
+        var j: i32 = 0;
+        while (j < keys.len()) {
+            if (j != i && !contains(after, keys[j])) {
+                return test.fail("removing " + keys[i].to_string() + " lost "
+                    + keys[j].to_string());
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var (_, again) = remove(sl, 424242);
+    if (again) { return test.fail("removing an absent key reported success"); }
+    return test.pass();
+}
+
+// Removing everything empties every level, and re-inserting rebuilds the
+// original structure exactly — the round trip that catches a delete leaving a
+// dangling link that a later insert then threads onto.
+function test_remove_all_then_reinsert_round_trips(): test.TestOutcome {
+    var keys: i32[] = corpus();
+    var original: string = render(build(keys));
+
+    var sl: SkipList = build(keys);
+    var i: i32 = 0;
+    while (i < keys.len()) {
+        var (after, _) = remove(sl, keys[i]);
+        sl = after;
+        i = i + 1;
+    }
+    var l: i32 = 0;
+    while (l <= sl.max_level) {
+        if (level_keys(sl, l).len() != 0) {
+            return test.fail("level " + l.to_string() + " is not empty after removing everything: ["
+                + join(level_keys(sl, l)) + "]");
+        }
+        l = l + 1;
+    }
+
+    var j: i32 = 0;
+    while (j < keys.len()) { sl = insert(sl, keys[j]); j = j + 1; }
+    if (join(level_keys(sl, 0)) != join(bf_sorted(keys))) {
+        return test.fail("level 0 after re-insert is [" + join(level_keys(sl, 0)) + "]");
+    }
+    var lv: i32 = 0;
+    while (lv <= sl.max_level) {
+        var want: i32[] = level_keys(build(keys), lv);
+        if (join(level_keys(sl, lv)) != join(want)) {
+            return test.fail("level " + lv.to_string() + " differs after a full round trip");
+        }
+        lv = lv + 1;
+    }
+    return test.pass();
+}
+
+function test_degenerate_lists(): test.TestOutcome {
+    var empty: SkipList = new_list();
+    if (contains(empty, 1)) { return test.fail("the empty list contains something"); }
+    var l: i32 = 0;
+    while (l <= empty.max_level) {
+        if (level_keys(empty, l).len() != 0) { return test.fail("empty list has links"); }
+        l = l + 1;
+    }
+    var (_, r) = remove(empty, 1);
+    if (r) { return test.fail("removing from the empty list reported success"); }
+
+    var one: SkipList = build([5]);
+    if (!contains(one, 5)) { return test.fail("single key lost"); }
+    if (join(level_keys(one, 0)) != "5") { return test.fail("single-key level 0 wrong"); }
+
+    // Negative keys and zero are ordinary keys, not sentinels.
+    var neg: SkipList = build([0, -1, -100, 5]);
+    if (join(level_keys(neg, 0)) != "-100,-1,0,5") {
+        return test.fail("negative keys mis-sorted: [" + join(level_keys(neg, 0)) + "]");
+    }
+    if (!contains(neg, 0) || !contains(neg, -100)) {
+        return test.fail("a negative or zero key was lost");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("skiplist — key-derived levels, so the structure is order-independent");
+
+    var sl: SkipList = build(corpus());
+    var l: i32 = sl.max_level;
+    while (l >= 0) {
+        var ks: i32[] = level_keys(sl, l);
+        if (ks.len() > 0 || l == 0) {
+            eprint("  L" + l.to_string() + ": " + join(ks));
+        }
+        l = l - 1;
+    }
+    eprint("nodes: " + (sl.nodes.len() - 1).to_string() + " for "
+        + corpus().len().to_string() + " keys");
+
+    var line: string = "level_of:";
+    var k: i32 = 0;
+    while (k < 12) { line = line + " " + k.to_string() + "->" + level_of(k).to_string(); k = k + 1; }
+    eprint(line);
+
+    var r: test.TestRunner = test.test_new("skiplist");
+    r = r.it("level zero is the sorted key set", test_level_zero_is_the_sorted_key_set);
+    r = r.it("membership agrees with a scan", test_membership_agrees_with_a_scan);
+    r = r.it("every level is a subsequence of the one below", test_every_level_is_a_subsequence_of_the_one_below);
+    r = r.it("insertion order does not change the structure", test_insertion_order_does_not_change_the_structure);
+    r = r.it("a key's level is a function of the key", test_a_keys_level_is_a_function_of_the_key);
+    r = r.it("delete unlinks from every level", test_delete_unlinks_from_every_level);
+    r = r.it("remove all then reinsert round trips", test_remove_all_then_reinsert_round_trips);
+    r = r.it("degenerate lists", test_degenerate_lists);
+    return r.finish();
+}
