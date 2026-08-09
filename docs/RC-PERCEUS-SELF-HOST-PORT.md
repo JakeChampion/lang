@@ -5316,6 +5316,59 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   unchanged, and `TestSelfHostPerModuleEmitAllFixpointX86_64` (382 s, run first).
   Refs #6360 #4451.
 
+- 2026-08-09: **The unmatched quadrant, STRING payload — `Option[string]` /
+  `Result[string, _]` that no match consumes now reclaims.** #6463 closed that
+  quadrant (never reassigned, never matched — so neither
+  `collect_fresh_optarr_names` nor `consumed_rcpayload_option_frees` looks at the
+  local) for ARRAY payloads. Varying the payload and holding everything else
+  fixed shows the string dimension was still open:
+
+  | shape, no consuming match | self-host | native |
+  |---|---|---|
+  | `Option[i32[]]`         | 0     | leaks 6400 |
+  | `Result[i32[], i32]`    | 0     | 0 |
+  | `Result[i32[], string]` | 6400  | 0 |
+  | `Option[string]`        | 22400 | leaks 6400 |
+
+  FIX: a `"OPTSTR:"` credit rather than widening `"OPTARR:"` — the release is
+  `__fern_str_free`, and a string box's data buffer is separate with a different
+  block class, so the array dec would free it wrongly.
+
+  **Freshness is load-bearing here in a way it is not for the array sibling.**
+  That one leans on the caller-side escape analysis reading an argument as an
+  escape, so an aliased buffer carries no second credit to collide with. A string
+  gets no such cover: `op_opt_make` stores its payload uncounted and a string
+  assignment is a borrow, so an aliased payload would be released under a live
+  reference. Admission demands a literal or a syntactically-fresh producer inline,
+  and the registry's "f" flag for the call form.
+
+  **THE EXIT SWEEP ALONE IS NOT ENOUGH, and the half-fix reads as progress.** A
+  loop-declared `var v` re-stores to the SAME slot each iteration, so a
+  function-exit sweep releases only the final value and every earlier iteration
+  still leaks. Sweep-only took 22400 to 18400 — a plausible-looking improvement
+  that is really three quarters of the leak still present. The store is where the
+  previous value has to go (`emit_optstr_reclaim_store`), exactly as the array
+  class already does. This is also the likely origin of the old "8800
+  final-iteration residue" note: a sweep-only credit leaves precisely that shape.
+  That note is otherwise NOT reproducible — four loop-declared variants (direct
+  ctor, call-bound, struct payload, string payload) all measure 0.
+
+  MEASURED: `Option[string]` unmatched 22400 -> **0** with `allocs == frees`, flat
+  at N=50/100/200/400, where native leaks 6400. Inline-concat, bare-literal and
+  `Result[string, i32]` spellings likewise 0. The array control is untouched.
+  Hazards refuse and leak rather than dangle, exits matching `fern -interp`: an
+  aliased producer payload, an inline ctor over a bare local, and a box read after
+  the loop.
+
+  SCOPE: `Result[i32[], string]` strands its Err strings (6400) and stays open —
+  the "f" flag describes the SUCCESS payload only, so releasing an Err string
+  needs its own whole-body verdict.
+
+  VERIFIED: `TestSelfHostUnmatchedOptStrReclaimX86_64` (new),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (393 s, run first), and the #6360
+  neighbours — call-bound enum, call-bound string payload, and the arm-escape gate.
+  Refs #6360 #4451.
+
 - 2026-08-09: **The consuming match one block deeper now reclaims (#6319's
   class).** `sole_top_level_match_idx` scanned only the flat statement list, so
   the same `match (v)` moved inside an `if` released NOTHING while the flat
