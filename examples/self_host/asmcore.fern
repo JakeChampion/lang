@@ -385,6 +385,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "nanosleep") { return "35"; }
         if (name == "poll") { return "7"; }
         if (name == "wait4") { return "61"; }
+        if (name == "socket") { return "41"; }
+        if (name == "bind") { return "49"; }
+        if (name == "listen") { return "50"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         return "-1";
@@ -417,6 +420,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "accept") { return "30"; }
         if (name == "select") { return "93"; }
         if (name == "wait4") { return "7"; }
+        if (name == "socket") { return "97"; }
+        if (name == "bind") { return "104"; }
+        if (name == "listen") { return "106"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -437,6 +443,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "nanosleep") { return "101"; }
     if (name == "ppoll") { return "73"; }
     if (name == "wait4") { return "260"; }
+    if (name == "socket") { return "198"; }
+    if (name == "bind") { return "200"; }
+    if (name == "listen") { return "201"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     return "-1";
@@ -698,6 +707,30 @@ pub function rt_src_timer_fd(t: string): string {
         return "function __fern_timer_fd(ms: i32): i32 { return 0 - 1; }";
     }
     return "function __fern_timer_fd(ms: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "timerfd_create") + ", 1, 0, 0); if (fd < 0) { return fd; } var its: i32 = __raw_scratch(32); __raw_store_ptr(its, 0, 0); __raw_store_ptr(its, 1, 0); __raw_store_ptr(its, 2, ms / 1000); __raw_store_ptr(its, 3, (ms % 1000) * 1000000); __syscall4(" + sysno(t, "timerfd_settime") + ", fd, 0, its, 0); return fd; }";
+}
+
+// sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
+// place the struct's SHAPE differs rather than a constant in it: Linux starts
+// with a u16 `sin_family`, XNU with a u8 `sin_len` (= 16) then a u8
+// `sin_family`. Everything after — the big-endian port at 2, the address at 4,
+// the eight zero bytes at 8 — is identical.
+function sockaddr_head(t: string, buf: string): string {
+    if (t == "arm64-darwin") {
+        return "__raw_store8(" + buf + ", 0, 16); __raw_store8(" + buf + ", 1, 2);";
+    }
+    return "__raw_store8(" + buf + ", 0, 2); __raw_store8(" + buf + ", 1, 0);";
+}
+
+// rt_src_tcp_listen backs `tcp_listen(port)` (#2649, syscall-leaf) → a listening
+// socket fd bound to INADDR_ANY:port, or -errno from whichever step failed.
+//
+// Three syscalls, all three-argument: socket, bind, listen. The sockaddr_in is
+// built a byte at a time in __fern_scratch because the floor has no 16- or
+// 32-bit store — and the port has to go in big-endian regardless of the host,
+// which is what `htons` means and why it is two explicit byte stores rather
+// than an endianness-dependent word write.
+pub function rt_src_tcp_listen(t: string): string {
+    return "function __fern_tcp_listen(port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rb: i32 = __syscall3(" + sysno(t, "bind") + ", fd, sa, 16); if (rb < 0) { return rb; } var rl: i32 = __syscall3(" + sysno(t, "listen") + ", fd, 128, 0); if (rl < 0) { return rl; } return fd; }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
