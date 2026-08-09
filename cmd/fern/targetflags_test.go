@@ -64,7 +64,7 @@ func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 func TestCompileFreestandingRefusesClearly(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	out := filepath.Join(t.TempDir(), "out")
-	code, err := run(entry, out, "freestanding", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
+	code, err := run(entry, out, "freestanding", "", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
 	if code == 0 || err == nil {
 		t.Fatalf("expected a refusal, got code=%d err=%v", code, err)
 	}
@@ -93,7 +93,7 @@ func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 	for _, target := range []string{"wasm", "arm64"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "out")
-			code, err := run(entry, out, target, "ssa", "", false, false, "", false, false, false, nil, false, "", false, nil)
+			code, err := run(entry, out, target, "ssa", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
 			if code == 0 || err == nil {
 				t.Fatalf("expected E066, got code=%d err=%v", code, err)
 			}
@@ -119,7 +119,51 @@ func TestBackendRejectsBadCombinations(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "out")
-			_, err := run(entry, out, c.target, c.backend, "", false, false, "", false, false, false, nil, false, "", false, nil)
+			_, err := run(entry, out, c.target, c.backend, "", "", false, false, "", false, false, false, nil, false, "", false, nil)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want error containing %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// `-emit core-module` replaces `-target wasm-bin`: an output format is a
+// property of the artifact, not of the machine it runs on, so it does not
+// belong in the target name (#6536). The bytes are unchanged — a core
+// module starts 0x01 0x00 0x00 0x00 after the magic, where a component
+// carries the component layer/version.
+func TestEmitCoreModule(t *testing.T) {
+	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
+	out := filepath.Join(t.TempDir(), "m.wasm")
+	code, err := run(entry, out, "wasm", "", "core-module", "", false, false, "", false, false, false, nil, false, "", false, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("emit core-module: code=%d err=%v", code, err)
+	}
+	b, rerr := os.ReadFile(out)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(b) < 8 || string(b[:4]) != "\x00asm" {
+		t.Fatalf("not a wasm artifact: % x", b[:min(8, len(b))])
+	}
+	if b[6] == 0x01 {
+		t.Errorf("got a component, want a raw core module: % x", b[:8])
+	}
+}
+
+// An output form the target has no notion of is refused by name, and the
+// retired spelling is no longer a target.
+func TestEmitRejectsBadCombinations(t *testing.T) {
+	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
+	cases := map[string]struct{ target, emit, want string }{
+		"no core-module for arm64": {"arm64", "core-module", "not available for -target arm64"},
+		"unknown emit":             {"wasm", "nope", `unknown -emit "nope"`},
+		"wasm-bin is not a target": {"wasm-bin", "", `unknown target "wasm-bin"`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			_, err := run(entry, out, c.target, "", c.emit, "", false, false, "", false, false, false, nil, false, "", false, nil)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("want error containing %q, got %v", c.want, err)
 			}

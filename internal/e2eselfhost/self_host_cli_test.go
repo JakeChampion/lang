@@ -1456,6 +1456,11 @@ function main(): i32 {
 		// Binary bytes go to a file (-o), not stdout, so they survive
 		// verbatim (incl. 0x00 / high bytes) without text mangling.
 		outPath := filepath.Join(dir, "wasmbin_prog.wasm")
+		// Still `-target wasm-bin`: this drives the SELF-HOSTED compiler,
+		// which carries its own -target vocabulary (x86-64-asm, arm64-asm,
+		// wasm-component, …) and its own `-ssa` flag. cmd/fern's move to
+		// `-emit core-module` (#6536) does not reach it; converging the two
+		// vocabularies is separate work.
 		stdout, code := runDriver(t, "-target", "wasm-bin", "-o", outPath, srcPath)
 		if code != 0 {
 			t.Fatalf("-target wasm-bin emit exited %d, want 0", code)

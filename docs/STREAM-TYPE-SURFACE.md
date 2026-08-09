@@ -315,7 +315,7 @@ pinned + runnable (above), P2 codegen/composer/e2e remaining.
 Done since: `stream[T]` **parameters** (produce side from Fern source — P1/P2,
 `TestWasmP3StreamParamFromFern`); `u8`+`i32` **stride** coverage in both
 directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
-the **CLI auto-bundle** — `fern -target wasm-bin -async-provider PATH` (or
+the **CLI auto-bundle** — `fern -target wasm -emit core-module -async-provider PATH` (or
 `-async-provider WITNAME=PATH`, repeatable) bundles bring-your-own provider
 component(s) so async `@import`s (scalar params + result, **single or multiple**)
 yield one self-contained runnable component (`cmd/fern` `TestAsyncProviderBundle*`,
