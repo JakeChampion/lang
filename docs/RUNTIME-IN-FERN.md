@@ -36,6 +36,50 @@ per-backend wasm helper bundles. **The "shape-diverging leaves" category is
 now empty** — see below; every entry that was in it turned out to be table
 rows over the existing floor.
 
+## The hot core needs better codegen first, not better expressiveness
+
+`__fern_arr_push` was attempted and **backed out** (#6446). It is worth reading
+before anyone tries it, the map runtime, or `arr_push_owned`, because the
+blocker is not the one the rest of this document would lead you to expect.
+
+Expressiveness was fine. The box header needs no new primitive — cap sits at
+`data-16` and rc at `data-8`, and `__raw_addr` takes a BYTE offset with
+full-width pointer arithmetic, so `__load_i32(__raw_addr(p, 0 - 8))` reads the
+rc word's low half, where the immortal bit (31) lives. The ownership contract
+needs no special handling either: the helper writes through its parameter and
+returns its own receiver, and the emitted body carried ZERO refcount traffic,
+because a raw-pointer body never handles the array as a typed value except
+through the type-only bridges. It was correct, and passed every behavioural
+probe on both native backends.
+
+What killed it was emitted size, which is a proxy for speed here:
+
+| | hand-asm | Fern-compiled |
+| --- | --- | --- |
+| total instructions | 27 | 353 |
+| in-place fast path | ~15 | ~169 |
+
+The IR's stack-machine lowering spends four instructions and two stack
+round-trips materialising the constant `-8`, and `pushq %rax` / `popq %rax`
+pairs run throughout. Every leaf migrated before this one was dominated by
+something other than its own instruction count — the syscall leaves by syscall
+latency, the array producers by allocation plus an O(n) copy — so codegen
+quality did not matter to any of them. `arr_push` runs on every `.append()`
+and its fast path is fifteen instructions of pointer arithmetic. A 10x
+expansion there is a straight loss.
+
+**So the precondition for the hot core is a better lowering, not a bigger
+floor.** The `len(asm) > N` assertions scattered through `internal/e2eselfhost`
+are what caught it; they read as "did the module bail to the AST path" but they
+double as the only guard against codegen bloat, and raising them to accommodate
+a migration would discard exactly the signal they exist to give.
+
+One rule the attempt did establish, which applies to any future raw op: **it
+must push a result.** Every raw op is typed `i32` and the statement lowering
+emits a drop, so an op that consumes operands without pushing one unbalances
+the operand stack at every call — `raw_store_ptr` pushes its value back for
+precisely this reason. Getting that wrong hung six fixtures.
+
 The **clocks** used to be on that shape-diverging list and mostly are not.
 `now_unix_ms` / `now_ns` do diverge — Linux takes
 `clock_gettime(clk, &timespec)` filling `{i64 sec; i64 nsec}`, XNU takes
