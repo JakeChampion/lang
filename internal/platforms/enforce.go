@@ -68,11 +68,27 @@ var gatedBuiltins = map[string]string{
 	"write":   "stdout",
 	"putchar": "stdout",
 
-	// Clocks, and the wakeups driven by them.
-	"now_unix_ms":  "now",
-	"now_ns":       "now",
-	"monotonic_ns": "now",
-	"sleep_ms":     "now",
+	// Clocks, and the wakeups driven by them. The pollable
+	// constructors carry the authority; `poll` / `wasm_block` and the
+	// other readiness helpers that WAIT on one do not (see coreBuiltins).
+	"now_unix_ms":         "now",
+	"now_ns":              "now",
+	"monotonic_ns":        "now",
+	"sleep_ms":            "now",
+	"timer_fd":            "now",
+	"wasm_timer_pollable": "now",
+
+	// The ambient invocation environment. argv and envp are adjacent on
+	// the process stack and `_start` captures them together, but they
+	// are separate capabilities because the proxy world has envp and no
+	// argv: `wasi-http` grants `env` and cannot answer `args`.
+	"env":  "env",
+	"args": "args",
+
+	// Entropy. A syscall on native (getrandom / getentropy) and a host
+	// import on wasm — never something the program can compute.
+	"random_bytes": "random",
+	"random_i32":   "random",
 
 	// Sockets.
 	"tcp_listen":   "tcp",
@@ -97,6 +113,50 @@ var gatedBuiltins = map[string]string{
 	"remove_dir_all":  "fs",
 	"temp_dir":        "fs",
 }
+
+// coreBuiltins is the other half of the classification: user-callable
+// builtins that need no host at all, so a freestanding target provides
+// them (#6506). Three groups, and the reason each is core differs:
+//
+//   - Allocation. map_new / cell_new / string_from_bytes_unchecked and
+//     the strbuf scratch surface need an ALLOCATOR, not an OS. Whoever
+//     seeds the heap region decides where the bytes come from; the
+//     builtin does not care.
+//   - Pure computation. The float bit casts compile to a register move.
+//   - Readiness. poll / wasm_block / wasm_poll / wasm_pollable_drop WAIT
+//     on a pollable someone else constructed, and every constructor is
+//     gated above, so gating the wait too would double-count the same
+//     authority.
+//
+// `exit` is the deliberate judgement call. It is host-shaped — a hosted
+// process exits through the kernel — but every target can define
+// "stop", including a freestanding one (trap, reset, or return to the
+// embedder). So it is core with a target-specific lowering rather than
+// a capability an artifact could be refused.
+var coreBuiltins = map[string]bool{
+	"exit": true,
+
+	"map_new":                     true,
+	"cell_new":                    true,
+	"string_from_bytes_unchecked": true,
+	"strbuf_reset":                true,
+	"strbuf_append":               true,
+	"strbuf_take":                 true,
+
+	"f32_bits":      true,
+	"f32_from_bits": true,
+	"f64_bits":      true,
+	"f64_from_bits": true,
+
+	"poll":               true,
+	"wasm_block":         true,
+	"wasm_poll":          true,
+	"wasm_pollable_drop": true,
+}
+
+// CoreBuiltin reports whether the named builtin needs no host — the
+// complement of GatedBuiltin over the user-callable registry.
+func CoreBuiltin(name string) bool { return coreBuiltins[name] }
 
 // GatedBuiltin reports the capability gating the named builtin, if any.
 func GatedBuiltin(name string) (string, bool) {

@@ -82,14 +82,14 @@ var table = map[string]Descriptor{
 		// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md
 		// D2') is native-only: wasm worlds have no processes, so only
 		// the four native targets grant it.
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
+		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"arm64-darwin": {
 		Name:         "arm64-darwin",
 		Description:  "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
+		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
@@ -98,14 +98,14 @@ var table = map[string]Descriptor{
 		Description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
 			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
+		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
 	"x86-64": {
 		Name:         "x86-64",
 		Description:  "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
+		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 		HandlerKinds: []string{"handle"},
 		Bindings:     nil,
 	},
@@ -119,7 +119,7 @@ var table = map[string]Descriptor{
 		// TestBuildReportsUnsupported pins). Programs reaching
 		// `subprocess` here are rejected at check time (E066)
 		// instead of failing mid-build.
-		Capabilities: []string{"log", "now", "env", "stdin", "stdout", "fs", "tcp"},
+		Capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 		HandlerKinds: []string{"main"},
 		Bindings:     nil,
 	},
@@ -130,7 +130,7 @@ var table = map[string]Descriptor{
 		// outbound capability (docs/STDLIB-DESIGN-RESEARCH.md
 		// Rec §10). `kv`, `secrets` follow once the host-binding
 		// shape is finalised.
-		Capabilities: []string{"log", "now", "env", "fetch"},
+		Capabilities: []string{"log", "now", "env", "random", "fetch"},
 		HandlerKinds: []string{"handle"},
 		// `wasmtime serve --env KEY=VAL` style bindings; future
 		// hosts may add kv-namespace + service-binding shapes.
