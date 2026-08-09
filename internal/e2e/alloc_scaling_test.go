@@ -224,6 +224,36 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A closure stored in a struct FIELD (#6443) — a provider table, a
+		// strategy record, a middleware chain, a callback registry. Nothing
+		// released it: `appendChildDrop` had no FuncType arm, so a closure
+		// field fell to the bare `__fern_rc_dec` fall-through, which zeroes
+		// the pair's count and stops. The pair block, the env block and every
+		// rc-tracked capture were stranded — three blocks per instance, and
+		// per instance means it scales with the table.
+		//
+		// Constant in n: each round builds and discards one 8-provider table.
+		name: "closure-in-struct-field",
+		decls: `import "std/i32";
+struct P { name: string, f: (i32) => i32 }
+function mkP(n: i32): P { return P { name: "provider" + n.to_string(), f: (x: i32) => x + n }; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < n) {
+        var ps: P[] = [];
+        var i: i32 = 0;
+        while (i < 8) { ps = ps.append(mkP(i)); i = i + 1; }
+        var j: i32 = 0;
+        while (j < ps.len()) { t = t + (ps[j].f)(1); j = j + 1; }
+        r = r + 1;
+    }
+    return t % 7;
+}`,
+		n:        200,
+		maxRatio: 130,
+	},
+	{
 		// A struct-update spread whose base is a FRESH value. `T { ...b, f: v }`
 		// where `b` is a LOCAL borrows the base — the local releases at its own
 		// scope exit, so the construction must not — but that reasoning does

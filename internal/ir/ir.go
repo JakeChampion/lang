@@ -2897,6 +2897,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					op.Str == "__drop_arr_closure" ||
+					op.Str == "__drop_closure_value" ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_enum_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
@@ -2947,6 +2948,12 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				// env (generically, through the embedded drop-fn pointer) +
 				// the pair block, then free the outer buffer.
 				fn = genArrClosureDropFn(ptrW)
+			} else if name == "__drop_closure_value" {
+				// One closure value reached through a container (struct field
+				// / enum payload / tuple element), where nothing names which
+				// closure the slot holds — the same pointer-dispatched release
+				// __drop_arr_closure runs per element.
+				fn = genClosureValueDropFn(ptrW)
 			} else if prim := strings.TrimPrefix(name, "__drop_dynprim_"); prim != name {
 				// Primitive/string-concrete `dyn` value-cell drop (#4351):
 				// frees the boxPrimitiveDynValue cell the fat pointer's `data`

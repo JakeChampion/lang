@@ -3897,6 +3897,55 @@ function f(): i32 {
 function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 	},
 	{
+		// A closure SHARED between a struct field and a live local (#6443).
+		// The field release dispatches through the drop-fn pointer the pair
+		// carries, so it has to respect the pair's own count: at rc>1 the
+		// is_unique gate must decline and leave the env alone, or `h` calls a
+		// freed env and reads a recycled capture. `keep` holds the struct so
+		// both references are live across the calls.
+		name: "closure_struct_field_shared_with_local",
+		src: `
+import "core/int";
+import "std/i32";
+struct H { f: (i32) => i32 }
+function main(): i32 {
+    var n: i32 = 7;
+    var h: (i32) => i32 = (x: i32) => x + n;
+    var keep: H = H { f: h };
+    var a: i32 = h(1);
+    var b: i32 = (keep.f)(2);
+    var c: i32 = h(3);
+    return (a + b + c - 27) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The reclaiming shape: a struct holding a capturing closure, built
+		// and discarded in a loop so the freed pair / env / capture blocks are
+		// recycled into the next round. An over-release here hands a live
+		// block to the freelist and the next round reads it back — which the
+		// value check catches even when the underflow counter does not.
+		name: "closure_struct_field_reclaim_loop",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct P { name: string, f: (i32) => i32 }
+function mkP(n: i32): P { return P { name: "provider" + n.to_string(), f: (x: i32) => x + n }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var ps: P[] = [];
+        var i: i32 = 0;
+        while (i < 4) { ps = ps.append(mkP(i)); i = i + 1; }
+        var j: i32 = 0;
+        while (j < ps.len()) { t = t + (ps[j].f)(1) + ps[j].name.len(); j = j + 1; }
+        r = r + 1;
+    }
+    return (t - 920) + __rc_underflow_count();
+}`,
+	},
+	{
 		// `.with` on a `string[]` PARAM, where the caller keeps the receiver
 		// live so the CoW takes its copy branch (#6407). Until strings joined
 		// the counted-element set, that copy went through the plain
