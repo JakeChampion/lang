@@ -5644,3 +5644,32 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   inits x nested/flat, plus the refusal),
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (379.06 s, run FIRST), 26 targeted
   suites 0 skips. Refs #6319 #6360 #4451.
+
+- 2026-08-09: **The block-scoped rc-payload direct ctor with a nested match — the
+  rc analogue of the scalar row #6526 closed.** #6480 widened
+  `consumed_rcpayload_option_frees`' match lookup to the nested spelling for CALL
+  inits only, because at function scope a direct ctor is already
+  `precise_drop_names`' is_rcopt candidate. A BLOCK-scoped local has no such
+  owner, so the direct ctor leaked there: **35200 over 100 rounds, `frees=0`**,
+  where every other spelling of the same shape was 0. Same `nested_ok` shape as
+  #6526 — TRUE only from lower_block — now gating `call_pt != "" || nested_ok`.
+
+  **The flag is LOAD-BEARING here, and that is the difference from #6526.**
+  Flipping the fn-scope call site to true SEGFAULTS both
+  `TestSelfHostNestedMatchBorrowNoUnderflow`'s program and the opt-struct-payload
+  hazard, where the identical mutation on the SCALAR collector was harmless
+  (every row stayed balanced, underflow 0). The reason: a scalar drop is a shallow
+  box free, and slot-zeroing makes a second credit dec null; an rc-payload drop
+  releases the PAYLOAD too, so the second credit double-frees it. Same-shaped
+  flag, genuinely different justification — **do not carry the reasoning from one
+  to the other**, in either direction. Both were measured.
+
+  With this and #6503 / #6517 / #6526, #6319's four quadrants (fn/block scope x
+  flat/nested match) close for the scalar Option and for the rc payload under both
+  inits.
+
+  VERIFIED: `TestSelfHostBlockRcPayloadNestedMatchX86_64` (new — direct-ctor
+  nested, call-init nested, the flat control, and the escaping-arm refusal at
+  801/401 which is measured, not assumed: an escaping ARRAY binding partially
+  retains), `TestSelfHostPerModuleEmitAllFixpointX86_64` (380.38 s, run FIRST), 27
+  targeted suites 0 skips. Refs #6319 #6360 #4451.

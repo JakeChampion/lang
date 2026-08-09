@@ -21614,7 +21614,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names), opterrfresh_names_of(s.reclaimable_names));
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names), opterrfresh_names_of(s.reclaimable_names), true);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -28973,7 +28973,10 @@ function call_init_callee_in(e: parser.Expr, names: string[]): boolean {
     return false;
 }
 
-function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[], err_fresh: string[]): OptRcFrees {
+// `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
+// take the nested-match lookup. See the comment at the lookup itself for why that
+// is safe there and unsafe at function scope.
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[], err_fresh: string[], nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var strs: boolean[] = [];
@@ -29015,19 +29018,22 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                     // which is also where the free lands, while the arm analyses
                     // take the match itself.
                     //
-                    // ONLY for a call init. A DIRECT ctor consumed by a nested
-                    // match is already reclaimed by precise_drop_names, whose
-                    // is_rcopt kind admits exactly `rcpayload_option_cand != ""`
-                    // and defers to this analysis only on a FLAT match
-                    // (body_has_top_level_match). Widening the lookup for that
-                    // shape too issues a second credit on the same box: measured
-                    // as a segfault, and as __rc_underflow_count() == -1 in
-                    // TestSelfHostNestedMatchBorrowNoUnderflowX86_64. The two
-                    // admissions are complementary, so keeping the direct ctor on
-                    // the flat lookup is what keeps them disjoint.
+                    // A call init always gets the nested lookup; a DIRECT ctor
+                    // gets it only under `nested_ok`, i.e. only from lower_block.
+                    //
+                    // The asymmetry is real and was measured both ways. At FUNCTION
+                    // scope precise_drop_names' is_rcopt kind already reclaims the
+                    // direct ctor with a nested match — it admits exactly
+                    // `rcpayload_option_cand != ""` and defers here only on a FLAT
+                    // match — and letting this analysis take it too is not a
+                    // harmless duplicate: it segfaults, and shows up as
+                    // __rc_underflow_count() == -1 in
+                    // TestSelfHostNestedMatchBorrowNoUnderflowX86_64. A BLOCK-scoped
+                    // local has no such owner, because precise_drop_names is only
+                    // ever called with fn.body and never sees one.
                     var match_idx: i32 = 0 - 1;
                     var msv: parser.Stmt[] = [];
-                    if (call_pt != "") {
+                    if (call_pt != "" || nested_ok) {
                         match_idx = sole_consuming_match_idx(body, v.name);
                         if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
                     } else {
@@ -37084,7 +37090,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_fresh_call_names_of(sg.opt_fresh_ret_fns), opterrfresh_call_names_of(sg.opt_fresh_ret_fns));
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_fresh_call_names_of(sg.opt_fresh_ret_fns), opterrfresh_call_names_of(sg.opt_fresh_ret_fns), false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
