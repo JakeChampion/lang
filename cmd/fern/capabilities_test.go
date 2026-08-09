@@ -129,7 +129,7 @@ function main(): i32 {
 		t.Errorf("governed package should error, not warn: %q", warns)
 	}
 	// Wiring: -check and -interp both surface the violation.
-	if cerr := runCheck(entry); cerr == nil || !strings.Contains(cerr.Error(), "E070") {
+	if cerr := runCheck(entry, ""); cerr == nil || !strings.Contains(cerr.Error(), "E070") {
 		t.Errorf("runCheck should fail with E070, got: %v", cerr)
 	}
 	if code, ierr := runInterp(entry, nil); ierr == nil || !strings.Contains(ierr.Error(), "E070") {
@@ -162,7 +162,7 @@ function main(): i32 {
 	if warns != want {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, want)
 	}
-	if cerr := runCheck(entry); cerr != nil {
+	if cerr := runCheck(entry, ""); cerr != nil {
 		t.Errorf("runCheck should succeed for an ungoverned dep, got: %v", cerr)
 	}
 }
@@ -249,7 +249,7 @@ pub function one(): i32 { return b.one(); }`,
 		"b/fern.toml": "[package]\nname = \"b\"\nlib = \"b.fern\"\n",
 		"b/b.fern":    "pub function one(): i32 { return 1; }",
 	})
-	err := runCheck(filepath.Join(root, "app", "main.fern"))
+	err := runCheck(filepath.Join(root, "app", "main.fern"), "")
 	if err == nil {
 		t.Fatal("expected the amplifying grant to fail -check, got none")
 	}

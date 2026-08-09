@@ -97,7 +97,7 @@ func TestEmbedMissingFlagIsADiagnostic(t *testing.T) {
 	embeddedAssets = nil
 	t.Cleanup(func() { embeddedAssets = prev })
 
-	err := runCheck(src)
+	err := runCheck(src, "")
 	if err == nil {
 		t.Fatal("expected -check to reject __fern_asset with no -embed")
 	}
@@ -119,7 +119,7 @@ func TestEmbedUnknownAssetSuggests(t *testing.T) {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := runCheck(src)
+	err := runCheck(src, "")
 	if err == nil {
 		t.Fatal("expected -check to reject an unknown asset")
 	}
@@ -190,7 +190,7 @@ func TestEmbedEnumerationEmptyBundleCompiles(t *testing.T) {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runCheck(src); err != nil {
+	if err := runCheck(src, ""); err != nil {
 		t.Fatalf("an empty embed bundle must still type-check: %v", err)
 	}
 }

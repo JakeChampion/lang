@@ -20,13 +20,13 @@ import (
 // application member that has no lib. This is the workspace-wide check
 // the multi-package self-hosted compiler wants: one command validates
 // lexer / parser / checker / codegen together.
-func runCheckTarget(arg string) error {
+func runCheckTarget(arg, target string) error {
 	if arg == "-" {
-		return runCheck(arg)
+		return runCheck(arg, target)
 	}
 	st, err := os.Stat(arg)
 	if err != nil || !st.IsDir() {
-		return runCheck(arg) // a file (or a bad path runCheck will report)
+		return runCheck(arg, target) // a file (or a bad path runCheck will report)
 	}
 	man, err := manifest.FindForDir(arg)
 	if err != nil {
@@ -40,7 +40,7 @@ func runCheckTarget(arg string) error {
 		if err != nil {
 			return err
 		}
-		return runCheck(entry)
+		return runCheck(entry, target)
 	}
 
 	// Workspace: check each member, aggregating. Don't stop at the first
@@ -55,7 +55,7 @@ func runCheckTarget(arg string) error {
 			failed++
 			continue
 		}
-		if cerr := runCheck(entry); cerr != nil {
+		if cerr := runCheck(entry, target); cerr != nil {
 			fmt.Fprintf(os.Stderr, "FAIL %s\n%v\n", rel, cerr)
 			failed++
 			continue
