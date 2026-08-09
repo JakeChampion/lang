@@ -546,6 +546,22 @@ pub function rt_src_random_bytes(t: string): string {
     return "function __fern_random_bytes(n: i32): string { var p: i32 = __raw_alloc(n); var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno(t, "getrandom") + ", __raw_addr(p, off), want, 0); if (r < 0) { off = n; } else { off = off + want; } } return __raw_string(p, n); }";
 }
 
+// rt_src_random_i32 backs a single CSPRNG i32 (#2649, syscall-leaf) — the
+// sibling of random_bytes, and core/map's per-process hash seed draws through it.
+//
+// Four bytes into the fixed static __fern_scratch buffer rather than a fresh
+// allocation: this allocates nothing, which is what lets it stay outside the
+// heap-gated runtime block (a program whose only runtime call is random_i32
+// emits no heap at all). Same reason the clocks use scratch.
+//
+// The getrandom result is read only to detect failure, matching random_bytes and
+// the hand-asm this replaces — on failure the caller gets whatever scratch held,
+// which is the contract the stack-slot version had too. wasm keeps its WASI
+// `random_get` bundle; it has no generic syscall.
+pub function rt_src_random_i32(t: string): string {
+    return "function __fern_random_i32(): i32 { var p: i32 = __raw_scratch(4); __syscall3(" + sysno(t, "getrandom") + ", p, 4, 0); return __load_i32(p); }";
+}
+
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
 // (#2649) — the single definition of the mapping native's __fern_io_error carries,
 // so the fs leaves stop INLINING the five-way branch and just call it. `path` is

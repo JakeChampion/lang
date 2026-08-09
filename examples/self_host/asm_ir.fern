@@ -336,30 +336,14 @@ pub function ir_helper_symbol(name: string): string {
 // '\n' (str_split) and drops the trailing empty entry with an array slice
 // (arr_slice). Heap + str_split + arr_slice dependent; gated on the str_lines need.
 
-// emit_ir_random_i32 appends the __fern_random_i32() helper. Kept OUT of
-// emit_ir_runtime (which is heap-gated) because random_i32 allocates nothing —
-// a program that only calls random_i32 uses no heap, so its helper must still
-// emit. getrandom(buf, 4, 0) into a 16-byte stack slot, reload as i32. (No
-// asm.fern counterpart — legacy x86-64 lacked random_i32; new for the IR path,
-// mirroring the Go backend.)
-function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_random_i32:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    subq $16, %rsp\n");        // 4-byte landing buffer (aligned)
-    s = s.write("    leaq -16(%rbp), %rdi\n");  // getrandom(buf, 4, 0)
-    s = s.write("    movq $4, %rsi\n");
-    s = s.write("    movq $0, %rdx\n");
-    s = s.write("    movq $318, %rax\n");
-    s = s.write("    syscall\n");
-    s = s.write("    movl -16(%rbp), %eax\n");  // 4 random bytes -> i32 (zero-extends)
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_random_i32 is a Fern runtime function (#2649): asmcore.rt_src_random_i32,
+// emitted via emit_ir_runtime_fern_fn and gated on the random_i32 need. It stays
+// OUT of the heap-gated runtime block for the same reason the hand-asm did — it
+// allocates nothing (getrandom into the static __fern_scratch), so a program
+// whose only runtime call is random_i32 must still get the helper.
 
 // emit_ir_map_hash_seed appends the __fern_map_hash_seed() helper — core/map's
-// per-process string-hash seed (#6194), drawn once via __fern_random_i32 and
+// per-process string-hash seed (#6194), drawn once via __fn___fern_random_i32 and
 // cached in the unit-local __fern_map_seed word.
 //
 // Forced nonzero: the word doubles as its own "already drawn" flag, and 0 is
@@ -369,6 +353,11 @@ function emit_ir_random_i32(s: asmcore.EmitState): asmcore.EmitState {
 // A CALL rather than an inline read (unlike __arr_push_shared_count) because
 // the lazy draw has a branch, and a helper keeps the label out of every call
 // site. Emitted beside random_i32, and heap-independent for the same reason.
+//
+// The draw goes through the STACK-ABI symbol: random_i32 is Fern now, so the
+// register-ABI __fern_random_i32 this used to call no longer exists. Zero args,
+// so there is nothing to push and nothing to clean up — the result still lands
+// in %eax.
 function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_map_hash_seed:\n");
     s = s.write("    movl __fern_map_seed(%rip), %eax\n");
@@ -376,7 +365,7 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jne .Lmapseed_ret\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    call __fern_random_i32\n");
+    s = s.write("    call __fn___fern_random_i32\n");
     s = s.write("    orl $1, %eax\n");
     s = s.write("    movl %eax, __fern_map_seed(%rip)\n");
     s = s.write("    leave\n");
@@ -4545,12 +4534,13 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
         "__fern_read_all_stdin",
-        "__fern_strbuf_reset", "__fern_strbuf_take", "__fern_random_i32",
+        "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fern_proc_fork", "__fern_proc_waitpid", "__fern_proc_exec",
-        // random_bytes is Fern on BOTH register backends now (#2649), so only the
-        // stack-ABI symbol exists; the register-ABI __fern_random_bytes is gone.
-        "__fn___fern_random_bytes",
+        // random_bytes and random_i32 are Fern on BOTH register backends now
+        // (#2649), so only the stack-ABI symbols exist; the register-ABI
+        // __fern_random_bytes / __fern_random_i32 are gone.
+        "__fn___fern_random_bytes", "__fn___fern_random_i32",
         // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
         // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
         // during the transition (a .globl of an undefined symbol is a no-op).
@@ -5185,8 +5175,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_random_bytes\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("random_bytes");
         } else if (o.kind_tag == 186) {  // random_i32
-            // no operands; __fern_random_i32() -> i32 in %rax.
-            s = s.write("    call __fern_random_i32\n    pushq %rax\n");
+            // no operands; the Fern-compiled __fn___fern_random_i32() -> i32 in
+            // %rax. Zero args, so the stack ABI needs no push and no cleanup.
+            s = s.write("    call __fn___fern_random_i32\n    pushq %rax\n");
             s = s.need("random_i32");
         } else if (o.kind_tag == 211) {  // proc_fork
             // no operands; __fern_proc_fork() -> i32 in %rax (0 child / pid
@@ -7637,7 +7628,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).
-    if (s.has_need("random_i32")) { s = emit_ir_random_i32(s); }
+    if (s.has_need("random_i32")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86_64"), all_structs, s);
+    }
     if (s.has_need("map_hash_seed")) { s = emit_ir_map_hash_seed(s); }
     // fork / wait4 allocate nothing either — same heap-independent gating.
     if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
@@ -7646,9 +7640,9 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
     // helpers hand the kernel to write structs into (timespec for the clocks,
     // struct stat for `stat`), reused/never-freed so no per-call leak. Emitted once
-    // in .bss when ANY scratch user is needed (clocks or stat), then the helpers in
-    // .text. Allocation-free, so independent of the heap runtime.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat")) {
+    // in .bss when ANY scratch user is needed (clocks, stat, or random_i32), then
+    // the helpers in .text. Allocation-free, so independent of the heap runtime.
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     if (s.has_need("monotonic_ns")) {

@@ -832,6 +832,9 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"i64arr-unannot-while", `function main(): i32 { var xs = [1 as i64, 2 as i64, 3 as i64]; var s: i64 = 0 as i64; var i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { var xs = [10 as i64, 20 as i64]; var s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
 		{"random-i32-varies", `function main(): i32 { var a: i32 = random_i32(); var b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
+		// A draw is a SIGNED i32 — see the x86-64 sibling: the hand-asm loaded
+		// with a zero-extending `ldr w0`, so `< 0` was dead code.
+		{"random-i32-signed", `function main(): i32 { var neg: i32 = 0; var i: i32 = 0; while (i < 200) { if (random_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
 		{"random-bytes-byte-range", `function main(): i32 { var s: string = random_bytes(4); var x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		// random_bytes over MORE than one chunk (#2649). The Fern helper fills
 		// the buffer in <= 256-byte pieces — getentropy's per-call ceiling on
