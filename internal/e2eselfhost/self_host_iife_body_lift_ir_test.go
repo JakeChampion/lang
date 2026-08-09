@@ -71,21 +71,23 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 	}
 }
 
-// nestedIifeGateSrc holds a value-position `if` in both a `match` scrutinee and
-// one of its arms. Hoisting the inner IIFE out of the outer one makes this
-// module refuse, so it pins lift_call_callee's in-IIFE gate.
-//
-// Only the strict-IR verdict is asserted: this shape is mis-answered by both
-// self-host backends (#6400), so an exit code here would pin the wrong number.
+// nestedIifeGateSrc nests a value-position `if` inside another one's branch.
+// lift_call_callee's in-IIFE gate is what stops the inner one being hoisted to a
+// top-level `__lam_N`, which would split one desugar across the IR and AST paths.
 const nestedIifeGateSrc = `function main(): i32 {
     var b: boolean = true;
-    var w: u32 = (match ((2147484129u32) -? (if (true) { 2147484571u32 } else { 250u32 })) { Some(c) => c, None => (if (b) { 5u32 } else { 687u32 }) });
-    return (w as i32) & 63i32;
+    var w: i32 = (if (b) { (if (true) { 7i32 } else { 2i32 }) } else { (if (b) { 9i32 } else { 3i32 }) });
+    return w & 63i32;
 }`
 
-// TestSelfHostNestedIifeStaysWholeX86_64 asserts the module still lowers on the
-// IR path under FERN_STRICT_IR=1, which refuses a silent fall-through to the AST
-// emitter (#5646).
+// TestSelfHostNestedIifeStaysWholeX86_64 asserts the gate STRUCTURALLY: the
+// emitted asm must carry no hoisted lambda, because the desugar stayed whole.
+// The answer is asserted too, so a module that lowers to the wrong thing still
+// fails.
+//
+// Asserting the hoist rather than "the module lowers" is what keeps this honest
+// when an unrelated bail moves: whether some other defect refuses this shape
+// varies, but whether the gate held is a property of the gate alone.
 func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -99,8 +101,21 @@ func TestSelfHostNestedIifeStaysWholeX86_64(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("driver (FERN_STRICT_IR=1) exited %d\n%s", code, stderr)
 	}
-	if len(stdout) == 0 {
-		t.Fatal("self-host compiler emitted 0 bytes")
+	for _, ln := range strings.Split(string(stdout), "\n") {
+		if strings.HasPrefix(ln, "__fn___lam_") {
+			t.Errorf("the inner IIFE was hoisted to %q — the in-IIFE gate did not hold", strings.TrimSuffix(ln, ":"))
+		}
+	}
+	progBin := buildBin(t, gcc, dir, "nested-iife-gate", string(stdout))
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(progBin)
+	} else {
+		cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+	}
+	_ = cmd.Run()
+	if got := cmd.ProcessState.ExitCode(); got != 7 {
+		t.Errorf("nested-iife-gate exited %d, want 7", got)
 	}
 }
 
