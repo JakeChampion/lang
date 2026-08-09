@@ -39230,6 +39230,19 @@ pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): bo
 // monomorphize_module's clone worklist), so an erased-generic fn's tuple
 // return keeps its type-var spellings ("(K, V)") and the registry tag would
 // otherwise degrade the element to a scalar at every call site.
+// fn_has_param_typed reports whether `fd` declares a parameter spelled exactly
+// `ty`. Used to recognise an ERASED generic from its signature: an unbounded
+// type param is stripped from `type_params`, so a bare-`T` return is only
+// distinguishable from a same-named enum by the binding site of the var.
+function fn_has_param_typed(fd: parser.FuncDecl, ty: string): boolean {
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (fd.params[i].type_name == ty) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function irl_looks_type_var(s: string): boolean {
     if (s.len() != 1) { return false; }
     var c: i32 = s[0] as i32;
@@ -39470,7 +39483,16 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         // below resolves its element against the actual argument instead; a bare
         // `T` has no element to resolve, and an annotated binding already
         // supplies the type.
-        else if (is_enum_like_name(rt, structs) && !irl_looks_type_var(rt)) { elig = true; }
+        //
+        // The type-var test alone is NOT enough to tell this from a real enum:
+        // an `enum E` is a single uppercase letter too, and skipping it sent the
+        // whole @derive(Default) enum family to the AST path. So require the
+        // ERASED-GENERIC signature the `T[]` sibling already keys on — a free
+        // function with a parameter declared at exactly that spelling. A derived
+        // `E_default(): E` takes no `E`, so it still records.
+        else if (is_enum_like_name(rt, structs)
+                && !(irl_looks_type_var(rt) && funcs[k].receiver_type.len() == 0
+                     && fn_has_param_typed(funcs[k], rt))) { elig = true; }
         // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
         // ret_type from the desugar, not the struct it actually returns — so
         // trust the BODY, not the declaration. Infer a leaf-safe struct return

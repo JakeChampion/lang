@@ -107,6 +107,12 @@ var genericErasureIRCases = []struct {
 	// all, so the case fails identically with and without the fix. It is covered
 	// through the CLI instead, which is what the corpus measurement exercises.)
 	{"id-enum-regress", "enum E { A, B } function idg[T](x: T): T { return x; } function main(): i32 { var e = idg(E.A); return match (e) { A => 42, B => 9 }; }", 42},
+	// A real enum whose name IS a single uppercase letter, returned by a
+	// function that takes no `E`. The type-var test alone cannot tell this from
+	// an erased generic, so skipping on it sent every @derive(Default) enum to
+	// the AST path; the erased-generic signature (a free function with a param
+	// declared at that spelling) is what separates them, and this has none.
+	{"single-letter-enum-return", "enum E { A, B } function mkE(): E { return E.A; } function main(): i32 { var e = mkE(); return match (e) { A => 42, B => 9 }; }", 42},
 }
 
 // TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the
