@@ -7,8 +7,8 @@ byte-building Tier-2 set (`chr`, `str_concat`, `i32_to_string`,
 raw-memory intrinsics (`RUNTIME-INTRINSICS.md`), on top of the earlier
 Tier-0/1 slices (`__fern_i32_pow`, the five `__fern_arr_i32_*` reducers,
 `__fern_str_to_i32`, and the str predicates/utilities). The **syscall
-leaves** followed on the x86-64 IR path (`random_bytes`, the three clocks,
-and the whole fs family) over the `__syscall3` / `__syscall4` /
+leaves** followed on the x86-64 IR path (`random_bytes`, `random_i32`, the
+three clocks, and the whole fs family) over the `__syscall3` / `__syscall4` /
 `__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08 they are
 reaching **arm64** as well: `random_bytes` first, then `read_file` /
 `write_file` / `remove_file` / `temp_dir` / `stat` with their shared
@@ -19,6 +19,16 @@ by the target. The **array producers** followed — the first non-syscall helper
 to move, all three over the `__raw_arr_box` + `__raw_array` pair:
 `xs.reverse()` / `xs.concat(ys)` arch-independent (one source, no target
 parameter), and `a[start:end]` with one, because its bounds check traps.
+
+`random_i32` is worth a line of its own, because migrating it **fixed a bug
+neither backend's tests could see**. Both hand-asm bodies loaded the four
+random bytes with a zero-extending load (`movl` / `ldr w0`), so the i32 never
+had its top bit set in its 64-bit slot and `random_i32() < 0` was dead code —
+a disagreement with the native backend on every draw above 2^31. The Fern
+helper returns `i32`, so the load sign-extends and the divergence goes away.
+The existing coverage asked only that two draws differ, which both the correct
+and the broken version satisfy; `random-i32-signed` on both IR paths now pins
+the sign.
 
 That trap is worth recording, because it read as a blocker and was not.
 `__fern_oob_abort` is only `exit(134)`, which the existing `__syscall3`
