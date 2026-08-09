@@ -843,12 +843,17 @@ function main(): i32 {
 	// The branch lambdas must CAPTURE. A no-capture one hoists to a top-level
 	// `__lam_N` and the module lowers; a capturing one cannot, so it stays an
 	// AST-only closure and `<fn>$clo` never resolves.
-	{"unresolved-function-value", `function main(): i32 {
-    var n: i32 = 7i32;
-    var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) });
-    return v2(1i32) & 63i32;
+	//
+	// The value-position if must sit directly in RETURN position: bound to a
+	// local first, the same arms hoist to `<fn>$iifeN` and lower.
+	{"unresolved-function-value", `function gen(n: i32): (i32) => i32 {
+    return (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) });
 }
-`, "main$iife0", "function value main$iife0$clo not defined"},
+function main(): i32 {
+    var f: (i32) => i32 = gen(5i32);
+    return f(4i32) & 63i32;
+}
+`, "gen", "function value gen$clo not defined"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own

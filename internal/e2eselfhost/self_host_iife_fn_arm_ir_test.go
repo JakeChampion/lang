@@ -77,6 +77,26 @@ var iifeFnArmCases = []struct {
 	{"mixed-arms-array-element", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var xs: ((i32) => i32)[] = [v0, (if (true) { v0 } else { ((b: i32) => b) }), v0]; return xs[1i32](3i32); }", 89},
 	{"mixed-arms-var-called", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 89); var n: i32 = 1; var w: (i32) => i32 = (if (n > 0) { v0 } else { ((b: i32) => b) }); return w(3); }", 89},
 	{"mixed-arms-returned-then-called", "function gen(n: i32): (i32) => i32 { var v0: (i32) => i32 = ((a: i32) => 89); return (if (n > 0) { v0 } else { ((b: i32) => b) }); } function main(): i32 { var f: (i32) => i32 = gen(1); return f(3); }", 89},
+
+	// The arm lambda itself CAPTURES. The cases above hoist the IIFE and the
+	// arm lambdas are capture-free, so each lifts to its own `__lam_N`; a
+	// capturing one cannot lift, and inside the hoisted `<fd>$iifeN` it reached
+	// lower_expr bare and asked for a `<fd>$iifeN$clo` — one name, built by
+	// nobody, since hoist_escaping_closure only claims a body whose LAST
+	// statement is the return and an arm's return is one level down.
+	//
+	// The arms now get the same `return <lambda>` desugar the worklist gives a
+	// source function, so each lifts through its local binding to a uniquely
+	// named `<fd>$iifeN$cloM` box. distinct-captures is the case that needs the
+	// names to differ; string-capture rides the env box's pointer slot.
+	{"capturing-arm-lambda", "function main(): i32 { var n: i32 = 7i32; var v2: (i32) => i32 = (if (true) { ((x: i32) => (x + n)) } else { ((x: i32) => 41i32) }); return v2(1i32) & 63i32; }", 8},
+	{"capturing-arms-distinct-captures", "function main(): i32 { var n: i32 = 7i32; var m: i32 = 20i32; var c: boolean = false; var v2: (i32) => i32 = (if (c) { ((x: i32) => (x + n)) } else { ((x: i32) => (x + m)) }); return v2(1i32) & 63i32; }", 21},
+	{"matchexpr-capturing-arms", "enum S { A, B } function main(): i32 { var n: i32 = 9i32; var e: S = S.B; var f: (i32) => i32 = (match (e) { A => ((x: i32) => (x + n)), B => ((y: i32) => (y * n)) }); return f(3i32) & 63i32; }", 27},
+	{"capturing-arm-string-capture", "function main(): i32 { var s: string = \"abcd\"; var f: (i32) => i32 = (if (true) { ((x: i32) => (x + s.len())) } else { ((y: i32) => y) }); return f(3i32) & 63i32; }", 7},
+	// Consumed through a factory: the hoisted `<fd>$iifeN` must still register
+	// as closure-returning (its arms now return a local, form (b) rather than
+	// form (a) of closure_ret_fns_of) or the caller bare-dispatches the box.
+	{"capturing-arm-bound-then-returned", "function gen(n: i32): (i32) => i32 { var w: (i32) => i32 = (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) }); return w; } function main(): i32 { var f: (i32) => i32 = gen(5i32); return f(4i32) & 63i32; }", 9},
 }
 
 // TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
