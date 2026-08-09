@@ -2226,11 +2226,18 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 			// non-generic struct/enum, neither of which needs the
 			// generic-enum / tuple registry, and the worklist regenerates
 			// the body from info.Structs / info.Enums by name.
+			// With reclamation compiled out the drop-fn BODIES are never
+			// generated (the worklist below is gated on RcFreeEnabled), so
+			// naming one here leaves the vtable referencing a symbol that
+			// does not exist and the link fails. The null sentinel is what
+			// the slot already means for a concrete needing no drop, and
+			// free-off leaks by construction, so it is the right answer
+			// rather than a workaround.
 			drop := ""
-			if prim {
+			if prim && ast.RcFreeEnabled {
 				drop = "__drop_dynprim_" + concrete
 			}
-			if !prim {
+			if !prim && ast.RcFreeEnabled {
 				var ct ast.Type
 				if _, ok := info.Structs[concrete]; ok {
 					ct = ast.StructType{Name: concrete}
