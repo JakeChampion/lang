@@ -86,6 +86,27 @@ var genericErasureIRCases = []struct {
 	// A TWO-type-var tuple payload (`Option[(K, V)]`) at (string, string): both
 	// element vars resolve from their respective arguments.
 	{"opt-tuple-two-var", "function mk[K, V](k: K, v: V): Option[(K, V)] { return Some((k, v)); } function main(): i32 { match (mk(\"ab\", \"cde\")) { Some(t) => { return t.0.len() * 10 + t.1.len(); }, None => { return 0; } } }", 23},
+	// The struct_ret_fns_of sibling of the same defect (#6441). A bare type-var
+	// return is not an enum, but is_enum_like_name says it is — that predicate
+	// rules out primitives, arrays, bracketed generics and tuples, and a lone
+	// uppercase letter passes all of them. So `idg|T` was recorded as an enum
+	// return, the call site stamped its slot "T", and a method on the result
+	// keyed `T.to_string` — a symbol nothing defines, bailing the whole module.
+	// f-strings are how this is normally reached, since `f"{e}"` desugars to
+	// `(e).to_string()`. "a5b".len() * 14.
+	{"id-scalar-fstring", "function idg[T](x: T): T { return x; } function main(): i32 { var s = f\"a{idg(5)}b\"; return s.len() * 14; }", 42},
+	// The same defect without the f-string: an explicit method call on a local
+	// bound from the generic. The ANNOTATION does not save it — the slot is
+	// stamped from the registry, not from `: i32`. "x5".len() * 21.
+	{"id-scalar-method-annotated", "function idg[T](x: T): T { return x; } function main(): i32 { var v: i32 = idg(5); var s = \"x\" + v.to_string(); return s.len() * 21; }", 42},
+	// A guard for what dropping the entry must NOT cost: a bare-T return
+	// instantiated at an ENUM still matches. The binding is unannotated, so it
+	// gets its type from neither the registry nor a `:` — if the entry had been
+	// the only source, this would break. (The STRUCT sibling is not pinned here:
+	// this driver resolves no imports and lowers no struct-returning generic at
+	// all, so the case fails identically with and without the fix. It is covered
+	// through the CLI instead, which is what the corpus measurement exercises.)
+	{"id-enum-regress", "enum E { A, B } function idg[T](x: T): T { return x; } function main(): i32 { var e = idg(E.A); return match (e) { A => 42, B => 9 }; }", 42},
 }
 
 // TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the

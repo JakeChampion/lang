@@ -39460,7 +39460,17 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         var elig: boolean = false;
         var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
-        else if (is_enum_like_name(rt, structs)) { elig = true; }
+        // A bare type VARIABLE return (`id[T](x: T): T`) is not an enum, but
+        // is_enum_like_name says it is — it rules out primitives, arrays,
+        // bracketed generics and tuples, and a lone uppercase letter passes all
+        // of those. Recording `id|T` then stamped the CALL SITE's slot "T", so a
+        // later `v.to_string()` keyed `T.to_string` — a symbol nothing defines —
+        // and bailed the module (#6441). Unrecorded, the slot falls through to
+        // the scalar path and dispatches on the real type. The `T[]` sibling
+        // below resolves its element against the actual argument instead; a bare
+        // `T` has no element to resolve, and an annotated binding already
+        // supplies the type.
+        else if (is_enum_like_name(rt, structs) && !irl_looks_type_var(rt)) { elig = true; }
         // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
         // ret_type from the desugar, not the struct it actually returns — so
         // trust the BODY, not the declaration. Infer a leaf-safe struct return
