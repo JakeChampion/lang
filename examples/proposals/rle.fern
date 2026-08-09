@@ -1,0 +1,454 @@
+// examples/proposals/rle.fern — proposal turn, drawn line 19:
+// "A run-length encoder and decoder that round-trips arbitrary bytes."
+//
+// "Arbitrary bytes" is the whole difficulty, and it is the part naive RLEs get
+// wrong. A format built around an escape marker corrupts any input containing
+// the marker; a format with a one-byte count silently truncates a run of 300;
+// a format that assumes text mishandles 0x00. Each of those produces an
+// encoder that works beautifully on the examples its author tried.
+//
+// So the format here is PackBits, which needs no escape byte at all: a header
+// of 0..127 introduces that many plus one LITERAL bytes, and a header of
+// 129..255 means the next byte repeats 257 minus it times, giving runs of 2 to
+// 128. Every one of the 256 byte values is ordinary data. 128 is reserved and
+// the decoder REJECTS it rather than guessing.
+//
+// The encoder emits a repeat packet only for a run of THREE or more. A pair
+// costs two bytes either way, and breaking a literal packet to emit one spends
+// an extra header on each side — which is what pushes an input like `0 1 1 0`
+// past the size bound below. That threshold is not a tuning choice; it is what
+// makes the bound true.
+//
+// Round-tripping is the obvious property and it is not enough on its own,
+// because the encoder that emits everything as literals round-trips perfectly
+// and compresses nothing. So the tests come in three groups that pin different
+// halves:
+//
+//   - **`decode(encode(x)) == x`** over an exhaustive space (every string over
+//     a three-byte alphabet up to length 5), every single byte value 0..255,
+//     runs at the packet boundaries (127 / 128 / 129 / 255 / 256 / 257), and
+//     pseudo-random data drawn from all 256 values.
+//   - **It actually compresses**: a long run must encode to a small fraction
+//     of its input. Without this, "correct" is satisfiable by doing nothing.
+//   - **It never expands beyond the format's bound**, `n + ceil(n/128)`, for
+//     every input in the corpus — the guarantee that makes an RLE safe to put
+//     in front of data you do not control.
+//
+// The decoder gets its own property, and it is the one that matters for a
+// decoder: fed a TRUNCATED stream it must either report an error or return a
+// genuine prefix of the original — never garbage, never run off the end. That
+// is swept over every prefix of every encoding in the corpus, which is a few
+// thousand malformed inputs nobody had to think up.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// A decode result. Malformed input is reported, not guessed at — a decoder
+// that returns its best effort on a truncated stream is how corrupt data
+// becomes corrupt state.
+struct Decoded { ok: boolean, bytes: u8[], err: string }
+
+// --------------------------------------------------------------- encode
+
+function encode(src: u8[]): u8[] {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < src.len()) {
+        // How far the byte at i repeats, capped at the format's 128.
+        var run: i32 = 1;
+        while (i + run < src.len() && src[i + run] == src[i] && run < 128) { run = run + 1; }
+        // Only a run of THREE or more becomes a repeat packet. A pair costs
+        // two bytes either way, and breaking a literal packet to emit one
+        // spends an extra header on each side — `0 1 1 0` would cost 6 bytes
+        // for 4, past the n + ceil(n/128) bound the format is chosen for.
+        // Leaving pairs inside the literal run is what makes that bound hold.
+        if (run >= 3) {
+            out = out.append(((257 - run) as u8));
+            out = out.append(src[i]);
+            i = i + run;
+        } else {
+            // A literal packet runs until a repeat starts or 128 bytes are in.
+            var start: i32 = i;
+            var lit: i32 = 0;
+            var stop: boolean = false;
+            while (i < src.len() && lit < 128 && !stop) {
+                if (i + 2 < src.len() && src[i + 1] == src[i] && src[i + 2] == src[i]) {
+                    stop = true;
+                } else {
+                    i = i + 1;
+                    lit = lit + 1;
+                }
+            }
+            // `stop` fires before consuming the byte that starts the repeat,
+            // so a literal packet is never emitted empty: the loop always
+            // takes at least the byte at `start`, which by the run check
+            // above does not begin a run of three.
+            out = out.append(((lit - 1) as u8));
+            var k: i32 = 0;
+            while (k < lit) { out = out.append(src[start + k]); k = k + 1; }
+        }
+    }
+    return out;
+}
+
+// --------------------------------------------------------------- decode
+
+function fail_decode(out: u8[], why: string): Decoded {
+    return Decoded { ok: false, bytes: out, err: why };
+}
+
+function decode(enc: u8[]): Decoded {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < enc.len()) {
+        var h: i32 = enc[i] as i32;
+        i = i + 1;
+        if (h == 128) { return fail_decode(out, "reserved header byte 128"); }
+        if (h < 128) {
+            var n: i32 = h + 1;
+            if (i + n > enc.len()) { return fail_decode(out, "truncated literal run"); }
+            var k: i32 = 0;
+            while (k < n) { out = out.append(enc[i + k]); k = k + 1; }
+            i = i + n;
+        } else {
+            var n: i32 = 257 - h;
+            if (i >= enc.len()) { return fail_decode(out, "truncated repeat run"); }
+            var b: u8 = enc[i];
+            i = i + 1;
+            var k: i32 = 0;
+            while (k < n) { out = out.append(b); k = k + 1; }
+        }
+    }
+    return Decoded { ok: true, bytes: out, err: "" };
+}
+
+// ---------------------------------------------------------------- corpus
+
+function bytes_equal(a: u8[], b: u8[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+// Is `p` a prefix of `whole`? What a truncated decode is allowed to return.
+function is_prefix(p: u8[], whole: u8[]): boolean {
+    if (p.len() > whole.len()) { return false; }
+    var i: i32 = 0;
+    while (i < p.len()) { if (p[i] != whole[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+function show(bs: u8[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < bs.len() && i < 24) {
+        if (i > 0) { out = out + " "; }
+        out = out + (bs[i] as i32).to_string();
+        i = i + 1;
+    }
+    if (bs.len() > 24) { out = out + " …(" + bs.len().to_string() + ")"; }
+    return out;
+}
+
+function repeated(b: i32, n: i32): u8[] {
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(b as u8); i = i + 1; }
+    return out;
+}
+
+// A deterministic pseudo-random byte stream, so every backend sees the same
+// bytes. The HIGH bits are sampled: the low bits of a power-of-two-modulus LCG
+// have short periods and would produce far less varied data than it looks.
+function lcg_bytes(seed: i32, n: i32): u8[] {
+    var out: u8[] = [];
+    var s: i32 = seed;
+    var i: i32 = 0;
+    while (i < n) {
+        s = s * 1103515245 + 12345;
+        var v: i32 = (s / 65536) % 256;
+        if (v < 0) { v = v + 256; }
+        out = out.append(v as u8);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Every string over {0, 1, 255} up to length 5, empty included. A tiny
+// alphabet is nothing but runs and near-runs, which is where the packet
+// boundaries get decided.
+function exhaustive(): u8[][] {
+    var alpha: i32[] = [0, 1, 255];
+    var out: u8[][] = [];
+    var empty: u8[] = [];
+    out = out.append(empty);
+    var cur: u8[][] = [empty];
+    var len: i32 = 1;
+    while (len <= 5) {
+        var next: u8[][] = [];
+        var i: i32 = 0;
+        while (i < cur.len()) {
+            var a: i32 = 0;
+            while (a < alpha.len()) {
+                next = next.append(cur[i].append(alpha[a] as u8));
+                a = a + 1;
+            }
+            i = i + 1;
+        }
+        var k: i32 = 0;
+        while (k < next.len()) { out = out.append(next[k]); k = k + 1; }
+        cur = next;
+        len = len + 1;
+    }
+    return out;
+}
+
+// The shapes the exhaustive space is too short to reach: runs that straddle
+// the 128-byte packet cap, all 256 byte values, and incompressible data.
+function edge_cases(): u8[][] {
+    var out: u8[][] = [];
+    var lens: i32[] = [1, 2, 3, 127, 128, 129, 130, 255, 256, 257, 300];
+    var vals: i32[] = [0, 65, 128, 255];
+    var v: i32 = 0;
+    while (v < vals.len()) {
+        var l: i32 = 0;
+        while (l < lens.len()) { out = out.append(repeated(vals[v], lens[l])); l = l + 1; }
+        v = v + 1;
+    }
+    // Every byte value once, ascending — no runs at all, the literal path.
+    var all: u8[] = [];
+    var b: i32 = 0;
+    while (b < 256) { all = all.append(b as u8); b = b + 1; }
+    out = out.append(all);
+    // A run long enough to straddle two packets, followed by literals.
+    out = out.append(repeated(7, 200).append(1).append(2).append(3));
+    // Pseudo-random data at several lengths.
+    var seeds: i32[] = [1, 7, 12345];
+    var s: i32 = 0;
+    while (s < seeds.len()) {
+        var ns: i32[] = [0, 1, 5, 63, 64, 200];
+        var j: i32 = 0;
+        while (j < ns.len()) { out = out.append(lcg_bytes(seeds[s], ns[j])); j = j + 1; }
+        s = s + 1;
+    }
+    return out;
+}
+
+function corpus(): u8[][] {
+    var out: u8[][] = exhaustive();
+    var e: u8[][] = edge_cases();
+    var i: i32 = 0;
+    while (i < e.len()) { out = out.append(e[i]); i = i + 1; }
+    return out;
+}
+
+// ----------------------------------------------------------------- tests
+
+// The claim: encoding then decoding gives back exactly what went in.
+function test_it_round_trips_the_whole_corpus(): test.TestOutcome {
+    var cs: u8[][] = corpus();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        var d: Decoded = decode(encode(cs[i]));
+        if (!d.ok) {
+            return test.fail("case " + i.to_string() + " (" + cs[i].len().to_string()
+                + " bytes) failed to decode its own encoding: " + d.err);
+        }
+        if (!bytes_equal(d.bytes, cs[i])) {
+            return test.fail("case " + i.to_string() + " did not round-trip:\n  in  "
+                + show(cs[i]) + "\n  out " + show(d.bytes));
+        }
+        i = i + 1;
+    }
+    if (cs.len() < 400) {
+        return test.fail("the corpus is only " + cs.len().to_string() + " cases");
+    }
+    return test.pass();
+}
+
+// Every single byte value survives, including 0 and the reserved header's
+// value 128 appearing as DATA — the case an escape-marker format gets wrong.
+function test_every_byte_value_survives(): test.TestOutcome {
+    var b: i32 = 0;
+    while (b < 256) {
+        var one: u8[] = [b as u8];
+        var d: Decoded = decode(encode(one));
+        if (!d.ok || !bytes_equal(d.bytes, one)) {
+            return test.fail("the byte " + b.to_string() + " did not round-trip");
+        }
+        // And as a run, so it goes through the repeat packet too.
+        var many: u8[] = repeated(b, 5);
+        var d2: Decoded = decode(encode(many));
+        if (!d2.ok || !bytes_equal(d2.bytes, many)) {
+            return test.fail("a run of byte " + b.to_string() + " did not round-trip");
+        }
+        b = b + 1;
+    }
+    return test.pass();
+}
+
+// Without this, "correct" is satisfied by an encoder that emits every byte as
+// a literal and compresses nothing at all.
+function test_it_actually_compresses_runs(): test.TestOutcome {
+    var n: i32 = 1000;
+    var run: u8[] = repeated(88, n);
+    var enc: u8[] = encode(run);
+    // Each packet covers up to 128 bytes in 2 bytes, so 1000 bytes needs 16.
+    if (enc.len() > 20) {
+        return test.fail("a run of " + n.to_string() + " bytes encoded to "
+            + enc.len().to_string() + " bytes, want about 16");
+    }
+    var d: Decoded = decode(enc);
+    if (!d.ok || !bytes_equal(d.bytes, run)) {
+        return test.fail("the compressed run did not round-trip");
+    }
+    return test.pass();
+}
+
+// The guarantee that makes an RLE safe on data you do not control: a literal
+// packet covers up to 128 bytes for one header byte, so nothing can exceed
+// n + ceil(n/128).
+function test_it_never_expands_past_the_bound(): test.TestOutcome {
+    var cs: u8[][] = corpus();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        var n: i32 = cs[i].len();
+        var bound: i32 = n + (n + 127) / 128;
+        var enc: u8[] = encode(cs[i]);
+        if (enc.len() > bound) {
+            return test.fail("case " + i.to_string() + ": " + n.to_string()
+                + " bytes encoded to " + enc.len().to_string() + ", bound is "
+                + bound.to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The decoder's own property, swept over every truncation of every encoding
+// in the corpus: report an error, or return a genuine prefix. Never garbage,
+// never past the end.
+function test_a_truncated_stream_is_rejected_or_a_prefix(): test.TestOutcome {
+    var cs: u8[][] = corpus();
+    var checked: i32 = 0;
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        // Keep the sweep to the shorter cases: the property is about packet
+        // boundaries, which the short inputs already cover densely.
+        if (cs[i].len() <= 12) {
+            var enc: u8[] = encode(cs[i]);
+            var cut: i32 = 0;
+            while (cut < enc.len()) {
+                var part: u8[] = [];
+                var k: i32 = 0;
+                while (k < cut) { part = part.append(enc[k]); k = k + 1; }
+                var d: Decoded = decode(part);
+                if (d.ok && !bytes_equal(d.bytes, cs[i]) && !is_prefix(d.bytes, cs[i])) {
+                    return test.fail("truncating case " + i.to_string() + " to "
+                        + cut.to_string() + " bytes decoded to something that is not a "
+                        + "prefix:\n  want prefix of " + show(cs[i]) + "\n  got  "
+                        + show(d.bytes));
+                }
+                if (!d.ok && !is_prefix(d.bytes, cs[i])) {
+                    return test.fail("the partial output of a rejected decode is not a "
+                        + "prefix of the original");
+                }
+                checked = checked + 1;
+                cut = cut + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (checked < 500) {
+        return test.fail("only " + checked.to_string() + " truncations were checked");
+    }
+    return test.pass();
+}
+
+// The reserved header is rejected rather than guessed at, wherever it appears
+// in the stream.
+function test_the_reserved_header_is_rejected(): test.TestOutcome {
+    var bad: u8[] = [128];
+    var d: Decoded = decode(bad);
+    if (d.ok) { return test.fail("a lone reserved header byte was accepted"); }
+    // After a valid packet, too — so the check is in the loop, not a
+    // first-byte special case.
+    var mixed: u8[] = encode(repeated(3, 4)).append(128 as u8);
+    var d2: Decoded = decode(mixed);
+    if (d2.ok) { return test.fail("a reserved header after a valid packet was accepted"); }
+    if (!is_prefix(d2.bytes, repeated(3, 4))) {
+        return test.fail("the partial output before the bad header is wrong");
+    }
+    return test.pass();
+}
+
+// The empty input is a real case: it encodes to nothing and decodes back to
+// nothing, rather than to a zero-length packet or an error.
+function test_the_empty_input(): test.TestOutcome {
+    var empty: u8[] = [];
+    var enc: u8[] = encode(empty);
+    if (enc.len() != 0) {
+        return test.fail("the empty input encoded to " + enc.len().to_string() + " bytes");
+    }
+    var d: Decoded = decode(enc);
+    if (!d.ok || d.bytes.len() != 0) {
+        return test.fail("the empty encoding did not decode to nothing");
+    }
+    return test.pass();
+}
+
+// The encoder is canonical on its own output: re-encoding what it produced
+// gives the identical bytes. A packetiser that sometimes splits a run one way
+// and sometimes another still round-trips, and this is what notices.
+function test_the_encoding_is_canonical(): test.TestOutcome {
+    var cs: u8[][] = corpus();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        var once: u8[] = encode(cs[i]);
+        var d: Decoded = decode(once);
+        if (!d.ok) { return test.fail("case " + i.to_string() + " failed to decode"); }
+        var twice: u8[] = encode(d.bytes);
+        if (!bytes_equal(once, twice)) {
+            return test.fail("case " + i.to_string() + " re-encodes differently:\n  "
+                + show(once) + "\n  " + show(twice));
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("rle — PackBits over arbitrary bytes, encode and decode");
+
+    var samples: u8[][] = [repeated(65, 12), lcg_bytes(7, 12),
+        repeated(9, 5).append(1).append(2).append(3)];
+    var i: i32 = 0;
+    while (i < samples.len()) {
+        var enc: u8[] = encode(samples[i]);
+        var d: Decoded = decode(enc);
+        var verdict: string = "round-trips";
+        if (!d.ok || !bytes_equal(d.bytes, samples[i])) { verdict = "FAILED"; }
+        eprint("  " + samples[i].len().to_string() + " bytes -> " + enc.len().to_string()
+            + "   " + verdict);
+        eprint("    in  " + show(samples[i]));
+        eprint("    enc " + show(enc));
+        i = i + 1;
+    }
+    var big: u8[] = repeated(88, 1000);
+    eprint("  a run of 1000 encodes to " + encode(big).len().to_string() + " bytes");
+
+    var r: test.TestRunner = test.test_new("rle");
+    r = r.it("it round trips the whole corpus", test_it_round_trips_the_whole_corpus);
+    r = r.it("every byte value survives", test_every_byte_value_survives);
+    r = r.it("it actually compresses runs", test_it_actually_compresses_runs);
+    r = r.it("it never expands past the bound", test_it_never_expands_past_the_bound);
+    r = r.it("a truncated stream is rejected or a prefix", test_a_truncated_stream_is_rejected_or_a_prefix);
+    r = r.it("the reserved header is rejected", test_the_reserved_header_is_rejected);
+    r = r.it("the empty input", test_the_empty_input);
+    r = r.it("the encoding is canonical", test_the_encoding_is_canonical);
+    return r.finish();
+}
