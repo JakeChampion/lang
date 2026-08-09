@@ -83,22 +83,51 @@ emitted text rather than a change to instruction selection, so it needs no
 clobber analysis: `popq Y` reads what the line above it just pushed, which makes
 the pair `Y := X` whatever either line was *meant* for.
 
-That is an instalment, not the fix. What it does NOT touch is the shape that
-dominates a binary op — the operand pair left one instruction apart once the
-inner pair folds:
+That is an instalment, not the fix — but the rest of the peephole avenue is
+**not** where the remaining cost is, and the numbers say so clearly enough to
+save the next person the detour.
+
+The obvious follow-up is the non-adjacent pair: a binary op's outer operands,
+left one instruction apart once the inner pair folds.
 
 ```asm
 pushq -8(%rbp)          movq -16(%rbp), %rcx
-movq -16(%rbp), %rcx    movq -8(%rbp), %rax     # not done: needs clobber analysis
+movq -16(%rbp), %rcx    movq -8(%rbp), %rax     # not done — and not worth it
 popq %rax
 ```
 
-Reaching that one means proving no instruction between the push and the pop
-changes the pushed source, which is a real analysis (implicit writes make a
-mnemonic blocklist unsafe — `idivq %rcx` clobbers `%rax` while naming neither).
-Worth roughly as much again. Re-measure `arr_push` before assuming the two
-together clear the bar: 353 instructions less 20% is still ~280 against 27, so
-the gap is one that instruction selection, not peepholes, has to close.
+**Measure it before building it.** On the post-peephole self-compile
+(1,485,135 lines) every push/pop pair still matched inside a basic block comes
+to ~43,600 — 20,815 at distance 2, 15,210 at distance 3, ~7,600 beyond. Folding
+*all* of them, with an unbounded window, is **2.9%**. The adjacent case was 85%
+of every in-block pair there ever was. Paying for a clobber analysis to get the
+remaining 15% is a bad trade, and the analysis is not cheap: implicit writes
+make a mnemonic blocklist unsafe, since `idivq %rcx` clobbers `%rax` while
+naming neither.
+
+### Where the cost actually is: every argument goes via the stack
+
+Sorting the 268,596 surviving pushes by what consumes them:
+
+| consumed by | count |
+| --- | --- |
+| a `call` (stack argument) | 171,881 |
+| a `popq` (peephole-able) | 42,331 |
+| something else | ~54,000 |
+
+with 130,118 call sites and 132,310 `addq $N, %rsp` cleanups beside them. Two
+thirds of all remaining pushes are argument setup. Every call pays push-per-arg
+plus a stack adjustment, and the callee then re-loads each one from `N(%rbp)`
+into its local slot.
+
+So the lever for the hot core is **register-passing for direct calls**, not more
+peepholing. Note what that would touch before starting: the hand-written runtime
+blobs call migrated helpers as `__fn___fern_*` under the current stack ABI, so
+caller, callee prologue, and every hand-asm call site move together — a roadmap
+decision, not a drive-by.
+
+And none of this on its own clears the `arr_push` bar: 353 instructions less 20%
+is still ~280 against 27.
 
 One rule the attempt did establish, which applies to any future raw op: **it
 must push a result.** Every raw op is typed `i32` and the statement lowering
