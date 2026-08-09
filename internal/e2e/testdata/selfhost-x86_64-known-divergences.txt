@@ -64,19 +64,3 @@
 # never x86-64-specific — all three self-host backends had the same single-read
 # shape, and the wasm leg only looked clean because it sets skipStdin and so
 # never asked. Keep that in mind before reading a lane's silence as coverage.
-
-# --- i32::MIN in a struct field, x86-64 self-host only --------------------
-# `smallest_int_literal`: the case's other five literal positions (var init,
-# argument, return, array element, match arm) are all correct here now, and the
-# whole case passes on the self-host wasm and arm64 legs. What remains is one
-# position on THIS leg: a struct field initialised with -2147483648 reads back
-# as 2147483648, so the case exits 5 at its `bounds.lo != a` check.
-#
-#     struct B { lo: i32, hi: i32 }
-#     var s: B = B { lo: -2147483648, hi: 7 };
-#     s.lo  // 2147483648 on self-host x86-64; -2147483648 on wasm, arm64, interp
-#
-# Same family as #6396 (a negated i32::MIN literal carried at 64 bits) but a
-# different path — that fix settled the `var` initialiser via infer_expr_width,
-# and the struct-field literal reaches its width decision another way.
-smallest_int_literal 6458 self-host x86-64: i32::MIN in a struct field reads back unsigned

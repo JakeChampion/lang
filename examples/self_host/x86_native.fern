@@ -1399,12 +1399,12 @@ function x86_rodata_label(a: X86Asm, name: string): X86Asm {
     return a;
 }
 
-// x86_rodata_quad appends an 8-byte little-endian value (lo + hi 32-bit
-// halves) to .rodata — a `.quad` constant.
-function x86_rodata_quad(a: X86Asm, lo: i32, hi: i32): X86Asm {
-    a = X86Asm { ...a, rodata: x86_le32(a.rodata, lo) };
-    a = X86Asm { ...a, rodata: x86_le32(a.rodata, hi) };
-    return a;
+// x86_rodata_quad appends `v` as 8 little-endian bytes to .rodata — a `.quad`
+// constant. The value is i64 because a `.quad` is: taking it as an i32 half and
+// a separately-supplied high half meant every caller had to know the sign, and
+// the one caller passed a hardcoded zero (#6458).
+function x86_rodata_quad(a: X86Asm, v: i64): X86Asm {
+    return X86Asm { ...a, rodata: x86_le64_i64(a.rodata, v) };
 }
 
 // x86_bss_label records `name` at the current .bss offset (section 2).
@@ -2982,7 +2982,12 @@ pub function x86_gas_assemble(src: string): X86Asm {
                     // would be 0.
                     a = x86_rodata_quad_sym(a, qop);
                 } else {
-                    a = x86_rodata_quad(a, x86_gas_atoi(qop), 0);
+                    // Parsed as i64, not i32: a `.quad` holds the full 64-bit
+                    // value, and reading it narrow lost both ends. A negative
+                    // one came back zero-extended (a const-struct `i32` field of
+                    // -5 read as 4294967291, #6458) and anything past 2^32
+                    // simply truncated.
+                    a = x86_rodata_quad(a, x86_gas_atoi64(qop));
                 }
             } else if (x86_str_starts_with(line, ".long")) {
                 // `.long a, b, …`: each comma-separated value as 4 little-endian

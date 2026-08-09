@@ -1,0 +1,33 @@
+// A struct literal whose every field is a scalar literal lowers to a CONST
+// AGGREGATE placed in static data rather than allocated, and each field is
+// written as one `.quad`. Reading that directive narrow zero-extended every
+// negative constant — not only the boundary magnitude — so `-5` came back as
+// 4294967291 (#6458).
+//
+// The same value routed through a variable takes the ordinary struct_make path
+// and was always correct, so each field is checked against its variable-built
+// twin: a run where both are wrong the same way still fails the absolute check
+// below.
+import "std/i32";
+
+struct B { a: i32, b: i32, c: i32 }
+
+function main(): i32 {
+    var k: B = B { a: -5, b: -2147483647, c: -2147483648 };
+    if (k.a != -5) { return 1; }
+    if (k.b != -2147483647) { return 2; }
+    if (k.c != -2147483648) { return 3; }
+
+    var v0: i32 = -5;
+    var v1: i32 = -2147483647;
+    var v2: i32 = 0 - 2147483647 - 1;
+    var m: B = B { a: v0, b: v1, c: v2 };
+    if (k.a != m.a) { return 4; }
+    if (k.b != m.b) { return 5; }
+    if (k.c != m.c) { return 6; }
+
+    // A negative field still reads back negative after a round trip through
+    // to_string, which is how the issue's repro surfaced it.
+    if (k.a.to_string() != "-5") { return 7; }
+    return 0;
+}
