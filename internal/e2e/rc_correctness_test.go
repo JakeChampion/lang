@@ -3974,6 +3974,72 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The fresh-container field read (#6401) applied to a container the
+		// caller still owns: `pick` RETURNS ITS OWN PARAMETER, so
+		// `pick(bx).items` hands back the struct `bx` holds, and `bx` is read
+		// again after every extraction.
+		//
+		// What this pins is the RUNTIME backstop, not the static predicate.
+		// Measured: deliberately breaking the static gate so it claims this
+		// container leaves the case passing on all three backends, because
+		// `return <param>` emits the return-transfer inc and the container
+		// arrives at rc 2 — emitOwnedSlotDrop's is_unique gate then declines
+		// and only decs. That is the safety argument the lowering rests on,
+		// so it is worth a case; it is NOT evidence that the static gate is
+		// correct, and a change that removed the is_unique gate is what this
+		// would catch.
+		name: "field_read_off_param_returning_call_is_not_claimed",
+		src: `
+import "core/int";
+import "std/i32";
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function pick(b: Box): Box { return b; }
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var bx: Box = Box { items: [P { a: 1, b: 2 }, P { a: 3, b: 4 }], tag: 5 };
+        var a: P[] = pick(bx).items;
+        var c: P[] = pick(bx).items;
+        t = t + a[0].a + c[1].b + bx.items[1].a + bx.tag;
+        r = r + 1;
+    }
+    return (t - 260) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The claiming shape, looping so the container's freed blocks are
+		// recycled into the next round. Every field kind the retain has to
+		// know about is extracted from a fresh container: an array, a heap
+		// string past SSO, and a scalar (which takes the no-retain path).
+		// An unbalanced retain leaks — invisible here — but an unbalanced
+		// DROP hands a live block to the freelist, and the next round's
+		// construction reads it back.
+		name: "field_read_off_fresh_container_reclaims",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32, name: string }
+function mk(i: i32): Box {
+    return Box { items: [P { a: i, b: i + 1 }, P { a: i + 2, b: i + 3 }], tag: i, name: "boxed-name-" + i.to_string() };
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var a: P[] = mk(r).items;
+        var s: string = mk(r).name;
+        var g: i32 = mk(r).tag;
+        t = t + a[0].a + a[1].b + s.len() + g;
+        r = r + 1;
+    }
+    return (t - 880) + __rc_underflow_count();
+}`,
+	},
+	{
 		// The reclaiming shape: a struct holding a capturing closure, built
 		// and discarded in a loop so the freed pair / env / capture blocks are
 		// recycled into the next round. An over-release here hands a live

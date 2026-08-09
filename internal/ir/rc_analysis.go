@@ -1539,6 +1539,25 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				}
 			}
 		}
+		// A FRESH owned container is the same counted alias, one step
+		// further: `mk_box().items` has no local to reclaim the container at
+		// all, so the FieldAccess lowering retains the loaded field and then
+		// deep-drops the container, which nets the field to this
+		// expression's own single reference (#6401). That leaves the
+		// destination genuinely owning it — the conservative taint would
+		// strand the retain instead, which is what turned a 32 B/round
+		// container leak into a 64 B/round field leak when the lowering
+		// landed on its own.
+		//
+		// Gated on exactly the predicate that lowering uses, so the two
+		// cannot disagree: a struct/tuple temp the borrow analysis proved
+		// fresh. Maps stay out for the reason the local case gives above —
+		// their slot drop deep-frees the value column rather than being the
+		// shallow is_unique-gated release the counted-alias argument rests
+		// on.
+		if b.freshOwnedFieldContainer(x.Target) && !isMapType(b.exprType(x)) {
+			return false
+		}
 		return true
 	case *ast.Index:
 		return true
