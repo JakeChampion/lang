@@ -375,6 +375,40 @@ emitter; when the table is empty, `runtime_need_deps`/`close_needs`/`need`/
   that works on the IR + self-host path but not the legacy AST→asm backend is
   acceptable per the project's stated gap policy.
 
+## What is left on the register backends, and what each needs
+
+Audited against the code at `ca576fc8`, because the interesting question for
+the next slice is not "which helpers are hand-written" but "which of them the
+floor can already express". The answer is: **all but one**.
+
+| still hand-asm | syscall | args | floor |
+| --- | --- | --- | --- |
+| `tcp_close` | `close` | 1 | `__syscall3` |
+| `tcp_accept` | `accept` | 3 | `__syscall3` |
+| `tcp_connect` / `tcp_listen` / `tcp_recv` | socket/bind/listen/connect/recvfrom | ≤3 | `__syscall3` |
+| `tcp_send` | `write` | 3 | `__syscall3` |
+| `poll` | `poll` | 2 (+ a built pollfd array) | `__syscall3` |
+| `timer_fd` | `timerfd_*` | 4 | `__syscall4` |
+| `proc_fork` | `clone` | 0 | `__syscall3` |
+| `proc_waitpid` | `wait4` | 2 | `__syscall3` |
+| `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
+| `sleep_ms` (Linux) | `nanosleep` | 2 | `__syscall3` |
+| **`sleep_ms` (Darwin)** | **`select`** | **5** | **needs `__syscall5`** |
+
+`tcp_pollable` issues no syscall at all. The remaining non-leaf entries
+(`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
+machinery) are infrastructure, not migration targets.
+
+**Do not read syscall arity off the registers the hand-asm touches.** Doing
+that here gave `tcp_send` six arguments and `proc_exec` six; both are three,
+and the extra registers are scratch in their byte-copy loops. Read the syscall
+number and count the arguments it actually takes.
+
+So `__syscall5` buys exactly one thing — Darwin's sleep — and nothing else in
+this table is waiting on the floor. The long entries are long because they
+build a struct (`sockaddr_in`, `pollfd[]`, `argv`) before the call, which is
+`__raw_alloc` + `__raw_store8` work, not a missing primitive.
+
 ## Validation strategy per slice
 
 1. **Differential** — emit the program both ways (helper-as-asm vs
