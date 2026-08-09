@@ -62,6 +62,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
+		"    if (tcp_listen(0) < 0) { return 18; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -108,7 +109,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// target and only the number moves, so no per-target fork.
 		"proc_waitpid",
 		// timerfd_create + timerfd_settime over an itimerspec in __fern_scratch.
-		"timer_fd"} {
+		"timer_fd",
+		// socket + bind + listen over a byte-built sockaddr_in. Its first two
+		// bytes are the one per-target difference (XNU has sin_len).
+		"tcp_listen"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
