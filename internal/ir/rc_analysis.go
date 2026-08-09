@@ -586,7 +586,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				}
 				switch pt := p.Type.(type) {
 				case ast.StringType:
-					flags[i] = stringParamCounted(fn, p.Name)
+					flags[i] = stringParamCounted(fn, p.Name, out)
 				case ast.StructType:
 					// Struct-param generalisation: credit `p` when every one of
 					// its appearances is a counted store, a non-retaining read,
@@ -654,9 +654,11 @@ func pureReadReceiverBuiltin(name string) bool {
 // stringParamCounted reports whether string parameter `pn` of fn is retained
 // only through counted constructions or non-retaining reads — every appearance
 // is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, the receiver
-// of a pure-read builtin (`s.len()`), or the source of a byte index / slice.
-// Conservative: a param qualifies only when every occurrence is credited.
-func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
+// of a pure-read builtin (`s.len()`), the source of a byte index / slice, or
+// an argument to a callee whose parameter in that position is itself
+// counted-retain. Conservative: a param qualifies only when every occurrence
+// is credited.
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
 	safe := map[*ast.Ident]bool{}
 	mark := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
@@ -703,6 +705,28 @@ func stringParamCounted(fn *ast.FuncDecl, pn string) bool {
 			// scalar, retaining nothing, so the receiver occurrence is safe.
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
+			}
+			// Passing `s` on to a callee that is ITSELF counted-retain in that
+			// position retains nothing new: whatever the callee does with it is
+			// already known to be a counted store or a pure read. This is the
+			// argument-position rule structParamProjectionsSafe has always had,
+			// and its absence here meant one FORWARDING frame disqualified the
+			// whole chain — a dispatcher like `check(kind, s) { return
+			// iban_valid(s); }` left every caller's freshly built string
+			// permanently taint-ineligible, so `var bad = rewrite(x);
+			// check(k, bad)` leaked it while the inline spelling was flat.
+			//
+			// Sound by the same fixpoint argument as the struct case: the
+			// summary starts all-false and only ever gains credits, so a
+			// mutual-recursion cycle with no grounding stays uncredited.
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if cs, known := summary[id.Name]; known {
+					for ai, a := range x.Args {
+						if ai < len(cs) && cs[ai] {
+							mark(a)
+						}
+					}
+				}
 			}
 		}
 		return true

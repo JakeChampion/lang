@@ -1,0 +1,553 @@
+// examples/proposals/checksums.fern — proposal turn, drawn line 200:
+// "An ISBN/IBAN/credit-card checksum validator."
+//
+// A validator that returns `true` for everything passes every test made of
+// known-good numbers, and there are a lot of validators shaped like that. So
+// the load-bearing test here is not a table of valid inputs — it is the
+// property a checksum EXISTS for:
+//
+//   **every single-digit substitution of a valid number must be rejected.**
+//
+// That is swept over every position of every valid number in the corpus,
+// against every other digit, for all four schemes. It is what a check digit
+// promises, and nothing else in the file would notice its absence.
+//
+// The second property is transpositions, and it is where the four schemes
+// genuinely differ — so it is stated exactly rather than approximated:
+//
+//   - ISBN-10 is mod 11 with distinct positional weights, so it detects EVERY
+//     adjacent transposition.
+//   - Luhn detects every adjacent transposition EXCEPT `09` <-> `90`. That
+//     exception is real and is asserted as an exact set rather than skipped —
+//     the test computes which pairs go undetected and requires that set to be
+//     precisely {09, 90}, so a Luhn that missed more would fail even though
+//     "it detects most transpositions" stayed true.
+//   - ISBN-13 and IBAN are mod 10 and mod 97 over a rearranged string; their
+//     transposition behaviour is not asserted beyond what the substitution
+//     sweep already covers.
+//
+// The third is that computing a check digit and validating one agree: for a
+// swept set of bodies, appending the computed digit must produce something the
+// validator accepts. A validator and a generator that disagree is the bug that
+// ships a batch of unusable numbers.
+//
+// Two implementation notes worth stating, because both are where these get
+// written wrong:
+//
+//   - **Luhn doubles every second digit FROM THE RIGHT.** Taken from the left
+//     it is correct for even-length inputs and wrong for odd ones, which is
+//     why the corpus carries both lengths.
+//   - **IBAN's mod 97 is over a number far too large for any integer type**,
+//     so it is folded digit by digit (`rem = (rem * 10 + d) % 97`). The
+//     rearrangement — first four characters moved to the end — happens before
+//     the letter-to-digit expansion, and a validator that does it the other
+//     way round still accepts many valid IBANs.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------- utilities
+
+function is_digit(c: u8): boolean { return c >= 48 && c <= 57; }
+function digit_of(c: u8): i32 { return (c as i32) - 48; }
+
+function all_digits(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < s.len()) { if (!is_digit(s[i])) { return false; } i = i + 1; }
+    return true;
+}
+
+// ------------------------------------------------------------------ Luhn
+
+// Doubles every second digit counting FROM THE RIGHT, which is what makes the
+// parity depend on the length rather than on the position index.
+function luhn_valid(s: string): boolean {
+    if (!all_digits(s) || s.len() < 2) { return false; }
+    var sum: i32 = 0;
+    var dbl: boolean = false;
+    var i: i32 = s.len() - 1;
+    while (i >= 0) {
+        var d: i32 = digit_of(s[i]);
+        if (dbl) {
+            d = d * 2;
+            if (d > 9) { d = d - 9; }
+        }
+        sum = sum + d;
+        dbl = !dbl;
+        i = i - 1;
+    }
+    return sum % 10 == 0;
+}
+
+// The check digit that makes `body` valid when appended.
+function luhn_check_digit(body: string): i32 {
+    var sum: i32 = 0;
+    var dbl: boolean = true; // the appended digit will sit at the un-doubled end
+    var i: i32 = body.len() - 1;
+    while (i >= 0) {
+        var d: i32 = digit_of(body[i]);
+        if (dbl) {
+            d = d * 2;
+            if (d > 9) { d = d - 9; }
+        }
+        sum = sum + d;
+        dbl = !dbl;
+        i = i - 1;
+    }
+    return (10 - (sum % 10)) % 10;
+}
+
+// -------------------------------------------------------------- ISBN-10
+
+// Weights 10 down to 1, mod 11. The last position may be 'X' for 10 — and
+// only the last.
+function isbn10_valid(s: string): boolean {
+    if (s.len() != 10) { return false; }
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var v: i32 = 0;
+        if (is_digit(s[i])) {
+            v = digit_of(s[i]);
+        } else if (i == 9 && s[i] == 88) { // 'X', last position only
+            v = 10;
+        } else {
+            return false;
+        }
+        sum = sum + v * (10 - i);
+        i = i + 1;
+    }
+    return sum % 11 == 0;
+}
+
+// The check character for a 9-digit body: a digit, or "X" for 10.
+function isbn10_check_char(body: string): string {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) { sum = sum + digit_of(body[i]) * (10 - i); i = i + 1; }
+    var c: i32 = (11 - (sum % 11)) % 11;
+    if (c == 10) { return "X"; }
+    return c.to_string();
+}
+
+// -------------------------------------------------------------- ISBN-13
+
+// Alternating weights 1 and 3, mod 10.
+function isbn13_valid(s: string): boolean {
+    if (s.len() != 13 || !all_digits(s)) { return false; }
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 13) {
+        var w: i32 = 1;
+        if (i % 2 == 1) { w = 3; }
+        sum = sum + digit_of(s[i]) * w;
+        i = i + 1;
+    }
+    return sum % 10 == 0;
+}
+
+function isbn13_check_digit(body: string): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var w: i32 = 1;
+        if (i % 2 == 1) { w = 3; }
+        sum = sum + digit_of(body[i]) * w;
+        i = i + 1;
+    }
+    return (10 - (sum % 10)) % 10;
+}
+
+// ----------------------------------------------------------------- IBAN
+
+function is_upper(c: u8): boolean { return c >= 65 && c <= 90; }
+
+// The number an IBAN reduces to is far larger than any integer type here, so
+// the remainder is folded a digit at a time. Letters expand to two digits
+// (A=10 .. Z=35), and the expansion happens AFTER the first four characters
+// are moved to the end.
+function iban_valid(s: string): boolean {
+    if (s.len() < 15 || s.len() > 34) { return false; }
+    if (!is_upper(s[0]) || !is_upper(s[1])) { return false; }
+    if (!is_digit(s[2]) || !is_digit(s[3])) { return false; }
+    var i: i32 = 4;
+    while (i < s.len()) {
+        if (!is_digit(s[i]) && !is_upper(s[i])) { return false; }
+        i = i + 1;
+    }
+    var rem: i32 = 0;
+    var k: i32 = 0;
+    while (k < s.len()) {
+        // The rearranged order: positions 4.. first, then 0..3.
+        var at: i32 = k + 4;
+        if (at >= s.len()) { at = at - s.len(); }
+        var c: u8 = s[at];
+        if (is_digit(c)) {
+            rem = (rem * 10 + digit_of(c)) % 97;
+        } else {
+            var v: i32 = (c as i32) - 55; // 'A' -> 10
+            rem = (rem * 10 + v / 10) % 97;
+            rem = (rem * 10 + v % 10) % 97;
+        }
+        k = k + 1;
+    }
+    return rem == 1;
+}
+
+// ---------------------------------------------------------------- corpus
+
+function valid_luhn(): string[] {
+    return ["79927398713", "4539578763621486", "4111111111111111",
+        "5500005555555559", "6011000990139424", "378282246310005",
+        "371449635398431", "38520000023237"];
+}
+function valid_isbn10(): string[] {
+    return ["0306406152", "080442957X", "0198526636", "1861972717", "0553213113"];
+}
+function valid_isbn13(): string[] {
+    return ["9780306406157", "9781861972712", "9783161484100", "9780553213119"];
+}
+function valid_iban(): string[] {
+    return ["GB82WEST12345698765432", "DE89370400440532013000",
+        "FR1420041010050500013M02606", "NL91ABNA0417164300",
+        "CH9300762011623852957", "BE68539007547034"];
+}
+
+// Which validator a string belongs to, so the sweeps can run over all four
+// without four copies of every loop.
+function check(kind: string, s: string): boolean {
+    if (kind == "luhn") { return luhn_valid(s); }
+    if (kind == "isbn10") { return isbn10_valid(s); }
+    if (kind == "isbn13") { return isbn13_valid(s); }
+    return iban_valid(s);
+}
+
+function kinds(): string[] { return ["luhn", "isbn10", "isbn13", "iban"]; }
+
+function corpus_for(kind: string): string[] {
+    if (kind == "luhn") { return valid_luhn(); }
+    if (kind == "isbn10") { return valid_isbn10(); }
+    if (kind == "isbn13") { return valid_isbn13(); }
+    return valid_iban();
+}
+
+function replace_at(s: string, at: i32, c: u8): string {
+    var buf: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (i == at) { buf = buf.append(c); } else { buf = buf.append(s[i]); }
+        i = i + 1;
+    }
+    return string_from_bytes_unchecked(buf);
+}
+
+function swap_at(s: string, at: i32): string {
+    var buf: u8[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (i == at) { buf = buf.append(s[i + 1]); }
+        else if (i == at + 1) { buf = buf.append(s[i - 1]); }
+        else { buf = buf.append(s[i]); }
+        i = i + 1;
+    }
+    return string_from_bytes_unchecked(buf);
+}
+
+// ----------------------------------------------------------------- tests
+
+// The corpus is genuinely valid — otherwise every sweep below is vacuous.
+function test_the_known_good_numbers_are_accepted(): test.TestOutcome {
+    var ks: string[] = kinds();
+    var i: i32 = 0;
+    while (i < ks.len()) {
+        var cs: string[] = corpus_for(ks[i]);
+        if (cs.len() == 0) { return test.fail(ks[i] + " has no corpus"); }
+        var j: i32 = 0;
+        while (j < cs.len()) {
+            if (!check(ks[i], cs[j])) {
+                return test.fail(ks[i] + " rejected the valid \"" + cs[j] + "\"");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The property a check digit exists for: change any one digit and it must be
+// caught. Swept over every position, every replacement, every scheme.
+function test_every_single_digit_substitution_is_rejected(): test.TestOutcome {
+    var ks: string[] = kinds();
+    var checked: i32 = 0;
+    var i: i32 = 0;
+    while (i < ks.len()) {
+        var cs: string[] = corpus_for(ks[i]);
+        var j: i32 = 0;
+        while (j < cs.len()) {
+            var s: string = cs[j];
+            var at: i32 = 0;
+            while (at < s.len()) {
+                if (is_digit(s[at])) {
+                    var d: i32 = 0;
+                    while (d < 10) {
+                        var c: u8 = (48 + d) as u8;
+                        if (c != s[at]) {
+                            var bad: string = replace_at(s, at, c);
+                            if (check(ks[i], bad)) {
+                                return test.fail(ks[i] + ": \"" + bad + "\" accepted — it is \""
+                                    + s + "\" with position " + at.to_string() + " changed");
+                            }
+                            checked = checked + 1;
+                        }
+                        d = d + 1;
+                    }
+                }
+                at = at + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if (checked < 1000) {
+        return test.fail("only " + checked.to_string() + " substitutions were swept");
+    }
+    return test.pass();
+}
+
+// ISBN-10 is mod 11 with distinct weights, so it catches EVERY adjacent
+// transposition of differing digits.
+function test_isbn10_detects_every_transposition(): test.TestOutcome {
+    var cs: string[] = valid_isbn10();
+    var checked: i32 = 0;
+    var j: i32 = 0;
+    while (j < cs.len()) {
+        var s: string = cs[j];
+        var at: i32 = 0;
+        while (at + 1 < s.len()) {
+            if (s[at] != s[at + 1]) {
+                var bad: string = swap_at(s, at);
+                if (isbn10_valid(bad)) {
+                    return test.fail("isbn10 accepted \"" + bad + "\", a transposition of \""
+                        + s + "\" at " + at.to_string());
+                }
+                checked = checked + 1;
+            }
+            at = at + 1;
+        }
+        j = j + 1;
+    }
+    if (checked < 20) { return test.fail("only " + checked.to_string() + " transpositions"); }
+    return test.pass();
+}
+
+// Luhn's exception, asserted as an EXACT set. Over every adjacent pair of
+// differing digits in the corpus, the transpositions that go undetected must
+// be exactly the 0/9 pairs — not "mostly", and not more.
+function test_luhn_misses_exactly_the_zero_nine_transposition(): test.TestOutcome {
+    var cs: string[] = valid_luhn();
+    var missed: i32 = 0;
+    var caught: i32 = 0;
+    var j: i32 = 0;
+    while (j < cs.len()) {
+        var s: string = cs[j];
+        var at: i32 = 0;
+        while (at + 1 < s.len()) {
+            var a: i32 = digit_of(s[at]);
+            var b: i32 = digit_of(s[at + 1]);
+            if (a != b) {
+                var bad: string = swap_at(s, at);
+                var zero_nine: boolean = (a == 0 && b == 9) || (a == 9 && b == 0);
+                if (luhn_valid(bad)) {
+                    if (!zero_nine) {
+                        return test.fail("luhn missed the transposition of " + a.to_string()
+                            + b.to_string() + " in \"" + s + "\" at " + at.to_string());
+                    }
+                    missed = missed + 1;
+                } else {
+                    if (zero_nine) {
+                        return test.fail("luhn CAUGHT a 09/90 transposition in \"" + s
+                            + "\" at " + at.to_string() + " — the exception set is wrong");
+                    }
+                    caught = caught + 1;
+                }
+            }
+            at = at + 1;
+        }
+        j = j + 1;
+    }
+    if (caught < 20) { return test.fail("only " + caught.to_string() + " were exercised"); }
+    if (missed == 0) {
+        return test.fail("no 09/90 pair appeared in the corpus, so the exception is untested");
+    }
+    return test.pass();
+}
+
+// The generator and the validator agree: appending the computed check digit
+// must produce something the validator accepts.
+function test_computing_a_check_digit_produces_a_valid_number(): test.TestOutcome {
+    // Luhn and ISBN-13 bodies, and ISBN-10 nine-digit bodies.
+    var luhn_bodies: string[] = ["7992739871", "453957876362148", "1", "00000000",
+        "123456789012345"];
+    var i: i32 = 0;
+    while (i < luhn_bodies.len()) {
+        var full: string = luhn_bodies[i] + luhn_check_digit(luhn_bodies[i]).to_string();
+        if (!luhn_valid(full)) {
+            return test.fail("luhn generated \"" + full + "\", which it rejects");
+        }
+        i = i + 1;
+    }
+    var isbn13_bodies: string[] = ["978030640615", "978186197271", "978316148410"];
+    var j: i32 = 0;
+    while (j < isbn13_bodies.len()) {
+        var f13: string = isbn13_bodies[j] + isbn13_check_digit(isbn13_bodies[j]).to_string();
+        if (!isbn13_valid(f13)) {
+            return test.fail("isbn13 generated \"" + f13 + "\", which it rejects");
+        }
+        j = j + 1;
+    }
+    var isbn10_bodies: string[] = ["030640615", "080442957", "019852663", "186197271"];
+    var k: i32 = 0;
+    while (k < isbn10_bodies.len()) {
+        var f10: string = isbn10_bodies[k] + isbn10_check_char(isbn10_bodies[k]);
+        if (!isbn10_valid(f10)) {
+            return test.fail("isbn10 generated \"" + f10 + "\", which it rejects");
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// The 'X' check character belongs only in the last position, and stands for
+// ten rather than being skipped.
+function test_isbn10_handles_the_x_check_character(): test.TestOutcome {
+    if (!isbn10_valid("080442957X")) { return test.fail("a valid X-checked ISBN was rejected"); }
+    if (isbn10_valid("X804429570")) { return test.fail("X was accepted in the first position"); }
+    if (isbn10_valid("08X4429570")) { return test.fail("X was accepted mid-number"); }
+    // If X were treated as anything but ten, this number would not validate,
+    // so the acceptance above is not an accident of skipping it.
+    if (isbn10_valid("0804429570")) {
+        return test.fail("replacing the X with 0 still validated");
+    }
+    return test.pass();
+}
+
+// Malformed input is rejected rather than crashing or being coerced.
+function test_malformed_input_is_rejected(): test.TestOutcome {
+    var bad_luhn: string[] = ["", "1", "12a4", "  12", "4539578763621487"];
+    var i: i32 = 0;
+    while (i < bad_luhn.len()) {
+        if (luhn_valid(bad_luhn[i])) {
+            return test.fail("luhn accepted \"" + bad_luhn[i] + "\"");
+        }
+        i = i + 1;
+    }
+    var bad_isbn: string[] = ["", "030640615", "03064061523", "030640615Y", "abcdefghij"];
+    var j: i32 = 0;
+    while (j < bad_isbn.len()) {
+        if (isbn10_valid(bad_isbn[j])) {
+            return test.fail("isbn10 accepted \"" + bad_isbn[j] + "\"");
+        }
+        j = j + 1;
+    }
+    var bad_iban: string[] = ["", "GB82", "gb82WEST12345698765432",
+        "GBX2WEST12345698765432", "GB82WEST1234569876543",
+        "GB82WEST12345698765432EXTRAEXTRAEXTRA"];
+    var k: i32 = 0;
+    while (k < bad_iban.len()) {
+        if (iban_valid(bad_iban[k])) {
+            return test.fail("iban accepted \"" + bad_iban[k] + "\"");
+        }
+        k = k + 1;
+    }
+    return test.pass();
+}
+
+// Luhn's parity is counted from the right, so it must behave correctly at both
+// parities of length. Taken from the left, odd-length numbers break.
+function test_luhn_works_at_both_length_parities(): test.TestOutcome {
+    var odd: string[] = ["79927398713", "371449635398431"];
+    var even: string[] = ["4539578763621486", "38520000023237"];
+    var i: i32 = 0;
+    while (i < odd.len()) {
+        if (odd[i].len() % 2 != 1) { return test.fail("\"" + odd[i] + "\" is not odd-length"); }
+        if (!luhn_valid(odd[i])) { return test.fail("odd-length \"" + odd[i] + "\" rejected"); }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < even.len()) {
+        if (even[j].len() % 2 != 0) { return test.fail("\"" + even[j] + "\" is not even-length"); }
+        if (!luhn_valid(even[j])) { return test.fail("even-length \"" + even[j] + "\" rejected"); }
+        j = j + 1;
+    }
+    return test.pass();
+}
+
+// The IBAN check digits are the thing being verified, so corrupting them must
+// be caught — and a validator that expanded letters before rearranging would
+// still accept many of these.
+function test_iban_check_digits_are_load_bearing(): test.TestOutcome {
+    var cs: string[] = valid_iban();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        var s: string = cs[i];
+        // Every other value of the two check digits must be rejected.
+        var d: i32 = 0;
+        while (d < 10) {
+            var c: u8 = (48 + d) as u8;
+            if (c != s[2]) {
+                if (iban_valid(replace_at(s, 2, c))) {
+                    return test.fail("iban accepted \"" + s + "\" with check digit 1 changed");
+                }
+            }
+            if (c != s[3]) {
+                if (iban_valid(replace_at(s, 3, c))) {
+                    return test.fail("iban accepted \"" + s + "\" with check digit 2 changed");
+                }
+            }
+            d = d + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("checksums — Luhn, ISBN-10, ISBN-13 and IBAN");
+
+    var ks: string[] = kinds();
+    var i: i32 = 0;
+    while (i < ks.len()) {
+        var cs: string[] = corpus_for(ks[i]);
+        var line: string = "  " + ks[i] + ": ";
+        var j: i32 = 0;
+        while (j < cs.len() && j < 3) {
+            if (j > 0) { line = line + "  "; }
+            var verdict: string = "no";
+            if (check(ks[i], cs[j])) { verdict = "yes"; }
+            line = line + cs[j] + "=" + verdict;
+            j = j + 1;
+        }
+        eprint(line);
+        i = i + 1;
+    }
+    eprint("  a one-digit slip: 4539578763621486 -> 4539578763621586 = "
+        + luhn_valid("4539578763621586").to_string());
+    eprint("  check digit for 7992739871: " + luhn_check_digit("7992739871").to_string());
+    eprint("  check char for 080442957: " + isbn10_check_char("080442957"));
+
+    var r: test.TestRunner = test.test_new("checksums");
+    r = r.it("the known good numbers are accepted", test_the_known_good_numbers_are_accepted);
+    r = r.it("every single digit substitution is rejected", test_every_single_digit_substitution_is_rejected);
+    r = r.it("isbn10 detects every transposition", test_isbn10_detects_every_transposition);
+    r = r.it("luhn misses exactly the zero nine transposition", test_luhn_misses_exactly_the_zero_nine_transposition);
+    r = r.it("computing a check digit produces a valid number", test_computing_a_check_digit_produces_a_valid_number);
+    r = r.it("isbn10 handles the x check character", test_isbn10_handles_the_x_check_character);
+    r = r.it("malformed input is rejected", test_malformed_input_is_rejected);
+    r = r.it("luhn works at both length parities", test_luhn_works_at_both_length_parities);
+    r = r.it("iban check digits are load bearing", test_iban_check_digits_are_load_bearing);
+    return r.finish();
+}
