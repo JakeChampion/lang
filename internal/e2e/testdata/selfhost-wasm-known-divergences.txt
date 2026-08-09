@@ -105,7 +105,7 @@
 #
 #     got:  8361 / 16762 / grows
 #     want: 8361 / 16762 / flat
-alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat
+alloc_flat_index_of_fresh_container 6491 self-host: a POINTER element / field read out of a container nothing names is never reclaimed — grows, native flat
 
 # --- array-store element: the move is not ported ---------------------------
 # Same bug, same measured value, on all three legs — see the x86-64 sibling for

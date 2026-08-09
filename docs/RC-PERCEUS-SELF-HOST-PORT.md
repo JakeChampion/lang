@@ -5673,3 +5673,55 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   801/401 which is measured, not assumed: an escaping ARRAY binding partially
   retains), `TestSelfHostPerModuleEmitAllFixpointX86_64` (380.38 s, run FIRST), 27
   targeted suites 0 skips. Refs #6319 #6360 #4451.
+
+- 2026-08-09: **The fresh-owned-container READ reclaim, scalar half (#6491).**
+  `mk()[i]` and `mk().f` read a value out of a container NOTHING NAMES, so the
+  read is the only place it can be reclaimed — there is no slot for the exit
+  sweep to find. The self-host leaked the whole container per evaluation.
+  Measured through `bin/fern-selfhost`, x86-64, fresh bytes at 50 and 100 rounds:
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `lit(n)[2]` — scalar elem, array-literal producer | 2800 / 5600 | **56 / 0** | 32 / 0 |
+  | `pair(n).k` — scalar field, scalar-only struct | 2400 / 4800 | **48 / 0** | 32 / 0 |
+  | `bag(n).k` — scalar field, `i32[]`-field struct | 5200 / 10400 | **104 / 0** | 64 / 0 |
+  | `nums(n)[1]` — scalar elem, LOCAL-built producer | 2824 / 5600 | 2824 / 5600 | 48 / 0 |
+  | `boxed(n).k` — scalar field, string-fielded struct | 3600 / 7200 | 1248 / 2400 | 32 / 0 |
+
+  The admission is **borrowed wholesale from the discarded-`mk(i);` statement
+  reclaim** rather than invented: the callee must be in
+  `return_fresh_struct_ret_fns` (bare entry for a struct, `"ARR:"` for a
+  scalar-element array), so the returned box is the unambiguous sole owner of
+  itself and of every field buffer. That is what makes the `__struct_drop_<T>`
+  in the `bag` row safe; a looser "any struct-returning call" would free the
+  caller's live buffer, which `borrowed-field-refused` pins by re-filling the
+  freed buffer and reading it back.
+
+  **SCALAR reads only, and that boundary is the whole reason this slice is
+  self-contained.** A pointer element/field ALIASES the container about to be
+  freed, so it needs three sites to agree — retain at the read, is_unique-gated
+  deep drop, and a binding that takes the read as a MOVE rather than an alias
+  (native's `isOwnedContainerRead` / `rhsTainted` pair). A scalar is copied out
+  of the buffer, so it needs none of them.
+
+  Two rows stay open, and the table above is what they cost rather than a guess:
+
+  - **A LOCAL-built producer** (`var out = []; out = out.append(x); return out;`)
+    earns no `"ARR:"` entry — that registry admits only a direct array-literal
+    return. `local-built-producer-still-grows` asserts it AS a leak, with the
+    `>` that must become `==` when the admission widens.
+  - **The pointer half**, which is what `alloc_flat_index_of_fresh_container`
+    actually measures: its element and field are strings AND its producers are
+    local-built, so it needs both widenings. Its rows in all three
+    `selfhost-*-known-divergences.txt` files say so now instead of describing
+    the whole mechanism as missing.
+
+  The `boxed` residual is NOT this shape: it is 24 B/round of const_str box, the
+  pre-existing `var t: string = "abc"` leak, measured identically on a probe with
+  no container read in it at all. The Box itself is reclaimed.
+
+  VERIFIED: `TestSelfHostFreshContainerReadReclaimIRX86_64` (new — 5 rows),
+  every case additionally run through the self-host on **arm64 (qemu) and wasm
+  (wasmtime)**, where the leak reproduced identically on base (exit 92) and is
+  gone after. `TestSelfHostPerModuleEmitAllFixpointX86_64` run FIRST, per the
+  rule for reclaim changes. Refs #6491 #4451.
