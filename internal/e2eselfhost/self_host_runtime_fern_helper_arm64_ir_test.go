@@ -57,6 +57,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// run, so a bogus fd is fine — this only has to make the ops lower.
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
+		"    sleep_ms(1);\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -90,7 +91,12 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// The socket leaves that take only an fd (#2649). The rest of the tcp
 		// family is still hand-asm: tcp_send is blocked on a string-data-pointer
 		// bridge the floor does not have, not on a syscall.
-		"tcp_close", "tcp_accept"} {
+		"tcp_close", "tcp_accept",
+		// sleep_ms is the first __syscall5 consumer — but only on Darwin, which
+		// sleeps with select(2). This Linux emit reaches it through nanosleep,
+		// so the assertion here is just that the helper is Fern at all; the
+		// Darwin test below is what pins the five-argument path.
+		"sleep_ms"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -206,6 +212,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// run, so a bogus fd is fine — this only has to make the ops lower.
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
+		"    sleep_ms(1);\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -241,6 +248,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		{"gettimeofday", "116"},
 		{"getdirentries64", "344"},
 		{"AT_REMOVEDIR", "128"},
+		// select, XNU's stand-in for nanosleep — and the only reason
+		// __syscall5 exists. Linux sleeps through nanosleep, which takes two.
+		{"select", "93"},
 	} {
 		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)

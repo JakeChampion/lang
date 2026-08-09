@@ -440,6 +440,11 @@ pub function op_syscall4(): Op { return op0("syscall4"); }
 // envp pointer (the `char **` the kernel handed _start, saved in __fern_envp).
 // A single `movq __fern_envp(%rip), %rax`. The env leaf walks the array from it.
 pub function op_raw_environ(): Op { return op0("raw_environ"); }
+// syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
+// and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
+// `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
+// five arguments. pops [nr, a1..a5] → the syscall return value; a5 → %r8 / x4.
+pub function op_syscall5(): Op { return op0("syscall5"); }
 // raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
 // the machine's FULL pointer width. It exists because `p + off` written in the
 // helper source does not survive: the surface type of a raw pointer is i32, so
@@ -1556,6 +1561,7 @@ function kind_id_4(name: string): i32 {
     if (name == "memchr") { return 225; }
     if (name == "write_file_exec") { return 226; }
     if (name == "ascii_run") { return 227; }
+    if (name == "syscall5") { return 228; }
     // ADDING AN EXTENSION TAG: take the next id here AND register it in
     // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
     // for the number you took. Two branches that each claim "the next free
@@ -1823,13 +1829,14 @@ function kind_name_4(id: i32): string {
     if (id == 225) { return "memchr"; }
     if (id == 226) { return "write_file_exec"; }
     if (id == 227) { return "ascii_run"; }
+    if (id == 228) { return "syscall5"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … ascii_run=227)
+// extension tags beyond kind_count() (struct_copy=198 … syscall5=228)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }

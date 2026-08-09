@@ -8563,6 +8563,22 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!s44.ok) { return s44; }
         return s44.emit(ir.op_syscall4());
     }
+    // __syscall5(nr, a1, a2, a3, a4, a5) — the 5-arg sub-floor sibling.
+    if (cid.name == "__syscall5" && c.args.len() == 6) {
+        var s50: LowerState = lower_expr(c.args[0], s);
+        if (!s50.ok) { return s50; }
+        var s51: LowerState = lower_expr(c.args[1], s50);
+        if (!s51.ok) { return s51; }
+        var s52: LowerState = lower_expr(c.args[2], s51);
+        if (!s52.ok) { return s52; }
+        var s53: LowerState = lower_expr(c.args[3], s52);
+        if (!s53.ok) { return s53; }
+        var s54: LowerState = lower_expr(c.args[4], s53);
+        if (!s54.ok) { return s54; }
+        var s55: LowerState = lower_expr(c.args[5], s54);
+        if (!s55.ok) { return s55; }
+        return s55.emit(ir.op_syscall5());
+    }
     // __raw_scratch(n) — fixed static scratch buffer ptr (#2649).
     if (cid.name == "__raw_scratch" && c.args.len() == 1) {
         var rsc: LowerState = lower_expr(c.args[0], s);

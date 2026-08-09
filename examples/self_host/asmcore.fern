@@ -382,6 +382,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "clock_gettime") { return "228"; }
         if (name == "getdents") { return "217"; }
         if (name == "accept") { return "43"; }
+        if (name == "nanosleep") { return "35"; }
         return "-1";
     }
     if (t == "arm64-darwin") {
@@ -410,6 +411,7 @@ pub function sysno(t: string, name: string): string {
         // every target rather than branching on the arity.
         if (name == "getdents") { return "344"; }
         if (name == "accept") { return "30"; }
+        if (name == "select") { return "93"; }
         return "-1";
     }
     // arm64 (Linux).
@@ -427,6 +429,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "clock_gettime") { return "113"; }
     if (name == "getdents") { return "61"; }
     if (name == "accept") { return "202"; }
+    if (name == "nanosleep") { return "101"; }
     return "-1";
 }
 
@@ -605,6 +608,25 @@ pub function rt_src_tcp_close(t: string): string {
 
 pub function rt_src_tcp_accept(t: string): string {
     return "function __fern_tcp_accept(fd: i32): i32 { return __syscall3(" + sysno(t, "accept") + ", fd, 0, 0); }";
+}
+
+// rt_src_sleep_ms backs `sleep_ms(ms)` (#2649, syscall-leaf) — and is the first
+// consumer of __syscall5.
+//
+// This is the leaf whose two targets genuinely disagree on the CALL, not just
+// the number: Linux sleeps with `nanosleep(&timespec, NULL)`, but XNU has no
+// nanosleep syscall at all and sleeps with
+// `select(0, NULL, NULL, NULL, &timeval)` — five arguments, and a subsecond
+// field measured in MICROseconds rather than nanoseconds. Both halves write the
+// two-word struct the same way, through __raw_store_ptr's word-sized slots, so
+// only the multiplier and the call differ.
+//
+// A non-positive `ms` returns without a syscall, matching the hand-asm.
+pub function rt_src_sleep_ms(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var tv: i32 = __raw_scratch(16); __raw_store_ptr(tv, 0, ms / 1000); __raw_store_ptr(tv, 1, (ms % 1000) * 1000); return __syscall5(" + sysno(t, "select") + ", 0, 0, 0, 0, tv); }";
+    }
+    return "function __fern_sleep_ms(ms: i32): i32 { if (ms <= 0) { return 0; } var ts: i32 = __raw_scratch(16); __raw_store_ptr(ts, 0, ms / 1000); __raw_store_ptr(ts, 1, (ms % 1000) * 1000000); return __syscall3(" + sysno(t, "nanosleep") + ", ts, 0, 0); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
@@ -2539,6 +2561,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // sibling. Returns the syscall result as i32.
                     if (id.name == "__syscall3") { return ty_i32(); }
                     if (id.name == "__syscall4") { return ty_i32(); }
+                    if (id.name == "__syscall5") { return ty_i32(); }
                     if (id.name == "__raw_environ") { return ty_i32(); }
                     // Fixed static scratch buffer for syscall leaves (timespec /
                     // stat) — reused, never freed. Returns the buffer ptr as i32.
