@@ -20,8 +20,14 @@ import (
 // than a widened lookup. `is_opt` is only ever set when
 // `!body_has_top_level_match`, so precise-drop takes the shape exactly when the
 // flat analysis cannot, and the flat analysis takes it exactly when precise-drop
-// stands down. Widening BOTH would put two credits on one box — the failure mode
-// #6480 shipped and CI caught as `__rc_underflow_count() == -1`.
+// stands down.
+//
+// Keeping that split is a territory boundary rather than a double-free guard, and
+// the difference was measured rather than assumed: letting the flat analysis take
+// the nested shape too does NOT over-release here, because the precise drop zeroes
+// the slot and the second credit decs null. It is kept because two analyses
+// silently claiming one local is how a real over-release gets built later — the
+// shape #6480 shipped and CI caught as `__rc_underflow_count() == -1`.
 //
 // That same argument is what lets `is_opt` admit a CALL init
 // (`fresh_scalar_option_call_init`, via the OPTFRESH registry now threaded into
@@ -135,6 +141,69 @@ function main(): i32 {
 }
 `
 
+// BLOCK-scoped — the local declared inside a loop, with the match nested one
+// deeper again. `precise_drop_names` is only ever called with `fn.body` and never
+// reaches a loop-declared local, so this half belongs to `consumed_scalar_enum_frees`,
+// which `lower_block` re-runs per block. Its lookup was flat-index, so the nested
+// match was invisible and both inits leaked 16000.
+//
+// Both inits appear in ONE program deliberately: the two locals are reclaimed by
+// the same per-block pass, and running them together is what would surface an
+// ordering bug between them.
+const scalarOptBlockNestedSrc = `function mk(i: i32): Option[i32] {
+    if (i < 0) { return None; }
+    return Some(i + 1);
+}
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 4) {
+        var o: Option[i32] = mk(k);
+        if (k >= 0) {
+            match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
+        }
+        var p: Option[i32] = Some(k + 7);
+        if (k >= 0) {
+            match (p) { Some(b) => { acc = acc + b; }, None => { acc = acc + 1; } }
+        }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    if (x == 999999) { return 90; }
+    return __rc_underflow_count();
+}
+`
+
+// The block-scoped FLAT control — already worked, and must keep working with
+// exactly one credit.
+const scalarOptBlockFlatSrc = `function mk(i: i32): Option[i32] {
+    if (i < 0) { return None; }
+    return Some(i + 1);
+}
+function round(i: i32): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 4) {
+        var o: Option[i32] = mk(k);
+        match (o) { Some(a) => { acc = acc + a; }, None => { acc = acc + 1; } }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    if (x == 999999) { return 90; }
+    return __rc_underflow_count();
+}
+`
+
 // The hazard: the arm binding is a scalar, but the OPTION itself is read again
 // after the match, so the box is still live where the precise drop would land.
 // `body_unsafe_for_match_borrow` re-reads only the scrutinee as a borrow — a
@@ -201,6 +270,8 @@ func TestSelfHostScalarOptNestedMatchX86_64(t *testing.T) {
 		{"call_init_nested_in_if", scalarOptCallNestedIfSrc},
 		{"flat_control", scalarOptFlatSrc},
 		{"call_init_flat_control", scalarOptCallFlatSrc},
+		{"block_scoped_nested", scalarOptBlockNestedSrc},
+		{"block_scoped_flat_control", scalarOptBlockFlatSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)
