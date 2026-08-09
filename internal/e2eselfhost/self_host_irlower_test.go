@@ -245,11 +245,14 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// immediate), so hex literals and the full u32 range survive — see
 		// op_const_i32_text / the IR backends. Each i32 arithmetic op is followed
 		// by an int_cast (the signed sibling of u32_wrap — op_int_cast("i32"),
-		// the per-width wrap the register backends emit), so `add` and `mul` each
-		// carry a trailing int_cast.
-		const want = "const_i32_text 2\n" +
-			"const_i32_text 3\n" +
-			"add\n" +
+		// the per-width wrap the register backends emit), so `mul` carries a
+		// trailing int_cast.
+		//
+		// `2 + 3` is gone: ir.fold_const_binaries collapses the const/const/binary
+		// triple to a single const_i32 before the backends see it, so this golden
+		// doubles as the fold's pin. `x * 10` survives because `x` is a load, not
+		// a constant.
+		const want = "const_i32 5\n" +
 			"int_cast\n" +
 			"store_local 0\n" +
 			"load_local 0\n" +
@@ -264,8 +267,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 		}
 		// exit code is ops.len() in -dump mode.
-		if code := cmd.ProcessState.ExitCode(); code != 10 {
-			t.Errorf("dump op count = %d, want 10", code)
+		if code := cmd.ProcessState.ExitCode(); code != 8 {
+			t.Errorf("dump op count = %d, want 8", code)
 		}
 	})
 }
