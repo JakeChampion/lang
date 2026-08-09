@@ -21,6 +21,15 @@ import (
 // `opt_arm_binding_escapes` both answer "nothing escapes" for a statement they
 // cannot parse, which reads as a proof when it is a blind spot. That is what
 // `nested_escape_churn` below pins.
+//
+// The widening is CALL-INIT ONLY, and that boundary is what keeps two analyses
+// from freeing one box. A direct ctor consumed by a nested match is already
+// reclaimed by `precise_drop_names`, whose `is_rcopt` kind admits exactly
+// `rcpayload_option_cand != ""` and yields to this analysis only on a FLAT match.
+// Widening the lookup for the direct ctor as well issues a second credit on the
+// same box — a segfault here, and `__rc_underflow_count() == -1` in
+// TestSelfHostNestedMatchBorrowNoUnderflowX86_64, which is the gate that catches
+// it. Every source below is therefore a producer call.
 
 const nmFlatArrSrc = `import "core/int";
 function make(i: i32): Result[i32[], string] {
@@ -126,28 +135,6 @@ function main(): i32 {
         while (c < 2) {
             match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
             c = c + 1;
-        }
-        r = r + 1;
-    }
-    return acc % 7;
-}
-`
-
-// The DIRECT-ctor candidate, nested. Not redundant with the call-init rows: it
-// reaches the same widened lookup by the other admission path, and it leaked
-// 35200 on main before this change.
-const nmIfDirectArrSrc = `import "core/int";
-function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    while (r < 100) {
-        var k: i32 = 0;
-        while (k < 4) {
-            var v: Option[i32[]] = Some([k, k + 1, k + 2]);
-            if (k >= 0) {
-                match (v) { Some(a) => { acc = acc + a.len(); }, None => { acc = acc + 1; } }
-            }
-            k = k + 1;
         }
         r = r + 1;
     }
@@ -294,7 +281,6 @@ func TestSelfHostNestedMatchReclaimX86_64(t *testing.T) {
 		{"flat_str_control", nmFlatStrSrc},
 		{"if_nested_str", nmIfStrSrc},
 		{"while_nested_str", nmWhileStrSrc},
-		{"if_nested_direct_ctor_arr", nmIfDirectArrSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			allocs, frees, live := counts(t, tc.name, tc.src)

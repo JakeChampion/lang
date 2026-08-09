@@ -5379,7 +5379,6 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   |---|---|---|
   | `Result[i32[], string]` from a call | 0 | **35200**, `frees=0` |
   | `Option[string]` from a call | 0 | **25600**, `frees=0` |
-  | `Option[i32[]]` direct ctor | 0 | **35200**, `frees=0` |
   | …the first row at 200 rounds | 0 | **70400** — a clean x2 |
 
   `sole_consuming_match_idx` returns the ENCLOSING top-level statement — where
@@ -5400,6 +5399,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   refusals. Counting statements that CONTAIN a match, not just those that ARE
   one, is also load-bearing: a name matched both flat and nested yields two hits
   and is refused rather than freed after the first.
+
+  **CALL-INIT ONLY, and that boundary is the whole disjointness argument.** A
+  DIRECT ctor consumed by a nested match is already reclaimed by
+  `precise_drop_names` — its `is_rcopt` kind admits exactly
+  `rcpayload_option_cand != ""` and defers to this analysis only on a FLAT match
+  (`body_has_top_level_match`). Widening the lookup for the direct ctor too issues
+  a SECOND credit on the same box. That is not theoretical: it segfaults, and
+  `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` reports
+  `__rc_underflow_count() == -1`. The two admissions are exact complements, so
+  keeping the direct ctor on the flat lookup is what keeps them disjoint — and the
+  block-scoped direct-ctor shape stays at 35200, unchanged from before, because
+  `precise_drop_names` runs over the fn's top-level statements and never reaches
+  it. That row is still open, and it belongs to precise-drop, not here.
+
+  The trap generalises: **a nested-match widening is only ever half a change.**
+  The other half is asking which analysis was already covering the shape, because
+  the leak and the double free look identical from the widened side — both are
+  "my credit fired". Only the underflow counter tells them apart, and only when
+  the shape reaches it.
 
   **Still flat-only, and measured rather than assumed:** the SCALAR-payload
   classes (`fresh_scalar_option_call_init` / `consumed_scalar_enum_frees`) keep

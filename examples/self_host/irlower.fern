@@ -28914,9 +28914,26 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                     // liveness and escape take the ENCLOSING top-level statement,
                     // which is also where the free lands, while the arm analyses
                     // take the match itself.
-                    var match_idx: i32 = sole_consuming_match_idx(body, v.name);
+                    //
+                    // ONLY for a call init. A DIRECT ctor consumed by a nested
+                    // match is already reclaimed by precise_drop_names, whose
+                    // is_rcopt kind admits exactly `rcpayload_option_cand != ""`
+                    // and defers to this analysis only on a FLAT match
+                    // (body_has_top_level_match). Widening the lookup for that
+                    // shape too issues a second credit on the same box: measured
+                    // as a segfault, and as __rc_underflow_count() == -1 in
+                    // TestSelfHostNestedMatchBorrowNoUnderflowX86_64. The two
+                    // admissions are complementary, so keeping the direct ctor on
+                    // the flat lookup is what keeps them disjoint.
+                    var match_idx: i32 = 0 - 1;
                     var msv: parser.Stmt[] = [];
-                    if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    if (call_pt != "") {
+                        match_idx = sole_consuming_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    } else {
+                        match_idx = sole_top_level_match_idx(body, v.name);
+                        if (match_idx > vi) { msv = [body[match_idx]]; }
+                    }
                     if (match_idx > vi && msv.len() == 1) {
                         var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
