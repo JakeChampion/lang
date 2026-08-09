@@ -15720,6 +15720,34 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `h()` bare-calls the box pointer as code (SIGSEGV).
                     if (s.is_closure_local("RETCLO$" + cid.name)) { clo_init = true; }
                 },
+                _ => { }
+            }
+            // A fn-typed binding whose init call carries an env BOX as an
+            // argument (`var v: (i32) => i32 = id(<boxed lambda>)`): the box was
+            // built by the lift for an erased-generic parameter, and an erased
+            // generic returns its argument, so what lands here is a box. Bind it
+            // a closure local — otherwise `v(1)` bare-calls the box pointer as
+            // code, which is the segfault #6466 records against widening the
+            // lift alone. Keyed on the `__mkclo$` marker rather than the callee,
+            // so it holds for any passthrough that returns the boxed argument.
+            if (v.type_name == "fn" || is_fn_payload_spelling(v.type_name)) {
+                var mka: i32 = 0;
+                while (mka < cc.args.len()) {
+                    match (cc.args[mka]) {
+                        parser.ExprCall(mkc) => {
+                            match (mkc.callee) {
+                                parser.ExprIdent(mkid) => {
+                                    if (mkid.name.len() > 8 && mkid.name[0:8] == "__mkclo$") { clo_init = true; }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    mka = mka + 1;
+                }
+            }
+            match (cc.callee) {
                 // `var f = m.make()` where the METHOD returns a closure. The
                 // arm above only ever saw a bare-ident callee (a free
                 // function), so a method-returned closure fell through here
@@ -47438,6 +47466,32 @@ function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32
     return false;
 }
 
+// lift_callee_is_typevar_passthrough reports whether free function `callee`
+// takes an ERASED type-var parameter at `idx` and returns that same type var —
+// the `id[T](x: T): T` shape. An unbounded type param is erased rather than
+// monomorphised, so the parameter keeps the spelling `T` and
+// lift_callee_param_is_fn, which tests for the literal "fn", never matches it.
+// A fn-value argument therefore reached lowering unlifted and asked for a
+// `<fn>$clo` nothing built (#6466).
+//
+// The passthrough shape is what makes boxing safe here: the callee returns its
+// argument unchanged, so whatever representation the argument has is the
+// representation the result has. A generic that CONSUMES the value would need
+// the env box to mean something to it.
+function lift_callee_is_typevar_passthrough(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < mfuncs.len()) {
+        if (mfuncs[i].name == callee && mfuncs[i].type_param_count > 0
+                && idx < mfuncs[i].params.len()
+                && mfuncs[i].params[idx].type_name.len() > 0
+                && mfuncs[i].params[idx].type_name == mfuncs[i].ret_type) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
     var i: i32 = 0;
     while (i < mfuncs.len()) {
@@ -48050,6 +48104,17 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai))) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
+                } else if (!is_mkclo && cnm.len() > 0 && lift_callee_is_typevar_passthrough(mfuncs, cnm, ai)
+                           && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
+                    // A fn value at an ERASED-GENERIC parameter (`id(<lambda>)`).
+                    // The declared parameter reads `T`, so the fn-typed gate above
+                    // cannot see it; box it here like every other fn-value argument
+                    // position. The binding the result lands in is marked a closure
+                    // local by lower_stmt_var's `__mkclo$`-argument rule, so the
+                    // box the passthrough returns is dispatched as one rather than
+                    // bare-called (#6466 records what that costs when it is not).
+                    var gr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
+                    fs = gr.funcs; ct = gr.counter; nargs = nargs.append(gr.expr);
                 } else if (mfield.len() > 0 && (lift_callee_param_is_fn(mfuncs, mfield, ai) || lift_method_arg_is_fn(call.args[ai], mfield, ai, mfuncs))) {
                     // Method-call fn-value argument (`m.set(1, <lambda>)`): wrap into
                     // the env box so the stored / called value is a uniform box. #3445.
