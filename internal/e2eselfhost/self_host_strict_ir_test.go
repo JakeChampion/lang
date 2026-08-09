@@ -830,9 +830,15 @@ var strictIRBailReasons = []struct {
 	// had closed. Any non-literal arm still refuses — `(752i64 + 0i64)` does
 	// too — but a call cannot be constant-folded back into the literal shape,
 	// so it is the spelling that survives a folder improvement.
+	//
+	// The value block is ASSIGNED, not bound by an annotated `var`. #6468 taught
+	// the desugar to take its width from the binding's annotation, so the `var`
+	// spelling of this program now lowers; an assignment has no annotation to
+	// read, which is the position the width is still lost in.
 	{"lifted-lambda-return", `function fallback(): i64 { return 752i64; }
 function main(): i32 {
-    var v: i64 = (match ((702i64) /? (3i64)) { Some(c) => c, None => fallback() });
+    var v: i64 = 0i64;
+    v = (match ((702i64) /? (3i64)) { Some(c) => c, None => fallback() });
     return ((v as i32) & 255i32);
 }
 `, "__lam_0", "did not lower: `return` of ident `c`"},

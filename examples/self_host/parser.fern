@@ -4446,6 +4446,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
         // (`m.get_or(k, 0.0)`) is unanswerable there without absorbing the whole
         // builtin surface. The annotation outranks the inference.
         init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
+        init_expr = stamp_value_block_ret(init_expr, type_name);
         return (StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str }, p);
     }
     if (kw == "return") {
@@ -11487,6 +11488,41 @@ function stamp_lambda_ret(e: Expr, fn_ret: string): Expr {
         ExprLambda(lm) => {
             if (lm.ret_type.len() > 0) { return e; }
             return ExprLambda { params: lm.params, ret_type: fn_ret, body: lm.body, use_infer: lm.use_infer };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// stamp_value_block_ret gives a value-block IIFE the WIDTH its binding declares.
+// `if` / `match` in value position desugar to a 0-arg IIFE whose ret_type
+// if_expr_rt guesses from the arms' syntax alone, and an arm that CALLS anything
+// is unguessable there — the classifier has no function table, so it falls to
+// "i32" (see if_expr_rt's ExprCall arm). The IIFE is then labelled i32 while its
+// body computes i64, and because that tag is non-empty infer_ret_types_module
+// never revisits the lambda, so nothing downstream recovers the width and the
+// module bails off the IR path.
+//
+// A 64-bit annotation on the binding is the authority the guess lacks, and
+// outranks it the same way stamp_lambda_ret's does. Only a WIDENING is applied:
+// the IIFE's value is an 8-byte slot either way, so the tag only has to stop
+// contradicting the body, and a non-64-bit annotation is left to the guess
+// rather than overwritten with a spelling (`Option[i32]`, a struct name) the
+// tag was never meant to carry.
+function stamp_value_block_ret(e: Expr, decl_ty: string): Expr {
+    if (decl_ty != "i64" && decl_ty != "u64") { return e; }
+    match (e) {
+        ExprCall(c) => {
+            if (c.args.len() != 0) { return e; }
+            match (c.callee) {
+                ExprLambda(lm) => {
+                    if (lm.params.len() != 0) { return e; }
+                    if (lm.ret_type == "i64" || lm.ret_type == "u64") { return e; }
+                    var nl: Expr = ExprLambda { params: lm.params, ret_type: decl_ty, body: lm.body, use_infer: lm.use_infer };
+                    return ExprCall { callee: nl, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                },
+                _ => { return e; }
+            }
         },
         _ => { return e; }
     }
