@@ -5236,8 +5236,24 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `optarr_aliased_payload_balances`, which asserts the balance in BOTH
   directions so a future widening cannot turn the strand into a double free.
 
-  **What remains on #6360 is one row, and it is not this family's bug.** Every
-  loop-DECLARED shape sits at 8800 = the final iteration's box+payload, which
-  the exit sweep misses because the slot name has retired by then. That is the
-  block-scoped-slot class (#6285 / #6375), whose deep-drop half is exactly what
-  segfaulted gen1 twice.
+- 2026-08-09: **#6360's last row — CLOSED. The issue is done.** Every
+  loop-DECLARED shape sat at 8800 = the final iteration's box+payload. The exit
+  sweep was not missing the SLOT, it was missing the NAME:
+  `slot_is_reclaimable_optarr` looked its credit up under
+  `s.locals[i].slot_name` verbatim, and a block-scoped slot has been renamed
+  `retired: <name>` by then. `reclaim_slot_name` strips that prefix and the
+  arr-of-arr sibling already went through it; routing OPTARR through it too is
+  the entire fix. Both loop-scoped rows 800/600/8800 -> 800/800/0.
+
+  **This is the block-scoped-slot class that segfaulted gen1 twice** (#6285 /
+  #6375), so the fixpoint ran first and is green (342 s). That does not
+  contradict the #6375 bisect, it locates it: what segfaulted there was the deep
+  FIELD drop (`__struct_drop_<T>` walking a field that had been moved into a live
+  local), and the box-only free was already green. OPTARR's payload release is
+  one flat `__fern_arr_dec` on a scalar buffer with no field walk, so it sits on
+  the green side of that line. **The distinction is deep-walk vs flat dec, not
+  block-scoped vs not** — the scope was never the hazard.
+
+  The two pins moved from asserting 8800 to asserting an exact balance rather
+  than `live_bytes == 0`: on a retired slot an over-release matters as much as a
+  leak, and only `allocs == frees` catches both.

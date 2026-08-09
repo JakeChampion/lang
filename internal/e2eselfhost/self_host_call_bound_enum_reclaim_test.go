@@ -438,31 +438,31 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 		}
 	})
 
-	// The same Option shape declared INSIDE the loop: 35200 -> 8800. Six of the
-	// eight objects a call allocates are released; the pair the FINAL iteration
-	// leaves live is not, because the exit sweep does not reach the retired slot
-	// name. That is the block-scoped-slot class — the one that segfaults gen1
-	// when granted more (#6285 / #6375) — and a distinct follow-up.
-	// Result[<flat scalar array>, _] declared inside the loop: the same partial
-	// close the Option spelling gets, via unmatched_optarr_ann_is. The Err
-	// payload is stranded by construction (emit_optarr_deep_free frees the
-	// payload only on tag==0, and tag 0 is Ok), which is the trade
-	// mixed_result_err_path_strands_only_the_payload already pins.
-	t.Run("rcpayload_direct_no_match_partial", func(t *testing.T) {
-		allocs, frees, live := counts(t, "rcpayload_direct_no_match", cbeRcPayloadDirectNoMatchSrc, 38)
-		if frees != 600 || live != 8800 {
-			t.Errorf("rcpayload_direct_no_match: allocs=%d frees=%d live_bytes=%d — want frees=600 live_bytes=8800 "+
-				"(was 800/0/35200 before the credit widened to Result)", allocs, frees, live)
-		}
-	})
-
-	t.Run("optarr_loop_scope_partial", func(t *testing.T) {
-		allocs, frees, live := counts(t, "optarr_loop_scope_partial", cbeOptArrLoopScopeSrc, 38)
-		if frees != 600 || live != 8800 {
-			t.Errorf("optarr_loop_scope_partial: allocs=%d frees=%d live_bytes=%d — want frees=600 live_bytes=8800.\n"+
-				"Was 800/0/35200 before the unmatched-OPTARR credit. If live_bytes is now 0 the block-scoped "+
-				"remainder has closed too: move this into the live_bytes==0 table and update #6360.",
-				allocs, frees, live)
-		}
-	})
+	// The same two shapes declared INSIDE the loop, 35200 -> 8800 -> 0. The
+	// 8800 was the FINAL iteration's box+payload: `slot_is_reclaimable_optarr`
+	// looked its credit up under the slot's VERBATIM name, and a block-scoped
+	// slot has been renamed `retired: <name>` by the time the exit sweep runs.
+	// Routing that lookup through `reclaim_slot_name` — which its
+	// arr-of-arr sibling already used — is the whole fix.
+	//
+	// These assert an exact balance rather than live_bytes==0 alone: this is the
+	// operation that segfaulted gen1 twice (#6285 / #6375), so an over-release
+	// here matters as much as a leak.
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{"rcpayload_direct_no_match", cbeRcPayloadDirectNoMatchSrc},
+		{"optarr_loop_scope", cbeOptArrLoopScopeSrc},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allocs, frees, live := counts(t, tc.name, tc.src, 38)
+			if allocs != frees || live != 0 {
+				t.Errorf("%s: allocs=%d frees=%d live_bytes=%d — want an exact balance. 8800 means the "+
+					"exit sweep is missing the final iteration's pair again (the retired slot name); "+
+					"frees > allocs means it now releases a slot something else still owns",
+					tc.name, allocs, frees, live)
+			}
+		})
+	}
 }
