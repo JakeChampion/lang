@@ -5369,6 +5369,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   neighbours — call-bound enum, call-bound string payload, and the arm-escape gate.
   Refs #6360 #4451.
 
+- 2026-08-09: **The Err arm's string, stranded by an empty else-branch — released
+  on the match-consumed path.** Every tag-guarded Option/Result drop frees the
+  payload under `tag == 0` and the box on every path, with NOTHING in the else.
+  #6463 made that explicit when it dropped the scalar-Err gate: "a non-scalar Err
+  payload is never reached — it is stranded, not dangled". Stranded is sound, and
+  it is still a leak: `Result[i32[], string]` from a call left 6400 over 100
+  rounds, x2.0 per doubling, against 0 on native.
+
+  **The proof the registry did not have.** The "f" flag is computed from the
+  SUCCESS payload only (`body_has_nonfresh_opt_success_payload`), so it cannot
+  vouch for an Err string, and reusing it would release a caller's box on the Err
+  path. The walker is now parameterised by which constructor it inspects — one
+  traversal, two verdicts — and the Err verdict takes its own tagged registry row
+  (`ERRFRESH:`, seeded `OPTERRFRESH:`). Tagged rather than a second flag character
+  so every existing `name|ptype|flag` lookup is untouched.
+
+  MEASURED: `Result[i32[], string]` from a call with a match 6400 -> **0**,
+  `allocs == frees`, flat at N=50/100/200/400. Err-always and bare-literal
+  spellings likewise 0. The aliased-Err hazard — a producer returning its own
+  `held: string` parameter — is refused and stays stranded at 3200, exit matching
+  `fern -interp`; the "f" flag WOULD have admitted it, which is the whole reason
+  the Err verdict is computed separately.
+
+  **HALF the class, deliberately, and pinned as such.** The same strand exists in
+  the UNMATCHED quadrant, which reaches `emit_optarr_deep_free` rather than
+  `emit_opt_tagged_payload_drop`. Both measure identically (3200 / 6400 / 12800 /
+  25600 at N=50/100/200/400) — which is what first suggested one defect — but they
+  are separate emitters, and the unmatched one is SHARED with the reassigned+match
+  OPTARR class, so an unconditional Err branch there would fire for slots that
+  never earned the verdict. Releasing it needs a per-slot credit of its own.
+  `unmatched_err_string_still_strands` asserts the remainder AS a leak so it stays
+  visible and measured rather than becoming folklore.
+
+  VERIFIED: `TestSelfHostOptErrStringReleaseX86_64` (new),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (run first), and the #6360
+  neighbours — unmatched optstr, call-bound string payload, the arm-escape gate,
+  call-bound enum, rcpayload option call. Refs #6360 #4451.
+
 - 2026-08-09: **The consuming match one block deeper now reclaims (#6319's
   class).** `sole_top_level_match_idx` scanned only the flat statement list, so
   the same `match (v)` moved inside an `if` released NOTHING while the flat

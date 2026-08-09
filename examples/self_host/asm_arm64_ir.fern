@@ -725,10 +725,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("random_bytes");
             s = s.write("    bl __fn___fern_random_bytes\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 186) {  // random_i32
-            // no operands; __fern_random_i32() -> i32 in x0. Helper is gated by
-            // the random_i32 need (asm_arm64.emit_runtime), heap-independent.
+            // no operands; the Fern-compiled __fn___fern_random_i32() -> i32 in
+            // x0. Zero args, so the stack ABI needs no push and no cleanup.
             s = s.need("random_i32");
-            s = s.write("    bl __fern_random_i32\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_random_i32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 211) {  // proc_fork
             // no operands; __fern_proc_fork() -> i32 in x0 (0 child / pid parent
             // / -errno). Helper gated by the need, like random_i32 (#5686).
@@ -2403,7 +2403,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("now_unix_ms")) {
@@ -6514,36 +6514,15 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // section below. The single shared body serves both arm64 AST + IR. It builds
     // the i32[] by appending each byte (arr_push) — its deps are declared by
     // mark_str_bytes / runtime_need_deps.
-    // __fern_random_i32() → a single CSPRNG i32: read 4 random bytes into a
-    // stack slot and reload them as an i32. Linux getrandom (syscall 278);
-    // Darwin getentropy (BSD 500). Heap-independent — gated by its own need
-    // (NOT the heap block) so a random_i32-only program still links it. New
-    // for the IR path; no legacy AST caller marks this need.
+    // random_i32: four bytes from the CSPRNG into __fern_scratch, reloaded as an
+    // i32. Heap-independent — gated by its own need (NOT the heap block) so a
+    // random_i32-only program still links it. Linux getrandom / Darwin
+    // getentropy differ only in the number, which `tgt` supplies.
     if (s.has_need("random_i32")) {
-        s = s.write(".globl __fern_random_i32\n");
-        s = s.write(".type __fern_random_i32, %function\n");
-        s = s.write("__fern_random_i32:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    sub sp, sp, #16\n");        // 4-byte landing buffer
-        s = s.write("    mov x0, sp\n");
-        s = s.write("    mov x1, #4\n");
-        if (darwin) {
-            s = s.write("    mov x16, #500\n");      // getentropy(buf, 4)
-            s = s.write("    svc #0x80\n");
-        } else {
-            s = s.write("    mov x2, #0\n");
-            s = s.write("    mov x8, #278\n");        // sys_getrandom(buf, 4, 0)
-            s = s.write("    svc #0\n");
-        }
-        s = s.write("    ldr w0, [sp]\n");           // 4 random bytes -> i32
-        s = s.write("    add sp, sp, #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_random_i32, .-__fern_random_i32\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32(tgt), s.struct_decls, s);
     }
     // __fern_map_hash_seed() → core/map's per-process string-hash seed
-    // (#6194), drawn once via __fern_random_i32 and cached in the unit-local
+    // (#6194), drawn once via the Fern __fn___fern_random_i32 and cached in the unit-local
     // __fern_map_seed word.
     //
     // Forced nonzero: the word doubles as its own "already drawn" flag, and 0
@@ -6558,7 +6537,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ldr w0, [x1]\n");
         s = s.write("    cbnz w0, .Lmapseed_ret\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    bl __fern_random_i32\n");
+        s = s.write("    bl __fn___fern_random_i32\n");
         s = s.write("    orr w0, w0, #1\n");
         s = s.write("    adrp x1, __fern_map_seed\n");
         s = s.write("    add x1, x1, :lo12:__fern_map_seed\n");
