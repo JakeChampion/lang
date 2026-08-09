@@ -28146,9 +28146,16 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
 // passed / aliased)? A borrow-only binding (indexing, `.len()`, arithmetic over
 // reads) is admitted — the box is deep-dropped AFTER the whole match runs, so a
 // borrow whose last use is inside the arm is sound. Reuses binding_escapes_arm
-// (the enum path's borrow-only gate, empty borrowable registry). Only the
-// CONSTRUCTED variant's arm is checked: the box always holds that variant's
-// payload, so the sibling arm never runs and binds nothing we free.
+// (the enum path's borrow-only gate, empty borrowable registry). Only the named
+// variant's arm is checked: the box always holds that variant's payload, so the
+// sibling arm never runs and binds nothing we free.
+//
+// Arms are matched by SPELLING, so a caller that does NOT know the constructed
+// variant passes `variant = "Ok|Some"` to check whichever of the two the SUCCESS
+// arm is written as. Naming one spelling on a runtime-variant box silently checks
+// NOTHING — `"Ok"` never matches a `Some(s)` arm — while reading as if it ran.
+// Checking every arm instead over-refuses: a scalar `Err(e)` binding used in
+// arithmetic is not a payload this drop can release.
 function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
     var none: string[] = [];
     match (st) {
@@ -28165,7 +28172,9 @@ function opt_arm_binding_escapes(st: parser.Stmt, variant: string): boolean {
                             if (pv.type_name[vc] == 46) { vname = pv.type_name[vc + 1 : pv.type_name.len()] + ""; }
                             vc = vc + 1;
                         }
-                        if (vname == variant && pv.binding != "" && pv.binding != "_") {
+                        var is_target: boolean = vname == variant;
+                        if (variant == "Ok|Some") { is_target = vname == "Ok" || vname == "Some"; }
+                        if (is_target && pv.binding != "" && pv.binding != "_") {
                             if (binding_escapes_arm(arm, pv.binding, none)) { return true; }
                         }
                     },
@@ -28767,15 +28776,26 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         match (body[vi]) {
             parser.StmtVar(v) => {
                 var cand: OptRcCand = rcpayload_option_cand(v, structs);
-                // Not a direct ctor? Try the OPTFRESH call-init form. The
-                // variant is unknown, so the candidate is marked tag-guarded and
-                // the escape gate below is applied to the payload-carrying
-                // variant ("Ok" covers Some too — opt_arm_binding_escapes matches
-                // the arm by payload position, not by spelling).
+                // Not a direct ctor? Try the OPTFRESH call-init form; the variant
+                // is unknown, so the candidate is marked tag-guarded.
+                //
+                // A STRING payload passes "Ok|Some" to the escape gate below, so
+                // the SUCCESS arm is checked under either spelling. Naming one
+                // variant on a runtime-variant box checks nothing at all, which is
+                // only survivable for an ARRAY payload: there an escaping arm
+                // binding RETAINS (`held = xs` incs the buffer), so the drop's dec
+                // is balanced and refusing the shape would cost real reclaim
+                // (measured, 1600/1600 to 800/1600). A string assignment is a
+                // BORROW, so the same escape leaves __fern_str_free releasing a
+                // live box.
                 var call_pt: string = "";
                 if (cand.variant == "") {
                     call_pt = rcpayload_option_call_ptype(v, opt_fresh, fresh_str);
-                    if (call_pt != "") { cand = OptRcCand { variant: "Ok", ptype: call_pt }; }
+                    if (call_pt != "") {
+                        var cvar: string = "Ok";
+                        if (call_pt == "string") { cvar = "Ok|Some"; }
+                        cand = OptRcCand { variant: cvar, ptype: call_pt };
+                    }
                 }
                 if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
                     var match_idx: i32 = sole_top_level_match_idx(body, v.name);

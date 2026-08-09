@@ -5270,3 +5270,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   The two pins moved from asserting 8800 to asserting an exact balance rather
   than `live_bytes == 0`: on a retired slot an over-release matters as much as a
   leak, and only `allocs == frees` catches both.
+
+- 2026-08-09: **The call-bound escape gate matched NOTHING, and #6469 turned that
+  into a dangle.** `opt_arm_binding_escapes` compares the arm's variant SPELLING
+  against the name its caller passes. #6451 introduced the call-init candidate
+  with a hardcoded `variant: "Ok"` and a comment claiming "Ok covers Some too —
+  matches the arm by payload position, not by spelling". It does not: `"Ok"` never
+  equals `"Some"`, so for every `match (v) { Some(s) => .., None => .. }` the gate
+  walked the arms and refused nothing.
+
+  That was survivable while the payload was an ARRAY, because an escaping arm
+  binding RETAINS — `held = xs` incs the buffer, so the drop's dec is balanced.
+  #6469 then admitted STRING success payloads to the same drop, and a string
+  assignment is a BORROW. With the gate matching nothing, `held = s` left
+  `__fern_str_free` releasing a box the caller still reads. Measured on main at
+  `53af8cb`: exit **178** against native and `fern -interp`'s 55.
+
+  FIX: the string rows pass `"Ok|Some"` — the SUCCESS arm under either spelling.
+  Two boundaries, both measured rather than argued:
+
+  - NOT applied to the array rows. Doing so refuses a shape that is already
+    correct: the escaping-array probe drops from 1600/1600 to 800/1600.
+  - NOT "every arm". A scalar `Err(e)` used in arithmetic reads as an escape,
+    which strands `Result[string, i32]` at 22400. A scalar binding is never a
+    payload this drop releases.
+
+  **THE FAILURE IS INVISIBLE TO A PLAIN PROBE, WHICH IS WHY THREE PASSES MISSED
+  IT.** With the bug present the escaping shape still exits correctly — the freed
+  box is simply not reused before it is read. It becomes observable only once
+  same-shaped strings are churned in between, recycling it. `__rc_underflow_count()`
+  stayed 0 throughout and never saw it: on the `__fern_str_free` path it is a
+  supporting check, not the discriminator. Any hazard probe for a string payload
+  needs a churn loop before the aliased read, or it reports a pass.
+
+  The complement is worth stating because it is what made the class look safe:
+  #6469's suite pins the PRODUCER-side aliases (payload aliases a live local or a
+  parameter), which its "f" flag does speak to. The flag proves the producer built
+  a fresh payload and says nothing about what the CONSUMER's arm then does with
+  it. Freshness and escape are orthogonal, and only both together make the drop
+  sound.
+
+  VERIFIED: `TestSelfHostOptArmEscapeGateX86_64` (new — both spellings refused,
+  borrow-only still reclaims, the array row pinned at 1600/1600, the scalar-Err row
+  pinned balanced), #6469's `TestSelfHostCallBoundStrPayloadReclaimX86_64` green
+  unchanged, and `TestSelfHostPerModuleEmitAllFixpointX86_64` (382 s, run first).
+  Refs #6360 #4451.
