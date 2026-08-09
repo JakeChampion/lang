@@ -769,6 +769,12 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__memcpy")
 					needs.add("__fern_rc_inc")
+				case "__fern_arr_cow_inplace_str":
+					needs.add("__fern_arr_cow_inplace_str")
+					needs.add("__fern_alloc")
+					needs.add("__memcpy")
+					needs.add("__fern_str_inc")
+					needs.add("__fern_rc_inc") // str_inc's heap path calls it
 				case "__fern_drop_arr_ptr":
 					needs.add("__fern_drop_arr_ptr")
 					needs.add("__fern_rc_dec")
@@ -1648,6 +1654,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrCowInPlacePtrBody,
+	},
+	"__fern_arr_cow_inplace_str": {
+		// (arr, stride) → new_data. Two-word string[] variant of
+		// __fern_arr_cow_inplace_ptr (#6407): the COPY path
+		// __fern_str_inc's each copied (data, len) pair — matching the
+		// __fern_drop_arr_str walk that releases them. See
+		// buildArrCowInPlaceStrBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildArrCowInPlaceStrBody,
 	},
 	"__fern_drop_arr_ptr": {
 		// (ptr, stride) → ptr. Phase 3 step 3 drop handler for
@@ -4457,9 +4473,24 @@ func buildArrCowInPlaceBody(helperIdxs map[string]uint32) []byte {
 // dec). Locals: 0=arr, 1=stride (params); 2=len, 3=cap, 4=headerBytes,
 // 5=new_data, 6=i.
 func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
+	return arrCowInPlaceRetainBody(helperIdxs, false)
+}
+
+// buildArrCowInPlaceStrBody — the two-word string[] sibling of
+// buildArrCowInPlacePtrBody (#6407): identical apart from the retain loop,
+// which __fern_str_inc's each copied (data@+0, len@+4) pair instead of
+// __fern_rc_inc'ing a single word. A string element's inline tag lives in
+// `len`, so the single-word retain would dereference an inline string's
+// character bytes as a heap pointer.
+func buildArrCowInPlaceStrBody(helperIdxs map[string]uint32) []byte {
+	return arrCowInPlaceRetainBody(helperIdxs, true)
+}
+
+func arrCowInPlaceRetainBody(helperIdxs map[string]uint32, strForm bool) []byte {
 	alloc := helperIdxs["__fern_alloc"]
 	memcpy := helperIdxs["__memcpy"]
 	rcinc := helperIdxs["__fern_rc_inc"]
+	strinc := helperIdxs["__fern_str_inc"]
 	var body []byte
 	// Fast path: rc == 1 → return arr (in-place; elements already owned).
 	body = inst.InstLocalGet(body, 0)
@@ -4559,15 +4590,34 @@ func buildArrCowInPlacePtrBody(helperIdxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 2)
 		body = numeric.InstI32GeS(body)
 		body = inst.InstBrIf(body, 1)
-		// __fern_rc_inc(mem[base + i*stride]); drop result
-		body = inst.InstLocalGet(body, 5)
-		body = inst.InstLocalGet(body, 6)
-		body = inst.InstLocalGet(body, 1)
-		body = numeric.InstI32Mul(body)
-		body = numeric.InstI32Add(body)
-		body = memory.InstI32Load(body, 2, 0)
-		body = inst.InstCall(body, rcinc)
-		body = inst.InstDrop(body)
+		if strForm {
+			// __fern_str_inc(mem[base+i*stride], mem[base+i*stride+4]); drop both
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0) // data
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 4) // len (offset +4)
+			body = inst.InstCall(body, strinc)
+			body = inst.InstDrop(body)
+			body = inst.InstDrop(body)
+		} else {
+			// __fern_rc_inc(mem[base + i*stride]); drop result
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstLocalGet(body, 1)
+			body = numeric.InstI32Mul(body)
+			body = numeric.InstI32Add(body)
+			body = memory.InstI32Load(body, 2, 0)
+			body = inst.InstCall(body, rcinc)
+			body = inst.InstDrop(body)
+		}
 		// i = i + 1; continue
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstI32Const(body, 1)

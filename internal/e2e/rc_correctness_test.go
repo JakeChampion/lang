@@ -3896,6 +3896,67 @@ function f(): i32 {
 }
 function main(): i32 { return f() - 23 + __rc_underflow_count(); }`,
 	},
+	{
+		// `.with` on a `string[]` PARAM, where the caller keeps the receiver
+		// live so the CoW takes its copy branch (#6407). Until strings joined
+		// the counted-element set, that copy went through the plain
+		// __fern_arr_cow_inplace: a raw memcpy leaving the fresh buffer
+		// sharing the caller's element pointers at unchanged rc. Both arrays
+		// then walk-dropped the same strings — a double free, and a SIGSEGV
+		// on x86-64 rather than the leak the issue was filed as.
+		//
+		// The elements are CONCATENATED rather than written as literals: a
+		// string literal is a static-sentinel buffer that inc/dec
+		// short-circuit on, so a literal-element array cannot express this
+		// bug at all. The rounds matter for the same reason — one round
+		// double-decs a buffer nobody reuses, and it takes a freed-and-
+		// recycled block for the corruption to become a fault.
+		name: "string_array_with_through_param_copies_elements",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+function swap0(a: string[]): string[] { return a.with(0, a[1]); }
+function mks(n: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append("kkkkkkkkkk" + i.to_string()); i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var a: string[] = mks(6);
+        var b: string[] = swap0(a);
+        t = t + a[2].len() + b[0].len();
+        r = r + 1;
+    }
+    return (t - 440) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same store where the REPLACED element is SHARED with a live
+		// local. `keep` holds the element that gets overwritten, so the
+		// release `.with` now owes must only DEC it, never free — otherwise
+		// `keep` reads a recycled buffer.
+		//
+		// One-directional, like the rest of this corpus: the pre-#6407
+		// behaviour (no release at all) leaks, and a leak reads 0 here too.
+		// It gates the release not turning into an over-release later.
+		name: "string_array_with_releases_replaced_element_once",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function main(): i32 {
+    var fresh: string = cat("aaaaaaaaa", "bbbbbbbb");
+    var a: string[] = [fresh, "ccccccccccccccccc"];
+    var keep: string = a[0];
+    a = a.with(0, "ddddddddddddddddd");
+    return (keep.len() + a[0].len() - 34) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
