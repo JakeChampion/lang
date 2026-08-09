@@ -1,0 +1,550 @@
+// examples/proposals/reflow.fern — proposal turn, drawn line 3:
+// "A tool that reflows paragraphs to a given column width, preserving
+// indentation and blank lines."
+//
+// A reflower makes exactly one claim: it moves whitespace and nothing else.
+// Every real bug in one is a violation of that claim — a word dropped at a
+// paragraph boundary, a word duplicated when a line is flushed twice, an
+// indent applied to the first line but not the continuations, a blank run
+// collapsed from three lines to one. All of those still produce output that
+// reads like reflowed text, which is why eyeballing the result is worthless.
+//
+// So the tests are stated as invariants over arbitrary input rather than as a
+// table of expected output. The load-bearing one is that the word sequence of
+// the whole document is unchanged; the rest pin down the parts of the claim
+// that "same words" does not cover:
+//
+//   - no line is wider than the target, unless it holds a single word that
+//     cannot be made narrower without hyphenation;
+//   - every line is as full as it can be — the next line's first word would
+//     not have fit. Without this, one word per line satisfies everything
+//     above and is not a reflow;
+//   - reflowing twice changes nothing;
+//   - a wider target never produces more lines.
+//
+// The greedy filler is then checked against an independent one that finds each
+// line by scanning every prefix of the remaining words and keeping the longest
+// that fits. Quadratic and slow, but you can read it and believe it, which is
+// the only thing an oracle has to be.
+//
+// Two design decisions, stated because they are what "preserving indentation"
+// actually means here:
+//
+//   - **A change of indentation starts a new paragraph.** Otherwise a more
+//     deeply indented line gets absorbed into its neighbour and its indent is
+//     gone — "preserved" would then only mean "the first line's indent
+//     survived". The indent of a paragraph is the leading whitespace of its
+//     lines, and it goes on every output line of that paragraph.
+//   - **Columns are bytes.** A tab counts as one column and a multi-byte
+//     character counts once per byte, so a line holding "naïve" is measured as
+//     6. This is what the implementation does; a display-width version needs a
+//     character-width table and is a different tool. The corpus keeps a
+//     non-ASCII word in it so the rule is exercised rather than avoided.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// A document is a sequence of blocks: runs of blank lines, and paragraphs.
+// `count` is the number of blank lines in a blank run; `indent` and `words`
+// describe a paragraph. Modelling the blank runs explicitly rather than
+// dropping them is what lets "blank lines are preserved" be a comparison of
+// two parses instead of an eyeball.
+struct Block { kind: string, indent: string, words: string[], count: i32 }
+
+function no_words(): string[] { var e: string[] = []; return e; }
+
+function is_space_byte(b: u8): boolean { return b == 32 || b == 9; }
+
+function is_blank(line: string): boolean {
+    var i: i32 = 0;
+    while (i < line.len()) {
+        if (!is_space_byte(line[i])) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function indent_of(line: string): string {
+    var i: i32 = 0;
+    while (i < line.len() && is_space_byte(line[i])) { i = i + 1; }
+    return line.take(i).to_owned();
+}
+
+// Split on runs of spaces and tabs, dropping empties, so "a   b" and "a b"
+// give the same two words.
+function words_of(line: string): string[] {
+    var out: string[] = no_words();
+    var i: i32 = 0;
+    while (i < line.len()) {
+        while (i < line.len() && is_space_byte(line[i])) { i = i + 1; }
+        var start: i32 = i;
+        while (i < line.len() && !is_space_byte(line[i])) { i = i + 1; }
+        if (i > start) { out = out.append(line.drop(start).take(i - start).to_owned()); }
+    }
+    return out;
+}
+
+function concat(a: string[], b: string[]): string[] {
+    var out: string[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+function join_lines(lines: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (i > 0) { out = out + "\n"; }
+        out = out + lines[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// --------------------------------------------------------------- parsing
+
+function parse(text: string): Block[] {
+    var lines: string[] = text.split("\n");
+    var blocks: Block[] = [];
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (is_blank(lines[i])) {
+            var n: i32 = 0;
+            while (i < lines.len() && is_blank(lines[i])) { n = n + 1; i = i + 1; }
+            blocks = blocks.append(Block { kind: "blank", indent: "", words: no_words(), count: n });
+        } else {
+            var ind: string = indent_of(lines[i]);
+            var ws: string[] = no_words();
+            while (i < lines.len() && !is_blank(lines[i]) && indent_of(lines[i]) == ind) {
+                ws = concat(ws, words_of(lines[i]));
+                i = i + 1;
+            }
+            blocks = blocks.append(Block { kind: "para", indent: ind, words: ws, count: 0 });
+        }
+    }
+    return blocks;
+}
+
+// --------------------------------------------------------------- filling
+
+// The columns available to the words themselves. A paragraph indented past
+// the target still has to put a word somewhere, so the floor is one column
+// and the line overflows — the alternative is dropping text.
+function avail_for(indent: string, width: i32): i32 {
+    var a: i32 = width - indent.len();
+    if (a < 1) { a = 1; }
+    return a;
+}
+
+function wrap(indent: string, words: string[], width: i32): string[] {
+    var avail: i32 = avail_for(indent, width);
+    var lines: string[] = [];
+    var cur: string = "";
+    var i: i32 = 0;
+    while (i < words.len()) {
+        if (cur.len() == 0) {
+            cur = words[i];
+        } else if (cur.len() + 1 + words[i].len() <= avail) {
+            cur = cur + " " + words[i];
+        } else {
+            lines = lines.append(indent + cur);
+            cur = words[i];
+        }
+        i = i + 1;
+    }
+    if (cur.len() > 0) { lines = lines.append(indent + cur); }
+    return lines;
+}
+
+function reflow(text: string, width: i32): string {
+    var blocks: Block[] = parse(text);
+    var lines: string[] = [];
+    var i: i32 = 0;
+    while (i < blocks.len()) {
+        if (blocks[i].kind == "blank") {
+            var n: i32 = 0;
+            while (n < blocks[i].count) { lines = lines.append(""); n = n + 1; }
+        } else {
+            lines = concat(lines, wrap(blocks[i].indent, blocks[i].words, width));
+        }
+        i = i + 1;
+    }
+    return join_lines(lines);
+}
+
+// ---------------------------------------------------------------- oracle
+
+function join_range(words: string[], from: i32, to: i32): string {
+    var out: string = "";
+    var i: i32 = from;
+    while (i < to) {
+        if (i > from) { out = out + " "; }
+        out = out + words[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// The same greedy fill, found by brute force: for each line, try every prefix
+// of what is left and keep the longest that fits, never fewer than one word.
+// Quadratic, and transparently the definition of "as many words as fit".
+function bf_wrap(indent: string, words: string[], width: i32): string[] {
+    var avail: i32 = avail_for(indent, width);
+    var lines: string[] = [];
+    var i: i32 = 0;
+    while (i < words.len()) {
+        var best: i32 = 1;
+        var k: i32 = 1;
+        while (i + k <= words.len()) {
+            if (join_range(words, i, i + k).len() <= avail) { best = k; }
+            k = k + 1;
+        }
+        lines = lines.append(indent + join_range(words, i, i + best));
+        i = i + best;
+    }
+    return lines;
+}
+
+// ---------------------------------------------------------------- corpus
+
+function docs(): string[] {
+    var d: string[] = [];
+    d = d.append("the quick brown fox jumps over the lazy dog and keeps going for a while");
+    d = d.append("one two three\nfour five six\nseven eight");
+    d = d.append("first paragraph here with several words\n\nsecond paragraph also with words");
+    d = d.append("above\n\n\n\nbelow after three blanks");
+    d = d.append("    an indented paragraph that will need more than one line to hold it");
+    d = d.append("flush left line here\n    indented continuation that is its own paragraph");
+    d = d.append("\n\nleading blanks then text\n\n");
+    d = d.append("a\nb\nc\nd\ne\nf\ng\nh");
+    d = d.append("short then supercalifragilisticexpialidocious then short again");
+    d = d.append("spaced    out     words\twith\ttabs   between   them");
+    d = d.append("a naïve word and a café to measure in bytes not characters");
+    d = d.append("");
+    d = d.append("      six space indent\n      second line same indent\n   three space indent");
+    return d;
+}
+
+function widths(): i32[] { return [8, 12, 20, 40]; }
+
+// Every word in the document, in order, ignoring line structure entirely.
+function all_words(text: string): string[] {
+    var out: string[] = no_words();
+    var lines: string[] = text.split("\n");
+    var i: i32 = 0;
+    while (i < lines.len()) { out = concat(out, words_of(lines[i])); i = i + 1; }
+    return out;
+}
+
+function words_equal(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+    return true;
+}
+
+function show_words(ws: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ws.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + ws[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+function count_lines(text: string): i32 { return text.split("\n").len(); }
+
+// ----------------------------------------------------------------- tests
+
+// The claim itself: reflowing moves whitespace and touches nothing else.
+function test_the_word_sequence_is_unchanged(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var before: string[] = all_words(ds[i]);
+            var after: string[] = all_words(reflow(ds[i], ws[j]));
+            if (!words_equal(before, after)) {
+                return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
+                    + ": words were [" + show_words(before) + "] and became ["
+                    + show_words(after) + "]");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Over-wide lines are allowed only where narrowing is impossible: a single
+// word longer than the space it has. Every width here is wider than every
+// indent in the corpus, so the clamp in avail_for is not what is being
+// exercised — it gets its own test below.
+function test_no_line_is_wider_than_asked_unless_it_is_one_word(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var lines: string[] = reflow(ds[i], ws[j]).split("\n");
+            var k: i32 = 0;
+            while (k < lines.len()) {
+                if (lines[k].len() > ws[j] && words_of(lines[k]).len() != 1) {
+                    return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
+                        + ": line \"" + lines[k] + "\" is " + lines[k].len().to_string()
+                        + " wide and holds " + words_of(lines[k]).len().to_string() + " words");
+                }
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Lines are as full as they can be. Without this, one word per line passes
+// every other test here and is not a reflow.
+function test_every_line_is_full(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var blocks: Block[] = parse(ds[i]);
+            var b: i32 = 0;
+            while (b < blocks.len()) {
+                if (blocks[b].kind == "para") {
+                    var limit: i32 = blocks[b].indent.len() + avail_for(blocks[b].indent, ws[j]);
+                    var lines: string[] = wrap(blocks[b].indent, blocks[b].words, ws[j]);
+                    var k: i32 = 0;
+                    while (k + 1 < lines.len()) {
+                        var next_word: string = words_of(lines[k + 1])[0];
+                        if (lines[k].len() + 1 + next_word.len() <= limit) {
+                            return test.fail("doc " + i.to_string() + " at width "
+                                + ws[j].to_string() + ": \"" + next_word
+                                + "\" would have fitted on \"" + lines[k] + "\"");
+                        }
+                        k = k + 1;
+                    }
+                }
+                b = b + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The blank runs and the paragraph indents come out the same shape they went
+// in: same block kinds in the same order, same number of blank lines in each
+// run, same indent on each paragraph.
+function test_blank_runs_and_indents_survive(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var before: Block[] = parse(ds[i]);
+            var after: Block[] = parse(reflow(ds[i], ws[j]));
+            if (before.len() != after.len()) {
+                return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
+                    + ": " + before.len().to_string() + " blocks became "
+                    + after.len().to_string());
+            }
+            var b: i32 = 0;
+            while (b < before.len()) {
+                if (before[b].kind != after[b].kind) {
+                    return test.fail("doc " + i.to_string() + " block " + b.to_string()
+                        + ": " + before[b].kind + " became " + after[b].kind);
+                }
+                if (before[b].count != after[b].count) {
+                    return test.fail("doc " + i.to_string() + " block " + b.to_string()
+                        + ": blank run of " + before[b].count.to_string() + " became "
+                        + after[b].count.to_string());
+                }
+                if (before[b].indent != after[b].indent) {
+                    return test.fail("doc " + i.to_string() + " block " + b.to_string()
+                        + ": indent of " + before[b].indent.len().to_string()
+                        + " became " + after[b].indent.len().to_string());
+                }
+                b = b + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// Already-reflowed text is a fixed point. This is the property that catches a
+// filler whose output re-parses into different paragraphs than it came from.
+function test_reflowing_twice_changes_nothing(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var once: string = reflow(ds[i], ws[j]);
+            var twice: string = reflow(once, ws[j]);
+            if (once != twice) {
+                return test.fail("doc " + i.to_string() + " at width " + ws[j].to_string()
+                    + " is not a fixed point:\n--- once ---\n" + once
+                    + "\n--- twice ---\n" + twice);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// More room never costs more lines. Greedy filling has this property because
+// the line it produces from a given starting word only grows with the width,
+// so it can never fall behind a narrower fill.
+function test_a_wider_target_never_needs_more_lines(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 1;
+        while (j < ws.len()) {
+            var narrow: i32 = count_lines(reflow(ds[i], ws[j - 1]));
+            var wide: i32 = count_lines(reflow(ds[i], ws[j]));
+            if (wide > narrow) {
+                return test.fail("doc " + i.to_string() + ": width " + ws[j - 1].to_string()
+                    + " gives " + narrow.to_string() + " lines but width "
+                    + ws[j].to_string() + " gives " + wide.to_string());
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The fast filler and the brute-force one agree, paragraph by paragraph.
+function test_the_greedy_fill_matches_the_brute_force_one(): test.TestOutcome {
+    var ds: string[] = docs();
+    var ws: i32[] = widths();
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        var j: i32 = 0;
+        while (j < ws.len()) {
+            var blocks: Block[] = parse(ds[i]);
+            var b: i32 = 0;
+            while (b < blocks.len()) {
+                if (blocks[b].kind == "para") {
+                    var fast: string[] = wrap(blocks[b].indent, blocks[b].words, ws[j]);
+                    var slow: string[] = bf_wrap(blocks[b].indent, blocks[b].words, ws[j]);
+                    if (!words_equal(fast, slow)) {
+                        return test.fail("doc " + i.to_string() + " block " + b.to_string()
+                            + " at width " + ws[j].to_string() + ": greedy gave\n"
+                            + join_lines(fast) + "\nbrute force gave\n" + join_lines(slow));
+                    }
+                }
+                b = b + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The decision that makes "preserving indentation" mean anything: an indent
+// change is a paragraph boundary, so the deeper line keeps its own indent
+// instead of being absorbed by its neighbour.
+function test_an_indent_change_starts_a_new_paragraph(): test.TestOutcome {
+    var src: string = "alpha beta\n    gamma delta\nepsilon";
+    var out: string = reflow(src, 40);
+    // At width 40 every paragraph fits on one line, so the output is exactly
+    // the three paragraphs, each on its own line with its own indent.
+    if (out != "alpha beta\n    gamma delta\nepsilon") {
+        return test.fail("expected three separately indented lines, got:\n" + out);
+    }
+    var blocks: Block[] = parse(src);
+    if (blocks.len() != 3) {
+        return test.fail("expected 3 blocks, got " + blocks.len().to_string());
+    }
+    if (blocks[1].indent.len() != 4) {
+        return test.fail("middle paragraph lost its indent");
+    }
+    return test.pass();
+}
+
+// A paragraph indented past the target still has to hold its words. The floor
+// of one column means it emits one word per line and overflows, rather than
+// looping forever or dropping text.
+function test_an_indent_wider_than_the_target(): test.TestOutcome {
+    var src: string = "        deeply indented words here";
+    var out: string = reflow(src, 4);
+    var lines: string[] = out.split("\n");
+    if (lines.len() != 4) {
+        return test.fail("expected one word per line, got " + lines.len().to_string()
+            + " lines:\n" + out);
+    }
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (words_of(lines[i]).len() != 1) {
+            return test.fail("line \"" + lines[i] + "\" holds "
+                + words_of(lines[i]).len().to_string() + " words");
+        }
+        if (indent_of(lines[i]).len() != 8) {
+            return test.fail("line \"" + lines[i] + "\" lost the 8-column indent");
+        }
+        i = i + 1;
+    }
+    if (!words_equal(all_words(src), all_words(out))) {
+        return test.fail("words were lost: [" + show_words(all_words(out)) + "]");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("reflow — paragraphs to a column width, indentation and blanks kept");
+
+    var demo: string = "The quick brown fox jumps over the lazy dog.\n"
+        + "It did so repeatedly, and with some enthusiasm.\n"
+        + "\n"
+        + "    An indented aside, which is its own paragraph because its\n"
+        + "    indentation differs from the text around it.\n"
+        + "\n"
+        + "Back to the left margin for a closing remark.";
+
+    var ws: i32[] = [28, 44];
+    var i: i32 = 0;
+    while (i < ws.len()) {
+        eprint("");
+        eprint("  --- width " + ws[i].to_string() + " ---");
+        var lines: string[] = reflow(demo, ws[i]).split("\n");
+        var k: i32 = 0;
+        while (k < lines.len()) { eprint("  |" + lines[k]); k = k + 1; }
+        i = i + 1;
+    }
+
+    var r: test.TestRunner = test.test_new("reflow");
+    r = r.it("the word sequence is unchanged", test_the_word_sequence_is_unchanged);
+    r = r.it("no line is wider than asked unless it is one word", test_no_line_is_wider_than_asked_unless_it_is_one_word);
+    r = r.it("every line is full", test_every_line_is_full);
+    r = r.it("blank runs and indents survive", test_blank_runs_and_indents_survive);
+    r = r.it("reflowing twice changes nothing", test_reflowing_twice_changes_nothing);
+    r = r.it("a wider target never needs more lines", test_a_wider_target_never_needs_more_lines);
+    r = r.it("the greedy fill matches the brute force one", test_the_greedy_fill_matches_the_brute_force_one);
+    r = r.it("an indent change starts a new paragraph", test_an_indent_change_starts_a_new_paragraph);
+    r = r.it("an indent wider than the target", test_an_indent_wider_than_the_target);
+    return r.finish();
+}

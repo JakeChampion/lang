@@ -98,3 +98,12 @@
 # --- shared with the x86-64 leg (same bug, same measured value) ---
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
+
+# --- fresh-owned-container read: not reclaimed by the self-host ------------
+# Same bug, same measured value, on all three legs — see the x86-64 sibling for
+# the split measurements and why a plain container drop would be a
+# use-after-free rather than a leak. #6491.
+#
+#     got:  8361 / 16762 / grows
+#     want: 8361 / 16762 / flat
+alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat
