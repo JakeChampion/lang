@@ -1977,6 +1977,69 @@ func genArrEnumDropFn(elemName string, ptrW int) *Func {
 	return genArrElemDropFn("__drop_arr_enum_"+elemName, "__drop_enum_"+elemName, "__ae", ptrW)
 }
 
+// genClosureValueDropFn builds __drop_closure_value(p) -> p: the release of
+// ONE closure value whose static identity is unknown. A closure PAIR is laid
+// out as {fn_ptr, env_ptr, drop_fn, env_ptr} (slots of ptrW bytes; env_ptr is
+// duplicated at slot 3 so {drop_fn@2, env_ptr@3} forms a callable sub-pair).
+// At the pair's last reference (is_unique — which also skips static OpConstFunc
+// cells, whose rc word is the immortal sentinel) it frees the captures + env
+// block by dispatching through the embedded drop-fn pointer, then frees the
+// pair block itself via the generic __fern_closure_drop.
+//
+// A closure LOCAL does not need this: b.closureTarget names the single closure
+// it can hold, so emitDec calls that closure's __closure_drop_<name> thunk
+// directly. A closure reached through a CONTAINER cannot name which closure it
+// holds — the field / element / payload type is just `(T) => R` — which is why
+// the dispatch has to go through the pointer the pair carries.
+//
+// Returns its argument so it composes with the drop sites' stack discipline.
+// Slot 0 = p (param).
+func genClosureValueDropFn(ptrW int) *Func {
+	return &Func{
+		Name:       "__drop_closure_value",
+		Params:     []ast.Param{{Name: "__cv", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        append(closureValueReleaseOps(0, ptrW), Op{Kind: OpLoadLocal, I32: 0}, Op{Kind: OpReturn}),
+	}
+}
+
+// closureValueReleaseOps emits the release of the closure pair in local `slot`
+// — the shared body of __drop_closure_value and __drop_arr_closure's
+// per-element step. Net-zero on the operand stack.
+func closureValueReleaseOps(slot int32, ptrW int) []Op {
+	// Empty signature + the closure-call ABI's appended env_ptr makes the
+	// dispatched wasm type (i32)->i32, matching __closure_drop_<name>'s
+	// actual (env)->env shape; natives read env from sub-pair+ptrW.
+	dropSig := &ast.FuncType{Result: ast.NumberType{}}
+	return []Op{
+		// if is_unique(p): drop_fn(env) via OpCallIndirect on (p + 2*ptrW).
+		// The is_unique gate skips shared closures (rc>1, another holder
+		// keeps the env live) and static function-value cells (sentinel rc,
+		// only 2 slots — never read slot 2 on them). Inside, the drop-fn
+		// slot is 0 for zero-capture closures (env==0, nothing to free) —
+		// guard it so OpCallIndirect never dispatches through a null slot.
+		{Kind: OpLoadLocal, I32: slot},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: slot},
+		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
+		{Kind: OpAdd},
+		{Kind: OpLoad, Width: WidthPtr},
+		{Kind: OpIf, I32: BlockTypeVoid}, // drop_fn != 0
+		{Kind: OpLoadLocal, I32: slot},
+		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
+		{Kind: OpAdd},
+		{Kind: OpCallIndirect, I32: 0, Ext: &OpExt{Sig: dropSig}},
+		{Kind: OpDrop},
+		{Kind: OpEnd}, // if drop_fn != 0
+		{Kind: OpEnd}, // if is_unique(p)
+		// Free / dec the pair block itself (rc==1 -> box_free, else dec).
+		{Kind: OpLoadLocal, I32: slot},
+		{Kind: OpCallDirect, Str: "__fern_closure_drop", I32: 1},
+		{Kind: OpDrop},
+	}
+}
+
 // genArrClosureDropFn builds __drop_arr_closure(ptr): the array-of-closure
 // sibling of genArrStructDropFn. Each element is a pointer to a closure PAIR
 // laid out as {fn_ptr, env_ptr, drop_fn, env_ptr} (slots of ptrW bytes; the
@@ -1993,10 +2056,6 @@ func genArrEnumDropFn(elemName string, ptrW int) *Func {
 // (param), 1=i, 2=len, 3=p (current element pair pointer).
 func genArrClosureDropFn(ptrW int) *Func {
 	stride := int32(ptrW)
-	// Empty signature + the closure-call ABI's appended env_ptr makes the
-	// dispatched wasm type (i32)->i32, matching __closure_drop_<name>'s
-	// actual (env)->env shape; natives read env from sub-pair+ptrW.
-	dropSig := &ast.FuncType{Result: ast.NumberType{}}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
@@ -2025,31 +2084,9 @@ func genArrClosureDropFn(ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpStoreLocal, I32: 3},
-		// if is_unique(p): drop_fn(env) via OpCallIndirect on (p + 2*ptrW).
-		// The is_unique gate skips shared closures (rc>1, another holder
-		// keeps the env live) and static function-value cells (sentinel rc,
-		// only 2 slots — never read slot 2 on them). Inside, the drop-fn
-		// slot is 0 for zero-capture closures (env==0, nothing to free) —
-		// guard it so OpCallIndirect never dispatches through a null slot.
-		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpIf, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
-		{Kind: OpAdd},
-		{Kind: OpLoad, Width: WidthPtr},
-		{Kind: OpIf, I32: BlockTypeVoid}, // drop_fn != 0
-		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpConstI32, I32: 2 * int32(ptrW)},
-		{Kind: OpAdd},
-		{Kind: OpCallIndirect, I32: 0, Ext: &OpExt{Sig: dropSig}},
-		{Kind: OpDrop},
-		{Kind: OpEnd}, // if drop_fn != 0
-		{Kind: OpEnd}, // if is_unique(p)
-		// Free / dec the pair block itself (rc==1 → box_free, else dec).
-		{Kind: OpLoadLocal, I32: 3},
-		{Kind: OpCallDirect, Str: "__fern_closure_drop", I32: 1},
-		{Kind: OpDrop},
+	}
+	ops = append(ops, closureValueReleaseOps(3, ptrW)...)
+	ops = append(ops, []Op{
 		// i = i + 1; continue.
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpConstI32, I32: 1},
@@ -2066,7 +2103,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpReturn},
-	}
+	}...)
 	return &Func{
 		Name:         "__drop_arr_closure",
 		Params:       []ast.Param{{Name: "__acl", Type: ast.NumberType{}}},
@@ -2691,6 +2728,19 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	}
 	if isMapType(t) {
 		return appendMapDrop(ops)
+	}
+	// Closure child (struct field / enum payload / tuple element): free the
+	// captures + env through the drop-fn pointer the pair carries, then the
+	// pair block. The fall-through below is a bare __fern_rc_dec, which
+	// zeroes the pair's count and stops — the pair block, the env block and
+	// every rc-tracked capture were stranded, three blocks per instance for
+	// the plainest `struct P { f: (T) => R }` (#6443). A container cannot
+	// name WHICH closure the slot holds, so this is the same generic,
+	// pointer-dispatched release __drop_arr_closure does per element.
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		return append(ops,
+			Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1},
+			Op{Kind: OpDrop})
 	}
 	if name, ok := dropFnNameFor(t, info, reg, tupleReg, ptrW, false); ok {
 		return append(ops,
