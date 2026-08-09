@@ -26917,6 +26917,93 @@ function sole_top_level_match_idx(stmts: parser.Stmt[], name: string): i32 {
     return 0 - 1;
 }
 
+// body_mentions_name: does `name` appear anywhere in `stmts`, at any depth?
+function body_mentions_name(stmts: parser.Stmt[], name: string): boolean {
+    var seen: string[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { seen = astwalk.collect_idents_stmt(stmts[i], seen); i = i + 1; }
+    return util.index_of_str(seen, name) >= 0;
+}
+
+// sole_match_only_use_of: the one top-level `match (name)` in `stmts`, as a
+// 0-or-1 element array, and only when no OTHER statement in `stmts` mentions
+// `name` at all.
+function sole_match_only_use_of(stmts: parser.Stmt[], name: string): parser.Stmt[] {
+    var at: i32 = 0 - 1;
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (match_scrutinee_is(stmts[i], name)) { at = i; n = n + 1; }
+        i = i + 1;
+    }
+    if (n != 1) { return []; }
+    var j: i32 = 0;
+    while (j < stmts.len()) {
+        if (j != at) {
+            var seen: string[] = [];
+            seen = astwalk.collect_idents_stmt(stmts[j], seen);
+            if (util.index_of_str(seen, name) >= 0) { return []; }
+        }
+        j = j + 1;
+    }
+    return [stmts[at]];
+}
+
+// consuming_match_of: the `match (name)` that statement `st` is, or contains one
+// block deeper — inside an `if` branch or a `while` body (#6319). Returned as a
+// 0-or-1 element array so a miss needs no invented Stmt: handing back `st` would
+// make the arm analyses read an `if`, and both answer "no escape" for a
+// statement they cannot parse, which reads as a proof when it is a blind spot.
+//
+// A nested match is admitted only when the scrutinee is `name`'s ONLY mention
+// inside `st`. The caller places the free after the whole of `st` and skips the
+// whole of `st` in its escape check, so a second mention — in the `if` cond, the
+// sibling branch, or a later statement of the same branch — is invisible to it.
+function consuming_match_of(st: parser.Stmt, name: string): parser.Stmt[] {
+    if (match_scrutinee_is(st, name)) { return [st]; }
+    match (st) {
+        parser.StmtIf(f) => {
+            var cs: string[] = [];
+            cs = astwalk.collect_idents_expr(f.cond, cs);
+            if (util.index_of_str(cs, name) >= 0) { return []; }
+            var a: parser.Stmt[] = sole_match_only_use_of(f.then_body, name);
+            if (a.len() == 1 && !body_mentions_name(f.else_body, name)) { return a; }
+            var b: parser.Stmt[] = sole_match_only_use_of(f.else_body, name);
+            if (b.len() == 1 && !body_mentions_name(f.then_body, name)) { return b; }
+            return [];
+        },
+        parser.StmtWhile(w) => {
+            var ws: string[] = [];
+            ws = astwalk.collect_idents_expr(w.cond, ws);
+            if (util.index_of_str(ws, name) >= 0) { return []; }
+            return sole_match_only_use_of(w.body, name);
+        },
+        _ => { return []; }
+    }
+}
+
+// sole_consuming_match_idx: sole_top_level_match_idx widened to the nested
+// spelling — the top-level index of the statement that IS, or uniquely contains,
+// the consuming match. That index is what the free is placed after and what the
+// liveness/escape checks skip; consuming_match_of re-derives the match itself for
+// the arm analyses.
+//
+// Counting statements that CONTAIN a match as well as those that are one is what
+// keeps this sound: a name matched both flat and nested now yields two hits and
+// is refused, where counting only flat matches would place the free after the
+// first and leave the second reading a released box.
+function sole_consuming_match_idx(stmts: parser.Stmt[], name: string): i32 {
+    var idx: i32 = 0 - 1;
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (consuming_match_of(stmts[i], name).len() == 1) { idx = i; n = n + 1; }
+        i = i + 1;
+    }
+    if (n == 1) { return idx; }
+    return 0 - 1;
+}
+
 // arm_bodies_use_name: does `name` appear (read) in any arm body OR guard of the
 // match statement `st`? (The scrutinee itself is excluded — the caller handles it.)
 // A use inside a body is a real use, so x is NOT dead-after / single-mention.
@@ -28798,12 +28885,19 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                     }
                 }
                 if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
-                    var match_idx: i32 = sole_top_level_match_idx(body, v.name);
-                    if (match_idx > vi) {
-                        var arms_use: boolean = match_arms_use_name(body[match_idx], v.name);
+                    // The consuming match may sit one block deeper than `body`
+                    // (#6319), so the two kinds of check read different things:
+                    // liveness and escape take the ENCLOSING top-level statement,
+                    // which is also where the free lands, while the arm analyses
+                    // take the match itself.
+                    var match_idx: i32 = sole_consuming_match_idx(body, v.name);
+                    var msv: parser.Stmt[] = [];
+                    if (match_idx > vi) { msv = consuming_match_of(body[match_idx], v.name); }
+                    if (match_idx > vi && msv.len() == 1) {
+                        var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
-                        var binds_esc: boolean = opt_arm_binding_escapes(body[match_idx], cand.variant);
+                        var binds_esc: boolean = opt_arm_binding_escapes(msv[0], cand.variant);
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);

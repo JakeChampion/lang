@@ -5315,3 +5315,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   pinned balanced), #6469's `TestSelfHostCallBoundStrPayloadReclaimX86_64` green
   unchanged, and `TestSelfHostPerModuleEmitAllFixpointX86_64` (382 s, run first).
   Refs #6360 #4451.
+
+- 2026-08-09: **The consuming match one block deeper now reclaims (#6319's
+  class).** `sole_top_level_match_idx` scanned only the flat statement list, so
+  the same `match (v)` moved inside an `if` released NOTHING while the flat
+  spelling was flat at 0. Measured at `d672c3da`, 100 rounds x 4, every exit code
+  matching `fern -interp` and native:
+
+  | shape | flat | nested in `if` |
+  |---|---|---|
+  | `Result[i32[], string]` from a call | 0 | **35200**, `frees=0` |
+  | `Option[string]` from a call | 0 | **25600**, `frees=0` |
+  | `Option[i32[]]` direct ctor | 0 | **35200**, `frees=0` |
+  | …the first row at 200 rounds | 0 | **70400** — a clean x2 |
+
+  `sole_consuming_match_idx` returns the ENCLOSING top-level statement — where
+  the free lands, and what the liveness and escape checks already skip — and
+  `consuming_match_of` re-derives the match for the arm analyses. Both are needed
+  and they are not interchangeable: **feeding the enclosing `if` to the arm
+  analyses is a use-after-free, not a missed reclaim.** `match_arms_use_name` and
+  `opt_arm_binding_escapes` both answer "nothing escapes" for a statement they
+  cannot parse, so the blind spot reads as a proof. Mutation-checked — with the
+  enclosing statement passed instead, the escaping-arm probe returns 46 against
+  the oracle's 24 and `frees` jumps 898 -> 1048, while every positive row still
+  reclaims 800/800, so the mutation removes only the refusal.
+
+  A nested match is admitted only when the scrutinee is the local's ONLY mention
+  inside the enclosing statement. The caller skips the WHOLE statement in its
+  escape check, so a mention in the `if` cond, the sibling branch, or a later
+  statement of the same branch would be invisible to it; all three are pinned as
+  refusals. Counting statements that CONTAIN a match, not just those that ARE
+  one, is also load-bearing: a name matched both flat and nested yields two hits
+  and is refused rather than freed after the first.
+
+  **Still flat-only, and measured rather than assumed:** the SCALAR-payload
+  classes (`fresh_scalar_option_call_init` / `consumed_scalar_enum_frees`) keep
+  their own `sole_top_level_match_idx` lookups. `Option[i32]` from a call nested
+  in an `if` leaks 16000 with `frees=0`, identically before and after this change
+  — a different call site, untouched here, and the next row of this class.
+
+  VERIFIED: `TestSelfHostNestedMatchReclaimX86_64` (new — four reclaim rows with
+  flat controls, three refusal rows, and the churn-based escape probe),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (421 s, run FIRST — gen0 == gen1
+  across 35 units), plus #6467's and #6469's suites green unchanged. Refs #6319
+  #6360 #4451.
