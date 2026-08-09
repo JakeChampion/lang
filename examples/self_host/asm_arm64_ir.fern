@@ -891,7 +891,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // [path box] -> __fern_open_fd(x0=path, x1=flags(imm), x2=0644) -> fd /
             // -errno. Body emitted by asm_arm64.emit_runtime, gated on open_file.
             s = s.need("heap"); s = s.need("open_file");
-            s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #420\n    bl __fern_open_fd\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #420\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_fd\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,
@@ -4277,6 +4278,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 // read/write_file, open_fd, envp / env, temp_dir, stat, read_dir, and the
 // remove_file / remove_dir_all walkers.
 function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    // The target key the migrated Fern helpers below are built for — same
+    // derivation as emit_rt_clock_and_print's ctgt.
+    var tgt: string = "arm64";
+    if (darwin) { tgt = "arm64-darwin"; }
     s = s.write("__fern_reader_read_chunk:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
@@ -4335,30 +4340,10 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
 
-    // __fern_io_error(x0 = errno, x1 = path string box) → IoError enum
-    // box — the arm64 sibling of the x86 IR helper (#4624, the arm64 leg
-    // of #4370). Variant box = [interned-shape-ptr@0, payload@8, …] (the
-    // same string-lit labels variant matching compares by pointer).
-    // errno → variant matches native: ENOENT(2) → NotFound(path),
-    // EACCES(13) → PermissionDenied(path), EEXIST(17) →
-    // AlreadyExists(path), EINTR(4) → Interrupted, default →
-    // Other(path, ""). Shapes pre-interned in the heap block above.
-    var ashNf: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "NotFound");
-    s = ashNf.state;
-    var ashPd: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "PermissionDenied");
-    s = ashPd.state;
-    var ashAe: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "AlreadyExists");
-    s = ashAe.state;
-    var ashIn: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Interrupted");
-    s = ashIn.state;
-    var ashOt: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, "Other");
-    s = ashOt.state;
-    // Emitted as a few coalesced multi-line writes (not one per asm
-    // line), like __fern_subprocess: the compiler's per-module emit of
-    // THIS module sits near the #3425 arena ceiling, and per-statement
-    // writes grow its lowering live set (exit-137 on the per-module
-    // whole-compiler test).
-    s = s.write(".globl __fern_io_error\n.type __fern_io_error, %function\n__fern_io_error:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov x19, x0\n    mov x20, x1\n    cmp x19, #2\n    b.eq .Laioe_nf\n    cmp x19, #13\n    b.eq .Laioe_pd\n    cmp x19, #17\n    b.eq .Laioe_ae\n    cmp x19, #4\n    b.eq .Laioe_intr\n    mov x0, #16\n    bl __fern_alloc\n    adrp x9, .Laioe_empty\n    add x9, x9, :lo12:.Laioe_empty\n    str x9, [x0]\n    str xzr, [x0, #8]\n    mov x19, x0\n    mov x0, #24\n    bl __fern_alloc\n    adrp x9, " + ashOt.label + "\n    add x9, x9, :lo12:" + ashOt.label + "\n    str x9, [x0]\n    str x20, [x0, #8]\n    str x19, [x0, #16]\n    b .Laioe_done\n.Laioe_nf:\n    adrp x19, " + ashNf.label + "\n    add x19, x19, :lo12:" + ashNf.label + "\n    b .Laioe_withpath\n.Laioe_pd:\n    adrp x19, " + ashPd.label + "\n    add x19, x19, :lo12:" + ashPd.label + "\n    b .Laioe_withpath\n.Laioe_ae:\n    adrp x19, " + ashAe.label + "\n    add x19, x19, :lo12:" + ashAe.label + "\n    b .Laioe_withpath\n.Laioe_intr:\n    mov x0, #8\n    bl __fern_alloc\n    adrp x9, " + ashIn.label + "\n    add x9, x9, :lo12:" + ashIn.label + "\n    str x9, [x0]\n    b .Laioe_done\n.Laioe_withpath:\n    mov x0, #16\n    bl __fern_alloc\n    str x19, [x0]\n    str x20, [x0, #8]\n.Laioe_done:\n    ldp x19, x20, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n.size __fern_io_error, .-__fern_io_error\n    .section .rodata\n.Laioe_empty:\n    .byte 0\n    .text\n");
+    // The register-ABI hand-asm __fern_io_error used to live here. Every fs
+    // leaf that called it is Fern now (#2649) and calls the bundled
+    // __fn___fern_io_error instead, so it had no callers left — it was emitted
+    // into every arm64 binary with an fs runtime and never reached.
 
     // __fern_read_file and __fern_write_file used to live here; both are Fern
     // runtime functions now (#2649), emitted need-gated in the fs bundle below
@@ -4368,78 +4353,14 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // Linux and Darwin bodies are one source instead of a `darwin` fork.
 
 
-    // __fern_open_fd(x0 = path string box, x1 = openat flags, x2 = mode) →
-    // i32 fd (or -errno): the file half of the streaming Reader/Writer
-    // surface (#4372). NUL-terminates the path (copy the box's data into a
-    // len+1 __fern_alloc buffer + a trailing 0), openat(AT_FDCWD, pathz,
-    // flags, mode), return the raw fd. Mirrors __fern_read_file's path
-    // prologue (openat=56) but returns the fd instead of read+close. One
-    // helper covers open_reader (flags=0) / open_writer (577) / open_appender
-    // (1089); the caller supplies the flags/mode in x1/x2.
-    s = s.write(".globl __fern_open_fd\n");
-    s = s.write(".type __fern_open_fd, %function\n");
-    s = s.write("__fern_open_fd:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    stp x23, x24, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // path box
-    s = s.write("    mov x23, x1\n");           // flags (saved across __fern_alloc)
-    s = s.write("    mov x24, x2\n");           // mode
-    s = s.write("    ldr x20, [x19]\n");        // path data ptr
-    s = s.write("    ldr x21, [x19, #8]\n");    // path len
-    s = s.write("    add x0, x21, #1\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x22, x0\n");           // pathz
-    s = s.write("    mov x9, #0\n");
-    s = s.write(".Lofd_copy:\n");
-    s = s.write("    cmp x9, x21\n");
-    s = s.write("    b.ge .Lofd_copydone\n");
-    s = s.write("    ldrb w10, [x20, x9]\n");
-    s = s.write("    strb w10, [x22, x9]\n");
-    s = s.write("    add x9, x9, #1\n");
-    s = s.write("    b .Lofd_copy\n");
-    s = s.write(".Lofd_copydone:\n");
-    s = s.write("    mov w10, #0\n");
-    s = s.write("    strb w10, [x22, x21]\n");  // NUL terminator
-    if (darwin) {
-        s = s.write("    mov x0, #-2\n");        // AT_FDCWD (Darwin)
-        // The IR carries LINUX open flags — irlower's open_reader / open_writer
-        // / open_appender constants are target-agnostic, and the op emitter has
-        // no `darwin` to branch on — so translate them here, the same class of
-        // bug as the arena mmap flags above (#6042). XNU's O_CREAT is 0x200,
-        // O_TRUNC 0x400 and O_APPEND 0x8; none match Linux's 64 / 512 / 1024:
-        //   O_RDONLY                     0    ->    0
-        //   O_WRONLY|O_CREAT|O_TRUNC     577  -> 1537
-        //   O_WRONLY|O_CREAT|O_APPEND   1089  ->  521
-        // Untranslated, open_writer asked XNU for O_WRONLY|0x40|0x200 — a
-        // nonexistent flag plus O_CREAT-without-O_TRUNC, so an overwrite left
-        // the old file's trailing bytes (write_file already got this right at
-        // its own openat, which is why only the streaming path was affected).
-        s = s.write("    cmp x23, #577\n");
-        s = s.write("    b.ne .Lofd_flag1\n");
-        s = s.write("    mov x23, #1537\n");
-        s = s.write("    b .Lofd_flagdone\n");
-        s = s.write(".Lofd_flag1:\n");
-        s = s.write("    cmp x23, #1089\n");
-        s = s.write("    b.ne .Lofd_flagdone\n");
-        s = s.write("    mov x23, #521\n");
-        s = s.write(".Lofd_flagdone:\n");
-    } else {
-        s = s.write("    mov x0, #-100\n");      // AT_FDCWD (Linux)
+    // open_fd: the file half of the streaming Reader/Writer surface (#4372),
+    // one helper for open_reader / open_writer / open_appender. Now Fern
+    // (asmcore.rt_src_open_fd) — including the Darwin open-flag translation the
+    // hand-asm did inline, which has to stay a run-time check because irlower
+    // picks the flags and has no target.
+    if (s.has_need("open_file")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_open_fd(tgt), s.struct_decls, s);
     }
-    s = s.write("    mov x1, x22\n");           // pathz
-    s = s.write("    mov x2, x23\n");           // flags
-    s = s.write("    mov x3, x24\n");           // mode
-    s = s.write("    mov x8, #56\n");           // sys_openat
-    s = s.write("    svc #0\n");                // x0 = fd / -errno
-    s = s.write("    ldp x23, x24, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_open_fd, .-__fern_open_fd\n");
 
     // __fern_envp: the `char **` _start stashes for env() and subprocess.
     // Emitted unconditionally because _start's save is gated on `heap`, not on
@@ -6489,8 +6410,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // arg; the helpers hand it a fresh copy, never their borrowed `path`). This
     // mirrors asm_ir's bundle exactly. read_dir / remove_dir_all joined it: the
     // 4th out-param Darwin's getdirentries64 wants is just __syscall4, and the
-    // dirent name offset is a direntoff row. The register-ABI hand-asm
-    // __fern_io_error stays only for open_fd.
+    // dirent name offset is a direntoff row. open_fd was the last leaf still
+    // hand-written; with it Fern too, the register-ABI hand-asm classifier is
+    // gone and this bundle is the only __fern_io_error.
     if (s.has_need("read_file") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }

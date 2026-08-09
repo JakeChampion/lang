@@ -722,56 +722,10 @@ function emit_ir_tcp_accept(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-// emit_ir_open_fd appends __fern_open_fd(%rdi = path string box, %rsi = openat
-// flags, %rdx = mode) -> the opened fd (or -errno) in %rax. The file half of the
-// streaming Reader/Writer surface (#4372): NUL-terminate the path (copy the box's
-// [data@0, len@8] bytes into a len+1 __fern_alloc buffer, append a 0), then
-// openat(AT_FDCWD=-100, pathz, flags, mode)=257 and return the raw fd. Mirrors
-// __fern_write_file's path prologue but returns the fd instead of write+close.
-// Gated on the open_file need; calls __fern_alloc.
-function emit_ir_open_fd(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_open_fd:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");                 // path data ptr
-    s = s.write("    pushq %r12\n");                 // path len
-    s = s.write("    pushq %r13\n");                 // flags
-    s = s.write("    pushq %r14\n");                 // mode
-    s = s.write("    pushq %r15\n");                 // NUL-term buffer ptr
-    s = s.write("    subq $8, %rsp\n");              // keep %rsp 16-aligned for the call
-    s = s.write("    movq %rsi, %r13\n");            // flags
-    s = s.write("    movq %rdx, %r14\n");            // mode
-    s = s.write("    movq (%rdi), %rbx\n");          // path data
-    s = s.write("    movq 8(%rdi), %r12\n");         // path len
-    s = s.write("    leaq 1(%r12), %rdi\n");         // len + 1
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    movq %rax, %r15\n");            // buffer
-    s = s.write("    movq $0, %rcx\n");
-    s = s.write(".Lof_copy:\n");
-    s = s.write("    cmpq %r12, %rcx\n");
-    s = s.write("    jge .Lof_copydone\n");
-    s = s.write("    movb (%rbx,%rcx,1), %dl\n");
-    s = s.write("    movb %dl, (%r15,%rcx,1)\n");
-    s = s.write("    incq %rcx\n");
-    s = s.write("    jmp .Lof_copy\n");
-    s = s.write(".Lof_copydone:\n");
-    s = s.write("    movb $0, (%r15,%r12,1)\n");     // NUL terminator
-    s = s.write("    movq $-100, %rdi\n");           // AT_FDCWD
-    s = s.write("    movq %r15, %rsi\n");            // pathz
-    s = s.write("    movq %r13, %rdx\n");            // flags
-    s = s.write("    movq %r14, %r10\n");            // mode
-    s = s.write("    movq $257, %rax\n");            // openat
-    s = s.write("    syscall\n");                    // %rax = fd / -errno
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    popq %r15\n");
-    s = s.write("    popq %r14\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_open_fd is a Fern runtime function (#2649): asmcore.rt_src_open_fd,
+// emitted via emit_ir_runtime_fern_fn and gated on the open_file need. It
+// NUL-terminates the path and openat(AT_FDCWD, pathz, flags, mode)s, returning
+// the raw fd or -errno; it allocates the NUL-term buffer, so it needs the heap.
 
 // emit_ir_sleep_ms appends the __fern_sleep_ms(%rdi = ms) helper, transcribed
 // verbatim from asm.fern's emit_runtime: split ms into a timespec
@@ -4552,7 +4506,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fern_tcp_close",
         "__fern_tcp_recv", "__fern_tcp_send", "__fern_tcp_listen", "__fern_tcp_accept",
-        "__fern_open_fd",
+        "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
         // scalar / string keys()/values() snapshots (#4353): a library
@@ -5272,9 +5226,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // -errno. Inline (no runtime helper): read data=box[0], len=box[8].
             s = s.write("    popq %rsi\n    popq %rdi\n    movq 8(%rsi), %rdx\n    movq (%rsi), %rsi\n    movq $1, %rax\n    syscall\n    pushq %rax\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
-            // [path box]; __fern_open_fd(%rdi=path, %rsi=flags(imm), %rdx=0644) ->
-            // fd / -errno. Allocates the NUL-term buffer, so heap + open_file needs.
-            s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n    call __fern_open_fd\n    pushq %rax\n");
+            // [path box]; the Fern __fn___fern_open_fd(path, flags(imm), 0644)
+            // -> fd / -errno via the stack ABI: args pushed 3rd-first, so
+            // param[0] lands at the lowest address. Allocates the NUL-term
+            // buffer, so heap + open_file needs.
+            s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n");
+            s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_fd\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("open_file");
         } else if (o.kind_tag == 219) {  // clz
             // LZCNT (BMI1) is DEFINED at zero -- it returns the operand width,
@@ -7703,7 +7660,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("tcp_send")) { s = emit_ir_tcp_send(s); }
     if (s.has_need("tcp_listen")) { s = emit_ir_tcp_listen(s); }
     if (s.has_need("tcp_accept")) { s = emit_ir_tcp_accept(s); }
-    if (s.has_need("open_file")) { s = emit_ir_open_fd(s); }
+    if (s.has_need("open_file")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_open_fd("x86_64"), all_structs, s);
+    }
     if (s.has_need("sleep_ms")) { s = emit_ir_sleep_ms(s); }
     }
     return peephole_push_pop(strbuf_take());
