@@ -473,22 +473,8 @@ function emit_ir_tcp_send(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms.
 // It writes the timespec into __fern_scratch, so it joins the scratch gate.
 
-// emit_ir_proc_fork appends __fern_proc_fork() -> i32 — a bare fork(2)
-// (syscall 57, no args) whose return shape IS the builtin's contract: 0 in the
-// child, the child's pid in the parent, -errno on failure. Transcribed from the
-// native x86-64 backend's emitProcForkRuntime. Allocation-free, so emitted
-// independently of the heap runtime (gated on the proc_fork need), like
-// __fern_random_i32 (#5686).
-pub function emit_ir_proc_fork(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_proc_fork:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    movq $57, %rax\n");
-    s = s.write("    syscall\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_proc_fork is a Fern runtime function (#2649): asmcore.rt_src_proc_fork
+// — a bare no-argument fork(2).
 
 // __fern_proc_exec is a Fern runtime function (#2649): asmcore.rt_src_proc_exec
 // — execve(2) over a built argv.
@@ -4153,7 +4139,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_read_all_stdin",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
-        "__fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
+        "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
         // random_bytes and random_i32 are Fern on BOTH register backends now
         // (#2649), so only the stack-ABI symbols exist; the register-ABI
         // __fern_random_bytes / __fern_random_i32 are gone.
@@ -4803,7 +4789,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 211) {  // proc_fork
             // no operands; __fern_proc_fork() -> i32 in %rax (0 child / pid
             // parent / -errno).
-            s = s.write("    call __fern_proc_fork\n    pushq %rax\n");
+            s = s.write("    call __fn___fern_proc_fork\n    pushq %rax\n");
             s = s.need("proc_fork");
         } else if (o.kind_tag == 212) {  // proc_waitpid
             // [pid] -> __fern_proc_waitpid(%rdi = pid) -> decoded status in %rax.
@@ -7272,7 +7258,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     }
     if (s.has_need("map_hash_seed")) { s = emit_ir_map_hash_seed(s); }
     // fork / wait4 allocate nothing either — same heap-independent gating.
-    if (s.has_need("proc_fork")) { s = emit_ir_proc_fork(s); }
+    if (s.has_need("proc_fork")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86_64"), all_structs, s);
+    }
     if (s.has_need("proc_waitpid")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86_64"), all_structs, s);

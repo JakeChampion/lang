@@ -388,8 +388,7 @@ hand-written" but "which of them the floor can already express".
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
 | `tcp_send` | `write` | 3 | `__syscall3`, but see below |
-| `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
-| **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
+| **`proc_fork` (Darwin only)** | `fork` | — | **not expressible** |
 
 `tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
 only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
@@ -416,7 +415,7 @@ did.
 leaf whose two targets disagree on the call itself, not just the number: Linux
 `nanosleep(&timespec, NULL)` against XNU
 `select(0, NULL, NULL, NULL, &timeval)`, five arguments and microseconds rather
-than nanoseconds. `proc_fork` (Linux) is unblocked by it and not yet done.
+than nanoseconds. `proc_fork` on arm64 Linux is its third consumer.
 
 `proc_waitpid` was the first leaf to need **no** per-target fork at all: `wait4`
 takes four arguments everywhere and only the number moves. Its Darwin hand-asm
@@ -430,6 +429,21 @@ syscall: it is a plain 3-argument `write`, but it needs the **data pointer of a
 copying the payload byte-by-byte on every call, which is a straight loss on a
 send path. What it wants is the inverse bridge (a `__raw_data`), not a wider
 syscall wrapper.
+
+`proc_fork` has since moved on **both Linux targets** — x86-64 through a bare
+no-argument `fork(2)`, arm64 through `clone(SIGCHLD, 0, 0, 0, 0)`. It is the
+first leaf to split by target for a reason other than a number or a struct
+layout: two of three targets are Fern and the third cannot be, so it joins
+`monotonic_ns` as a per-target pair. Both carry the `__fn___` name, because a
+zero-arg helper's stack and register conventions coincide and the call site
+should not have to learn which body it got.
+
+Darwin is the leaf's genuine floor limit, and only **half** of the reason
+usually given for it survives contact: the carry-flag errno convention would
+have cost nothing, since `darwinize` already injects that fold around every
+`__syscall*`. What no `__syscall*` can supply is **x1**, the register XNU uses
+to mark the child — and that is the entire content of the answer. A one-integer
+intrinsic cannot see a second return register.
 
 `proc_exec` has since moved too, and it is the one entry the audit table's
 "args" column undersold: the syscall is a plain 3-argument `execve`, but the
@@ -448,11 +462,6 @@ listed the two together as equally blocked, which had the asymmetry backwards.
 A negative return is clamped to length 0: the op has no error channel, so a
 short read, EOF and `-errno` all arrive as the empty string, exactly as the
 hand-asm's `csel ... ge` did.
-
-Darwin's `fork` is the second helper after `monotonic_ns` that stays
-hand-written on principle rather than for want of a syscall wrapper: it reports
-failure in the **carry flag** and distinguishes child from parent by **x1**,
-and Fern can read neither. A `__syscall*` intrinsic returns one integer.
 
 ### Two ways this audit went wrong before it went right
 
