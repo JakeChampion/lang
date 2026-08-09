@@ -106,3 +106,15 @@
 #     got:  8361 / 16762 / grows
 #     want: 8361 / 16762 / flat
 alloc_flat_index_of_fresh_container 6491 self-host: a container read at `mk()[i]` / `mk().field` is never reclaimed — grows, native flat
+
+# --- array-store element: the move is not ported ---------------------------
+# Same bug, same measured value, on all three legs — see the x86-64 sibling for
+# why the element ends up holding a retain nothing gives back, and for the two
+# shapes the case covers. #6535.
+#
+# Measurable here for the same reason the sibling above is: the divergence is in
+# stdout, not an exit code, so the WASI exit cap does not hide it.
+#
+#     got:  3700 / 7400 / grows
+#     want: 3700 / 7400 / flat
+alloc_flat_array_push_bound_elem 6535 self-host: a bound array-store element keeps its retain and is never released — grows, native flat
