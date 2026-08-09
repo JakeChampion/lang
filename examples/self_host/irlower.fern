@@ -21585,7 +21585,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names));
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names), opterrfresh_names_of(s.reclaimable_names));
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -21765,7 +21765,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             if (rcopt.idxs[rk] == i && rcopt.blockable[rk]) {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.n_params) {
-                    if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, tagged_payload_freefn(rcopt.strs[rk])); }
+                    if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, tagged_payload_freefn(rcopt.strs[rk]), tagged_errfreefn(rcopt.errstrs[rk])); }
                     else if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
                     else { st = emit_opt_payload_drop(st, rslot); }
                 }
@@ -26845,7 +26845,8 @@ function optfresh_call_names_of(entries: string[]): string[] {
     var i: i32 = 0;
     while (i < entries.len()) {
         var e: string = entries[i];
-        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:");
+        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:")
+            || (e.len() > 9 && e[0:9] == "ERRFRESH:");
         if (!tagged) {
             var bar: i32 = 0;
             while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
@@ -26861,6 +26862,7 @@ function optfresh_call_names_of(entries: string[]): string[] {
 // producer? Tagged rows ("RCE:" / "AAC:") have no flag field and are refused.
 function optfresh_entry_payload_is_fresh(e: string): boolean {
     if (e.len() > 4 && (e[0:4] == "RCE:" || e[0:4] == "AAC:")) { return false; }
+    if (e.len() > 9 && e[0:9] == "ERRFRESH:") { return false; }
     var i: i32 = e.len() - 2;
     if (i < 0) { return false; }
     return e[i] == 124 && e[i + 1:e.len()] == "f";   // 124 = '|'
@@ -26875,6 +26877,31 @@ function optfresh_fresh_names_of(reclaim: string[]): string[] {
     while (i < reclaim.len()) {
         var e: string = reclaim[i];
         if (e.len() > 10 && e[0:10] == "OPTFRESHF:") { out = out.append(e[10:e.len()] + ""); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The ERR-string-fresh producers, from the raw registry and from the seeded list
+// (#6360). Tagged rows rather than a second flag character, so every existing
+// "name|ptype|flag" lookup is untouched.
+function opterrfresh_call_names_of(entries: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        if (e.len() > 9 && e[0:9] == "ERRFRESH:") { out = out.append(e[9:e.len()] + ""); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function opterrfresh_names_of(reclaim: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < reclaim.len()) {
+        var e: string = reclaim[i];
+        if (e.len() > 12 && e[0:12] == "OPTERRFRESH:") { out = out.append(e[12:e.len()] + ""); }
         i = i + 1;
     }
     return out;
@@ -28712,7 +28739,7 @@ function opt_payload_deep_sty(ptype: string, structs: parser.StructDecl[]): stri
 // FIELDS; a block-level drop zeroes the slot and starves that machinery,
 // leaking the field buffers (the #5453 CI regression) — so struct payloads
 // stay fn-level-only, where the pass and the machinery agree.
-struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[], stys: string[], tagged: boolean[] }
+struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[], stys: string[], tagged: boolean[], errstrs: boolean[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -28787,13 +28814,29 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[], fre
     return "";
 }
 
-function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[]): OptRcFrees {
+// call_init_callee_in: `e` is a direct call to a bare-ident callee listed in
+// `names`. The membership test the call-init admissions all share (#6360).
+function call_init_callee_in(e: parser.Expr, names: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => { return util.index_of_str(names, id.name) >= 0; },
+                _ => { return false; }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[], err_fresh: string[]): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var strs: boolean[] = [];
     var blockable: boolean[] = [];
     var stys: string[] = [];
     var tagged: boolean[] = [];
+    var errstrs: boolean[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
@@ -28837,6 +28880,13 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             if (dsty.len() > 0 && opt_arm_field_moved(body[match_idx], cand.variant, dsty, structs)) { dsty = ""; }
                             stys = stys.append(dsty);
                             tagged = tagged.append(call_pt != "");
+                            // #6360: the Err arm's string may be released too, but
+                            // only for a call-bound candidate whose producer is
+                            // ERRFRESH-proven. A direct ctor names one variant, so
+                            // its drop never reaches the other arm's payload.
+                            errstrs = errstrs.append(call_pt != ""
+                                && opt_payload_type(v.type_name, "Err") == "string"
+                                && call_init_callee_in(v.init, err_fresh));
                         }
                     }
                 }
@@ -28845,7 +28895,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable, stys: stys, tagged: tagged };
+    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable, stys: stys, tagged: tagged, errstrs: errstrs };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
@@ -28866,6 +28916,14 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
 // Which runtime helper releases a tag-guarded payload whole: a string box needs
 // __fern_str_free (separate data buffer, different block class), everything
 // rcpayload_option_call_ptype otherwise admits is a flat scalar array.
+// tagged_errfreefn: "" leaves the tag guard's else-branch empty (an Err payload
+// stranded, the pre-#6360 behaviour); __fern_str_free fills it for a producer
+// whose every Err payload is a proven-fresh string.
+function tagged_errfreefn(err_str: boolean): string {
+    if (err_str) { return "__fern_str_free"; }
+    return "";
+}
+
 function tagged_payload_freefn(is_str: boolean): string {
     if (is_str) { return "__fern_str_free"; }
     return "__fern_rc_dec";
@@ -28937,7 +28995,7 @@ function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
 // Tag 0 is Some/Ok, matching emit_optstruct_deep_free, whose null-then-tag shape
 // this follows exactly. The slot is zeroed so the exit sweep decs a null rather
 // than the box a second time.
-function emit_opt_tagged_payload_drop(se: LowerState, slot: i32, freefn: string): LowerState {
+function emit_opt_tagged_payload_drop(se: LowerState, slot: i32, freefn: string, errfreefn: string): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -28952,6 +29010,17 @@ function emit_opt_tagged_payload_drop(se: LowerState, slot: i32, freefn: string)
     st = st.emit(ir.op_opt_payload());
     st = st.emit(ir.op_call_direct(freefn, 1));
     st = st.emit(ir.op_drop());
+    // `errfreefn` non-empty fills the else-branch that was empty until #6360, so
+    // an Err payload is released rather than stranded. It stays empty unless the
+    // producer's every Err payload is proven fresh (ERRFRESH), because this arm
+    // has no other owner to fall back on.
+    if (errfreefn != "") {
+        st = st.emit(ir.op_else());
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_opt_payload());
+        st = st.emit(ir.op_call_direct(errfreefn, 1));
+        st = st.emit(ir.op_drop());
+    }
     st = st.emit(ir.op_end());                       // end if-success
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // free the box
@@ -36565,6 +36634,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // rather than a flag on the entry above: the "OPTFRESH:<name>" lookups
         // are exact-match, and "OPTFRESHF:"[0:9] is "OPTFRESHF", not
         // "OPTFRESH:", so neither prefix test can see the other's rows.
+        // ERR-side sibling (#6360): the producer's every Err payload is a fresh
+        // string, which the flag above cannot say. Its rows are tagged, so the
+        // bar-scan never reaches them and they seed under their own prefix.
+        if (ofr_e.len() > 9 && ofr_e[0:9] == "ERRFRESH:") {
+            reclaim = reclaim.append("OPTERRFRESH:" + ofr_e[9:ofr_e.len()]);
+        }
         if (optfresh_entry_payload_is_fresh(ofr_e)) {
             reclaim = reclaim.append("OPTFRESHF:" + ofr_e[0:ofr_bar]);
         }
@@ -36773,7 +36848,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_fresh_call_names_of(sg.opt_fresh_ret_fns));
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_fresh_call_names_of(sg.opt_fresh_ret_fns), opterrfresh_call_names_of(sg.opt_fresh_ret_fns));
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -37159,7 +37234,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 var roslot: i32 = s.slot_of(rcoptfrees.names[roi]);
                 if (roslot >= s.n_params) {
                     if (rcoptfrees.tagged[roi]) {
-                        s = emit_opt_tagged_payload_drop(s, roslot, tagged_payload_freefn(rcoptfrees.strs[roi]));
+                        s = emit_opt_tagged_payload_drop(s, roslot, tagged_payload_freefn(rcoptfrees.strs[roi]), tagged_errfreefn(rcoptfrees.errstrs[roi]));
                     } else if (rcoptfrees.strs[roi]) {
                         s = emit_opt_str_payload_drop(s, roslot);
                     } else if (rcoptfrees.stys[roi].len() > 0) {
@@ -37938,6 +38013,21 @@ function body_has_nonctor_opt_return(stmts: parser.Stmt[]): boolean {
 // string ownership of it. A literal payload is admitted — __fern_str_free's
 // heap-base guard no-ops on .rodata data, so crediting the binding is safe.
 function body_has_nonfresh_opt_success_payload(stmts: parser.Stmt[]): boolean {
+    return body_has_nonfresh_opt_payload(stmts, false);
+}
+
+// body_has_nonfresh_opt_err_payload: the Err-arm verdict (#6360). Needed because
+// the "f" flag above describes the SUCCESS payload only, so it cannot vouch for an
+// Err string — and a drop that releases one has to know.
+function body_has_nonfresh_opt_err_payload(stmts: parser.Stmt[]): boolean {
+    return body_has_nonfresh_opt_payload(stmts, true);
+}
+
+// body_has_nonfresh_opt_payload: does any `Ok(..)`/`Some(..)` return (or, with
+// `err`, any `Err(..)` return) carry a payload that is NOT a static literal or a
+// syntactically-fresh string producer? One walk, selected by which constructor it
+// inspects — the two verdicts differ only in that name.
+function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -37946,7 +38036,9 @@ function body_has_nonfresh_opt_success_payload(stmts: parser.Stmt[]): boolean {
                     parser.ExprCall(c) => {
                         match (c.callee) {
                             parser.ExprIdent(cid) => {
-                                if ((cid.name == "Ok" || cid.name == "Some") && c.args.len() == 1) {
+                                var hit: boolean = cid.name == "Ok" || cid.name == "Some";
+                                if (err) { hit = cid.name == "Err"; }
+                                if (hit && c.args.len() == 1) {
                                     var pfresh: boolean = str_local_binding_is_fresh(c.args[0]);
                                     match (c.args[0]) { parser.ExprString(_) => { pfresh = true; }, _ => {} }
                                     if (!pfresh) { return true; }
@@ -37958,10 +38050,10 @@ function body_has_nonfresh_opt_success_payload(stmts: parser.Stmt[]): boolean {
                     _ => {}
                 }
             },
-            parser.StmtIf(f) => { if (body_has_nonfresh_opt_success_payload(f.then_body) || body_has_nonfresh_opt_success_payload(f.else_body)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonfresh_opt_success_payload(w.body)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonfresh_opt_success_payload(fo.body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_success_payload(m.arms[a].body)) { return true; } a = a + 1; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_opt_payload(f.then_body, err) || body_has_nonfresh_opt_payload(f.else_body, err)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_opt_payload(w.body, err)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_opt_payload(fo.body, err)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_payload(m.arms[a].body, err)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -37990,6 +38082,13 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
             var flag: string = "a";
             if (!body_has_nonfresh_opt_success_payload(funcs[k].body)) { flag = "f"; }
             out = out.append(funcs[k].name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
+            // #6360: a separate tagged row when every Err payload is a fresh string
+            // too. The flag above is the SUCCESS verdict and cannot speak for Err,
+            // so a drop that releases the Err payload needs its own proof.
+            if (opt_payload_type(rt, "Err") == "string"
+                    && !body_has_nonfresh_opt_err_payload(funcs[k].body)) {
+                out = out.append("ERRFRESH:" + funcs[k].name);
+            }
         }
         // #4355 slice 5: fresh rc-ENUM ctor fns, tagged "RCE:<name>|<Enum>" in the
         // SAME list (the tag keeps the "name|ptype|flag" lookups above from ever
