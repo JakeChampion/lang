@@ -5498,3 +5498,45 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (421 s, run FIRST — gen0 == gen1
   across 35 units), plus #6467's and #6469's suites green unchanged. Refs #6319
   #6360 #4451.
+- 2026-08-09: **#6360's leak list, RE-DERIVED by measurement, re-confirmed at `7014ae2`.** The
+  call-bound string class and both quadrants of the Err-string class are closed
+  (#6467 / #6476 / #6483 / #6488), so the old list describes nothing. This is what
+  a fresh differential sweep actually finds. Every row is `FERN_LEAKCHECK=1`,
+  100 rounds x 4 iterations, exit codes equal to `fern -interp` and to native.
+  Re-measured after #6480 widened the consuming-match class: every figure below
+  is unchanged by it, and both clean controls stay clean.
+
+  **The 75-probe scratchpad corpus is EXHAUSTED and clean.** Zero exit-code
+  divergences — no use-after-free survives anywhere in it. Every leak it still
+  reports is a hazard probe written to be REFUSED: box-aliased-outward (32800),
+  escaping arm binding (31200), aliased payload (19200). Those are the
+  conservative side of gates that would dangle if widened. They do mark a real
+  parity gap — native reclaims all three — but closing them needs genuine liveness
+  inference, not another syntactic credit. Do not read them as defects.
+
+  **New classes, from probing shapes the corpus never covered.** Ranked, all
+  exactly x2.0 per doubling:
+
+  | shape | self-host | frees | native |
+  |---|---|---|---|
+  | `Option[string[]]`                | 57600 | 1600/4000 | 0 |
+  | `Option[P]`, P has a string FIELD | 48000 |  800/2400 | 0 |
+  | `Option[Option[i32[]]]`           | 48000 |    0/1200 | 0 |
+  | `Result[string[], string]`        | 43200 | 1200/3000 | 0 |
+
+  The first, second and fourth share one cause: **a payload that needs a
+  per-element or per-field STRING release**, where the existing drops do a single
+  `__fern_rc_dec` (flat buffer) or a single `__fern_str_free` (one string) and walk
+  neither a `string[]`'s elements nor a struct's string fields. `Option[P]` is the
+  near-miss — `emit_opt_struct_payload_drop` / `opt_payload_deep_sty` already
+  handle a struct payload with rc-ARRAY fields, and simply do not admit string
+  fields. The third is a different cause: `frees=0`, so the credit is unreachable
+  rather than partial — `rcpayload_option_cand` has no branch whose payload type is
+  itself an Option.
+
+  **Controls that are CLEAN, recorded so nobody re-probes them**: `Option[i32[][]]`,
+  `Option[i32[]][]`, `Option[(i32, i32[])]`, a bare `string[]` local, and a bare
+  struct-with-string-field local. The leak needs BOTH the Option wrapper and a
+  string-carrying payload; neither alone reproduces it.
+
+  Refs #6360 #4451.
