@@ -384,53 +384,8 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_poll is a Fern runtime function (#2649): asmcore.rt_src_poll. It builds
 // the pollfd[] with __raw_store_ptr + __raw_store8 and calls poll(2); arm64
 // Linux reaches ppoll through __syscall5 instead.
-
-// emit_ir_timer_fd appends __fern_timer_fd(%rdi = ms) -> a CLOCK_MONOTONIC
-// one-shot timerfd fd, readable after `ms` ms (or -errno), in %rax. The mirror
-// of the native helper: timerfd_create(CLOCK_MONOTONIC, 0) [#283], then
-// timerfd_settime(fd, 0, &{it_interval=0, it_value={sec, nsec}}, NULL) [#286].
-// Allocation-free (32-byte stack itimerspec), gated on the timer_fd need.
-function emit_ir_timer_fd(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_timer_fd:\n");
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");                 // ms
-    s = s.write("    pushq %r12\n");                 // fd
-    s = s.write("    subq $32, %rsp\n");             // struct itimerspec
-    s = s.write("    movq %rdi, %rbx\n");            // ms
-    s = s.write("    movq $1, %rdi\n");              // CLOCK_MONOTONIC
-    s = s.write("    xorq %rsi, %rsi\n");
-    s = s.write("    movq $283, %rax\n");            // timerfd_create
-    s = s.write("    syscall\n");
-    s = s.write("    movq %rax, %r12\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    js .Lir_tfd_ret\n");            // create failed -> -errno
-    s = s.write("    xorq %rax, %rax\n");            // it_interval = {0,0}
-    s = s.write("    movq %rax, (%rsp)\n");
-    s = s.write("    movq %rax, 8(%rsp)\n");
-    s = s.write("    movq %rbx, %rax\n");            // it_value = {ms/1000, (ms%1000)*1e6}
-    s = s.write("    xorq %rdx, %rdx\n");
-    s = s.write("    movq $1000, %rcx\n");
-    s = s.write("    divq %rcx\n");                  // rax=sec, rdx=rem ms
-    s = s.write("    movq %rax, 16(%rsp)\n");
-    s = s.write("    movq $1000000, %rax\n");
-    s = s.write("    imulq %rdx, %rax\n");           // nsec
-    s = s.write("    movq %rax, 24(%rsp)\n");
-    s = s.write("    movl %r12d, %edi\n");           // timerfd_settime(fd, 0, &its, NULL)
-    s = s.write("    xorq %rsi, %rsi\n");
-    s = s.write("    movq %rsp, %rdx\n");
-    s = s.write("    xorq %r10, %r10\n");
-    s = s.write("    movq $286, %rax\n");            // timerfd_settime
-    s = s.write("    syscall\n");
-    s = s.write("    movq %r12, %rax\n");            // return fd
-    s = s.write(".Lir_tfd_ret:\n");
-    s = s.write("    addq $32, %rsp\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    popq %rbp\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_timer_fd is a Fern runtime function (#2649): asmcore.rt_src_timer_fd —
+// timerfd_create then timerfd_settime over an itimerspec in __fern_scratch.
 
 // emit_ir_wasm_timer_pollable appends __fern_wasm_timer_pollable(ns) -> -1: on
 // native there's no pollable (a deadline rides poll(2)'s timeout arg), so it
@@ -4358,7 +4313,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_monotonic_ns", "__fern_now_ns",
         "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
         "__fn___fern_poll",
-        "__fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
+        "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
         "__fern_tcp_recv", "__fern_tcp_send", "__fern_tcp_listen", "__fn___fern_tcp_accept",
@@ -5030,7 +4985,8 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 188) {  // timer_fd
             // [ms]; __fern_timer_fd(%rdi=ms) -> a CLOCK_MONOTONIC timerfd fd
             // (readable after ms), or -errno, in %rax.
-            s = s.write("    popq %rdi\n    call __fern_timer_fd\n    pushq %rax\n");
+            // [ms] IS param[0] already; the stack ABI needs no marshalling.
+            s = s.write("    call __fn___fern_timer_fd\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("timer_fd");
         } else if (o.kind_tag == 189) {  // wasm_timer_pollable
             // [ns]; __fern_wasm_timer_pollable(%rdi=ns) -> -1 on native (no
@@ -7472,7 +7428,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     if (s.has_need("monotonic_ns")) {
@@ -7524,7 +7480,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86_64"), all_structs, s);
     }
-    if (s.has_need("timer_fd")) { s = emit_ir_timer_fd(s); }
+    if (s.has_need("timer_fd")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86_64"), all_structs, s);
+    }
     if (s.has_need("wasm_timer_pollable")) { s = emit_ir_wasm_timer_pollable(s); }
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }
     if (s.has_need("wasm_block")) { s = emit_ir_wasm_block(s); }

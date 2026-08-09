@@ -7,7 +7,7 @@ import (
 
 // TestSelfHostTimerFdIRArm64 is the arm64 half of slice 3 (docs/ASYNC-SELFHOST-IR.md):
 // timer_fd / wasm_timer_pollable / wasm_pollable_drop now lower to dedicated IR
-// ops on the self-host arm64 IR backend, emitting `bl __fern_timer_fd` (the
+// ops on the self-host arm64 IR backend, emitting `bl __fn___fern_timer_fd` (the
 // timerfd_create/settime #85/#86 mirror), `bl __fern_wasm_timer_pollable` (-1),
 // and `bl __fern_wasm_pollable_drop` (0). A module using them is IR-eligible
 // rather than falling back to the AST emitter (which can't emit them).
@@ -33,7 +33,7 @@ func TestSelfHostTimerFdIRArm64(t *testing.T) {
     var fd: i32 = timer_fd(1);
     var fds: i32[] = [fd];
     return poll(fds, 500);
-}`, 0, "bl __fern_timer_fd"},
+}`, 0, "bl __fn___fern_timer_fd"},
 		{"shims", `function main(): i32 {
     var p: i32 = wasm_timer_pollable(0);
     var d: i32 = wasm_pollable_drop(p);
