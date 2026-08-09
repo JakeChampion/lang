@@ -5011,9 +5011,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   / #6255 / #6263 / #6274 / #6285 / #6291 / #6308 / #6319 / #6336 / #6347 /
   #6375). It is no longer the live list.
 
-  **The live list is #6360**: an enum local bound from a CALL is never reclaimed
-  on the self-host — `frees=0`, exactly x2.0 per doubling, and not
-  Result-specific (`Option` behaves identically). Native is clean on every row.
+  **The live list is #6360, now down to its STRING rows.** The class was "an
+  enum local bound from a CALL is never reclaimed" — `frees=0`, exactly x2.0 per
+  doubling, native clean on every row. Two thirds of it has closed: #6416 took
+  the scalar payload, #6451 the rc payload.
+
+  What that left is best read as a 2x2, because "rc payload leaks" is the wrong
+  summary and cost a wrong turn before it was measured:
+
+  | payload | init | before #6451 |
+  |---|---|---|
+  | rc | direct | 0 — already deep-freed, buffer and all |
+  | rc | call | 35200 — closed by #6451 |
+  | scalar | direct | 0 |
+  | scalar | call | 0 — closed by #6416 |
+
+  The rc payload was never what defeated reclaim. `rcpayload_option_cand` reads
+  the CONSTRUCTED variant off the init: `Some([..])` is visible, `mk(i)` is not,
+  and `emit_opt_payload_drop` then reads offset 8 unconditionally — sound only
+  because a specific variant was admitted. `emit_opt_tagged_payload_drop` guards
+  that same release on `op_opt_tag() == 0`.
+
+  **Still open, and they are TWO defects rather than one:**
+
+  - `Result[i32[], string]` from a call — 35200, `frees=0`. Needs a two-way tag
+    dispatch (`__fern_rc_dec` on the Ok arm, `__fern_str_free` on the Err arm).
+    **The blocker is freshness, not dispatch.** The direct path gates a string
+    payload on its ARGUMENT being fresh (`str_local_binding_is_fresh`); a call
+    init cannot see the argument. The OPTFRESH registry already carries the
+    needed proof as its `"f"` flag — but `body_has_nonfresh_opt_success_payload`
+    proves the SUCCESS payload fresh, and here the string is the ERR payload, so
+    the flag does not cover it. Extending it means a new whole-program check
+    over Err payloads, not a reuse of the existing one.
+  - `Option[string]` from a call — reclaims **PARTIALLY** (800 of 2000, where the
+    closed shapes were `frees=0`). Something already frees part of it, so this is
+    a different defect and folding it into the class above risks a double free.
+    Its success payload IS the string, so the registry's `"f"` flag does cover
+    this one — the missing piece here is diagnosis, not a freshness proof.
+
+  **Checked, so it does not get re-litigated: an ALIASED payload through a
+  producer is sound.** `function mk(a: i32[]) { return Some(a); }` called on a
+  live `shared` array admits under #6451 (OPTFRESH proves the return is a direct
+  ctor; it says nothing about the argument), and the unconditional `rc_dec` on
+  the payload is nonetheless balanced — interp / native / self-host all exit 10
+  with `allocs=51 frees=51 live_bytes=0`, and `shared` reads back intact after
+  the loop. So the array ctor takes a counted reference. Strings are the shape
+  where that is NOT assumed, which is exactly why the direct path gates them.
 
   **The block-scoped bare-name struct credit is HALF closed** (#6375, 8800 →
   4000): the BOX is reclaimed, the field drop is not. Three fixpoint runs, one
