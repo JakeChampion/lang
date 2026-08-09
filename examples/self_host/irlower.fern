@@ -46055,6 +46055,30 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
         parser.ExprIndex(ix) => {
             return parser.ExprIndex { array: subst_fcall_expr(ix.array, fname, lname, capargs), index: subst_fcall_expr(ix.index, fname, lname, capargs), unchecked: ix.unchecked, ty: ix.ty };
         },
+        // The aggregate literals. A call reached only through one of these was
+        // left un-substituted, so the binding's name survived the caller's
+        // post-rewrite check, the lift declined, and the lambda fell to the
+        // escaping-closure path — which names a `<fn>$clo` nothing hoisted.
+        parser.ExprArray(arr) => {
+            var ael: parser.Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < arr.elements.len()) { ael = ael.append(subst_fcall_expr(arr.elements[ai], fname, lname, capargs)); ai = ai + 1; }
+            return parser.ExprArray { elements: ael };
+        },
+        parser.ExprTuple(tu) => {
+            var tel: parser.Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) { tel = tel.append(subst_fcall_expr(tu.elements[ti], fname, lname, capargs)); ti = ti + 1; }
+            return parser.ExprTuple { elements: tel, line: tu.line, col: tu.col };
+        },
+        parser.ExprStructLit(sl) => {
+            var fvals: parser.Expr[] = [];
+            var fi: i32 = 0;
+            while (fi < sl.field_values.len()) { fvals = fvals.append(subst_fcall_expr(sl.field_values[fi], fname, lname, capargs)); fi = fi + 1; }
+            var nbase: parser.Expr = sl.base;
+            if (sl.has_base) { nbase = subst_fcall_expr(sl.base, fname, lname, capargs); }
+            return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: fvals, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
+        },
         parser.ExprFieldAccess(fa) => {
             return parser.ExprFieldAccess { obj: subst_fcall_expr(fa.obj, fname, lname, capargs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
