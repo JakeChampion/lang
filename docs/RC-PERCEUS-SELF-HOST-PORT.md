@@ -5039,8 +5039,10 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   because a specific variant was admitted. `emit_opt_tagged_payload_drop` guards
   that same release on `op_opt_tag() == 0`.
 
-  **Still open — one class, two ORTHOGONAL dimensions.** Measured at the merge
-  of #6451 and #6448, `Result[i32[], E]` from a call, 100 rounds x 4:
+  **One class, two ORTHOGONAL dimensions — one of the two now half-closed.**
+  Measured at the merge of #6451 and #6448, `Result[i32[], E]` from a call, 100
+  rounds x 4. The success payload is `i32[]` throughout, so this table is
+  unaffected by the string-SUCCESS-payload close below:
 
   | Err | consumed by a match | self-host |
   |---|---|---|
@@ -5049,42 +5051,53 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | string | yes | 35200, `frees=0` |
   | string | no | 35200, `frees=0` |
 
-  So the two open dimensions are:
+  So the two dimensions were:
 
-  1. **no consuming match**, for a CALL init. #6451's admission requires a
-     `sole_top_level_match_idx`, and #6448's no-match class does not admit a
-     call init — neither reaches this cell.
-  2. **a string payload**, below.
+  1. **no consuming match**, for a CALL init — still open. #6451's admission
+     requires a `sole_top_level_match_idx`, and #6448's no-match class does not
+     admit a call init, so neither reaches this cell. `sole_top_level_match_idx`
+     is also what leaves the INDENTED spelling out: a call-init string Option
+     whose match sits inside an `if` is 800 / `frees=0` where the same match at
+     top level is clean.
+  2. **a string payload** — split by WHERE the string sits, and only the
+     SUCCESS half is closed.
 
-  - `Result[i32[], string]` from a call — 35200, `frees=0`. Needs a two-way tag
-    dispatch (`__fern_rc_dec` on the Ok arm, `__fern_str_free` on the Err arm).
-    **The blocker is freshness, not dispatch.** The direct path gates a string
-    payload on its ARGUMENT being fresh (`str_local_binding_is_fresh`); a call
-    init cannot see the argument. The OPTFRESH registry already carries the
-    needed proof as its `"f"` flag — but `body_has_nonfresh_opt_success_payload`
-    proves the SUCCESS payload fresh, and here the string is the ERR payload, so
-    the flag does not cover it. Extending it means a new whole-program check
-    over Err payloads, not a reuse of the existing one.
-  - `Option[string]` from a call — **the same class, not a different defect.**
-    It first read as "reclaims partially, 800 of 2000", which suggested something
-    already frees part of it and that folding it in risked a double free. That
-    was an artifact of the PROBE: its payload was `Some("ab" + "cd")`, and the
-    concat's intermediate temporaries are freed by other machinery, which masked
-    the option boxes never being freed at all. The same shape with a LITERAL
-    payload is `allocs=800 frees=0` — the closed class's exact signature.
-    Varying one dimension separated them:
+  - **Success payload — CLOSED.** `Option[string]` / `Result[string, <scalar>]`
+    from a call went 800 `frees=0` → 800/800, and the fn-scoped spelling
+    200 `frees=0` → 200/200. `rcpayload_option_call_ptype` now admits a `string`
+    success payload, and `emit_opt_tagged_payload_drop` takes the payload helper
+    as a parameter (`__fern_str_free` instead of `__fern_rc_dec`) rather than
+    growing a fourth near-identical emitter.
 
-    | payload | init | self-host |
-    |---|---|---|
-    | `"abcd"` literal | call | 800, **frees=0** |
-    | `"ab" + "cd"` | call | 2000, frees=800 (the 800 are the concat temporaries) |
-    | `"abcd"` literal | direct | 800 / 800, clean |
-    | `"ab" + "cd"` | direct | 2000 / 2000, clean |
+    The freshness proof was already computed and then dropped on the floor:
+    `opt_fresh_ret_fns_of` records the `"f"` flag per producer, but both name
+    extractors stripped it, so lower_func could not see it. It is now seeded as
+    `"OPTFRESHF:<name>"` beside `"OPTFRESH:<name>"` — a separate prefix, because
+    the existing lookups are exact-match and `"OPTFRESHF:"[0:9]` is `"OPTFRESHF"`,
+    not `"OPTFRESH:"`, so neither prefix test can see the other's rows.
 
-    So both open rows are one class — a call-init string payload — and they
-    differ only in WHERE the string sits, which decides whether the freshness
-    proof already exists: success payload (covered by the registry's `"f"` flag)
-    versus Err payload (not covered).
+    **The refusals are the load-bearing half.** `op_opt_make` stores the payload
+    UNCOUNTED, so a producer returning `Some(pre)` for a live local — or worse,
+    `Some(s)` for a caller's parameter — is flagged `"a"` and must stay refused:
+    freeing there DANGLES rather than leaks. Both shapes are pinned as refused in
+    `TestSelfHostCallBoundStrPayloadReclaimX86_64`, which asserts every row's exit
+    code against `fern -interp` so a dangle surfaces as a wrong answer rather than
+    quiet corruption.
+  - **Err payload — CLOSED by #6463**, and not the way this note predicted. It
+    assumed a string Err needed its own freshness proof plus a second arm on the
+    tag guard. It needed neither: the guard frees the payload only under
+    `tag == 0`, so a non-scalar Err is never reached — stranded, not dangled —
+    and the Err gate was simply dropped. The `"f"` flag not covering Err costs
+    nothing, because the success payload is the only one the drop touches.
+
+    Worth keeping as method: the gate that looked load-bearing was refusing the
+    whole shape, so it leaked the BOX as well as the payload it was protecting.
+    Check what a refusal actually costs before treating it as the safe default.
+
+    Do not re-derive the `Option[string]` numbers from the concat spelling: that
+    probe reads as "reclaims partially, 800 of 2000" because the concat's
+    intermediate temporaries are freed by other machinery, which masks the boxes
+    never being freed at all. The literal spelling is the honest signature.
 
   **Checked, so it does not get re-litigated: an ALIASED payload through a
   producer is sound.** `function mk(a: i32[]) { return Some(a); }` called on a
