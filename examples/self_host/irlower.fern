@@ -16829,36 +16829,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var is_closurearr: boolean = false;
     match (v.init) {
         parser.ExprArray(carr) => {
-            if (carr.elements.len() > 0) {
-                match (carr.elements[0]) {
-                    parser.ExprLambda(_) => { is_closurearr = true; },
-                    parser.ExprCall(cec) => {
-                        match (cec.callee) {
-                            parser.ExprIdent(cecid) => {
-                                if (util.index_of_str(se.sigs.closure_fns, cecid.name) >= 0) { is_closurearr = true; }
-                                // A `__mkclo$<name>(caps…)` env-box marker
-                                // (lift_inline_closures, #2994) builds a
-                                // closure box element just like a closure-
-                                // returning call, so the array is a closure
-                                // array (its `fs[i](args)` unpacks the box).
-                                if (cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$") { is_closurearr = true; }
-                            },
-                            _ => { }
-                        }
-                    },
-                    // A bare CLOSURE-LOCAL ident element (`var fs = [f]` where
-                    // f binds a capturing lambda): the element is the env-box
-                    // POINTER, so the array is a closure array — without this
-                    // arm the slot stayed unclassified and `fs[i]()` bare-
-                    // called the box pointer as code (SIGSEGV, #5405). The
-                    // `.append(f)` site already had this arm (#3556); this is
-                    // its array-LITERAL sibling. A bare NAMED-fn element is
-                    // NOT matched here — is_closure_local is false for it, so
-                    // the #3574 fn-pointer-array classification still wins.
-                    parser.ExprIdent(ceid) => { if (se.is_closure_local(ceid.name)) { is_closurearr = true; } },
-                    _ => { }
-                }
-            }
+            if (carr.elements.len() > 0 && arr_elem_is_closure_box(carr.elements[0], se)) { is_closurearr = true; }
         },
         // `var arr = mk()` where mk returns a closure-array (`((T) => R)[]`):
         // arr's elements are closure boxes, so mark it is_closurearr for the
@@ -16868,6 +16839,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         parser.ExprCall(cac) => {
             match (cac.callee) {
                 parser.ExprIdent(cacid) => { if (se.is_closurearr_ret_fn(cacid.name)) { is_closurearr = true; } },
+                // A value-position if/match (an IIFE) whose every arm yields a
+                // closure ARRAY. Same argument as the closure-returning call
+                // above, one container out: leaving it unclassified made
+                // `xs[i](args)` bare-call the box pointer as code.
+                parser.ExprLambda(_) => { if (cac.args.len() == 0 && iife_callee_closurearr_arms(cac.callee, se)) { is_closurearr = true; } },
                 _ => { }
             }
         },
@@ -45957,6 +45933,41 @@ function desugar_lambda_returns(body: parser.Stmt[], counter: i32): DesugarRet {
     return DesugarRet { body: out, counter: c };
 }
 
+// desugar_nontail_lambda_returns applies the same rewrite to every `return
+// <lambda>` in `body` EXCEPT one that is the body's final top-level statement.
+// That one is hoist_escaping_closure's, and handing it to the desugar instead is
+// what regressed the `curry` shape (#5281); every other position has no hoist
+// and asked for a `<fd>$clo` nothing built.
+//
+// It exists for a body ASSEMBLED during lifting, which the pre-worklist pass
+// over the source functions cannot have seen — see unwrap_sole_iife_return, its
+// only caller. Returns `body` unchanged when nothing is rewritten, so an
+// unaffected function serializes byte-identically.
+function desugar_nontail_lambda_returns(body: parser.Stmt[]): parser.Stmt[] {
+    var n: i32 = body.len();
+    if (n == 0) { return body; }
+    var tail_is_lam_ret: boolean = false;
+    match (body[n - 1]) {
+        parser.StmtReturn(tr) => {
+            match (tr.value) {
+                parser.ExprLambda(_) => { tail_is_lam_ret = true; },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    var upto: i32 = n;
+    if (tail_is_lam_ret) { upto = n - 1; }
+    var head: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < upto) { head = head.append(body[i]); i = i + 1; }
+    var hd: DesugarRet = desugar_lambda_returns(head, 0);
+    if (hd.counter == 0) { return body; }
+    var nb: parser.Stmt[] = hd.body;
+    if (tail_is_lam_ret) { nb = nb.append(body[n - 1]); }
+    return nb;
+}
+
 // lift_stmt rewrites a single statement, recursing into nested bodies + the
 // call-bearing expression positions (return / var-init / expr-stmt / control
 // conditions). Other statements pass through.
@@ -47455,6 +47466,97 @@ function iife_stmts_all_boxed(stmts: parser.Stmt[], s: LowerState, seen: i32): i
     return n;
 }
 
+// arr_elem_is_closure_box reports whether an array literal's element is a
+// closure BOX rather than a raw fn pointer: an inline lambda, a call to a
+// closure-returning fn, a `__mkclo$<name>(caps…)` env-box marker
+// (lift_inline_closures, #2994), or a closure-LOCAL ident (#5405). A bare
+// named-fn element answers false, which is what keeps the #3574 fn-pointer-array
+// classification. Read of element[0]: all elements of a closure array share one
+// dispatch ABI (#5071 gives a mixed literal uniform boxes).
+function arr_elem_is_closure_box(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return true; },
+        parser.ExprCall(cec) => {
+            match (cec.callee) {
+                parser.ExprIdent(cecid) => {
+                    if (util.index_of_str(s.sigs.closure_fns, cecid.name) >= 0) { return true; }
+                    return cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$";
+                },
+                _ => { return false; }
+            }
+        },
+        parser.ExprIdent(ceid) => { return s.is_closure_local(ceid.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// iife_callee_closurearr_arms is iife_callee_boxed_arms one container out: every
+// arm of the value-position if/match yields a closure ARRAY, so the binding is
+// one too. Same walk, different question of each arm value.
+function iife_callee_closurearr_arms(callee: parser.Expr, s: LowerState): boolean {
+    match (callee) {
+        parser.ExprLambda(lam) => {
+            if (lam.params.len() != 0) { return false; }
+            var seen: i32 = 0;
+            return iife_stmts_all_closurearr(lam.body, s, seen) > 0;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function iife_stmts_all_closurearr(stmts: parser.Stmt[], s: LowerState, seen: i32): i32 {
+    var n: i32 = seen;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                if (!expr_is_closure_array(r.value, s)) { return 0 - 1; }
+                n = n + 1;
+            },
+            parser.StmtIf(iff) => {
+                n = iife_stmts_all_closurearr(iff.then_body, s, n);
+                if (n < 0) { return 0 - 1; }
+                n = iife_stmts_all_closurearr(iff.else_body, s, n);
+                if (n < 0) { return 0 - 1; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    n = iife_stmts_all_closurearr(mm.arms[a].body, s, n);
+                    if (n < 0) { return 0 - 1; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// expr_is_closure_array reports whether an arm value yields an array of closure
+// boxes: an array LITERAL with a boxed element, a call to a closurearr-returning
+// fn, or a nested value-position if/match whose own arms all are.
+function expr_is_closure_array(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return false; }
+            return arr_elem_is_closure_box(arr.elements[0], s);
+        },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return s.is_closurearr_ret_fn(cid.name); },
+                parser.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_closurearr_arms(c.callee, s); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // expr_is_closure_box reports whether an arm value is already a closure box: a
 // closure LOCAL (the `v0` alias shape), a `__mkclo$…` env-box marker the lift
 // pass produced, or a nested value-position if/match whose own arms are all
@@ -47580,6 +47682,113 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
         i = i + 1;
     }
     return false;
+}
+
+// iife_arms_are_arrays_with_capturing_lambda reports whether EVERY arm of a
+// value-position if/match returns an array LITERAL and at least one of those
+// arrays holds a capturing lambda. It is the gate on rewriting the arms into
+// uniform env boxes: below the "every arm" half the binding would carry two
+// dispatch ABIs, and without the "some capture" half there is nothing to fix.
+function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl): boolean {
+    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0);
+    return seen > 0;
+}
+
+// Returns the number of capturing lambda elements found, or -1 as soon as an arm
+// returns something that is not an array literal.
+function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32): i32 {
+    var n: i32 = seen;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprArray(arr) => {
+                        var e: i32 = 0;
+                        while (e < arr.elements.len()) {
+                            match (arr.elements[e]) {
+                                parser.ExprLambda(el) => { if (lambda_captures(el, fd).len() > 0) { n = n + 1; } },
+                                _ => {}
+                            }
+                            e = e + 1;
+                        }
+                    },
+                    _ => { return 0 - 1; }
+                }
+            },
+            parser.StmtIf(iff) => {
+                n = iife_arm_arrays_capturing(iff.then_body, fd, n);
+                if (n < 0) { return 0 - 1; }
+                n = iife_arm_arrays_capturing(iff.else_body, fd, n);
+                if (n < 0) { return 0 - 1; }
+            },
+            parser.StmtMatch(mm) => {
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n);
+                    if (n < 0) { return 0 - 1; }
+                    a = a + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// box_iife_arm_array_elems rewrites every element of every arm's array literal
+// through try_fn_field_value — a capturing lambda becomes a `__mkclo$<fd>$cloN`
+// env box, a no-capture lambda / bare fn name a `$wrapN` trampoline box, an
+// already-boxed value flows through. Same uniform-box treatment #5071 gives one
+// mixed array literal, applied across the arms because they share a binding.
+function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
+    var fs: parser.FuncDecl[] = funcs;
+    var ct: i32 = counter;
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var nv: parser.Expr = r.value;
+                match (r.value) {
+                    parser.ExprArray(arr) => {
+                        var nelems: parser.Expr[] = [];
+                        var e: i32 = 0;
+                        while (e < arr.elements.len()) {
+                            var er: InlineCloRes = try_fn_field_value(arr.elements[e], fd, fs, ct, gfns, mfuncs, structs);
+                            fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
+                            e = e + 1;
+                        }
+                        nv = parser.ExprArray { elements: nelems };
+                    },
+                    _ => {}
+                }
+                out = out.append(parser.StmtReturn { value: nv, line: r.line, col: r.col });
+            },
+            parser.StmtIf(iff) => {
+                var tb: InlineCloStmts = box_iife_arm_array_elems(iff.then_body, fd, fs, ct, gfns, structs, mfuncs);
+                fs = tb.funcs; ct = tb.counter;
+                var eb: InlineCloStmts = box_iife_arm_array_elems(iff.else_body, fd, fs, ct, gfns, structs, mfuncs);
+                fs = eb.funcs; ct = eb.counter;
+                out = out.append(parser.StmtIf { cond: iff.cond, then_body: tb.stmts, else_body: eb.stmts });
+            },
+            parser.StmtMatch(mm) => {
+                var narms: parser.MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    var ab: InlineCloStmts = box_iife_arm_array_elems(mm.arms[a].body, fd, fs, ct, gfns, structs, mfuncs);
+                    fs = ab.funcs; ct = ab.counter;
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: mm.scrutinee, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+            },
+            _ => { out = out.append(stmts[i]); }
+        }
+        i = i + 1;
+    }
+    return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
 // hoist_capturing_iife builds `<fd>$iifeN(caps…)` from the IIFE lambda and
@@ -47748,6 +47957,31 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         if (iar.counter > ct) {
                             fs = iar.funcs; ct = iar.counter;
                             return InlineCloRes { expr: iar.expr, funcs: fs, counter: ct };
+                        }
+                    }
+                    // An IIFE the hoist does not claim keeps its arms inline, and
+                    // this is the only place they are reachable: the arms are
+                    // STATEMENTS inside an expression, so the expression walk
+                    // stops here. A capturing lambda in an arm's ARRAY literal
+                    // therefore never got its `__mkclo$<fd>$cloN` marker and asked
+                    // for a `<fd>$clo` nothing built.
+                    //
+                    // Boxing that one element is not enough, and the two extra
+                    // requirements are why this is gated on EVERY arm being an
+                    // array literal rather than done element by element. The
+                    // binding gets ONE dispatch ABI, so a sibling arm whose array
+                    // holds a raw fn pointer (a no-capture lambda the later lift
+                    // hoists to `__lam_N`) would be env-first-dispatched as a box —
+                    // #5071's problem, one container out. And the DESTINATION has
+                    // to read as a closure array (expr_is_closure_array below),
+                    // which it only can when every arm answers the same way.
+                    // Anything else is left to bail exactly as before.
+                    if (call.args.len() == 0 && ielam.params.len() == 0
+                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd)) {
+                        var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, fd, fs, ct, gfns, structs, mfuncs);
+                        if (ibr.counter > ct) {
+                            fs = ibr.funcs; ct = ibr.counter;
+                            ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: ibr.stmts, use_infer: ielam.use_infer };
                         }
                     }
                 },
@@ -49265,7 +49499,13 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
                     match (c.callee) {
                         parser.ExprLambda(lam) => {
                             if (lam.params.len() != 0) { return fd; }
-                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: lam.body, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
+                            // The spliced body carries the IIFE's arm returns
+                            // into a function, past the pre-worklist `return
+                            // <lambda>` desugar, so run it here on everything but
+                            // the tail return (desugar_nontail_lambda_returns).
+                            // Without it an arm lambda asked for a `<fd>$clo`
+                            // nothing built.
+                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_nontail_lambda_returns(lam.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str };
                         },
                         _ => { return fd; }
                     }
