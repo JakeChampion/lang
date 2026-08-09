@@ -21,16 +21,28 @@ import (
 //	the sweep + entry-zeroing, BOX-ONLY free             green, 390s
 //
 // So the unsafe operation is specifically `__struct_drop_<T>` on a block-scoped
-// slot — not the box dec, not the other consumers, and not the zeroing. The box
-// free is sound and lands here; the field drop stays withheld under the #3456
-// shallow contract, the same way a "NODEEP:"-marked slot withholds it.
+// slot. That got the BOX free landed (8800 -> 4000) with the field drop withheld,
+// and left the why open.
 //
-// That halves the shape rather than closing it: 8800 -> 4000, the S boxes
-// reclaimed and the `xs` buffers still leaked. The remaining half needs to explain
-// why the deep drop is unsafe here when the credit already proves the name fresh
-// and non-escaping — worth knowing before anyone tries a fourth time.
+// The why, from a stack trace rather than a fourth theory: gen1 faulted in
+// `asmcore.EmitState.has_need` -> `__fern_str_eq` on a freed string. The shape is
+// `var lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` — `lo` is
+// block-scoped and its `EmitState` FIELD is moved into the live threaded `s`, so
+// the deep walk freed that state's arrays out from under it.
 //
-// None of this is visible to the probe corpus: all 162 differential programs agree
+// Both escape analyses missed it identically: `expr_unsafe_for` and
+// `moves_fields_expr` treat `name.field` as a borrow, which is right for a SCALAR
+// field and wrong for a nested-struct / array / string one. The `"NODEEP:"`
+// detector now consults the field TYPE (`optstruct_body_moves_field`), so the
+// withholding is the marker's job — and with the marker able to see this move,
+// the deep drop is granted to everyone else and the shape reaches **0**.
+//
+// The trade is visible in `field_extracted_out_of_the_block` below: it now
+// reclaims LESS (500 frees, was 800) because the marker correctly refuses a local
+// whose field escapes. Across the 164-program probe corpus that is the only shape
+// that lost reclaim, against three that reached zero.
+//
+// None of this is visible to the probe corpus: all 162 differential programs agreed
 // with native on both the segfaulting and the green build. The self-compiler is the
 // only program that shows it, which is why the fixpoint runs FIRST on a reclaim
 // change and not last.
@@ -91,15 +103,15 @@ function main(): i32 {
 			t.Fatalf("allocs=%d, want 800 — the probe's shape changed and the numbers "+
 				"below no longer mean what the comment says", allocs)
 		}
-		if frees != 700 {
-			t.Errorf("frees=%d, want 700 — 400 struct boxes plus the 300 the sweep "+
-				"already reclaimed. Fewer means the block-scoped box free was lost; more "+
-				"means the deep field drop was granted, which SEGFAULTS the gen1 "+
-				"self-compile (see the header)", frees)
+		if frees != 800 {
+			t.Errorf("frees=%d, want 800 — the boxes AND their `xs` buffers. This was 700 "+
+				"while the deep field drop was withheld here; the withholding is now the "+
+				"NODEEP marker's job, and the marker finally sees the bare-field-read move "+
+				"that made the deep drop unsafe", frees)
 		}
-		if live != 4000 {
-			t.Errorf("live_bytes=%d, want 4000 — the `xs` buffers, which stay leaked "+
-				"under the shallow contract. It was 8800 before the box free", live)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — 8800 before the box free landed, 4000 while "+
+				"the field drop was withheld wholesale, and 0 now", live)
 		}
 	})
 
@@ -253,7 +265,7 @@ function round(r: i32): i32 {
     return acc + held[1] + r;
 }`,
 			want:      57,
-			wantFrees: 800,
+			wantFrees: 500,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

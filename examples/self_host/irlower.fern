@@ -19873,7 +19873,7 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // DISPROVEN — with the marker visible, granting the deep drop still segfaults.
 function slot_nodeep(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
-    return util.index_of_str(s.reclaimable_names, "NODEEP:" + s.locals[i].slot_name) >= 0;
+    return util.index_of_str(s.reclaimable_names, "NODEEP:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
@@ -20878,6 +20878,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     while (j < st.locals.len()) {
         var live_credit: boolean = slot_is_reclaimable_struct(st, j);
         var scoped_credit: boolean = !live_credit && slot_is_reclaimable_struct_scoped(st, j);
+        // A scoped slot deep-drops only when the move scan could type-check it.
+        var scoped_deep_ok: boolean = scoped_credit
+            && util.index_of_str(st.reclaimable_names, "FLDCHECKED:" + reclaim_slot_name(st, j)) >= 0;
         if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
@@ -20915,7 +20918,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // run it under gdb —
             //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
             //       -out-dir OUT -func-budget 100 -unit-range 0:8
-            if (!scoped_credit) { st = emit_struct_field_drops(st, j); }
+            if (!scoped_credit || scoped_deep_ok) { st = emit_struct_field_drops(st, j); }
             st = st.emit(ir.op_load_local(j));
             st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
             st = st.emit(ir.op_drop());
@@ -25686,7 +25689,33 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var mvty: string = fresh_struct_lit_type_deep(body, out[mvi]);
         var mvff: string[] = [];
         if (mvty != "") { mvff = clo_field_names_of(structs, mvty); }
-        if (moves_fields_stmts(body, out[mvi], mvff)) { out = out.append("NODEEP:" + out[mvi]); }
+        var mv_moves: boolean = moves_fields_stmts(body, out[mvi], mvff);
+        // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
+        // receiver use does, and moves_fields_expr cannot see it: its
+        // ExprFieldAccess arm only recurses into the object, and a bare ExprIdent
+        // object matches no arm at all. That blind spot is what made the deep drop
+        // unsafe for a block-scoped slot (#6127) — `var lo: StringLitOut =
+        // add_string_lit(s, ..); s = lo.state;` hands lo's EmitState to the live
+        // threaded `s`, and the deep walk then freed that state's arrays out from
+        // under it (gen1 faulted in EmitState.has_need → __fern_str_eq).
+        //
+        // optstruct_body_moves_field names the MOVE positions positively (a bind /
+        // assign / return value, a call argument, a container element) rather than
+        // reporting every field read and exempting borrows — see its header for why
+        // that polarity matters. Only when the local's struct type is known, so an
+        // untyped local keeps its prior verdict exactly.
+        var mvsty: string = mvty;
+        if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
+        if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs)) { mv_moves = true; }
+        if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
+        // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
+        // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
+        // with this witness: without a type there is no move check, and granting the
+        // drop anyway trapped the wasm-hosted compiler in
+        // __struct_drop_irlower__LowerState (an un-annotated call-bound LowerState
+        // local, dec'ing a moved-out field). Live-credit slots are unaffected — they
+        // keep exactly the verdict they had before any of this.
+        else if (mvsty != "") { out = out.append("FLDCHECKED:" + out[mvi]); }
         mvi = mvi + 1;
     }
     // Fresh scalar-tuple locals (`var t = (3, 4)`): credited under a "TUP:" prefix
@@ -28284,6 +28313,195 @@ function optstruct_bind_esc_stmt(st: parser.Stmt, name: string, sty: string, str
         },
         parser.StmtDefer(d) => { return optstruct_bind_esc_stmt(d.action, name, sty, structs); },
         _ => { return false; }
+    }
+    return false;
+}
+
+// declared_struct_type_of: the DECLARED struct type of local `name` — the type
+// fresh_struct_lit_type_deep cannot supply, because it reads the type off a struct
+// LITERAL init and the shapes that matter here are bound from a CALL
+// (`var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, ..)`). Resolves the
+// qualified spelling too: `a.B` is tried as written, then as the mangled `a__B`,
+// then as the bare tail `B`. "" when the name is not a struct-annotated local.
+function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): string {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name && v.type_name.len() > 0) {
+                    if (decl_is_struct(structs, v.type_name)) { return v.type_name; }
+                    var dot: i32 = 0 - 1;
+                    var c: i32 = 0;
+                    while (c < v.type_name.len()) {
+                        if (v.type_name[c] == 46) { dot = c; }
+                        c = c + 1;
+                    }
+                    if (dot > 0) {
+                        var head: string = v.type_name[0:dot] + "";
+                        var tail: string = v.type_name[dot + 1 : v.type_name.len()] + "";
+                        var mangled: string = head + "__" + tail;
+                        if (decl_is_struct(structs, mangled)) { return mangled; }
+                        if (decl_is_struct(structs, tail)) { return tail; }
+                    }
+                }
+            },
+            parser.StmtIf(f) => {
+                var t1: string = declared_struct_type_of(f.then_body, name, structs);
+                if (t1 != "") { return t1; }
+                var t2: string = declared_struct_type_of(f.else_body, name, structs);
+                if (t2 != "") { return t2; }
+            },
+            parser.StmtWhile(w) => { var t: string = declared_struct_type_of(w.body, name, structs); if (t != "") { return t; } },
+            parser.StmtFor(fo) => { var t: string = declared_struct_type_of(fo.body, name, structs); if (t != "") { return t; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { var t: string = declared_struct_type_of(m.arms[mi].body, name, structs); if (t != "") { return t; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// --- fieldmove: which POSITIONS actually move a field out (#6127) -----------
+//
+// The "NODEEP:" marker needs to know when a local's NON-SCALAR field is handed to
+// something longer-lived — `var lo: StringLitOut = add_string_lit(s, ..); s =
+// lo.state;`, where the deep drop would then free that EmitState's arrays out
+// from under the live `s`.
+//
+// This is deliberately a POSITIVE list of move positions, not a general escape
+// walker with borrow exemptions. The first cut reused optstruct_bind_esc_expr
+// (#6336), which reports every bare non-scalar field read and admits a whitelist
+// of borrows — and that polarity is wrong for a WHOLE-FUNCTION scan: it fired on
+// `match (t.e)` (withholding #4357's per-iteration struct-enum reclaim, an 80
+// bytes/iteration leak) and on `h.f(10)` (withholding the k_clo drop for every
+// called fn-field struct), and each fix added another exemption. The borrow
+// positions are open-ended; the MOVE positions are not.
+//
+// A move is a chain rooted at `name` whose leaf field is non-scalar, appearing as
+// the WHOLE value of a bind / assign / return, as a direct call ARGUMENT, or as a
+// container element. Every other position — a match scrutinee, a call callee, an
+// index base, a `.len()` receiver, an operand — reads through and is a borrow.
+function fieldmove_is_move_value(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var lt: string = optstruct_chain_leaf_type(e, name, sty, structs);
+    if (lt.len() == 0) { return false; }
+    if (lt == "?") { return true; }              // unresolved chain — assume the worst
+    return !is_scalar_type_name(lt);
+}
+
+// fieldmove_expr: the move positions reachable inside an expression — a direct
+// call argument, or an element of an array / tuple / struct literal (including a
+// functional-update base, which copies every field pointer into the new box).
+function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (fieldmove_is_move_value(c.args[ai], name, sty, structs)) { return true; }
+                if (fieldmove_expr(c.args[ai], name, sty, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return fieldmove_expr(c.callee, name, sty, structs);
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (fieldmove_is_move_value(a.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(a.elements[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (fieldmove_is_move_value(t.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(t.elements[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) {
+                if (fieldmove_is_move_value(sl.base, name, sty, structs)) { return true; }
+                if (fieldmove_expr(sl.base, name, sty, structs)) { return true; }
+            }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs)) { return true; }
+                if (fieldmove_expr(sl.field_values[i], name, sty, structs)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprBinary(b) => { return fieldmove_expr(b.left, name, sty, structs) || fieldmove_expr(b.right, name, sty, structs); },
+        parser.ExprUnary(u) => { return fieldmove_expr(u.operand, name, sty, structs); },
+        parser.ExprIndex(ix) => { return fieldmove_expr(ix.array, name, sty, structs) || fieldmove_expr(ix.index, name, sty, structs); },
+        parser.ExprSlice(sl2) => { return fieldmove_expr(sl2.array, name, sty, structs) || fieldmove_expr(sl2.start, name, sty, structs) || fieldmove_expr(sl2.end, name, sty, structs); },
+        parser.ExprFieldAccess(fa) => { return fieldmove_expr(fa.obj, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (st) {
+        // A direct `var t = x.f` init is a BORROW, not a move — the same split
+        // structfld_collect_unsafe_stmts (#6274) already draws for the whole-program
+        // scan, and for the same reason: the fresh binding dies with the scope, while
+        // a REASSIGN `t = x.f` hands the field to a name that outlives it. That is
+        // exactly the `s = lo.state` hazard, and dropping this case is what keeps
+        // `var xs = r.hs; xs[1]()` deep-drop-worthy.
+        parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs); },
+        parser.StmtAssign(a) => { return fieldmove_is_move_value(a.value, name, sty, structs) || fieldmove_expr(a.value, name, sty, structs); },
+        parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs) || fieldmove_expr(r.value, name, sty, structs); },
+        parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs); },
+        parser.StmtIf(f) => {
+            if (fieldmove_expr(f.cond, name, sty, structs)) { return true; }
+            var ti: i32 = 0;
+            while (ti < f.then_body.len()) { if (fieldmove_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            var ei: i32 = 0;
+            while (ei < f.else_body.len()) { if (fieldmove_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            return false;
+        },
+        parser.StmtWhile(w) => {
+            if (fieldmove_expr(w.cond, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < w.body.len()) { if (fieldmove_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtFor(fo) => {
+            if (fieldmove_expr(fo.iter, name, sty, structs)) { return true; }
+            var i: i32 = 0;
+            while (i < fo.body.len()) { if (fieldmove_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.StmtMatch(m) => {
+            if (fieldmove_expr(m.scrutinee, name, sty, structs)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && fieldmove_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) { if (fieldmove_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return fieldmove_stmt(d.action, name, sty, structs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// optstruct_body_moves_field: any statement in `stmts` moves a NON-SCALAR field of
+// the struct local `name` (declared type `sty`) into something longer-lived.
+function optstruct_body_moves_field(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (fieldmove_stmt(stmts[i], name, sty, structs)) { return true; }
+        i = i + 1;
     }
     return false;
 }
