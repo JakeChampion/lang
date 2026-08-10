@@ -6274,3 +6274,46 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   credit. Also green: the whole `TestSelfHostStr*` family including
   `tostring-string-recv-alias-safe` and `TestSelfHostStrAccum`, the #6590 litstr suite,
   and `TestSelfHostPerModuleEmitAllFixpointX86_64` (458 s). Refs #6599 #6590 #5935.
+
+- 2026-08-10: **The #6043 sole-occurrence death, ported to the self-host grow bracket
+  (#6048).** A PARAM read exactly once in the whole body, at a call no loop or lambda
+  encloses, is dead at that call, so the #4873 containment bracket need not force a
+  full-buffer copy on it. The self-host carried only the two pre-#6043 shapes (the
+  self-reassign and the `return f(.., x, ..)`), both gated per-statement.
+
+  `__arr_push_shared_count()`, self-host x86-64, the #6036 probe corpus:
+
+  | probe | before | after |
+  |---|---|---|
+  | `H_call_result_into_local` — the shape filed | **45** | **0** |
+  | `J_nested_call_arg` | **44** | **0** |
+  | `M_call_then_inline_append` | **44** | **0** |
+  | A / C / I / K / L *(controls)* | 0 | 0 |
+
+  **Two things diverge from the issue's expectation, and both are measurements rather
+  than predictions.** It says J/K/M "are pinned at 49 by a DIFFERENT mechanism and
+  should stay 49" — that is the NATIVE corpus. On the self-host they read **44/0/44**
+  before this change, so the two compilers were never at the same numbers here, and
+  the port takes J and M to 0 as well as H. Native still reads 49 for those probes,
+  so the self-host now performs FEWER buffer copies than native on two shapes. The
+  benign direction, and the probe checks the accumulator's length and endpoints before
+  reading the counter, so every row is fewer copies of a *correct* answer.
+
+  **The per-statement hook cannot see the whole body**, so the census is computed once
+  per function (`grow_sole_exempt_names_of`) and carried on `LowerState.grow_sole`. It
+  can be unioned into every statement's exempt set unconditionally: a name in it occurs
+  exactly once in the entire body, so only the statement holding that occurrence has a
+  bracket that can consult it.
+
+  Both of native's restrictions are carried over and both are load-bearing. The
+  LOOP/LAMBDA exclusion — a single textual read inside a repeating construct is still
+  many dynamic reads, and the next iteration would observe the previous one's in-place
+  growth, which the interpreter never performs; without it the rule degenerates into
+  the textually-last-occurrence heuristic `callArgDeaths` deliberately rejects. And
+  PARAMS only — a param is bound once per frame from the caller, whose own bracket
+  already contains what the callee does to it.
+
+  VERIFIED: new `TestSelfHostGrowSoleOccurrenceX86_64` (9 rows, including a
+  loop-negative that asserts on CONTENTS rather than a count), the per-module fixpoint
+  (581 s), and the grow / array / string reclaim suites (604 s). Refs #6048 #6043
+  #6036 #4873.
