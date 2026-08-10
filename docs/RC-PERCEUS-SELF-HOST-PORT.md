@@ -6229,3 +6229,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | `Option[string[]]` | 57600 | 1600/4000 |
   | `Option[Option[i32[]]]` | 48000 | **0**/1200 |
   | `Result[string[], string]` | 57600 | 1600/4000 |
+
+- 2026-08-10: **`<scalar>.to_string()` now earns the `STR:` reclaim credit (#6599).**
+  `var s: string = i.to_string()` never freed its box on the self-host, unbounded in a
+  loop, while native was flat. It matters out of proportion to the shape because every
+  `f"{x}"` desugars to `x.to_string()`.
+
+  **The callee was innocent, and the measurement that shows it is the useful part.**
+  Varying only the spelling, 200 iterations, `FERN_LEAKCHECK=1`, self-host x86-64:
+
+  | spelling | before | after |
+  |---|---|---|
+  | `i32_to_string(i)` — free function | 400/398/32 | unchanged *(control)* |
+  | `i.to_string()` — method | 400/**0**/**6400** | **400/398/32** |
+
+  **Identical allocation counts**, which is what proves `int_to_string`'s own
+  `__alloc_u8` buffer and `string_from_bytes_unchecked` are not involved: the whole
+  difference was one caller-side credit. `str_free_producer_ident` admits the
+  free-function spelling by name and excludes the method form, which
+  `str_local_binding_is_fresh` lists under "receiver-identity fast-paths".
+
+  That exclusion is right for a STRING receiver — the call returns the receiver itself,
+  so freeing the result releases a box the source still owns — and wrong for a SCALAR
+  receiver, where it is the decimal-text builtin returning a fresh sole-owned box.
+
+  **The receiver-type test cannot live in the freshness predicate, and the reason is
+  structural rather than stylistic.** `str_local_binding_is_fresh` is deliberately
+  PURELY SYNTACTIC — no LowerState, no types — with the type gate applied separately via
+  the slot's `is_str`. `is_str` is true for BOTH receivers, because the RESULT is a
+  string either way; what must be tested is the RECEIVER. Its ~20 other callers drive
+  the accumulator and concat-temp analyses, where widening it broke two over-release
+  contracts in #6590. So the credit is a separate collector in `reclaimable_names_of`,
+  the same shape as that fix's `collect_litstr_local_names`, reading a name→declared-type
+  map built the way `rc_fe_collect_types` builds one.
+
+  An UNKNOWN receiver type is REFUSED rather than assumed scalar: the wrong answer on
+  this side is an over-release, not a leak. Same reason `.to_string()` on a scalar
+  PARAM stays uncredited — `reclaimable_names_of` does not receive `fn.params`, so the
+  type does not resolve. Conservative, and worth widening only with its own gate.
+
+  VERIFIED: new `TestSelfHostTostrScalarReclaimIRX86_64` (5 rows — the reproducer, the
+  free-function control, a value-exactness guard, the string-receiver negative, and an
+  escape negative), with the reproducer row confirmed load-bearing by disabling the
+  credit. Also green: the whole `TestSelfHostStr*` family including
+  `tostring-string-recv-alias-safe` and `TestSelfHostStrAccum`, the #6590 litstr suite,
+  and `TestSelfHostPerModuleEmitAllFixpointX86_64` (458 s). Refs #6599 #6590 #5935.
