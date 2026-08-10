@@ -607,7 +607,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // orchestrator drives BATCHES of units, each a fresh process that releases
         // the accumulation on exit while still sharing the base derivation across
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
-        // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
+        // x86 shares the bases; -target arm64 uses the arm64 emitter unchanged.
         var needs: string[] = asm_ir.all_runtime_need_roots();
         var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
@@ -755,7 +755,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     var shard_ns: string = parts[pm_index].ns;
     if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
     var unit: string = "";
-    // `-target arm64-linux` routes the per-unit emit through the arm64 emitter
+    // `-target arm64` routes the per-unit emit through the arm64 emitter
     // (#4398 part 1: the asm_arm64_modload_run fold), incl. the same
     // -func-range [lo,hi) window sharding (#3425) the x86 emit uses — the
     // fold doubled the whole-compiler per-module program (both backends in

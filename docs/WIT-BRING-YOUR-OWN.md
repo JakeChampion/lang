@@ -1550,9 +1550,9 @@ produces a response:
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.
 
-> **Note on the embedded HTTP path:** `-target wasm32-wasi32-wasi-http`
+> **Note on the embedded HTTP path:** `-target wasm32-wasi-http`
 > (`emitIncomingHandlerExport` / `compose_http.go` / `wasi_http.go`) is still the
 > live CLI feature and is **not** dead code — the bring-your-own path above is
-> currently test-only. A future consolidation could migrate `-target wasm32-wasi32-wasi-http`
+> currently test-only. A future consolidation could migrate `-target wasm32-wasi-http`
 > onto the generic world-driven composer once the body/header marshalling and a
 > `pub resource` HTTP lib exist; until then both coexist.

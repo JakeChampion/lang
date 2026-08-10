@@ -241,7 +241,7 @@ since the notes above:
 **Unified `fern` CLI** (`examples/self_host/fern.fern`). Where the
 codebase previously had a dozen single-mode `*_run.fern` shims, there is
 now one self-hosted binary that parses argv flags and dispatches —
-`fern [-check | -interp | -fmt] [-target x86-64-linux|arm64|arm64-darwin|wasm]
+`fern [-check | -interp | -fmt] [-target x86-64|arm64|arm64-darwin|wasm]
 [-o OUT] <entry.fern> [stdlib-root]` — reusing the import-driven file
 loader.
 It hosts both native emitters (`asm.fern` + `asm_arm64.fern`) plus the
@@ -249,7 +249,7 @@ checker, interpreter, printer, and the wasm emitter, selected at runtime.
 Gated by `internal/e2e/self_host_cli_test.go`.
 
 **A third self-host backend: wasm** (`examples/self_host/wasm.fern`,
-driven by `wasm_run.fern` and `fern -target wasm32-wasi`). It emits a WASI core
+driven by `wasm_run.fern` and `fern -target wasm`). It emits a WASI core
 module in the text format (WAT) — `_start` calls `proc_exit(main())`, so
 `wasmtime run prog.wat` exits with the program's result. Built up across
 ~20 incremental, differential-tested slices (each its own PR, gated by
@@ -510,9 +510,9 @@ Gated by 482 differential cases as of this writing. What remained for the
 wasm backend was packaging, not language — and that packaging is now wired
 into the unified `fern` CLI:
 
-- **`fern -target wasm32-wasi -emit core-module`** emits runnable **binary** `.wasm` via the
+- **`fern -target wasm-bin`** emits runnable **binary** `.wasm` via the
   self-hosted WAT→binary assembler (`watbin.fern`), not WAT text.
-- **`fern -target wasm32-wasi-component`** emits a **Component-Model `wasi:cli/run`**
+- **`fern -target wasm-component`** emits a **Component-Model `wasi:cli/run`**
   component, auto-selecting the framing from the program's WASI usage and
   covering every wasi:cli/run shape the self-host emit supports (no-I/O,
   stdout, filesystem read/write/rw, random, env, args, clock wall/mono,
@@ -520,7 +520,7 @@ into the unified `fern` CLI:
   combinations are rejected with a clear error, never a broken component.
 
 The remaining wasm shape is **`wasi:http/incoming-handler`** (native
-`-target wasm32-wasi32-wasi-http`), which needs a self-host core emitter that lowers the
+`-target wasm32-wasi-http`), which needs a self-host core emitter that lowers the
 request/response **resource handles** — deferred until the in-progress
 own/borrow resource-handle work lands.
 The core wasi builtins (clock / file / env / random) are now covered.
@@ -681,7 +681,7 @@ Remaining is packaging, not coverage: wrap the core module in the
 format — the self-host emits a WASI-preview1 command today, so this also
 involves the preview1→preview2 adapter composition the Go backend uses).
 *(Update: the `wasi:cli/run` packaging is now complete and wired into
-`fern -target wasm32-wasi-component` — see the summary near the top of this
+`fern -target wasm-component` — see the summary near the top of this
 section. `wasi:http/incoming-handler` remains, pending resource-handle
 lowering.)*
 
@@ -1295,7 +1295,7 @@ Component Type encoder, and the preview-1 → preview-2 adapter
 — now lives in-tree under `internal/wasm/*` (`encode`,
 `componenttype`, `component`, plus the `leb128` / `sections`
 / `inst` / `imports` / `memory` / … building blocks).
-`fern -target wasm32-wasi` / `-target wasm32-wasi32-wasi-http` compose components
+`fern -target wasm32-wasi` / `-target wasm32-wasi-http` compose components
 natively in Go (`component.ClassifyCore` → `component.Compose`,
 see `cmd/fern/main.go`), with no `wasm-tools` shell-out and no
 preview-1 adapter. The only external process the toolchain

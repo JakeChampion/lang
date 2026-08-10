@@ -18,14 +18,14 @@ external `wasi_snapshot_preview1` adapter to supply.
 Build a CLI program:
 
 ```
-$ fern -target wasm32-wasi32-wasi -o prog.wasm path/to/example.fern
+$ fern -target wasm32-wasi -o prog.wasm path/to/example.fern
 $ wasmtime run prog.wasm
 ```
 
 Build a wasi:http handler:
 
 ```
-$ fern -target wasm32-wasi32-wasi32-wasi-http -o handler.wasm path/to/example.fern
+$ fern -target wasm32-wasi-http -o handler.wasm path/to/example.fern
 $ wasmtime serve handler.wasm
 ```
 

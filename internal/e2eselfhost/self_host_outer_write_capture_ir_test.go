@@ -69,6 +69,22 @@ func TestSelfHostOuterWriteCaptureIRX86_64(t *testing.T) {
 			`function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 2) { if (i >= 0) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); } i = i + 1; } return (fs[0])(0); }`,
 			2,
 		},
+		// OPERAND POSITIONS. The two shapes above are `var g = <lambda>`, which
+		// the scan matches because the init IS a lambda. These are lambdas the
+		// init merely CONTAINS — a struct-literal field, a call argument — and
+		// they were invisible at any depth, top level included, until the scan
+		// looked inside operands. `struct-literal-field` is this issue's
+		// original reproducer.
+		{
+			"struct-literal-field",
+			`struct C { f: (i32) => i32, n: i32 } function main(): i32 { var cs: C[] = []; var i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`,
+			2,
+		},
+		{
+			"call-argument",
+			`function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { var i: i32 = 0; var fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`,
+			4,
+		},
 		// A read-only capture nothing ever reassigns must stay unboxed and keep
 		// answering with the value it closed over — the guard against widening
 		// the scan into boxing every capture it can now see.
