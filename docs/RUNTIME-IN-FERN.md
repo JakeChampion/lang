@@ -385,14 +385,38 @@ Audited per helper and **per target**, because
 the interesting question for the next slice is not "which helpers are
 hand-written" but "which of them the floor can already express".
 
-| still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
+**Scope.** This table only ever covered the leaves the #2649 slices took on —
+the fs / clock / socket / process family. It is NOT an inventory of every
+hand-written syscall body on the register backends. Do not read it as one.
+
+| the #2649 family, still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
 | **`proc_fork` (Darwin only)** | `fork` | — | **not expressible** |
 
-That is the whole list. Every syscall leaf on the register backends is now one
-Fern source, and the single remaining hand-written body is the one target the
-floor genuinely cannot reach. `tcp_pollable` is not on it because it issues no
-syscall at all — a native socket's readiness token IS its fd.
+That family is done: every one of its leaves is now one Fern source, and the
+single hand-written body left in it is the one target the floor genuinely
+cannot reach. `tcp_pollable` is not on the list because it issues no syscall at
+all — a native socket's readiness token IS its fd.
+
+**What the table never covered, and what is therefore still hand-asm.** Grep
+both backends for a raw trap (`syscall` on x86-64, `svc #0` on arm64) and the
+remainder splits three ways:
+
+- **Still-migratable leaves**, in the same shape as the ones above and not yet
+  attempted: `print_str`, `print_int`, `putchar`, `eprint_str`, `read_line`,
+  `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`, `reader_close`,
+  and `udp_send`. These are plain `read`/`write`/`close` calls; nothing in the
+  audit above suggests a floor gap, so they are the natural continuation
+  whenever #2649 is picked up again.
+
+  `udp_send` is the odd one: its hand-asm exists **only on arm64**, and
+  `asm_ir.fern` has no `kind_tag == 208` case at all, so the op does not lower
+  on x86-64. That is a backend-parity gap rather than a migration one — worth
+  knowing before treating it as an ordinary next slice.
+- **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
+  exec, drain and reap in one body), `map_delete`, `strbuf_append`.
+- **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
+  (`oob_abort`, `san_abort`, `hev_f`).
 
 `tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
 only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
@@ -476,9 +500,9 @@ A negative return is clamped to length 0: the op has no error channel, so a
 short read, EOF and `-errno` all arrive as the empty string, exactly as the
 hand-asm's `csel ... ge` did.
 
-### Two ways this audit went wrong before it went right
+### Three ways this audit went wrong before it went right
 
-Both are cheap to repeat, so they are worth naming.
+All three are cheap to repeat, so they are worth naming.
 
 **Do not read arity off the registers a hand-asm body touches.** That gave
 `tcp_send` and `proc_exec` six arguments each; both are three, and the extra
@@ -490,6 +514,15 @@ reaches for a different syscall where x86-64 has a simpler one: `poll` becomes
 `ppoll`, `fork` becomes `clone`, and both jump from three arguments to five.
 It concluded `__syscall5` had a single consumer when it has three — the exact
 inversion of the decision it was meant to inform. Read all three bodies.
+
+**Do not treat a primitive's reach as the reason it was added.** `tcp_send` sat
+blocked for the whole migration on a missing `__raw_data`, with the recorded
+choice being "add the op or copy the payload". Neither applied: a string value
+already IS its box pointer, so `__raw_data` is `raw_load_ptr(s, 0)` — an op that
+had been in the floor from the start, introduced for array slots. `__raw_array`
+had even established the identical type-only bridge one type over. Before
+concluding the floor cannot express something, check what the existing
+primitives can address, not what they were named for.
 
 ## Validation strategy per slice
 
