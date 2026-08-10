@@ -6028,6 +6028,53 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   ARRTUP/ARRSTRUCT/STRARR/enum reclaim gates, and every probe through the self-host
   on x86-64, arm64 (qemu) and wasm (wasmtime). Refs #5474 #4353 #4451.
 
+- 2026-08-10: **A literal-initialised string local declared inside a loop body is now
+  reclaimed (#6582).** `str_local_binding_is_fresh` admitted a concat and the string
+  producer methods but not a bare literal, so `var pre: string = "ab"` earned no
+  `STR:` credit and leaked one box per evaluation on the asm backends.
+  `is_fresh_str_temp`, twenty lines below it, already documented why the literal IS
+  fresh — `const_str` allocates a fresh box per evaluation, the DATA is `.rodata` but
+  the box is not, and `__fern_str_free`'s heap-base guard skips the data and reclaims
+  the box — and admitted the identical shape as a concat OPERAND.
+
+  200 iterations, `FERN_LEAKCHECK=1`, self-host x86-64:
+
+  | shape | before | after |
+  |---|---|---|
+  | `while (…) { var pre = "ab"; acc += pre.len(); }` | 200/**0**/**4800** | **200/199/24** |
+  | the same building an `i32[]` from `pre.len()` | 400/**200**/**4800** | **400/399/24** |
+  | `pre` hoisted above the loop *(control)* | 201/200/24 | 201/201/0 |
+
+  Flat on wasm before and after — the literal is data-section there and `arr_dec` is a
+  guarded no-op. **That backend split is the trap:** it reads as a partial fix to
+  whatever class is under test. It cost a full round on #5474's gate, whose churn
+  cases hoist the string for exactly this reason.
+
+  **Scope was set by two over-release contracts, both found by running the existing
+  gates rather than by reasoning.** The first cut folded the literal into
+  `str_local_binding_is_fresh`, whose ~20 other callers drive the accumulator
+  consume-rebind and concat-temp analyses: that made `s = "reset"` read as a fresh
+  rebind and credited an accumulator `TestSelfHostStrAccum` pins as un-reclaimable.
+  The credit therefore lives only on the `STR:` path. The second: a literal local that
+  is the receiver of `.to_string()` stays uncredited, because on a string receiver that
+  call is the IDENTITY — its result aliases the receiver's box and the concat-temp
+  machinery frees that result as a temp, so crediting the local too releases the same
+  box twice (`tostring-string-recv-alias-safe`, pinned at exactly two sites).
+
+  Still leaking, deliberately: a literal local that is also a CONCAT OPERAND
+  (800/598/4832). `expr_unsafe_for` treats any ident operand of a binary op as an
+  escape, and that gate backs every reclaim class — widening it is a cross-class change
+  that needs its own gating.
+
+  Also fixed here: `make selfhost-cli` was broken on Linux since #6572 renamed targets
+  to `<isa>-<environment>` — the Makefile default still said `x86-64`. Note the
+  self-host compiler itself still takes the OLD spellings, so `bin/fern` and
+  `bin/fern-selfhost` currently disagree on target names.
+
+  VERIFIED: new `TestSelfHostLitStrLocalReclaim{IRX86_64,IRArm64}` (4 rows × 2
+  backends), the whole `TestSelfHostStr*` family, `TestSelfHostArrEnumReclaim`, and
+  `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6582 #4451.
+
 - 2026-08-10: **The block-scoped STRUCT payload with a nested match — closed; the
   TUPLE half is not.** #6553 recorded both rows and predicted the work would be on
   the EMISSION side rather than admission. That held exactly: the block-level

@@ -23858,6 +23858,130 @@ function rcenum_call_init_owner(e: parser.Expr, opt_fresh_ret: string[]): string
 // The escape gate (body_unsafe_for) and the not-reassigned gate are applied by
 // reclaimable_names_of before any name is credited "STR:", so a returned /
 // stored / aliased / reassigned string is never freed (only leaked, sound).
+// --- literal-init string locals (#6582) --------------------------------------
+//
+// `var pre: string = "ab"` earned no "STR:" credit and leaked one box per evaluation
+// on the asm backends: str_local_binding_is_fresh admits a concat and the producer
+// methods but not a bare literal. const_str allocates a FRESH box per evaluation —
+// the DATA is .rodata, but the box is not, and __fern_str_free's heap-base guard
+// already skips the data and reclaims the box, which is why is_fresh_str_temp admits
+// the identical shape as a concat OPERAND. Flat on wasm, where the whole literal is
+// data-section and arr_dec is a guarded no-op.
+//
+// Kept OUT of str_local_binding_is_fresh, whose twenty-odd other callers drive the
+// accumulator consume-rebind and concat-temp analyses: widening it there makes
+// `s = "reset"` read as a fresh rebind, admitting an accumulator TestSelfHostStrAccum
+// pins as un-reclaimable. Both that and the exclusion below are over-release
+// contracts, so this stays local to the STR credit.
+
+// litstr_tostring_receiver: `name` is the receiver of a `.to_string()` call. On a
+// STRING receiver that call is the IDENTITY — its result aliases the receiver's box,
+// and the concat-temp machinery frees that result as an inline-consumed temp. Adding
+// an exit-sweep free of the local would then release the same box twice, which is what
+// TestSelfHostStrConcatTemp's `tostring-string-recv-alias-safe` pins at exactly two
+// sites. Freeing the alias rather than the source is the pre-existing shape here; this
+// exclusion keeps the literal credit from turning it into a double release.
+function litstr_tostring_receiver(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "to_string") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (litstr_tostring_receiver(c.callee, name)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (litstr_tostring_receiver(c.args[ci], name)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return litstr_tostring_receiver(b.left, name) || litstr_tostring_receiver(b.right, name); },
+        parser.ExprUnary(u) => { return litstr_tostring_receiver(u.operand, name); },
+        parser.ExprFieldAccess(fa2) => { return litstr_tostring_receiver(fa2.obj, name); },
+        parser.ExprIndex(ix) => { return litstr_tostring_receiver(ix.array, name) || litstr_tostring_receiver(ix.index, name); },
+        parser.ExprArray(a) => {
+            var ai: i32 = 0;
+            while (ai < a.elements.len()) { if (litstr_tostring_receiver(a.elements[ai], name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { if (litstr_tostring_receiver(t.elements[ti], name)) { return true; } ti = ti + 1; }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function litstr_tostring_recv_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return litstr_tostring_receiver(v.init, name); },
+        parser.StmtAssign(a) => { return litstr_tostring_receiver(a.value, name); },
+        parser.StmtReturn(r) => { return litstr_tostring_receiver(r.value, name); },
+        parser.StmtExpr(e) => { return litstr_tostring_receiver(e.value, name); },
+        parser.StmtIf(f) => {
+            if (litstr_tostring_receiver(f.cond, name)) { return true; }
+            return litstr_tostring_recv_body(f.then_body, name) || litstr_tostring_recv_body(f.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            if (litstr_tostring_receiver(w.cond, name)) { return true; }
+            return litstr_tostring_recv_body(w.body, name);
+        },
+        parser.StmtFor(fo) => {
+            if (litstr_tostring_receiver(fo.iter, name)) { return true; }
+            return litstr_tostring_recv_body(fo.body, name);
+        },
+        parser.StmtMatch(m) => {
+            if (litstr_tostring_receiver(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (litstr_tostring_recv_body(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.StmtDefer(d) => { return litstr_tostring_recv_stmt(d.action, name); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function litstr_tostring_recv_body(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (litstr_tostring_recv_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+
+// collect_litstr_local_names gathers every `var s: string = "lit"` binding, recursing
+// through nested blocks exactly as collect_fresh_string_names does.
+function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprString(_) => { a = push_str_unique(a, v.name); },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = collect_litstr_local_names(f.then_body, a); a = collect_litstr_local_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_litstr_local_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_litstr_local_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_litstr_local_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -26345,6 +26469,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
+    }
+    // Literal-init string locals (#6582) — same two gates as the fresh producers
+    // above, plus the `.to_string()` identity-alias exclusion. See the
+    // collect_litstr_local_names block for why this is not folded into
+    // str_local_binding_is_fresh.
+    var lits: string[] = collect_litstr_local_names(body, []);
+    var li2: i32 = 0;
+    while (li2 < lits.len()) {
+        if (util.index_of_str(strs, lits[li2]) < 0
+            && util.index_of_str(reassigned, lits[li2]) < 0
+            && !litstr_tostring_recv_body(body, lits[li2])
+            && !body_unsafe_for_clo(body, lits[li2], borrowable, clo_ok)) {
+            out = out.append("STR:" + lits[li2]);
+        }
+        li2 = li2 + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
@@ -35967,6 +36106,29 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
                 },
                 parser.ExprFieldAccess(sccfa) => {
                     if (util.is_all_digits(sccfa.field) && expr_tuple_elem_tag(sccfa.obj, util.digits_to_i32(sccfa.field), s) == "clo") { el_call_ok = true; }
+                    else {
+                        // (d) a METHOD call whose result is provably one scalar
+                        // slot — iife_method_ret_i32 is sound by EXCLUSION (a
+                        // method registered as returning a string / array /
+                        // tuple / struct / Option is rejected), and its wide
+                        // sibling names an i64 / f64 result. Only the free-fn
+                        // form was admitted, so `(p.sum(), 165i64)` bailed the
+                        // whole module while `(f(6), 165i64)` lowered — the
+                        // difference being nothing but how the callee is
+                        // spelled.
+                        var mrty: string = expr_struct_type(sccfa.obj, s);
+                        if (mrty.len() > 0
+                                && (iife_method_ret_i32(mrty, sccfa.field, s)
+                                    || iife_method_ret_kind(mrty, sccfa.field, s).len() > 0)) { el_call_ok = true; }
+                        // (e) `.len()` on a STRING or ARRAY receiver. The
+                        // registry lookup above is keyed on a struct / enum type
+                        // name, so it cannot answer for a builtin receiver — but
+                        // a length is an i32 whatever it is measuring.
+                        else if (sccfa.field == "len" && scc.args.len() == 0
+                                && (expr_is_str(sccfa.obj, s) || expr_is_arr_src(sccfa.obj, s)
+                                    || expr_is_strarr(sccfa.obj, s) || expr_is_f64arr(sccfa.obj, s)
+                                    || expr_is_i64arr(sccfa.obj, s))) { el_call_ok = true; }
+                    }
                 },
                 _ => {}
             }
@@ -42861,6 +43023,16 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
     var seen: i32 = 0;
     var okc: i32 = 0;
     match (e) {
+        // A LAMBDA body is statements inside an expression, and a value-position
+        // if/match is exactly that (an IIFE). collect_idents_expr descends into
+        // one, so a call to `fname` there counts toward nident; without the same
+        // descent here it counted toward nothing, nident outran nseen, and the
+        // proof failed silently — leaving a genuine closure-array PARAM unmarked
+        // so `fs[i](args)` bare-dispatched the element box (#6571).
+        parser.ExprLambda(lm) => {
+            var (ls, lo) = ca_scan_stmts(lm.body, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            return (ls, lo);
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
@@ -49144,6 +49316,17 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
             match (c.callee) {
                 parser.ExprLambda(il) => {
                     if (c.args.len() != 0 || il.params.len() != 0) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    // What the arms are SELECTED BY is walked first and
+                    // unconditionally (#6571) — it is independent of whether the
+                    // arm VALUES are boxable, so an IIFE with a capturing lambda
+                    // in its condition and plain scalar arms (the shape that
+                    // bailed) is rewritten even though the boxing below declines.
+                    var cnd: InlineCloStmts = lift_iife_conditions(il.body, fd, funcs, counter, gfns, mfuncs, structs);
+                    if (cnd.counter > counter) {
+                        var cl2: parser.Expr = parser.ExprLambda { params: il.params, ret_type: il.ret_type, body: cnd.stmts, use_infer: il.use_infer };
+                        var ce2: parser.Expr = parser.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                        return InlineCloRes { expr: ce2, funcs: cnd.funcs, counter: cnd.counter };
+                    }
                     if (!iife_arms_all_boxable(il.body)) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
                     // The arms are lowered INLINE in the enclosing function, so a
                     // name the IIFE itself binds — a match arm's payload, an
@@ -49344,6 +49527,53 @@ function iife_arm_lambda_captures_in(stmts: parser.Stmt[], fd: parser.FuncDecl):
         i = i + 1;
     }
     return false;
+}
+
+// lift_iife_conditions walks what an IIFE's arms are SELECTED BY (#6571).
+//
+// A value-position `if`/`match` is an IIFE, and its body is STATEMENTS inside an
+// expression. Every lift path that reaches into one — the #6256 arm-value boxing
+// below, box_iife_arm_array_elems — walks the arms' returned VALUES; nothing
+// walked the CONDITION. A capturing lambda there therefore reached lower_expr
+// bare and asked for a `$clo` nothing built, bailing the module.
+//
+// Only the condition / scrutinee is walked, and only through the ordinary
+// expression lift: the returns belong to the paths that own them, and running
+// both over the same node would box an arm value twice.
+function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloStmts {
+    var fs: parser.FuncDecl[] = funcs;
+    var ct: i32 = counter;
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtIf(iff) => {
+                var cr: InlineCloRes = lift_inline_closures_expr(iff.cond, fd, fs, ct, gfns, structs, mfuncs);
+                fs = cr.funcs; ct = cr.counter;
+                var tb: InlineCloStmts = lift_iife_conditions(iff.then_body, fd, fs, ct, gfns, mfuncs, structs);
+                fs = tb.funcs; ct = tb.counter;
+                var eb: InlineCloStmts = lift_iife_conditions(iff.else_body, fd, fs, ct, gfns, mfuncs, structs);
+                fs = eb.funcs; ct = eb.counter;
+                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts });
+            },
+            parser.StmtMatch(mm) => {
+                var sr: InlineCloRes = lift_inline_closures_expr(mm.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
+                fs = sr.funcs; ct = sr.counter;
+                var narms: parser.MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    var ab: InlineCloStmts = lift_iife_conditions(mm.arms[a].body, fd, fs, ct, gfns, mfuncs, structs);
+                    fs = ab.funcs; ct = ab.counter;
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+            },
+            _ => { out = out.append(stmts[i]); }
+        }
+        i = i + 1;
+    }
+    return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
 // box_iife_arm_values rewrites each arm's returned VALUE through
@@ -50231,6 +50461,20 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
                             ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: ibr.stmts, use_infer: ielam.use_infer };
+                        }
+                    }
+                    // The arms' own CONDITION is the one part of an inline IIFE
+                    // nothing above reaches (#6571): both paths walk what the arms
+                    // RETURN, neither walks what selects them. Runs on whichever
+                    // body the boxing above settled on, so the two compose rather
+                    // than racing for the same node.
+                    if (call.args.len() == 0 && ielam.params.len() == 0) {
+                        var iebody: parser.Stmt[] = ielam.body;
+                        match (ncallee) { parser.ExprLambda(nl) => { iebody = nl.body; }, _ => {} }
+                        var icr: InlineCloStmts = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
+                        if (icr.counter > ct) {
+                            fs = icr.funcs; ct = icr.counter;
+                            ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: icr.stmts, use_infer: ielam.use_infer };
                         }
                     }
                 },
