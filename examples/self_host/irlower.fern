@@ -36106,6 +36106,14 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
                         if (mrty.len() > 0
                                 && (iife_method_ret_i32(mrty, sccfa.field, s)
                                     || iife_method_ret_kind(mrty, sccfa.field, s).len() > 0)) { el_call_ok = true; }
+                        // (e) `.len()` on a STRING or ARRAY receiver. The
+                        // registry lookup above is keyed on a struct / enum type
+                        // name, so it cannot answer for a builtin receiver — but
+                        // a length is an i32 whatever it is measuring.
+                        else if (sccfa.field == "len" && scc.args.len() == 0
+                                && (expr_is_str(sccfa.obj, s) || expr_is_arr_src(sccfa.obj, s)
+                                    || expr_is_strarr(sccfa.obj, s) || expr_is_f64arr(sccfa.obj, s)
+                                    || expr_is_i64arr(sccfa.obj, s))) { el_call_ok = true; }
                     }
                 },
                 _ => {}
