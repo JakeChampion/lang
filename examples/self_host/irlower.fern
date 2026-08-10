@@ -24156,6 +24156,44 @@ function collect_fresh_string_in_stmt(st: parser.Stmt, acc: string[]): string[] 
     }
 }
 
+// collect_str_fresh_ret_call_names: `var t: string = f(i)` where `f` is proven to
+// return a fresh, sole-owned box (str_fresh_ret_fns_of). The string sibling of
+// collect_fresh_ret_call_names, and the reason it was needed: the binding-side
+// freshness test is str_local_binding_is_fresh, which admits a call ONLY via
+// str_free_producer_ident — a hardcoded list of BUILTINS (chr, str_to_upper,
+// i32_to_string, …). A user-defined `function suffix(n: i32): string` is not in
+// it, so its result earned no "STR:" credit and leaked one box per evaluation,
+// unbounded in a loop (#6606). The whole-program proof that closes that gap
+// already existed and was simply never consulted here.
+//
+// No new soundness argument: the caller-side release is the same __fern_str_free
+// the fresh-producer credit emits, and reclaimable_names_of applies the SAME two
+// gates to these names as to str_local_binding_is_fresh's (not reassigned, and
+// body_unsafe_for_clo proves non-escape). The freshness half is what
+// str_fresh_ret_fns_of proves whole-program: every return is fresh, so the
+// result can alias no parameter, field or live local of the callee.
+function collect_str_fresh_ret_call_names(stmts: parser.Stmt[], str_fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (util.index_of_str(reassigned, v.name) < 0
+                    && is_fresh_ret_binding(v.init, "", str_fresh_ret)) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_str_fresh_ret_call_names(f.then_body, str_fresh_ret, reassigned, a); a = collect_str_fresh_ret_call_names(f.else_body, str_fresh_ret, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_str_fresh_ret_call_names(w.body, str_fresh_ret, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_str_fresh_ret_call_names(fo.body, str_fresh_ret, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_fresh_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // --- string-builder accumulator reclaim (#2649 consume-rebind) ----------------
 //
 // The canonical string leak is the accumulator `var s: string = ""; while (…) {
@@ -24307,11 +24345,33 @@ function collect_str_accumulator_names(stmts: parser.Stmt[], reassigned: string[
 // NOT admitted: proving that ident is a sole-owned local needs the per-callee
 // accumulator analysis, a follow-up. A `return param` / `return field` / `return
 // "lit"` is likewise not fresh (may alias / is static).
+// str_return_is_fresh: the RETURN-position freshness test, which is
+// str_local_binding_is_fresh plus a bare string LITERAL.
+//
+// A literal belongs here for the reason #6582/#6590 established for a
+// literal-INITIALISED local: `const_str` allocates a fresh box per evaluation
+// (the DATA is .rodata, which __fern_str_free's heap-base guard skips; the box
+// is not), so `return "even"` hands the caller a box it solely owns — exactly
+// what str_fresh_ret_fns_of needs to prove.
+//
+// It is a SEPARATE predicate rather than a widening of
+// str_local_binding_is_fresh for the reason #6590 records: that one has ~20
+// callers driving the accumulator consume-rebind and concat-temp analyses, and
+// folding the literal in there made `s = "reset"` read as a fresh rebind and
+// credited an accumulator its own gate pins as un-reclaimable. Return position
+// has no such consumer — a return value is never rebound.
+function str_return_is_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        _ => { return str_local_binding_is_fresh(e); }
+    }
+    return false;
+}
 function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!str_local_binding_is_fresh(r.value)) { return true; } },
+            parser.StmtReturn(r) => { if (!str_return_is_fresh(r.value)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_str_return(f.then_body) || body_has_nonfresh_str_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_str_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_str_return(fo.body)) { return true; } },
@@ -26636,6 +26696,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // locals qualify. The reclaim frees the box + data buffer via __fern_str_free
     // (asm) / $__fern_arr_dec (wasm) at the loop-rebind and at scope exit.
     var strs: string[] = collect_fresh_string_names(body, []);
+    // …plus the calls a whole-program proof says return a fresh box (#6606).
+    strs = collect_str_fresh_ret_call_names(body, str_fresh_ret, reassigned, strs);
     // #4354 interlock: a fresh string captured into an APPROVED capture-RC
     // closure (`var c = <lambda>` — single-bind, non-escaping) is no longer an
     // escape: the build site retains it (rc 2), this sweep's later string loop
