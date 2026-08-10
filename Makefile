@@ -77,7 +77,7 @@ freeze:
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
 # harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
-SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64)
+SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64-linux)
 selfhost-cli: bin/fern
 	@mkdir -p bin
 	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost examples/self_host/fern.fern

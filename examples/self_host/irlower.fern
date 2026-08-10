@@ -23857,6 +23857,130 @@ function rcenum_call_init_owner(e: parser.Expr, opt_fresh_ret: string[]): string
 // The escape gate (body_unsafe_for) and the not-reassigned gate are applied by
 // reclaimable_names_of before any name is credited "STR:", so a returned /
 // stored / aliased / reassigned string is never freed (only leaked, sound).
+// --- literal-init string locals (#6582) --------------------------------------
+//
+// `var pre: string = "ab"` earned no "STR:" credit and leaked one box per evaluation
+// on the asm backends: str_local_binding_is_fresh admits a concat and the producer
+// methods but not a bare literal. const_str allocates a FRESH box per evaluation —
+// the DATA is .rodata, but the box is not, and __fern_str_free's heap-base guard
+// already skips the data and reclaims the box, which is why is_fresh_str_temp admits
+// the identical shape as a concat OPERAND. Flat on wasm, where the whole literal is
+// data-section and arr_dec is a guarded no-op.
+//
+// Kept OUT of str_local_binding_is_fresh, whose twenty-odd other callers drive the
+// accumulator consume-rebind and concat-temp analyses: widening it there makes
+// `s = "reset"` read as a fresh rebind, admitting an accumulator TestSelfHostStrAccum
+// pins as un-reclaimable. Both that and the exclusion below are over-release
+// contracts, so this stays local to the STR credit.
+
+// litstr_tostring_receiver: `name` is the receiver of a `.to_string()` call. On a
+// STRING receiver that call is the IDENTITY — its result aliases the receiver's box,
+// and the concat-temp machinery frees that result as an inline-consumed temp. Adding
+// an exit-sweep free of the local would then release the same box twice, which is what
+// TestSelfHostStrConcatTemp's `tostring-string-recv-alias-safe` pins at exactly two
+// sites. Freeing the alias rather than the source is the pre-existing shape here; this
+// exclusion keeps the literal credit from turning it into a double release.
+function litstr_tostring_receiver(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "to_string") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { if (rid.name == name) { return true; } },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (litstr_tostring_receiver(c.callee, name)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (litstr_tostring_receiver(c.args[ci], name)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return litstr_tostring_receiver(b.left, name) || litstr_tostring_receiver(b.right, name); },
+        parser.ExprUnary(u) => { return litstr_tostring_receiver(u.operand, name); },
+        parser.ExprFieldAccess(fa2) => { return litstr_tostring_receiver(fa2.obj, name); },
+        parser.ExprIndex(ix) => { return litstr_tostring_receiver(ix.array, name) || litstr_tostring_receiver(ix.index, name); },
+        parser.ExprArray(a) => {
+            var ai: i32 = 0;
+            while (ai < a.elements.len()) { if (litstr_tostring_receiver(a.elements[ai], name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { if (litstr_tostring_receiver(t.elements[ti], name)) { return true; } ti = ti + 1; }
+            return false;
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function litstr_tostring_recv_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return litstr_tostring_receiver(v.init, name); },
+        parser.StmtAssign(a) => { return litstr_tostring_receiver(a.value, name); },
+        parser.StmtReturn(r) => { return litstr_tostring_receiver(r.value, name); },
+        parser.StmtExpr(e) => { return litstr_tostring_receiver(e.value, name); },
+        parser.StmtIf(f) => {
+            if (litstr_tostring_receiver(f.cond, name)) { return true; }
+            return litstr_tostring_recv_body(f.then_body, name) || litstr_tostring_recv_body(f.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            if (litstr_tostring_receiver(w.cond, name)) { return true; }
+            return litstr_tostring_recv_body(w.body, name);
+        },
+        parser.StmtFor(fo) => {
+            if (litstr_tostring_receiver(fo.iter, name)) { return true; }
+            return litstr_tostring_recv_body(fo.body, name);
+        },
+        parser.StmtMatch(m) => {
+            if (litstr_tostring_receiver(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (litstr_tostring_recv_body(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.StmtDefer(d) => { return litstr_tostring_recv_stmt(d.action, name); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function litstr_tostring_recv_body(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (litstr_tostring_recv_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+
+// collect_litstr_local_names gathers every `var s: string = "lit"` binding, recursing
+// through nested blocks exactly as collect_fresh_string_names does.
+function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprString(_) => { a = push_str_unique(a, v.name); },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = collect_litstr_local_names(f.then_body, a); a = collect_litstr_local_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = collect_litstr_local_names(w.body, a); },
+            parser.StmtFor(fo) => { a = collect_litstr_local_names(fo.body, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_litstr_local_names(m.arms[mi].body, a); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 function collect_fresh_string_names(stmts: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -26344,6 +26468,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + strs[si]);
         }
         si = si + 1;
+    }
+    // Literal-init string locals (#6582) — same two gates as the fresh producers
+    // above, plus the `.to_string()` identity-alias exclusion. See the
+    // collect_litstr_local_names block for why this is not folded into
+    // str_local_binding_is_fresh.
+    var lits: string[] = collect_litstr_local_names(body, []);
+    var li2: i32 = 0;
+    while (li2 < lits.len()) {
+        if (util.index_of_str(strs, lits[li2]) < 0
+            && util.index_of_str(reassigned, lits[li2]) < 0
+            && !litstr_tostring_recv_body(body, lits[li2])
+            && !body_unsafe_for_clo(body, lits[li2], borrowable, clo_ok)) {
+            out = out.append("STR:" + lits[li2]);
+        }
+        li2 = li2 + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
