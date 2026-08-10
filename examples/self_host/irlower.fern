@@ -23968,6 +23968,138 @@ function litstr_tostring_recv_body(stmts: parser.Stmt[], name: string): boolean 
     return false;
 }
 
+// --- `<scalar>.to_string()` string locals (#6599) -----------------------------
+//
+// `var s: string = i.to_string()` leaked its box on every backend: the method form
+// is excluded from str_free_producer_ident / str_local_binding_is_fresh, whose
+// comments give the reason — `.to_string()` is a "receiver-identity fast-path". That
+// is true on a STRING receiver, where the call returns the receiver itself, so
+// freeing the result would release a box the source still owns. On a SCALAR receiver
+// it is the decimal-text builtin returning a fresh sole-owned box, which is the same
+// value str_free_producer_ident already admits under the free-function spelling
+// `i32_to_string(n)`. Measured, 200 iterations, self-host x86-64:
+//
+//   var s = i32_to_string(i)   400 allocs / 398 frees /   32 bytes   bounded
+//   var s = i.to_string()      400 allocs /   0 frees / 6400 bytes   LEAK
+//
+// Identical alloc counts, so int_to_string's own buffer and string_from_bytes_unchecked
+// are not involved — the whole difference is this credit. It matters out of proportion
+// to the shape, because every `f"{x}"` desugars to `x.to_string()`.
+//
+// The test has to live HERE rather than in str_local_binding_is_fresh, and the reason
+// is structural: that predicate is deliberately PURELY SYNTACTIC (no LowerState, no
+// types) with the type gate applied separately via the slot's is_str — and is_str is
+// true for BOTH cases, because the RESULT is a string either way. What must be tested
+// is the RECEIVER's type. Its ~20 callers also drive the accumulator and concat-temp
+// analyses, where widening it broke two over-release contracts in #6590.
+//
+// An UNKNOWN receiver type is refused, not assumed scalar: unresolvable must fall to
+// leak-safe, since the wrong answer here is an over-release rather than a leak.
+
+// tostr_scalar_type_name: the receiver types whose `.to_string()` is the decimal-text
+// builtin. Deliberately NOT `string` (the identity case) and not a struct/array.
+function tostr_scalar_type_name(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64";
+}
+
+// tostr_decl_names / tostr_decl_vals collect `name` and `declared type` for every
+// annotated `var` in the
+// body, the way rc_fe_collect_types does. Bindings with no annotation are simply absent,
+// which reads as "unknown" and refuses the credit.
+// The names and the types are collected by two INDEPENDENT walks in the same order,
+// which is what keeps the two lists index-aligned: each visits the same StmtVar nodes
+// in the same sequence and appends exactly when the binding carries an annotation.
+function tostr_decl_names(stmts: parser.Stmt[], ns: string[]): string[] {
+    var out_n: string[] = ns;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.type_name.len() > 0) { out_n = out_n.append(v.name); } },
+            parser.StmtIf(f) => { out_n = tostr_decl_names(f.then_body, out_n); out_n = tostr_decl_names(f.else_body, out_n); },
+            parser.StmtWhile(w) => { out_n = tostr_decl_names(w.body, out_n); },
+            parser.StmtFor(fo) => { out_n = tostr_decl_names(fo.body, out_n); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { out_n = tostr_decl_names(m.arms[mi].body, out_n); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return out_n;
+}
+
+function tostr_decl_vals(stmts: parser.Stmt[], ts: string[]): string[] {
+    var out_t: string[] = ts;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.type_name.len() > 0) { out_t = out_t.append(v.type_name); } },
+            parser.StmtIf(f) => { out_t = tostr_decl_vals(f.then_body, out_t); out_t = tostr_decl_vals(f.else_body, out_t); },
+            parser.StmtWhile(w) => { out_t = tostr_decl_vals(w.body, out_t); },
+            parser.StmtFor(fo) => { out_t = tostr_decl_vals(fo.body, out_t); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { out_t = tostr_decl_vals(m.arms[mi].body, out_t); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return out_t;
+}
+
+// tostr_scalar_init: `init` is `<ident>.to_string()` whose receiver is a local declared
+// with a scalar int type. Returns the bound name's eligibility.
+function tostr_scalar_init(init: parser.Expr, ns: string[], ts: string[]): boolean {
+    match (init) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "to_string") { return false; }
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => {
+                            var at: i32 = util.index_of_str(ns, rid.name);
+                            if (at < 0) { return false; }          // unknown type -> refuse
+                            if (at >= ts.len()) { return false; }
+                            return tostr_scalar_type_name(ts[at]);
+                        },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_tostr_scalar_names gathers every `var s: string = <scalar>.to_string()`
+// binding, recursing through nested blocks like its siblings.
+function collect_tostr_scalar_names(stmts: parser.Stmt[], ns: string[], ts: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (tostr_scalar_init(v.init, ns, ts)) { a = push_str_unique(a, v.name); }
+            },
+            parser.StmtIf(f) => { a = collect_tostr_scalar_names(f.then_body, ns, ts, a); a = collect_tostr_scalar_names(f.else_body, ns, ts, a); },
+            parser.StmtWhile(w) => { a = collect_tostr_scalar_names(w.body, ns, ts, a); },
+            parser.StmtFor(fo) => { a = collect_tostr_scalar_names(fo.body, ns, ts, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_tostr_scalar_names(m.arms[mi].body, ns, ts, a); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_litstr_local_names gathers every `var s: string = "lit"` binding, recursing
 // through nested blocks exactly as collect_fresh_string_names does.
 function collect_litstr_local_names(stmts: parser.Stmt[], acc: string[]): string[] {
@@ -26533,6 +26665,21 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("STR:" + lits[li2]);
         }
         li2 = li2 + 1;
+    }
+    // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
+    // above. See the collect_tostr_scalar_names block for why the receiver-type test
+    // cannot live in str_local_binding_is_fresh.
+    var tsn: string[] = tostr_decl_names(body, []);
+    var tst: string[] = tostr_decl_vals(body, []);
+    var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
+    var ti2: i32 = 0;
+    while (ti2 < tss.len()) {
+        if (util.index_of_str(strs, tss[ti2]) < 0
+            && util.index_of_str(reassigned, tss[ti2]) < 0
+            && !body_unsafe_for_clo(body, tss[ti2], borrowable, clo_ok)) {
+            out = out.append("STR:" + tss[ti2]);
+        }
+        ti2 = ti2 + 1;
     }
     // String-builder ACCUMULATORS (#2649 consume-rebind): a reassigned
     // `var s: string = ""; while (…) { s = s + part; }` whose every reassignment is
