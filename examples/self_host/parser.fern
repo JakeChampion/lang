@@ -14394,24 +14394,45 @@ function is_float_type_name(t: string): boolean {
     return t == "f64" || t == "f32" || t == "float";
 }
 
-// settle_float_expr stamps `is_float` on every unsettled integer literal in an
-// expression standing in a float destination: a bare `1`, and recursively the
-// operands of a unary `-`/`+` or a binary `+ - * /`. A literal carrying an
-// explicit integer suffix (`1i64`) is already settled and is left alone, as is
-// every other expression shape — so `var x: f64 = a;` for an i32 local `a` still
-// draws the error native gives it. Mirrors native's settleFloat.
+// is_unsettled_int_literal reports whether `e` is an integer literal whose type
+// the destination is still free to choose — a bare `1`, or a unary `-`/`+` or a
+// binary `+ - * /` built ONLY from such literals.
+//
+// The "only" is load-bearing. Native settles a binary just once, before its
+// float width is known, so a subtree that ALREADY carries a float is left
+// alone: `var f: f64 = 1 + 2.5;` is E009 there, not a silent widening of the
+// i32 operand. A literal with an explicit integer suffix (`1i64`) is settled
+// already and is likewise not a candidate.
+function is_unsettled_int_literal(e: Expr): boolean {
+    match (e) {
+        ExprNumber(n) => { return !n.is_float && n.suffix.len() == 0; },
+        ExprUnary(u) => {
+            if (u.op != "-" && u.op != "+") { return false; }
+            return is_unsettled_int_literal(u.operand);
+        },
+        ExprBinary(b) => {
+            if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/") { return false; }
+            return is_unsettled_int_literal(b.left) && is_unsettled_int_literal(b.right);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// settle_float_expr stamps `is_float` across an unsettled integer literal
+// standing in a float destination. Every other expression — including a mixed
+// `1 + 2.5` and an i32 local — comes back untouched, so it still draws the
+// error native gives it. Mirrors native's settleFloat.
 function settle_float_expr(e: Expr): Expr {
+    if (!is_unsettled_int_literal(e)) { return e; }
     match (e) {
         ExprNumber(n) => {
-            if (n.is_float || n.suffix.len() > 0) { return e; }
             return ExprNumber { text: n.text, suffix: n.suffix, is_float: true, line: n.line, col: n.col };
         },
         ExprUnary(u) => {
-            if (u.op != "-" && u.op != "+") { return e; }
             return ExprUnary { op: u.op, operand: settle_float_expr(u.operand), line: u.line, col: u.col };
         },
         ExprBinary(b) => {
-            if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/") { return e; }
             return ExprBinary { op: b.op, left: settle_float_expr(b.left), right: settle_float_expr(b.right), line: b.line, col: b.col };
         },
         _ => { return e; }

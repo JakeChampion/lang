@@ -68,6 +68,12 @@ var numericSettleRejects = []struct {
 	{"string-to-f64", `function main(): i32 { var x: f64 = "s"; return 0; }`, "E003"},
 	{"float-to-i32", `function main(): i32 { var x: i32 = 1.5; return 0; }`, "E003"},
 	{"i32-local-argument", `function g(x: f64): i32 { return 0; } function main(): i32 { var a: i32 = 1; return g(a); }`, "E038"},
+	// A binary that ALREADY carries a float is not a candidate: native settles
+	// a binary once, before its float width is known, so the i32 operand draws
+	// E009 rather than being widened under it. checker.fern's own assertion 400
+	// pins this shape, and a settle that recursed unconditionally broke it.
+	{"mixed-binary", `function main(): i32 { var f: f64 = 1 + 2.5; return 0; }`, "E009"},
+	{"mixed-binary-reversed", `function main(): i32 { var f: f64 = 2.5 + 1; return 0; }`, "E009"},
 }
 
 // TestSelfHostNumericSettleChecker pins the accept side: every case checks clean
