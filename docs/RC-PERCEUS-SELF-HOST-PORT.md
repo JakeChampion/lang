@@ -5968,3 +5968,61 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (391 s), the closure suites, and
   every probe run through the self-host on **x86-64, arm64 (qemu) and wasm
   (wasmtime)**. Refs #6170 #6158 #6185 #5301 #4451.
+
+- 2026-08-10: **`MyEnum[]` element reclaim — the last array-of-X kind with no element
+  walk (#5474, #4353 item 4).** `string[]` (#5471), `(…)[]` (ARRTUP) and
+  `(<struct-with-array>)[]` (ARRSTRUCT) all reclaimed their elements; an enum array
+  was left on a buffer-only dec, so every element enum box and any rc payload it
+  carried leaked per iteration.
+
+  **Read the instrument note before the numbers.** This issue accumulated four
+  comments ending in a full retraction because the harness used
+  `__heap_bump_bytes()` deltas, which reported a leak for a scalar `i32[]` control
+  that cannot leak — a bump high-water legitimately advances. `FERN_LEAKCHECK=1`
+  answers the question directly (exact allocs/frees/live_bytes) and its controls
+  come out clean, so it is the instrument to reach for here. 200 iterations,
+  self-host x86-64:
+
+  | element type | before | after |
+  |---|---|---|
+  | `i32[]` (control) | 201/200/24 | unchanged |
+  | `string[]` (control) | 1401/1400/24 | unchanged |
+  | `(i32,string)[]` (control) | 1801/1800/24 | unchanged |
+  | `E[]` | 2001/**600**/**35224** | **2001/2000/24** |
+  | `E[]`, all-unit `[B,B,B]` | 801/**200**/**19224** | **801/800/24** |
+
+  The all-unit row localised it better than the issue body did: 200 × (3 element
+  boxes + 1 buffer) allocated and exactly 200 freed means the **outer buffer was
+  already being reclaimed** and only the element walk was missing.
+
+  **Two things make ARRENUM its own machinery rather than another ARRSTRUCT.** The
+  per-element drop dispatches on the variant at runtime, so it routes
+  `emit_enum_variant_drops`; and that primitive frees the element box itself and
+  zeroes the slot, so the walk emits **no** trailing `__fern_rc_dec` per element.
+  Copying ARRTUP/ARRSTRUCT's trailing dec double-frees every element.
+
+  The element enum name rides the credit (`ARRENUM:<local>#<Enum>`): an `E[]` slot
+  records its element type in neither `arrarr_elem` (populated only for `T[][]`, and
+  only for four scalar tags) nor `struct_type`, and one credit string beats a slot
+  column for a single class.
+
+  **Admission is deliberately much tighter than its siblings'** — the only admitted
+  use is `xs.len()`. The hazard here is a double-free, not a leak: a match arm can
+  bind an element's payload, and freeing that element under a live binding corrupts
+  the self-compile. Every extraction (`xs[i]` bare, as a match scrutinee, or a bound
+  element) falls back to the existing shallow dec. Widening this to indexed reads is
+  the follow-up and needs the arm-binding escape analysis ARRTUP grew.
+
+  **Separate defect found while gating this, NOT fixed here:** a literal-initialised
+  string local declared INSIDE a loop body (`while (…) { var pre: string = "ab"; … }`)
+  leaks 24 B per iteration on x86-64 and arm64, and is flat on wasm. It is
+  independent of element type — the plain `i32[]` control leaks it identically with
+  no rc element anywhere — so it is not an enum-array problem. The bounded-churn
+  gate cases hoist the string above the loop so they fail only on what they test.
+
+  VERIFIED: new `TestSelfHostArrEnumReclaim{IRX86_64,IRArm64,WasmIR}` (6 rows × 3
+  backends — 3 bounded-churn including an all-unit and an unqualified-ctor spelling,
+  3 extraction negatives asserting exact values with `__rc_underflow()` at zero),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (442 s), the neighbouring
+  ARRTUP/ARRSTRUCT/STRARR/enum reclaim gates, and every probe through the self-host
+  on x86-64, arm64 (qemu) and wasm (wasmtime). Refs #5474 #4353 #4451.
