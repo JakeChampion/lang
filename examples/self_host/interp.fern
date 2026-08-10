@@ -444,6 +444,175 @@ function lam_targets_expr(e: parser.Expr, acc: string[]): string[] {
     return acc;
 }
 
+// ---- the OUTER-write clause of a mutable scalar capture (#5394 / #6578) ----
+//
+// The rule above cells a local because a LAMBDA writes it. This is the other
+// direction, and the one that was never ported: the lambda only READS the
+// local, and the ENCLOSING body reassigns it afterwards. A by-value snapshot
+// freezes the pre-assignment value, so `var i = 0; var f = (x) => x + i;
+// i = 3; f(0)` answered 0 here and 3 on every other engine.
+//
+// The reassignment guard is what keeps this narrow, and the narrowness is the
+// whole point. A local the body never reassigns reads the same either way, so
+// celling it is invisible — but a per-iteration `var n = k` captured in a loop
+// MUST stay by value, and celling that would hand every closure the last
+// iteration's n. Native answers 3 for that shape, not 6.
+
+// ib_idents_expr / ib_idents_stmts collect every ident mentioned. Used only to
+// approximate what a lambda READS: a superset is safe here because the result
+// is intersected with the names the enclosing body actually reassigns, and
+// cellify_env only touches names bound in this scope.
+function ib_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.append(id.name); },
+        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
+        parser.ExprBinary(b) => { return ib_idents_expr(b.right, ib_idents_expr(b.left, acc)); },
+        parser.ExprUnary(u) => { return ib_idents_expr(u.operand, acc); },
+        parser.ExprIndex(ix) => { return ib_idents_expr(ix.index, ib_idents_expr(ix.array, acc)); },
+        parser.ExprSlice(sl) => { return ib_idents_expr(sl.end, ib_idents_expr(sl.start, ib_idents_expr(sl.array, acc))); },
+        parser.ExprFieldAccess(fa) => { return ib_idents_expr(fa.obj, acc); },
+        parser.ExprCall(c) => {
+            var a1: string[] = ib_idents_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { a1 = ib_idents_expr(c.args[i], a1); i = i + 1; }
+            return a1;
+        },
+        parser.ExprArray(ar) => {
+            var a2: string[] = acc;
+            var j: i32 = 0;
+            while (j < ar.elements.len()) { a2 = ib_idents_expr(ar.elements[j], a2); j = j + 1; }
+            return a2;
+        },
+        parser.ExprTuple(t) => {
+            var a3: string[] = acc;
+            var k: i32 = 0;
+            while (k < t.elements.len()) { a3 = ib_idents_expr(t.elements[k], a3); k = k + 1; }
+            return a3;
+        },
+        parser.ExprStructLit(sl2) => {
+            var a4: string[] = acc;
+            if (sl2.has_base) { a4 = ib_idents_expr(sl2.base, a4); }
+            var m: i32 = 0;
+            while (m < sl2.field_values.len()) { a4 = ib_idents_expr(sl2.field_values[m], a4); m = m + 1; }
+            return a4;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+function ib_idents_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { a = ib_idents_expr(v.init, a); },
+            parser.StmtAssign(asg) => { a = a.append(asg.target); a = ib_idents_expr(asg.value, a); },
+            parser.StmtReturn(r) => { a = ib_idents_expr(r.value, a); },
+            parser.StmtExpr(x) => { a = ib_idents_expr(x.value, a); },
+            parser.StmtIf(f) => { a = ib_idents_expr(f.cond, a); a = ib_idents_stmts(f.then_body, a); a = ib_idents_stmts(f.else_body, a); },
+            parser.StmtWhile(w) => { a = ib_idents_expr(w.cond, a); a = ib_idents_stmts(w.body, a); },
+            parser.StmtFor(fo) => { a = ib_idents_expr(fo.iter, a); a = ib_idents_stmts(fo.body, a); },
+            parser.StmtMatch(m) => {
+                a = ib_idents_expr(m.scrutinee, a);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { a = ib_idents_stmts(m.arms[ai].body, a); ai = ai + 1; }
+            },
+            parser.StmtDefer(d) => { a = ib_idents_stmts([d.action], a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// lam_reads_expr / lam_read_names: the names some lambda in `st` mentions. Only
+// a LAMBDA body contributes, exactly as stmt_lambda_writes does — an ident in
+// the statement's own expression is an ordinary read in this scope.
+function lam_reads_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return ib_idents_stmts(lm.body, acc); },
+        parser.ExprBinary(b) => { return lam_reads_expr(b.right, lam_reads_expr(b.left, acc)); },
+        parser.ExprUnary(u) => { return lam_reads_expr(u.operand, acc); },
+        parser.ExprIndex(ix) => { return lam_reads_expr(ix.index, lam_reads_expr(ix.array, acc)); },
+        parser.ExprSlice(sl) => { return lam_reads_expr(sl.end, lam_reads_expr(sl.start, lam_reads_expr(sl.array, acc))); },
+        parser.ExprFieldAccess(fa) => { return lam_reads_expr(fa.obj, acc); },
+        parser.ExprCall(c) => {
+            var a1: string[] = lam_reads_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { a1 = lam_reads_expr(c.args[i], a1); i = i + 1; }
+            return a1;
+        },
+        parser.ExprArray(ar) => {
+            var a2: string[] = acc;
+            var j: i32 = 0;
+            while (j < ar.elements.len()) { a2 = lam_reads_expr(ar.elements[j], a2); j = j + 1; }
+            return a2;
+        },
+        parser.ExprTuple(t) => {
+            var a3: string[] = acc;
+            var k: i32 = 0;
+            while (k < t.elements.len()) { a3 = lam_reads_expr(t.elements[k], a3); k = k + 1; }
+            return a3;
+        },
+        parser.ExprStructLit(sl2) => {
+            var a4: string[] = acc;
+            if (sl2.has_base) { a4 = lam_reads_expr(sl2.base, a4); }
+            var m: i32 = 0;
+            while (m < sl2.field_values.len()) { a4 = lam_reads_expr(sl2.field_values[m], a4); m = m + 1; }
+            return a4;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+function lam_read_names(st: parser.Stmt): string[] {
+    var acc: string[] = [];
+    match (st) {
+        parser.StmtVar(v) => { return lam_reads_expr(v.init, acc); },
+        parser.StmtAssign(a) => { return lam_reads_expr(a.value, acc); },
+        parser.StmtReturn(r) => { return lam_reads_expr(r.value, acc); },
+        parser.StmtExpr(x) => { return lam_reads_expr(x.value, acc); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// body_assign_names: every name this body reassigns, at any depth. A name NOT
+// in here is captured by value, which is what keeps a loop-local `var` per
+// iteration.
+function body_assign_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(asg) => { a = a.append(asg.target); },
+            parser.StmtIf(f) => { a = body_assign_names(f.then_body, a); a = body_assign_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = body_assign_names(w.body, a); },
+            parser.StmtFor(fo) => { a = body_assign_names(fo.body, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = body_assign_names(m.arms[ai].body, a); ai = ai + 1; } },
+            parser.StmtDefer(d) => { a = body_assign_names([d.action], a); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// cellify_outer_writes applies the clause: a name a lambda in `st` reads AND
+// this body reassigns becomes a shared cell before the closure snapshots it.
+function cellify_outer_writes(env: Env, st: parser.Stmt, reassigned: string[]): Env {
+    if (reassigned.len() == 0) { return env; }
+    var reads: string[] = lam_read_names(st);
+    var hit: string[] = [];
+    var i: i32 = 0;
+    while (i < reads.len()) {
+        if (util.index_of_str(reassigned, reads[i]) >= 0) { hit = hit.append(reads[i]); }
+        i = i + 1;
+    }
+    if (hit.len() == 0) { return env; }
+    return cellify_env(env, hit);
+}
+
 // stmt_lambda_writes lists the names some lambda in `st` assigns to.
 function stmt_lambda_writes(st: parser.Stmt): string[] {
     var one: parser.Stmt[] = [st];
@@ -2267,8 +2436,10 @@ function trim_env(e: Env, base: i32): Env {
 // The first non-zero sig short-circuits the walk.
 function eval_block(body: parser.Stmt[], env: Env): StepResult {
     var cur: Env = env;
+    var reassigned: string[] = body_assign_names(body, []);
     var i: i32 = 0;
     while (i < body.len()) {
+        cur = cellify_outer_writes(cur, body[i], reassigned);
         var r: StepResult = eval_stmt(body[i], cur);
         cur = r.env;
         if (r.sig != 0) {
@@ -2284,8 +2455,10 @@ function eval_block(body: parser.Stmt[], env: Env): StepResult {
 // explicit return was seen.
 function eval_program(prog: parser.Stmt[]): Value {
     var env: Env = new_env();
+    var preassigned: string[] = body_assign_names(prog, []);
     var i: i32 = 0;
     while (i < prog.len()) {
+        env = cellify_outer_writes(env, prog[i], preassigned);
         var r: StepResult = eval_stmt(prog[i], env);
         env = r.env;
         if (r.sig != 0) { return r.ret; }

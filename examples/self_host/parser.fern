@@ -11510,6 +11510,27 @@ function stamp_lambda_ret(e: Expr, fn_ret: string): Expr {
 // rather than overwritten with a spelling (`Option[i32]`, a struct name) the
 // tag was never meant to carry.
 function stamp_value_block_ret(e: Expr, decl_ty: string): Expr {
+    // `var xs: i64[] = [ <value block>, … ]` — the annotation names the ELEMENT
+    // type, so each element gets the same treatment the scalar binding gets.
+    // Without it a wide value block in an element position kept if_expr_rt's
+    // guess: `[match (a +? b) { Some(v) => v, None => id(<i64>) }]` reads both
+    // arms as i32 (a CALL is unguessable at parse time), labels the IIFE i32,
+    // and the i64 `return` inside the lifted body then bails the module (#6593).
+    if (decl_ty.len() > 2 && decl_ty[decl_ty.len() - 2 : decl_ty.len()] == "[]") {
+        var elem_ty: string = decl_ty[0 : decl_ty.len() - 2] + "";
+        match (e) {
+            ExprArray(al) => {
+                var nels: Expr[] = [];
+                var ai: i32 = 0;
+                while (ai < al.elements.len()) {
+                    nels = nels.append(stamp_value_block_ret(al.elements[ai], elem_ty));
+                    ai = ai + 1;
+                }
+                return ExprArray { elements: nels };
+            },
+            _ => { return e; }
+        }
+    }
     if (decl_ty != "i64" && decl_ty != "u64") { return e; }
     match (e) {
         ExprCall(c) => {
