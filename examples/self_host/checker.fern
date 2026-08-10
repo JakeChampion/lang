@@ -110,9 +110,15 @@ pub struct TypeUnion { name: string, args: Type[] }
 // (#4346 piece 2). Method dispatch THROUGH a dyn value is not yet typed —
 // `d.hi()` still infers unknown — a deliberately-deferred follow-up.
 pub struct TypeDyn { traits: string }
+// The type of an expression that yields no value: a call of a `: void`
+// function, and a bare `return;`. It is distinct from TypeUnknown, which
+// means "this checker could not work the type out" — conflating the two made
+// void read as an unresolved name, so a void call was an uncoded over-reject
+// in statement position and an invisible wildcard in value position (#6649).
+pub struct TypeVoid { tag: i32 }
 pub struct TypeUnknown { reason: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeUnknown;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeVoid | TypeUnknown;
 
 // Helper wraps: same pattern as elsewhere in the port — putting
 // the struct literal in return-position lets the implicit
@@ -222,6 +228,7 @@ function digit_string_to_i32(s: string): i32 {
 function t_union(name: string): Type { var noargs: Type[] = []; return TypeUnion { name: name, args: noargs }; }
 function t_union_g(name: string, args: Type[]): Type { return TypeUnion { name: name, args: args }; }
 function t_dyn(traits: string): Type { return TypeDyn { traits: traits }; }
+function t_void(): Type { return TypeVoid { tag: 0 }; }
 function t_unknown(reason: string): Type { return TypeUnknown { reason: reason }; }
 
 // type_debug renders a Type to a compact, unambiguous debug spelling — the Type
@@ -253,6 +260,7 @@ pub function type_debug(t: Type): string {
         TypeMap(m) => { return "map<" + type_debug(m.key) + ", " + type_debug(m.value) + ">"; },
         TypeUnion(u) => { return "union:" + u.name; },
         TypeDyn(d) => { return "dyn:" + d.traits; },
+        TypeVoid(_) => { return "void"; },
         TypeUnknown(uk) => { return "unknown(" + uk.reason + ")"; }
     }
     return "?";
@@ -355,6 +363,12 @@ function type_eq(a: Type, b: Type): boolean {
                 _ => { return false; }
             }
         },
+        TypeVoid(_) => {
+            match (b) {
+                TypeVoid(_) => { return true; },
+                _ => { return false; }
+            }
+        },
         TypeUnknown(_) => { return false; }
     }
     return false;
@@ -363,6 +377,14 @@ function type_eq(a: Type, b: Type): boolean {
 function is_unknown(t: Type): boolean {
     match (t) {
         TypeUnknown(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function is_void(t: Type): boolean {
+    match (t) {
+        TypeVoid(_) => { return true; },
         _ => { return false; }
     }
     return false;
@@ -1221,6 +1243,7 @@ function type_from_name(name: string): Type {
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name == "void") { return t_void(); }
     return t_unknown("unrecognised type name: " + name);
 }
 
@@ -1914,6 +1937,15 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
             return CheckResult { scope: s2, ty: t };
         },
         parser.StmtReturn(r) => {
+            // A bare `return;` yields no value. The parser leaves an
+            // ExprUnknown("punct:;") sentinel in r.value, which types as
+            // unknown and would mark the enclosing body ill-typed (#6649).
+            var bare_ret: boolean = false;
+            match (r.value) {
+                parser.ExprUnknown(bu) => { if (bu.kind == "punct:;") { bare_ret = true; } },
+                _ => { }
+            }
+            if (bare_ret) { return CheckResult { scope: s, ty: t_void() }; }
             var t: Type = check_expr(r.value, s);
             // Compare against the enclosing function's declared
             // ret_type when one is set (top-level stmts have an
@@ -2285,6 +2317,7 @@ pub function type_from_name_with_structs(name: string, structs: StructSig[]): Ty
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name == "void") { return t_void(); }
     var i: i32 = 0;
     while (i < structs.len()) {
         if (structs[i].name == name) { return t_struct(name); }
@@ -2315,6 +2348,7 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name == "void") { return t_void(); }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -2386,6 +2420,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name == "void") { return t_void(); }
     // Tuple `(A, B, …)` → TypeTuple of its elements. Needs ≥2 elements (a single
     // `(T)` / `()` is not a tuple — it falls through to the name lookups → unknown,
     // matching the old `parts.len() >= 2` gate).
@@ -2617,6 +2652,7 @@ pub function type_from_name_with_names_and_unions(name: string, struct_names: st
     if (name == "bool" || name == "boolean") { return t_bool(); }
     if (name == "string") { return t_string(); }
     if (name == "f64" || name == "f32" || name == "float") { return t_float(); }
+    if (name == "void") { return t_void(); }
     var i: i32 = 0;
     while (i < struct_names.len()) {
         if (struct_names[i] == name) { return t_struct(name); }
@@ -2762,6 +2798,7 @@ function type_label(t: Type): string {
         TypeMap(_) => { return "map"; },
         TypeUnion(u) => { return u.name; },
         TypeDyn(d) => { return "dyn " + d.traits; },
+        TypeVoid(_) => { return "void"; },
         TypeUnknown(_) => { return "unknown"; },
     }
     return "unknown";
@@ -4610,6 +4647,21 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                         var cnat: Type = check_expr(c.args[0], s);
                         if (!is_unknown(cnat) && !is_primitive_type(cnat)) {
                             out = out.append(dg_at("E057", "Cell[" + type_label(cnat) + "] is not allowed: a cell's element type must be a scalar (i32/i64/f64/bool) or string; a composite/reference type could form a cycle, which immutable data structures forbid", expr_line(c.args[0]), expr_col(c.args[0])));
+                        }
+                    }
+                    // E072: a void expression is not a value. Native's only
+                    // requireValue site is the variant-constructor payload
+                    // (`Some(nothing())`); the same argument to a plain
+                    // function draws E038 and to a struct field E043, so
+                    // widening this past variant constructors would report a
+                    // code native does not.
+                    if (union_of_variant(id.name, s.unions).len() > 0 || mx_builtin_enum_of(id.name).len() > 0) {
+                        var vi: i32 = 0;
+                        while (vi < c.args.len()) {
+                            if (is_void(check_expr(c.args[vi], s))) {
+                                out = out.append(dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(c.args[vi]), expr_col(c.args[vi])));
+                            }
+                            vi = vi + 1;
                         }
                     }
                     if (is_unknown(s.lookup(id.name))) {
