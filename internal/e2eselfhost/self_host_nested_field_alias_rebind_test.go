@@ -23,10 +23,16 @@ import (
 // literal / ctor, and a field read is neither — so the successor box holds a
 // COUNTED reference and the superseded box's deep drop decs the dup.
 //
-// The assertion is the EQUALITY of the two spellings, not a flat zero: both
-// still carry the separate carried-nested-field defect (#6605), which is one
-// box per call on either spelling. Equality is what this fix owns, and it keeps
-// holding when that one lands and takes both rows to zero.
+// The assertion is that the explicit spelling's cost does not scale with the
+// ITERATION count — that is exactly what losing the credit cost, and exactly what
+// this fix owns. Before it: 10160 B at k=8 and 98480 at k=32. After: 800 at both.
+//
+// It is deliberately not an absolute number and not equality with the carried
+// spelling. #6620 took the carried row to zero while the explicit row kept one
+// box per call, because its release covers the base-copy path and not the
+// override alias — a residual filed separately. Pinning either the number or the
+// equality would make this suite fail on someone else's unrelated RC landing;
+// pinning the k-invariance keeps testing this fix and nothing else.
 const nestedFieldAliasExplicitSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
@@ -44,6 +50,28 @@ function main(): i32 {
     var t: i32 = 0;
     var r: i32 = 0;
     while (r < 10) { t = t + work(8); r = r + 1; }
+    return t & 63;
+}`
+
+// The same program at k=32. A per-ITERATION leak scales with it; the per-call
+// residual does not.
+const nestedFieldAliasExplicitK32Src = `struct I { tag: i32, data: i32[] }
+struct S { xs: i32[], inner: I, n: i32 }
+
+function work(k: i32): i32 {
+    var o: S = S { xs: [1, 2], inner: I { tag: 0, data: [9] }, n: 0 };
+    var i: i32 = 0;
+    while (i < k) {
+        o = S { xs: o.xs.append(i), inner: o.inner, n: i };
+        i = i + 1;
+    }
+    return o.xs.len() + o.inner.tag;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 10) { t = t + work(32); r = r + 1; }
     return t & 63;
 }`
 
@@ -146,16 +174,25 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
 
-	explicitLive, _, explicitExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_explicit", nestedFieldAliasExplicitSrc)
+	k8Live, _, k8Exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_explicit_k8", nestedFieldAliasExplicitSrc)
+	k32Live, _, k32Exit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_explicit_k32", nestedFieldAliasExplicitK32Src)
 	carriedLive, _, carriedExit := leakSummary(t, gcc, runner, driverBin, dir, "nfa_carried", nestedFieldAliasCarriedSrc)
 
-	if explicitExit != 36 || carriedExit != 36 {
-		t.Fatalf("exit codes: explicit=%d carried=%d, want 36 for both", explicitExit, carriedExit)
+	if k8Exit != 36 || carriedExit != 36 {
+		t.Fatalf("exit codes: explicit=%d carried=%d, want 36 for both", k8Exit, carriedExit)
 	}
-	if explicitLive != carriedLive {
-		t.Errorf("live_bytes: explicit alias=%d, `...base` carry=%d — the two spellings mean "+
-			"the same thing and native is flat on both, so an explicit `inner: o.inner` must "+
-			"not cost the local its whole reclaim credit (#6623)", explicitLive, carriedLive)
+	if k32Exit != 20 {
+		t.Fatalf("explicit k=32 exited %d, want 20", k32Exit)
+	}
+	if k8Live != k32Live {
+		t.Errorf("live_bytes: k=8 %d, k=32 %d — quadrupling the ITERATION count must not cost "+
+			"more, since every superseded array buffer is the local's to release. A difference "+
+			"here is the reclaim credit lost to the explicit `inner: o.inner` again (#6623)",
+			k8Live, k32Live)
+	}
+	if carriedLive != 0 {
+		t.Errorf("the `...base` carry leaked %d bytes — that spelling is the control and #6605 "+
+			"took it to zero; a regression there invalidates the comparison above", carriedLive)
 	}
 
 	t.Run("array-field-alias-not-exempt", func(t *testing.T) {
