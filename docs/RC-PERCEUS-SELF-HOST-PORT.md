@@ -5822,3 +5822,61 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   refusal), every case additionally run through the self-host on **x86-64, arm64
   (qemu) and wasm (wasmtime)**, and
   `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6491 #4451.
+
+- 2026-08-10: **RECLAIM — the consumed-match enum frees now run on the
+  `return`-out-of-an-arm paths (#6219).** Every consumed-enum release was
+  emitted AFTER its consuming `match` statement. When all arms of that match
+  `return`, control leaves the function before reaching the release, so nothing
+  was freed at all — one box per call, unbounded. Both families placed their
+  frees that way and both leaked: `consumed_scalar_enum_frees` (scalar enum and
+  scalar Option) and `consumed_rcpayload_enum_frees` (rc-payload enum, which
+  strands its array payload as well as its box).
+
+  The mechanism was already in the tree and was only ever wired to one family:
+  `optret_pending` (#4353 p1/p3) carries a release across the arm bodies, and
+  `emit_dec_sweep_except_list` — which every return form runs — emits it before
+  `op_return`. The fix adds two entry kinds, `"#b"` (shallow box dec) and
+  `"#e<enum>;<moved…>"` (runtime variant_is deep-drop), and sets them at all
+  four emission sites: the fn-body loop and its `lower_block` mirror, scalar and
+  rc-payload each.
+
+  **The post-match site stays exactly where it was.** It is the release for the
+  fallthrough paths; the pending entry is the release for the return paths. What
+  keeps a path from being claimed twice is the slot-zero both sites already
+  performed, plus `__fern_rc_dec` being null-safe — so the gate asserts an exact
+  `allocs == frees`, not `live_bytes == 0`, and every probe additionally checks
+  `__rc_underflow_count()`.
+
+  **The rc-payload entry has to carry the MOVED set, not just the slot.** When
+  an arm binds the array payload and returns it, `match_moved_rc_payloads` holds
+  that field and `emit_enum_variant_drops_moved` must skip its dec while still
+  freeing the box. Dropping the moved set on the return path would dangle the
+  buffer the caller is about to read, not merely mis-count it — which is why the
+  entry encodes enum name and moved fields rather than reusing the bare
+  `"slot#kind"` shape.
+
+  Measured, self-host x86-64, allocs/frees/live before → after (native was
+  already balanced on all seven, and every exit code is native's):
+
+  | shape | before | after |
+  |---|---|---|
+  | scalar enum, all arms return | 100/0/4800 | **100/100/0** |
+  | scalar enum, no arm returns (control) | 100/100/0 | 100/100/0 |
+  | scalar Option, all arms return | 100/0/4000 | **100/100/0** |
+  | rc-payload enum, all arms return | 200/0/8800 | **200/200/0** |
+  | rc-payload MOVED out of a returning arm | 200/100/4800 | **200/200/0** |
+  | one arm returns AND falls through | 100/51/2352 | **100/100/0** |
+  | candidate in a loop body, arm returns | 202/201/48 | **202/202/0** |
+
+  The two partial rows are the mechanism stated in numbers: the mixed shape
+  freed exactly the 51 rounds that fell through and leaked the 49 that returned;
+  the loop-block shape freed every iteration but the one that returned out.
+
+  Also deleted the redundant slot-zero after the block-level rc-payload free —
+  `emit_enum_variant_drops_moved` has always zeroed the slot itself.
+
+  VERIFIED: new `TestSelfHostReturningArmEnumFreeX86_64` (7 rows),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (371 s, 36 units, run FIRST per
+  §the reclaim rule), the neighbouring enum/match reclaim gates, and all seven
+  probes run through the self-host on **x86-64, arm64 (qemu) and wasm
+  (wasmtime)**. Refs #6219 #4451.

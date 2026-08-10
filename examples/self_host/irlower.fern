@@ -497,14 +497,16 @@ pub struct LowerState {
     // return-transfer retain. See the return path's use for why that retain is
     // what made accumulator threading quadratic.
     own_params: string[],
-    // optret_pending: consumed-match Option/Result candidates whose arms are
-    // CURRENTLY being lowered — "slot#s" (string payload) / "slot#a"
-    // (leak-safe-array payload) entries. A `return` inside such an arm would
-    // make the post-match drop site dead code (the #4353 p1/p3 leak), so
-    // emit_dec_sweep_except_list (which every return form runs) drops the
-    // pending payload + box before op_return; the drop zeroes the slot, and
-    // fallthrough paths keep the post-match drop — each dynamic path frees
-    // the box exactly once. Set/restored around the candidate's match
+    // optret_pending: consumed-match candidates whose arms are CURRENTLY being
+    // lowered — "slot#s" (Option/Result string payload) / "slot#a"
+    // (Option/Result leak-safe-array payload) / "slot#b" (scalar-enum or
+    // scalar-Option box, shallow dec) / "slot#e<enum>;<moved…>" (rc-payload
+    // enum, runtime variant dispatch) entries. A `return` inside such an arm
+    // would make the post-match drop site dead code (the #4353 p1/p3 and #6219
+    // leaks), so emit_dec_sweep_except_list (which every return form runs)
+    // drops the pending payload + box before op_return; the drop zeroes the
+    // slot, and fallthrough paths keep the post-match drop — each dynamic path
+    // frees the box exactly once. Set/restored around the candidate's match
     // statement by the fn-body loop and lower_block; empty at fn end.
     optret_pending: string[],
     n_params: i32,
@@ -20852,6 +20854,54 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
     return PreciseDrops { idxs: idxs, names: names, kinds: kinds };
 }
 
+// emit_scalar_enum_box_free releases a consumed scalar-enum / scalar-Option
+// local's box: a shallow dec (every payload is a scalar, so there is nothing to
+// walk) then zero the slot.
+//
+// Zeroing is what keeps the three emission sites disjoint. The post-match site,
+// its lower_block mirror, and the return-path sweep each claim the same
+// candidate, and on any one dynamic path at most one of them is reached; a
+// zeroed slot makes a second dec a no-op, since __fern_rc_dec is null-safe.
+function emit_scalar_enum_box_free(s: LowerState, slot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// rcenum_pending_entry encodes an rc-payload enum's return-path release as one
+// optret_pending entry: "<slot>#e<enum>;<moved…>". The deep-drop needs the enum
+// NAME (to walk its variants) and the MOVED set (fields an escaping arm binding
+// now owns), and both are only in hand at the match statement, not at the
+// `return` that has to emit the release. ';' is a safe separator: an enum name
+// and a "<Variant>#<index>" moved entry are both identifier-and-digit text.
+function rcenum_pending_entry(slot: i32, enum_name: string, moved: string[]): string {
+    var ent: string = util.i32_to_string(slot) + "#e" + enum_name;
+    var mi: i32 = 0;
+    while (mi < moved.len()) {
+        ent = ent + ";" + moved[mi];
+        mi = mi + 1;
+    }
+    return ent;
+}
+
+// split_semi is rcenum_pending_entry's inverse: the enum name first, then each
+// moved entry.
+function split_semi(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 59) {   // 59 = ';'
+            out = out.append(s[start:i] + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(s[start:s.len()] + "");
+}
+
 // slot_list_has reports whether slot index `v` is in `xs` — the keep-set
 // membership test for emit_dec_sweep_except_list.
 function slot_list_has(xs: i32[], v: i32): boolean {
@@ -20886,13 +20936,15 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
 // payload are never swept.
 pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState {
     var st: LowerState = s;
-    // Pending consumed-match Option/Result drops (#4353 p1/p3): a `return`
-    // inside a candidate's match arm runs this sweep, so drop the pending
-    // payload + box here — the post-match drop site is dead code on this
-    // path. The drop zeroes the slot; entries are "slot#s" (string payload,
-    // rc-aware str_free) / "slot#a" (leak-safe-array payload, shallow dec).
-    // Empty outside candidate arms (set/restored around the match), so the
-    // fn-end sweep and every unrelated return are byte-unchanged.
+    // Pending consumed-match drops (#4353 p1/p3, #6219): a `return` inside a
+    // candidate's match arm runs this sweep, so drop the pending payload + box
+    // here — the post-match drop site is dead code on this path. The drop
+    // zeroes the slot; entries are "slot#s" (string payload, rc-aware
+    // str_free) / "slot#a" (leak-safe-array payload, shallow dec) / "slot#b"
+    // (scalar-enum or scalar-Option box, shallow dec) / "slot#e<enum>;<moved…>"
+    // (rc-payload enum, runtime variant dispatch — rcenum_pending_entry). Empty
+    // outside candidate arms (set/restored around the match), so the fn-end
+    // sweep and every unrelated return are byte-unchanged.
     var opi: i32 = 0;
     while (opi < st.optret_pending.len()) {
         var ope: string = st.optret_pending[opi];
@@ -20900,7 +20952,15 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         while (oph < ope.len() && ope[oph] != 35) { oph = oph + 1; }   // 35 = '#'
         var opslot: i32 = util.digits_to_i32(ope[0:oph] + "");
         if (opslot >= st.n_params) {
-            if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
+            if (oph + 1 < ope.len() && ope[oph + 1] == 98) {   // 98 = 'b'
+                st = emit_scalar_enum_box_free(st, opslot);
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == 101) {   // 101 = 'e'
+                var eparts: string[] = split_semi(ope[oph + 2 : ope.len()] + "");
+                var emoved: string[] = [];
+                var emi: i32 = 1;
+                while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
+                st = emit_enum_variant_drops_moved(st, opslot, eparts[0], emoved);
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
                 st = emit_opt_str_payload_drop(st, opslot);
             } else {
                 st = emit_opt_payload_drop(st, opslot);
@@ -21802,6 +21862,28 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             }
             opj = opj + 1;
         }
+        // Same, for the block-local scalar-enum / scalar-Option box (#6219).
+        var sej: i32 = 0;
+        while (sej < scenfrees.idxs.len()) {
+            if (scenfrees.idxs[sej] == i) {
+                var seslot2: i32 = st.slot_of(scenfrees.names[sej]);
+                if (seslot2 >= st.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
+                }
+            }
+            sej = sej + 1;
+        }
+        // Same, for the block-local rc-PAYLOAD enum box.
+        var rej: i32 = 0;
+        while (rej < rcenfrees.idxs.len()) {
+            if (rcenfrees.idxs[rej] == i) {
+                var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
+                if (reslot2 >= st.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.structs))));
+                }
+            }
+            rej = rej + 1;
+        }
         // Is statement i a self-overwrite (functional-update) reuse site?
         var soi: i32 = 0 - 1;
         var c: i32 = 0;
@@ -21935,18 +22017,14 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         // for a LOOP body: the slot is re-declared next iteration, and a stale
         // pointer there would be dec'd twice. Emitted BEFORE retire_locals, while
         // the name still resolves — after retirement the slot is unfindable, which
-        // is why the function-exit sweep cannot do this job.
+        // is why the function-exit sweep cannot claim this on its own. It claims
+        // the `return`-out-of-an-arm paths only, off the "#b" pending entry set
+        // above, which records the SLOT while the name still resolves.
         var sef: i32 = 0;
         while (sef < scenfrees.idxs.len()) {
             if (scenfrees.idxs[sef] == i) {
                 var sslot: i32 = st.slot_of(scenfrees.names[sef]);
-                if (sslot >= st.n_params) {
-                    st = st.emit(ir.op_load_local(sslot));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_const_i32(0));
-                    st = st.emit(ir.op_store_local(sslot));
-                }
+                if (sslot >= st.n_params) { st = emit_scalar_enum_box_free(st, sslot); }
             }
             sef = sef + 1;
         }
@@ -21954,18 +22032,16 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         // scalar loop above, but the release is emit_enum_variant_drops_moved —
         // a runtime variant_is dispatch that decs the live variant's rc payload and
         // then frees the box, skipping any field whose arm binding escaped
-        // (match_moved_rc_payloads, #4400). Zeroing the slot afterwards is what
-        // keeps this disjoint from the RCENUM loop-rebind reclaim: on the next
-        // iteration emit_enum_deep_reinit_store would otherwise deep-drop the box
-        // this just freed.
+        // (match_moved_rc_payloads, #4400). The slot-zero inside that helper is
+        // what keeps this disjoint from the RCENUM loop-rebind reclaim: on the
+        // next iteration emit_enum_deep_reinit_store would otherwise deep-drop
+        // the box this just freed.
         var ref2: i32 = 0;
         while (ref2 < rcenfrees.idxs.len()) {
             if (rcenfrees.idxs[ref2] == i) {
                 var rslot2: i32 = st.slot_of(rcenfrees.names[ref2]);
                 if (rslot2 >= st.n_params) {
                     st = emit_enum_variant_drops_moved(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.structs));
-                    st = st.emit(ir.op_const_i32(0));
-                    st = st.emit(ir.op_store_local(rslot2));
                 }
             }
             ref2 = ref2 + 1;
@@ -37451,10 +37527,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // the statement and clobber a same-named outer local (the top-level
         // sibling of the lower_block fix; #3726).
         var stmt_sbase: i32 = s.locals.len();
-        // Statement j is a consumed-match Option/Result candidate's match: set
-        // the pending return-drop entries (#4353 p1/p3) so a `return` inside
-        // an arm frees the payload + box via the return-path sweep — the
-        // post-match drop below is dead code on those paths. Blockable kinds
+        // Statement j is a consumed-match candidate's match: set the pending
+        // return-drop entries (#4353 p1/p3, #6219) so a `return` inside an arm
+        // frees the payload + box via the return-path sweep — the post-match
+        // drop below is dead code on those paths. Blockable Option/Result kinds
         // only (string / leak-safe-array payloads carry a COMPLETE drop; a
         // struct payload's field release belongs to the fn-level machinery).
         // Restored right after the statement lowers.
@@ -37470,6 +37546,34 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 }
             }
             opj = opj + 1;
+        }
+        // Same, for the scalar-enum / scalar-Option box (#6219). The donor
+        // suppression mirrors the post-match emission below exactly: a donated
+        // box is consumed by a later reuse site, and keeping the two sites on
+        // one rule is what makes "freed on every path, by exactly one site"
+        // checkable by reading them side by side.
+        var sej: i32 = 0;
+        while (sej < enumfrees.idxs.len()) {
+            if (enumfrees.idxs[sej] == j && util.index_of_str(edon.donors, enumfrees.names[sej]) < 0) {
+                var seslot2: i32 = s.slot_of(enumfrees.names[sej]);
+                if (seslot2 >= s.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
+                }
+            }
+            sej = sej + 1;
+        }
+        // Same, for the rc-PAYLOAD enum box. Its release is the runtime
+        // variant_is dispatch, so the entry carries the enum name and the moved
+        // set too; the donor suppression mirrors its post-match emission.
+        var rej: i32 = 0;
+        while (rej < rcenumfrees.idxs.len()) {
+            if (rcenumfrees.idxs[rej] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
+                var reslot2: i32 = s.slot_of(rcenumfrees.names[rej]);
+                if (reslot2 >= s.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.structs))));
+                }
+            }
+            rej = rej + 1;
         }
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
         var reuse_i: i32 = 0 - 1;
@@ -37732,21 +37836,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // single-owner, dead-after enum local, free its box now (dec + zero the
         // slot), mirroring the array precise drop. Sound: the box has an rc header
         // (op_struct_make) and the match already read its scalar payloads as
-        // borrows; the exit dec-sweep never sweeps struct/enum slots, so this is
-        // the only release — no double-free.
+        // borrows. This is the FALLTHROUGH release; an arm that `return`s never
+        // reaches it and is released by the "#b" pending entry set above instead.
         var ei: i32 = 0;
         while (ei < enumfrees.idxs.len()) {
             // Suppress the free if this donor's box was donated to a later enum-donor
             // reuse site (the reuse consumes the box; freeing it too is a double-free).
             if (enumfrees.idxs[ei] == j && util.index_of_str(edon.donors, enumfrees.names[ei]) < 0) {
                 var xslot: i32 = s.slot_of(enumfrees.names[ei]);
-                if (xslot >= s.n_params) {
-                    s = s.emit(ir.op_load_local(xslot));
-                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    s = s.emit(ir.op_drop());
-                    s = s.emit(ir.op_const_i32(0));
-                    s = s.emit(ir.op_store_local(xslot));
-                }
+                if (xslot >= s.n_params) { s = emit_scalar_enum_box_free(s, xslot); }
             }
             ei = ei + 1;
         }
