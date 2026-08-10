@@ -331,6 +331,28 @@ function (e: Env) lookup(name: string): Value {
         if (e.names[i] == name) { return deref_cell(e.values[i]); }
         i = i - 1;
     }
+    // A top-level function used as a VALUE — `[inc, dbl]`, or passing `inc` to
+    // a higher-order function (#6611). Functions live in `funcs`, not in the
+    // name/value arrays, so the scan above misses them and the name read as
+    // undefined. Only reached on a MISS, so a local of the same name still
+    // shadows, and calling `inc(3)` is unaffected: that resolves by name
+    // through call_func without coming here.
+    var fi: i32 = 0;
+    while (fi < e.funcs.len()) {
+        var fd: parser.FuncDecl = e.funcs[fi];
+        if (fd.name == name && fd.receiver_name.len() == 0) {
+            var no_names: string[] = [];
+            var no_values: Value[] = [];
+            return VFunc {
+                params: fd.params,
+                ret_type: fd.ret_type,
+                body: fd.body,
+                captured_names: no_names,
+                captured_values: no_values
+            };
+        }
+        fi = fi + 1;
+    }
     return v_err("undefined identifier: " + name);
 }
 
@@ -1863,6 +1885,23 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // variant. VStruct uses its declared type_name; primitive
     // variants map to the language's primitive type-keywords
     // so `function (s: string) len(): i32 { … }` dispatches.
+    // A fn-valued TUPLE element: `(t.0)(5)` parses as a call whose callee is a
+    // field access, so it arrives here as method dispatch (#6611). Checked
+    // ahead of the recv_type derivation below, which has no name for a tuple
+    // and would reject it first. A tuple has no methods, so a numeric index
+    // holding a closure is the only thing this spelling can mean.
+    match (recv) {
+        VTuple(tv) => {
+            var ti: i32 = util.digits_to_i32(name);
+            if (ti >= 0 && ti < tv.elements.len()) {
+                match (tv.elements[ti]) {
+                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases); },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
     var recv_type: string = "";
     match (recv) {
         VStruct(sv) => { recv_type = sv.type_name; },
