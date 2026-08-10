@@ -22006,6 +22006,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
                 if (rslot >= st.n_params) {
                     if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, tagged_payload_freefn(rcopt.strs[rk]), tagged_errfreefn(rcopt.errstrs[rk])); }
                     else if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
+                    else if (rcopt.stys[rk].len() > 0) { st = emit_opt_struct_payload_drop(st, rslot, rcopt.stys[rk]); }
                     else { st = emit_opt_payload_drop(st, rslot); }
                 }
             }
@@ -29415,10 +29416,23 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
                             strs = strs.append(cand.ptype == "string");
-                            blockable = blockable.append(cand.ptype == "string" || is_leaksafe_array_field(cand.ptype));
                             var dsty: string = opt_payload_deep_sty(cand.ptype, structs);
-                            if (dsty.len() > 0 && opt_arm_field_moved(body[match_idx], cand.variant, dsty, structs)) { dsty = ""; }
+                            // The MATCH, not body[match_idx] — under a nested lookup the
+                            // latter is the enclosing `if`, which this predicate cannot
+                            // parse and so reads as "no field moved", granting a deep drop
+                            // over a field the arm moved out. Masked until now by the
+                            // arm-escape gate refusing those shapes first; making a struct
+                            // payload blockable below puts real weight on it.
+                            if (dsty.len() > 0 && opt_arm_field_moved(msv[0], cand.variant, dsty, structs)) { dsty = ""; }
                             stys = stys.append(dsty);
+                            // A struct payload IS blockable once the block-level emission
+                            // performs the same deep field drop the fn-level one does —
+                            // `dsty` non-empty is exactly "the deep drop is available and
+                            // no arm moved a field out of it". Without that branch the
+                            // block pass would emit a shallow dec and strand the field
+                            // buffers, which is the #5453 regression this gate was added
+                            // for.
+                            blockable = blockable.append(cand.ptype == "string" || is_leaksafe_array_field(cand.ptype) || dsty.len() > 0);
                             tagged = tagged.append(call_pt != "");
                             // #6360: the Err arm's string may be released too, but
                             // only for a call-bound candidate whose producer is
