@@ -41242,6 +41242,36 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
     var rc: string[] = closure_ret_closure_fns_of(funcs, structs);
     var ri: i32 = 0;
     while (ri < rc.len()) { out = out.append("RETCLO2:" + rc[ri]); ri = ri + 1; }
+    // "PASSTHRU:<fn>:<argidx>" markers for an erased-generic parameter the
+    // function RETURNS unchanged (`id[T](x: T): T`, `pick[T](c, a, b: T): T`).
+    // A fn value at such a parameter is boxed by the lift, and the call hands
+    // that same box back — so the CALL is a closure box, which the read side
+    // (arr_elem_is_closure_box) cannot tell from any other call without this.
+    var pt: string[] = typevar_passthrough_markers_of(funcs);
+    var pi: i32 = 0;
+    while (pi < pt.len()) { out = out.append(pt[pi]); pi = pi + 1; }
+    return out;
+}
+
+// typevar_passthrough_markers_of lists "PASSTHRU:<fn>:<argidx>" for every
+// receiver-less generic function whose parameter at `argidx` is declared with
+// its own return type — the lift-side lift_callee_is_typevar_passthrough test,
+// carried to the read side, where the module funcs are no longer in scope.
+function typevar_passthrough_markers_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].type_param_count > 0) {
+            var p: i32 = 0;
+            while (p < funcs[i].params.len()) {
+                if (funcs[i].params[p].type_name.len() > 0 && funcs[i].params[p].type_name == funcs[i].ret_type) {
+                    out = out.append("PASSTHRU:" + funcs[i].name + ":" + util.i32_to_string(p));
+                }
+                p = p + 1;
+            }
+        }
+        i = i + 1;
+    }
     return out;
 }
 
@@ -47616,6 +47646,29 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
                     var niife: parser.Expr = parser.ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                     return InlineCloRes { expr: niife, funcs: br.funcs, counter: br.counter };
                 },
+                parser.ExprIdent(cid) => {
+                    // A generic passthrough (`id(<lambda>)`) hands its argument
+                    // straight back, so boxing the argument boxes the call. The
+                    // aggregate positions call this directly rather than through
+                    // the expression walk, so the call's own arguments were never
+                    // reached and the lambda inside stayed raw.
+                    var pfs: parser.FuncDecl[] = funcs;
+                    var pct: i32 = counter;
+                    var pargs: parser.Expr[] = [];
+                    var pi2: i32 = 0;
+                    while (pi2 < c.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, pi2)
+                                && lift_arg_is_fn_value(c.args[pi2], mfuncs)) {
+                            var pr: InlineCloRes = try_fn_field_value(c.args[pi2], fd, pfs, pct, gfns, mfuncs, structs);
+                            pfs = pr.funcs; pct = pr.counter; pargs = pargs.append(pr.expr);
+                        } else {
+                            pargs = pargs.append(c.args[pi2]);
+                        }
+                        pi2 = pi2 + 1;
+                    }
+                    if (pct == counter) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    return InlineCloRes { expr: parser.ExprCall { callee: c.callee, args: pargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, funcs: pfs, counter: pct };
+                },
                 _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
             }
         },
@@ -48059,7 +48112,16 @@ function arr_elem_is_closure_box(e: parser.Expr, s: LowerState): boolean {
             match (cec.callee) {
                 parser.ExprIdent(cecid) => {
                     if (util.index_of_str(s.sigs.closure_fns, cecid.name) >= 0) { return true; }
-                    return cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$";
+                    if (cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$") { return true; }
+                    // A generic passthrough hands its argument back unchanged, so
+                    // the call is a box exactly when that argument is one.
+                    var pa: i32 = 0;
+                    while (pa < cec.args.len()) {
+                        if (util.index_of_str(s.sigs.closure_fns, "PASSTHRU:" + cecid.name + ":" + util.i32_to_string(pa)) >= 0
+                                && arr_elem_is_closure_box(cec.args[pa], s)) { return true; }
+                        pa = pa + 1;
+                    }
+                    return false;
                 },
                 // A value-position if/match ELEMENT whose arms the lift boxed
                 // (#6256): the element yields a box, so the array holding it is
@@ -48624,6 +48686,22 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                             parser.ExprLambda(scil) => {
                                 if (sccall.args.len() == 0 && scil.params.len() == 0
                                     && iife_arm_lambda_captures(scil.body, fd)) { has_cap_lam = true; }
+                            },
+                            // A generic PASSTHROUGH element (`id(<lambda>)`,
+                            // `pick(c, <lambda>, …)`) forwards the box the lift
+                            // puts at its erased-generic parameter, so the array
+                            // holding it is on the env-first ABI whether or not
+                            // anything captures — the boxing at that parameter is
+                            // unconditional. Without this the sibling elements
+                            // stayed bare fn pointers under a binding that
+                            // dispatches every element as a box.
+                            parser.ExprIdent(scfid) => {
+                                var sa: i32 = 0;
+                                while (sa < sccall.args.len()) {
+                                    if (lift_callee_is_typevar_passthrough(mfuncs, scfid.name, sa)
+                                            && lift_arg_is_fn_value(sccall.args[sa], mfuncs)) { has_cap_lam = true; }
+                                    sa = sa + 1;
+                                }
                             },
                             _ => {}
                         }
