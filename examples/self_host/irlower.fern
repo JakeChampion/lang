@@ -15597,6 +15597,13 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (slot_is_reclaimable_arrtup(sb, slot)) {
         return emit_arrtup_reclaim_store(sb, slot, sb.locals[slot].arrarr_elem);
     }
+    // Reclaimable `MyEnum[]` LOOP-LOCAL (#5474): free the prior iteration's element
+    // enum boxes (payload + box, via the runtime variant dispatch) and the outer
+    // buffer. The shallow emit_arr_store dec below frees only the buffer, which is
+    // why every element box leaked per iteration.
+    if (slot_is_reclaimable_arrenum(sb, slot)) {
+        return emit_arrenum_reclaim_store(sb, slot, arrenum_enum_of_slot(sb, slot));
+    }
     // Reclaimable (<struct-with-array>)[] LOOP-LOCAL (#4365): free the prior iteration's
     // whole structure — each element struct's rc fields + struct box, then the outer
     // buffer — before the store (the shallow emit_arr_store dec frees only the buffer).
@@ -21019,7 +21026,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -21379,6 +21386,19 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_store_local(asj));
         }
         asj = asj + 1;
+    }
+    // Reclaimable `MyEnum[]` locals (#5474): deep-free the final live structure (per
+    // element the runtime variant dispatch, which drops the payload AND frees the box,
+    // then the outer buffer). Excluded from the plain is_arr sweep above; entry-zeroed
+    // via arr_slots_of (is_arr).
+    var aej: i32 = st.n_params;
+    while (aej < st.locals.len()) {
+        if (!slot_list_has(keeps, aej) && slot_is_reclaimable_arrenum(st, aej)) {
+            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(aej));
+        }
+        aej = aej + 1;
     }
     // (Reclaimable arr-of-arr locals are freed INSIDE the is_arr sweep above —
     // an arrarr slot is also is_arr, so a separate loop here double-freed;
@@ -26623,6 +26643,22 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             }
         }
         asti = asti + 1;
+    }
+    // Fresh `MyEnum[]` locals (#5474): `var xs: E[] = [E.A(..), E.B, ..]` — the enum
+    // sibling of ARRTUP/ARRSTRUCT, and the last array-of-X element kind that had no
+    // element walk at all. Credited "ARRENUM:<local>#<Enum>", the enum riding the
+    // entry because an `E[]` slot records its element type nowhere (see the ARRENUM
+    // block). The escape gate is deliberately much tighter than its siblings' — only
+    // `xs.len()` — because an element extraction here risks a double-free rather than
+    // a leak; arrenum_esc_expr says why.
+    var aens: string[] = collect_fresh_arrenum_names(body, structs, []);
+    var aeni: i32 = 0;
+    while (aeni < aens.len()) {
+        var aename: string = arrenum_entry_name(aens[aeni]);
+        if (aename.len() > 0 && !arrenum_escapes(body, aename) && !body_unsafe_for(body, aename, borrowable)) {
+            out = out.append("ARRENUM:" + aens[aeni]);
+        }
+        aeni = aeni + 1;
     }
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
     // — every element fresh (a no-base struct literal, or a call to a strict-fresh
@@ -33513,6 +33549,300 @@ function arrstruct_elem_payload_escapes(stmts: parser.Stmt[], name: string, sty:
         i = i + 1;
     }
     return false;
+}
+
+// ── ARRENUM: reclaim `MyEnum[]` array-of-enums locals (#5474 / #4353 item 4) ──
+// The last missing array-of-X element kind. `string[]` (#5471), `struct[]`
+// (ARRSTRUCT) and `(…)[]` (ARRTUP) all reclaim their elements; an enum array was
+// left on a buffer-only dec, so the outer buffer was freed and every element enum
+// box — and any rc payload it carried — leaked.
+//
+// Two things make this class its own machinery rather than another ARRSTRUCT:
+//
+//   - The per-element drop DISPATCHES on the variant at runtime, so it routes
+//     emit_enum_variant_drops rather than a type-directed __struct_drop_<T>.
+//   - emit_enum_variant_drops frees the element box ITSELF and zeroes the slot,
+//     so this walk must NOT copy ARRTUP/ARRSTRUCT's trailing __fern_rc_dec on the
+//     element. Copying it double-frees every element.
+//
+// The element enum name reaches the release side through the CREDIT
+// ("ARRENUM:<local>#<Enum>"), not through the slot: an `E[]` slot records its
+// element enum in neither `arrarr_elem` (populated only for `T[][]`, and only for
+// four scalar tags) nor `struct_type`, and adding a slot column for one class is
+// more surface than parsing a credit that is already per-name.
+
+// arrenum_lit_enum: `e` is a non-empty array literal whose EVERY element is a fresh
+// construction of the SAME enum (fresh_rcpayload_enum_init — the ctor forms the
+// scalar-enum reclaim already admits, qualified and unqualified, call and unit).
+// Returns that enum's name, else "". A bare-ident element would alias a live enum
+// box the free could dangle, so only constructions qualify.
+function arrenum_lit_enum(e: parser.Expr, structs: parser.StructDecl[]): string {
+    match (e) {
+        parser.ExprArray(arr) => {
+            if (arr.elements.len() == 0) { return ""; }
+            var owner: string = "";
+            var i: i32 = 0;
+            while (i < arr.elements.len()) {
+                var o: string = fresh_rcpayload_enum_init(arr.elements[i], structs);
+                if (o.len() == 0) { return ""; }
+                if (owner.len() == 0) { owner = o; }
+                if (o != owner) { return ""; }
+                i = i + 1;
+            }
+            return owner;
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// arrenum_esc_expr reports whether `e` uses `name` in ANY way other than as the
+// receiver of `name.len()`.
+//
+// This is the maximally-conservative first cut the issue asks for, and the reason
+// is that the hazard here is a double-free rather than a leak: `match (xs[i])` reads
+// an element box as a borrowed indexed value and an arm may bind its payload, so
+// freeing that element while a binding aliases it corrupts the self-compile. Every
+// extraction — `xs[i]` bare, as a match subject, or a payload binding — therefore
+// falls back to the existing leak-safe shallow dec. Widening this to admit indexed
+// reads is the follow-up, and it needs the arm-binding escape analysis ARRTUP grew.
+function arrenum_esc_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprNumber(_) => { return false; },
+        parser.ExprString(_) => { return false; },
+        parser.ExprBool(_) => { return false; },
+        parser.ExprUnknown(_) => { return false; },
+        parser.ExprBinary(b) => { return arrenum_esc_expr(b.left, name) || arrenum_esc_expr(b.right, name); },
+        parser.ExprUnary(u) => { return arrenum_esc_expr(u.operand, name); },
+        parser.ExprCall(c) => {
+            // `name.len()` — a header read that touches no element, so a borrow.
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        match (cfa.obj) {
+                            parser.ExprIdent(rid) => {
+                                if (rid.name == name) {
+                                    var ai: i32 = 0;
+                                    while (ai < c.args.len()) { if (arrenum_esc_expr(c.args[ai], name)) { return true; } ai = ai + 1; }
+                                    return false;
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (arrenum_esc_expr(c.callee, name)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (arrenum_esc_expr(c.args[ci], name)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (arrenum_esc_expr(a.elements[i], name)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { if (arrenum_esc_expr(t.elements[ti], name)) { return true; } ti = ti + 1; }
+            return false;
+        },
+        parser.ExprIndex(x) => { return arrenum_esc_expr(x.array, name) || arrenum_esc_expr(x.index, name); },
+        parser.ExprSlice(sl) => { return arrenum_esc_expr(sl.array, name) || arrenum_esc_expr(sl.start, name) || arrenum_esc_expr(sl.end, name); },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { if (arrenum_esc_expr(sl.base, name)) { return true; } }
+            var fi: i32 = 0;
+            while (fi < sl.field_values.len()) { if (arrenum_esc_expr(sl.field_values[fi], name)) { return true; } fi = fi + 1; }
+            return false;
+        },
+        parser.ExprFieldAccess(fa) => { return arrenum_esc_expr(fa.obj, name); },
+        // A lambda capturing the name carries it out of the frame entirely.
+        parser.ExprLambda(lm) => {
+            var used: string[] = astwalk.collect_idents_expr(e, []);
+            return util.index_of_str(used, name) >= 0;
+        },
+    }
+    return true;
+}
+
+function arrenum_esc_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return arrenum_esc_expr(v.init, name); },
+        parser.StmtAssign(a) => {
+            // A reassignment of the name itself is not a read of it, but the value
+            // is; the credit separately refuses reassigned names.
+            if (a.target == name) { return true; }
+            return arrenum_esc_expr(a.value, name);
+        },
+        parser.StmtReturn(r) => { return arrenum_esc_expr(r.value, name); },
+        parser.StmtExpr(e) => { return arrenum_esc_expr(e.value, name); },
+        parser.StmtIf(f) => {
+            if (arrenum_esc_expr(f.cond, name)) { return true; }
+            return arrenum_escapes(f.then_body, name) || arrenum_escapes(f.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            if (arrenum_esc_expr(w.cond, name)) { return true; }
+            return arrenum_escapes(w.body, name);
+        },
+        parser.StmtFor(fo) => {
+            if (arrenum_esc_expr(fo.iter, name)) { return true; }
+            return arrenum_escapes(fo.body, name);
+        },
+        parser.StmtMatch(m) => {
+            // Any match over the name (or over anything mentioning it) extracts.
+            if (arrenum_esc_expr(m.scrutinee, name)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) { if (arrenum_esc_expr(m.arms[ai].guard, name)) { return true; } }
+                if (arrenum_escapes(m.arms[ai].body, name)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return arrenum_esc_stmt(d.action, name); },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function arrenum_escapes(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (arrenum_esc_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// collect_fresh_arrenum_names returns "<local>#<Enum>" for every `var xs: E[] = [ctor, …]`
+// binding whose name is never reassigned. The enum rides the entry so the release side
+// gets it without a slot column; the escape gate is applied by the caller, which owns
+// the whole function body (a nested binding's uses can sit in the enclosing tail).
+function collect_fresh_arrenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                var owner: string = arrenum_lit_enum(v.init, structs);
+                if (owner.len() > 0 && util.index_of_str(reassigned, v.name) < 0) {
+                    a = push_str_unique(a, v.name + "#" + owner);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_fresh_arrenum_names(f.then_body, structs, a); a = collect_fresh_arrenum_names(f.else_body, structs, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrenum_names(w.body, structs, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrenum_names(fo.body, structs, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_arrenum_names(m.arms[mi].body, structs, a); mi = mi + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// arrenum_entry_name returns the "<local>" half of a "<local>#<Enum>" entry, or "".
+function arrenum_entry_name(entry: string): string {
+    var i: i32 = 0;
+    while (i < entry.len()) {
+        if (entry[i] == 35) { return entry[0:i] + ""; }   // 35='#'
+        i = i + 1;
+    }
+    return "";
+}
+
+// arrenum_enum_of_slot returns the element enum recorded in slot i's "ARRENUM:" credit,
+// or "" when the slot carries none.
+function arrenum_enum_of_slot(s: LowerState, i: i32): string {
+    if (i < s.n_params) { return ""; }
+    if (i >= s.locals.len()) { return ""; }
+    if (!s.locals[i].is_arr) { return ""; }
+    if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return ""; }
+    var pre: string = "ARRENUM:" + reclaim_slot_name(s, i) + "#";
+    var k: i32 = 0;
+    while (k < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[k];
+        if (e.len() > pre.len() && e[0:pre.len()] == pre) { return e[pre.len():e.len()] + ""; }
+        k = k + 1;
+    }
+    return "";
+}
+
+function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
+    return arrenum_enum_of_slot(s, i).len() > 0;
+}
+
+// emit_arrenum_deep_free frees the array-of-enums buffer in `slot`: null-guarded, a
+// counted loop walks each element (an enum box ptr) and runs the runtime variant
+// dispatch on it, then decs the outer buffer. Consumes no operand; leaves the slot
+// dangling.
+//
+// NO per-element __fern_rc_dec: emit_enum_variant_drops already frees the box and
+// zeroes the slot. That is the one place this differs from its ARRTUP/ARRSTRUCT
+// siblings, and copying their trailing dec double-frees every element.
+function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // arr != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    var idxn: string = "$aeni" + util.i32_to_string(st.locals.len());
+    st = st.add_local(idxn);
+    var idxslot: i32 = st.slot_of(idxn);
+    var eln: string = "$aene" + util.i32_to_string(st.locals.len());
+    st = st.add_local(eln);
+    var elslot: i32 = st.slot_of(eln);
+    st = st.emit(ir.op_const_i32(0 - 1));            // index starts at -1 (advance-at-top)
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_block(0)).enter_loop();
+    st = st.emit(ir.op_loop(0));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_bin("add", 0, false));
+    st = st.emit(ir.op_store_local(idxslot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_bin("lt_s", 0, false));
+    st = st.emit(ir.op_bin("not", 0, false));
+    st = st.emit(ir.op_brif(1));                     // exit when idx >= len
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(idxslot));
+    st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (enum box ptr)
+    st = st.emit(ir.op_store_local(elslot));
+    st = emit_enum_variant_drops(st, elslot, ename); // drop payload AND free the box
+    st = st.emit(ir.op_br(0));                       // back-edge
+    st = st.emit(ir.op_end());                       // end loop
+    st = st.emit(ir.op_end()).exit_loop();           // end block
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));        // free the outer buffer box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_arrenum_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD
+// structure, store new. The null guard inside deep_free covers the first iteration.
+// COW-guarded (old != new) for the same reason as its siblings — a rebind that hands
+// back the same buffer must not destroy the elements the stored value still points at.
+function emit_arrenum_reclaim_store(se: LowerState, slot: i32, ename: string): LowerState {
+    var scratch: string = "$aer" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_load_local(tmp));             // new
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = emit_arrenum_deep_free(st, slot, ename);    // free old structure
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));             // new
+    return st.emit(ir.op_store_local(slot));
 }
 
 // slot_is_reclaimable_arrstruct: slot i holds a fresh, non-escaping
