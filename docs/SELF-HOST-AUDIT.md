@@ -97,7 +97,7 @@ These are not just smells — they can produce wrong output today.
   (the `sat_trunc_opcode` comment records a real instance). Both
   fallthroughs now `eprint` the op and `exit(1)` when a NAMED op reaches
   them (empty/unnamed nodes keep the lenient skip). Verified benign-token
-  clean across the wasm-binary, CLI (`-target wasm -emit core-module`), leb128,
+  clean across the wasm-binary, CLI (`-target wasm-bin`), leb128,
   ret-struct-field, streq-helper, and arm64-builds suites.
 
 - [x] **SH-004 — `parse_f64` does not round-trip to nearest double.** _Done:_

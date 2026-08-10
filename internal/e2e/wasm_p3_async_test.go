@@ -192,7 +192,7 @@ func TestCmdLangAsyncExport(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "aexport.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm", "-emit", "core-module", "-async-export", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-async-export", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -async-export failed: %v\n%s", err, out)
@@ -224,7 +224,7 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "akw.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm", "-emit", "core-module", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern (async function) failed: %v\n%s", err, out)
@@ -259,7 +259,7 @@ func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "akwf.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm", "-emit", "core-module", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern (async function f64) failed: %v\n%s", err, out)

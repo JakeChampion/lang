@@ -39,7 +39,7 @@ func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 		got  int
 	}{
 		{"x86_64", x86_64.ExitArenaExhausted},
-		{"arm64", arm64.ExitArenaExhausted},
+		{"arm64-linux", arm64.ExitArenaExhausted},
 	} {
 		if c.got == 137 {
 			t.Errorf("%s: arena exhaustion is back to 137, which is SIGKILL's "+

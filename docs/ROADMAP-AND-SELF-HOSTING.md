@@ -510,7 +510,7 @@ Gated by 482 differential cases as of this writing. What remained for the
 wasm backend was packaging, not language — and that packaging is now wired
 into the unified `fern` CLI:
 
-- **`fern -target wasm -emit core-module`** emits runnable **binary** `.wasm` via the
+- **`fern -target wasm-bin`** emits runnable **binary** `.wasm` via the
   self-hosted WAT→binary assembler (`watbin.fern`), not WAT text.
 - **`fern -target wasm-component`** emits a **Component-Model `wasi:cli/run`**
   component, auto-selecting the framing from the program's WASI usage and
@@ -520,7 +520,7 @@ into the unified `fern` CLI:
   combinations are rejected with a clear error, never a broken component.
 
 The remaining wasm shape is **`wasi:http/incoming-handler`** (native
-`-target wasi-http`), which needs a self-host core emitter that lowers the
+`-target wasm32-wasi-http`), which needs a self-host core emitter that lowers the
 request/response **resource handles** — deferred until the in-progress
 own/borrow resource-handle work lands.
 The core wasi builtins (clock / file / env / random) are now covered.
@@ -686,7 +686,7 @@ section. `wasi:http/incoming-handler` remains, pending resource-handle
 lowering.)*
 
 The **component-wrapper track** has started. Investigation of the Go
-backend's `-target wasm` output shows it is preview2-native: the core
+backend's `-target wasm32-wasi` output shows it is preview2-native: the core
 module has *no* WASI imports and exports `_lang_run`, wrapped with `canon
 lift` into a `wasi:cli/run@0.2.0` instance export. A component's binary
 preamble is the wasm magic + `0d 00 01 00` (version 13, layer 1, vs a core
@@ -708,7 +708,7 @@ lift 8, instance 5, `wasi:cli/run@0.2.0` export 11) are *constant* for
 this fixed shape (they only reference the core's `_lang_run` export and
 the `() -> result` signature), so they're emitted verbatim. Given a core
 that exports `_lang_run`, `component_full` produces a component
-**byte-identical to the Go backend's `-target wasm` output**, validated
+**byte-identical to the Go backend's `-target wasm32-wasi` output**, validated
 both ways: `TestSelfHostWasmComponentFull` feeds the Go backend's own core
 to `component_full` and asserts byte-equality + a matching `wasmtime` run
 (ok path `main()==0` → exit 0; err path → exit 1).
@@ -1211,7 +1211,7 @@ directly. Status by half:
   binary encoder + Component-Model framing live in-tree in Go
   (`internal/wasm/*`) **and** in Fern (`leb128.fern` → `wat_lex.fern` →
   `wat_parse.fern` → `wat_encode.fern` → `wat_emit_bin.fern` →
-  `wat_component.fern`). `fern -target wasm` produces a runnable binary
+  `wat_component.fern`). `fern -target wasm32-wasi` produces a runnable binary
   with no external process.
 - **native (x86-64 / arm64 ELF, arm64-darwin Mach-O): split.** The **Go
   bootstrap already emits these in-process** —
@@ -1295,7 +1295,7 @@ Component Type encoder, and the preview-1 → preview-2 adapter
 — now lives in-tree under `internal/wasm/*` (`encode`,
 `componenttype`, `component`, plus the `leb128` / `sections`
 / `inst` / `imports` / `memory` / … building blocks).
-`fern -target wasm` / `-target wasi-http` compose components
+`fern -target wasm32-wasi` / `-target wasm32-wasi-http` compose components
 natively in Go (`component.ClassifyCore` → `component.Compose`,
 see `cmd/fern/main.go`), with no `wasm-tools` shell-out and no
 preview-1 adapter. The only external process the toolchain

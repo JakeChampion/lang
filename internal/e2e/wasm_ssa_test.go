@@ -57,7 +57,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 
 	outWasm := filepath.Join(dir, "sum.wasm")
 	emit := exec.Command(bin,
-		"-target", "wasm", "-backend", "ssa",
+		"-target", "wasm32-wasi", "-backend", "ssa",
 		"-o", outWasm,
 		srcPath,
 	)
@@ -150,7 +150,7 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 			}
 			outWasm := filepath.Join(dir, c.name+".wasm")
 			emit := exec.Command(bin,
-				"-target", "wasm", "-backend", "ssa",
+				"-target", "wasm32-wasi", "-backend", "ssa",
 				"-component-wrap-cli",
 				"-o", outWasm,
 				srcPath,

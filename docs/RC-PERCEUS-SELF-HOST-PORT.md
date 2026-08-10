@@ -5912,6 +5912,122 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (48000): that one is about which FIELD TYPES the deep drop admits, this one is
   about which SCOPE may run the deep drop at all. Both can be true at once.
 
+- 2026-08-10: **In-place `.with` now respects ownership across a bare-ident
+  REBIND (#6170).** `x = x.with(i, v)` lowers to an in-place `arr_set`, which is
+  sound only when `x` is the buffer's sole reference. #6158 taught that decision
+  about field-read bindings; it still had nothing to say about
+  `var heap = heap_in; heap = heap.with(…)`. `alias_idents_in_value` credits
+  `heap_in` — the name that ACQUIRED an alias — while the name actually mutated
+  is `heap`, so the write landed in the caller's buffer. A third shape,
+  `var b = a; b = b.with(…)` over a still-live local, was broken the same way
+  and was not on any issue.
+
+  | shape | interp | self-host before | after |
+  |---|---|---|---|
+  | `var heap = heap_in` over a borrowed param | 7 | **77** | **7** |
+  | `var b = a` over a still-live local | 7 | **77** | **7** |
+  | `var x = obj.field` (#6158) | 7 | 7 | 7 |
+  | `own` param, direct | 7 | 7 | 7 |
+  | direct borrowed param (#6185) | 7 | **77** | **77** — still open |
+
+  **The param is a rebind SOURCE, never a member of the borrowed set, and that
+  distinction is the whole fix.** Crediting the param itself also forbids the
+  DIRECT `p = p.with(…)`, which is how a mutable closure capture is written:
+  `box_mutated_scalar_captures` rewrites a captured `x = v` into
+  `x = x.with(0, v)` on a 1-element cell, and the param-lift hands that cell to
+  the lifted body as a plain array param that MUST write through it. Measured
+  rather than reasoned: the first cut credited the param and failed
+  `TestSelfHostOuterMutCapture`'s `loop-accumulator` (32, want 42) and
+  `outer-and-inner-write` (38, want 42) on x86-64, arm64 and wasm — the #5301
+  stale-snapshot regression the #6158 gate warns about, reproduced exactly.
+
+  A rebind needs no such judgement, because the capture cell is only ever
+  written by the direct form. Telling "the caller's array" from "a captured
+  cell" AT THE PARAM remains the open design question (#6185).
+
+  **The other half is not cloning what it need not clone.** A rebind is credited
+  only when its source is a non-`own` array param, is itself borrowed, or is
+  used again after the binding. None holding means the rebind is the buffer's
+  only remaining name, so `own heap_in` + `var heap = heap_in` keeps its stores
+  in place — the const-eval VM's shape (`eval_ops`), which is why this was split
+  out of #6158. Measured on a 4000-element array, 4000 `.with` writes:
+  `own` **12 allocs / 0 bytes**, borrowed **4012 allocs / 128 MB**. An
+  intermediate cut that credited every rebind put the `own` column at 128 MB
+  too; `own-param-rebind-loop-allocates-nothing` now pins it, by ALLOCATION
+  rather than by answer, because that failure is silent quadratic copying that
+  every correctness case still passes.
+
+  Worth recording against the issue's premise: `eval_ops` is reached only from
+  `eval_call` ← `eval_program` ← `irlower_run.fern`, a test driver. It is not on
+  the production compile path, so the clone cost was bounded even before the
+  `own` exemption landed.
+
+  VERIFIED: `TestSelfHostBorrowedWithInPlaceIRX86_64` extended from 5 rows to 9
+  (two fixes, one `own` perf guard, one divergence pin for #6185),
+  `TestSelfHostOuterMutCapture` on x86-64 / wasm / arm64,
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (391 s), the closure suites, and
+  every probe run through the self-host on **x86-64, arm64 (qemu) and wasm
+  (wasmtime)**. Refs #6170 #6158 #6185 #5301 #4451.
+
+- 2026-08-10: **`MyEnum[]` element reclaim — the last array-of-X kind with no element
+  walk (#5474, #4353 item 4).** `string[]` (#5471), `(…)[]` (ARRTUP) and
+  `(<struct-with-array>)[]` (ARRSTRUCT) all reclaimed their elements; an enum array
+  was left on a buffer-only dec, so every element enum box and any rc payload it
+  carried leaked per iteration.
+
+  **Read the instrument note before the numbers.** This issue accumulated four
+  comments ending in a full retraction because the harness used
+  `__heap_bump_bytes()` deltas, which reported a leak for a scalar `i32[]` control
+  that cannot leak — a bump high-water legitimately advances. `FERN_LEAKCHECK=1`
+  answers the question directly (exact allocs/frees/live_bytes) and its controls
+  come out clean, so it is the instrument to reach for here. 200 iterations,
+  self-host x86-64:
+
+  | element type | before | after |
+  |---|---|---|
+  | `i32[]` (control) | 201/200/24 | unchanged |
+  | `string[]` (control) | 1401/1400/24 | unchanged |
+  | `(i32,string)[]` (control) | 1801/1800/24 | unchanged |
+  | `E[]` | 2001/**600**/**35224** | **2001/2000/24** |
+  | `E[]`, all-unit `[B,B,B]` | 801/**200**/**19224** | **801/800/24** |
+
+  The all-unit row localised it better than the issue body did: 200 × (3 element
+  boxes + 1 buffer) allocated and exactly 200 freed means the **outer buffer was
+  already being reclaimed** and only the element walk was missing.
+
+  **Two things make ARRENUM its own machinery rather than another ARRSTRUCT.** The
+  per-element drop dispatches on the variant at runtime, so it routes
+  `emit_enum_variant_drops`; and that primitive frees the element box itself and
+  zeroes the slot, so the walk emits **no** trailing `__fern_rc_dec` per element.
+  Copying ARRTUP/ARRSTRUCT's trailing dec double-frees every element.
+
+  The element enum name rides the credit (`ARRENUM:<local>#<Enum>`): an `E[]` slot
+  records its element type in neither `arrarr_elem` (populated only for `T[][]`, and
+  only for four scalar tags) nor `struct_type`, and one credit string beats a slot
+  column for a single class.
+
+  **Admission is deliberately much tighter than its siblings'** — the only admitted
+  use is `xs.len()`. The hazard here is a double-free, not a leak: a match arm can
+  bind an element's payload, and freeing that element under a live binding corrupts
+  the self-compile. Every extraction (`xs[i]` bare, as a match scrutinee, or a bound
+  element) falls back to the existing shallow dec. Widening this to indexed reads is
+  the follow-up and needs the arm-binding escape analysis ARRTUP grew.
+
+  **Separate defect found while gating this, NOT fixed here:** a literal-initialised
+  string local declared INSIDE a loop body (`while (…) { var pre: string = "ab"; … }`)
+  leaks 24 B per iteration on x86-64 and arm64, and is flat on wasm. It is
+  independent of element type — the plain `i32[]` control leaks it identically with
+  no rc element anywhere — so it is not an enum-array problem. The bounded-churn
+  gate cases hoist the string above the loop so they fail only on what they test.
+  Filed as #6582, with the control table and the backend split.
+
+  VERIFIED: new `TestSelfHostArrEnumReclaim{IRX86_64,IRArm64,WasmIR}` (6 rows × 3
+  backends — 3 bounded-churn including an all-unit and an unqualified-ctor spelling,
+  3 extraction negatives asserting exact values with `__rc_underflow()` at zero),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (442 s), the neighbouring
+  ARRTUP/ARRSTRUCT/STRARR/enum reclaim gates, and every probe through the self-host
+  on x86-64, arm64 (qemu) and wasm (wasmtime). Refs #5474 #4353 #4451.
+
 - 2026-08-10: **The block-scoped STRUCT payload with a nested match — closed; the
   TUPLE half is not.** #6553 recorded both rows and predicted the work would be on
   the EMISSION side rather than admission. That held exactly: the block-level

@@ -69,7 +69,7 @@ function main(): i32 {
 					t.Errorf("interp exit = %d, want %d", code, c.want)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, code := compileAndRunArm64(t, c.src); code != c.want {
 					t.Errorf("arm64 exit = %d, want %d", code, c.want)
 				}
@@ -79,7 +79,7 @@ function main(): i32 {
 					t.Errorf("x86_64 exit = %d, want %d", code, c.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if code := compileAndRunWasmbinMain(t, c.src); code != c.want {
 					t.Errorf("wasm exit = %d, want %d", code, c.want)
 				}
@@ -123,7 +123,7 @@ function main(): i32 {
 					t.Errorf("interp exit = %d, want 101 (todo should abort)", code)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, code := compileAndRunArm64(t, c.src); code != 101 {
 					t.Errorf("arm64 exit = %d, want 101 (todo should abort)", code)
 				}

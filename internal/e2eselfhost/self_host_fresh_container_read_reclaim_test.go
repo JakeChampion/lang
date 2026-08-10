@@ -177,6 +177,133 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+
+	// ── the POINTER half ────────────────────────────────────────────────────
+	// A `string` element ALIASES the buffer being freed, so the release is a deep
+	// one (__fern_str_arr_free: every element box, then the buffer) preceded by a
+	// retain of the element that survives it. Leaked the whole 4-string container
+	// per evaluation — 17256 B / 50 rounds, exactly doubling.
+	{"fresh-strarr-index-bound", `function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function strs(n: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < 4) { out = out.append(wide(n + i)); i = i + 1; }
+    return out;
+}
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: string = strs(i)[1]; acc = acc + b.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 2091) { return 91; }
+    if (y != 4192) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The same read with NO destination to own the extracted string: a borrowing
+	// `.len()`. The container reclaim alone would strand the element it kept
+	// alive, so the receiver position frees it after the read — the binding
+	// credit's twin.
+	{"fresh-strarr-index-borrowed", `function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function strs(n: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < 4) { out = out.append(wide(n + i)); i = i + 1; }
+    return out;
+}
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { acc = acc + strs(i)[0].len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 2090) { return 91; }
+    if (y != 4190) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// A `string` FIELD read off a fresh owned struct. Unlike the element, this one
+	// is a MOVE and not a retain-and-drop: the strict-fresh admission plus the
+	// per-field freshness proof mean the box holds the string's only reference,
+	// so the read hands it on and the box dec is the whole release.
+	{"fresh-struct-field-string", `struct Box { name: string, k: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function boxed(n: i32): Box { return Box { name: wide(n), k: n }; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var f: string = boxed(i).name; acc = acc + f.len() + boxed(i).name.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 4180) { return 91; }
+    if (y != 8380) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The refusal that carries the pointer half's safety argument on the ELEMENT
+	// side. `pair` builds its array out of a FIELD READ, which the array literal
+	// does not retain — so if the producer were admitted, the deep free would
+	// release `keep`'s own string box. The churn re-uses the freed bytes, so a
+	// widened admission reads a corrupted length and reports 90.
+	{"strarr-aliased-element-refused", `struct Box { name: string, k: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function pair(b: Box): string[] { return [b.name, b.name]; }
+function main(): i32 {
+    var keep: Box = Box { name: wide(7), k: 7 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + pair(keep)[0].len(); i = i + 1; }
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (t != 4100) { return 91; }
+    if (keep.name.len() != 41) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The FIELD-side refusal. `wrap` stores its own PARAMETER in the returned
+	// struct, so the box does not own that string — moving it out and letting the
+	// destination free it would release main's `live` underneath it.
+	{"strfld-param-value-refused", `struct Box { name: string, k: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function wrap(s: string, n: i32): Box { return Box { name: s, k: n }; }
+function main(): i32 {
+    var live: string = wide(3);
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var f: string = wrap(live, i).name; t = t + f.len(); i = i + 1; }
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (t != 4100) { return 91; }
+    if (live.len() != 41) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostFreshContainerReadReclaimIRX86_64 drives the cases through the

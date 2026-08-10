@@ -10,7 +10,7 @@
 //   -E / --show-ends         print a `$` at the end of each line
 //   -T / --show-tabs         display tab characters as `^I`
 //
-//   $ fern -target x86-64 -o cat cat.fern
+//   $ fern -target x86-64-linux -o cat cat.fern
 //   $ ./cat -n file.txt
 //   $ printf 'a\n\n\nb\n' | ./cat -s
 //

@@ -67,7 +67,7 @@ below proposes changing it.
 
 ### Three measurements that constrained the design
 
-Taken on this tree, x86-64, `/tmp/fern -target x86-64`. **D7 has since
+Taken on this tree, x86-64, `/tmp/fern -target x86-64-linux`. **D7 has since
 landed (#5627)**; these are the numbers that set its shape, with the
 post-fix figures alongside.
 

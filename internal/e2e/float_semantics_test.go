@@ -38,7 +38,7 @@ func TestFloatSemantics_PortableSubset(t *testing.T) {
 	}`
 	const want = 7
 
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		_, code := compileAndRunArm64(t, src)
 		if code != want {
 			t.Errorf("arm64 exit=%d, want %d\nsrc:\n%s", code, want, src)
@@ -50,7 +50,7 @@ func TestFloatSemantics_PortableSubset(t *testing.T) {
 			t.Errorf("x86_64 exit=%d, want %d\nsrc:\n%s", code, want, src)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		componentPath := buildComponent(t, src)
 		stdout, stderr, ec := runComponent(t, componentPath, runOpts{})
 		if ec != 0 {
@@ -93,7 +93,7 @@ function main(): i32 {
 			t.Errorf("x86_64 exit=%d, want 0", code)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		if got := runWasm(t, src); got != 0 {
 			t.Errorf("wasm exit=%d, want 0", got)
 		}

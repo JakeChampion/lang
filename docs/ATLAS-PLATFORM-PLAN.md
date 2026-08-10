@@ -112,7 +112,7 @@ is entered and left inside a single op:
   (i+1)*8]`… Always 8-byte."
 
 This is not merely how the comments read; it is what the backend emits. For
-`var c: f64 = a * b + a`, `fern -target x86-64` produces:
+`var c: f64 = a * b + a`, `fern -target x86-64-linux` produces:
 
 ```
     movabs $0x400c000000000000,%rax   ; f64 bit pattern in a GPR
@@ -506,7 +506,7 @@ as if that were the whole prerequisite, and it is not:
 > **The in-process assemblers must be able to ENCODE vector instructions, and
 > they could not.**
 
-`internal/native/x86_64` — which `-target x86-64` uses by default, `-cc` being
+`internal/native/x86_64` — which `-target x86-64-linux` uses by default, `-cc` being
 the opt-out — had no vector surface whatsoever. Only the scalar float ops the
 code generator uses to shuttle f64 through xmm. Not `movdqu`, not `pcmpeqb`,
 not `pmovmskb`, not even `bsf`. The first SSE2 kernel therefore assembled

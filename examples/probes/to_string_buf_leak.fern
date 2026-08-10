@@ -20,7 +20,7 @@
 // next to it, sized by the literal 16, was untainted and reclaimed fine — the
 // whole difference was the size being computed rather than constant.
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/to_string_buf_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/to_string_buf_leak.fern
 //   /tmp/p; # stderr, before the fix: leakcheck: allocs=545 frees=346 live_bytes=7152
 //           # stderr, after:          leakcheck: allocs=545 frees=545 live_bytes=0
 //

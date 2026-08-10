@@ -96,7 +96,7 @@ var threadedArrayParamSizes = []struct {
 func TestX86_64ThreadedArrayParamBounded(t *testing.T) {
 	for _, sz := range threadedArrayParamSizes {
 		_, got := compileAndRunX86_64FreeOn(t, threadedArrayParamSrc(sz.src, sz.twoN))
-		checkThreadedArrayParam(t, "x86-64", sz.n, got)
+		checkThreadedArrayParam(t, "x86-64-linux", sz.n, got)
 	}
 }
 
@@ -106,6 +106,6 @@ func TestWASMThreadedArrayParamBounded(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	for _, sz := range threadedArrayParamSizes {
 		got := runWasm(t, threadedArrayParamSrc(sz.src, sz.twoN))
-		checkThreadedArrayParam(t, "wasm", sz.n, got)
+		checkThreadedArrayParam(t, "wasm32-wasi", sz.n, got)
 	}
 }

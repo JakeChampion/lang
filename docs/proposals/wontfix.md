@@ -65,7 +65,7 @@ often confused:
 - WASI refuses anything outside `[0..126)`, so a value >= 126 is reported as 1.
   This produced 14 phantom "mismatches" on the self-host fixture leg's first
   run.
-- A `-target wasm` CLI component lowers `main`'s return through
+- A `-target wasm32-wasi` CLI component lowers `main`'s return through
   `wasi:cli/run`'s `result<_, _>`, so under plain `wasmtime run` **every**
   nonzero value collapses to exit 1 — 3, 7 and 125 all report 1.
 

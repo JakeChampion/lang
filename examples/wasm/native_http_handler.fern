@@ -9,7 +9,7 @@
 // arm64-darwin`) that serves HTTP/1.1 on $PORT — no Linux
 // container, no wasmtime, no separate runtime to ship.
 //
-//   $ fern -target arm64 -o serve native_http_handler.fern
+//   $ fern -target arm64-linux -o serve native_http_handler.fern
 //   $ PORT=8080 qemu-aarch64 ./serve &
 //   $ curl http://localhost:8080/foo
 //

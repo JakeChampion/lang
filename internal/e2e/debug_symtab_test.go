@@ -24,7 +24,7 @@ function main(): i32 { return helper(14); }
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "sym.bin")
-	if o, err := exec.Command(bin, "-g", "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-g", "-target", "x86-64-linux", "-o", out, p).CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 -g build: %v\n%s", err, o)
 	}
 
@@ -65,7 +65,7 @@ function main(): i32 { return helper(14); }
 
 	// Without -g there is no static symbol table (default binaries stay lean).
 	outNoG := filepath.Join(dir, "sym_nog.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", outNoG, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", outNoG, p).CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 build: %v\n%s", err, o)
 	}
 	fn, err := goelf.Open(outNoG)

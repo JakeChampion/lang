@@ -91,8 +91,8 @@ every target would grant `alloc` and the capability would carry no information.
 
 ## The target
 
-`-target freestanding` exists and grants nothing (#6509). It is **check-only**: the
-descriptor is declared, `fern -targets` lists it, and `fern -check -target freestanding`
+`-target arm64-freestanding` / `-target x86-64-freestanding` exist and grant nothing (#6509). It is **check-only**: the
+descriptor is declared, `fern -targets` lists it, and `fern -check -target arm64-freestanding`
 type-checks against its empty capability set — but no backend emits for it, and asking
 one to is a refusal naming the check path rather than the "unknown target" error, which
 would be false.
@@ -146,8 +146,64 @@ freestanding artifact put a panic message?*: it does not have one, and stopping 
 only honest thing left. The symbols stay defined (call sites branch to them); only the
 bodies change, and the backtrace string is dropped since nothing writes it.
 
-The allocator trap is a **placeholder for #6511**, not the design: once the heap is an
-embedder-supplied region, `__fern_heap_ptr` is seeded and the trap is unreachable.
+### The heap is handed in, not acquired
+
+A hostless target cannot `mmap` a region, and with no MMU may have no address space to
+reserve one in. So the heap becomes the embedder's (#6511): off the process path the
+backends export
+
+```
+__fern_heap_init(base, len)     // rdi/rsi on System V, x0/x1 on AAPCS64
+```
+
+which seeds `__fern_heap_ptr` (cursor), `__fern_heap_base` (high-water reference) and
+`__fern_heap_end` (`base + len`). **Only the seeding moves.** The 16-byte rounding, the
+RC header and the two-tier segregated freelist all work against a region regardless of
+where it came from — `docs/ARENA-DECISION.md` is why there is exactly one cursor pair to
+reseed. Hosted targets keep the lazy `mmap` and do *not* get this symbol; one allocator
+with two ways to seed its cursor is two sources of truth.
+
+The contract is that the embedder calls it once before anything that allocates.
+
+**Two defined failure modes, both a trap:**
+
+- **Allocating before `__fern_heap_init`.** `__fern_heap_ptr` is still zero, which is the
+  unseeded sentinel, so `__fern_alloc` stops instead of bumping a null cursor. (A region
+  based at address 0 is therefore not expressible — not a real heap on any target.)
+- **Exhausting the region.** The existing `.Lalloc_oom` bounds check already routes to
+  `__fern_report`, which off the process path is the trap above. So exhaustion is the
+  same "stop" as every other hostless abort rather than an exit code the embedder cannot
+  see anyway.
+
+## The `std/` partition
+
+The same line, at module scope (#6512). `platforms.Reach(prog)` returns the host
+capabilities a program can reach, each with an example builtin — the target-independent
+half of `Enforce`, sharing its scan. Applied per module, that makes "can I use this
+without a host?" a **derived** property: a module whose reach is empty is core-safe.
+
+`stdModuleReach` in `std_partition_test.go` is the resulting table, and
+`TestStdPartitionIsDerivedNotAsserted` recomputes it from source on every run. Nothing in
+it is a judgement call. It is checked in only so a module *acquiring* a host dependency
+is a visible diff rather than a surprise at someone's first freestanding build; the test
+fails if a module cannot be loaded, is missing from the table, or has drifted. A second
+test independently runs the core-safe modules through `Enforce` against `freestanding`,
+so the partition means what the compiler enforces rather than only agreeing with it by
+construction.
+
+Today: **41 of 54 modules are core-safe.** Two results worth knowing:
+
+- **`std/math` is hosted, on `random`.** It reads like an obviously-core numerics module
+  and is in fact the random-number module (`random_int` over the platform CSPRNG). A
+  hand-written classification would have got this wrong, which is the argument for
+  deriving in one line.
+- **`std/test` reaches `env`, `fs`, `log` and `now`.** So a freestanding target cannot run
+  the in-language test runner, and its output sink is only one of four things in the way.
+  Worth knowing before treating "core-safe" and "testable in-language" as the same set.
+
+Note what is deliberately *not* here: importing a hosted module is not an error. E066 is
+enforced post-tree-shake, so a program may import `std/io` and use only its core-safe
+parts. The partition answers a question; it does not add a gate.
 
 ## Adding a builtin
 

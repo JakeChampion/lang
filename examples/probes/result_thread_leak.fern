@@ -4,7 +4,7 @@
 // does NOT, and it isolates the shape that costs `lexer.tokenize` ~4 blocks
 // per token (464073 of 508639 on parser.fern, 91%).
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/result_thread_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/result_thread_leak.fern
 //   /tmp/p    # stderr: leakcheck: allocs=2400 frees=200 live_bytes=68800
 //
 // The shape is the lexer's token loop, reduced to its essentials: a scanner

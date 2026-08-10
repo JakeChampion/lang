@@ -166,7 +166,7 @@ in-place ops), so there is no replaced box to reclaim.
 
 Re-measured on today's main (the numbers above predate the merged
 allocator/RC reclamation arc). Method: build the SSA→asm driver
-(`examples/self_host/ssa_emit_run.fern`) with `cmd/fern -target x86-64`, feed it
+(`examples/self_host/ssa_emit_run.fern`) with `cmd/fern -target x86-64-linux`, feed it
 a real module on stdin, sample peak RSS (`/proc/<pid>/VmHWM`):
 
 | input | lines | peak RSS | exit |
@@ -320,7 +320,7 @@ native residuals above; only one is still live:
   discarded forms all bounded on both compilers.)
 
 **2026-07-18 — the deferred `wasm.fern` SSA-emit re-measure.** Same method
-(`ssa_emit_run.fern` built by `cmd/fern -target x86-64`, input on stdin,
+(`ssa_emit_run.fern` built by `cmd/fern -target x86-64-linux`, input on stdin,
 peak RSS via `getrusage`), on a main with the dead-intermediate drop
 (#4533), the map reclaim arc (#5096 + self-host ports), and everything
 between merged:

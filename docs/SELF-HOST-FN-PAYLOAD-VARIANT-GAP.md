@@ -79,7 +79,7 @@ of building the variant box. The Go compiler handles this correctly
 Build the driver, then feed each program on stdin:
 
 ```
-go run ./cmd/fern -target x86-64 -o /tmp/shc examples/self_host/asm_run.fern
+go run ./cmd/fern -target x86-64-linux -o /tmp/shc examples/self_host/asm_run.fern
 /tmp/shc < prog.fern > prog.s && cc -nostdlib -static -o prog prog.s && ./prog
 ```
 

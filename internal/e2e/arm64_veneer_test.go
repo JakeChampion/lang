@@ -52,7 +52,7 @@ func TestArm64VeneerForcedReach(t *testing.T) {
 				t.Fatalf("write source: %v", err)
 			}
 			out := filepath.Join(dir, c.name+".bin")
-			build := exec.Command(bin, "-target", "arm64", "-o", out, src)
+			build := exec.Command(bin, "-target", "arm64-linux", "-o", out, src)
 			// 64 instructions: short enough that every cross-function
 			// call needs a veneer, long enough that a function's own
 			// conditional branches (which are not veneered) still encode.

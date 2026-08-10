@@ -8,7 +8,7 @@
 // string methods (split, len), `defer` for cleanup, and the
 // `Result` + `match` idiom for fallible operations.
 //
-//   $ fern -target wasm -o wc.wasm wc.fern
+//   $ fern -target wasm32-wasi -o wc.wasm wc.fern
 //   $ wasmtime --dir=. wc.wasm README.md docs/LANGUAGE-DIRECTION.md
 //   ...
 // (string).split / (string).is_empty inside count_chunk; the

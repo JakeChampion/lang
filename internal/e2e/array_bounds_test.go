@@ -44,7 +44,7 @@ func assertAborts(t *testing.T, src string) {
 			t.Errorf("x86_64 printed %q before aborting\nsrc:\n%s", out, src)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		out, code := compileAndRunArm64(t, src)
 		if code == 0 {
 			t.Errorf("arm64 did not abort (exit 0); stdout=%q\nsrc:\n%s", out, src)
@@ -53,7 +53,7 @@ func assertAborts(t *testing.T, src string) {
 			t.Errorf("arm64 printed %q before aborting\nsrc:\n%s", out, src)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		comp := buildNumComponent(t, src)
 		_, _, code := runComponent(t, comp, runOpts{})
 		if code == 0 {
