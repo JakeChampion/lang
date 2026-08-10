@@ -1475,8 +1475,8 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     // `var o: Option[i32] = Some(3);` type-checks. A DECLARED enum/union in
     // scope wins over the builtin table, so a user enum that reuses a builtin
     // variant name (`enum E { Ok(i32), … }`) types `Ok(1)` as `E`, not
-    // `Result`. Arity / payload-type errors remain the province of the
-    // dedicated variant diagnostic passes; here we only supply the value type.
+    // `Result`. Arity / payload-type errors belong to variant_ctor_diags;
+    // here we only supply the value type.
     var ctor_user: string = union_of_variant(name, s.unions);
     if (ctor_user.len() > 0) { return t_union(ctor_user); }
     var ctor_enum: string = mx_builtin_enum_of(name);
@@ -4545,6 +4545,44 @@ function mlit_is_base(e: parser.Expr): boolean {
     return false;
 }
 
+// variant_ctor_diags checks a variant-constructor call's ARGUMENTS against the
+// variant's declared payloads — arity, then each payload's type (E036, #6650).
+// check_call_expr types such a call to its enum and returns before the
+// per-argument loop it runs for an ordinary function, and no other pass looked
+// at the arguments, so `Wrap("x")` for `enum W { Wrap(i32) }` was accepted.
+//
+// Only a variant of a DECLARED enum with a `__ev` payload marker is checked.
+// A builtin `Ok` / `Some` / `Err` has no backing StructSig, and a variant
+// without `__ev` is either payload-less (`Nil`) or a struct-union member
+// (`type U = A | B`) — indistinguishable here, which is why
+// variant_payload_count returns -1 for both and this skips them.
+//
+// An integer argument in a FLOAT payload slot is also skipped: the self-host
+// types every numeric literal as i32 and has no settling pass (#6654), so
+// flagging it would reject `Wrap(1)` for `Wrap(f64)`. Delete the skip with
+// #6654.
+function variant_ctor_diags(id: parser.ExprIdent, c: parser.ExprCall, s: Scope): Diag[] {
+    var out: Diag[] = [];
+    if (s.lookup_sig(id.name).name.len() > 0) { return out; }
+    if (union_of_variant(id.name, s.unions).len() == 0) { return out; }
+    var want: i32 = variant_payload_count(id.name, s.structs);
+    if (want < 0) { return out; }
+    if (c.args.len() != want) {
+        out = out.append(dg_at("E036", "variant " + id.name + " expects " + itoa_nn(want) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+    }
+    var i: i32 = 0;
+    while (i < c.args.len() && i < want) {
+        var at: Type = check_expr(c.args[i], s);
+        var pt: Type = variant_payload_type_at(s, id.name, i);
+        var int_into_float: boolean = type_eq(at, t_i32()) && type_eq(pt, t_float());
+        if (!is_unknown(at) && !is_unknown(pt) && !int_into_float && !type_assignable(at, pt, s.unions)) {
+            out = out.append(dg_at("E036", "variant " + id.name + " payload " + itoa_nn(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
@@ -4712,6 +4750,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 }
                             }
                         }
+                        out = append_diags(out, variant_ctor_diags(id, c, s));
                     }
                 },
                 parser.ExprFieldAccess(mfa) => {

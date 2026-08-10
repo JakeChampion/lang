@@ -766,6 +766,25 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"payload-variant-bare", "enum E { A(i32), B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"union-member-bare", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U { return P; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"payload-variant-call-ok", "enum E { A(i32), B }\nfunction f(): E { return A(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A constructor call's ARGUMENTS against the declared payloads (#6650):
+		// wrong type, wrong type in a later slot, and either arity direction.
+		// A builtin variant has no backing struct, so its payload type is
+		// unknown and stays unchecked (E002 from the destination annotation is
+		// what catches `Some("x")` for an `Option[i32]`); a generic payload
+		// erases to unknown likewise. An integer literal in an f64 slot is
+		// accepted — the self-host types every numeric literal i32.
+		{"variant-payload-type", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(\"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-payload-type-second", "enum R { Rect(i32, i32), Empty }\nfunction f(): R { return Rect(1, \"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-payload-type-struct", "struct S { x: i32 }\nstruct T2 { y: i32 }\nenum W { Wrap(S), Empty }\nfunction f(): W { return Wrap(T2 { y: 1 }); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-ctor-arity-over", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(1, 2); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-ctor-arity-under", "enum R { Rect(i32, i32), Empty }\nfunction f(): R { return Rect(1); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"variant-payload-multi-ok", "enum R { Rect(i32, i32), Empty }\nfunction f(): R { return Rect(1, 2); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-widths-ok", "enum W { Wrap(i64), Empty }\nfunction f(): W { return Wrap(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-float-literal-ok", "enum W { Wrap(f64), Empty }\nfunction f(): W { return Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-generic-ok", "enum Box[T] { Wrap(T), Empty }\nfunction f(): Box[i32] { return Wrap(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-builtin-ok", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-struct-ok", "struct S { x: i32 }\nenum W { Wrap(S), Empty }\nfunction f(): W { return Wrap(S { x: 1 }); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"variant-payload-array-ok", "enum W { Wrap(i32[]), Empty }\nfunction f(): W { return Wrap([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"nullary-variant-bare-ok", "enum E { A, B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
 		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
