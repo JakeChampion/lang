@@ -14352,6 +14352,19 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
     return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits }, p);
 }
 
+// skip_decl_modifier consumes a contextual declaration modifier `name`
+// when it sits directly before the keyword `before` (`async` before
+// `function`, `opaque` before `struct`) and returns the cursor past it.
+// Anywhere else the cursor comes back untouched, so both names stay usable
+// as ordinary identifiers — the rule the native parser uses. Callers
+// compare `.pos` to tell a match from a miss.
+function skip_decl_modifier(p: Par, name: string, before: string): Par {
+    if (p.peek_ident() != name) { return p; }
+    var probe: Par = p.advance();
+    if (probe.peek_keyword() != before) { return p; }
+    return probe;
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
     var funcs: FuncDecl[] = [];
@@ -14441,6 +14454,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 p = probe.advance();  // consume `must_consume`
                 var mck: string = p.peek_keyword();
                 if (mck == "pub") { p = p.advance(); mck = p.peek_keyword(); }
+                var mco_p: Par = skip_decl_modifier(p, "opaque", "struct");
+                if (mco_p.pos != p.pos) { p = mco_p; mck = "struct"; }
                 if (mck == "struct") {
                     var (mcs_decl, mcs_p) = parse_struct_decl(p);
                     p = mcs_p;
@@ -14466,6 +14481,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
             p = dr_p;
             var dk: string = p.peek_keyword();
             if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); }
+            var do_p: Par = skip_decl_modifier(p, "opaque", "struct");
+            if (do_p.pos != p.pos) { p = do_p; dk = "struct"; }
             if (dk == "struct") {
                 var (dsr_decl, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
@@ -14528,6 +14545,25 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 decl_fip = fm_name == "fip" && !fm_graded;
             }
         }
+        // `async` is a contextual modifier on a function decl (`async
+        // function …` / `pub async function …`): the WASI Preview-3
+        // component-model-async export surface. The self-host emits no
+        // component-model async surface (#6636), so the mark is
+        // parse-TOLERATED and DROPPED — the declaration compiles as an
+        // ordinary function, and the native compile of the same program is
+        // what checks the async shape. The `@import(…) async function`
+        // stream form is a different shape and stays native-only.
+        var async_p: Par = skip_decl_modifier(p, "async", "function");
+        if (async_p.pos != p.pos) { p = async_p; kw = "function"; }
+        // `opaque` is a contextual modifier on a struct decl (`pub opaque
+        // struct …`): the type name is exported, its representation is
+        // private outside the declaring module. Enforcing that (native's
+        // E021) needs the per-decl module provenance the self-host checker
+        // does not carry, so the mark is parse-tolerated and dropped too —
+        // accepting more than native, the sound direction for a compiler
+        // that only ever sees native-valid programs.
+        var opaque_p: Par = skip_decl_modifier(p, "opaque", "struct");
+        if (opaque_p.pos != p.pos) { p = opaque_p; kw = "struct"; }
         if (kw == "function") {
             var (fr_func, fr_p) = parse_func_decl(p);
             p = fr_p;
