@@ -68,6 +68,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    var av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
+		"    if (tcp_send(999, \"x\") >= 0) { return 23; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -98,9 +99,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// has to stay a run-time check because irlower picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
 		"random_i32", "open_fd",
-		// The socket leaves that take only an fd (#2649). tcp_send is the one
-		// still hand-asm, blocked on a string-data-pointer bridge the floor does
-		// not have rather than on a syscall.
+		// The socket leaves that take only an fd (#2649).
 		"tcp_close", "tcp_accept",
 		// sleep_ms is the first __syscall5 consumer — but only on Darwin, which
 		// sleeps with select(2). This Linux emit reaches it through nanosleep,
@@ -131,7 +130,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// clone(SIGCHLD, 0, 0, 0, 0) via __syscall5 — arm64 Linux has no bare
 		// fork(2). Fern on THIS target only; the Darwin test below pins the
 		// opposite, since XNU marks the child in x1 and no __syscall* sees it.
-		"proc_fork"} {
+		"proc_fork",
+		// write(2) straight out of the string's own buffer. The last leaf, and
+		// the one whose blocker turned out not to exist: __raw_data needed no
+		// op of its own, since a string value already IS its box pointer.
+		"tcp_send"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}

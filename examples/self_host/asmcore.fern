@@ -788,6 +788,19 @@ pub function rt_src_tcp_connect(t: string): string {
     return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
 }
 
+// rt_src_tcp_send backs `tcp_send(fd, s)` (#2649, syscall-leaf) → bytes written
+// or -errno. A single write(2) straight out of the string's own buffer.
+//
+// This was the last leaf, and it was held up by a floor addition it turned out
+// not to need. The blocker was described as a missing `__raw_data` OP — the
+// inverse of __raw_string — with the fallback being a byte-by-byte copy of the
+// payload on every send. Neither was necessary: a string value already IS its
+// box pointer and the data word is slot 0 of that box, so __raw_data lowers to
+// the raw_load_ptr the floor has had all along. No copy, and no new op.
+pub function rt_src_tcp_send(t: string): string {
+    return "function __fern_tcp_send(fd: i32, s: string): i32 { return __syscall3(" + sysno(t, "write") + ", fd, __raw_data(s), s.len()); }";
+}
+
 // rt_src_tcp_recv backs `tcp_recv(fd, max)` (#2649, syscall-leaf) → a string of
 // up to `max` bytes. A short read, EOF and -errno all come back as the empty
 // string: the op has no error channel, so the hand-asm clamped a negative to
@@ -2721,6 +2734,9 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     if (id.name == "__raw_store_ptr") { return ty_i32(); }
                     if (id.name == "__raw_load_ptr") { return ty_i32(); }
                     if (id.name == "__raw_string") { return ty_string(); }
+                    // The inverse (#2649): a live string's data pointer, which
+                    // is slot 0 of the box the string value already points at.
+                    if (id.name == "__raw_data") { return ty_i32(); }
                     // Pointer + offset at full machine width (#2649) — `p + off`
                     // in the source would be narrowed to i32 by arm64.
                     if (id.name == "__raw_addr") { return ty_i32(); }

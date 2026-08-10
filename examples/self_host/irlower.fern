@@ -8533,6 +8533,17 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!ab0.ok) { return ab0; }
         return ab0.emit(ir.op_raw_arr_box());
     }
+    // __raw_data(s) — a live string's DATA pointer (#2649), the inverse of
+    // __raw_string and the last thing blocking tcp_send. It needs no op of its
+    // own: a string value already IS its box pointer, and the data word is slot
+    // 0 of that box, so this is raw_load_ptr(s, 0) — the same read __raw_string
+    // wrote. Only the checker had to be convinced the string is addressable.
+    if (cid.name == "__raw_data" && c.args.len() == 1) {
+        var rd0: LowerState = lower_expr(c.args[0], s);
+        if (!rd0.ok) { return rd0; }
+        var rd1: LowerState = rd0.emit(ir.op_const_i32(0));
+        return rd1.emit(ir.op_raw_load_ptr());
+    }
     // __raw_array(ptr) — the type-only bridge back to a typed array (#2649),
     // the array sibling of __raw_string. It emits NOTHING: the data pointer
     // already IS the array value, so only the checker needed convincing.

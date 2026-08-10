@@ -387,8 +387,12 @@ hand-written" but "which of them the floor can already express".
 
 | still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | **`proc_fork` (Darwin only)** | `fork` | — | **not expressible** |
+
+That is the whole list. Every syscall leaf on the register backends is now one
+Fern source, and the single remaining hand-written body is the one target the
+floor genuinely cannot reach. `tcp_pollable` is not on it because it issues no
+syscall at all — a native socket's readiness token IS its fd.
 
 `tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
 only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
@@ -423,12 +427,23 @@ carried a manual carry-flag check to turn `+errno` into `-errno`, which is not
 ported — `darwinize` already wraps every `__syscall*` with exactly that
 sequence, so keeping it would have negated twice.
 
-`tcp_send` is blocked on the **direction** of the string bridge, not on a
-syscall: it is a plain 3-argument `write`, but it needs the **data pointer of a
-`string`**, and the floor only runs the other way. Expressing it today means
-copying the payload byte-by-byte on every call, which is a straight loss on a
-send path. What it wants is the inverse bridge (a `__raw_data`), not a wider
-syscall wrapper.
+`tcp_send` was the last leaf, and it is the one the audit got most wrong. It was
+recorded here as blocked on the **direction** of the string bridge — a plain
+3-argument `write` that needs a live `string`'s data pointer, where the floor
+only runs the other way — with the choice framed as adding a `__raw_data` op
+versus copying the payload byte-by-byte on every call.
+
+**Neither was needed.** A string value already IS its box pointer, and the data
+word is slot 0 of that box, so `__raw_data(s)` lowers to `raw_load_ptr(s, 0)` —
+an op the floor has had since the beginning. It is a lowering entry and a
+checker type, no new op, no kind id, no sweep-list or golden change. `tcp_send`
+is a one-line helper that copies nothing.
+
+The lesson generalises past this leaf: "the floor cannot express X" is a claim
+about the floor's *reach*, and the reach of a set of primitives is not the union
+of what each was introduced for. `__raw_array` had already established that a
+bridge in this shape can be free — the pointer simply IS the value — and the
+same was true one type over, unnoticed for the whole migration.
 
 `proc_fork` has since moved on **both Linux targets** — x86-64 through a bare
 no-argument `fork(2)`, arm64 through `clone(SIGCHLD, 0, 0, 0, 0)`. It is the
@@ -455,10 +470,8 @@ ahead of `tcp_send` despite looking like the bigger job. None of those buffers
 are freed, deliberately: on success the address space is replaced, and on
 failure the caller is already reporting an error.
 
-`tcp_recv` runs **with** that direction and so has since moved: it allocates the
-buffer itself, `read`s into it, and hands the buffer to `__raw_string` — the
-copy tcp_send cannot avoid never happens. An earlier revision of this table
-listed the two together as equally blocked, which had the asymmetry backwards.
+`tcp_recv` runs **with** that direction: it allocates the buffer itself, `read`s
+into it, and hands the buffer to `__raw_string`, so it copies nothing either.
 A negative return is clamped to length 0: the op has no error channel, so a
 short read, EOF and `-errno` all arrive as the empty string, exactly as the
 hand-asm's `csel ... ge` did.
