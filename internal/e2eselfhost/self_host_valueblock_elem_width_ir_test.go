@@ -22,14 +22,15 @@ import (
 // literal-arm-unchanged and scalar-binding-unchanged are the two routes that
 // already recovered the width; they must keep doing so.
 //
-// NOTE on what these do and do not prove. The driver does not set
-// FERN_STRICT_IR, so on the parent commit the bail falls THROUGH to the AST
-// emitter, which computes every case here correctly — so all five pass on both
-// sides and none of them is a mutation check. They pin the ANSWERS against a
-// future miscompile. The evidence that the shape stays on the IR path is the
-// strict-IR corpus census in the PR (3 seeds off the bail pile, 0 divergences);
-// no asm-label witness separates the two, because a bailing module still emits
-// `.Lir_*` labels for the functions that did lower.
+// These run under FERN_STRICT_IR=1 (#6602), so a per-function bail refuses the
+// build rather than being absorbed — the answer alone cannot show a value block
+// kept its width, since a bail can reach the same answer another way.
+//
+// They are still not mutation checks against #6593's parent: measured there,
+// these reduced programs lower with no bail and emit byte-identical asm. The
+// bail that fix addressed was reached by the fernsmith seeds it cites, not by
+// these. What these pin is the answers, plus that the shape stays on the IR
+// path from here on.
 var valueBlockElemWidthCases = []struct {
 	name string
 	src  string
@@ -56,10 +57,7 @@ func TestSelfHostValueBlockElemWidthIRX86_64(t *testing.T) {
 
 	for _, tc := range valueBlockElemWidthCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -85,10 +83,7 @@ func TestSelfHostValueBlockElemWidthIRArm64(t *testing.T) {
 
 	for _, tc := range valueBlockElemWidthCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64", "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64", "-ir")
 			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()

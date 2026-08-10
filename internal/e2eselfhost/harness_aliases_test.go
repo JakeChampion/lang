@@ -38,6 +38,7 @@ var nativeLinkArm64 = e2eharness.NativeLinkArm64
 var runArm64Bin = e2eharness.RunArm64Bin
 var runBin = e2eharness.RunBin
 var runCapture = e2eharness.RunCapture
+var runCaptureStrictIR = e2eharness.RunCaptureStrictIR
 var runDriverFile = e2eharness.RunDriverFile
 var runDriverStdinExits = e2eharness.RunDriverStdinExits
 var runFixtureInterp = e2eharness.RunFixtureInterp
