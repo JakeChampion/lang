@@ -20237,7 +20237,20 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && expr_unsafe_for(sl.base, name, borrowable)) { return true; }
+            // A BARE-IDENT functional-update base (`T { ...name, … }`) reads
+            // name's fields with struct_get and copies them out. That is a
+            // BORROW of the box, the same as a method receiver — counting it as
+            // an escape left every `d = T { ...d, … }` self-update with no
+            // reclaim credit at all, so neither the box a rebind superseded nor
+            // the final one was ever released. What the field copy does hazard
+            // is the DEEP drop, because the copies carry no inc;
+            // moves_fields_expr marks the name for that instead.
+            if (sl.has_base) {
+                match (sl.base) {
+                    parser.ExprIdent(_) => {},
+                    _ => { if (expr_unsafe_for(sl.base, name, borrowable)) { return true; } }
+                }
+            }
             var i: i32 = 0;
             while (i < sl.field_values.len()) { if (expr_unsafe_for(sl.field_values[i], name, borrowable)) { return true; } i = i + 1; }
             return false;
@@ -26127,7 +26140,20 @@ function moves_fields_expr(e: parser.Expr, name: string, fnfields: string[]): bo
             return false;
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base && moves_fields_expr(sl.base, name, fnfields)) { return true; }
+            // A BARE-IDENT base copies name's fields into the new box with no
+            // inc (op_struct_copy, and the per-field path's array copy), so the
+            // new value and name alias the same buffers. Deep-dropping name
+            // would free them out from under it — the NODEEP hazard, in the
+            // same class as a method receiver. The SELF-update
+            // `name = T { ...name, … }` is exempted by moves_fields_stmt: there
+            // the two boxes are the same slot's before and after, so ownership
+            // moves forward rather than being shared.
+            if (sl.has_base) {
+                match (sl.base) {
+                    parser.ExprIdent(bid) => { if (bid.name == name) { return true; } },
+                    _ => { if (moves_fields_expr(sl.base, name, fnfields)) { return true; } }
+                }
+            }
             var i: i32 = 0;
             while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name, fnfields)) { return true; } i = i + 1; }
             return false;
@@ -26178,6 +26204,29 @@ function moves_fields_stmt(st: parser.Stmt, name: string, fnfields: string[]): b
                             sai = sai + 1;
                         }
                         return deep_move;
+                    },
+                    // `name = T { ...name, … }` — the same exemption for the
+                    // functional-update form. The copied fields land in the box
+                    // this very slot is about to hold, so ownership moves
+                    // forward instead of being shared with a second live value,
+                    // and the superseded box's deep drop stays sound. Only the
+                    // TOP-LEVEL base is exempt; `name` anywhere in an override
+                    // value still marks.
+                    parser.ExprStructLit(ssl) => {
+                        var base_self: boolean = false;
+                        if (ssl.has_base) {
+                            match (ssl.base) {
+                                parser.ExprIdent(sbid) => { base_self = sbid.name == name; },
+                                _ => {}
+                            }
+                        }
+                        if (!base_self) { return moves_fields_expr(a.value, name, fnfields); }
+                        var sfi: i32 = 0;
+                        while (sfi < ssl.field_values.len()) {
+                            if (moves_fields_expr(ssl.field_values[sfi], name, fnfields)) { return true; }
+                            sfi = sfi + 1;
+                        }
+                        return false;
                     },
                     _ => { return moves_fields_expr(a.value, name, fnfields); }
                 }

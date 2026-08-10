@@ -1,0 +1,94 @@
+// spec: AL-01
+//
+// A functional-update SELF-ASSIGN — `d = T { ...d, f: v }` — must cost the
+// same fresh memory per iteration as any other rebind. It did not on the
+// self-host: a bare-ident struct-lit BASE counted as an ESCAPE, so the local
+// earned no reclaim credit at all and NOTHING was ever released — neither the
+// box each update superseded nor the final one (allocs=160 frees=0 for the
+// scalar-only shape). The base is a field-COPY, i.e. a borrow of the box; what
+// it does hazard is the DEEP drop, because the copies carry no rc-inc.
+//
+// The four shapes differ in what the copy has to carry:
+//   - scalars only, where the shallow box free is the whole reclamation;
+//   - a string field copied through the base;
+//   - an array field REPLACED by an append, the engine under the nested half
+//     of alloc_flat_array_push_bound_elem;
+//   - a base read by a DIFFERENT local, which must stay box-only: its fields
+//     move into the new value with no counted reference, so deep-dropping the
+//     base would free them out from under it.
+//
+// Every shape reads its values back afterwards, so a release landing under a
+// live reference shows up as a wrong number rather than as a shape change.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "std/i32";
+import "std/i64";
+
+struct Pt { x: i32, y: i32 }
+struct Named { tag: string, n: i32 }
+struct Buf { xs: i32[], n: i32 }
+
+function scalar_only(k: i32): i32 {
+    var p: Pt = Pt { x: 0, y: 0 };
+    var i: i32 = 0;
+    while (i < k) {
+        p = Pt { ...p, x: p.x + 1 };
+        i = i + 1;
+    }
+    return p.x + p.y;
+}
+
+function with_string(k: i32): i32 {
+    var s: Named = Named { tag: "seed", n: 0 };
+    var i: i32 = 0;
+    while (i < k) {
+        s = Named { ...s, n: s.n + 1 };
+        i = i + 1;
+    }
+    return s.n + s.tag.len();
+}
+
+function with_array(k: i32): i32 {
+    var b: Buf = Buf { xs: [], n: 0 };
+    var i: i32 = 0;
+    while (i < k) {
+        b = Buf { ...b, xs: b.xs.append(i) };
+        i = i + 1;
+    }
+    var sum: i32 = b.xs.len();
+    var j: i32 = 0;
+    while (j < b.xs.len()) { sum = sum + b.xs[j]; j = j + 1; }
+    return sum;
+}
+
+// The base is a DIFFERENT local, and it stays live: `a` still owns nothing
+// exclusively once its fields are copied out, so only its box may be freed.
+function fork_base(k: i32): i32 {
+    var a: Buf = Buf { xs: [k, k + 1], n: k };
+    var b: Buf = Buf { ...a, n: a.n + 1 };
+    var c: Buf = Buf { ...a, n: a.n + 2 };
+    return a.n + b.n + c.n + a.xs[0] + b.xs[1] + c.xs[0];
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + scalar_only(8) + with_string(8) + with_array(8) + fork_base(i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}
