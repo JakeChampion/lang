@@ -70,14 +70,14 @@ freeze:
 # produced was SIGKILLed at exec, which is why the target did not exist.
 #
 #   make selfhost-cli
-#   bin/fern-selfhost -target wasm32-wasi /ABS/prog.fern $(PWD)/internal/stdlib -o p.wat
+#   bin/fern-selfhost -target wasm /ABS/prog.fern $(PWD)/internal/stdlib -o p.wat
 #   wasmtime run p.wat; echo $$?        # oracle: ./bin/fern -interp /ABS/prog.fern
 #
 # Use ABSOLUTE paths. A relative one was unopenable from an arm64-darwin binary
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
 # harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
-SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64)
+SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64-linux)
 selfhost-cli: bin/fern
 	@mkdir -p bin
 	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost examples/self_host/fern.fern
