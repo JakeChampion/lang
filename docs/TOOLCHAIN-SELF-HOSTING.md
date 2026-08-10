@@ -396,7 +396,7 @@ import composers, `BuildLiftedExportComponent`, and
 byte-equivalent by `TestWASMComponentGoLangByteEquivalence`.
 
 `cmd/fern` accepts a new `-component-wrap` flag (with
-`-target wasm-bin`, no `-wasi-adapter`) that wraps the core wasm
+`-target wasm -emit core-module`, no `-wasi-adapter`) that wraps the core wasm
 output as a self-contained preview-2 component via the Go encoder
 — no `wasm-tools component new --adapt` shell-out. Lifts `main`
 as a component-level u32-returning function.
@@ -404,7 +404,7 @@ as a component-level u32-returning function.
 End-to-end exit code 42 demo (covered by
 `TestCmdLangComponentWrap`):
 
-    $ fern -target wasm-bin -component-wrap -o min.wasm min.fern
+    $ fern -target wasm -emit core-module -component-wrap -o min.wasm min.fern
     $ wasmtime run --invoke 'main()' min.wasm
     42
 
@@ -562,7 +562,7 @@ End-to-end exit code 42 demo (covered by
       `WrapWasiPrintAsCliRun` (#1248).
 
     **End-to-end test** `TestCmdLangComponentWrapCliWithPrint`:
-    Fern `print("hello world")` → `fern -target wasm-bin
+    Fern `print("hello world")` → `fern -target wasm -emit core-module
     -component-wrap-cli` → `wasmtime run` → stdout `"hello
     world\n"`. No wasm-tools shell-out, no preview-1 adapter,
     no `--invoke` flag.

@@ -79,7 +79,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
 
   **Update (wasm packaging — now wired into the unified `fern` CLI).** What
   this section called "remaining for wasm" is largely done:
-  - `fern -target wasm-bin` emits a runnable **binary** `.wasm` (the
+  - `fern -target wasm -emit core-module` emits a runnable **binary** `.wasm` (the
     self-hosted WAT→binary assembler, `watbin.fern`), not WAT text.
   - `fern -target wasm-component` emits a **Component-Model** `wasi:cli/run`
     component, auto-selecting the framing from the program's WASI usage:

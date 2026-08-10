@@ -127,7 +127,7 @@ verified in `component_test.go`):
 the `("", "task-return")` import + a synthetic `() -> ()` core func that
 calls `main`, hands its i32 to task-return, returns void) + the composer
 assembly (`component.BuildAsyncLiftedExportComponent`); (3) the CLI
-surface — `fern -target wasm-bin -async-export` produces a component
+surface — `fern -target wasm -emit core-module -async-export` produces a component
 exporting `run: async func() -> u32`, run with
 `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`.
 Tests: `TestWasmP3AsyncExport{Assembly,FromFern}` + `TestCmdLangAsyncExport`
@@ -136,7 +136,7 @@ Tests: `TestWasmP3AsyncExport{Assembly,FromFern}` + `TestCmdLangAsyncExport`
 **UPDATE — first-class `async` keyword.** `async function foo(): i32 {
 … }` (a contextual modifier, like `fip` — `async` stays usable as an
 ordinary identifier elsewhere; `pub async function` works) marks the
-function `FuncDecl.Async`. On `-target wasm-bin` the driver lifts the
+function `FuncDecl.Async`. On `-target wasm -emit core-module` the driver lifts the
 async-marked function under its own name (`foo: async func() -> u32`),
 no flag needed; the `-async-export` flag remains for wrapping `main` as
 `run`. The source function is pinned past both the AST tree-shaker and
