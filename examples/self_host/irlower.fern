@@ -42517,6 +42517,16 @@ function ca_classify_expr(e: parser.Expr, fname: string, pidx: i32, caller_body:
     var seen: i32 = 0;
     var okc: i32 = 0;
     match (e) {
+        // A LAMBDA body is statements inside an expression, and a value-position
+        // if/match is exactly that (an IIFE). collect_idents_expr descends into
+        // one, so a call to `fname` there counts toward nident; without the same
+        // descent here it counted toward nothing, nident outran nseen, and the
+        // proof failed silently — leaving a genuine closure-array PARAM unmarked
+        // so `fs[i](args)` bare-dispatched the element box (#6571).
+        parser.ExprLambda(lm) => {
+            var (ls, lo) = ca_scan_stmts(lm.body, fname, pidx, caller_body, closureset, caset, caller_cparams);
+            return (ls, lo);
+        },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
@@ -48800,6 +48810,17 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
             match (c.callee) {
                 parser.ExprLambda(il) => {
                     if (c.args.len() != 0 || il.params.len() != 0) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    // What the arms are SELECTED BY is walked first and
+                    // unconditionally (#6571) — it is independent of whether the
+                    // arm VALUES are boxable, so an IIFE with a capturing lambda
+                    // in its condition and plain scalar arms (the shape that
+                    // bailed) is rewritten even though the boxing below declines.
+                    var cnd: InlineCloStmts = lift_iife_conditions(il.body, fd, funcs, counter, gfns, mfuncs, structs);
+                    if (cnd.counter > counter) {
+                        var cl2: parser.Expr = parser.ExprLambda { params: il.params, ret_type: il.ret_type, body: cnd.stmts, use_infer: il.use_infer };
+                        var ce2: parser.Expr = parser.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                        return InlineCloRes { expr: ce2, funcs: cnd.funcs, counter: cnd.counter };
+                    }
                     if (!iife_arms_all_boxable(il.body)) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
                     // The arms are lowered INLINE in the enclosing function, so a
                     // name the IIFE itself binds — a match arm's payload, an
@@ -49000,6 +49021,53 @@ function iife_arm_lambda_captures_in(stmts: parser.Stmt[], fd: parser.FuncDecl):
         i = i + 1;
     }
     return false;
+}
+
+// lift_iife_conditions walks what an IIFE's arms are SELECTED BY (#6571).
+//
+// A value-position `if`/`match` is an IIFE, and its body is STATEMENTS inside an
+// expression. Every lift path that reaches into one — the #6256 arm-value boxing
+// below, box_iife_arm_array_elems — walks the arms' returned VALUES; nothing
+// walked the CONDITION. A capturing lambda there therefore reached lower_expr
+// bare and asked for a `$clo` nothing built, bailing the module.
+//
+// Only the condition / scrutinee is walked, and only through the ordinary
+// expression lift: the returns belong to the paths that own them, and running
+// both over the same node would box an arm value twice.
+function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloStmts {
+    var fs: parser.FuncDecl[] = funcs;
+    var ct: i32 = counter;
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtIf(iff) => {
+                var cr: InlineCloRes = lift_inline_closures_expr(iff.cond, fd, fs, ct, gfns, structs, mfuncs);
+                fs = cr.funcs; ct = cr.counter;
+                var tb: InlineCloStmts = lift_iife_conditions(iff.then_body, fd, fs, ct, gfns, mfuncs, structs);
+                fs = tb.funcs; ct = tb.counter;
+                var eb: InlineCloStmts = lift_iife_conditions(iff.else_body, fd, fs, ct, gfns, mfuncs, structs);
+                fs = eb.funcs; ct = eb.counter;
+                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts });
+            },
+            parser.StmtMatch(mm) => {
+                var sr: InlineCloRes = lift_inline_closures_expr(mm.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
+                fs = sr.funcs; ct = sr.counter;
+                var narms: parser.MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < mm.arms.len()) {
+                    var ab: InlineCloStmts = lift_iife_conditions(mm.arms[a].body, fd, fs, ct, gfns, mfuncs, structs);
+                    fs = ab.funcs; ct = ab.counter;
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    a = a + 1;
+                }
+                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+            },
+            _ => { out = out.append(stmts[i]); }
+        }
+        i = i + 1;
+    }
+    return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
 // box_iife_arm_values rewrites each arm's returned VALUE through
@@ -49887,6 +49955,20 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
                             ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: ibr.stmts, use_infer: ielam.use_infer };
+                        }
+                    }
+                    // The arms' own CONDITION is the one part of an inline IIFE
+                    // nothing above reaches (#6571): both paths walk what the arms
+                    // RETURN, neither walks what selects them. Runs on whichever
+                    // body the boxing above settled on, so the two compose rather
+                    // than racing for the same node.
+                    if (call.args.len() == 0 && ielam.params.len() == 0) {
+                        var iebody: parser.Stmt[] = ielam.body;
+                        match (ncallee) { parser.ExprLambda(nl) => { iebody = nl.body; }, _ => {} }
+                        var icr: InlineCloStmts = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
+                        if (icr.counter > ct) {
+                            fs = icr.funcs; ct = icr.counter;
+                            ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: icr.stmts, use_infer: ielam.use_infer };
                         }
                     }
                 },
