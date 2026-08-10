@@ -224,6 +224,7 @@ function print_func_decl(fd: parser.FuncDecl): string {
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
+    if (fd.async) { out = out + "async "; }
     out = out + "function ";
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
@@ -635,6 +636,30 @@ function main(): i32 {
     if (rtI.funcs[0].import_iface != "wasi:random/random@0.2.0") { return 187; }
     if (rtI.funcs[0].import_wit != "get-random-u64") { return 188; }
     if (rtI.funcs[0].body.len() != 0) { return 189; }
+
+    // `async function` round-trip (#6631). The bit has to survive BOTH the
+    // parse and the print: the AST-rewrite passes each rebuild a FuncDecl
+    // field by field, so a copy site that hardcodes `async: false` drops it
+    // silently — the round-trip is what catches that, since parse alone
+    // would still report it set.
+    var srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
+    var modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
+    if (modJ.funcs.len() != 2) { return 190; }
+    if (!modJ.funcs[0].async) { return 191; }
+    if (modJ.funcs[1].async) { return 192; }
+    var rtJ: parser.Module = roundtrip_module(srcJ);
+    if (rtJ.funcs.len() != 2) { return 193; }
+    if (!rtJ.funcs[0].async) { return 194; }
+    if (rtJ.funcs[1].async) { return 195; }
+    // `pub async function` — the pub prefix is stripped before the probe.
+    var rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
+    if (rtK.funcs.len() != 1) { return 196; }
+    if (!rtK.funcs[0].async) { return 197; }
+    // Contextual only: `async` followed by anything else stays an ordinary
+    // identifier, and no function is marked.
+    var rtL: parser.Module = roundtrip_module("function main(): i32 { var async: i32 = 3; return async + 4; }");
+    if (rtL.funcs.len() != 1) { return 198; }
+    if (rtL.funcs[0].async) { return 199; }
 
     return 0;
 }

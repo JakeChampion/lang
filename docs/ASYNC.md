@@ -1,11 +1,17 @@
 # Async & concurrency in Fern (user guide)
 
-Fern's concurrency is **colorless**: there is no `async` function modifier and no
-function coloring in the surface you write. Concurrency is expressed with plain
-library combinators — `gather` / `race` / `with_deadline` — over a `Future[T]`
-(a not-yet-ready value). You write straight-line code and make the concurrency
-points **explicit** at the `gather`/`race` call. No stackful green threads, no
-parse-time CPS transform — just functions and values.
+Fern's concurrency is **colorless**: no function coloring in the surface you
+write. Concurrency is expressed with plain library combinators — `gather` /
+`race` / `with_deadline` — over a `Future[T]` (a not-yet-ready value). You write
+straight-line code and make the concurrency points **explicit** at the
+`gather`/`race` call. No stackful green threads, no parse-time CPS transform —
+just functions and values.
+
+The `async function` modifier this guide's own examples use is **not** function
+coloring: it colors a component-model **export**, not a call graph. It marks a
+function for the WASI Preview-3 `canon lift async` surface and changes nothing
+about how the body is written, type-checked, or run — the interpreter executes
+an `async function` exactly as a plain one. See `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 
 This is the user-facing guide. For the design and internals see
 `docs/ASYNC-REDESIGN.md` (the model + rationale), `docs/STREAM-TYPE-SURFACE.md`,
