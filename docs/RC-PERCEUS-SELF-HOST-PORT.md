@@ -5880,3 +5880,60 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   §the reclaim rule), the neighbouring enum/match reclaim gates, and all seven
   probes run through the self-host on **x86-64, arm64 (qemu) and wasm
   (wasmtime)**. Refs #6219 #4451.
+
+- 2026-08-10: **In-place `.with` now respects ownership across a bare-ident
+  REBIND (#6170).** `x = x.with(i, v)` lowers to an in-place `arr_set`, which is
+  sound only when `x` is the buffer's sole reference. #6158 taught that decision
+  about field-read bindings; it still had nothing to say about
+  `var heap = heap_in; heap = heap.with(…)`. `alias_idents_in_value` credits
+  `heap_in` — the name that ACQUIRED an alias — while the name actually mutated
+  is `heap`, so the write landed in the caller's buffer. A third shape,
+  `var b = a; b = b.with(…)` over a still-live local, was broken the same way
+  and was not on any issue.
+
+  | shape | interp | self-host before | after |
+  |---|---|---|---|
+  | `var heap = heap_in` over a borrowed param | 7 | **77** | **7** |
+  | `var b = a` over a still-live local | 7 | **77** | **7** |
+  | `var x = obj.field` (#6158) | 7 | 7 | 7 |
+  | `own` param, direct | 7 | 7 | 7 |
+  | direct borrowed param (#6185) | 7 | **77** | **77** — still open |
+
+  **The param is a rebind SOURCE, never a member of the borrowed set, and that
+  distinction is the whole fix.** Crediting the param itself also forbids the
+  DIRECT `p = p.with(…)`, which is how a mutable closure capture is written:
+  `box_mutated_scalar_captures` rewrites a captured `x = v` into
+  `x = x.with(0, v)` on a 1-element cell, and the param-lift hands that cell to
+  the lifted body as a plain array param that MUST write through it. Measured
+  rather than reasoned: the first cut credited the param and failed
+  `TestSelfHostOuterMutCapture`'s `loop-accumulator` (32, want 42) and
+  `outer-and-inner-write` (38, want 42) on x86-64, arm64 and wasm — the #5301
+  stale-snapshot regression the #6158 gate warns about, reproduced exactly.
+
+  A rebind needs no such judgement, because the capture cell is only ever
+  written by the direct form. Telling "the caller's array" from "a captured
+  cell" AT THE PARAM remains the open design question (#6185).
+
+  **The other half is not cloning what it need not clone.** A rebind is credited
+  only when its source is a non-`own` array param, is itself borrowed, or is
+  used again after the binding. None holding means the rebind is the buffer's
+  only remaining name, so `own heap_in` + `var heap = heap_in` keeps its stores
+  in place — the const-eval VM's shape (`eval_ops`), which is why this was split
+  out of #6158. Measured on a 4000-element array, 4000 `.with` writes:
+  `own` **12 allocs / 0 bytes**, borrowed **4012 allocs / 128 MB**. An
+  intermediate cut that credited every rebind put the `own` column at 128 MB
+  too; `own-param-rebind-loop-allocates-nothing` now pins it, by ALLOCATION
+  rather than by answer, because that failure is silent quadratic copying that
+  every correctness case still passes.
+
+  Worth recording against the issue's premise: `eval_ops` is reached only from
+  `eval_call` ← `eval_program` ← `irlower_run.fern`, a test driver. It is not on
+  the production compile path, so the clone cost was bounded even before the
+  `own` exemption landed.
+
+  VERIFIED: `TestSelfHostBorrowedWithInPlaceIRX86_64` extended from 5 rows to 9
+  (two fixes, one `own` perf guard, one divergence pin for #6185),
+  `TestSelfHostOuterMutCapture` on x86-64 / wasm / arm64,
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (391 s), the closure suites, and
+  every probe run through the self-host on **x86-64, arm64 (qemu) and wasm
+  (wasmtime)**. Refs #6170 #6158 #6185 #5301 #4451.

@@ -17,16 +17,28 @@ import (
 // nothing about ownership. A local bound from a struct field read has no local
 // alias at all, so it sailed through.
 //
-// SCOPE: this covers the FIELD-READ shapes only. The sibling shape — a bare
-// borrowed array PARAM self-reassigned (`function f(buf: i32[]) { buf =
-// buf.with(…); }`) — is deliberately NOT fixed here and is tracked separately.
-// Treating a borrowed array param as unsafe to write in place collides with
-// mutable captures: irlower threads a captured cell to the lifted closure body
-// as a call ARGUMENT (#5301), so that body legitimately receives the cell as a
-// borrowed param and MUST write through it. Forbidding that strands the
-// closure on a stale by-value snapshot — measured, five CI shards' worth.
-// Separating the two needs a way to tell "the caller's array" from "a captured
-// cell", which is a design question, not a gate tweak.
+// SCOPE: the FIELD-READ shapes, plus (#6170) the bare-ident REBIND shapes —
+// `var heap = heap_in; heap = heap.with(…)` over a borrowed param, and
+// `var b = a; b = b.with(…)` over a still-live local.
+//
+// The DIRECT form — a borrowed array param self-reassigned in place,
+// `function f(buf: i32[]) { buf = buf.with(…); }` — remains deliberately
+// unfixed, and its case below asserts the divergence rather than leaving it
+// undescribed. Treating a borrowed array param as unsafe to write in place
+// collides with mutable captures: box_mutated_scalar_captures rewrites a
+// captured `x = v` into `x = x.with(0, v)` on a 1-element cell, and the
+// param-lift hands that cell to the lifted body as a plain array param, which
+// MUST write through it (#5301). Forbidding that strands the closure on a stale
+// by-value snapshot — measured, five CI shards' worth, and reproduced here
+// while developing #6170: crediting the param itself failed
+// TestSelfHostOuterMutCapture's `loop-accumulator` (32, want 42) and
+// `outer-and-inner-write` (38, want 42) on all three backends.
+//
+// The rebind shapes need no such judgement, which is why they can be fixed
+// while the direct one waits: the capture cell is only ever written by the
+// DIRECT form, so a non-`own` array param can serve as a rebind SOURCE without
+// being a member of the borrowed set. Telling "the caller's array" from "a
+// captured cell" at the param itself is still the open design question (#6185).
 //
 // Every expected value came from `bin/fern -interp`, and each failing case was
 // confirmed to diverge on the pre-fix compiler at the value named in its
@@ -151,4 +163,72 @@ function main(): i32 {
     if (after - before > 65536) { return 91; }
     return 7;
 }`, "own-param-with-loop-allocates-nothing", 7)
+
+	// #6170: the bare-ident REBIND of a borrowed array param. `alias_idents_in_value`
+	// credits `heap_in` — the name that ACQUIRED an alias — while the name actually
+	// mutated is `heap`, which is neither a param nor a field read, so nothing marked
+	// it and the write went through into the caller's buffer. Pre-fix: 77.
+	run(t, `function run(heap_in: i32[], at: i32, v: i32): i32[] {
+    var heap: i32[] = heap_in;
+    heap = heap.with(at, v);
+    return heap;
+}
+function main(): i32 {
+    var h: i32[] = [0, 0, 0, 0];
+    var r: i32[] = run(h, 1, 7);
+    return h[1] * 10 + r[1];
+}`, "rebind-of-borrowed-param", 7)
+
+	// The same rebind over a plain LOCAL that is still live afterwards. No param
+	// and no field read is involved, so this one is invisible to both prior gates;
+	// it is the shape the liveness arm of the rule exists for. Pre-fix: 77.
+	run(t, `function main(): i32 {
+    var a: i32[] = [0, 0, 0, 0];
+    var b: i32[] = a;
+    b = b.with(1, 7);
+    return a[1] * 10 + b[1];
+}`, "rebind-of-live-local", 7)
+
+	// MUST NOT REGRESS, and the case that keeps the rule from being written as
+	// "any rebind clones": the source is an `own` param and is dead after the
+	// rebind, so `heap` is the buffer's only remaining name and the stores stay
+	// in place. This is the const-eval VM's shape (irlower's `eval_ops`, which
+	// rebinds `heap` from `heap_in` and writes it a dozen times per op), and the
+	// reason #6170 was split out of #6158 in the first place.
+	//
+	// Asserted by ALLOCATION, not by answer: getting this wrong is silent
+	// quadratic copying that every correctness case above still passes. With the
+	// rebind credited unconditionally this read ~128 MB instead of 0.
+	run(t, `function fill(own heap_in: i32[], n: i32): i32[] {
+    var heap: i32[] = heap_in;
+    var i: i32 = 0;
+    while (i < n) { heap = heap.with(i, i); i = i + 1; }
+    return heap;
+}
+function main(): i32 {
+    var b: i32[] = [];
+    var k: i32 = 0;
+    while (k < 4000) { b = b.append(0); k = k + 1; }
+    var before: i64 = __heap_bump_bytes();
+    b = fill(b, 4000);
+    var after: i64 = __heap_bump_bytes();
+    if (b[3999] != 3999) { return 90; }
+    if (after - before > 65536) { return 91; }
+    return 7;
+}`, "own-param-rebind-loop-allocates-nothing", 7)
+
+	// The DIRECT borrowed-param self-reassign, pinned at its DIVERGENT value so
+	// the remaining scope is visible from the gate rather than only from #6185.
+	// A fix flips this to 7, which is the intended signal: re-measure the row
+	// and delist it deliberately. Do not "fix" it by crediting the param in
+	// borrowed_names_of — that is what breaks mutable captures; see the header.
+	run(t, `function run(heap: i32[], at: i32, v: i32): i32[] {
+    heap = heap.with(at, v);
+    return heap;
+}
+function main(): i32 {
+    var h: i32[] = [0, 0, 0, 0];
+    var r: i32[] = run(h, 1, 7);
+    return h[1] * 10 + r[1];
+}`, "direct-borrowed-param-still-writes-through", 77)
 }
