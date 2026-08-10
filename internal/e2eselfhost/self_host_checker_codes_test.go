@@ -131,6 +131,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// E072 with the code written out. The differential below derives its
+		// expectation from the Go checker, so it cannot tell "both sides emit
+		// E072" from "neither side emits anything"; this row can.
+		{"e072-void-variant-payload", "function nothing(): void { }\nfunction f(): Option[()] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n", []string{"E072"}},
 		// Bare no-payload enum variant used as a value (#4346 piece 2). A unit
 		// variant (`Red`) types to its enum's union, so a matching declared
 		// type is clean and a MISMATCHED one draws E003 (Color not assignable
@@ -1283,6 +1287,31 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// self-host typed the call unknown and silently over-rejected.
 		{"generic-method-ret-ok", "struct Box[T] { v: T }\nfunction (b: Box[T]) get(): T { return b.v; }\nfunction main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.get(); }\n"},
 		{"generic-method-nested-ret-ok", "struct Wrapper[T] { items: T[] }\nfunction (w: Wrapper[T]) all(): T[] { return w.items; }\nfunction main(): i32 { var w: Wrapper[i32] = Wrapper { items: [1, 2] }; return w.all()[0]; }\n"},
+
+		// `void` shapes (#6649). Before TypeVoid existed, void resolved through
+		// the same "unrecognised type name" fallthrough as a misspelling, so a
+		// void call was an uncoded over-reject in statement position (invisible
+		// to this gate, whose codeRE only matches E\d{3}) and an unknown-typed
+		// wildcard in value position. The first three must stay CLEAN and the
+		// rest must carry native's exact code.
+		{"void-call-stmt", "function nothing(): void { }\nfunction main(): i32 { nothing(); return 0; }\n"},
+		{"void-bare-return", "function nothing(): void { return; }\nfunction main(): i32 { return 0; }\n"},
+		{"void-method-stmt", "struct S { a: i32 }\nfunction (s: S) touch(): void { }\nfunction main(): i32 { var s = S { a: 1 }; s.touch(); return 0; }\n"},
+		{"void-assign-annotated", "function nothing(): void { }\nfunction main(): i32 { var x: i32 = nothing(); return x; }\n"},
+		{"void-as-plain-arg", "function nothing(): void { }\nfunction g(x: i32): i32 { return x; }\nfunction main(): i32 { return g(nothing()); }\n"},
+		{"void-return-value-from-void-fn", "function nothing(): void { return 1; }\nfunction main(): i32 { return 0; }\n"},
+		// E072 itself: a void call in a variant-constructor payload. This is
+		// native's ONLY requireValue site — the two rows above prove the same
+		// argument draws E038 to a plain function, which is why the self-host
+		// check is keyed on the callee being a variant constructor.
+		{"e072-void-in-builtin-variant", "function nothing(): void { }\nfunction f(): Option[()] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n"},
+		{"e072-unit-payload-ok", "function f(): Option[()] { return Some(()); }\nfunction main(): i32 { return 0; }\n"},
+		{"e072-normal-payload-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(3); }\nfunction main(): i32 { return 0; }\n"},
+		// NOT here, deliberately: `Wrap(nothing())` for a USER enum. Native
+		// reports E072 *and* E036 (payload 0 type void, expected i32); the
+		// self-host emits only E072 because it never checks variant payload
+		// types at all — `Wrap("x")` is accepted clean. That is #6650, a
+		// separate rule from this one; add the row when it lands.
 	}
 
 	for _, tc := range progs {
