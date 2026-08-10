@@ -1908,6 +1908,30 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         }
         i = i + 1;
     }
+    // No user method matched. Before erroring, try a FIELD holding a closure
+    // (#6596): `h.f(3)` where `f: (i32) => i32` is a field, not a method. The
+    // compiled path has always supported this — it is the shape #6461 is about,
+    // a struct carrying a handler — but this engine read every `recv.name(...)`
+    // as method dispatch and gave up here.
+    //
+    // Deliberately a FALLBACK rather than a check ahead of the walk: a real
+    // method keeps winning, so no existing dispatch changes and this can only
+    // turn an error into an answer.
+    match (recv) {
+        VStruct(sv2) => {
+            var fi: i32 = 0;
+            while (fi < sv2.field_names.len()) {
+                if (sv2.field_names[fi] == name) {
+                    match (sv2.field_values[fi]) {
+                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases); },
+                        _ => {}
+                    }
+                }
+                fi = fi + 1;
+            }
+        },
+        _ => {}
+    }
     return v_err("undefined method `" + name + "` on `" + recv_type + "`");
 }
 
