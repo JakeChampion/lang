@@ -68,6 +68,44 @@ var litStrLocalReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// #6606: a local bound to a USER function's string result. str_local_binding_is_fresh
+	// admits a call only via str_free_producer_ident — a hardcoded list of BUILTINS — so
+	// `var t = suffix(i)` earned no credit and freed nothing at all: allocs=200 frees=0
+	// live=4800 over 200 rounds, against 200/199/24 after. The whole-program proof it
+	// needed (str_fresh_ret_fns_of) already existed and was never consulted at the
+	// binding.
+	{"strfresh-ret-call-loop-local", `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var t: string = suffix(i); acc = (acc + t.len()) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var t2: string = suffix(j); acc = (acc + t2.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// The OVER-RELEASE guard on that credit, and the reason the freshness half is a
+	// whole-program proof rather than "it is a call". `ident` returns its PARAMETER, so
+	// its result ALIASES the caller's box — freeing it at the binding would release a
+	// string the caller still holds. str_return_is_fresh declines a bare-ident return, so
+	// `ident` never enters str_fresh_ret_fns and the local is left to leak, which is the
+	// conservative direction. Reading every value back afterwards turns a wrong admission
+	// into a wrong ANSWER rather than only a byte count.
+	{"strfresh-identity-ret-refused", `function ident(s: string): string { return s; }
+function main(): i32 {
+    var keep: string = "abcd";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var t: string = ident(keep); acc = (acc + t.len()) % 251; i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (keep.len() != 4) { return 96; }
+    if (acc != (200 * 4) % 251) { return 95; }
+    return 0;
+}`, 0},
 	// The shape #5474's gate tripped on: the same local feeding a scalar array build.
 	{"litstr-loop-local-with-array", `function main(): i32 {
     var acc: i32 = 0;
