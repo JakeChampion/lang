@@ -175,6 +175,36 @@ The contract is that the embedder calls it once before anything that allocates.
   same "stop" as every other hostless abort rather than an exit code the embedder cannot
   see anyway.
 
+## The `std/` partition
+
+The same line, at module scope (#6512). `platforms.Reach(prog)` returns the host
+capabilities a program can reach, each with an example builtin — the target-independent
+half of `Enforce`, sharing its scan. Applied per module, that makes "can I use this
+without a host?" a **derived** property: a module whose reach is empty is core-safe.
+
+`stdModuleReach` in `std_partition_test.go` is the resulting table, and
+`TestStdPartitionIsDerivedNotAsserted` recomputes it from source on every run. Nothing in
+it is a judgement call. It is checked in only so a module *acquiring* a host dependency
+is a visible diff rather than a surprise at someone's first freestanding build; the test
+fails if a module cannot be loaded, is missing from the table, or has drifted. A second
+test independently runs the core-safe modules through `Enforce` against `freestanding`,
+so the partition means what the compiler enforces rather than only agreeing with it by
+construction.
+
+Today: **41 of 54 modules are core-safe.** Two results worth knowing:
+
+- **`std/math` is hosted, on `random`.** It reads like an obviously-core numerics module
+  and is in fact the random-number module (`random_int` over the platform CSPRNG). A
+  hand-written classification would have got this wrong, which is the argument for
+  deriving in one line.
+- **`std/test` reaches `env`, `fs`, `log` and `now`.** So a freestanding target cannot run
+  the in-language test runner, and its output sink is only one of four things in the way.
+  Worth knowing before treating "core-safe" and "testable in-language" as the same set.
+
+Note what is deliberately *not* here: importing a hosted module is not an error. E066 is
+enforced post-tree-shake, so a program may import `std/io` and use only its core-safe
+parts. The partition answers a question; it does not add a gate.
+
 ## Adding a builtin
 
 Classify it in `internal/platforms/enforce.go`: a capability in `gatedBuiltins`, or
