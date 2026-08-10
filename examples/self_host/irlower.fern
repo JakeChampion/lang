@@ -22538,8 +22538,87 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
-// borrowed_names_of is the OWNERSHIP set (#6158), deliberately SEPARATE from
-// the aliasing set above. Only the `.with` self-reassign consults it.
+// borrowed_rebind_closure credits the `var X = Y` bare-ident rebinds whose X
+// still shares a buffer someone else reaches. Run to a fixpoint so a chain
+// `var b = a; var c = b;` reaches c.
+//
+// X is credited when ANY of these holds:
+//
+//   - Y is a non-`own` array PARAM (`borrow_srcs`) — the caller holds the
+//     buffer and reads it after the call returns. Y being dead in THIS body
+//     proves nothing, because the other reader is not in this body.
+//   - Y is itself borrowed — the transitive case.
+//   - Y is used again after the binding — the aliasing case, `var b = a` with a
+//     live `a`. `alias_idents_in_value` credits only the source, the name that
+//     ACQUIRED an alias, so nothing marked `b` and `b = b.with(…)` wrote
+//     through into `a`.
+//
+// None holding means the rebind is the buffer's only remaining name and the
+// in-place store is sound — which is what keeps `own heap_in` fast: the caller
+// transferred the buffer, and after `var heap = heap_in;` nothing reads
+// `heap_in` again, so a const-eval-VM-shaped loop keeps its stores in place.
+//
+// **The param is a SOURCE, never a member.** Crediting the param itself would
+// also forbid the DIRECT `p = p.with(…)` self-reassign, and that is how a
+// mutable closure capture is written: box_mutated_scalar_captures rewrites
+// `x = v` into `x = x.with(0, v)` on a 1-element cell, and the param-lift hands
+// that cell to the lifted body as a plain array param, which MUST write through
+// it. Making the param borrowed strands the closure on a stale by-value
+// snapshot (#5301) — a wrong answer, not a leak. Telling a caller's array from
+// a captured cell at the param itself is the open design question in #6185; a
+// rebind needs no such judgement, because the cell is only ever written by the
+// direct form.
+//
+// A rebind inside a nested block is credited unconditionally: the liveness test
+// is positional within one statement list and cannot see uses in the enclosing
+// tail. Conservative, so it clones rather than mis-stores.
+function borrowed_rebind_closure(body: parser.Stmt[], acc: string[], borrow_srcs: string[]): string[] {
+    var a: string[] = acc;
+    var grew: boolean = true;
+    while (grew) {
+        var before: i32 = a.len();
+        a = borrowed_rebinds(body, a, borrow_srcs, true);
+        grew = a.len() > before;
+    }
+    return a;
+}
+
+function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], borrow_srcs: string[], top: boolean): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprIdent(id) => {
+                        if (!top || util.index_of_str(a, id.name) >= 0
+                                || util.index_of_str(borrow_srcs, id.name) >= 0
+                                || name_used_after(stmts, id.name, i)) {
+                            a = push_str_unique(a, v.name);
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(iff) => {
+                a = borrowed_rebinds(iff.then_body, a, borrow_srcs, false);
+                a = borrowed_rebinds(iff.else_body, a, borrow_srcs, false);
+            },
+            parser.StmtWhile(w) => { a = borrowed_rebinds(w.body, a, borrow_srcs, false); },
+            parser.StmtFor(f) => { a = borrowed_rebinds(f.body, a, borrow_srcs, false); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = borrowed_rebinds(m.arms[k].body, a, borrow_srcs, false); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// borrowed_names_of is the OWNERSHIP set (#6158/#6170), deliberately SEPARATE
+// from the aliasing set above. Only the `.with` self-reassign consults it.
 //
 // Merging the two looked tempting and is wrong: `aliased_names` also drives the
 // `.append` self-reassign's arr_push-vs-arr_push_owned choice and the map
@@ -22547,9 +22626,30 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
 // an array are retained — mutable captures then read a stale by-value snapshot
 // (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
 // different questions; they get different sets.
-function borrowed_names_of(body: parser.Stmt[]): string[] {
-    var none: string[] = [];
-    return borrowed_field_bindings(body, none);
+//
+// Two kinds of binding are members, and each is a buffer some OTHER name still
+// reaches at the point the in-place store would happen:
+//
+//   - a `var X = OBJ.field` binding whose OBJ is not cleared first;
+//   - a `var X = Y` bare-ident rebind that borrowed_rebind_closure credits.
+//
+// The non-`own` ARRAY PARAMS are passed in as rebind SOURCES rather than added
+// as members — see borrowed_rebind_closure for why crediting the param itself
+// would break mutable closure captures. `own` params are not even sources: the
+// caller TRANSFERRED the buffer, so the in-place store is the point of the
+// annotation. `own_names` carries the declared ones plus the ones
+// move_arr_params_of inferred.
+function borrowed_names_of(fn: parser.FuncDecl, own_names: string[]): string[] {
+    var srcs: string[] = [];
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (is_array_type_name(fn.params[i].type_name) && util.index_of_str(own_names, fn.params[i].name) < 0) {
+            srcs = push_str_unique(srcs, fn.params[i].name);
+        }
+        i = i + 1;
+    }
+    var a: string[] = borrowed_field_bindings(fn.body, []);
+    return borrowed_rebind_closure(fn.body, a, srcs);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -37683,7 +37783,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
-    var borrowed: string[] = borrowed_names_of(fn.body);
+    var own_names: string[] = mv_own_params_for(fn, sg.move_arr_params);
+    var borrowed: string[] = borrowed_names_of(fn, own_names);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
@@ -37890,7 +37991,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: mv_own_params_for(fn, sg.move_arr_params), n_params: names.len(), ok: true, fail_why: "" };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: own_names, n_params: names.len(), ok: true, fail_why: "" };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
