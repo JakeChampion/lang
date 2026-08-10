@@ -6418,3 +6418,42 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   loop-negative that asserts on CONTENTS rather than a count), the per-module fixpoint
   (581 s), and the grow / array / string reclaim suites (604 s). Refs #6048 #6043
   #6036 #4873.
+
+- 2026-08-10: **An EXPLICITLY aliased nested-struct field costs the local its whole
+  reclaim credit (#6623).** `o = S { xs: o.xs.append(i), inner: o.inner, n: i }` and
+  `o = S { ...o, xs: o.xs.append(i), n: i }` mean the same thing, and native is flat
+  on both, but the self-host stranded every superseded box on the explicit spelling.
+
+  The NODEEP field-move scan reads a bare non-scalar field read in a struct-literal
+  field value as an uncounted move out of `o`. `slot_nodeep` gates the consume-rebind's
+  `emit_field_reclaim_store` branch as well as the exit sweep, so the verdict took
+  `__field_reclaim_S` with the deep drop and the rebind fell back to a shallow box dec —
+  the superseded box AND the `xs` buffer it owned were both stranded.
+
+  | k | explicit before | explicit after | `...o` control |
+  |---|---|---|---|
+  | 1 | 70 / 30 — **1760 B** | 70 / 50 — 800 B | 70 / 50 — 800 B |
+  | 2 | 100 / 50 — **2480 B** | 100 / 80 — 800 B | 100 / 80 — 800 B |
+  | 8 | 280 / 170 — **10160 B** | 280 / 260 — 800 B | 280 / 260 — 800 B |
+  | 32 | 1000 / 650 — **98480 B** | 1000 / 980 — 800 B | 1000 / 980 — 800 B |
+
+  **The k sweep is the diagnosis, not decoration.** This defect is per-ITERATION and
+  #6605's carried-field strand is per-CALL, so the two are separable only on that
+  curve — the residual 800 B every row above still carries is #6605 (#6620), untouched
+  here. Getting that distinction wrong cost a wrong diagnosis twice on #6605 itself.
+
+  `fieldmove_alias_retained` exempts exactly the class the struct-literal override path
+  retains UNCONDITIONALLY: a nested-struct or enum field value, where only a fresh
+  `I { … }` literal / a fresh variant ctor is handed over uncounted. The successor box
+  therefore holds a counted reference and the superseded box's deep drop decs a dup.
+
+  **Array and string field values are deliberately left unexempt.** Their retain is
+  conditional — a bare ident naming an rc-array slot; `slit_reclaim` plus a freshness
+  test — so exempting the read without first widening the retain trades the leak for a
+  use-after-free. That is #6628, and `array_field_alias_not_exempt` holds the line.
+
+  VERIFIED: new `TestSelfHostNestedFieldAliasRebindX86_64` (5 rows; three FAIL on the
+  parent commit, including the k sweep at 98480 B), cross-backend exit agreement with
+  `fern -interp` on x86-64 / arm64 (qemu) / wasm (wasmtime) — `irlower.fern` is shared,
+  so all three move together — and `FERN_STRICT_IR=1` clean on every probe.
+  Refs #6623 #6605 #6628 #6127.
