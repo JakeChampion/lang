@@ -1490,6 +1490,105 @@ function main(): i32 {
 		}
 	})
 
+	// watbin's opcode table is the only thing between the emitter's WAT and a
+	// runnable `.wasm`, and a mnemonic missing from it takes down every program
+	// that reaches the instruction — `f64.reinterpret_i64` blocked anything
+	// calling `.to_string()` (#6607). These rows drive one program per opcode
+	// family through `-target wasm-bin`, so a table gap fails here rather than
+	// in whichever probe happens to need the instruction. The exit code is the
+	// assertion: it comes from the program, so a wrong encoding that still
+	// validates is caught too.
+	t.Run("wasm-bin-opcode-families", func(t *testing.T) {
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH; skipping wasm-bin opcode families")
+		}
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
+		cases := []struct {
+			name   string
+			src    string
+			exit   int
+			stdout string
+		}{
+			// 0xbc-0xbf reinterprets + 0xb6 demote / 0xbb promote. The f32
+			// forms ride a demote/promote pair, since an f32 travels in an
+			// f64 slot on wasm.
+			{"reinterpret-bits", `function main(): i32 {
+    var x: f32 = 1.0 as f32;
+    var b: i32 = f32_bits(x);
+    var y: f32 = f32_from_bits(b);
+    var d: i64 = f64_bits(2.0);
+    var z: f64 = f64_from_bits(d);
+    if (b == 1065353216 && y == x && z == 2.0 && d == 4611686018427387904) { return 42; }
+    return 1;
+}
+`, 42, ""},
+			// The #6607 repro: the decimal formatter reaches 0xbf, so a
+			// program that merely prints a number needs it.
+			{"to-string-prints", `import "std/i32";
+
+function main(): i32 {
+    print((41i32).to_string());
+    return 0;
+}
+`, 0, "41\n"},
+			// 0x67-0x69 / 0x79-0x7b — the i32 and i64 bit counts.
+			{"bit-counts", `import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+    var a: i32 = (16i32).leading_zeros() + (16i32).trailing_zeros() + (255i32).count_ones();
+    var b: i32 = (1099511627776i64).leading_zeros() + (1099511627776i64).trailing_zeros() + (255i64).count_ones();
+    if (a == 39 && b == 71) { return 42; }
+    return 1;
+}
+`, 42, ""},
+			// 0xFC 10 `memory.copy` — `__memcpy`, reached by `string.bytes()`.
+			{"bulk-memory-copy", `import "std/string";
+
+function main(): i32 {
+    var b: u8[] = "hello".bytes();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.len()) { t = t + (b[i] as i32); i = i + 1; }
+    if (t == 532 && b.len() == 5) { return 42; }
+    return 1;
+}
+`, 42, ""},
+			// 0xFC 11 `memory.fill` — `__memset`, core/map's bucket init.
+			{"bulk-memory-fill", `function main(): i32 {
+    var p: usize = __alloc(8);
+    __memset(p, 65, 8);
+    if ((__load_i32(p) & 255) == 65) { return 42; }
+    return 1;
+}
+`, 42, ""},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "wasmbin_"+tc.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				outPath := filepath.Join(dir, "wasmbin_"+tc.name+".wasm")
+				if _, code := runDriver(t, "-target", "wasm-bin", "-o", outPath, srcPath, stdlibRoot); code != 0 {
+					t.Fatalf("-target wasm-bin emit exited %d, want 0", code)
+				}
+				cmd := exec.Command(wasmtime, "run", outPath)
+				out, _ := cmd.Output()
+				if c := cmd.ProcessState.ExitCode(); c != tc.exit {
+					t.Errorf("exited %d, want %d", c, tc.exit)
+				}
+				if string(out) != tc.stdout {
+					t.Errorf("stdout = %q, want %q", string(out), tc.stdout)
+				}
+			})
+		}
+	})
+
 	t.Run("emit-target-wasm-component", func(t *testing.T) {
 		// The driver emits a Component-Model wasi:cli/run component under
 		// -target wasm-component, picking the no-I/O or stdout framing from
