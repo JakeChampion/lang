@@ -44709,6 +44709,24 @@ function rc_fe_rhs_tainted(e: parser.Expr, tainted: string[], types_n: string[],
                     // an enum built from a borrowed-param payload (`A(n)`)
                     // wrongly taints the enum local.
                     if (variant_enum_owner(structs, cid.name).len() > 0) { return false; }
+                    // __alloc_u8(n): a fresh zero-filled rc=1 buffer straight
+                    // from the runtime allocator, whose only argument is a
+                    // SCALAR byte count — the result cannot alias it however
+                    // tainted that count is. The generic any-arg-tainted rule
+                    // below said otherwise, so `__alloc_u8(16)` (literal,
+                    // untainted) reclaimed while `__alloc_u8(n_bytes)` never
+                    // did, leaking one buffer per call out of int_to_string /
+                    // __int_to_string_u64 / int_to_string_radix — i.e. out of
+                    // every `n.to_string()` (#5931, native side; #5935 ports it).
+                    //
+                    // Sound only because the escape walk taints a buffer whose
+                    // ADDRESS is handed out as a raw integer: rc_fe_walk_expr's
+                    // `as_` arm escapes a pointer-shaped operand cast to a
+                    // non-pointer target, which is what `s.bytes()` does when it
+                    // passes `buf as usize` to __memcpy. Without that guard this
+                    // untaint would reclaim a buffer still being written through
+                    // the raw pointer.
+                    if (cid.name == "__alloc_u8") { return false; }
                 },
                 parser.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.

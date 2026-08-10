@@ -667,6 +667,45 @@ function main(): i32 { return f(); }`,
 				"f": {"freeEligible": {native: "a,b", selfhost: "a"}},
 			},
 		},
+		{
+			// #5935 half one: the ALLOCATOR untaint. `__alloc_u8(n)` hands back a
+			// fresh block that cannot alias its scalar size argument, however
+			// tainted that argument is — so the buffer is freeEligible even when
+			// the count derives from a borrowed param. Before the port the
+			// self-host's generic any-arg-tainted rule left every dynamically
+			// sized buffer permanently ineligible, so `__alloc_u8(16)` was
+			// eligible and `__alloc_u8(n)` was not — the divergence that made
+			// #5931's native-only fix invisible to this harness.
+			name: "fe-alloc-u8-computed-size",
+			src: `function fill(n: i32): i32 {
+	var buf: u8[] = __alloc_u8(n + 1);
+	buf = buf.with(0, 65 as u8);
+	return buf[0] as i32;
+}
+function main(): i32 { return fill(3); }`,
+			anchor: map[string]map[string]string{"fill": {"freeEligible": "buf"}},
+		},
+		{
+			// #5935 half two: the guard that makes half one sound. Casting a
+			// pointer-shaped value to a non-pointer target hands out a raw
+			// address rc cannot follow (`std/string`'s `s.bytes()` passes
+			// `buf as usize` to __memcpy), so the operand escapes and the buffer
+			// must NOT be eligible. Without this the untaint above would reclaim
+			// a buffer still being written through the raw pointer.
+			//
+			// Asserted as the EMPTY table rather than by omission: "no line" and
+			// "line naming something else" are different failures, and only the
+			// explicit value distinguishes a working guard from a table that
+			// simply stopped being emitted.
+			name: "fe-alloc-u8-address-escapes",
+			src: `function raw(n: i32): i32 {
+	var buf: u8[] = __alloc_u8(n + 1);
+	var addr: usize = buf as usize;
+	return (addr as i32) & 1;
+}
+function main(): i32 { return raw(3); }`,
+			anchor: map[string]map[string]string{"raw": {"freeEligible": ""}},
+		},
 	}
 
 	for _, tc := range cases {
