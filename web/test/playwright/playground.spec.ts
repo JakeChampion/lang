@@ -242,9 +242,9 @@ test("Run (interp) is disabled in the wasi-http world", async ({ page }) => {
   // both directions. (A handler's auto-synthesised main calls blocking
   // tcp_serve; running it through the interp would never return.)
   await expect(page.locator("#run")).toBeEnabled();
-  await page.locator("#worldSelect").selectOption("wasi-http");
+  await page.locator("#worldSelect").selectOption("wasm32-wasi-http");
   await expect(page.locator("#run")).toBeDisabled();
-  await page.locator("#worldSelect").selectOption("wasm");
+  await page.locator("#worldSelect").selectOption("wasm32-wasi");
   await expect(page.locator("#run")).toBeEnabled();
 });
 
