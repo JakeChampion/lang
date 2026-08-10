@@ -5880,3 +5880,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   §the reclaim rule), the neighbouring enum/match reclaim gates, and all seven
   probes run through the self-host on **x86-64, arm64 (qemu) and wasm
   (wasmtime)**. Refs #6219 #4451.
+
+- 2026-08-10: **Two more nested-match rows, measured and left open on purpose —
+  STRUCT and TUPLE payloads at block scope.** #6503 / #6517 / #6526 / #6538 closed
+  #6319's grid (fn/block scope x flat/nested match) for the scalar Option and the
+  rc-array payload. Sweeping the same grid over the remaining two payload classes
+  at `7f00e52f`, 100 rounds x 4, every exit code matching `fern -interp`, and
+  re-verified unchanged at `5052f826` after #6564 landed in the same area:
+
+  | block-scoped local | flat match | nested in an `if` |
+  |---|---|---|
+  | `Option[P]`, P = `{ xs: i32[], n: i32 }` | 0 | **51200**, `frees=0` |
+  | `Option[(i32, i32[])]` | 0 | **48000**, `frees=0` |
+
+  **These are NOT another nested_ok widening, and the code says why.** Both are
+  refused one layer further down than the match lookup: `blockable` admits only
+  payloads whose drop is COMPLETE on its own (string / leak-safe scalar array).
+  A struct payload's shallow box dec relies on the fn-level OPTSTRUCT machinery to
+  release its array FIELDS, and a block-level drop zeroes the slot and starves it
+  — the #5453 CI regression. A tuple payload fails `is_leaksafe_array_field` for
+  the same reason.
+
+  So closing these needs the block-level pass to perform the DEEP field release
+  itself, not merely to see the nested match. That is the deep-walk-vs-flat-dec
+  line this document already draws: the flat dec is the green side, and the deep
+  field walk is what segfaulted gen1 in #6285 / #6375. Whoever takes it should
+  budget a fixpoint run per attempt and expect the emission side, not the
+  admission side, to be the work.
+
+  Not on #6495's list, and distinct from its `Option[P]`-with-a-string-FIELD row
+  (48000): that one is about which FIELD TYPES the deep drop admits, this one is
+  about which SCOPE may run the deep drop at all. Both can be true at once.
