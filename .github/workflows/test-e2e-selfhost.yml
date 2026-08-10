@@ -170,7 +170,7 @@ env:
   # same regex as the two lists above, and each has a matching job below.
   # (Distinct from ISOLATED_DRIVER_TESTS, which is about *where fern.fern gets
   # cold-built*, not about run length.)
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only. EMPTY means nothing is
   # quarantined — the #4801 quarantine is fully retired.
@@ -408,6 +408,54 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostConstFuncGen2$' -test.v -test.timeout 28m
+
+  # The ARM64 STAGE-2 FIXPOINT (#6327). #5972 deleted the original along with
+  # the AST emitters — correctly, its driver was one of them — and nothing
+  # replaced it, so from then until now no lane checked that the arm64 emit is
+  # a fixed point of itself. This job is the replacement.
+  #
+  # It needs BOTH toolchains and is the only job here that does: a native x86
+  # host to run the emitting driver, plus cross-gcc AND qemu to link and run
+  # generation 2. That combination is why it is a job rather than a shard
+  # member — and cross-gcc is exactly the install #6038 records stalling and
+  # vanishing shards, which is a failure this lane can absorb and a shard
+  # cannot.
+  #
+  # BUDGET, MEASURED (the mistake #6310 records is a budget written for a test
+  # nobody had run). Locally, 4 cores: 262 s total — ~220 s of it stage 1, which
+  # runs NATIVELY, then 1.9 s for the bare compiler-module case and ~35 s each
+  # for the three stdlib-importing ones under qemu. Per-case cost is dominated
+  # by stdlib LOADING, not emit. 25 minutes is ~5.7x the measured run.
+  #
+  # FERN_STAGE2_SELF is deliberately NOT set: that case is gen2 recompiling the
+  # whole compiler under qemu, and it is left to a human with time rather than
+  # paid on every push.
+  stage2-fixpoint-arm64:
+    needs: build
+    name: stage2-fixpoint-arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - name: aarch64 cross-gcc + qemu (stage 2 is linked and RUN)
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
+        run: |
+          set -euo pipefail
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostStage2FixpointArm64$' -test.v -test.timeout 22m
 
   # The PER-MODULE fixpoint: 33 separate per-module emits, gen0 (Go-built) vs
   # gen1 (self-host-BUILT), asserting byte identity across every unit. It is the

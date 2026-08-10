@@ -6075,6 +6075,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends), the whole `TestSelfHostStr*` family, `TestSelfHostArrEnumReclaim`, and
   `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6582 #4451.
 
+- 2026-08-10: **The block-scoped STRUCT payload with a nested match — closed; the
+  TUPLE half is not.** #6553 recorded both rows and predicted the work would be on
+  the EMISSION side rather than admission. That held exactly: the block-level
+  rc-payload emission had three branches (tagged / string / flat dec) and no deep
+  one, so `blockable` excluded struct payloads to stop a shallow dec stranding the
+  array FIELDS (#5453). Giving the block pass the same
+  `emit_opt_struct_payload_drop` branch `lower_func` has, and keying `blockable`
+  on `dsty` — which already means "deep drop available AND no arm moved a field
+  out" — closes it:
+
+  | block-scoped, match nested in an `if` | before | after |
+  |---|---|---|
+  | `Option[P]`, P = `{ xs: i32[], n: i32 }` | 51200, `frees=0` | **0** |
+  | flat control | 0 | 0 |
+  | field moved out of the arm | refused | refused (1201/1) |
+  | `Option[(i32, i32[])]` | 48000 | **48000 — still open** |
+
+  Tuples are untouched because `opt_payload_deep_sty` is struct-only; that row
+  needs a tuple-shaped deep drop, which is its own increment.
+
+  **THE FIXPOINT IS THE HEADLINE.** This is the deep FIELD walk on a block-scoped
+  slot — the operation §9 records as segfaulting gen1 in #6285 / #6375, and the
+  reason the flat-dec/deep-walk line was drawn. It is green at 464.08 s. What
+  changed since is #6408, which taught `expr_unsafe_for` / `moves_fields_expr` to
+  read a bare non-scalar `name.field` as a MOVE; the walk this grants is the one
+  that bisect isolated, and it now has the escape analysis it was missing.
+
+  **A correction whose necessity I could NOT demonstrate, stated as such.**
+  `opt_arm_field_moved` was reading `body[match_idx]`, which under a nested lookup
+  is the enclosing `if` — a statement it cannot parse, so it answers "no field
+  moved". It now reads the match. That is right in principle, but mutating it back
+  changes no observable behaviour on either shape I could construct: an ARRAY
+  field assignment RETAINS (#6467), so a granted drop stays balanced, and a STRING
+  field is never walked by the deep drop at all (which is #6495's separate open
+  row). So it is a correctness fix against a latent hole, not a fix for a live
+  bug — and it becomes load-bearing the moment string fields are admitted.
+
+  VERIFIED: `TestSelfHostBlockStructPayloadNestedMatchX86_64` (new — the nested
+  row, its flat control, and the field-moved refusal),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (464.08 s, run FIRST), 28 targeted
+  suites 0 skips. Refs #6319 #6360 #4451.
+
 - 2026-08-10: **`__alloc_u8` untaint ported to the self-host free-eligibility
   analysis (#5935), and the issue's rationale corrected.** Native's #5931 untaints
   the allocator — `__alloc_u8(n)` hands back a fresh block that cannot alias its
