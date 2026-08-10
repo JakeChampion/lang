@@ -91,8 +91,8 @@ every target would grant `alloc` and the capability would carry no information.
 
 ## The target
 
-`-target freestanding` exists and grants nothing (#6509). It is **check-only**: the
-descriptor is declared, `fern -targets` lists it, and `fern -check -target freestanding`
+`-target arm64-freestanding` / `-target x86-64-freestanding` exist and grant nothing (#6509). It is **check-only**: the
+descriptor is declared, `fern -targets` lists it, and `fern -check -target arm64-freestanding`
 type-checks against its empty capability set — but no backend emits for it, and asking
 one to is a refusal naming the check path rather than the "unknown target" error, which
 would be false.

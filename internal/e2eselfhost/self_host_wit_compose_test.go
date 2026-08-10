@@ -41,8 +41,8 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -179,8 +179,8 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	progPath := filepath.Join(dir, "prog.fern")
 	_ = os.WriteFile(progPath, []byte(`function main(): i32 { write("`+want+`"); return 0; }`), 0o644)
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, _ := os.ReadFile(refPath)
 	if err := os.WriteFile(filepath.Join(dir, "core.bin"), componentCoreSection(t, ref), 0o644); err != nil {

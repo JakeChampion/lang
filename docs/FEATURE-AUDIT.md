@@ -290,7 +290,7 @@ reading is a silently wrong regression test.
 
 The 2026-06-28 entry below lifted the `ld` side of the AArch64 ±128 MiB
 `bl`/`b` wall with per-function sections; the **pure-Go assembler** — the
-default for `-target arm64`, no external toolchain — still had the wall,
+default for `-target arm64-linux`, no external toolchain — still had the wall,
 because it resolves branches itself and had nothing to fall back on. It
 refused the program outright:
 

@@ -11754,14 +11754,83 @@ function irt_collect_stmt(st: Stmt, acc: Expr[]): Expr[] {
 // irt_infer_func unifies the inferred types of every return in fd, or "" if
 // any return can't be determined or they conflict (a bare `return;` value is
 // ExprUnknown -> "" -> bail, so void / mixed functions keep their void type).
+// irt_payload_of resolves the PAYLOAD type a `Some(n)` / `Ok(n)` arm binds, from
+// the scrutinee's inferred type. A checked operator (`a +? b`) infers to its
+// OPERAND type rather than to an `Option[…]` spelling — that is the form the
+// corpus reaches this through — while an explicit `Option[X]` / `Result[X, …]`
+// is stripped to X. "" when neither applies.
+function irt_payload_of(scrut_ty: string): string {
+    if (scrut_ty.len() == 0) { return ""; }
+    var b: i32 = 0;
+    while (b < scrut_ty.len()) {
+        if (scrut_ty[b] == 91) {
+            var inner: string = scrut_ty[b + 1 : scrut_ty.len() - 1] + "";
+            var c: i32 = 0;
+            while (c < inner.len()) {
+                if (inner[c] == 44) { return inner[0 : c] + ""; }
+                c = c + 1;
+            }
+            return inner;
+        }
+        b = b + 1;
+    }
+    if (irt_is_scalar_ty(scrut_ty)) { return scrut_ty; }
+    return "";
+}
+
+function irt_is_scalar_ty(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8"
+        || t == "usize" || t == "f64" || t == "f32";
+}
+
+// irt_arm_bindings collects the payload bindings a match introduces, as
+// pseudo-parameters typed from their scrutinee. irt_guess resolves an ident
+// against parameters only, so `match (a +? b) { Some(n) => n, … }` inferred
+// nothing for `n`, and a lifted value block returning it kept the parser's
+// syntax-only i32 guess (#6468).
+function irt_arm_bindings(stmts: Stmt[], params: ParamDecl[], funcs: FuncDecl[], structs: StructDecl[], acc: ParamDecl[]): ParamDecl[] {
+    var out: ParamDecl[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtMatch(m) => {
+                var st: string = irt_payload_of(irt_guess(m.scrutinee, params, funcs, structs));
+                var a: i32 = 0;
+                while (a < m.arms.len()) {
+                    match (m.arms[a].pattern) {
+                        PatVariant(pv) => {
+                            if (st.len() > 0 && pv.binding.len() > 0 && pv.binding != "_") {
+                                out = out.append(ParamDecl { name: pv.binding, type_name: st, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" });
+                            }
+                        },
+                        _ => {}
+                    }
+                    out = irt_arm_bindings(m.arms[a].body, params, funcs, structs, out);
+                    a = a + 1;
+                }
+            },
+            StmtIf(f) => {
+                out = irt_arm_bindings(f.then_body, params, funcs, structs, out);
+                out = irt_arm_bindings(f.else_body, params, funcs, structs, out);
+            },
+            StmtWhile(w) => { out = irt_arm_bindings(w.body, params, funcs, structs, out); },
+            StmtFor(fr) => { out = irt_arm_bindings(fr.body, params, funcs, structs, out); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function irt_infer_func(fd: FuncDecl, funcs: FuncDecl[], structs: StructDecl[]): string {
     var empty: Expr[] = [];
     var rets: Expr[] = irt_collect_returns(fd.body, empty);
     if (rets.len() == 0) { return ""; }
+    var scope: ParamDecl[] = irt_arm_bindings(fd.body, fd.params, funcs, structs, fd.params);
     var unified: string = "";
     var i: i32 = 0;
     while (i < rets.len()) {
-        var g: string = irt_guess(rets[i], fd.params, funcs, structs);
+        var g: string = irt_guess(rets[i], scope, funcs, structs);
         if (g == "") { return ""; }
         if (unified == "") { unified = g; }
         else {

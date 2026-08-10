@@ -61,7 +61,7 @@ function main(): i32 {
 		t.Fatalf("write prog: %v", err)
 	}
 	compPath := filepath.Join(dir, "prog.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", compPath, progPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", compPath, progPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm: %v\n%s", err, out)
 	}
 	if out, err := exec.Command(wasmtime, "run", "-S", "inherit-network", compPath).CombinedOutput(); err != nil {

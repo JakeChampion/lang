@@ -569,7 +569,7 @@ function main(): i32 {
 	// CLEANLY (no unsupported-feature diagnostic, no crash); the
 	// differential run-vs-interp coverage lives in TestArm64DynTrait* /
 	// TestX86_64DynTrait* / TestWASMDynTrait* in dyn_trait_compiled_test.go.
-	gen := exec.Command(bin, "-target", "arm64", "-o", filepath.Join(dir, "out"), src)
+	gen := exec.Command(bin, "-target", "arm64-linux", "-o", filepath.Join(dir, "out"), src)
 	var gerr bytes.Buffer
 	gen.Stderr = &gerr
 	if err := gen.Run(); err != nil {
@@ -640,7 +640,7 @@ function main(): i32 {
 	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
 	// reject, no panic). The differential correctness tests against the
 	// interpreter live in dyn_trait_compiled_test.go (dynAllBackends).
-	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
 		gen.Stderr = &gerr
@@ -709,7 +709,7 @@ function main(): i32 {
 	// compiling to each target must succeed (no error, no panic). The
 	// runtime-behaviour differential vs the interpreter is in TestDowncast*
 	// (dyn_trait_compiled_test.go).
-	for _, target := range []string{"arm64", "x86-64", "wasm"} {
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
 		gen.Stderr = &gerr

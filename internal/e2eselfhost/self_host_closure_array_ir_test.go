@@ -159,6 +159,28 @@ var closureArrayIRCases = []struct {
 	// regression: a bare NAMED-fn literal element stays on the #3574
 	// fn-pointer path (is_closure_local is false for it): 42.
 	{"local-elem-namedfn-plain", `function h(): i32 { return 42; } function main(): i32 { var fs: (() => i32)[] = [h]; return fs[0](); }`, 42},
+
+	// #6571: the closure array sits in the CONDITION of a value-position
+	// if — an IIFE, so the arms are statements inside an expression and every
+	// lift path walked what the arms RETURN, never what selects them. The
+	// lambda reached lower_expr bare and bailed the module.
+	//
+	// Landing the condition walk alone turned that refusal into a SIGSEGV,
+	// which is why both halves are pinned here: boxing the literal makes it a
+	// closure array, and `g`'s `fn[]` PARAM has to be marked one too or
+	// `fs[0](1)` bare-dispatches the env box. The param proof was already
+	// capable of that — it just could not SEE a call inside an IIFE body,
+	// because its classifier had no lambda arm where collect_idents_expr has
+	// one. The statement form below is the control: it always worked.
+	{"iife-cond-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
+function main(): i32 { var v2: i32 = 5i32; return (if (g([((x: i32) => (x + v2))], 1i64)) { 9i32 } else { 1i32 }); }`, 9},
+	// The same shape one statement out — the spelling that already compiled,
+	// kept so a regression cannot be mistaken for the IIFE case alone.
+	{"stmt-cond-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
+function main(): i32 { var v2: i32 = 5i32; if (g([((x: i32) => (x + v2))], 1i64)) { return 9i32; } return 1i32; }`, 9},
+	// The match SCRUTINEE sibling: same blind spot, the other selector.
+	{"iife-scrutinee-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
+function main(): i32 { var v2: i32 = 5i32; return (match (g([((x: i32) => (x + v2))], 1i64)) { true => 7i32, _ => 1i32 }); }`, 7},
 }
 
 // TestSelfHostClosureArrayIRX86_64 routes each case through the self-hosted

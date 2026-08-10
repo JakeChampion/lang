@@ -162,7 +162,7 @@ func TestX86_64SelfReassignFieldSound(t *testing.T) {
 func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
 	_, n1 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
 	_, n2 := compileAndRunX86_64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
-	assertSubQuadratic(t, "x86-64", n1, n2)
+	assertSubQuadratic(t, "x86-64-linux", n1, n2)
 }
 
 // The SSA-builder-shaped accumulator (string field + growing i32[], threaded
@@ -171,7 +171,7 @@ func TestX86_64SelfReassignStringFieldBounded(t *testing.T) {
 func TestX86_64SSAAccumThreadedParam(t *testing.T) {
 	_, n1 := compileAndRunX86_64FreeOn(t, ssaAccumBumpSrc("200"))
 	_, n2 := compileAndRunX86_64FreeOn(t, ssaAccumBumpSrc("400"))
-	assertSubQuadratic(t, "x86-64", n1, n2)
+	assertSubQuadratic(t, "x86-64-linux", n1, n2)
 	if _, code := compileAndRunX86_64FreeOn(t, ssaAccumSoundSrc); code != 0 {
 		t.Errorf("threaded-param accumulator: got %d, want 0 (100/101=value, >0=over-release)", code)
 	}
@@ -191,7 +191,7 @@ func TestArm64SelfReassignFieldSound(t *testing.T) {
 func TestArm64SelfReassignStringFieldBounded(t *testing.T) {
 	_, n1 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("200"))
 	_, n2 := compileAndRunArm64FreeOn(t, selfReassignStringFieldBumpSrc("400"))
-	assertSubQuadratic(t, "arm64", n1, n2)
+	assertSubQuadratic(t, "arm64-linux", n1, n2)
 }
 
 func TestWASMSelfReassignFieldBounded(t *testing.T) {
@@ -200,7 +200,7 @@ func TestWASMSelfReassignFieldBounded(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	n1 := runWasm(t, selfReassignFieldBumpSrc("200"))
 	n2 := runWasm(t, selfReassignFieldBumpSrc("400"))
-	assertSubQuadratic(t, "wasm", n1, n2)
+	assertSubQuadratic(t, "wasm32-wasi", n1, n2)
 	if got := runWasm(t, selfReassignFieldSoundSrc); got != 0 {
 		t.Errorf("string-free accumulator: got %d, want 0", got)
 	}

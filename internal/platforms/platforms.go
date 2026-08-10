@@ -63,6 +63,14 @@ type Descriptor struct {
 	// Phase 3 wires it to runtime binding-fetch glue.
 	Bindings []string
 
+	// ISA and Environment are the two halves of the target's name. ISA
+	// selects the backend; Environment selects what the host provides
+	// and therefore drives Capabilities and Entry. Callers branching on
+	// "is this wasm" or "is this Darwin" should read these rather than
+	// string-matching Name.
+	ISA         string
+	Environment string
+
 	// Entry is how the artifact is entered. It drives whether the
 	// native backends emit the process-entry runtime (`_start` /
 	// `_main` and the argc/argv/envp capture off the process stack),
@@ -131,14 +139,16 @@ func (e EntryShape) OrDefault() EntryShape {
 // `random` (#6516) meant editing the same line four times. #6529
 // carries this the rest of the way, splitting the target NAME into
 // <isa>-<environment> so the two axes are spelled separately too.
-type environment struct {
-	capabilities []string
-	handlerKinds []string
-	bindings     []string
-	entry        EntryShape
-}
+// Capability sets live one level below the environment, on a PROFILE it
+// names. linux / darwin / android are genuinely different environments —
+// different object formats, different syscall vectors, and #6510's entry
+// shape is a per-environment property — but a host either has a
+// filesystem or it does not, and all three grant exactly the same set.
+// A shared profile keeps that list written once without pretending the
+// three environments are one.
+type capabilityProfile = []string
 
-var environments = map[string]environment{
+var capabilityProfiles = map[string]capabilityProfile{
 	// The full compiled runtime surface: fs / tcp / stdin are raw
 	// syscalls. NOTE `subprocess` is deliberately absent — it is an
 	// INTERP-ONLY builtin today (internal/interp only; no codegen
@@ -148,32 +158,42 @@ var environments = map[string]environment{
 	//
 	// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md D2')
 	// is native-only: wasm worlds have no processes.
-	"native": {
-		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
-		handlerKinds: []string{"handle"},
-		entry:        EntryProcess,
-	},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
-	// gap wasmbin's TestBuildReportsUnsupported pins). Programs
-	// reaching `subprocess` here are rejected at check time (E066)
-	// instead of failing mid-build.
-	"wasi": {
-		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
-		handlerKinds: []string{"main"},
-		entry:        EntryProcess,
-	},
+	// gap wasmbin's TestBuildReportsUnsupported pins).
+	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 
 	// The proxy world: an HTTP handler and nothing else. No argv, no
 	// stdout stream, no filesystem — which is what gives `args` and
 	// `stdout` their teeth as capabilities distinct from `env` and
 	// `log` (#6513, #6516). `fetch` is the planned outbound capability
-	// (docs/STDLIB-DESIGN-RESEARCH.md Rec §10); `kv` and `secrets`
-	// follow once the host-binding shape is finalised.
+	// (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
+	"wasi-proxy": {"log", "now", "env", "random", "fetch"},
+
+	// No host at all. Everything a program can still reach is
+	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
+	// and every judgement call.
+	"none": nil,
+}
+
+type environment struct {
+	profile      string
+	handlerKinds []string
+	bindings     []string
+	entry        EntryShape
+}
+
+var environments = map[string]environment{
+	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
+	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
+	"android": {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
+	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main"}, entry: EntryProcess},
+
 	"wasi-http": {
-		capabilities: []string{"log", "now", "env", "random", "fetch"},
+		profile:      "wasi-proxy",
 		handlerKinds: []string{"handle"},
 		// The proxy world never enters the component; the host calls
 		// the exported `handle`.
@@ -183,57 +203,59 @@ var environments = map[string]environment{
 		bindings: []string{"env"},
 	},
 
-	// No host at all. Everything a program can still reach is
-	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
-	// and every judgement call. No entry point either: a freestanding
-	// artifact is either a guest (exported symbols its embedder calls)
-	// or the host (entered at a reset vector), so #6510 needs to leave
-	// room for both — docs/BARE-METAL-PLAN.md.
-	//
-	// The guest shape is what is built first; EntryReset is the second
-	// value the day a target owns the machine.
-	"freestanding": {entry: EntryExports},
+	// No host at all. No entry point either: a freestanding artifact is
+	// either a guest (exported symbols its embedder calls) or the host
+	// (entered at a reset vector), so this leaves room for both —
+	// docs/BARE-METAL-PLAN.md. The guest shape is what is built first;
+	// EntryReset is the second value the day a target owns the machine.
+	"freestanding": {profile: "none", entry: EntryExports},
 }
 
-// table is the per-target descriptor registry: the ISA-and-object-format
-// half, plus which environment the target runs in. Keys match the
-// `-target` flag values cmd/fern accepts.
+// table is the target registry: every valid <isa>-<environment> pair.
+// The ISA half selects the backend; the environment half says what the
+// host provides. Neither is implied — there is no bare `arm64` meaning
+// arm64-Linux (#6529).
 var table = map[string]struct {
-	description string
+	isa         string
 	environment string
+	description string
 	noBackend   bool
 }{
-	"arm64": {
-		description: "ARM64 Linux ELF (default — Graviton, Apple Silicon via container, Raspberry Pi 4+ 64-bit, Android).",
-		environment: "native",
+	"arm64-linux": {
+		isa: "arm64", environment: "linux",
+		description: "ARM64 Linux ELF (Graviton, Raspberry Pi 4+ 64-bit, Apple Silicon via container).",
 	},
 	"arm64-darwin": {
+		isa: "arm64", environment: "darwin",
 		description: "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
-		environment: "native",
 	},
 	"arm64-android": {
+		isa: "arm64", environment: "android",
 		description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
-			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
-		environment: "native",
+			"Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
 	},
-	"x86-64": {
+	"arm64-freestanding": {
+		isa: "arm64", environment: "freestanding", noBackend: true,
+		description: "ARM64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"x86-64-linux": {
+		isa: "x86-64", environment: "linux",
 		description: "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
-		environment: "native",
 	},
-	"wasm": {
+	"x86-64-freestanding": {
+		isa: "x86-64", environment: "freestanding", noBackend: true,
+		description: "x86-64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"wasm32-wasi": {
+		isa: "wasm32", environment: "wasi",
 		description: "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).",
-		environment: "wasi",
 	},
-	"wasi-http": {
+	"wasm32-wasi-http": {
+		isa: "wasm32", environment: "wasi-http",
 		description: "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).",
-		environment: "wasi-http",
-	},
-	"freestanding": {
-		description: "No host — no kernel, no syscalls, no process. Type-checkable " +
-			"today; no backend emits for it yet (#6506).",
-		environment: "freestanding",
-		noBackend:   true,
 	},
 }
 
@@ -252,10 +274,16 @@ func ForTarget(name string) *Descriptor {
 		// programming error in this file, not a user-facing one.
 		panic("platforms: target " + name + " names unknown environment " + t.environment)
 	}
+	caps, ok := capabilityProfiles[env.profile]
+	if !ok {
+		panic("platforms: environment " + t.environment + " names unknown profile " + env.profile)
+	}
 	return &Descriptor{
 		Name:         name,
 		Description:  t.description,
-		Capabilities: env.capabilities,
+		ISA:          t.isa,
+		Environment:  t.environment,
+		Capabilities: caps,
 		HandlerKinds: env.handlerKinds,
 		Bindings:     env.bindings,
 		Entry:        env.entry,

@@ -15,7 +15,7 @@ shipping backends — `internal/codegen/{arm64,x86_64,wasmbin}` — all consume
 the flat, structured-control-flow `ir.Program` and run only the
 peephole-grade passes in `internal/ir/` (`fold`, `dce`, `copyprop`,
 `constprop`, `inline`, `strength`, `tco`, `defunctionalise`). The only
-consumer of the SSA layer is the experimental `-target wasm -backend ssa` emitter
+consumer of the SSA layer is the experimental `-target wasm32-wasi -backend ssa` emitter
 (`internal/codegen/wasmssa/`), which covers i32/i64/f32/f64 + memory + a
 reducible-CFG subset.
 
@@ -84,7 +84,7 @@ On 2026-09-01, revisit with fresh numbers:
 So the framework doesn't rot:
 
 - Keep `internal/ssa/` building and its tests green in CI (they already run).
-- Keep `-target wasm -backend ssa` in the e2e matrix so the layer stays exercised
+- Keep `-target wasm32-wasi -backend ssa` in the e2e matrix so the layer stays exercised
   end-to-end, not just unit-tested.
 - New IR ops / language features are **not** required to land in the SSA
   layer while it is shelved — but if `-backend ssa` (wasm) can't express a feature, that

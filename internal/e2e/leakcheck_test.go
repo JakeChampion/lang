@@ -68,7 +68,7 @@ func emitLeakCheck(t *testing.T, backend, src string, leakCheck bool) string {
 	ast.LeakCheckEnabled = leakCheck
 	var asm string
 	var emitErr error
-	if backend == "arm64" {
+	if backend == "arm64-linux" {
 		asm, emitErr = arm64codegen.Emit(prog, info)
 	} else {
 		asm, emitErr = x86_64.Emit(prog, info)
@@ -110,7 +110,7 @@ func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
-	asm := emitLeakCheck(t, "arm64", src, true)
+	asm := emitLeakCheck(t, "arm64-linux", src, true)
 	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
@@ -208,7 +208,7 @@ const leakCheckExitBuiltinSrc = `function main(): i32 {
 // at all — instrumentation, counters, report, and literals are all
 // behind the flag (the flag-off byte-identical guarantee).
 func TestLeakCheckOffEmitsNoSymbols(t *testing.T) {
-	for _, backend := range []string{"x86_64", "arm64"} {
+	for _, backend := range []string{"x86_64", "arm64-linux"} {
 		asm := emitLeakCheck(t, backend, leakCheckLeakySrc, false)
 		if strings.Contains(asm, "__fern_lc_") || strings.Contains(asm, ".Llc_") {
 			t.Errorf("%s: flag-off asm contains leak-detector symbols", backend)

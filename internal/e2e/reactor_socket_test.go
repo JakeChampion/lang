@@ -62,7 +62,7 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "server.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, srcPath).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
 

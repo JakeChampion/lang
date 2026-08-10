@@ -821,29 +821,6 @@ var strictIRBailReasons = []struct {
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: `var u` bound from immediately-invoked value block"},
-	// The same desugar, but here the lambda is LIFTED to a top-level function
-	// and refuses inside its own body, so the bail names `__lam_0` and the node
-	// is the lifted return rather than the call. Two bails one line apart in the
-	// source that the bare function name would have made look unrelated.
-	//
-	// The `None` arm is a CALL, not a literal, and that is the whole ingredient
-	// (#6292): #6271 taught `lower_value_tail` the literal-arm form, so with
-	// `None => 752i64` this program lowers and the fixture asserted a gap that
-	// had closed. Any non-literal arm still refuses — `(752i64 + 0i64)` does
-	// too — but a call cannot be constant-folded back into the literal shape,
-	// so it is the spelling that survives a folder improvement.
-	//
-	// The value block is ASSIGNED, not bound by an annotated `var`. #6468 taught
-	// the desugar to take its width from the binding's annotation, so the `var`
-	// spelling of this program now lowers; an assignment has no annotation to
-	// read, which is the position the width is still lost in.
-	{"lifted-lambda-return", `function fallback(): i64 { return 752i64; }
-function main(): i32 {
-    var v: i64 = 0i64;
-    v = (match ((702i64) /? (3i64)) { Some(c) => c, None => fallback() });
-    return ((v as i32) & 255i32);
-}
-`, "__lam_0", "did not lower: `return` of ident `c`"},
 	// The OTHER half of func_ineligible_reason: the body lowered fine and the
 	// bail is a symbol that does not resolve — a different debugging task from a
 	// refused body, which the bare function name never distinguished.

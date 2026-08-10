@@ -15,7 +15,7 @@ performance budget gets spent on plumbing vs real work.
 
 The codebase already ships `function handle(req): HttpResponse`
 as the canonical entry point — same source compiles for
-`-target=wasi-http` (a Component Model `.wasm`) and `-target=arm64`
+`-target=wasm32-wasi-http` (a Component Model `.wasm`) and `-target=arm64-linux`
 (a Linux ELF that serves HTTP/1.1 on `$PORT` via the
 auto-synthesised `main → tcp_serve(port, handle)`). The
 question this doc asks: **does that seam shape generalise as
@@ -214,7 +214,7 @@ the platform's lifecycle.
 
 - *Platform package distribution as `.roc`-files.* That's a
   Roc-specific package-manager call. Our equivalent is a
-  build flag (`-target=wasi-http` selects a particular
+  build flag (`-target=wasm32-wasi-http` selects a particular
   platform's code-generation path). Lighter, less complex.
 
 ### Cloudflare Workers — service bindings and request context
@@ -809,7 +809,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse { … }
 The `Platform` type is generated per-target by the
 compiler from the target's capability descriptor. For
 wasi-http it includes `fetch`, `kv`, `secrets`, `log`,
-`now`; for native (`-target=arm64`) it includes a subset
+`now`; for native (`-target=arm64-linux`) it includes a subset
 (no kv unless we provide a sqlite-backed local impl).
 
 The auto-`main` synthesis stays — it constructs the

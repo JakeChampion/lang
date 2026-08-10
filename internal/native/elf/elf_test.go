@@ -47,10 +47,10 @@ func TestWXPageAlignPerArch(t *testing.T) {
 		return last
 	}
 
-	if a := dataAlign(binX, "x86-64"); a != 0x1000 {
+	if a := dataAlign(binX, "x86-64-linux"); a != 0x1000 {
 		t.Errorf("x86-64 W^X p_align = %#x, want 0x1000 (4 KiB)", a)
 	}
-	if a := dataAlign(binA, "arm64"); a != 0x10000 {
+	if a := dataAlign(binA, "arm64-linux"); a != 0x10000 {
 		t.Errorf("arm64 W^X p_align = %#x, want 0x10000 (64 KiB)", a)
 	}
 	// The x86 image no longer pays the 64 KiB floor; arm64 still does.
@@ -954,8 +954,8 @@ func TestStaticExecutableDataWXSyms(t *testing.T) {
 		nosyms  []byte
 		machine goelf.Machine
 	}{
-		{"x86-64", elf.StaticExecutableDataX86WXSyms(text, data, syms), elf.StaticExecutableDataX86WX(text, data), goelf.EM_X86_64},
-		{"arm64", elf.StaticExecutableDataWXSyms(text, data, syms), elf.StaticExecutableDataWX(text, data), goelf.EM_AARCH64},
+		{"x86-64-linux", elf.StaticExecutableDataX86WXSyms(text, data, syms), elf.StaticExecutableDataX86WX(text, data), goelf.EM_X86_64},
+		{"arm64-linux", elf.StaticExecutableDataWXSyms(text, data, syms), elf.StaticExecutableDataWX(text, data), goelf.EM_AARCH64},
 	} {
 		f, err := goelf.NewFile(bytes.NewReader(tc.syms))
 		if err != nil {
@@ -1024,8 +1024,8 @@ func TestStaticExecutableDataWXSymsDWARF(t *testing.T) {
 		arch string
 		bin  []byte
 	}{
-		{"x86-64", elf.StaticExecutableDataX86WXSyms(text, data, syms)},
-		{"arm64", elf.StaticExecutableDataWXSyms(text, data, syms)},
+		{"x86-64-linux", elf.StaticExecutableDataX86WXSyms(text, data, syms)},
+		{"arm64-linux", elf.StaticExecutableDataWXSyms(text, data, syms)},
 	} {
 		f, err := goelf.NewFile(bytes.NewReader(tc.bin))
 		if err != nil {

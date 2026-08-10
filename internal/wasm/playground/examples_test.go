@@ -41,7 +41,7 @@ func TestPlaygroundExamplesCompile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var err error
 			if strings.Contains(src, "function handle") {
-				_, err = CompileComponent(src, "wasi-http")
+				_, err = CompileComponent(src, "wasm32-wasi-http")
 			} else {
 				_, err = CompileCoreWasm(src)
 			}

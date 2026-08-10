@@ -36,7 +36,7 @@ One leg per target, each with its own
 `internal/e2e/testdata/selfhost-<target>-known-divergences.txt`. It found twelve
 divergences on fixtures green for months, and sixteen more on x86-64.
 
-The **arm64 leg** is the highest-value of the three: `-target arm64` is the only
+The **arm64 leg** is the highest-value of the three: `-target arm64-linux` is the only
 path where the self-host compiler produces the finished binary ITSELF (emit +
 assemble + link in-process, no gcc, no wasmtime), so it is the only gate on
 `arm64_native.fern`. Its first valid run measured 302/317 passing with 15 listed
@@ -117,7 +117,7 @@ generally not needed** and the peak sits comfortably under a 16 GB host:
   Output is byte-identical.
 - Driver binaries are **assembled + linked in-process** by the pure-Go native
   assembler (`internal/native/x86_64` + `internal/native/elf` — the same
-  pipeline `cmd/fern -target x86-64` uses by default): ~25 s / ~2.6 GB where GNU
+  pipeline `cmd/fern -target x86-64-linux` uses by default): ~25 s / ~2.6 GB where GNU
   `as` took ~36 s at ~4.7 GB plus a link, and the ~470 MB `.s` never touches
   disk. Any assembler error falls back to the old gcc(+lld) path automatically.
   `CachedLink` does the same for HUGE self-host-emitted asm (the stage-2

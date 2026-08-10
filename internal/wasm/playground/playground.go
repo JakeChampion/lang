@@ -6,8 +6,8 @@
 // It mirrors the two component-producing CLI targets in
 // cmd/fern/main.go:
 //
-//	world "wasm"      → a wasi:cli/run component (runnable as-is)
-//	world "wasi-http" → a wasi:http/incoming-handler@0.2.0 component
+//	world "wasm32-wasi"      → a wasi:cli/run component (runnable as-is)
+//	world "wasm32-wasi-http" → a wasi:http/incoming-handler@0.2.0 component
 //
 // The compose logic intentionally tracks cmd/fern's
 // buildPreview2Component / the wasi-http branch; if the
@@ -30,7 +30,7 @@ import (
 )
 
 // CompileComponent compiles src to a Component Model binary for the
-// given world ("wasm" or "wasi-http") and returns the component
+// given world ("wasm32-wasi" or "wasm32-wasi-http") and returns the component
 // bytes. Front-end errors (parse / check) come back formatted the
 // same way the playground's other panes show them.
 func CompileComponent(src, world string) ([]byte, error) {
@@ -39,9 +39,9 @@ func CompileComponent(src, world string) ([]byte, error) {
 		return nil, err
 	}
 	switch world {
-	case "wasm":
+	case "wasm32-wasi":
 		return cliRunComponent(prog, info)
-	case "wasi-http":
+	case "wasm32-wasi-http":
 		return httpHandlerComponent(prog, info)
 	default:
 		return nil, fmt.Errorf("unknown world %q (want \"wasm\" or \"wasi-http\")", world)

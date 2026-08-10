@@ -199,7 +199,7 @@ function main(): i32 {
 			t.Errorf("x86_64 stdout = %q, want %q", got, want)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		out, _ := compileAndRunArm64(t, src)
 		if got := normalizeOut(out); got != want {
 			t.Errorf("arm64 stdout = %q, want %q", got, want)

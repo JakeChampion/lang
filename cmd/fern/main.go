@@ -291,8 +291,8 @@ var embeddedAssets *embed.Set
 // backends carry no instrumentation, so -sanitize on those is a warning, not
 // a silently unchecked build.
 var sanitizerTargets = map[string]bool{
-	"x86-64":        true,
-	"arm64":         true,
+	"x86-64-linux":  true,
+	"arm64-linux":   true,
 	"arm64-android": true,
 	"arm64-darwin":  true,
 }
@@ -603,7 +603,7 @@ func shouldUseASCII(force bool) bool {
 
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
-	target := flag.String("target", "arm64", "code-generation backend: arm64 (default, Linux ELF), arm64-android (arm64 Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64 (Linux ELF, in-process native backend by default), wasm (CLI component), wasi-http (HTTP handler component implementing wasi:http/incoming-handler), freestanding (no host at all — type-checks against an empty capability set; no backend emits for it yet, see docs/FREESTANDING-CORE.md)")
+	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF, in-process native backend by default), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern -targets` lists them with their capabilities.")
 	cc := flag.String("cc", "", "external assembler/linker invoked when -o or --run is set. arm64/x86-64 Linux and arm64-darwin all default to the in-process native backend (no external toolchain); passing -cc opts out to it (e.g. aarch64-linux-gnu-gcc / x86_64-linux-gnu-gcc on Linux, clang on darwin).")
 	runIt := flag.Bool("run", false, "link to a temporary binary and execute it (arm64 Linux only; uses qemu-aarch64 when not on an arm64 host)")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
@@ -613,7 +613,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm and -target arm64. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi and -target arm64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component — the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
@@ -643,7 +643,7 @@ func main() {
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
 	sanitize := flag.Bool("sanitize", false, "debug build: turn on the heap memory-safety detectors together (native x86-64/arm64). Reports an rc over-release (double free) and a use-after-free of a quarantined block as a named `fern-sanitizer:` line on stderr followed by a fatal SIGILL, and prints a leak census at exit. Costs allocation throughput and never recycles a freed block, so it is for debugging, not for shipping; an unsanitized build is byte-identical to one from a compiler without the feature. Same as FERN_SANITIZE=1.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fern [-target arm64|arm64-android|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]")
+		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-backend ssa] [-emit core-module] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
@@ -1098,7 +1098,7 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 	if platforms.ForTarget(target) == nil {
 		return nil
 	}
-	if target == "wasi-http" {
+	if target == "wasm32-wasi-http" {
 		kept := prog.Funcs[:0]
 		for _, fn := range prog.Funcs {
 			if fn.IsSynthesisedHandlerMain {
@@ -1112,7 +1112,7 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 	if shared && export != "" {
 		extras = append(extras, strings.Split(export, ",")...)
 	}
-	if target == "wasi-http" {
+	if target == "wasm32-wasi-http" {
 		extras = append(extras, "handle", "__method_HeaderMap_append")
 	}
 	// WIT-exported functions are entry points the AST walk can't
@@ -1270,8 +1270,8 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	switch backend {
 	case "":
 	case "ssa":
-		if target != "wasm" && target != "arm64" {
-			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64, wasm)", target)
+		if target != "wasm32-wasi" && target != "arm64-linux" {
+			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, wasm32-wasi)", target)
 		}
 	default:
 		return 1, fmt.Errorf("unknown -backend %q (want ssa, or omit it for the target's default emitter)", backend)
@@ -1280,8 +1280,8 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	switch emit {
 	case "":
 	case "core-module":
-		if target != "wasm" && target != "wasi-http" {
-			return 1, fmt.Errorf("-emit core-module is not available for -target %s (available for: wasm, wasi-http)", target)
+		if target != "wasm32-wasi" && target != "wasm32-wasi-http" {
+			return 1, fmt.Errorf("-emit core-module is not available for -target %s (available for: wasm32-wasi, wasm32-wasi-http)", target)
 		}
 	default:
 		return 1, fmt.Errorf("unknown -emit %q (want core-module, or omit it for the target's default output form)", emit)
@@ -1291,7 +1291,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 1, fmt.Errorf("-target %s: no backend emits for this target yet — `fern -check -target %s` type-checks against its capability set, but there is nothing to compile to (#6506)", target, target)
 	}
 
-	if backend == "ssa" && target == "wasm" {
+	if backend == "ssa" && target == "wasm32-wasi" {
 		// Experimental SSA-direct backend (internal/codegen/wasmssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR
 		// → ssa.Optimize → wasmssa.EmitModule. Covers i32/i64/f32/
@@ -1329,11 +1329,11 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 0, nil
 	}
 
-	if backend == "ssa" && target == "arm64" {
+	if backend == "ssa" && target == "arm64-linux" {
 		// Experimental SSA-direct arm64 backend (internal/codegen/arm64ssa)
 		// — lowers via parse → check → ir.LowerWith → ssa.LiftFromIR →
 		// ssa.Optimize → arm64ssa.EmitAsmModule, then links the same in-process
-		// W^X static ELF as -target arm64 (linkNative). It uses SSA register
+		// W^X static ELF as -target arm64-linux (linkNative). It uses SSA register
 		// allocation instead of the stack-machine emitter, so the emitted .text
 		// is markedly smaller. Coverage is a subset of the language (the integer
 		// core, control flow, calls, memory, strings, arrays, and the RC runtime);
@@ -1575,7 +1575,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 0, nil
 	}
 
-	if target == "wasm" || target == "wasi-http" {
+	if target == "wasm32-wasi" || target == "wasm32-wasi-http" {
 		// Both CLI wasm targets route through wasmbin. The old
 		// WAT-text backend (internal/codegen/wasm) has been
 		// removed; wasmbin emits the component binary directly.
@@ -1586,7 +1586,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		// Go-side preview-2 encoder (no wasm-tools, no preview-1 adapter).
 		// The path composes any mix of the migrated preview-2 imports;
 		// anything else surfaces a clear error.
-		if target == "wasm" {
+		if target == "wasm32-wasi" {
 			bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 				Preview2WASI: true,
 				SynthCliRun:  true,
@@ -1597,7 +1597,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 			}
 			comp, err := buildPreview2CliRunComponent(prog, info, bin)
 			if err != nil {
-				return 1, fmt.Errorf("-target wasm %w", err)
+				return 1, fmt.Errorf("-target wasm32-wasi %w", err)
 			}
 			if err := os.WriteFile(outPath, comp, 0o644); err != nil {
 				return 1, err
@@ -1631,8 +1631,8 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 0, nil
 	}
 
-	if target != "arm64" && target != "arm64-darwin" && target != "arm64-android" && target != "x86-64" {
-		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, arm64-android, x86-64, wasm, or wasi-http)", target)
+	if target != "arm64-linux" && target != "arm64-darwin" && target != "arm64-android" && target != "x86-64-linux" {
+		return 1, fmt.Errorf("unknown target %q — run `fern -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
 	}
 
 	darwin := target == "arm64-darwin"
@@ -1661,13 +1661,13 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// its scalar parameters + locals with frame offsets, so gdb/lldb can
 	// `info args` / `print <var>`. x86-64 and arm64 (Linux ELF); gated on -g.
 	var dbgVars map[string][]nativeelf.LocalVar
-	if emitDebugSyms && (target == "x86-64" || target == "arm64") && !darwin && !android {
+	if emitDebugSyms && (target == "x86-64-linux" || target == "arm64-linux") && !darwin && !android {
 		dbgVars = dwarfLocalVars(prog, info, target)
 	}
 
 	var asm string
 	switch target {
-	case "x86-64":
+	case "x86-64-linux":
 		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms})
 	default:
 		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android})
@@ -1680,7 +1680,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	ccExplicit := cc != ""
 	if cc == "" {
 		switch target {
-		case "x86-64":
+		case "x86-64-linux":
 			cc = "x86_64-linux-gnu-gcc"
 		case "arm64-darwin":
 			cc = "clang"
@@ -1714,7 +1714,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		if outPath == "" {
 			return 1, fmt.Errorf("-shared requires -o OUTPUT.so")
 		}
-		if target != "x86-64" && target != "arm64" && target != "arm64-android" {
+		if target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android" {
 			return 1, fmt.Errorf("-shared is only supported with -target x86-64, arm64, or arm64-android (got %q)", target)
 		}
 		if err := linkNativeShared(asm, binPath, target, exportNames); err != nil {
@@ -1722,14 +1722,14 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		}
 		return 0, nil
 	}
-	if native && target != "arm64" && target != "x86-64" && target != "arm64-darwin" && target != "arm64-android" {
+	if native && target != "arm64-linux" && target != "x86-64-linux" && target != "arm64-darwin" && target != "arm64-android" {
 		return 1, fmt.Errorf("-native is only supported with -target arm64, arm64-android, x86-64, or arm64-darwin (got %q)", target)
 	}
 	// arm64/x86-64 Linux, arm64-darwin, and arm64-android all use the
 	// pure-Go assembler+linker by default (no external toolchain). Pass -cc
 	// to opt out to an external assembler/linker (gcc on Linux, clang on
 	// darwin); arm64-android only supports the in-process PIE linker.
-	useNative := native || (!ccExplicit && (target == "arm64" || target == "x86-64" || darwin || android))
+	useNative := native || (!ccExplicit && (target == "arm64-linux" || target == "x86-64-linux" || darwin || android))
 	switch {
 	case useNative && darwin:
 		if err := linkNativeDarwin(asm, binPath); err != nil {
@@ -1739,7 +1739,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		if err := linkNativePIE(asm, binPath); err != nil {
 			return 1, err
 		}
-	case useNative && target == "x86-64":
+	case useNative && target == "x86-64-linux":
 		if err := linkNativeX86(asm, binPath, dbgSrc, dbgCompDir, dbgVars); err != nil {
 			return 1, err
 		}
@@ -1768,14 +1768,21 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// Run the binary directly when its target matches the host
 	// architecture — no emulator (or qemu install) needed. Only fall back
 	// to a user-mode emulator for the cross case.
-	if ((target == "arm64" || target == "arm64-android") && runtime.GOARCH == "arm64") ||
-		(target == "x86-64" && runtime.GOARCH == "amd64") {
-		return execDirect(binPath, progArgs)
+	// NOTE the two senses of "arm64" on this line: the TARGET's ISA half
+	// and the HOST's runtime.GOARCH. They are different vocabularies that
+	// happen to share a spelling — Go says "amd64" where a target says
+	// "x86-64" — so this comparison goes through the descriptor's ISA
+	// rather than the target name.
+	if d := platforms.ForTarget(target); d != nil {
+		if (d.ISA == "arm64" && runtime.GOARCH == "arm64") ||
+			(d.ISA == "x86-64" && runtime.GOARCH == "amd64") {
+			return execDirect(binPath, progArgs)
+		}
 	}
 	// If the user left -qemu at its default but built for
 	// x86-64, swap to qemu-x86_64 so --run picks the right
 	// emulator without manual flag-flipping.
-	if target == "x86-64" && qemu == "qemu-aarch64" {
+	if target == "x86-64-linux" && qemu == "qemu-aarch64" {
 		qemu = "qemu-x86_64"
 	}
 	return execUnderQemu(qemu, binPath, progArgs)
@@ -2051,7 +2058,7 @@ func linkNativePIE(asm, outPath string) error {
 func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 	soname := filepath.Base(outPath)
 	var so []byte
-	if target == "x86-64" {
+	if target == "x86-64-linux" {
 		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
@@ -2234,7 +2241,7 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 		cum := 0 // arm64 running byte offset (sum of slot sizes so far)
 		for k, s := range slots {
 			off := -8 * (k + 1) // x86-64: uniform 8-byte slots
-			if target != "x86-64" {
+			if target != "x86-64-linux" {
 				sz := 8
 				if _, isStr := s.typ.(ast.StringType); isStr {
 					sz = 16 // arm64 two-word string

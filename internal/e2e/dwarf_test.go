@@ -28,7 +28,7 @@ function main(): i32 { return helper(21); }
 
 	// Default build: no DWARF.
 	plain := filepath.Join(dir, "plain.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", plain, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", plain, p).CombinedOutput(); err != nil {
 		t.Fatalf("plain build: %v\n%s", err, o)
 	}
 	if f, err := goelf.Open(plain); err == nil {
@@ -40,7 +40,7 @@ function main(): i32 { return helper(21); }
 
 	// -g build: DWARF present.
 	out := filepath.Join(dir, "g.bin")
-	if o, err := exec.Command(bin, "-g", "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-g", "-target", "x86-64-linux", "-o", out, p).CombinedOutput(); err != nil {
 		t.Fatalf("-g build: %v\n%s", err, o)
 	}
 	f, err := goelf.Open(out)
@@ -124,7 +124,7 @@ func TestDWARFLineTable(t *testing.T) {
 
 	// The line table is target-independent (address_size 8 both ways) and
 	// decoded host-side, so we build for each target and parse without running.
-	for _, target := range []string{"x86-64", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
@@ -212,7 +212,7 @@ func TestDWARFLineTable(t *testing.T) {
 
 	// Default build: no line table.
 	plain := filepath.Join(dir, "plain.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", plain, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", plain, p).CombinedOutput(); err != nil {
 		t.Fatalf("plain build: %v\n%s", err, o)
 	}
 	if pf, err := goelf.Open(plain); err == nil {
@@ -262,8 +262,8 @@ func TestDWARFLocalVars(t *testing.T) {
 		off int64
 	}
 	cases := map[string]map[string]want{
-		"x86-64": {"n": {dwarf.TagFormalParameter, -16}, "m": {dwarf.TagVariable, -24}},
-		"arm64":  {"n": {dwarf.TagFormalParameter, -24}, "m": {dwarf.TagVariable, -32}},
+		"x86-64-linux": {"n": {dwarf.TagFormalParameter, -16}, "m": {dwarf.TagVariable, -24}},
+		"arm64-linux":  {"n": {dwarf.TagFormalParameter, -24}, "m": {dwarf.TagVariable, -32}},
 	}
 	for target, wants := range cases {
 		t.Run(target, func(t *testing.T) {
@@ -372,7 +372,7 @@ func TestDWARFStructVars(t *testing.T) {
 	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	for _, target := range []string{"x86-64", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
@@ -474,7 +474,7 @@ func TestDWARFMixedStructVars(t *testing.T) {
 	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	for _, target := range []string{"x86-64", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
@@ -579,7 +579,7 @@ func TestDWARFNestedStructVars(t *testing.T) {
 	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	for _, target := range []string{"x86-64", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
@@ -706,7 +706,7 @@ func TestDWARFEnumVars(t *testing.T) {
 	if err := os.WriteFile(spath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	for _, target := range []string{"x86-64", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {

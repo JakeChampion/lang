@@ -869,7 +869,7 @@ world-driven composer (P2) wires it.
      inside a multi-field variant arm (the tight 1-/2-byte canonical packing). The
      multi-component harness (`TestExternImportCustomProvider`) is the test
      vehicle for these.
-   - **CLI integration — ✅ done (Go).** `fern -target wasm` now compiles an
+   - **CLI integration — ✅ done (Go).** `fern -target wasm32-wasi` now compiles an
      `@import` program end to end: when the legacy composer's `ClassifyCore`
      reports imports it doesn't recognise and the program declares any extern
      (`hasExternImports`), `buildPreview2Component` rebuilds the core with
@@ -923,7 +923,7 @@ world-driven composer (P2) wires it.
      Go CLI's component output is the **oracle for self-hosting**:
      `TestSelfHostWasmComponentFull*` assert the self-hosted Fern compiler
      (`examples/self_host/wasm.fern`) emits byte-identical components to
-     `fern -target wasm`. The self-hosted compiler implements the registry
+     `fern -target wasm32-wasi`. The self-hosted compiler implements the registry
      composition, so flipping the Go CLI to the world composer desyncs them.
      Retiring the registry for cli/run therefore requires re-implementing
      world-driven composition in the self-hosted compiler first (and
@@ -1550,9 +1550,9 @@ produces a response:
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.
 
-> **Note on the embedded HTTP path:** `-target wasi-http`
+> **Note on the embedded HTTP path:** `-target wasm32-wasi-http`
 > (`emitIncomingHandlerExport` / `compose_http.go` / `wasi_http.go`) is still the
 > live CLI feature and is **not** dead code — the bring-your-own path above is
-> currently test-only. A future consolidation could migrate `-target wasi-http`
+> currently test-only. A future consolidation could migrate `-target wasm32-wasi-http`
 > onto the generic world-driven composer once the body/header marshalling and a
 > `pub resource` HTTP lib exist; until then both coexist.

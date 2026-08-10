@@ -75,11 +75,11 @@ qemu-aarch64 factorial          # or run natively on arm64 hardware
 ./fern -target arm64-darwin -cc clang -o factorial examples/factorial.fern
 
 # x86-64 Linux
-./fern -target x86-64 -o factorial examples/factorial.fern
+./fern -target x86-64-linux -o factorial examples/factorial.fern
 ./factorial
 
 # WASM (self-contained preview-2 component, no external adapter)
-./fern -target wasm -o factorial.wasm examples/factorial.fern
+./fern -target wasm32-wasi -o factorial.wasm examples/factorial.fern
 wasmtime run factorial.wasm
 
 # Run straight through the interpreter (no binary emitted)

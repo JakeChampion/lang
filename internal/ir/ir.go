@@ -3839,7 +3839,25 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		}
 		// Variant constructor: the result EMBEDS its payload args, so each
 		// pointer-typed payload slot must itself be filled escape-free.
+		//
+		// `variantPayloads` holds the DECLARED payload types, so a generic
+		// enum's are still `ParamType{T}`. Bind them against the destination's
+		// type arguments — `Some((n, n))` filling an `Option[(i32, i32)]` needs
+		// the payload slot to read as that tuple, not as `T`. The TupleLit case
+		// is the one that notices: it matches on the slot being a TupleType and
+		// declines anything else, where StructLit / ArrayLit carry their own
+		// type and never consult it. That asymmetry is why a tuple payload
+		// leaked where the same shape in a struct did not (#6409).
 		if pls, isVariant := variantPayloads[id.Name]; isVariant {
+			if et, isEnum := slot.(ast.EnumType); isEnum && len(et.Args) > 0 {
+				if ed, known := info.Enums[et.Name]; known && len(ed.TypeParams) == len(et.Args) {
+					sub := make([]ast.Type, len(pls))
+					for i, pt := range pls {
+						sub[i] = substituteTypeParamsDeep(pt, ed.TypeParams, et.Args)
+					}
+					pls = sub
+				}
+			}
 			for i, a := range x.Args {
 				var pt ast.Type
 				if i < len(pls) {

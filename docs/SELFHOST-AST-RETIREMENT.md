@@ -2681,7 +2681,7 @@ tier → leak.
      arm64-darwin backend's static dyld-free Mach-O is SIGKILLed by current macOS
      (`TestArm64DarwinNativeMachO` skips with exactly this diagnostic), `-cc clang`
      assembles a driver-sized `.s` only until a `bl` exceeds the 26-bit ±128 MB
-     span (`__drop_struct_asmcore__EmitState`), and `-target wasm` cannot compile
+     span (`__drop_struct_asmcore__EmitState`), and `-target wasm32-wasi` cannot compile
      the x86 driver at all (`asm__try_emit_builtin: unknown callee strbuf_append`).
      What DOES work, and is faster than any of them: **interpret the driver** —
      `fern -interp asm_ir_run.fern -- -ir-probe < prog.fern` gives the routing
@@ -2884,7 +2884,7 @@ claim that the floor is *module-dependent* was **an artifact of that second
 pass**, not a property of the emit. The corrected measurements are below. The
 headline survives; the model does not.
 
-Method: build gen0 (`fern -target x86-64 -o gen0 asm_modload_run.fern`),
+Method: build gen0 (`fern -target x86-64-linux -o gen0 asm_modload_run.fern`),
 `-per-module-emit-all -assume-eligible` in batches, assemble + link the 36 units
 into gen1, then emit single windows sampling the kernel's `VmHWM`. Peak RSS in
 MB; `-func-range LO:HI` picks the window. Output is byte-identical with and
@@ -3762,7 +3762,7 @@ this section has proposed for the lexer strand: not the return escape, not the
 payload strings, not the buffer taint, and not the threading shape.
 
 **Read from the emitted code (2026-07-29), and the whole strand reduces to one
-question.** `fern -target x86-64 lexprobe.fern > lexprobe.s`, then grep
+question.** `fern -target x86-64-linux lexprobe.fern > lexprobe.s`, then grep
 `lexer__tokenize`'s body:
 
     164  Lrcop_dec              (inline flat rc decs)
@@ -4016,7 +4016,7 @@ and dropping any one of them makes the program correct:
 | the grow takes the COPY path with the old buffer surviving | in-place grow shares nothing |
 | the element outlives its own buffer only via a second holder | an rc≥3 name absorbs the extra dec silently |
 
-It is also **x86-64 only** in this shape: the same probe under `-target arm64`
+It is also **x86-64 only** in this shape: the same probe under `-target arm64-linux`
 returns 0 with the arm applied (two-word strings take a different retain path).
 The self-host failure is an x86-64 miscompile of `mmc` — the arm64 gate catches
 it because `mmc`, an x86-64 binary, is the thing that miscompiles.

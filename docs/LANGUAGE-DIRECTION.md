@@ -663,7 +663,7 @@ Deferred to a follow-up:
   escape — the language doesn't (yet) statically enforce
   this, so callers shouldn't return pointers to in-block
   allocations. **Implicit per-handler arena shipped.**
-  `-target wasi-http`'s `__http_entry` wrapper now opens an
+  `-target wasm32-wasi-http`'s `__http_entry` wrapper now opens an
   arena_save at the top and arena_restore right before
   exit, so every per-request allocation (the HttpRequest /
   HttpResponse structs, body strings, intermediate concat

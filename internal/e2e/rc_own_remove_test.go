@@ -112,7 +112,7 @@ func TestX86_64OwnParamRemove(t *testing.T) {
 	for _, c := range ownRemoveCases {
 		t.Run(c.name, func(t *testing.T) {
 			_, got := compileAndRunX86_64FreeOn(t, c.src("__arr_push_shared_count()"))
-			c.check(t, "x86-64", got)
+			c.check(t, "x86-64-linux", got)
 		})
 	}
 }
@@ -121,7 +121,7 @@ func TestArm64OwnParamRemove(t *testing.T) {
 	for _, c := range ownRemoveCases {
 		t.Run(c.name, func(t *testing.T) {
 			_, got := compileAndRunArm64(t, c.src("__arr_push_shared_count()"))
-			c.check(t, "arm64", got)
+			c.check(t, "arm64-linux", got)
 		})
 	}
 }
@@ -132,7 +132,7 @@ func TestWASMOwnParamRemove(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range ownRemoveCases {
 		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm", runWasm(t, c.src("__arr_push_shared_count()")))
+			c.check(t, "wasm32-wasi", runWasm(t, c.src("__arr_push_shared_count()")))
 		})
 	}
 }
@@ -174,13 +174,13 @@ function main(): i32 {
 		}
 	}
 	_, x86 := compileAndRunX86_64FreeOn(t, src)
-	check("x86-64", x86)
+	check("x86-64-linux", x86)
 	_, arm := compileAndRunArm64(t, src)
-	check("arm64", arm)
+	check("arm64-linux", arm)
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
-	check("wasm", runWasm(t, src))
+	check("wasm32-wasi", runWasm(t, src))
 }
 
 // The other direction: excluding a param from the sweep at a return that did

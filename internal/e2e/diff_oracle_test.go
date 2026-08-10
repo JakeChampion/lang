@@ -346,7 +346,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			src := fernsmith.GenMain(seed)
 			expected := runInterpByte(t, src)
 
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				d := runArm64Diag(t, src)
 				if d.code != expected {
 					art := preserveDiagArtifacts(t, fmt.Sprintf("seed=%d/arm64", seed), src, d)
@@ -444,7 +444,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		src := fernsmith.GenMainBytes(data)
 		expected := runInterpByte(t, src)
-		t.Run("arm64", func(t *testing.T) {
+		t.Run("arm64-linux", func(t *testing.T) {
 			_, code := compileAndRunArm64(t, src)
 			if code != expected {
 				t.Errorf("arm64 exit=%d, interp=%d\ndata=%x\nsrc:\n%s", code, expected, data, src)
@@ -456,7 +456,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 				t.Errorf("x86_64 exit=%d, interp=%d\ndata=%x\nsrc:\n%s", code, expected, data, src)
 			}
 		})
-		t.Run("wasm", func(t *testing.T) {
+		t.Run("wasm32-wasi", func(t *testing.T) {
 			componentPath := buildComponent(t, src)
 			stdout, stderr, ec := runComponent(t, componentPath, runOpts{})
 			if ec != 0 {

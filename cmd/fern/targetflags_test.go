@@ -16,17 +16,17 @@ func writeFern(t *testing.T, src string) string {
 	return p
 }
 
-// `-check -target freestanding` is the #6509 deliverable: the target is
+// `-check -target arm64-freestanding` is the #6509 deliverable: the target is
 // declared and checkable before any backend emits for it, so E066 names
 // the missing capability instead of a build dying on an undefined label.
 func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  print(\"hi\");\n  return 0;\n}\n")
-	err := runCheck(entry, "freestanding")
+	err := runCheck(entry, "arm64-freestanding")
 	if err == nil {
 		t.Fatal("print should be E066 under freestanding")
 	}
 	got := err.Error()
-	for _, want := range []string{"E066", "freestanding", "`log`", "print"} {
+	for _, want := range []string{"E066", "arm64-freestanding", "`log`", "print"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("error missing %q:\n%s", want, got)
 		}
@@ -37,7 +37,7 @@ func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
 // target is usable and not merely restrictive.
 func TestCheckTargetFreestandingAllowsCore(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  var b: i64 = f64_bits(1.5);\n  return ((b + 1) as i32);\n}\n")
-	if err := runCheck(entry, "freestanding"); err != nil {
+	if err := runCheck(entry, "arm64-freestanding"); err != nil {
 		t.Fatalf("core-only program rejected: %v", err)
 	}
 }
@@ -53,8 +53,8 @@ func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 	if err := runCheck(entry, ""); err != nil {
 		t.Fatalf("bare -check should not enforce a target: %v", err)
 	}
-	if err := runCheck(entry, "arm64"); err == nil {
-		t.Fatal("-check -target arm64 should reject subprocess")
+	if err := runCheck(entry, "arm64-linux"); err == nil {
+		t.Fatal("-check -target arm64-linux should reject subprocess")
 	}
 }
 
@@ -64,12 +64,12 @@ func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 func TestCompileFreestandingRefusesClearly(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	out := filepath.Join(t.TempDir(), "out")
-	code, err := run(entry, out, "freestanding", "", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
+	code, err := run(entry, out, "arm64-freestanding", "", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
 	if code == 0 || err == nil {
 		t.Fatalf("expected a refusal, got code=%d err=%v", code, err)
 	}
 	got := err.Error()
-	for _, want := range []string{"no backend", "fern -check -target freestanding"} {
+	for _, want := range []string{"no backend", "fern -check -target arm64-freestanding"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("error missing %q:\n%s", want, got)
 		}
@@ -90,7 +90,7 @@ func TestCompileFreestandingRefusesClearly(t *testing.T) {
 // target's descriptor, so E066 applies to them like anything else (#6536).
 func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  var r = subprocess(\"/bin/echo\", [\"hi\"], \"\");\n  return r.exit_code;\n}\n")
-	for _, target := range []string{"wasm", "arm64"} {
+	for _, target := range []string{"wasm32-wasi", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "out")
 			code, err := run(entry, out, target, "ssa", "", "", false, false, "", false, false, false, nil, false, "", false, nil)
@@ -113,8 +113,8 @@ func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 func TestBackendRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, backend, want string }{
-		"no ssa for x86-64": {"x86-64", "ssa", "not available for -target x86-64"},
-		"unknown backend":   {"wasm", "nope", `unknown -backend "nope"`},
+		"no ssa for x86-64": {"x86-64-linux", "ssa", "not available for -target x86-64"},
+		"unknown backend":   {"wasm32-wasi", "nope", `unknown -backend "nope"`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestBackendRejectsBadCombinations(t *testing.T) {
 func TestEmitCoreModule(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	out := filepath.Join(t.TempDir(), "m.wasm")
-	code, err := run(entry, out, "wasm", "", "core-module", "", false, false, "", false, false, false, nil, false, "", false, nil)
+	code, err := run(entry, out, "wasm32-wasi", "", "core-module", "", false, false, "", false, false, false, nil, false, "", false, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("emit core-module: code=%d err=%v", code, err)
 	}
@@ -156,8 +156,8 @@ func TestEmitCoreModule(t *testing.T) {
 func TestEmitRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, emit, want string }{
-		"no core-module for arm64": {"arm64", "core-module", "not available for -target arm64"},
-		"unknown emit":             {"wasm", "nope", `unknown -emit "nope"`},
+		"no core-module for arm64": {"arm64-linux", "core-module", "not available for -target arm64"},
+		"unknown emit":             {"wasm32-wasi", "nope", `unknown -emit "nope"`},
 		"wasm-bin is not a target": {"wasm-bin", "", `unknown target "wasm-bin"`},
 	}
 	for name, c := range cases {

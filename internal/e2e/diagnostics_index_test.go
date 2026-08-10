@@ -145,7 +145,7 @@ func codesByCase(t *testing.T) map[string][]string {
 		case fileExists(filepath.Join(dir, "expected.error")):
 			cmd = exec.Command(bin, "-check", main)
 		case fileExists(filepath.Join(dir, "expected.lowering-error")):
-			cmd = exec.Command(bin, "-target", "x86-64", "-o", filepath.Join(t.TempDir(), "prog"), main)
+			cmd = exec.Command(bin, "-target", "x86-64-linux", "-o", filepath.Join(t.TempDir(), "prog"), main)
 		default:
 			continue
 		}

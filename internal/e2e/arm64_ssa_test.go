@@ -1290,7 +1290,7 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			out := filepath.Join(dir, c.name+".bin")
-			emit := exec.Command(bin, "-target", "arm64", "-backend", "ssa", "-o", out, srcPath)
+			emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
 			var eb bytes.Buffer
 			emit.Stderr = &eb
 			if err := emit.Run(); err != nil {
@@ -1345,7 +1345,7 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "sub.bin")
-	emit := exec.Command(bin, "-target", "arm64", "-backend", "ssa", "-o", out, srcPath)
+	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()

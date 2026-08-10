@@ -44,7 +44,7 @@ func runDynZeroProg(t *testing.T, name, src string, wantExit int) {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, name+".bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, p).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, p).CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 build: %v\n%s", err, o)
 	}
 	cmd := runX86Bin(qemu, out)

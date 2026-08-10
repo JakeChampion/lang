@@ -324,7 +324,7 @@ lambda bodies, #4802; the `call_indirect` seam accepts two-slot
 `string` params, #4804; the `__fern_box_free` funcidx collision is
 fixed, #4816), and a `sort_by[string]` instantiation now compiles +
 runs standalone — but delegating the three string sorts to `sort_by`
-still makes `prop_sort_strings` fail `-target wasm` validation (a
+still makes `prop_sort_strings` fail `-target wasm32-wasi` validation (a
 separate two-slot-`string` value-flow defect surfaced only through the
 mangled-module delegation, #4829). They become `sort_by` delegations
 once #4829 closes; the planned deprecation in favor of the `Ord`-bound
