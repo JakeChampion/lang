@@ -143,7 +143,7 @@ func TestX86_64FixturesFreeMatchesNoFree(t *testing.T) {
 }
 
 func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
-	forEachRunnableFixture(t, "arm64-linux", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		// t.Cleanup restore: see the x86_64 variant — a t.Fatal inside
 		// runFixtureArm64 must not leak RcFreeEnabled=false package-wide.
 		prev := ast.RcFreeEnabled
@@ -157,7 +157,7 @@ func TestArm64FixturesFreeMatchesNoFree(t *testing.T) {
 }
 
 func TestWASMFixturesFreeMatchesNoFree(t *testing.T) {
-	forEachRunnableFixture(t, "wasm32-wasi", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		// t.Cleanup restore: see the x86_64 variant — a t.Fatal inside
 		// runFixtureWasm must not leak a flipped flag package-wide.
 		prev := ast.RcFreeEnabled
@@ -192,7 +192,7 @@ func TestX86_64ReuseMatchesNoReuse(t *testing.T) {
 }
 
 func TestArm64ReuseMatchesNoReuse(t *testing.T) {
-	forEachRunnableFixture(t, "arm64-linux", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		prev := ast.RcReuseEnabled
 		t.Cleanup(func() { ast.RcReuseEnabled = prev })
@@ -206,7 +206,7 @@ func TestArm64ReuseMatchesNoReuse(t *testing.T) {
 }
 
 func TestWASMReuseMatchesNoReuse(t *testing.T) {
-	forEachRunnableFixture(t, "wasm32-wasi", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prevFree := ast.RcFreeEnabled
 		t.Cleanup(func() { ast.RcFreeEnabled = prevFree })
 		ast.RcFreeEnabled = true

@@ -30,7 +30,7 @@ func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
 }
 
 func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
-	forEachRunnableFixture(t, "arm64-linux", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.OwnedByDefault
 		ast.OwnedByDefault = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
@@ -44,7 +44,7 @@ func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
 }
 
 func TestWASMOwnedByDefaultMatchesBorrow(t *testing.T) {
-	forEachRunnableFixture(t, "wasm32-wasi", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.RcFreeEnabled
 		ast.RcFreeEnabled = true
 		po := ast.OwnedByDefault

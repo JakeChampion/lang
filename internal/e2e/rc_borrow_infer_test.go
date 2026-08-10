@@ -30,7 +30,7 @@ func TestX86_64BorrowInferMatchesOwned(t *testing.T) {
 }
 
 func TestArm64BorrowInferMatchesOwned(t *testing.T) {
-	forEachRunnableFixture(t, "arm64-linux", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.BorrowInferEnabled
 		ast.BorrowInferEnabled = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
@@ -58,7 +58,7 @@ var wasmBorrowInferKnownDivergent = map[string]bool{
 }
 
 func TestWASMBorrowInferMatchesOwned(t *testing.T) {
-	forEachRunnableFixture(t, "wasm32-wasi", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		if wasmBorrowInferKnownDivergent[f.name] {
 			t.Skip("known owned-model RC divergence on wasm — #2828")
 		}

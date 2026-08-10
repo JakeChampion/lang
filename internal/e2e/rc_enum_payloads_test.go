@@ -29,7 +29,7 @@ func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 }
 
 func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
-	forEachRunnableFixture(t, "arm64-linux", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.EnumRcPayloads
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
@@ -43,7 +43,7 @@ func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 }
 
 func TestWASMEnumRcPayloadsMatchesMove(t *testing.T) {
-	forEachRunnableFixture(t, "wasm32-wasi", func(t *testing.T, f *fixtureSpec) {
+	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.RcFreeEnabled
 		ast.RcFreeEnabled = true
 		pe := ast.EnumRcPayloads
