@@ -94,6 +94,16 @@ func TestSelfHostInterpCallableValues(t *testing.T) {
 		// A plain tuple read with no closure in sight — the tuple arm must not
 		// disturb ordinary element access.
 		{"plain-tuple-read", `function main(): i32 { var t: (i32, i32) = (3, 4); return t.0 + t.1; }`},
+		// CONSTS, which is where naming-a-function-as-a-value collides. The
+		// parser desugars `const N = expr` into a ZERO-ARG FUNCTION, and a bare
+		// `N` is evaluated by calling it — a path reached only because the env
+		// lookup MISSED. Resolving function names to values one level lower, in
+		// the lookup itself, made that lookup succeed with a VFunc and every
+		// const reference silently became a function value. These are the
+		// shapes that caught it.
+		{"const-ref", `const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }`},
+		{"const-two", `const A: i32 = 7; const B: i32 = 5; function main(): i32 { return A + B; }`},
+		{"const-in-callee", `const K: i32 = 3; function add(x: i32): i32 { return x + K; } function main(): i32 { return add(4); }`},
 
 		// NOT covered here: calling a NON-fn field (`s.v(1)` for `v: i32`). The
 		// fallback is gated on the field holding a VFunc, so that shape still
