@@ -97,7 +97,7 @@ func TestX86_64ArrPushCliffBytes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			_, count := compileAndRunX86_64FreeOn(t, c.countSrc())
 			_, bytes := compileAndRunX86_64FreeOn(t, c.bytesSrc())
-			c.check(t, "x86-64", count, bytes)
+			c.check(t, "x86-64-linux", count, bytes)
 		})
 	}
 }
@@ -107,7 +107,7 @@ func TestArm64ArrPushCliffBytes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			_, count := compileAndRunArm64(t, c.countSrc())
 			_, bytes := compileAndRunArm64(t, c.bytesSrc())
-			c.check(t, "arm64", count, bytes)
+			c.check(t, "arm64-linux", count, bytes)
 		})
 	}
 }
@@ -118,7 +118,7 @@ func TestWASMArrPushCliffBytes(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range cliffBytesCases {
 		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm", runWasm(t, c.countSrc()), runWasm(t, c.bytesSrc()))
+			c.check(t, "wasm32-wasi", runWasm(t, c.countSrc()), runWasm(t, c.bytesSrc()))
 		})
 	}
 }

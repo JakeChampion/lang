@@ -110,6 +110,17 @@ import (
 // That is a harness artifact, not a compiler divergence: check a suspicious
 // compile failure against `bin/fern -check` on the unmodified fixture before
 // writing it down.
+// NOTE the two fields below name DIFFERENT vocabularies, and #6529's rename
+// had to leave both alone:
+//
+//	backend  a fixture SELECTOR, matched against the `backends` file each
+//	         conformance case carries on disk (interp / x86_64 / arm64 / wasm).
+//	target   a flag for the SELF-HOSTED compiler, which keeps its own -target
+//	         names (x86-64-asm, arm64-asm, wasm-component) and never learned
+//	         cmd/fern's <isa>-<environment> spelling.
+//
+// Neither is a cmd/fern target. Renaming `backend` silently ran zero fixtures;
+// renaming `target` made the self-host driver exit 2.
 func TestFernFixturesSelfHostWasm(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {

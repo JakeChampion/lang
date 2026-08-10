@@ -38,7 +38,7 @@ func TestPollStubInterpWasm(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, "poll.wasm")
-		if o, err := exec.Command(bin, "-target", "wasm", "-o", out, srcPath).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", out, srcPath).CombinedOutput(); err != nil {
 			t.Fatalf("wasm build of a poll-using program failed: %v\n%s", err, o)
 		}
 	})

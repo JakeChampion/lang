@@ -497,7 +497,7 @@ would turn a pre-2008 CPU into a SIGILL at the first bit operation rather than
 a slow binary — raising the baseline is a project decision, not a codegen one.
 On arm64 the hardware popcount lives on the SIMD side (`cnt` per byte, `addv`
 to sum), and neither `cnt`, `addv`, nor `rbit` is implemented by the in-process
-assembler `cmd/fern -target arm64` uses by default; emitting them fails at
+assembler `cmd/fern -target arm64-linux` uses by default; emitting them fails at
 assemble time. Both still gain from being inline on the IR path rather than
 behind a Fern-level call, which is where the 3.9x comes from.
 

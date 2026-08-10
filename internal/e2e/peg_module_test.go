@@ -40,7 +40,7 @@ function main(): i32 {
 			t.Errorf("interp exit = %d, want %d", code, want)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		if _, code := compileAndRunArm64(t, src); code != want {
 			t.Errorf("arm64 exit = %d, want %d", code, want)
 		}
@@ -50,7 +50,7 @@ function main(): i32 {
 			t.Errorf("x86_64 exit = %d, want %d", code, want)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		if code := compileAndRunWasmbinMain(t, src); code != want {
 			t.Errorf("wasm exit = %d, want %d", code, want)
 		}
@@ -102,7 +102,7 @@ function main(): i32 {
 			t.Errorf("interp exit = %d, want %d", code, want)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		if _, code := compileAndRunArm64(t, src); code != want {
 			t.Errorf("arm64 exit = %d, want %d", code, want)
 		}
@@ -112,7 +112,7 @@ function main(): i32 {
 			t.Errorf("x86_64 exit = %d, want %d", code, want)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		if code := compileAndRunWasmbinMain(t, src); code != want {
 			t.Errorf("wasm exit = %d, want %d", code, want)
 		}
@@ -131,7 +131,7 @@ func TestX86_64PegTapRunsNatively(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "peg_tap")
-	if o, err := exec.Command(fern, "-target", "x86-64", "-o", out,
+	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
 		"../../examples/tests/peg_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native compile of peg_test.fern failed: %v\n%s", err, o)
 	}

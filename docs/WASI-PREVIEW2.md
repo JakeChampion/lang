@@ -1,13 +1,13 @@
 # WASI Preview 2 migration plan
 
-> **Status (complete).** The migration is done: `fern -target wasm` and
-> `-target wasi-http` compose Component Model components **natively** in
+> **Status (complete).** The migration is done: `fern -target wasm32-wasi` and
+> `-target wasm32-wasi32-wasi-http` compose Component Model components **natively** in
 > Go (`internal/wasm/component`), with no `wasm-tools` shell-out and no
 > preview-1 adapter. The `-wasi-adapter` flag and the
 > `wasm-tools component new --adapt` step have been removed from the
 > toolchain. Any mix of the migrated preview-2 imports composes through
 > one unified path (`classifyComposeRequest` → `component.Compose`).
-> The preview-1 import shape survives only as the bare `-target wasm -emit core-module`
+> The preview-1 import shape survives only as the bare `-target wasm32-wasi -emit core-module`
 > raw-core escape hatch (runnable directly under `wasmtime run`). The e2e
 > test infrastructure (`buildComponent`) now composes natively in-process
 > too (`component.Compose`), so the suite's only external dependency is
@@ -168,7 +168,7 @@ wasmtime allows `create-tcp-socket` and `start-bind`.
 
 ### Step 5 — Add `wasi:http` handler target (shipped)
 
-A new compile mode: `fern -target wasi-http prog.fern` produces
+A new compile mode: `fern -target wasm32-wasi32-wasi-http prog.fern` produces
 a component implementing `wasi:http/incoming-handler.handle`.
 The Fern program declares:
 
@@ -249,7 +249,7 @@ Limitations / follow-ups:
 
 ### Step 6 — Drop preview-1 emission (shipped)
 
-`-target wasm` now always emits a Component Model component;
+`-target wasm32-wasi` now always emits a Component Model component;
 the `-wasi-preview2` flag is gone (the option implied it was
 optional, but there's no preview-1 path to fall back on
 anymore) and `-wasi-adapter PATH` is required so `wasm-tools

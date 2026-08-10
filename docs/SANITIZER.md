@@ -6,7 +6,7 @@ using one meant already knowing which bug you had. `-sanitize` is the single
 opt-in surface over all of them — the thing you reach for *before* you know.
 
 ```sh
-fern -target x86-64 -sanitize -g -o prog prog.fern && ./prog
+fern -target x86-64-linux -sanitize -g -o prog prog.fern && ./prog
 # or, for a driver you don't invoke directly:
 FERN_SANITIZE=1 go test ./internal/e2e/ -run TestWhatever
 ```
@@ -88,7 +88,7 @@ existing `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), so the flag goes to the
 compiler process, not to the program it produces:
 
 ```sh
-FERN_SANITIZE=1 bin/fern-selfhost -target x86-64 /ABS/prog.fern $PWD/internal/stdlib -o prog.s
+FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux /ABS/prog.fern $PWD/internal/stdlib -o prog.s
 ```
 
 Its two gaps versus native are honest subsets, not silent differences: no

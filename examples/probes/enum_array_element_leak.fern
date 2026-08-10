@@ -8,7 +8,7 @@
 // it. A runtime that reclaims deeply frees every element with the buffer, so
 // allocs should equal frees. Measured on the native x86-64 backend:
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/enum_array_element_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/enum_array_element_leak.fern
 //   /tmp/p    # stderr: leakcheck: allocs=19024 frees=13024 live_bytes=192000
 //
 // 68.5% freed — ~3000 blocks leaked per 5000 elements, per round. Watch the

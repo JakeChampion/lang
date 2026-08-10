@@ -25,7 +25,7 @@ That blob-per-shape approach has reached its limit:
 - **The blobs are opaque.** ~80 KB of `\xNN` with no structure a reader can
   follow or a tool can check.
 - **Capture depends on the native compiler.** Each blob is extracted from
-  `fern -target wasm` output for a representative program; a shape the
+  `fern -target wasm32-wasi` output for a representative program; a shape the
   native backend does not emit (e.g. an exotic combination) cannot be
   captured at all.
 
@@ -285,7 +285,7 @@ Per-shape drivers (`component_suffix_stdout` / `_eprint` / `_exit` /
 `_fs_args_read` / `_fs_rw_args`) are a few lines each — just the import
 list + index state. Every shape reproduces its old blob byte-for-byte, and
 each `component_full_io_*` wrapper's whole-component byte-identity to
-`fern -target wasm` is gated by its existing `TestSelfHostWasmComponentFullIO*`
+`fern -target wasm32-wasi` is gated by its existing `TestSelfHostWasmComponentFullIO*`
 e2e (self-host compile → byte-compare → wasmtime run).
 
 **Remaining frontier:** the `gDrop` (resource-handle drop) path in

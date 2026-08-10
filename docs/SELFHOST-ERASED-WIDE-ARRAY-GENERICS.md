@@ -21,9 +21,9 @@ function main(): i32 {
 | path | `reverse` | `rotate_left` | `drop` |
 |---|---|---|---|
 | native `-interp` (oracle) | 45 | 45 | 45 |
-| native compiled `-target x86-64` | 45 | 45 | 45 |
-| **self-host `-target wasm`** | **15** | **0** | **0** |
-| self-host `-target x86-64` | 45 | — | — |
+| native compiled `-target x86-64-linux` | 45 | 45 | 45 |
+| **self-host `-target wasm32-wasi`** | **15** | **0** | **0** |
+| self-host `-target x86-64-linux` | 45 | — | — |
 
 So: **self-host wasm only.** Every other path is correct, including the
 self-host's own x86-64 backend.

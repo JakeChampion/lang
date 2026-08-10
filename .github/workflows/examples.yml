@@ -45,7 +45,7 @@ jobs:
           mkdir -p build
           for f in examples/*.fern; do
             name=$(basename "$f" .fern)
-            ./bin/fern -target arm64 "$f" > "build/$name.s"
+            ./bin/fern -target arm64-linux "$f" > "build/$name.s"
             if [ "${{ matrix.host }}" = "aarch64" ]; then
               gcc -static -nostdlib "build/$name.s" -o "build/$name"
               echo "::group::run $name"

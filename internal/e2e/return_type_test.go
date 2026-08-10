@@ -42,7 +42,7 @@ func TestDeclaredReturnTypes(t *testing.T) {
 					t.Errorf("x86_64 exit = %d, want %d", code, c.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if code := compileAndRunWasmbinMain(t, c.src); code != c.want {
 					t.Errorf("wasm exit = %d, want %d", code, c.want)
 				}

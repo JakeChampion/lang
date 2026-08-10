@@ -40,7 +40,7 @@ func TestCLISharedX86Dlopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	soPath := filepath.Join(dir, "libfern.so")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-shared", "-export", "answer", "-o", soPath, src).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-shared", "-export", "answer", "-o", soPath, src).CombinedOutput(); err != nil {
 		t.Fatalf("-shared build failed: %v\n%s", err, o)
 	}
 	loader := `#include <dlfcn.h>

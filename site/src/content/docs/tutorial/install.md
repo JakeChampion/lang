@@ -90,7 +90,7 @@ fern -interp hello.fern
 Or compile to wasm and run under wasmtime:
 
 ```bash
-fern -target wasm -o hello.wasm hello.fern
+fern -target wasm32-wasi -o hello.wasm hello.fern
 wasmtime hello.wasm
 ```
 

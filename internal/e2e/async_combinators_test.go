@@ -53,7 +53,7 @@ function main(): i32 {
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, "async.wasm")
-		if o, err := exec.Command(bin, "-target", "wasm", "-o", out, srcPath).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", out, srcPath).CombinedOutput(); err != nil {
 			t.Fatalf("wasm build of a std/async program failed: %v\n%s", err, o)
 		}
 	})
@@ -154,8 +154,8 @@ function main(): i32 {
 		qemu   func(*testing.T) string
 		run    func(qemu, bin string, args ...string) *exec.Cmd
 	}{
-		{"x86-64", x86QemuOrEmpty, runX86Bin},
-		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+		{"x86-64-linux", x86QemuOrEmpty, runX86Bin},
+		{"arm64-linux", arm64QemuOrEmpty, runArm64Bin},
 	}
 	for _, p := range progs {
 		p := p

@@ -4,11 +4,11 @@
 // this is a single binary that parses argv flags and dispatches:
 //
 //     fern -o OUT <entry.fern> [stdlib]    a runnable x86-64 Linux ELF
-//     fern -target arm64 -o OUT <e.fern>   a runnable arm64 Linux ELF
+//     fern -target arm64-linux -o OUT <e.fern>   a runnable arm64 Linux ELF
 //     fern -target arm64-darwin -o OUT …   a runnable arm64 Mach-O
-//     fern -target x86-64-asm <entry.fern> emit x86-64 GAS text
-//     fern -target arm64-asm <entry.fern>  emit arm64 GAS text
-//     fern -target wasm <entry.fern>       emit a WASI WAT module
+//     fern -target x86-64-linux-asm <entry.fern> emit x86-64 GAS text
+//     fern -target arm64-linux-asm <entry.fern>  emit arm64 GAS text
+//     fern -target wasm32-wasi <entry.fern>       emit a WASI WAT module
 //     fern -ssa <entry.fern>               opt into the SSA pipeline
 //     fern -check <entry.fern>             type-check; exit 0 ok / 1 bad
 //     fern -interp <entry.fern>            evaluate; exit = program result
@@ -58,7 +58,7 @@ import "./elf";
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
 // string whose bytes are written verbatim (incl. 0x00 / high bytes) by
-// write_file. Used by the -target wasm-bin path.
+// write_file. Used by the -target wasm32-wasi32-wasi -emit core-module path.
 function to_u8(b: i32[]): u8[] {
     var o: u8[] = [];
     var i: i32 = 0;
@@ -173,14 +173,14 @@ function x86_elf_binary(asm: string): string {
     // Anything unencodable means bytes were dropped, so every offset past
     // the first is wrong — refuse rather than write it (SH-005, #6045).
     if (a.unknown.len() > 0) {
-        eprint("fern: -target x86-64: in-process assembler could not encode: ");
+        eprint("fern: -target x86-64-linux: in-process assembler could not encode: ");
         eprint(a.unknown[0]);
         eprint("\n");
         return "";
     }
     var eoff: i32 = x86_native.x86_label_off(a, "_start");
     if (eoff < 0) {
-        eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
+        eprint("fern: -target x86-64-linux: no _start symbol in the emitted program\n");
         return "";
     }
     var bin: i32[] = elf.elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, eoff);
@@ -268,7 +268,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-android|arm64-darwin|arm64-darwin-asm|wasm|wasm-bin|wasm-component] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64-linux|x86-64-asm|arm64|arm64-asm|arm64-android|arm64-darwin|arm64-darwin-asm|wasm|wasm-bin|wasm-component] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -771,12 +771,12 @@ function run(): i32 {
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-asm") {
         // The arm64 emitter's GAS text, stopping short of the in-process
-        // assembler + linker that `-target arm64` runs on top of it — the
-        // arm64 sibling of `-target x86-64-asm`, and the shape a harness
+        // assembler + linker that `-target arm64-linux` runs on top of it — the
+        // arm64 sibling of `-target x86-64-linux-asm`, and the shape a harness
         // wants when it assembles with its own toolchain.
         //
         // It is also the only way to observe the emitter in isolation, which
-        // is what corrected #6011: measured through `-target arm64` the
+        // is what corrected #6011: measured through `-target arm64-linux` the
         // arm64 path looked 5x hungrier than x86-64, but that compared
         // "emit + assemble + link" against x86-64's "emit". Emitter to
         // emitter they are at parity (1.56 GB vs 1.50 GB on an empty `main`
@@ -786,7 +786,7 @@ function run(): i32 {
     } else if (target == "arm64-darwin-asm") {
         // The darwinized GAS text, stopping short of the in-process
         // assembler + linker `-target arm64-darwin` runs on top of it. This
-        // is the darwin sibling of -target arm64-asm, and it exists for the
+        // is the darwin sibling of -target arm64-linux-asm, and it exists for the
         // same reason: it is the only way to hand the emitter's output to
         // clang, which decides whether a misbehaving binary is the
         // emitter's fault or arm64_gas_program's.
@@ -853,7 +853,7 @@ function run(): i32 {
         // component.
         var shape: i32 = wasm_ir.component_shape(full);
         if (shape < 0) {
-            eprint("fern: -target wasm-component: program uses WASI imports not yet supported (no-I/O, stdout, and filesystem are wrapped so far)\n");
+            eprint("fern: -target wasm32-wasi-component: program uses WASI imports not yet supported (no-I/O, stdout, and filesystem are wrapped so far)\n");
             return 2;
         }
         var comp: i32[] = [];
@@ -895,7 +895,7 @@ function run(): i32 {
         out_asm = string_from_bytes_unchecked(to_u8(comp));
     } else if (target == "x86-64-asm") {
         // The x86-64 emitter's GAS text, stopping short of the in-process
-        // assembler + linker `-target x86-64` runs on top of it — the mirror
+        // assembler + linker `-target x86-64-linux` runs on top of it — the mirror
         // of arm64-asm, and what a harness assembling with its own toolchain
         // wants.
         out_asm = asm_ir.emit_module_or_error(full);
@@ -903,7 +903,7 @@ function run(): i32 {
         // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
         // AST emitter. As of slice 5 asm.emit_module has no callers at all.
         // The text is then assembled + linked in-process (x86_native + elf.fern),
-        // so `-target x86-64` produces a runnable binary like `-target arm64`
+        // so `-target x86-64-linux` produces a runnable binary like `-target arm64-linux`
         // does and needs nothing on $PATH.
         out_asm = x86_elf_binary(asm_ir.emit_module_or_error(full));
         if (out_asm.len() == 0) { return 2; }

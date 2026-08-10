@@ -197,7 +197,7 @@ func runArm64SSAOrSkip(t *testing.T, bin, qemu, src string) ssaRun {
 		t.Fatalf("write src: %v", err)
 	}
 	outPath := filepath.Join(dir, "main.bin")
-	emit := exec.Command(bin, "-target", "arm64", "-backend", "ssa", "-o", outPath, srcPath)
+	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", outPath, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	if err := emit.Run(); err != nil {

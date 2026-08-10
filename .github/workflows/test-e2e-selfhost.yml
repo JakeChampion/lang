@@ -323,13 +323,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
-          wasmtime: "true" # the CLI tests' `-target wasm` sub-legs run wasmtime
+          wasmtime: "true" # the CLI tests' `-target wasm32-wasi` sub-legs run wasmtime
           gotestsum: "true"
       # TestSelfHostArm64LinuxBuilds and TestSelfHostArm64DarwinBuilds are in
       # this job's -test.run list, and the Linux one EXECUTES its arm64 output —
       # under qemu-aarch64, which was never installed here, so it t.Skipped every
       # run. That skip is why #6047 (every printed string right-length /
-      # wrong-bytes on `-target arm64`) survived having a `print` test case.
+      # wrong-bytes on `-target arm64-linux`) survived having a `print` test case.
       # Installing qemu makes the test actually run; the encoding differential
       # (TestSelfHostArm64AsmEncodingMatchesNative) is the deterministic gate
       # that needs no emulator.

@@ -19,7 +19,7 @@ The native backend needs no external toolchain on Linux, so the
 quickest loop is to compile to a native binary and run it:
 
 ```
-$ fern -target x86-64 -o cat examples/cli/cat.fern   # or -target arm64
+$ fern -target x86-64-linux-linux -o cat examples/cli/cat.fern   # or -target arm64-linux-linux
 $ ./cat -n README.md
 $ printf 'a\nb\nc\n' | ./cat -n
 ```
@@ -32,11 +32,11 @@ $ printf 'one\ntwo\n' | fern -interp examples/cli/tac.fern
 $ fern -interp examples/cli/seq.fern -- 1 2 10
 ```
 
-And they build to wasm like any other program — `-target wasm`
+And they build to wasm like any other program — `-target wasm32-wasi32-wasi`
 emits a self-contained preview-2 component (no external adapter):
 
 ```
-$ fern -target wasm -o wc.wasm examples/cli/wc.fern
+$ fern -target wasm32-wasi32-wasi -o wc.wasm examples/cli/wc.fern
 $ wasmtime run --dir=. wc.wasm file.txt
 ```
 

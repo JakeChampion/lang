@@ -100,14 +100,14 @@ function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 // its frames resolve to the calling functions via the -g symbol table.
 func TestX86_64AbortBacktrace(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
-	runBacktraceCase(t, "x86-64", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
+	runBacktraceCase(t, "x86-64-linux", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
 }
 
 // TestArm64AbortBacktrace is the arm64 parity check: the x29 frame-chain walk
 // produces the same resolved backtrace as x86-64.
 func TestArm64AbortBacktrace(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	runBacktraceCase(t, "arm64", func(bin string) *exec.Cmd {
+	runBacktraceCase(t, "arm64-linux", func(bin string) *exec.Cmd {
 		if qemu == "" {
 			return exec.Command(bin)
 		}

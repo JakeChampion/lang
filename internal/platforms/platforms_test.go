@@ -25,19 +25,37 @@ func TestEveryTargetComposes(t *testing.T) {
 	}
 }
 
-// No two environments may carry the same capability set. Two that do
-// are one environment wearing two names — exactly the state the four
-// native targets were in before they were collapsed, where adding a
-// capability meant editing the identical list four times and missing
-// one was silent.
-func TestEnvironmentsAreDistinct(t *testing.T) {
+// No two capability PROFILES may carry the same set. Two that do are one
+// profile wearing two names — the state the four native targets were in
+// before they were collapsed, where adding a capability meant editing
+// the identical list four times and missing one was silent.
+//
+// Environments are deliberately NOT covered: linux, darwin and android
+// share the hosted-native profile on purpose, because they differ in
+// object format and syscall vector rather than in what the host grants.
+func TestCapabilityProfilesAreDistinct(t *testing.T) {
 	seen := map[string]string{}
-	for name, env := range environments {
-		key := strings.Join(env.capabilities, ",")
+	for name, caps := range capabilityProfiles {
+		key := strings.Join(caps, ",")
 		if prev, dup := seen[key]; dup {
-			t.Errorf("environments %q and %q have identical capability sets — collapse them", prev, name)
+			t.Errorf("profiles %q and %q have identical capability sets — collapse them", prev, name)
 		}
 		seen[key] = name
+	}
+}
+
+// Every target's two halves are spelled in its name, so the name cannot
+// drift from what the descriptor says, and every environment names a
+// profile that exists.
+func TestTargetNameMatchesItsHalves(t *testing.T) {
+	for _, name := range Targets() {
+		d := ForTarget(name)
+		if want := d.ISA + "-" + d.Environment; want != name {
+			t.Errorf("target %q composes to %q — name and halves disagree", name, want)
+		}
+		if _, ok := capabilityProfiles[environments[d.Environment].profile]; !ok {
+			t.Errorf("environment %q names unknown profile", d.Environment)
+		}
 	}
 }
 
@@ -48,7 +66,7 @@ func TestEnvironmentsAreDistinct(t *testing.T) {
 // landing a descriptor here surfaces immediately rather than
 // at the user-visible "platform has no capabilities" surface.
 func TestForTargetCoversEveryCanonicalTarget(t *testing.T) {
-	canonical := []string{"arm64", "arm64-android", "arm64-darwin", "x86-64", "wasm", "wasi-http"}
+	canonical := []string{"arm64-linux", "arm64-android", "arm64-darwin", "x86-64-linux", "wasm32-wasi", "wasm32-wasi-http"}
 	for _, name := range canonical {
 		t.Run(name, func(t *testing.T) {
 			d := ForTarget(name)
@@ -110,17 +128,17 @@ func TestHasCapabilityHonoursDescriptor(t *testing.T) {
 		want   bool
 	}{
 		// Universal capabilities.
-		{"arm64", "now", true},
-		{"x86-64", "now", true},
-		{"wasi-http", "now", true},
-		{"wasm", "now", true},
+		{"arm64-linux", "now", true},
+		{"x86-64-linux", "now", true},
+		{"wasm32-wasi-http", "now", true},
+		{"wasm32-wasi", "now", true},
 		// `fetch` is wasi-http-only today.
-		{"wasi-http", "fetch", true},
-		{"arm64", "fetch", false},
-		{"wasm", "fetch", false},
+		{"wasm32-wasi-http", "fetch", true},
+		{"arm64-linux", "fetch", false},
+		{"wasm32-wasi", "fetch", false},
 		// `kv` doesn't exist anywhere yet.
-		{"wasi-http", "kv", false},
-		{"arm64", "kv", false},
+		{"wasm32-wasi-http", "kv", false},
+		{"arm64-linux", "kv", false},
 		// Unknown target returns false (not panic).
 		{"mars", "log", false},
 	}
@@ -136,12 +154,12 @@ func TestHasCapabilityHonoursDescriptor(t *testing.T) {
 // surfaces this; pin the shape so accidental reformatting
 // surfaces here rather than as a UX change.
 func TestDescriptorStringIsHumanReadable(t *testing.T) {
-	d := ForTarget("wasi-http")
+	d := ForTarget("wasm32-wasi-http")
 	if d == nil {
-		t.Fatal("ForTarget(\"wasi-http\") returned nil")
+		t.Fatal("ForTarget(\"wasm32-wasi-http\") returned nil")
 	}
 	got := d.String()
-	want := "wasi-http: WebAssembly Component Model — proxy world (wasi:http/incoming-handler)."
+	want := "wasm32-wasi-http: WebAssembly Component Model — proxy world (wasi:http/incoming-handler)."
 	if got != want {
 		t.Errorf("String() = %q\n want %q", got, want)
 	}
@@ -171,7 +189,7 @@ func TestEveryTargetDeclaresAnEntryShape(t *testing.T) {
 // second value the descriptor is shaped to hold rather than a rewrite;
 // docs/BARE-METAL-PLAN.md.
 func TestFreestandingIsEnteredByNobody(t *testing.T) {
-	if got := ForTarget("freestanding").Entry; got != EntryExports {
+	if got := ForTarget("arm64-freestanding").Entry; got != EntryExports {
 		t.Errorf("freestanding entry = %q, want %q: nothing enters it, its embedder calls in", got, EntryExports)
 	}
 }

@@ -14,7 +14,7 @@ fern -target arm64-android -shared \
      -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString,Java_dev_fern_demo_Native_objectHashCode,Java_dev_fern_demo_Native_charCodeAt \
      -o libfern.so examples/android/fern_jni.fern
 
-# x86-64 emulator: -target x86-64 (same flags)
+# x86-64 emulator: -target x86-64-linux-linux (same flags)
 ```
 
 This emits an `ET_DYN`, W^X, position-independent `.so` with the exported

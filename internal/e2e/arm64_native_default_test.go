@@ -54,7 +54,7 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	t.Run("default_build_is_native", func(t *testing.T) {
 		out := filepath.Join(dir, "prog.bin")
 		// No -cc: must build with no external assembler/linker on PATH.
-		if o, err := exec.Command(bin, "-target", "arm64", "-o", out, src).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "arm64-linux", "-o", out, src).CombinedOutput(); err != nil {
 			t.Fatalf("default arm64 build failed: %v\n%s", err, o)
 		}
 		info, err := os.Stat(out)
@@ -80,7 +80,7 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 		// arm64QemuOrEmpty above already skipped a host that can do
 		// neither. The check this replaced tested `qemu == ""`, i.e. it
 		// skipped exactly the native host that needs no emulator at all.
-		cmd := exec.Command(bin, "-target", "arm64", "--run", src)
+		cmd := exec.Command(bin, "-target", "arm64-linux", "--run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {
 			t.Errorf("fern --run exit = %d, want 42", code)
@@ -92,7 +92,7 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 		// always fails must therefore make the build fail — proving the
 		// default path is NOT using -cc.
 		out := filepath.Join(dir, "prog_cc.bin")
-		if err := exec.Command(bin, "-target", "arm64", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
+		if err := exec.Command(bin, "-target", "arm64-linux", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
 			t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
 		}
 	})

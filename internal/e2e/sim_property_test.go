@@ -193,7 +193,7 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 			t.Errorf("x86_64 = %q, interp = %q\nsrc:\n%s", trimOut(got), want, src)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		comp := buildNumComponent(t, src)
 		got, stderr, ec := runComponent(t, comp, runOpts{})
 		if ec != 0 {
