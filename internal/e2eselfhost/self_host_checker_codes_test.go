@@ -785,6 +785,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-payload-builtin-ok", "function f(): Option[i32] { return Some(3); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-struct-ok", "struct S { x: i32 }\nenum W { Wrap(S), Empty }\nfunction f(): W { return Wrap(S { x: 1 }); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"variant-payload-array-ok", "enum W { Wrap(i32[]), Empty }\nfunction f(): W { return Wrap([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
+		// Both codes with the set written out: a void argument to a declared
+		// enum's typed payload is E072 (not a value) AND E036 (wrong type).
+		// The differential cannot tell "both sides emit both" from "neither
+		// emits anything"; this row can.
+		{"variant-payload-void", "function nothing(): void { }\nenum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(nothing()); }\nfunction main(): i32 { return 0; }\n", []string{"E036", "E072"}},
 		{"nullary-variant-bare-ok", "enum E { A, B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"value-param-ok", "function f(a: i32): i32 { return a; }\nfunction main(): i32 { return f(1); }\n", nil},
 		{"value-function-as-value-ok", "function g(): i32 { return 1; }\nfunction run(fn: () => i32): i32 { return fn(); }\nfunction main(): i32 { return run(g); }\n", nil},
@@ -1326,11 +1331,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"e072-void-in-builtin-variant", "function nothing(): void { }\nfunction f(): Option[()] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n"},
 		{"e072-unit-payload-ok", "function f(): Option[()] { return Some(()); }\nfunction main(): i32 { return 0; }\n"},
 		{"e072-normal-payload-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(3); }\nfunction main(): i32 { return 0; }\n"},
-		// NOT here, deliberately: `Wrap(nothing())` for a USER enum. Native
-		// reports E072 *and* E036 (payload 0 type void, expected i32); the
-		// self-host emits only E072 because it never checks variant payload
-		// types at all — `Wrap("x")` is accepted clean. That is #6650, a
-		// separate rule from this one; add the row when it lands.
+		// `Wrap(nothing())` for a USER enum draws BOTH rules: E072 for the void
+		// argument and E036 for the payload type it is not (#6650). The two are
+		// independent — E072 fires on any variant, E036 only on a declared
+		// enum's typed payload — so this row is what proves they compose.
+		{"e072-and-e036-void-user-variant", "function nothing(): void { }\nenum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(nothing()); }\nfunction main(): i32 { return 0; }\n"},
 	}
 
 	for _, tc := range progs {
