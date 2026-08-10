@@ -39,9 +39,9 @@ func TestDropGuidedDifferential(t *testing.T) {
 			var onOut string
 			var onCode int
 			prev := ast.RcReuseDropGuided
+			defer func() { ast.RcReuseDropGuided = prev }()
 			ast.RcReuseDropGuided = true
 			onOut, onCode = compileAndRunX86_64(t, src)
-			ast.RcReuseDropGuided = prev
 
 			if offCode != expected {
 				mismatches++

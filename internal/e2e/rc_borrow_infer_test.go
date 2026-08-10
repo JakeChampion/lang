@@ -18,11 +18,11 @@ import (
 func TestX86_64BorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.BorrowInferEnabled
+		defer func() { ast.BorrowInferEnabled = prev }()
 		ast.BorrowInferEnabled = false
 		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		ast.BorrowInferEnabled = true
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
-		ast.BorrowInferEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("borrow inference diverged from owned model:\n owned =(exit %d) %q\n borrow=(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -32,11 +32,11 @@ func TestX86_64BorrowInferMatchesOwned(t *testing.T) {
 func TestArm64BorrowInferMatchesOwned(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.BorrowInferEnabled
+		defer func() { ast.BorrowInferEnabled = prev }()
 		ast.BorrowInferEnabled = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		ast.BorrowInferEnabled = true
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
-		ast.BorrowInferEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("borrow inference diverged from owned model:\n owned =(exit %d) %q\n borrow=(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -63,14 +63,14 @@ func TestWASMBorrowInferMatchesOwned(t *testing.T) {
 			t.Skip("known owned-model RC divergence on wasm — #2828")
 		}
 		prev := ast.RcFreeEnabled
+		defer func() { ast.RcFreeEnabled = prev }()
 		ast.RcFreeEnabled = true
 		pb := ast.BorrowInferEnabled
+		defer func() { ast.BorrowInferEnabled = pb }()
 		ast.BorrowInferEnabled = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.BorrowInferEnabled = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
-		ast.BorrowInferEnabled = pb
-		ast.RcFreeEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("borrow inference diverged from owned model:\n owned =(exit %d) %q\n borrow=(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}

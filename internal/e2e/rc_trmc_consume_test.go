@@ -67,11 +67,11 @@ func assertConsumeHalves(t *testing.T, backend string, on, off int) {
 func TestX86_64TrmcConsumePeakHalved(t *testing.T) {
 	src := trmcConsumePeakSrc("2000", "1024")
 	prev := ast.OwnedByDefault
+	defer func() { ast.OwnedByDefault = prev }()
 	ast.OwnedByDefault = true
 	on := mustRunX86_64FreeOn(t, src)
 	ast.OwnedByDefault = false
 	off := mustRunX86_64FreeOn(t, src)
-	ast.OwnedByDefault = prev
 	assertConsumeHalves(t, "x86_64", on, off)
 	if _, code := compileAndRunX86_64FreeOn(t, trmcConsumeSoundSrc); code != 0 {
 		t.Errorf("x86_64 consume soundness: got %d, want 0 (100=value, >0=over-release)", code)
@@ -81,11 +81,11 @@ func TestX86_64TrmcConsumePeakHalved(t *testing.T) {
 func TestArm64TrmcConsumePeakHalved(t *testing.T) {
 	src := trmcConsumePeakSrc("2000", "1024")
 	prev := ast.OwnedByDefault
+	defer func() { ast.OwnedByDefault = prev }()
 	ast.OwnedByDefault = true
 	on := mustRunArm64FreeOn(t, src)
 	ast.OwnedByDefault = false
 	off := mustRunArm64FreeOn(t, src)
-	ast.OwnedByDefault = prev
 	assertConsumeHalves(t, "arm64-linux", on, off)
 	if _, code := compileAndRunArm64FreeOn(t, trmcConsumeSoundSrc); code != 0 {
 		t.Errorf("arm64 consume soundness: got %d, want 0", code)
@@ -95,13 +95,14 @@ func TestArm64TrmcConsumePeakHalved(t *testing.T) {
 func TestWASMTrmcConsumePeakHalved(t *testing.T) {
 	src := trmcConsumePeakSrc("2000", "1024")
 	prc := ast.RcFreeEnabled
+	defer func() { ast.RcFreeEnabled = prc }()
 	ast.RcFreeEnabled = true
 	prev := ast.OwnedByDefault
+	defer func() { ast.OwnedByDefault = prev }()
 	ast.OwnedByDefault = true
 	on := runWasm(t, src)
 	ast.OwnedByDefault = false
 	off := runWasm(t, src)
-	ast.OwnedByDefault = prev
 	ast.RcFreeEnabled = prc
 	assertConsumeHalves(t, "wasm32-wasi", on, off)
 
@@ -109,5 +110,4 @@ func TestWASMTrmcConsumePeakHalved(t *testing.T) {
 	if got := runWasm(t, trmcConsumeSoundSrc); got != 0 {
 		t.Errorf("wasm consume soundness: got %d, want 0", got)
 	}
-	ast.RcFreeEnabled = prc
 }
