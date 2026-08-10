@@ -26307,11 +26307,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var asts: string[] = collect_fresh_arrstruct_names(body, structs, []);
     var asti: i32 = 0;
     while (asti < asts.len()) {
-        if (!body_unsafe_for(body, asts[asti], borrowable)
-            && util.index_of_str(reassigned, asts[asti]) < 0
+        // "A|" rows are append-BUILT markers, not candidates.
+        if (!(asts[asti].len() > 2 && asts[asti][0] == 65 && asts[asti][1] == 124)   // 65='A' 124='|'
+            && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs)
             && !arrarr_row_escapes(body, asts[asti])
             && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs)) {
-            out = out.append("ARRSTRUCT:" + asts[asti]);
+            // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
+            // blunt not-reassigned exclusion, validating each rebind
+            // individually (#6535) — the self-append is sanctioned, any other
+            // reassignment still sinks the credit outright.
+            if (util.index_of_str(asts, "A|" + asts[asti]) >= 0) {
+                out = out.append("ARRSTRUCTA:" + asts[asti]);
+            } else {
+                out = out.append("ARRSTRUCT:" + asts[asti]);
+            }
         }
         asti = asti + 1;
     }
@@ -32589,9 +32598,120 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): b
     return false;
 }
 
+// arrstruct_self_append_elem / arrstruct_name_is_appended / arrstruct_unsafe_for:
+// the append-built half of this class (#6535), transcribed from the shallow
+// STRUCTARR siblings #6127 introduced. The literal-built credit refused any
+// REASSIGNED name, and `vals = vals.append(Val { .. })` is a reassignment — so
+// an append-built array-of-structs earned no credit at all and leaked its whole
+// structure per round, where the literal-built form of the identical value was
+// flat. Measured 35200 bytes over 100 rounds on a 4-element `Val { kind: i32,
+// kids: i32[] }[]`, doubling with the round count, against 0 for the literal.
+//
+// The element rule is the SAME one arrstruct_lit_is_fresh applies per element —
+// a fresh struct literal — so the element box is sole-owned exactly as in the
+// literal-built form the deep walk already frees. A bare-ident element is
+// refused: the array's deep drop and the live local's own sweep would both
+// release the element's field buffers.
+function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_self_append: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (!is_self_append) { return false; }
+            if (c.args.len() != 1) { return false; }
+            return is_fresh_struct_init(c.args[0], structs);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs)) { return true; } },
+            parser.StmtIf(f) => {
+                if (arrstruct_name_is_appended(f.then_body, name, structs)) { return true; }
+                if (arrstruct_name_is_appended(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (arrstruct_name_is_appended(m.arms[mi].body, name, structs)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// body_unsafe_for with exactly one sanctioned reassignment — the self-append
+// rebind. Only the assign case differs; everything else delegates, which is
+// sound because this class's own element hazards (an element alias, an element
+// field-payload extraction) are checked separately by arrarr_row_escapes and
+// arrstruct_elem_payload_escapes, applied alongside this gate.
+function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_arrstruct_unsafe_for(stmts[i], name, borrowable, structs)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                if (arrstruct_self_append_elem(a.value, name, structs)) { return false; }
+                return true;   // any other reassignment of the candidate
+            }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (arrstruct_unsafe_for(m.arms[ai].body, name, borrowable, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs); },
+        _ => { return stmt_unsafe_for(st, name, borrowable); }
+    }
+    return false;
+}
+
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
-// literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body.
-// Escape gates applied by reclaimable_names_of.
+// literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
+// or — #6535 — from an EMPTY literal the body then grows by self-append. Escape gates
+// applied by reclaimable_names_of.
 function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -32599,6 +32719,18 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.Str
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, v.name); }
+                // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
+                // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
+                // `[]` (no elements to prove fresh), which left every append-built
+                // array-of-structs uncredited. "A|" marks it append-BUILT so the
+                // crediting loop can grant the separate ARRSTRUCTA: credit, the
+                // same marker trick the STRUCTARR side uses.
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
+                    && arrarr_lit_is_empty(v.init)
+                    && arrstruct_name_is_appended(stmts, v.name, structs)) {
+                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, "A|" + v.name);
+                }
             },
             parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a); a = collect_fresh_arrstruct_names(f.else_body, structs, a); },
             parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a); },
@@ -32745,6 +32877,32 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 },
                 _ => {}
             }
+            // `name.append(<fresh struct literal>)` — the sanctioned self-append
+            // rebind (#6535). Same whitelist shape and same reason as `.len()`
+            // above: the receiver is READ to copy the buffer, and the element
+            // stored is a freshly-built sole-owned box, so nothing here binds an
+            // element pointer or extracts a field payload. Without it the
+            // receiver fell to the bare-ident arm and every append-built
+            // array-of-structs refused the credit — the leak this closes.
+            //
+            // The shape is checked, not assumed: a non-append method, a
+            // non-literal element, or an append whose result goes SOMEWHERE ELSE
+            // all fall through to the generic tail below and still escape. The
+            // arg is walked, so `name.append(Val { xs: name[0].xs })` is caught.
+            match (c.callee) {
+                parser.ExprFieldAccess(afa) => {
+                    match (afa.obj) {
+                        parser.ExprIdent(aid3) => {
+                            if (aid3.name == name && afa.field == "append" && c.args.len() == 1
+                                && is_fresh_struct_init(c.args[0], structs)) {
+                                return arrstruct_elem_esc_expr(c.args[0], name, sty, structs);
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             if (arrstruct_elem_esc_expr(c.callee, name, sty, structs)) { return true; }
             var ci: i32 = 0;
             while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
@@ -32836,7 +32994,12 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
+    if (util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0) { return true; }
+    // APPEND-BUILT (#6535) carries a separate credit so the literal-built rule
+    // is not widened by accident — the two reach the same deep walk, and the
+    // rebind that distinguishes them is cow-guarded in
+    // emit_arrstruct_reclaim_store.
+    return util.index_of_str(s.reclaimable_names, "ARRSTRUCTA:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -32892,12 +33055,24 @@ function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
 
 // emit_arrstruct_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD
 // structure, store new. The null guard inside deep_free covers the first-iteration null.
+//
+// COW-GUARDED (old != new), like emit_structarr_reclaim_store. A self-append
+// (`vals = vals.append(v)`) hands back the SAME buffer whenever the rc==1 grow
+// happened in place, and the deep free would then destroy the elements the
+// stored value still points at — a use-after-free, not a leak. The guard is
+// what admits the append-built class at all; a genuine rebind to a different
+// array still frees, so the literal-built path is unchanged.
 function emit_arrstruct_reclaim_store(se: LowerState, slot: i32, sty: string): LowerState {
     var scratch: string = "$asr" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_load_local(tmp));             // new
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
     st = emit_arrstruct_deep_free(st, slot, sty);    // free old structure
+    st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
