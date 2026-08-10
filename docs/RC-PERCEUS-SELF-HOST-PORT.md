@@ -5885,7 +5885,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   STRUCT and TUPLE payloads at block scope.** #6503 / #6517 / #6526 / #6538 closed
   #6319's grid (fn/block scope x flat/nested match) for the scalar Option and the
   rc-array payload. Sweeping the same grid over the remaining two payload classes
-  at `7f00e52f`, 100 rounds x 4, every exit code matching `fern -interp`:
+  at `7f00e52f`, 100 rounds x 4, every exit code matching `fern -interp`, and
+  re-verified unchanged at `5052f826` after #6564 landed in the same area:
 
   | block-scoped local | flat match | nested in an `if` |
   |---|---|---|
