@@ -62,6 +62,20 @@ Several comments in the tree read the other way around. They are wrong, and
 *and* the native suite while segfaulting the driver. `internal/e2eselfhost` is
 what caught it.
 
+### An answer is not proof the IR path produced it
+
+A case that asserts only an exit code cannot show a shape **stayed on the IR
+path**: a per-function bail can reach the same answer by another route, so the
+case passes on the commit the fix has not landed on. No asm-label witness
+separates the two either — a module that bailed still emits `.Lir_*` labels for
+the functions that did lower.
+
+Use `runCaptureStrictIR` instead of `runCapture` when that is the point (#6602).
+It sets `FERN_STRICT_IR=1`, so a bail exits 3 naming the site and fails the test.
+Most `*_ir_test.go` suites still use plain `runCapture` and have not been
+audited against the flag; any that stop passing under it were pinning a bail
+rather than the IR path.
+
 ## Gate → what it actually proves
 
 | Gate | Proves | Blind to |
