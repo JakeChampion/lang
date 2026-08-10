@@ -50763,18 +50763,64 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.
 // body reassigns (#5394). Returns `fd` unchanged when none qualify (lambda-free
 // and read-only-capture functions stay byte-identical).
 function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.FuncDecl {
-    var boxed: string[] = [];
-    var btypes: string[] = [];
     var otargets: string[] = body_assign_targets(fd.body);
     var dvars: string[] = body_var_decl_names(fd.body);
+    var acc: BoxScan = box_scan_stmts(fd.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: [], types: [] });
+    var boxed: string[] = acc.names;
+    var btypes: string[] = acc.types;
+    if (boxed.len() == 0) { return fd; }
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed, btypes), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str };
+}
+
+// BoxScan: box_scan_stmts' paired accumulator — boxed capture NAMES and the
+// cell TYPE each is rewritten to.
+struct BoxScan { names: string[], types: string[] }
+
+// box_scan_stmts walks one statement LIST for the two lambda-binding shapes
+// box_mutated_scalar_captures recognises, and recurses into nested blocks
+// (#6539). The scan used to run over `fd.body` alone, so a `var g = <lambda>`
+// one block deeper — the overwhelmingly common spelling, inside a loop — was
+// never seen and its mutated capture kept the construction-time snapshot.
+// Measured: the identical binding returned the reference answer at top level
+// and the stale one inside a `while`.
+//
+// The escape test scans the REMAINDER OF THE SAME BLOCK, which is the scope
+// that can still use the binding as a value. `esc` only ever widens what is
+// boxed, and boxing an already-correct read-only capture is a representation
+// change rather than a behaviour one, so a block-local answer is the
+// conservative direction here.
+function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+    var boxed: string[] = acc.names;
+    var btypes: string[] = acc.types;
     var i: i32 = 0;
-    while (i < fd.body.len()) {
+    while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
         var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false };
-        match (fd.body[i]) {
+        match (stmts[i]) {
             parser.StmtVar(v) => { match (v.init) { parser.ExprLambda(l) => { lam = l; lam_ok = true; bname = v.name; }, _ => {} } },
             parser.StmtReturn(r) => { match (r.value) { parser.ExprLambda(l) => { lam = l; lam_ok = true; }, _ => {} } },
+            parser.StmtIf(f) => {
+                var a1: BoxScan = box_scan_stmts(f.then_body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+                var a2: BoxScan = box_scan_stmts(f.else_body, fd, structs, mfuncs, otargets, dvars, a1);
+                boxed = a2.names; btypes = a2.types;
+            },
+            parser.StmtWhile(w) => {
+                var aw: BoxScan = box_scan_stmts(w.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+                boxed = aw.names; btypes = aw.types;
+            },
+            parser.StmtFor(fo) => {
+                var af: BoxScan = box_scan_stmts(fo.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+                boxed = af.names; btypes = af.types;
+            },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) {
+                    var am: BoxScan = box_scan_stmts(m.arms[mi].body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+                    boxed = am.names; btypes = am.types;
+                    mi = mi + 1;
+                }
+            },
             _ => {}
         }
         if (lam_ok) {
@@ -50791,8 +50837,8 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
             if (bname.len() > 0) {
                 esc = false;
                 var esci: i32 = i + 1;
-                while (esci < fd.body.len()) {
-                    if (ident_used_as_value_stmt(fd.body[esci], bname)) { esc = true; }
+                while (esci < stmts.len()) {
+                    if (ident_used_as_value_stmt(stmts[esci], bname)) { esc = true; }
                     esci = esci + 1;
                 }
             }
@@ -50813,8 +50859,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
         }
         i = i + 1;
     }
-    if (boxed.len() == 0) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed, btypes), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str };
+    return BoxScan { names: boxed, types: btypes };
 }
 
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
