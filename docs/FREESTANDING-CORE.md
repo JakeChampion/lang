@@ -146,8 +146,34 @@ freestanding artifact put a panic message?*: it does not have one, and stopping 
 only honest thing left. The symbols stay defined (call sites branch to them); only the
 bodies change, and the backtrace string is dropped since nothing writes it.
 
-The allocator trap is a **placeholder for #6511**, not the design: once the heap is an
-embedder-supplied region, `__fern_heap_ptr` is seeded and the trap is unreachable.
+### The heap is handed in, not acquired
+
+A hostless target cannot `mmap` a region, and with no MMU may have no address space to
+reserve one in. So the heap becomes the embedder's (#6511): off the process path the
+backends export
+
+```
+__fern_heap_init(base, len)     // rdi/rsi on System V, x0/x1 on AAPCS64
+```
+
+which seeds `__fern_heap_ptr` (cursor), `__fern_heap_base` (high-water reference) and
+`__fern_heap_end` (`base + len`). **Only the seeding moves.** The 16-byte rounding, the
+RC header and the two-tier segregated freelist all work against a region regardless of
+where it came from — `docs/ARENA-DECISION.md` is why there is exactly one cursor pair to
+reseed. Hosted targets keep the lazy `mmap` and do *not* get this symbol; one allocator
+with two ways to seed its cursor is two sources of truth.
+
+The contract is that the embedder calls it once before anything that allocates.
+
+**Two defined failure modes, both a trap:**
+
+- **Allocating before `__fern_heap_init`.** `__fern_heap_ptr` is still zero, which is the
+  unseeded sentinel, so `__fern_alloc` stops instead of bumping a null cursor. (A region
+  based at address 0 is therefore not expressible — not a real heap on any target.)
+- **Exhausting the region.** The existing `.Lalloc_oom` bounds check already routes to
+  `__fern_report`, which off the process path is the trap above. So exhaustion is the
+  same "stop" as every other hostless abort rather than an exit code the embedder cannot
+  see anyway.
 
 ## Adding a builtin
 
