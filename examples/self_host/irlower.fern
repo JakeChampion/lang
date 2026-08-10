@@ -31023,9 +31023,18 @@ function collect_fresh_opttup_names(stmts: parser.Stmt[], structs: parser.Struct
                     && opttup_init_is_fresh(opttup_inner_type(v.type_name), v.init, structs)
                     && (util.index_of_str(reassigned, v.name) < 0
                         || opt_rebinds_all_fresh(stmts, v.name, "tup", opttup_inner_type(v.type_name), structs))) {
-                    var match_idx: i32 = sole_top_level_match_idx(stmts, v.name);
-                    if (match_idx > vi
-                        && !match_arms_use_name(stmts[match_idx], v.name)
+                    // The consuming match may sit one block deeper (#6319). No
+                    // nested_ok flag is needed here, unlike the scalar and rc-payload
+                    // collectors: NOTHING else claims this shape at either scope —
+                    // both nested cells leaked (12000 fn-scoped, 48000 block-scoped)
+                    // while both flat cells were 0 — so there is no territory to
+                    // divide. Liveness and escape take the enclosing statement; the
+                    // arm check takes the match itself.
+                    var match_idx: i32 = sole_consuming_match_idx(stmts, v.name);
+                    var msv: parser.Stmt[] = [];
+                    if (match_idx > vi) { msv = consuming_match_of(stmts[match_idx], v.name); }
+                    if (match_idx > vi && msv.len() == 1
+                        && !match_arms_use_name(msv[0], v.name)
                         && !opttup_payload_escapes(stmts, v.name, opttup_inner_type(v.type_name), structs)
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {

@@ -1270,65 +1270,68 @@ function eval_number_literal(is_float: boolean, t: string): Value {
     return box_i64(util.digits_to_i64(t));
 }
 
+function resolve_ident_value(name: string, env: Env): Value {
+    var idv: Value = env.lookup(name);
+    // A bare identifier with no local binding may name a
+    // `const`: the parser desugars `const N = expr;` into a
+    // zero-arg function `N()`, and the native compiler lowers a
+    // bare `N` reference to a call. Mirror that here — if no
+    // local binding exists but a zero-arg, non-method function
+    // of this name does, evaluate it as a nullary call. Regular
+    // zero-arg functions referenced bare are a checker error
+    // (E002) upstream, so on valid programs this only fires for
+    // consts.
+    if (is_err(idv)) {
+        var ci: i32 = 0;
+        while (ci < env.funcs.len()) {
+            if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
+                var no_args: Value[] = [];
+                return call_func(name, no_args, env.funcs, env.aliases);
+            }
+            ci = ci + 1;
+        }
+        // `None` — the one builtin Option / Result constructor that
+        // takes no payload, so it appears as a bare identifier rather
+        // than a call (#5990). The const lookup above runs first, so a
+        // user `const None = …` still wins.
+        if (name == "None") {
+            var none_args: Value[] = [];
+            return v_variant("None", none_args);
+        }
+        // A top-level function named as a VALUE rather than called —
+        // `[inc, dbl]`, or passing `inc` to a higher-order function
+        // (#6611). Last of the three, which is what keeps consts
+        // working: a const IS a zero-arg function, so the scan above
+        // must claim it first and call it. A genuine zero-arg function
+        // therefore cannot be named as a value here, which costs
+        // nothing — doing so is E002 upstream.
+        var vfi: i32 = 0;
+        while (vfi < env.funcs.len()) {
+            var vfd: parser.FuncDecl = env.funcs[vfi];
+            if (vfd.name == name && vfd.receiver_name.len() == 0) {
+                var no_names: string[] = [];
+                var no_values: Value[] = [];
+                return VFunc {
+                    params: vfd.params,
+                    ret_type: vfd.ret_type,
+                    body: vfd.body,
+                    captured_names: no_names,
+                    captured_values: no_values
+                };
+            }
+            vfi = vfi + 1;
+        }
+    }
+    return idv;
+}
+
 function eval_expr(e: parser.Expr, env: Env): Value {
     match (e) {
         parser.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
         parser.ExprBool(b) => { return v_bool(b.value); },
         parser.ExprString(s) => { return v_string(s.value); },
-        parser.ExprIdent(id) => {
-            var idv: Value = env.lookup(id.name);
-            // A bare identifier with no local binding may name a
-            // `const`: the parser desugars `const N = expr;` into a
-            // zero-arg function `N()`, and the native compiler lowers a
-            // bare `N` reference to a call. Mirror that here — if no
-            // local binding exists but a zero-arg, non-method function
-            // of this name does, evaluate it as a nullary call. Regular
-            // zero-arg functions referenced bare are a checker error
-            // (E002) upstream, so on valid programs this only fires for
-            // consts.
-            if (is_err(idv)) {
-                var ci: i32 = 0;
-                while (ci < env.funcs.len()) {
-                    if (env.funcs[ci].name == id.name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
-                        var no_args: Value[] = [];
-                        return call_func(id.name, no_args, env.funcs, env.aliases);
-                    }
-                    ci = ci + 1;
-                }
-                // `None` — the one builtin Option / Result constructor that
-                // takes no payload, so it appears as a bare identifier rather
-                // than a call (#5990). The const lookup above runs first, so a
-                // user `const None = …` still wins.
-                if (id.name == "None") {
-                    var none_args: Value[] = [];
-                    return v_variant("None", none_args);
-                }
-                // A top-level function named as a VALUE rather than called —
-                // `[inc, dbl]`, or passing `inc` to a higher-order function
-                // (#6611). Last of the three, which is what keeps consts
-                // working: a const IS a zero-arg function, so the scan above
-                // must claim it first and call it. A genuine zero-arg function
-                // therefore cannot be named as a value here, which costs
-                // nothing — doing so is E002 upstream.
-                var vfi: i32 = 0;
-                while (vfi < env.funcs.len()) {
-                    var vfd: parser.FuncDecl = env.funcs[vfi];
-                    if (vfd.name == id.name && vfd.receiver_name.len() == 0) {
-                        var no_names: string[] = [];
-                        var no_values: Value[] = [];
-                        return VFunc {
-                            params: vfd.params,
-                            ret_type: vfd.ret_type,
-                            body: vfd.body,
-                            captured_names: no_names,
-                            captured_values: no_values
-                        };
-                    }
-                    vfi = vfi + 1;
-                }
-            }
-            return idv;
-        },
+        parser.ExprIdent(id) => { return resolve_ident_value(id.name, env); },
+
         parser.ExprBinary(b) => {
             var lv: Value = eval_expr(b.left, env);
             if (is_err(lv)) { return lv; }
@@ -1427,7 +1430,14 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         var variant_call: boolean = false;
                         match (fa.obj) {
                             parser.ExprIdent(oid) => {
-                                var probe: Value = env.lookup(oid.name);
+                                // Ask the same question the ident evaluator
+                                // answers, not a narrower one (#6617). A raw
+                                // env lookup misses a CONST — which is a
+                                // zero-arg function, not a binding — so
+                                // `S.len()` was classified as a variant
+                                // construction and built a variant named
+                                // `len` instead of dispatching a method.
+                                var probe: Value = resolve_ident_value(oid.name, env);
                                 if (is_err(probe)) { variant_call = true; }
                             },
                             _ => { }

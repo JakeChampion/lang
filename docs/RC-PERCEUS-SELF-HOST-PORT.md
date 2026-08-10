@@ -6275,6 +6275,39 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `tostring-string-recv-alias-safe` and `TestSelfHostStrAccum`, the #6590 litstr suite,
   and `TestSelfHostPerModuleEmitAllFixpointX86_64` (458 s). Refs #6599 #6590 #5935.
 
+- 2026-08-10: **The TUPLE payload's nested match — #6319's grid is now closed for
+  all four payload classes.** #6588 predicted this row would need "a tuple-shaped
+  deep drop". **That prediction was wrong, and measuring is what found it out:**
+  `emit_opttup_deep_free` and `slot_is_reclaimable_opttup` already exist and
+  already perform the type-driven tuple deep-drop. Only the CREDIT was missing —
+  `collect_fresh_opttup_names` found its consuming match with
+  `sole_top_level_match_idx`, the same flat-index blindness the scalar, rc-array
+  and struct collectors each had. So this is an ADMISSION fix, the exact inverse
+  of #6588 next door, where emission genuinely was the work.
+
+  | `Option[(i32, i32[])]` | flat | nested in an `if` |
+  |---|---|---|
+  | fn-scoped | 0 | **12000, `frees=0` -> 0** |
+  | block-scoped | 0 | **48000, `frees=0` -> 0** |
+  | tuple element escaping the arm | — | refused, 1201/1 |
+
+  **No `nested_ok` flag, and that too is measured rather than carried over.** The
+  scalar (#6526) and rc-payload (#6538) collectors each needed one because
+  precise_drop_names owns their shape at function scope. Nothing owns the tuple
+  shape at EITHER scope — both nested cells leaked while both flat cells were 0 —
+  so there is no territory to divide and no second credit to collide with. Three
+  same-looking widenings, three different disjointness answers; none of them
+  transferred.
+
+  With #6480 / #6503 / #6517 / #6526 / #6538 / #6588 and this, the grid closes:
+  fn/block scope x flat/nested match, for scalar Option, rc-array, struct and
+  tuple payloads, under both inline-ctor and call inits.
+
+  VERIFIED: `TestSelfHostOptTupNestedMatchX86_64` (new — both scopes nested, both
+  flat controls, and the element-escape refusal),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (326.63 s, run FIRST), 29 targeted
+  suites 0 skips. Refs #6319 #6360 #4451.
+
 - 2026-08-10: **The #6043 sole-occurrence death, ported to the self-host grow bracket
   (#6048).** A PARAM read exactly once in the whole body, at a call no loop or lambda
   encloses, is dead at that call, so the #4873 containment bracket need not force a
