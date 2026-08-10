@@ -51,16 +51,13 @@ function main(): i32 {
 }
 
 func TestSelfHostClosureFieldReclaimX86_64(t *testing.T) {
-	// The self-host has its OWN version of this leak, and it is a different
-	// one: it already routes closure fields (the `clofld` scan's "clo:" tag,
-	// whose `k_clo` arm shallow-frees the field's env box), so it reclaims
-	// part of what native did not — but measured against the plain-i32
-	// control it still keeps 320 B per round for an 8-record table, exactly
-	// doubling from 100 rounds to 200. That is a RECLAIM-side gap in the
-	// goal-2 port, not the release bug this file's fix closes, so it is
-	// tracked separately rather than folded in here.
-	t.Skip("self-host closure-field reclaim gap: 320 B/round, doubling — tracked in #6461")
-
+	// The self-host had its OWN version of this leak, and it was a different
+	// one (#6461): the clofld admission was granted and the `k_clo` arm was
+	// ready, but a single `fn` field took the whole `P[]` local out of the
+	// append-built struct-array reclaim class, so nothing under it — element
+	// boxes, strings, closures — was ever freed. Both halves are closed now,
+	// and the probe is not merely flat in the delta: `allocs == frees`,
+	// `live_bytes = 0`.
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
