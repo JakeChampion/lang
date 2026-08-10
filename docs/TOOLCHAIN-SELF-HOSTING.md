@@ -3,11 +3,11 @@
 > **Update — the SELF-HOST compiler now matches on Linux.** Everything
 > below describes the *native* (Go) compiler, which reached the
 > no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had
-> only reached it for `-target arm64` / `-target arm64-darwin`;
-> `-target x86-64` still emitted `.s` for an external assembler. It now
+> only reached it for `-target arm64-linux` / `-target arm64-darwin`;
+> `-target x86-64-linux` still emitted `.s` for an external assembler. It now
 > assembles and links in-process too, via `examples/self_host/x86_native.fern`
 > (the merged encoder + GAS front-end, the x86 sibling of
-> `arm64_native.fern`) and `elf.fern`. `-target x86-64-asm` is the escape
+> `arm64_native.fern`) and `elf.fern`. `-target x86-64-linux-asm` is the escape
 > hatch that still emits GAS text — the shape a harness assembling with its
 > own toolchain wants, and the only way to observe the emitter in isolation.
 > This closes precondition 2 of the backend-retirement list in
@@ -38,8 +38,8 @@
 > reasoning is still useful), but the framing as a forward plan is no
 > longer accurate.
 
-> **Update — the wasm `wasm-tools` shell-out is gone.** `-target wasm`
-> and `-target wasi-http` now compose Component Model components natively
+> **Update — the wasm `wasm-tools` shell-out is gone.** `-target wasm32-wasi`
+> and `-target wasm32-wasi32-wasi-http` now compose Component Model components natively
 > in Go (`internal/wasm/component`), and the `-wasi-adapter` flag +
 > `emitPreview2ComponentFromCoreBytes` (`wasm-tools component new --adapt`)
 > have been deleted from the driver. A single classifier
@@ -396,7 +396,7 @@ import composers, `BuildLiftedExportComponent`, and
 byte-equivalent by `TestWASMComponentGoLangByteEquivalence`.
 
 `cmd/fern` accepts a new `-component-wrap` flag (with
-`-target wasm -emit core-module`, no `-wasi-adapter`) that wraps the core wasm
+`-target wasm32-wasi -emit core-module`, no `-wasi-adapter`) that wraps the core wasm
 output as a self-contained preview-2 component via the Go encoder
 — no `wasm-tools component new --adapt` shell-out. Lifts `main`
 as a component-level u32-returning function.
@@ -404,14 +404,14 @@ as a component-level u32-returning function.
 End-to-end exit code 42 demo (covered by
 `TestCmdLangComponentWrap`):
 
-    $ fern -target wasm -emit core-module -component-wrap -o min.wasm min.fern
+    $ fern -target wasm32-wasi -emit core-module -component-wrap -o min.wasm min.fern
     $ wasmtime run --invoke 'main()' min.wasm
     42
 
 #### What's NOT yet shipped
 
-- **`-target wasm` / `-target wasi-http` default-path wiring.
-  Both shipped.** `-target wasm` without `-wasi-adapter` flows
+- **`-target wasm32-wasi` / `-target wasm32-wasi32-wasi-http` default-path wiring.
+  Both shipped.** `-target wasm32-wasi` without `-wasi-adapter` flows
   through the Go-side preview-2 encoder when the program's
   imports are all preview-2-migrated; unsupported imports
   surface a clear error pointing at `-wasi-adapter`. `-target
@@ -562,7 +562,7 @@ End-to-end exit code 42 demo (covered by
       `WrapWasiPrintAsCliRun` (#1248).
 
     **End-to-end test** `TestCmdLangComponentWrapCliWithPrint`:
-    Fern `print("hello world")` → `fern -target wasm -emit core-module
+    Fern `print("hello world")` → `fern -target wasm32-wasi -emit core-module
     -component-wrap-cli` → `wasmtime run` → stdout `"hello
     world\n"`. No wasm-tools shell-out, no preview-1 adapter,
     no `--invoke` flag.
@@ -700,9 +700,9 @@ End-to-end exit code 42 demo (covered by
     retired. Finally pure-structured (exit/random/monotonic alone or
     combined) folded in too: the composer now claims any program with
     ≥1 recognised import, so `WrapWasiImportedAsCliRun` was deleted
-    and both `-component-wrap-cli` and the `-target wasm` no-adapter
+    and both `-component-wrap-cli` and the `-target wasm32-wasi` no-adapter
     default route through one shared `buildPreview2CliRunComponent`
-    (#1342) — which also fixed `-target wasm` erroring on
+    (#1342) — which also fixed `-target wasm32-wasi` erroring on
     print/read_file/etc. despite the docs claiming equivalence.
     `ComposePreview2CliRun` is now the sole adapter-free cli/run
     component-builder, and the non-cli `-component-wrap` export shape
@@ -751,7 +751,7 @@ End-to-end exit code 42 demo (covered by
     export-of-interface shape (the first in the codebase — lift the
     core `handle(own<incoming-request>, own<response-outparam>)` and
     export the interface, #1367), then `ComposeHttpHandler` + the
-    adapter-free `-target wasi-http` driver routing. Method lowerings
+    adapter-free `-target wasm32-wasi32-wasi-http` driver routing. Method lowerings
     span every kind: no-opts scalar (headers / constructors /
     set-status-code), memory trampolines (consume / stream / body /
     write / append / response-outparam.set), memory+realloc (method /
@@ -875,8 +875,8 @@ End-to-end exit code 42 demo (covered by
     - Then `-wasi-adapter` / preview-1 / `wasm-tools` can be retired
       from the default toolchain. Inbound `udp_recv`, DNS hostnames, and
       read+append remain genuinely niche.
-  - **Default-path driver wiring for `-target wasm`.** Shipped
-    in #1204. `-target wasm` without `-wasi-adapter` routes
+  - **Default-path driver wiring for `-target wasm32-wasi`.** Shipped
+    in #1204. `-target wasm32-wasi` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)
     automatically. Programs covered by the current preview-2
     import migration (no imports, or wasi:cli/exit /
@@ -903,7 +903,7 @@ new --adapt …` with a Fern implementation. As of 2026-05-20,
 (`internal/wasm/componenttype.Embed`); the last remaining external
 call is `component new --adapt` at `cmd/fern/main.go:851` inside
 `emitPreview2ComponentFromCoreBytes` (reached only on the
-`-wasi-adapter` fallback path — the default `-target wasm` /
+`-wasi-adapter` fallback path — the default `-target wasm32-wasi` /
 `wasi-http` routes now compose natively via `internal/wasm/component`
 with no shell-out).
 Phase 2's job is to take that last call out.

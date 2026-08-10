@@ -3,11 +3,11 @@
 // below differ only in whether the intermediate has a name, and are balanced
 // either way:
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/string_arg_temp_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/string_arg_temp_leak.fern
 //   /tmp/p    # stderr, before: leakcheck: allocs=195 frees=156 live_bytes=1248
 //             # stderr, after:  leakcheck: allocs=195 frees=195 live_bytes=0
 //
-// `-target arm64` reports the same numbers. Before the fix, one block leaked per
+// `-target arm64-linux` reports the same numbers. Before the fix, one block leaked per
 // call of temp(), unbounded in a loop; bound() alone was already 195/195.
 //
 // TWO gates had to open, and each alone left the leak in place.

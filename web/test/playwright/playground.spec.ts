@@ -101,7 +101,7 @@ test("changing the asm target re-emits for that backend", async ({ page }) => {
   await gotoReady(page);
   await page.locator("#viewAsm").click();
   await expect(page.locator("#asmPanel")).toHaveClass(/shown/);
-  await page.locator("#targetSelect").selectOption("x86-64");
+  await page.locator("#targetSelect").selectOption("x86-64-linux");
   await expect(page.locator("#asmStatus")).toContainText(/x86-64.*line/, {
     timeout: 10_000,
   });

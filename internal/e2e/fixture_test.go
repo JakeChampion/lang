@@ -49,7 +49,7 @@
 // wasm leg: a fixture's `main` must return i32 (not void), and
 // `int_to_string` must be reachable so the result line can be
 // formatted — i.e. a wasm-targeting exact-match fixture must
-// `import "core/int";`, or drop "wasm" from the fixture's
+// `import "core/int";`, or drop "wasm32-wasi" from the fixture's
 // `backends` file.
 package e2e
 
@@ -100,7 +100,7 @@ type fixtureSpec struct {
 	reclaimObservable bool
 }
 
-var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
+var allBackends = []string{"interp", "x86_64", "arm64-linux", "wasm32-wasi"}
 
 // rejectionCase reports whether the fixture asserts a diagnostic rather
 // than a run. Such a case has no output, no exit code and no backends,
@@ -284,9 +284,9 @@ func (f *fixtureSpec) run(t *testing.T, backend string) (stdout string, exit int
 		return runFixtureInterp(t, f.mainPath, f.stdin)
 	case "x86_64":
 		return runFixtureX86_64(t, f.mainPath, f.stdin)
-	case "arm64":
+	case "arm64-linux":
 		return runFixtureArm64(t, f.mainPath, f.stdin)
-	case "wasm":
+	case "wasm32-wasi":
 		return runFixtureWasm(t, f.mainPath, f.stdin)
 	default:
 		t.Fatalf("unknown backend %q", backend)
@@ -301,7 +301,7 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 		// wasm appends main's i32 result (+newline) to stdout; that
 		// trailing line is how we read the exit code on a host that
 		// only surfaces 0/1, so fold it into the expected stdout.
-		if backend == "wasm" {
+		if backend == "wasm32-wasi" {
 			want = f.wantOut + strconv.Itoa(f.wantExit) + "\n"
 		}
 		if stdout != want {
@@ -315,7 +315,7 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 		}
 	}
 
-	if backend == "wasm" {
+	if backend == "wasm32-wasi" {
 		// Exit value rides on stdout (handled above); a non-zero
 		// wasmtime status here means the component trapped.
 		if exit != 0 {

@@ -736,7 +736,7 @@ representative subset splits it three ways:
   * **The rescue WAS gated, and no longer is.** Diverting *every* over-budget program swept in the self-host CHECKER driver (built by this same driver, and in the window), routing it through IR and straight into the two IR-path over-frees documented below. Both are now fixed, the gate (`needs_ir_only_builtin` + its builtin-name table) is DELETED, and every over-budget program in the window routes per-module IR. `TestSelfHostCheckerCodesX86_64` / `TestSelfHostCheckerDifferentialX86_64` are now the pin: they build the checker driver through this driver, so they compile the checker on the IR path and fail loudly if either over-free comes back.
   * **~~arm64 needs none of this.~~ It does — this bullet's central clause is FALSE (measured 2026-07-30).** The bullet used to read: "`emit_module` tries `all_eligible` first, and unlike x86 the arm64 merged IR path has **no 512-function budget**, so it already takes the over-budget programs the x86 path has to rescue." There is no such asymmetry. The 512-function budget lives in `eligible_core_known_main` (`asm_ir.fern:3248`), which arm64 reaches through the very `asm_ir.all_eligible` call this bullet cites — one gate, both backends. (That gate's own comment is stale in the other direction: it justifies the cap by #3425, which is closed.)
 
-    Measured on the `TestSelfHostPerModuleConcat*` fixture (7 sibling modules × 100 functions, 701 raw merged funcs) with `-target arm64` and the arm64 rescue disabled by raising its lower bound out of range:
+    Measured on the `TestSelfHostPerModuleConcat*` fixture (7 sibling modules × 100 functions, 701 raw merged funcs) with `-target arm64-linux` and the arm64 rescue disabled by raising its lower bound out of range:
 
     | | `.L` labels | of which `.Lir` | per-unit pools | links + runs |
     | --- | ---: | --- | --- | --- |
@@ -1513,7 +1513,7 @@ Plus the IR path's own coupling to the AST files (the untangle target, slice 4):
   **superseded and deleted** — with the IR callers routed to `emit_ir_runtime`,
   `asm_arm64.emit_runtime_fern_fn` is only ever reached on the AST path, so its
   (never-taken) IR branch and the shared `asmcore` field are dead. **This move is
-  BYTE-PRESERVING on the arm64 IR path** (verified: `asm_ir_run -target arm64 -ir`
+  BYTE-PRESERVING on the arm64 IR path** (verified: `asm_ir_run -target arm64-linux -ir`
   emits byte-identical asm for string/array/foreach/chr/pow/cmp/index_of programs
   before and after), and x86-inert (no x86 file read the field). `asm_arm64.fern`
   keeps its own `emit_runtime` for the AST fallback until slice 5 deletes the
@@ -2681,7 +2681,7 @@ tier → leak.
      arm64-darwin backend's static dyld-free Mach-O is SIGKILLed by current macOS
      (`TestArm64DarwinNativeMachO` skips with exactly this diagnostic), `-cc clang`
      assembles a driver-sized `.s` only until a `bl` exceeds the 26-bit ±128 MB
-     span (`__drop_struct_asmcore__EmitState`), and `-target wasm` cannot compile
+     span (`__drop_struct_asmcore__EmitState`), and `-target wasm32-wasi` cannot compile
      the x86 driver at all (`asm__try_emit_builtin: unknown callee strbuf_append`).
      What DOES work, and is faster than any of them: **interpret the driver** —
      `fern -interp asm_ir_run.fern -- -ir-probe < prog.fern` gives the routing
@@ -2884,7 +2884,7 @@ claim that the floor is *module-dependent* was **an artifact of that second
 pass**, not a property of the emit. The corrected measurements are below. The
 headline survives; the model does not.
 
-Method: build gen0 (`fern -target x86-64 -o gen0 asm_modload_run.fern`),
+Method: build gen0 (`fern -target x86-64-linux -o gen0 asm_modload_run.fern`),
 `-per-module-emit-all -assume-eligible` in batches, assemble + link the 36 units
 into gen1, then emit single windows sampling the kernel's `VmHWM`. Peak RSS in
 MB; `-func-range LO:HI` picks the window. Output is byte-identical with and
@@ -3762,7 +3762,7 @@ this section has proposed for the lexer strand: not the return escape, not the
 payload strings, not the buffer taint, and not the threading shape.
 
 **Read from the emitted code (2026-07-29), and the whole strand reduces to one
-question.** `fern -target x86-64 lexprobe.fern > lexprobe.s`, then grep
+question.** `fern -target x86-64-linux lexprobe.fern > lexprobe.s`, then grep
 `lexer__tokenize`'s body:
 
     164  Lrcop_dec              (inline flat rc decs)
@@ -4016,7 +4016,7 @@ and dropping any one of them makes the program correct:
 | the grow takes the COPY path with the old buffer surviving | in-place grow shares nothing |
 | the element outlives its own buffer only via a second holder | an rc≥3 name absorbs the extra dec silently |
 
-It is also **x86-64 only** in this shape: the same probe under `-target arm64`
+It is also **x86-64 only** in this shape: the same probe under `-target arm64-linux`
 returns 0 with the arm applied (two-word strings take a different retain path).
 The self-host failure is an x86-64 miscompile of `mmc` — the arm64 gate catches
 it because `mmc`, an x86-64 binary, is the thing that miscompiles.
@@ -4196,7 +4196,7 @@ cracked it are cheap and general:
   no need to guess which of 147 functions matters.
 - **Don't run the 312 s test to iterate.** `TestSelfHostStdTestE2EArm64` builds
   `mmc` (an x86-64 binary) once and then compiles each case in well under a
-  second; building `mmc` by hand and diffing `mmc <case> <stdlib> -target arm64`
+  second; building `mmc` by hand and diffing `mmc <case> <stdlib> -target arm64-linux`
   against a baseline build gives the same signal in 0.6 s per case, and the
   symbol diff names the corrupted function directly.
 - **`FERN_RC_FREE_DEBUG=1` is the detector for this class** (quarantine + poison

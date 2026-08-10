@@ -54,7 +54,7 @@ func TestArm64ArgvStringsRcSafe(t *testing.T) {
 			t.Fatalf("write %s: %v", path, err)
 		}
 		defer os.Remove(path)
-		cmd := runArm64Bin(qemu, bin, path, stdlibish, "-target", "arm64")
+		cmd := runArm64Bin(qemu, bin, path, stdlibish, "-target", "arm64-linux")
 		out, _ := cmd.CombinedOutput()
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			t.Fatalf("len=%d: did not exit normally (out=%q)", n, out)

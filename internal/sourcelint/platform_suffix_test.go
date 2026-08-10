@@ -35,10 +35,10 @@ var knownGOOS = map[string]bool{
 }
 
 var knownGOARCH = map[string]bool{
-	"386": true, "amd64": true, "arm": true, "arm64": true, "loong64": true,
+	"386": true, "amd64": true, "arm": true, "arm64-linux": true, "loong64": true,
 	"mips": true, "mips64": true, "mips64le": true, "mipsle": true,
 	"ppc64": true, "ppc64le": true, "riscv64": true, "s390x": true,
-	"sparc64": true, "wasm": true,
+	"sparc64": true, "wasm32-wasi": true,
 }
 
 // moduleRoot walks up from the test's working directory to the directory

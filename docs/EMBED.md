@@ -10,7 +10,7 @@ handed to the compiler; each file becomes an ordinary string literal in the
 program.
 
 ```
-fern -embed ./assets -target x86-64 -o prog prog.fern
+fern -embed ./assets -target x86-64-linux -o prog prog.fern
 ```
 
 ```fern

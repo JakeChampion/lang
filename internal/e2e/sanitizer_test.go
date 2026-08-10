@@ -87,7 +87,7 @@ func emitSanitize(t *testing.T, backend, src string, on bool) string {
 
 	var asm string
 	var emitErr error
-	if backend == "arm64" {
+	if backend == "arm64-linux" {
 		asm, emitErr = arm64codegen.Emit(prog, info)
 	} else {
 		asm, emitErr = x86_64.Emit(prog, info)
@@ -113,7 +113,7 @@ func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 func runSanitizeArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
-	return buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64", src, true), true)
+	return buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", src, true), true)
 }
 
 func buildAndRunSanitized(t *testing.T, gcc string, runner []string, asm string, arm64 bool) (string, string, int) {
@@ -245,7 +245,7 @@ func TestApplySanitizeFoldsIntoComponentFlags(t *testing.T) {
 // is byte-identical to one from a compiler without the feature".
 func TestSanitizeOffEmitsNoSymbols(t *testing.T) {
 	needles := []string{"fern-sanitizer", "__fern_msg_san_", ".Lsan_"}
-	for _, backend := range []string{"x86_64", "arm64"} {
+	for _, backend := range []string{"x86_64", "arm64-linux"} {
 		asm := emitSanitize(t, backend, sanCleanSrc, false)
 		for _, n := range needles {
 			if strings.Contains(asm, n) {
@@ -283,7 +283,7 @@ func TestSanitizeWiresUseAfterFreeReport(t *testing.T) {
 			silentTraps: []string{"ud2"},
 		},
 		{
-			backend: "arm64",
+			backend: "arm64-linux",
 			poison: []string{
 				fmt.Sprintf("movz w2, #%d", ast.RcPoison&0xffff),
 				fmt.Sprintf("movk w2, #%d, lsl #16", (ast.RcPoison>>16)&0xffff),
@@ -453,8 +453,8 @@ func TestArm64SanitizeLeakVerdict(t *testing.T) {
 
 func TestArm64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
-	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64", sanQuarantineSrc, true), true)
-	_, _, plainKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64", sanQuarantineSrc, false), true)
+	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", sanQuarantineSrc, true), true)
+	_, _, plainKiB := buildAndRunSanitized(t, gcc, []string{qemu}, emitSanitize(t, "arm64-linux", sanQuarantineSrc, false), true)
 
 	if sanKiB < 4 {
 		t.Errorf("sanitized bump high-water = %d KiB, want >= 4 (freed blocks must not be recycled)", sanKiB)

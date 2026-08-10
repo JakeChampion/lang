@@ -289,8 +289,8 @@ func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]st
 			t.Errorf("x86_64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
-		if known(t, "arm64") {
+	t.Run("arm64-linux", func(t *testing.T) {
+		if known(t, "arm64-linux") {
 			return
 		}
 		out, _ := compileAndRunArm64(t, src)
@@ -298,8 +298,8 @@ func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]st
 			t.Errorf("arm64 = %q, interp = %q\nsrc:\n%s", got, want, src)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
-		if known(t, "wasm") {
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		if known(t, "wasm32-wasi") {
 			return
 		}
 		comp := buildNumComponent(t, src)

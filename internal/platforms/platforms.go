@@ -34,8 +34,8 @@ import (
 // Descriptor describes a compilation target's runtime surface.
 // One Descriptor per supported `-target=...` value.
 type Descriptor struct {
-	// Name is the canonical -target= flag value (e.g. "wasi-http",
-	// "arm64", "x86-64"). Lookups in `ForTarget` match this
+	// Name is the canonical -target= flag value (e.g. "wasm32-wasi-http",
+	// "arm64-linux", "x86-64-linux"). Lookups in `ForTarget` match this
 	// case-sensitively.
 	Name string
 
@@ -63,6 +63,14 @@ type Descriptor struct {
 	// Phase 3 wires it to runtime binding-fetch glue.
 	Bindings []string
 
+	// ISA and Environment are the two halves of the target's name. ISA
+	// selects the backend; Environment selects what the host provides
+	// and therefore drives Capabilities. Callers branching on "is this
+	// wasm" or "is this Darwin" should read these rather than
+	// string-matching Name.
+	ISA         string
+	Environment string
+
 	// NoBackend marks a target that is DECLARED and type-checkable
 	// but that no codegen backend emits yet, so `fern -check
 	// -target NAME` works and compiling is a clear refusal rather
@@ -74,24 +82,19 @@ type Descriptor struct {
 	NoBackend bool
 }
 
-// environments carry the per-HOST half of a target: what the platform
-// underneath provides. Capabilities describe what the host grants, and
-// the ISA has nothing to say about whether there is a filesystem — so
-// the set lives here and each target names an environment rather than
-// repeating a list.
+// A target is <isa>-<environment>. The ISA half selects the backend; the
+// environment half says what the host provides. Neither is implied:
+// there is no bare `arm64` meaning arm64-Linux.
 //
-// That repetition is what this replaces: the four native targets
-// carried a byte-identical eleven-element list, and adding `args` and
-// `random` (#6516) meant editing the same line four times. #6529
-// carries this the rest of the way, splitting the target NAME into
-// <isa>-<environment> so the two axes are spelled separately too.
-type environment struct {
-	capabilities []string
-	handlerKinds []string
-	bindings     []string
-}
+// Capability sets live one level down again, on a PROFILE the
+// environment names. linux / darwin / android are genuinely different
+// environments — different object formats, different syscall vectors —
+// but a host either has a filesystem or it does not, and all three grant
+// exactly the same set. Naming a shared profile keeps that list written
+// once without pretending the three environments are one.
+type capabilityProfile = []string
 
-var environments = map[string]environment{
+var capabilityProfiles = map[string]capabilityProfile{
 	// The full compiled runtime surface: fs / tcp / stdin are raw
 	// syscalls. NOTE `subprocess` is deliberately absent — it is an
 	// INTERP-ONLY builtin today (internal/interp only; no codegen
@@ -101,84 +104,96 @@ var environments = map[string]environment{
 	//
 	// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md D2')
 	// is native-only: wasm worlds have no processes.
-	"native": {
-		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
-		handlerKinds: []string{"handle"},
-	},
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
-	// gap wasmbin's TestBuildReportsUnsupported pins). Programs
-	// reaching `subprocess` here are rejected at check time (E066)
-	// instead of failing mid-build.
-	"wasi": {
-		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
-		handlerKinds: []string{"main"},
-	},
+	// gap wasmbin's TestBuildReportsUnsupported pins).
+	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 
 	// The proxy world: an HTTP handler and nothing else. No argv, no
 	// stdout stream, no filesystem — which is what gives `args` and
-	// `stdout` their teeth as capabilities distinct from `env` and
-	// `log` (#6513, #6516). `fetch` is the planned outbound capability
-	// (docs/STDLIB-DESIGN-RESEARCH.md Rec §10); `kv` and `secrets`
-	// follow once the host-binding shape is finalised.
-	"wasi-http": {
-		capabilities: []string{"log", "now", "env", "random", "fetch"},
-		handlerKinds: []string{"handle"},
-		// `wasmtime serve --env KEY=VAL` style bindings; future hosts
-		// may add kv-namespace + service-binding shapes.
-		bindings: []string{"env"},
-	},
+	// `stdout` their teeth as capabilities distinct from `env` and `log`
+	// (#6513, #6516). `fetch` is the planned outbound capability
+	// (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
+	"wasi-proxy": {"log", "now", "env", "random", "fetch"},
 
 	// No host at all. Everything a program can still reach is
-	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
-	// and every judgement call. No entry point either: a freestanding
-	// artifact is either a guest (exported symbols its embedder calls)
-	// or the host (entered at a reset vector), so #6510 needs to leave
-	// room for both — docs/BARE-METAL-PLAN.md.
-	"freestanding": {},
+	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule and
+	// every judgement call.
+	"none": nil,
 }
 
-// table is the per-target descriptor registry: the ISA-and-object-format
-// half, plus which environment the target runs in. Keys match the
-// `-target` flag values cmd/fern accepts.
+type environment struct {
+	profile      string
+	handlerKinds []string
+	bindings     []string
+}
+
+var environments = map[string]environment{
+	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle"}},
+	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle"}},
+	"android": {profile: "hosted-native", handlerKinds: []string{"handle"}},
+	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main"}},
+	// `wasmtime serve --env KEY=VAL` style bindings; future hosts may add
+	// kv-namespace + service-binding shapes.
+	"wasi-http": {profile: "wasi-proxy", handlerKinds: []string{"handle"}, bindings: []string{"env"}},
+	// No entry point declared. A freestanding artifact can be a GUEST (a
+	// set of exported symbols its embedder calls) or the HOST (entered at
+	// a reset vector, owning the vector table). docs/BARE-METAL-PLAN.md
+	// says #6510 must not foreclose on the second, so neither shape is
+	// baked in here.
+	"freestanding": {profile: "none"},
+}
+
+// table is the target registry: every valid <isa>-<environment> pair.
+// `emits` says whether a codegen backend exists for the pair — the
+// freestanding pairs are declared and type-checkable before anything
+// emits for them (#6509), so compiling one is a clear refusal rather
+// than a fall-through to "unknown target". It is stated per entry rather
+// than defaulted so adding a target forces the question.
 var table = map[string]struct {
-	description string
+	isa         string
 	environment string
-	noBackend   bool
+	description string
+	emits       bool
 }{
-	"arm64": {
-		description: "ARM64 Linux ELF (default — Graviton, Apple Silicon via container, Raspberry Pi 4+ 64-bit, Android).",
-		environment: "native",
+	"arm64-linux": {
+		isa: "arm64", environment: "linux", emits: true,
+		description: "ARM64 Linux ELF (Graviton, Raspberry Pi 4+ 64-bit, Apple Silicon via container).",
 	},
 	"arm64-darwin": {
+		isa: "arm64", environment: "darwin", emits: true,
 		description: "ARM64 macOS Mach-O (native Apple Silicon Macs; no Linux container needed).",
-		environment: "native",
 	},
 	"arm64-android": {
+		isa: "arm64", environment: "android", emits: true,
 		description: "ARM64 Android — Linux ELF as a static position-independent " +
 			"executable (ET_DYN, W^X), so it loads at an arbitrary base under " +
-			"Android's loader. Same syscalls / AAPCS64 as the arm64 target.",
-		environment: "native",
+			"Android's loader. Same syscalls / AAPCS64 as arm64-linux.",
 	},
-	"x86-64": {
+	"arm64-freestanding": {
+		isa: "arm64", environment: "freestanding",
+		description: "ARM64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"x86-64-linux": {
+		isa: "x86-64", environment: "linux", emits: true,
 		description: "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
-		environment: "native",
 	},
-	"wasm": {
+	"x86-64-freestanding": {
+		isa: "x86-64", environment: "freestanding",
+		description: "x86-64 with no host — no kernel, no syscalls, no process. " +
+			"Type-checkable today; no backend emits for it yet (#6510).",
+	},
+	"wasm32-wasi": {
+		isa: "wasm32", environment: "wasi", emits: true,
 		description: "WebAssembly Component Model — CLI world (wasi:cli/run + wasi:filesystem + wasi:clocks).",
-		environment: "wasi",
 	},
-	"wasi-http": {
+	"wasm32-wasi-http": {
+		isa: "wasm32", environment: "wasi-http", emits: true,
 		description: "WebAssembly Component Model — proxy world (wasi:http/incoming-handler).",
-		environment: "wasi-http",
-	},
-	"freestanding": {
-		description: "No host — no kernel, no syscalls, no process. Type-checkable " +
-			"today; no backend emits for it yet (#6506).",
-		environment: "freestanding",
-		noBackend:   true,
 	},
 }
 
@@ -193,17 +208,21 @@ func ForTarget(name string) *Descriptor {
 	}
 	env, ok := environments[t.environment]
 	if !ok {
-		// A target naming an environment that doesn't exist is a
-		// programming error in this file, not a user-facing one.
 		panic("platforms: target " + name + " names unknown environment " + t.environment)
+	}
+	caps, ok := capabilityProfiles[env.profile]
+	if !ok {
+		panic("platforms: environment " + t.environment + " names unknown profile " + env.profile)
 	}
 	return &Descriptor{
 		Name:         name,
 		Description:  t.description,
-		Capabilities: env.capabilities,
+		ISA:          t.isa,
+		Environment:  t.environment,
+		Capabilities: caps,
 		HandlerKinds: env.handlerKinds,
 		Bindings:     env.bindings,
-		NoBackend:    t.noBackend,
+		NoBackend:    !t.emits,
 	}
 }
 

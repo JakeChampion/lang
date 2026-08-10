@@ -14,7 +14,7 @@
 // small leaks under the baseline, which is what made an earlier version of this
 // probe report a bogus "512 KiB size threshold"):
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/loop_append_drop_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/loop_append_drop_leak.fern
 //   /tmp/p; # stderr: leakcheck: allocs=N frees=M live_bytes=K
 //
 // Fixed = frees equals allocs and live_bytes is 0. Exit code is 4 either way

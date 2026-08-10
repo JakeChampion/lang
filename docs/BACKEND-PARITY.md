@@ -2,12 +2,24 @@
 
 Three code-generation backends ship today:
 
-| backend | OS  | object format | ABI                | status                  |
-| ------- | --- | ------------- | ------------------ | ----------------------- |
-| arm64   | Linux | ELF         | AAPCS64            | primary target          |
-| arm64-darwin | macOS | Mach-O | AAPCS64 + Apple's syscall vector | shares `EmitWithOptions` with arm64 |
-| x86-64  | Linux | ELF         | System V AMD64     | newer; some gaps        |
-| wasm    | n/a  | wasm32 module | wasm CC + WASI    | the "everything" backend |
+Targets are `<isa>-<environment>` (#6529): the ISA half picks the backend, the
+environment half says what the host provides. Neither is implied — there is no
+bare `arm64` meaning arm64-Linux.
+
+| target | ISA | environment | object format | ABI | status |
+| ------ | --- | ----------- | ------------- | --- | ------ |
+| arm64-linux | arm64 | linux | ELF | AAPCS64 | primary target |
+| arm64-darwin | arm64 | darwin | Mach-O | AAPCS64 + Apple's syscall vector | shares `EmitWithOptions` with arm64-linux |
+| arm64-android | arm64 | android | ELF (ET_DYN, PIE) | AAPCS64 | same syscalls as arm64-linux |
+| x86-64-linux | x86-64 | linux | ELF | System V AMD64 | newer; some gaps |
+| wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | the "everything" backend |
+| wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world |
+| arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
+
+Two axes are deliberately NOT in the name: `-backend ssa` selects an alternate
+emitter for the same target, and `-emit core-module` an alternate output form
+(#6536). Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
+what let `wasm-ssa` skip capability enforcement entirely.
 
 ## CPU baseline
 

@@ -14,7 +14,7 @@ import (
 // and returns stdout.
 // RunCapture runs the built driver binary, pipes stdin in, and returns its
 // stdout. extraArgs are appended after the binary — the arm64/darwin consumers
-// pass "-target", "arm64" (etc.) to select the emit backend of the folded
+// pass "-target", "arm64-linux" (etc.) to select the emit backend of the folded
 // asm_run driver (#4398 part 1); x86 callers pass nothing and stay unchanged.
 func RunCapture(t *testing.T, gcc string, runner []string, bin string, stdin []byte, extraArgs ...string) []byte {
 	t.Helper()

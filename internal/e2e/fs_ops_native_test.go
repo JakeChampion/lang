@@ -131,7 +131,7 @@ func TestX86_64FilesystemOpsTapLinksNatively(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "fsops_tap")
-	if o, err := exec.Command(fern, "-target", "x86-64", "-o", out,
+	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
 		"../../examples/tests/filesystem_ops_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native compile of filesystem_ops_test.fern failed: %v\n%s", err, o)
 	}
@@ -196,7 +196,7 @@ func TestArm64ArithmeticTapLinksNatively(t *testing.T) {
 	fern := buildFernCLI(t)
 	qemu := arm64QemuOrEmpty(t)
 	out := filepath.Join(t.TempDir(), "arith_tap_arm64")
-	if o, err := exec.Command(fern, "-target", "arm64", "-o", out,
+	if o, err := exec.Command(fern, "-target", "arm64-linux", "-o", out,
 		"../../examples/tests/arithmetic_test.fern").CombinedOutput(); err != nil {
 		t.Fatalf("native arm64 compile of arithmetic_test.fern failed: %v\n%s", err, o)
 	}

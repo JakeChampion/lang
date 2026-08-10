@@ -46,7 +46,7 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	t.Run("default_build_is_native", func(t *testing.T) {
 		out := filepath.Join(dir, "prog.bin")
 		// No -cc: must build with no external assembler/linker.
-		if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, src).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 			t.Fatalf("default x86-64 build failed: %v\n%s", err, o)
 		}
 		info, err := os.Stat(out)
@@ -71,7 +71,7 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 				t.Skip("--run on this host needs qemu-x86_64")
 			}
 		}
-		cmd := exec.Command(bin, "-target", "x86-64", "--run", src)
+		cmd := exec.Command(bin, "-target", "x86-64-linux", "--run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {
 			t.Errorf("fern --run exit = %d, want 42", code)
@@ -82,7 +82,7 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 		// A failing -cc must make the build fail, proving the default path
 		// does NOT shell out to an external assembler/linker.
 		out := filepath.Join(dir, "prog_cc.bin")
-		if err := exec.Command(bin, "-target", "x86-64", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
+		if err := exec.Command(bin, "-target", "x86-64-linux", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
 			t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
 		}
 	})

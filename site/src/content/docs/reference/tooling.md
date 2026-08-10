@@ -8,7 +8,7 @@ sidebar:
 ## Compiler — `fern`
 
 ```bash
-fern [-target arm64|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] FILE.fern
+fern [-target arm64-linux|arm64-darwin|x86-64|wasm] [-o OUTPUT] [--run] FILE.fern
 fern -fmt [-w | -d] FILE.fern
 fern -interp FILE.fern
 fern -repl

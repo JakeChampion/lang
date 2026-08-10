@@ -91,7 +91,7 @@ func runAbortCases(t *testing.T, target string, run func(bin string) *exec.Cmd) 
 // cause to stderr before exiting, instead of exiting with a bare code.
 func TestX86_64AbortMessages(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
-	runAbortCases(t, "x86-64", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
+	runAbortCases(t, "x86-64-linux", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
 }
 
 // TestArm64AbortMessages is the arm64 parity check: the same programs abort
@@ -99,7 +99,7 @@ func TestX86_64AbortMessages(t *testing.T) {
 // abortCases table).
 func TestArm64AbortMessages(t *testing.T) {
 	qemu := arm64QemuOrEmpty(t)
-	runAbortCases(t, "arm64", func(bin string) *exec.Cmd {
+	runAbortCases(t, "arm64-linux", func(bin string) *exec.Cmd {
 		if qemu == "" {
 			return exec.Command(bin)
 		}

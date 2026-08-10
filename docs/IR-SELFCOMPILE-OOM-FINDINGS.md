@@ -695,7 +695,7 @@ the result *after*).
 ```sh
 go build -o /tmp/fern ./cmd/fern
 # temporarily: asm_ir.fern  `> 512`  ->  `> 100000`
-/tmp/fern -target x86-64 -o /tmp/asm_run examples/self_host/asm_run.fern
+/tmp/fern -target x86-64-linux -o /tmp/asm_run examples/self_host/asm_run.fern
 # feed generated N-function / M-statement modules on stdin; measure
 # peak RSS with getrusage(RUSAGE_CHILDREN).ru_maxrss
 

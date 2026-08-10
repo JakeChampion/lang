@@ -67,12 +67,12 @@ func TestNativeMutScalarCapture(t *testing.T) {
 					t.Errorf("x86-64 %q: exit = %d, want %d", tc.name, got, tc.want)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, got := compileAndRunArm64(t, tc.src); got != tc.want {
 					t.Errorf("arm64 %q: exit = %d, want %d", tc.name, got, tc.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if got := compileAndRunWasmbinMain(t, tc.src); got != tc.want {
 					t.Errorf("wasm %q: exit = %d, want %d", tc.name, got, tc.want)
 				}
@@ -124,12 +124,12 @@ func TestNativeMutPointerCapture(t *testing.T) {
 					t.Errorf("x86-64 %q: exit = %d, want %d", tc.name, got, tc.want)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, got := compileAndRunArm64(t, tc.src); got != tc.want {
 					t.Errorf("arm64 %q: exit = %d, want %d", tc.name, got, tc.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if got := compileAndRunWasmbinMain(t, tc.src); got != tc.want {
 					t.Errorf("wasm %q: exit = %d, want %d", tc.name, got, tc.want)
 				}

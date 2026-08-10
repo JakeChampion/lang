@@ -39,7 +39,7 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	orch := filepath.Join(dir, "orch_arm64")
 
 	if err := withBuildMemoryMB(arm64ImageBuildMB, func() error {
-		out, err := exec.Command(fernBin, "-target", "arm64", "-o", orch, entry).CombinedOutput()
+		out, err := exec.Command(fernBin, "-target", "arm64-linux", "-o", orch, entry).CombinedOutput()
 		if err != nil {
 			return &buildErr{err: err, out: out}
 		}

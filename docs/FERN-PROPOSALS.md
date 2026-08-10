@@ -162,9 +162,9 @@ every leg. By the end, the file must pass ALL FIVE of these:
 ```
 ./bin/fern -check  app.fern                          # type-checks, silent
 ./bin/fern -interp app.fern                          # the oracle
-./bin/fern -target x86-64 -o /tmp/app     app.fern && /tmp/app
-./bin/fern -target wasm   -o /tmp/app.wasm app.fern && wasmtime run /tmp/app.wasm
-make selfhost-cli && bin/fern-selfhost -target x86-64 \
+./bin/fern -target x86-64-linux -o /tmp/app     app.fern && /tmp/app
+./bin/fern -target wasm32-wasi   -o /tmp/app.wasm app.fern && wasmtime run /tmp/app.wasm
+make selfhost-cli && bin/fern-selfhost -target x86-64-linux \
     /ABS/PATH/app.fern $PWD/internal/stdlib -o /tmp/app-sh && /tmp/app-sh
 ```
 
@@ -178,7 +178,7 @@ The last leg is the point. `make selfhost-cli` is a one-time ~2 min build
 you exercise the compiler the project is actually trying to finish. It needs
 **absolute paths**.
 
-Compare **stdout** across the legs, not just status. The `-target wasm` CLI
+Compare **stdout** across the legs, not just status. The `-target wasm32-wasi` CLI
 component lowers `main`'s return through `wasi:cli/run`'s `result<_, _>`, so
 every nonzero value collapses to exit 1 — measured, not assumed. Exit codes
 distinguish only pass from fail on that leg, which is exactly why `main`

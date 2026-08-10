@@ -73,7 +73,7 @@ func TestHighByteStringLiteralNativeAssembler(t *testing.T) {
 		outBin := filepath.Join(dir, "prog.x86")
 		// No -cc: the default in-process assembler + linker, the path the
 		// bug lived on.
-		if o, err := exec.Command(bin, "-target", "x86-64", "-o", outBin, src).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", outBin, src).CombinedOutput(); err != nil {
 			t.Fatalf("x86-64 build: %v\n%s", err, o)
 		}
 		got := runMaybeEmulated(t, outBin, "qemu-x86_64", isX86Host())
@@ -85,7 +85,7 @@ func TestHighByteStringLiteralNativeAssembler(t *testing.T) {
 	t.Run("arm64-native-assembler", func(t *testing.T) {
 		qemu := arm64QemuOrEmpty(t)
 		outBin := filepath.Join(dir, "prog.arm64")
-		if o, err := exec.Command(bin, "-target", "arm64", "-o", outBin, src).CombinedOutput(); err != nil {
+		if o, err := exec.Command(bin, "-target", "arm64-linux", "-o", outBin, src).CombinedOutput(); err != nil {
 			t.Fatalf("arm64 build: %v\n%s", err, o)
 		}
 		got := runMaybeEmulated(t, outBin, qemu, qemu == "")

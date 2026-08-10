@@ -170,8 +170,8 @@ func runAsyncIOProgram(t *testing.T, bin, dir, name, src string, want int) {
 		qemu   func(*testing.T) string
 		run    func(qemu, bin string, args ...string) *exec.Cmd
 	}{
-		{"x86-64", x86QemuOrEmpty, runX86Bin},
-		{"arm64", arm64QemuOrEmpty, runArm64Bin},
+		{"x86-64-linux", x86QemuOrEmpty, runX86Bin},
+		{"arm64-linux", arm64QemuOrEmpty, runArm64Bin},
 	}
 	for _, be := range backends {
 		be := be

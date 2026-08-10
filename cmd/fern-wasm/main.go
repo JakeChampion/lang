@@ -38,8 +38,8 @@
 //	}
 //	  Compiles src for one of the supported targets and returns
 //	  the textual output the corresponding cmd/fern `-target`
-//	  flag would have written. Targets: "arm64" (Linux ELF),
-//	  "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF).
+//	  flag would have written. Targets: "arm64-linux" (Linux ELF),
+//	  "arm64-darwin" (Mach-O variant), "x86-64-linux" (Linux ELF).
 //	  The playground's "View assembly" pane consumes this for
 //	  the Godbolt-style side-by-side experience. (The wasm
 //	  target retired with the WAT backend — the wasmbin path
@@ -53,7 +53,7 @@
 //	  Compiles src to a Component Model binary — the same bytes
 //	  `fern -target wasm` / `-target wasi-http` write — so the page
 //	  can offer it for download and local `wasmtime` / jco runs.
-//	  Worlds: "wasm" (a wasi:cli/run component) and "wasi-http" (a
+//	  Worlds: "wasm32-wasi" (a wasi:cli/run component) and "wasm32-wasi-http" (a
 //	  wasi:http/incoming-handler component). Bytes come back
 //	  base64-encoded so they survive the syscall/js boundary as a
 //	  plain string; the page decodes with atob into a Uint8Array.
@@ -263,11 +263,11 @@ func compile(src, target string) map[string]any {
 
 	var out string
 	switch target {
-	case "arm64":
+	case "arm64-linux":
 		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{})
 	case "arm64-darwin":
 		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-	case "x86-64":
+	case "x86-64-linux":
 		out, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
 	default:
 		result["error"] = fmt.Sprintf("unknown target %q (want arm64, arm64-darwin, x86-64)", target)
@@ -286,9 +286,9 @@ func compile(src, target string) map[string]any {
 // base64-encoded (see the API surface comment at the top of file).
 func compileComponent(src, world string) map[string]any {
 	result := map[string]any{
-		"wasm":  "",
-		"world": world,
-		"error": nil,
+		"wasm32-wasi": "",
+		"world":       world,
+		"error":       nil,
 	}
 
 	defer func() {
@@ -302,7 +302,7 @@ func compileComponent(src, world string) map[string]any {
 		result["error"] = err.Error()
 		return result
 	}
-	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	result["wasm32-wasi"] = base64.StdEncoding.EncodeToString(bin)
 	return result
 }
 
@@ -313,8 +313,8 @@ func compileComponent(src, world string) map[string]any {
 // web/wasi-shim.js.
 func compileCoreWasm(src string) map[string]any {
 	result := map[string]any{
-		"wasm":  "",
-		"error": nil,
+		"wasm32-wasi": "",
+		"error":       nil,
 	}
 
 	defer func() {
@@ -328,7 +328,7 @@ func compileCoreWasm(src string) map[string]any {
 		result["error"] = err.Error()
 		return result
 	}
-	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	result["wasm32-wasi"] = base64.StdEncoding.EncodeToString(bin)
 	return result
 }
 
@@ -338,8 +338,8 @@ func compileCoreWasm(src string) map[string]any {
 // path for the wasi-http world via web/wasi-http-shim.js.
 func compileHttpHandlerCore(src string) map[string]any {
 	result := map[string]any{
-		"wasm":  "",
-		"error": nil,
+		"wasm32-wasi": "",
+		"error":       nil,
 	}
 
 	defer func() {
@@ -353,7 +353,7 @@ func compileHttpHandlerCore(src string) map[string]any {
 		result["error"] = err.Error()
 		return result
 	}
-	result["wasm"] = base64.StdEncoding.EncodeToString(bin)
+	result["wasm32-wasi"] = base64.StdEncoding.EncodeToString(bin)
 	return result
 }
 
@@ -433,9 +433,9 @@ func main() {
 	js.Global().Set("fernCompileComponent", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return map[string]any{
-				"wasm":  "",
-				"world": "",
-				"error": "fernCompileComponent(src, world) requires two string arguments",
+				"wasm32-wasi": "",
+				"world":       "",
+				"error":       "fernCompileComponent(src, world) requires two string arguments",
 			}
 		}
 		return compileComponent(args[0].String(), args[1].String())
@@ -444,8 +444,8 @@ func main() {
 	js.Global().Set("fernCompileCoreWasm", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return map[string]any{
-				"wasm":  "",
-				"error": "fernCompileCoreWasm(src) requires one string argument",
+				"wasm32-wasi": "",
+				"error":       "fernCompileCoreWasm(src) requires one string argument",
 			}
 		}
 		return compileCoreWasm(args[0].String())
@@ -454,8 +454,8 @@ func main() {
 	js.Global().Set("fernCompileHttpHandlerCore", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return map[string]any{
-				"wasm":  "",
-				"error": "fernCompileHttpHandlerCore(src) requires one string argument",
+				"wasm32-wasi": "",
+				"error":       "fernCompileHttpHandlerCore(src) requires one string argument",
 			}
 		}
 		return compileHttpHandlerCore(args[0].String())

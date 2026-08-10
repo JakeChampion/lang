@@ -19,7 +19,7 @@ func TestCompileComponentCliRunStructure(t *testing.T) {
   print("hello from a component");
   return 0;
 }`
-	bin, err := CompileComponent(src, "wasm")
+	bin, err := CompileComponent(src, "wasm32-wasi")
 	if err != nil {
 		t.Fatalf("CompileComponent(wasm): %v", err)
 	}
@@ -38,7 +38,7 @@ import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
   return http.http_response_ok("ok");
 }`
-	bin, err := CompileComponent(src, "wasi-http")
+	bin, err := CompileComponent(src, "wasm32-wasi-http")
 	if err != nil {
 		// The handler surface (HttpRequest / HttpResponse / Platform /
 		// http_response_ok) is prelude-provided; if the names drift this
@@ -57,7 +57,7 @@ func TestCompileComponentUnknownWorld(t *testing.T) {
 }
 
 func TestCompileComponentParseErrorFormatted(t *testing.T) {
-	_, err := CompileComponent(`function main(): i32 { return `, "wasm")
+	_, err := CompileComponent(`function main(): i32 { return `, "wasm32-wasi")
 	if err == nil {
 		t.Fatal("expected a parse error")
 	}
@@ -81,7 +81,7 @@ func TestCompileComponentRunsUnderWasmtime(t *testing.T) {
   print("` + want + `");
   return 0;
 }`
-	bin, err := CompileComponent(src, "wasm")
+	bin, err := CompileComponent(src, "wasm32-wasi")
 	if err != nil {
 		t.Fatalf("CompileComponent(wasm): %v", err)
 	}

@@ -32,7 +32,7 @@ Memory is reference counted, freed at the point the last use goes out of
 scope rather than at a collector's convenience. There is no tuning, no
 heap sizing, and no pause to plan around.
 
-<small>Measured on x86-64 Linux, August 2026: `fern -target x86-64 -o
+<small>Measured on x86-64 Linux, August 2026: `fern -target x86-64-linux -o
 hello hello.fern`, `go build -ldflags="-s -w"`, `rustc -O -C
 strip=symbols`. Re-run them yourself — the order of magnitude is the
 point, not the digits.</small>
@@ -52,7 +52,7 @@ separate tool.
 
 ## The same program, native or WebAssembly
 
-`-target wasm` emits a self-contained WASI component and `-target
+`-target wasm32-wasi` emits a self-contained WASI component and `-target
 wasi-http` an HTTP handler for `wasmtime serve` — from the source that
 also builds a native binary. No JavaScript shim, no adapter step, no
 second implementation to keep in sync.

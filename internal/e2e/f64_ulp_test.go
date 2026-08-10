@@ -320,7 +320,7 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("x86-64 exited %d\n%s", code, out)
 	}
-	checkF64Output(t, "x86-64", out, cs, maxULP)
+	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
 }
 
 func TestF64TranscendentalUlpArm64(t *testing.T) {
@@ -329,7 +329,7 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("arm64 exited %d\n%s", code, out)
 	}
-	checkF64Output(t, "arm64", out, cs, maxULP)
+	checkF64Output(t, "arm64-linux", out, cs, maxULP)
 }
 
 // TestF64TranscendentalBackendsAgree pins the two register backends to each

@@ -4,7 +4,7 @@
 // still strands its result structs — because the scanner takes a SCALAR
 // argument that the caller taints.
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/scalar_thread_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/scalar_thread_leak.fern
 //   /tmp/p    # stderr: leakcheck: allocs=3400 frees=1000 live_bytes=76800
 //
 // The one structural addition over result_thread_leak.fern is `start_line`: a

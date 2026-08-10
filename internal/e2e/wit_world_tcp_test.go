@@ -72,7 +72,7 @@ func TestComposeTcpFromWorld(t *testing.T) {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
-	if out, err := exec.Command(fernBin, "-target", "wasm", "-o", refPath, progPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)

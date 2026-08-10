@@ -117,8 +117,8 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "wasm",
-		target:    "wasm",
+		backend:   "wasm32-wasi",
+		target:    "wasm32-wasi",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-wasm-known-divergences.txt",
@@ -145,7 +145,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		//	wasm trap: wasm `unreachable` instruction executed  → a real failure
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			watPath := filepath.Join(t.TempDir(), "prog.wat")
-			cmd := exec.Command(fernBin, "-target", "wasm", f.mainPath, stdlibRoot, "-o", watPath)
+			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", f.mainPath, stdlibRoot, "-o", watPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
 				return
@@ -209,17 +209,17 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "x86_64",
-		target:    "x86-64",
+		target:    "x86-64-linux",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := exec.Command(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				// Includes the in-process assembler's own refusal ("could not
 				// encode: …"), which names the mnemonic or operand shape.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -254,20 +254,20 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 	// turns into a skip.
 	_, qemu := arm64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "arm64",
-		target:    "arm64",
+		backend:   "arm64-linux",
+		target:    "arm64-linux",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-arm64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "arm64", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := exec.Command(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				// Includes the in-process assembler's own refusal ("hit an
 				// instruction it does not yet support: …"), which names the
 				// mnemonic — a different and more actionable failure than the
 				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods

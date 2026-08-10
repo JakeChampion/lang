@@ -10,7 +10,7 @@
 // sat one above its true owner count forever. inferParamCountedRetain now proves
 // the retention counted and lifts that taint.
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/retained_param_leak.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/retained_param_leak.fern
 //   /tmp/p; # stderr: leakcheck: allocs=3000 frees=2000 live_bytes=32000
 //
 // FIXED for this shape by inferParamCountedRetain: frees went 1000 -> 2000, so
