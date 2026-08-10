@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/ast"
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
@@ -96,6 +97,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	withArgs := usesArgs(helpers)
 	withStrbuf := usesStrbuf(helpers)
+	withMapSeed := usesMapSeed(helpers)
 	withReadLine := usesReadLine(helpers)
 	withEnv := usesEnv(helpers)
 	strLabels, strOrder := collectStrings(progs, names)
@@ -299,6 +301,15 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("%s:", strbufDataSym)
 		w("\t.space %d", strbufBytes)
 	}
+	if withMapSeed {
+		// core/map's per-process string-hash seed. One word, zero-initialised —
+		// and zero doubles as "not yet drawn", which is why the drawn value is
+		// forced nonzero (see emitMapHashSeedHelper).
+		w(".section .bss")
+		w(".align 8")
+		w("%s:", mapSeedSym)
+		w("\t.quad 0")
+	}
 	if withReadLine {
 		// The Reader.read_line scratch buffer (reused across calls; NOBITS).
 		w(".section .bss")
@@ -333,6 +344,7 @@ const (
 	// lets the loader zero-fill the rest via p_memsz, so the whole zero-init buffer
 	// is NOBITS (see elf.imageWX / trailingTrimZeros).
 	strbufLenSym  = "__ssa_strbuf_len"
+	mapSeedSym    = "__ssa_map_seed"
 	strbufDataSym = "__ssa_strbuf_data"
 	strbufBytes   = 64 << 20 // 64 MiB (NOBITS — no file cost)
 
@@ -357,6 +369,17 @@ func usesReadLine(helpers []string) bool {
 
 // usesStrbuf reports whether the module references any strbuf builtin, so the
 // .bss counter + buffer are emitted only when needed.
+// usesMapSeed reports whether the module references core/map's per-process
+// string-hash seed, so its cached .bss word is emitted.
+func usesMapSeed(helpers []string) bool {
+	for _, h := range helpers {
+		if h == "__fern_map_hash_seed" {
+			return true
+		}
+	}
+	return false
+}
+
 func usesStrbuf(helpers []string) bool {
 	for _, h := range helpers {
 		if h == "strbuf_reset" || h == "strbuf_append" || h == "strbuf_take" {
@@ -452,24 +475,39 @@ func splitDynPair(key string) (string, string) {
 // (referencedRuntimeHelpers); its `bl fn_<name>` site links the label
 // fnLabel(name) writes. Leaf functions under the AArch64 PCS (arg/result x0).
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique": emitRcIsUniqueHelper,
-	"__fern_rc_inc":       emitRcIncHelper,
-	"__fern_rc_dec":       emitRcDecHelper,
-	"__fern_box_free":     emitBoxFreeHelper,
-	"__fern_closure_drop": emitClosureDropHelper,
-	"__str_len":           emitStrLenHelper,
-	"__str_eq":            emitStrEqHelper,
-	"__str_concat":        emitStrConcatHelper,
-	"__fern_str_dec":      emitStrDecHelper,
-	"__fern_arr_dec":      emitArrDecHelper,
-	"__fern_drop_arr_str": emitDropArrStrHelper,
-	"__str_idx":           emitStrIdxHelper,
-	"__fern_memchr":       emitMemchrHelper,
-	"__fern_ascii_run":    emitAsciiRunHelper,
-	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
-	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
-	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
-	"__arr_idx_16":        emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
+	"__fern_rc_is_unique":  emitRcIsUniqueHelper,
+	"__fern_rc_inc":        emitRcIncHelper,
+	"__fern_rc_dec":        emitRcDecHelper,
+	"__fern_box_free":      emitBoxFreeHelper,
+	"__fern_closure_drop":  emitClosureDropHelper,
+	"__str_len":            emitStrLenHelper,
+	"__ptr_width":          emitPtrWidthHelper,
+	"__load_i32":           emitLoadI32Helper,
+	"__store_i32":          emitStoreI32Helper,
+	"__load_ptr":           emitLoadPtrHelper,
+	"__store_ptr":          emitStorePtrHelper,
+	"__load_i64":           emitLoadI64Helper,
+	"__store_i64":          emitStoreI64Helper,
+	"__memset":             emitMemsetHelper,
+	"__alloc":              emitAllocHelper,
+	"__free":               emitFreeHelper,
+	"__str_eq":             emitStrEqHelper,
+	"__str_concat":         emitStrConcatHelper,
+	"__fern_str_dec":       emitStrDecHelper,
+	"__fern_arr_dec":       emitArrDecHelper,
+	"__fern_drop_arr_str":  emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "das"),
+	"__fern_drop_arr_ptr":  emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dap"),
+	"__memcpy":             emitMemcpyHelper,
+	"__fern_map_drop":      emitMapDropHelper,
+	"__fern_map_hash_seed": emitMapHashSeedHelper,
+	"__alloc_reuse":        emitAllocReuseHelper,
+	"__str_idx":            emitStrIdxHelper,
+	"__fern_memchr":        emitMemchrHelper,
+	"__fern_ascii_run":     emitAsciiRunHelper,
+	"__arr_idx":            emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
+	"__arr_idx_1":          emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
+	"__arr_idx_8":          emitArrIdxHelperN("__arr_idx_8", 3),  // stride 8 (i64 / pointer)
+	"__arr_idx_16":         emitArrIdxHelperN("__arr_idx_16", 4), // stride 16 (two-word string[])
 	// Bounds-check-elided variants (#4380 lever 3): same address compute, no trap.
 	"__arr_idx_nc":                  emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
 	"__arr_idx_1_nc":                emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
@@ -1755,6 +1793,10 @@ func emitPollHelper(w func(string, ...any)) {
 var runtimeHelperDeps = map[string][]string{
 	"__fern_closure_drop":           {"__fern_box_free", "__fern_rc_dec"},
 	"__fern_drop_arr_str":           {"__fern_str_dec", "__fern_arr_dec"},
+	"__fern_drop_arr_ptr":           {"__fern_rc_dec", "__fern_arr_dec"},
+	"__fern_map_drop":               {"__free"},
+	"__fern_map_hash_seed":          {"random_i32"},
+	"__alloc_reuse":                 {"__free", "__alloc"},
 	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
@@ -1781,6 +1823,12 @@ var runtimeHelperDeps = map[string][]string{
 // absent (the mask is correct or harmless for them).
 var helperReturns64 = map[string]bool{
 	"__str_concat":                  true,
+	"__load_ptr":                    true,
+	"__memcpy":                      true,
+	"__fern_map_drop":               true,
+	"__alloc_reuse":                 true,
+	"__alloc":                       true,
+	"__load_i64":                    true,
 	"__fern_box_free":               true,
 	"__fern_arr_push_grow":          true,
 	"__fern_arr_push_grow_ptr":      true,
@@ -1846,6 +1894,8 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_arr_push_grow_move_ptr": true,
 	"__fern_arr_push_grow_move_str": true,
 	"__alloc_u8":                    true,
+	"__alloc":                       true,
+	"__alloc_reuse":                 true,
 	"__fern_arr_cow_inplace":        true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
@@ -2051,6 +2101,137 @@ func emitStrLenHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__str_len"))
 	w("\tldur w0, [x0, #-4]")
+	w("\tret")
+}
+
+// emitPtrWidthHelper writes __ptr_width() -> i32: the target's pointer size in
+// bytes, 8 here. The Map runtime calls it to size a per-entry key/value slot, so
+// the same core/map.fern source lays out 8-byte slots on the natives and 4-byte
+// ones on wasm32. Mirrors the arm64 stack-machine backend's constant function
+// (`mov w0, #8; ret`) and the wasm backend's `i32.const 4`. Leaf.
+func emitPtrWidthHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__ptr_width"))
+	w("\tmov w0, #8")
+	w("\tret")
+}
+
+// The raw-memory intrinsics core/map.fern is written against: it manipulates its
+// kv buffer through explicit loads and stores rather than through typed field
+// access, because the buffer is one untyped allocation whose layout depends on
+// the target's pointer width. The stack-machine backend emits these as real
+// two-instruction leaf functions too (emitRawIntPokesRuntime), so calling them
+// rather than inlining costs nothing this path does not already pay.
+//
+// Return widths matter here: __load_ptr / __load_i64 hand back a full 8-byte
+// value and are listed in helperReturns64, or the direct-call sequence's i32
+// sign-extend mask would truncate a high heap address. __load_i32 is genuinely
+// 32-bit and wants the mask. The stores are void.
+
+// emitAllocHelper writes __alloc(n) -> ptr: a raw bump of n 8-aligned bytes with
+// NO rc header, the primitive core/map.fern builds its kv buffer out of (it lays
+// down its own header words at buf+0..20). Contrast __alloc_u8, which reserves a
+// 16-byte cap/rc/len header and zeroes the payload.
+//
+// Fresh bump memory is already zero — the heap is a .bss buffer and the cursor
+// only ever moves forward — so there is nothing to clear. Like __alloc_u8 this
+// does not bounds-check the cursor against the end of the buffer; that gap is
+// the SSA path's, not this helper's.
+func emitAllocHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__alloc"))
+	w("\tadrp x8, %s", heapPtrSym)
+	w("\tadd x8, x8, #:lo12:%s", heapPtrSym)
+	w("\tldr x9, [x8]")
+	w("\tadd x9, x9, #7")
+	w("\tand x9, x9, #-8")       // base, 8-aligned
+	w("\tadd x10, x9, w0, uxtw") // cursor += n (size is a non-negative i32)
+	w("\tstr x10, [x8]")
+	w("\tmov x0, x9")
+	w("\tret")
+}
+
+// emitFreeHelper writes __free(ptr, n): a no-op, because this backend's heap is
+// bump-only with no freelist — the same reason __fern_box_free is a bare `ret`.
+// core/map.fern's grow path calls it to release the old kv buffer, so the symbol
+// has to exist; the memory is simply not reused. Void, leaf.
+func emitFreeHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__free"))
+	w("\tret")
+}
+
+func emitLoadI32Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__load_i32"))
+	w("\tldr w0, [x0]")
+	w("\tret")
+}
+
+func emitStoreI32Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__store_i32"))
+	w("\tstr w1, [x0]")
+	w("\tret")
+}
+
+func emitLoadPtrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__load_ptr"))
+	w("\tldr x0, [x0]")
+	w("\tret")
+}
+
+func emitStorePtrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__store_ptr"))
+	w("\tstr x1, [x0]")
+	w("\tret")
+}
+
+// __load_i64 / __store_i64 are the 8-byte pair the Map runtime's wide-scalar
+// boxed-key path (keyKind 2) uses to reach an i64 / u64 / f64 key through its
+// heap cell. On arm64 a usize is already 8 bytes, so `Map[i64, _]` itself stays
+// on keyKind 0 and never calls these — but the stdlib names them regardless of
+// target, so the symbols need linkable bodies.
+func emitLoadI64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__load_i64"))
+	w("\tldr x0, [x0]")
+	w("\tret")
+}
+
+func emitStoreI64Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__store_i64"))
+	w("\tstr x1, [x0]")
+	w("\tret")
+}
+
+// emitMemsetHelper writes __memset(dst, byte, n): splat the low byte of `byte`
+// across a 64-bit pattern, store it 8 bytes at a time, then finish the tail one
+// byte at a time. The Map runtime uses it to fill a fresh bucket array with the
+// 0xff empty-slot marker. Void, leaf.
+func emitMemsetHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__memset"))
+	w("\tand w1, w1, #0xff")
+	w("\torr w3, w1, w1, lsl #8")
+	w("\torr w3, w3, w3, lsl #16")
+	w("\torr x3, x3, x3, lsl #32")
+	w(".Lssa_mset_word:")
+	w("\tcmp x2, #8")
+	w("\tb.lt .Lssa_mset_tail")
+	w("\tstr x3, [x0], #8")
+	w("\tsub x2, x2, #8")
+	w("\tb .Lssa_mset_word")
+	w(".Lssa_mset_tail:")
+	w("\tcmp x2, #0")
+	w("\tb.eq .Lssa_mset_done")
+	w("\tstrb w1, [x0], #1")
+	w("\tsub x2, x2, #1")
+	w("\tb .Lssa_mset_tail")
+	w(".Lssa_mset_done:")
 	w("\tret")
 }
 
@@ -3477,56 +3658,218 @@ func emitReadDirHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitDropArrStrHelper writes __fern_drop_arr_str(ptr, stride) -> ptr: the
-// scope-exit drop for a string[] local. arm64ssa strings are single-word (one
-// data pointer per element, stride pointer-width), so — unlike the native
-// two-word walk — each element load is a single ldr. On the last reference
-// (rc == 1) it walks the `len` elements and __fern_str_dec's each, then dec's
-// the array box via __fern_arr_dec; a shared array (rc != 1) just dec's the box
-// (its elements stay alive for the other holder). Same null / low-address /
-// static-sentinel guards as __fern_arr_dec. Non-leaf (calls __fern_str_dec in a
-// loop), so it keeps a frame with callee-saved x19=ptr / x20=stride / x21=len /
-// x22=i across the calls. Returns the input ptr (the dec contract).
-func emitDropArrStrHelper(w func(string, ...any)) {
+// emitDropArrElemHelper returns the emitter for a per-element array drop:
+// __fern_drop_arr_<kind>(ptr, stride) -> ptr, the scope-exit drop for an array
+// whose elements each need releasing. On the LAST reference (rc == 1) it walks
+// the `len` elements and calls `elemDrop` on each, then dec's the array box via
+// __fern_arr_dec; a shared array (rc != 1) dec's the box only, since its
+// elements stay alive for the other holder. Same null / low-address /
+// static-sentinel guards as __fern_arr_dec. Returns the input ptr (the dec
+// contract).
+//
+// Non-leaf — it calls into `elemDrop` in a loop — so it keeps a frame with
+// callee-saved x19=ptr / x20=stride / x21=len / x22=i live across the calls.
+//
+// Two instantiations, differing only in the per-element call:
+//
+//   - string[]  -> __fern_str_dec. arm64ssa strings are single-word (one data
+//     pointer per element), so each element load is a single ldr — unlike the
+//     native backend's two-word walk.
+//   - pointer[] -> __fern_rc_dec, for elements that are themselves rc-tracked
+//     heap values (arrays, maps, structs). This is the one core/map.fern needs
+//     to reclaim a Map's array-typed value column.
+//
+// `tag` distinguishes the two instantiations' local labels; emitting both with
+// one tag would define each label twice.
+func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		lbl := func(suffix string) string { return ".Lssa_" + tag + "_" + suffix }
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tstp x29, x30, [sp, #-48]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tmov x19, x0") // ptr
+		w("\tmov x20, x1") // stride
+		w("\tcbz x19, %s", lbl("ret"))
+		w("\tcmp x19, #0x10000")
+		w("\tb.lo %s", lbl("ret"))
+		w("\tldur w0, [x19, #-8]")          // rc
+		w("\ttbnz w0, #31, %s", lbl("ret")) // static sentinel
+		w("\tcmp w0, #1")
+		w("\tb.ne %s", lbl("decarr")) // shared: dec the box only
+		// rc == 1: walk the elements, releasing each.
+		w("\tldur w21, [x19, #-4]") // len
+		w("\tmov x22, #0")          // i
+		w("%s:", lbl("loop"))
+		w("\tcmp w22, w21")
+		w("\tb.ge %s", lbl("decarr"))
+		w("\tmul x0, x22, x20") // i*stride
+		w("\tadd x0, x19, x0")  // &elem[i]
+		w("\tldr x0, [x0]")     // elem
+		w("\tbl %s", fnLabel(elemDrop))
+		w("\tadd x22, x22, #1")
+		w("\tb %s", lbl("loop"))
+		w("%s:", lbl("decarr"))
+		w("\tmov x0, x19")
+		w("\tmov x1, x20")
+		w("\tbl %s", fnLabel("__fern_arr_dec"))
+		w("\tmov x0, x19") // return ptr
+		w("\tb %s", lbl("done"))
+		w("%s:", lbl("ret"))
+		w("\tmov x0, x19")
+		w("%s:", lbl("done"))
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #48")
+		w("\tret")
+	}
+}
+
+// emitMapDropHelper writes __fern_map_drop(m) -> m: the scope-exit drop for a
+// Map local. A Map handle keeps its rc at [m-8] and its kv-buffer pointer at
+// [m+0]. On the LAST reference (rc == 1) both allocations are released — the buf
+// (ast.MapHeaderBytes + cap*(4 + entryStride), cap at [buf+0], entryStride =
+// 2*ptrW = 16 here) and then the 16-byte handle cell at m-8; on a shared handle
+// (rc > 1) the count is decremented in place. Entry keys and values are NOT
+// walked: the IR emits a __map_drop_values call ahead of this one for the value
+// column. Mirrors the stack-machine backend's emitMapDropRuntime, including its
+// null / low-address / static-sentinel / non-positive-rc guards. m is held in
+// callee-saved x19 across the __free calls.
+//
+// __free is a no-op on this backend (bump-only heap, no freelist — see
+// emitFreeHelper), so the rc == 1 branch reclaims nothing today. The calls are
+// emitted anyway rather than elided: they are what makes this helper's contract
+// the same as the native one, so a freelist landing later needs no change here.
+func emitMapDropHelper(w func(string, ...any)) {
 	w("")
-	w("%s:", fnLabel("__fern_drop_arr_str"))
-	w("\tstp x29, x30, [sp, #-48]!")
+	w("%s:", fnLabel("__fern_map_drop"))
+	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tmov x29, sp")
-	w("\tstp x19, x20, [sp, #16]")
-	w("\tstp x21, x22, [sp, #32]")
-	w("\tmov x19, x0") // ptr
-	w("\tmov x20, x1") // stride
-	w("\tcbz x19, .Lssa_das_ret")
+	w("\tstr x19, [sp, #16]")
+	w("\tmov x19, x0") // m
+	w("\tcbz x19, .Lssa_mapdrop_ret")
 	w("\tcmp x19, #0x10000")
-	w("\tb.lo .Lssa_das_ret")
-	w("\tldur w0, [x19, #-8]")         // rc
-	w("\ttbnz w0, #31, .Lssa_das_ret") // static sentinel
-	w("\tcmp w0, #1")
-	w("\tb.ne .Lssa_das_decarr") // shared: dec the box only
-	// rc == 1: walk elements, drop each single-word string.
-	w("\tldur w21, [x19, #-4]") // len
-	w("\tmov x22, #0")          // i
-	w(".Lssa_das_loop:")
-	w("\tcmp w22, w21")
-	w("\tb.ge .Lssa_das_decarr")
-	w("\tmul x0, x22, x20") // i*stride
-	w("\tadd x0, x19, x0")  // &elem[i]
-	w("\tldr x0, [x0]")     // elem = single-word string ptr
-	w("\tbl %s", fnLabel("__fern_str_dec"))
-	w("\tadd x22, x22, #1")
-	w("\tb .Lssa_das_loop")
-	w(".Lssa_das_decarr:")
+	w("\tb.lo .Lssa_mapdrop_ret")
+	w("\tldur w1, [x19, #-8]") // rc
+	w("\ttbnz w1, #31, .Lssa_mapdrop_ret")
+	w("\tcmp w1, #0")
+	w("\tb.le .Lssa_mapdrop_ret") // non-positive rc: nothing to do
+	w("\tcmp w1, #1")
+	w("\tb.ne .Lssa_mapdrop_dec") // shared: just decrement
+	w("\tldr x4, [x19]")          // buf
+	w("\tcbz x4, .Lssa_mapdrop_freehandle")
+	w("\tcmp x4, #0x10000")
+	w("\tb.lo .Lssa_mapdrop_freehandle")
+	w("\tldr w5, [x4]")   // cap
+	w("\tmov x6, #20")    // 4 + entryStride(16)
+	w("\tmul x5, x5, x6") // cap * 20
+	w("\tadd x1, x5, #%d", ast.MapHeaderBytes)
+	w("\tmov x0, x4") // base = buf
+	w("\tbl %s", fnLabel("__free"))
+	w(".Lssa_mapdrop_freehandle:")
+	w("\tsub x0, x19, #8") // handle base
+	w("\tmov x1, #16")     // handle size
+	w("\tbl %s", fnLabel("__free"))
+	w("\tb .Lssa_mapdrop_ret")
+	w(".Lssa_mapdrop_dec:")
+	w("\tldur w1, [x19, #-8]")
+	w("\tsub w1, w1, #1")
+	w("\tstur w1, [x19, #-8]")
+	w(".Lssa_mapdrop_ret:")
 	w("\tmov x0, x19")
-	w("\tmov x1, x20")
-	w("\tbl %s", fnLabel("__fern_arr_dec"))
-	w("\tmov x0, x19") // return ptr
-	w("\tb .Lssa_das_done")
-	w(".Lssa_das_ret:")
-	w("\tmov x0, x19")
-	w(".Lssa_das_done:")
-	w("\tldp x21, x22, [sp, #32]")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #48")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitMapHashSeedHelper writes __fern_map_hash_seed() -> i32: core/map's
+// per-process string-hash seed, mixed into its FNV basis so attacker-supplied
+// key strings cannot be precomputed into a colliding set offline (#6194).
+//
+// Per PROCESS, not per map — the draw is a getrandom syscall, which a program
+// creating maps freely must not pay repeatedly, so the word caches it and every
+// map after the first is a load. Value and cache flag share that one word (zero
+// means "not yet drawn"), which is why the drawn value is forced nonzero with
+// `orr w0, w0, #1`: zero is also core/map's "unseeded" sentinel, and a 0 seed
+// reaching a map header would silently leave it unseeded. Mirrors the
+// stack-machine backend's emitMapHashSeedRuntime.
+func emitMapHashSeedHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_map_hash_seed"))
+	w("\tadrp x1, %s", mapSeedSym)
+	w("\tadd x1, x1, #:lo12:%s", mapSeedSym)
+	w("\tldr w0, [x1]")
+	w("\tcbnz w0, .Lssa_mapseed_ret")
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tbl %s", fnLabel("random_i32"))
+	w("\torr w0, w0, #1") // never 0 — see the doc above
+	w("\tadrp x1, %s", mapSeedSym)
+	w("\tadd x1, x1, #:lo12:%s", mapSeedSym)
+	w("\tstr w0, [x1]")
+	w("\tldp x29, x30, [sp], #16")
+	w(".Lssa_mapseed_ret:")
+	w("\tret")
+}
+
+// emitAllocReuseHelper writes __alloc_reuse(token, tokenSize, size) -> ptr: the
+// drop-reuse (FBIP) primitive. When the token is live and its 16-byte size class
+// matches `size`'s, it hands the token straight back — no free, no allocation,
+// which is the whole point of reuse. On a null token or a class mismatch it
+// releases the dropped block and allocates fresh, so a mispaired reuse is
+// slow-not-wrong. Class arithmetic ((sz+15)&-16) mirrors the native helper's.
+//
+// AAPCS64: x0 = token, x1 = tokenSize, x2 = size. __free is a no-op here (see
+// emitFreeHelper), so the mismatch path just allocates — but the call stays, for
+// the same reason it stays in emitMapDropHelper. Tails into __alloc.
+func emitAllocReuseHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__alloc_reuse"))
+	w("\tcbz x0, .Lssa_reuse_fresh") // null token -> plain alloc(size)
+	w("\tadd x3, x1, #15")
+	w("\tand x3, x3, #-16")
+	w("\tadd x4, x2, #15")
+	w("\tand x4, x4, #-16")
+	w("\tcmp x3, x4")
+	w("\tb.ne .Lssa_reuse_mismatch")
+	w("\tret") // same class: reuse the token in place
+	w(".Lssa_reuse_mismatch:")
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	w("\tstr x2, [sp, #-16]!") // save size (keeps sp 16-aligned)
+	w("\tbl %s", fnLabel("__free"))
+	w("\tldr x2, [sp], #16") // restore size
+	w("\tldp x29, x30, [sp], #16")
+	w(".Lssa_reuse_fresh:")
+	w("\tmov x0, x2")               // size
+	w("\tb %s", fnLabel("__alloc")) // tail call
+}
+
+// emitMemcpyHelper writes __memcpy(dst, src, n) -> dst: copy 8 bytes at a time,
+// then the tail one byte at a time. core/map.fern uses it to move a kv buffer's
+// entries into a freshly grown one. Mirrors the stack-machine backend's
+// __fern_memcpy. Returns dst (an 8-byte pointer), so it is in helperReturns64.
+func emitMemcpyHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__memcpy"))
+	w("\tmov x3, x0") // save dst for the return
+	w(".Lssa_mcp_word:")
+	w("\tcmp x2, #8")
+	w("\tb.lt .Lssa_mcp_tail")
+	w("\tldr x4, [x1], #8")
+	w("\tstr x4, [x0], #8")
+	w("\tsub x2, x2, #8")
+	w("\tb .Lssa_mcp_word")
+	w(".Lssa_mcp_tail:")
+	w("\tcmp x2, #0")
+	w("\tb.eq .Lssa_mcp_done")
+	w("\tldrb w4, [x1], #1")
+	w("\tstrb w4, [x0], #1")
+	w("\tsub x2, x2, #1")
+	w("\tb .Lssa_mcp_tail")
+	w(".Lssa_mcp_done:")
+	w("\tmov x0, x3")
 	w("\tret")
 }
 
@@ -4231,7 +4574,12 @@ func callLines(in x86.Inst, numAlloc, scratch, callSaveBase int) ([]string, erro
 		out = append(out, fmt.Sprintf("str %s, [sp, #%d]", xreg(r), 8*(callSaveBase+k)))
 	}
 	out = append(out, argMoveLines(in.ArgLocs)...)
-	out = append(out, fmt.Sprintf("bl %s", fnLabel(in.Callee)))
+	// ir.CodegenAlias resolves a Map/MapIter call target onto the stdlib `_impl`
+	// that implements it. Applied HERE, where the callee becomes a label, so
+	// there is no path that emits the unaliased name (#6609). Its twin is the
+	// alias map handed to LiveFunctionsWithAliases in buildArm64SSA — miss
+	// either and the assembler reports the same dangling label.
+	out = append(out, fmt.Sprintf("bl %s", fnLabel(ir.CodegenAlias(in.Callee))))
 	out = append(out, fmt.Sprintf("mov %s, x0", xreg(scratch))) // capture tag / result
 	if in.Op == x86.CallPair {
 		out = append(out, fmt.Sprintf("mov %s, x1", xreg(s0))) // capture payload

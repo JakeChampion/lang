@@ -1879,7 +1879,12 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 			dynRoots = append(dynRoots, m.Func)
 		}
 	}
-	live := ir.LiveFunctionsWithAliases(irProg, nil, dynRoots...)
+	// ir.CodegenAliases so a Map call site keeps its stdlib `_impl` alive: the
+	// IR emits `map_new` and only the emitter knows that resolves to
+	// `map_new_impl`, so passing nil here culled every Map impl as unreachable
+	// and the link failed on a dangling label (#6609). Must stay in step with
+	// the alias the emitter applies — same map, both ends.
+	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases, dynRoots...)
 	funcs := map[string]*ssa.Func{}
 	for _, fn := range irProg.Funcs {
 		if live != nil && !live[fn.Name] {
