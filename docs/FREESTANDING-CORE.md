@@ -109,20 +109,45 @@ Two consequences worth knowing:
   target grants. A bare `fern -check` still means "does this type-check".
 - **`log` is no longer universal.** `TestNoTargetMissesLogCapability` exempts targets
   marked `NoBackend`. Keyed on the flag rather than the name, so the day something emits
-  for freestanding the invariant applies again — at which point *where does a
-  freestanding artifact put a panic message?* becomes a question with an answer instead
-  of an omission.
+  for freestanding the invariant applies again.
 
-The entry point is deliberately unspecified: `HandlerKinds` is empty, because a
-freestanding artifact is not entered at `main`. #6510 settles the shape.
+## The entry shape
 
-**There is more than one shape, and #6510 must not foreclose on the second.** A
-freestanding artifact can be a *guest* — a set of exported symbols its embedder calls,
-closer to the existing `-shared` / `-export` path than to any handler kind — or it can
-be the *host*, entered at a reset vector, owning the vector table and the MMU. Fern
-targets both (`docs/BARE-METAL-PLAN.md`). The guest shape is the near-term one and the
-right thing to build first; hard-coding it as *the* freestanding shape is what turns the
-host shape into a rewrite instead of a second descriptor field.
+`HandlerKinds` is empty because a freestanding artifact is not entered at `main`. What
+replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
+
+| shape | who transfers control | native backends emit |
+| --- | --- | --- |
+| `EntryProcess` | a kernel / dyld, with a populated process stack | `_start` (`_main` on Mach-O) + the argc/argv/envp capture |
+| `EntryExports` | nobody; the embedder calls exported symbols | neither |
+| `EntryReset` | a reset vector, with no stack pointer | not emitted for yet |
+
+Freestanding is `EntryExports` today. **`EntryReset` exists so the kernel posture is a
+second value rather than a rewrite** of everything keyed on "freestanding means exported
+symbols" — Fern targets both postures (`docs/BARE-METAL-PLAN.md`). The zero value
+resolves to `EntryProcess` via `OrDefault`, so a codegen `Options{}` keeps the hosted
+behaviour.
+
+### Where a hostless panic goes: nowhere — it traps
+
+Capability gating removes most of the hosted runtime for free: a freestanding program
+*cannot call* `read_file` / `tcp_*` / `print` / the clocks, so their `uses*` flags never
+set and their syscalls are never emitted. Three pieces do not fall out that way, because
+nothing in the program has to name them:
+
+- **`__fern_report`**, the abort reporter, emitted for every program — it writes the
+  cause to stderr and `exit_group`s.
+- **`__fern_exit`**, because `exit` is core (above) and so must exist everywhere.
+- **`__fern_alloc`'s lazy `mmap`**, because essentially every program allocates.
+
+On an entry shape other than `EntryProcess` all three become a trap — `ud2` on x86-64,
+`brk #1` on arm64 — rather than a syscall. That is the answer to *where does a
+freestanding artifact put a panic message?*: it does not have one, and stopping is the
+only honest thing left. The symbols stay defined (call sites branch to them); only the
+bodies change, and the backtrace string is dropped since nothing writes it.
+
+The allocator trap is a **placeholder for #6511**, not the design: once the heap is an
+embedder-supplied region, `__fern_heap_ptr` is seeded and the trap is unreachable.
 
 ## Adding a builtin
 

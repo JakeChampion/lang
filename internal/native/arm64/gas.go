@@ -282,6 +282,16 @@ func assembleInsn(a *Assembler, line string) error {
 		}
 		a.Emit(SVC(uint16(imm)))
 		return nil
+	case "brk":
+		if len(ops) != 1 {
+			return fmt.Errorf("brk expects 1 operand")
+		}
+		imm, err := parseImm(ops[0])
+		if err != nil {
+			return err
+		}
+		a.Emit(BRK(uint16(imm)))
+		return nil
 	default:
 		return fmt.Errorf("unsupported instruction %q", mnem)
 	}
