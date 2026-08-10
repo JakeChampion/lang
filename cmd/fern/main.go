@@ -614,11 +614,12 @@ func main() {
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm and -target arm64. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
-	componentWrap := flag.Bool("component-wrap", false, "with -target wasm-bin: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
+	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component — the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
+	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
-	asyncExport := flag.Bool("async-export", false, "with -target wasm-bin: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	asyncExport := flag.Bool("async-export", false, "with -emit core-module: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	var asyncProviders repeatedString
-	flag.Var(&asyncProviders, "async-provider", "with -target wasm-bin and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
+	flag.Var(&asyncProviders, "async-provider", "with -emit core-module and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's bytes, where NAME is the file's slash-separated path relative to DIR. Assets are ordinary string literals: immortal (no refcount traffic), zero-copy to hand to user code, and NUL-safe, so binary assets (images, fonts, wasm) work unchanged.")
 	emitDebug := flag.Bool("g", false, "emit a static symbol table (.symtab) into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names")
 	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
@@ -886,7 +887,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-async-export is mutually exclusive with -component-wrap / -component-wrap-cli")
 		os.Exit(1)
 	}
-	code, err := run(srcPath, *out, *target, *backend, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
+	code, err := run(srcPath, *out, *target, *backend, *emit, *cc, *runIt, *native, *qemu, *componentWrap, *componentWrapCli, *asyncExport, asyncProviders, *shared, *export, *optimize, progArgs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -1115,9 +1116,15 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 		extras = append(extras, "handle", "__method_HeaderMap_append")
 	}
 	// WIT-exported functions are entry points the AST walk can't
-	// see — keep them (and what they call) in the scanned set.
+	// see — keep them (and what they call) in the scanned set. An
+	// `async function` with a body is the same kind of hidden entry
+	// point: the wasmbin path lifts it as a component-level export
+	// (`-emit core-module`, docs/WASI-PREVIEW3-ASYNC-PLAN.md), so it is
+	// reachable from outside even when nothing in the program calls it.
+	// Body-less `@import async` declarations are imports, not exports,
+	// and are deliberately excluded.
 	for _, fn := range prog.Funcs {
-		if fn.ExportIface != "" || fn.ExportWITName != "" {
+		if fn.ExportIface != "" || fn.ExportWITName != "" || (fn.Async && fn.ImportIface == "") {
 			extras = append(extras, fn.Name)
 		}
 	}
@@ -1209,7 +1216,7 @@ func runCheck(srcPath, target string) error {
 // run drives the full pipeline. The returned int is the exit code that
 // the fern process itself should exit with: 0 in compile-only mode, or
 // the program's own exit code under --run.
-func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
+func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool, qemu string, componentWrap, componentWrapCli, asyncExport bool, asyncProviders []string, shared bool, export string, optimize bool, progArgs []string) (int, error) {
 	e, err := loadEntry(srcPath)
 	if err != nil {
 		return 1, err
@@ -1268,6 +1275,16 @@ func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu 
 		}
 	default:
 		return 1, fmt.Errorf("unknown -backend %q (want ssa, or omit it for the target's default emitter)", backend)
+	}
+
+	switch emit {
+	case "":
+	case "core-module":
+		if target != "wasm" && target != "wasi-http" {
+			return 1, fmt.Errorf("-emit core-module is not available for -target %s (available for: wasm, wasi-http)", target)
+		}
+	default:
+		return 1, fmt.Errorf("unknown -emit %q (want core-module, or omit it for the target's default output form)", emit)
 	}
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
@@ -1336,7 +1353,7 @@ func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu 
 		return 0, nil
 	}
 
-	if target == "wasm-bin" {
+	if emit == "core-module" {
 		// Binary backend (internal/codegen/wasmbin) — produces wasm core
 		// module bytes directly. Output mode:
 		//   - default: write the raw core module to outPath (runnable via
@@ -1345,7 +1362,7 @@ func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu 
 		//     self-contained preview-2 component via internal/wasm/component
 		//     (no wasm-tools, no preview-1 adapter).
 		if outPath == "" {
-			return 1, fmt.Errorf("-target wasm-bin requires -o OUTPUT")
+			return 1, fmt.Errorf("-emit core-module requires -o OUTPUT")
 		}
 		// WASI Preview-3 component-model-async export, triggered either
 		// by an `async function` in the source (lifted under its own
@@ -1615,7 +1632,7 @@ func run(srcPath, outPath, target, backend, cc string, runIt, native bool, qemu 
 	}
 
 	if target != "arm64" && target != "arm64-darwin" && target != "arm64-android" && target != "x86-64" {
-		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, arm64-android, x86-64, wasm, wasm-bin, or wasi-http)", target)
+		return 1, fmt.Errorf("unknown target %q (want arm64-darwin, arm64, arm64-android, x86-64, wasm, or wasi-http)", target)
 	}
 
 	darwin := target == "arm64-darwin"

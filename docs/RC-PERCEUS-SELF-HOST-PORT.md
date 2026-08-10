@@ -5727,6 +5727,61 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gone after. `TestSelfHostPerModuleEmitAllFixpointX86_64` run FIRST, per the
   rule for reclaim changes. Refs #6491 #4451.
 
+- 2026-08-09: **A closure field no longer sinks its whole struct array (#6461).**
+  The issue asked which of two things the self-host was doing — refusing the
+  `clofld` admission, or granting it and reclaiming incompletely. Neither. The
+  admission was granted and the `k_clo` drop arm was ready; nothing ever called
+  it, because the array holding the records was not in a reclaim class at all.
+  `slot_is_reclaimable_structarr` gates the append-built class on a field
+  allowlist that did not know `fn`, so one closure field dropped the `P[]` local
+  to the generic shallow `__fern_rc_dec` — element boxes, strings and closures
+  leaking together.
+
+  The diagnostic that pins it is the same array with the field swapped: the
+  `i32`-field control reclaims *perfectly* (`allocs=5100 frees=5100`,
+  `live_bytes=0`), and adding one `fn` field takes it to `frees=2700`,
+  `live_bytes=102400`. A leak proportional to the whole structure, not to the
+  closure — which is what said to look one level up from `k_clo`.
+
+  Two admissions widen. `fn` joins scalar / `string` in the shallow-free
+  allowlist, on `string`'s own argument: what the class needs of a field type is
+  that leaking it is sound, and when the type ALSO routes field reclaim the deep
+  branch recovers both through `__struct_drop_<T>`, whose arms carry their own
+  whole-program admissions. And `structarr_elem_store_ok` now admits a call into
+  `return_fresh_struct_ret_fns` beside the no-base literal — strict-fresh proves
+  the returned box is rc=1 and unaliased, the literal's freshness one frame out.
+  A METHOD call still declines: the receiver type is unknown at the scan, so the
+  `<Base>.<method>` key cannot be looked up and the credit is not granted on a
+  guess.
+
+  Both were needed for the issue's reproducer, which builds its elements with
+  `mkP(i)`: `fn` alone fixes only the inline-literal spelling.
+
+  | heap high-water, 100 vs 200 rounds | before | after |
+  |---|---|---|
+  | x86-64 | 102600 / 205000 | **1224 / 1224** |
+  | arm64 | 102600 / 205000 | **1224 / 1224** |
+  | wasm | 64080 / 128080 | **720 / 720** |
+
+  Every before column is exactly 2.0x per doubling. Measured on each leg rather
+  than inferred from x86-64 — this is an `irlower` change, so all three move
+  together. Native was already flat on the same source and is untouched.
+
+  **Found and NOT fixed here:** a lambda capturing a MUTATED loop variable
+  snapshots it at construction on the self-host, where interp and native both
+  read it at call time (`(cs[0].f)(0)` -> 0 vs 3). Reproduced on a compiler built
+  from `main`, so it predates this and is not in its blast radius; whether the
+  self-host or the other two are wrong may be a language-design call. Filed as
+  #6539. The hazard cases added here deliberately use a non-capturing lambda or a
+  parameter capture so they do not ride on that question.
+
+  VERIFIED: `internal/e2eselfhost/self_host_closure_field_reclaim_test.go` loses
+  its `t.Skip` (delta 0 B at both round counts), a new call-element reclaim test,
+  three new hazard rows (passthrough callee, method call, closure read back out
+  of a reclaimed array), `TestSelfHostPerModuleEmitAllFixpointX86_64` (764.61 s),
+  and the arm64 + wasm structarr / arrstruct / elem-drop neighbours (316.56 s,
+  0 skips). Refs #6461 #4451.
+
 - 2026-08-10: **The LOCAL-built scalar-array producer — the pin the entry above
   left (#6491).** `var out: i32[] = []; … out = out.append(v); … return out;` is
   how a producer is actually written, and the `"ARR:"` rule declined it (direct

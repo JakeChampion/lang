@@ -390,6 +390,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "listen") { return "50"; }
         if (name == "connect") { return "42"; }
     if (name == "execve") { return "59"; }
+    if (name == "fork") { return "57"; }
         if (name == "timerfd_create") { return "283"; }
         if (name == "timerfd_settime") { return "286"; }
         return "-1";
@@ -452,6 +453,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "listen") { return "201"; }
     if (name == "connect") { return "203"; }
     if (name == "execve") { return "221"; }
+    if (name == "clone") { return "220"; }
     if (name == "timerfd_create") { return "85"; }
     if (name == "timerfd_settime") { return "86"; }
     return "-1";
@@ -706,6 +708,26 @@ pub function rt_src_proc_waitpid(t: string): string {
 // reporting an error.
 pub function rt_src_proc_exec(t: string): string {
     return "function __fern_proc_exec(path: string, args: string[]): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var n: i32 = args.len(); var argv: i32 = __raw_alloc((n + 2) * 8); __raw_store_ptr(argv, 0, pathz); var k: i32 = 0; while (k < n) { var a: string = args[k]; var al: i32 = a.len(); var ab: i32 = __raw_alloc(al + 1); var j: i32 = 0; while (j < al) { __raw_store8(ab, j, a[j]); j = j + 1; } __raw_store8(ab, al, 0); __raw_store_ptr(argv, k + 1, ab); k = k + 1; } __raw_store_ptr(argv, n + 1, 0); return __syscall3(" + sysno(t, "execve") + ", pathz, argv, __raw_environ()); }";
+}
+
+// rt_src_proc_fork backs `proc_fork()` (#2649, syscall-leaf) → 0 in the child,
+// the child's pid in the parent, -errno on failure — the crash-only supervision
+// primitive (docs/CRASH-ONLY-SERVE.md D2', #5686). The kernel's return shape IS
+// the contract, so there is nothing to decode.
+//
+// The two Linux targets disagree on the CALL, not just the number: x86-64 has a
+// bare no-argument fork(2), while arm64 has no fork at all and spells it
+// clone(SIGCHLD, 0, 0, 0, 0) — five arguments, hence __syscall5.
+//
+// NOT called for arm64-darwin. XNU's fork returns the pid in x0 with x1 marking
+// the child, and no __syscall* intrinsic can see a second return register, so
+// that one target keeps a hand-written body (under the __fn___ name, since a
+// zero-arg helper's stack and register conventions coincide).
+pub function rt_src_proc_fork(t: string): string {
+    if (t == "x86_64") {
+        return "function __fern_proc_fork(): i32 { return __syscall3(" + sysno(t, "fork") + ", 0, 0, 0); }";
+    }
+    return "function __fern_proc_fork(): i32 { return __syscall5(" + sysno(t, "clone") + ", 17, 0, 0, 0, 0); }";
 }
 
 // rt_src_timer_fd backs `timer_fd(ms)` (#2649, syscall-leaf) → a CLOCK_MONOTONIC

@@ -26305,7 +26305,8 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         asti = asti + 1;
     }
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
-    // — every element a fresh no-base struct literal, and P has no rc-array field
+    // — every element fresh (a no-base struct literal, or a call to a strict-fresh
+    // struct-returning function — structarr_elem_store_ok), and P has no rc-array field
     // (the deep ARRSTRUCT path above only credits field-routing structs). Credited
     // "STRUCTARR:" so slot_is_reclaimable_structarr routes the exit sweep /
     // loop-rebind through __fern_arrarr_free (a rc-guarded box dec per element
@@ -26318,7 +26319,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // `for p in g { … p.field … }` iteration and `g[i].field` reads are fine). The
     // detector's struct_has_reclaim_array_field guard keeps this DISJOINT from
     // ARRSTRUCT — field structs deep-drop there, scalar structs shallow-free here.
-    var sarrs2: string[] = collect_fresh_structarr_names(body, []);
+    var sarrs2: string[] = collect_fresh_structarr_names(body, fresh_ret, []);
     var sa2i: i32 = 0;
     while (sa2i < sarrs2.len()) {
         // NOT excluded on `reassigned` any more (#6127) — the self-append rebind
@@ -26328,7 +26329,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // otherwise body_unsafe_for, so it subsumes both former checks.
         // "A|" rows are append-BUILT markers, not candidates.
         if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == 65 && sarrs2[sa2i][1] == 124)   // 65='A' 124='|'
-            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable)
+            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable, fresh_ret)
             && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
             // Append-built candidates take the SEPARATE STRUCTARRA: credit,
             // which slot_is_reclaimable_structarr additionally gates on the
@@ -30176,17 +30177,31 @@ function structarr_lit_is_fresh(e: parser.Expr): boolean {
 // struct LITERAL, the same per-element rule structarr_lit_is_fresh applies to an
 // initializer. An ident element would alias a live local whose box the reclaim
 // would dangle; a `...base` copy shares the base's field pointers.
-function structarr_elem_store_ok(e: parser.Expr): boolean {
+//
+// A CALL to a strict-fresh struct-returning function (`fresh_ret` — every return
+// a no-base literal whose array fields come from fresh array literals) is the
+// same freshness one call frame out: the returned box is rc=1 and unaliased, so
+// the array is its sole owner exactly as for an inline literal. The looser
+// fresh_struct_ret_fns is NOT enough — it admits alias-inc'd field buffers. A
+// METHOD call declines: the receiver type is not known here, so `<Base>.<m>`
+// keys cannot be looked up (conservative, no admission).
+function structarr_elem_store_ok(e: parser.Expr, fresh_ret: string[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => { return !sl.has_base; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return util.index_of_str(fresh_ret, cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
 }
 
 // structarr_self_append_elem: `e` is the sanctioned self-append rebind of
-// `name` — `name.append(<fresh no-base struct literal>)`.
-function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
+// `name` — `name.append(<fresh element>)`, per structarr_elem_store_ok.
+function structarr_self_append_elem(e: parser.Expr, name: string, fresh_ret: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var is_self_append: boolean = false;
@@ -30203,7 +30218,7 @@ function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
             }
             if (!is_self_append) { return false; }
             if (c.args.len() != 1) { return false; }
-            return structarr_elem_store_ok(c.args[0]);
+            return structarr_elem_store_ok(c.args[0], fresh_ret);
         },
         _ => { return false; }
     }
@@ -30212,20 +30227,20 @@ function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
 
 // structarr_name_is_appended: `name` takes at least one sanctioned self-append,
 // which is what admits an empty-literal init as an append-built candidate.
-function structarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean {
+function structarr_name_is_appended(stmts: parser.Stmt[], name: string, fresh_ret: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name)) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name, fresh_ret)) { return true; } },
             parser.StmtIf(f) => {
-                if (structarr_name_is_appended(f.then_body, name)) { return true; }
-                if (structarr_name_is_appended(f.else_body, name)) { return true; }
+                if (structarr_name_is_appended(f.then_body, name, fresh_ret)) { return true; }
+                if (structarr_name_is_appended(f.else_body, name, fresh_ret)) { return true; }
             },
-            parser.StmtWhile(w) => { if (structarr_name_is_appended(w.body, name)) { return true; } },
-            parser.StmtFor(fo) => { if (structarr_name_is_appended(fo.body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (structarr_name_is_appended(w.body, name, fresh_ret)) { return true; } },
+            parser.StmtFor(fo) => { if (structarr_name_is_appended(fo.body, name, fresh_ret)) { return true; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (structarr_name_is_appended(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (structarr_name_is_appended(m.arms[mi].body, name, fresh_ret)) { return true; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -30243,27 +30258,27 @@ function structarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean
 // Only the assign case differs from stmt_unsafe_for; everything else delegates,
 // which is sound because this class's own element hazard — a bound element box
 // — is checked separately by structarr_elem_escapes, applied alongside this gate.
-function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], fresh_ret: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable, fresh_ret)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], fresh_ret: string[]): boolean {
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
-                if (structarr_self_append_elem(a.value, name)) { return false; }
+                if (structarr_self_append_elem(a.value, name, fresh_ret)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return expr_unsafe_for(a.value, name, borrowable);
         },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return structarr_unsafe_for(f.then_body, name, borrowable) || structarr_unsafe_for(f.else_body, name, borrowable);
+            return structarr_unsafe_for(f.then_body, name, borrowable, fresh_ret) || structarr_unsafe_for(f.else_body, name, borrowable, fresh_ret);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return structarr_unsafe_for(w.body, name, borrowable);
+            return structarr_unsafe_for(w.body, name, borrowable, fresh_ret);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -30272,19 +30287,19 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return structarr_unsafe_for(fo.body, name, borrowable);
+            return structarr_unsafe_for(fo.body, name, borrowable, fresh_ret);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (structarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                if (structarr_unsafe_for(m.arms[ai].body, name, borrowable, fresh_ret)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable); },
+        parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable, fresh_ret); },
         _ => { return stmt_unsafe_for(st, name, borrowable); }
     }
     return false;
@@ -30297,7 +30312,7 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 // check is needed — the all-struct-literal init both proves freshness AND makes
 // the declaration path mark the slot is_arr with its element struct type, which
 // slot_is_reclaimable_structarr consults.
-function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -30311,7 +30326,7 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): str
                 // uncredited, leaking one element box per append. Measured on
                 // the leakcheck differential at 38400 bytes over 100 rounds,
                 // scaling linearly, where native leaks nothing.
-                else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name)) {
+                else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name, fresh_ret)) {
                     a = push_str_unique(a, v.name);
                     // "A|" marks it append-BUILT so the crediting loop can grant
                     // the separate, stricter STRUCTARRA: credit — same marker
@@ -30319,12 +30334,12 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): str
                     a = push_str_unique(a, "A|" + v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, a); a = collect_fresh_structarr_names(f.else_body, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, a); },
+            parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, fresh_ret, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, fresh_ret, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_structarr_names(m.arms[mi].body, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_structarr_names(m.arms[mi].body, fresh_ret, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -32913,39 +32928,49 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // broke self-compilation the first time this was attempted (#6129:
     // gen0/gen1 diverged on unit 2_s83).
     //
-    // `string` specifically is safe to admit, which the map / option / tuple
-    // kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
-    // admits only a no-base struct LITERAL, rejecting the bare-ident element
-    // that would alias a live local (965 such sites in the compiler's own
-    // sources, including every `s.ops.append(op)`) — so the shallow free
+    // `string` and `fn` specifically are safe to admit, which the map / option /
+    // tuple kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
+    // admits only a no-base struct LITERAL or a strict-fresh-returning call,
+    // rejecting the bare-ident element that would alias a live local (965 such
+    // sites in the compiler's own sources, including every `s.ops.append(op)`)
+    // — so the shallow free
     // releases a box this array solely owns. Its string field then leaks
     // EXACTLY as it already does on the literal-built path for the same type,
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
     if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + reclaim_slot_name(s, i)) >= 0) {
-        return struct_all_scalar_or_string_fields(s.structs, sty);
+        return struct_all_scalar_string_or_fn_fields(s.structs, sty);
     }
     return false;
 }
 
-// struct_all_scalar_or_string_fields: every field of `sty` is a plain scalar or
-// a `string`, so a SHALLOW free of the struct's box releases the box itself and
-// leaks at most its string boxes. The append-built struct-array class admits
-// this because its elements are provably fresh no-base literals
-// (structarr_elem_store_ok), making the box sole-owned; the string leak is the
-// same one the literal-built class has always accepted for the same type.
-// Deliberately an allowlist rather than a denylist — a field type this does not
-// recognise keeps the struct out, which is the safe direction and stays safe as
-// the type system grows.
-function struct_all_scalar_or_string_fields(structs: parser.StructDecl[], sty: string): boolean {
+// struct_all_scalar_string_or_fn_fields: every field of `sty` is a plain scalar,
+// a `string`, or an `fn` (closure), so a SHALLOW free of the struct's box
+// releases the box itself and leaks at most its string / closure boxes. The
+// append-built struct-array class admits this because its elements are provably
+// fresh no-base literals (structarr_elem_store_ok), making the box sole-owned;
+// the string leak is the same one the literal-built class has always accepted
+// for the same type. Deliberately an allowlist rather than a denylist — a field
+// type this does not recognise keeps the struct out, which is the safe
+// direction and stays safe as the type system grows.
+//
+// `fn` rides the same argument as `string`: neither is a rc-ARRAY field (so
+// struct_has_reclaim_array_field still keeps this class disjoint from
+// ARRSTRUCT), and both are recovered rather than leaked when the type ALSO
+// routes field reclaim — the deep branch then walks each element through
+// __struct_drop_<T>, whose k_str / k_clo arms carry their own whole-program
+// admissions. Without `fn` here a single closure field took the entire array
+// out of the reclaim class, so its element boxes, strings AND closures all
+// leaked (#6461: 320 B/round for an 8-record table).
+function struct_all_scalar_string_or_fn_fields(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var n: i32 = decl_field_count(structs, sty);
     if (n == 0) { return false; }
     var fi: i32 = 0;
     while (fi < n) {
         var ft: string = decl_field_type_at(structs, sty, fi);
-        if (!is_scalar_field_type(ft) && ft != "string") { return false; }
+        if (!is_scalar_field_type(ft) && ft != "string" && ft != "fn") { return false; }
         fi = fi + 1;
     }
     return true;

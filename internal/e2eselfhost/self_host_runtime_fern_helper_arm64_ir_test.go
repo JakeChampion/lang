@@ -67,6 +67,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (tcp_recv(999, 4).len() != 0) { return 20; }\n" +
 		"    var av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
+		"    if (proc_fork() == 123456) { return 22; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -126,7 +127,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"tcp_recv",
 		// execve over an argv built from the args array. The one leaf whose
 		// contract is that it does NOT return on success.
-		"proc_exec"} {
+		"proc_exec",
+		// clone(SIGCHLD, 0, 0, 0, 0) via __syscall5 — arm64 Linux has no bare
+		// fork(2). Fern on THIS target only; the Darwin test below pins the
+		// opposite, since XNU marks the child in x1 and no __syscall* sees it.
+		"proc_fork"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -247,6 +252,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// Darwin emit has to carry it from asmcore.sysno — assert below.
 		"    if (tcp_connect(2130706433, 1) == 0) { return 15; }\n" +
 		"    if (tcp_recv(999, 4).len() != 0) { return 16; }\n" +
+		"    if (proc_fork() == 123456) { return 17; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -370,6 +376,25 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	}
 	if strings.Contains(asm, "\n__fern_tcp_recv:") {
 		t.Error("the register-ABI hand-asm __fern_tcp_recv is back")
+	}
+	// proc_fork is the second helper after monotonic_ns that stays hand-written
+	// on Darwin for want of an expressible form rather than a syscall number.
+	// darwinize would have supplied the carry-flag errno fold for free; what it
+	// cannot supply is x1, which is the ONLY thing distinguishing the child from
+	// the parent. It keeps the __fn___ name so the call site does not branch.
+	if !strings.Contains(asm, "__fn___fern_proc_fork:") {
+		t.Error("__fn___fern_proc_fork not defined for Darwin")
+	}
+	if !strings.Contains(asm, "    cbz x1, .Lpf_done\n") {
+		t.Error("Darwin proc_fork lost the x1 child/parent discrimination — the reason it is not Fern")
+	}
+	if !strings.Contains(asm, "    mov x16, #2\n    svc #0x80\n") {
+		t.Error("Darwin proc_fork is not trapping to BSD fork (2) through the Darwin vector")
+	}
+	// clone is Linux-only. If the Fern body were selected for Darwin, 220 would
+	// arrive as a pushed operand the way every other migrated number does.
+	if strings.Contains(asm, "    mov x0, #220\n    str x0, [sp, #-16]!\n") {
+		t.Error("Darwin proc_fork pushed Linux's clone number (220) in Mach-O output")
 	}
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")

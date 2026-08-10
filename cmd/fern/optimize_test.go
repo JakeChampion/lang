@@ -29,7 +29,7 @@ func TestOptimizeElidesAsserts(t *testing.T) {
 	}
 	build := func(optimize bool, out string) string {
 		bin := filepath.Join(dir, out)
-		code, err := run(src, bin, "x86-64", "", "", false, false, "qemu-aarch64",
+		code, err := run(src, bin, "x86-64", "", "", "", false, false, "qemu-aarch64",
 			false, false, false, nil, false, "", optimize, nil)
 		if err != nil || code != 0 {
 			t.Fatalf("build (optimize=%v): code=%d err=%v", optimize, code, err)
