@@ -10,7 +10,7 @@
 // `use` syntax (Gleam-style CPS) for fall-through error
 // handling.
 //
-//   $ fern -target wasm32-wasi32-wasi-http -o url.wasm url_router.fern
+//   $ fern -target wasm32-wasi-http -o url.wasm url_router.fern
 //   $ wasmtime serve url.wasm &
 //   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
 //   {"path":"/search","q":"lang","tags":["fast","small"]}

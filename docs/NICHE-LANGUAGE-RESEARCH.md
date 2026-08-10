@@ -250,7 +250,7 @@ sources:
 
 **Fit for Fern: adaptable, and the best architectural idea in the
 survey.** Fern already *is* multi-platform (arm64/x86-64 Linux,
-arm64 Darwin, wasm32 WASI, `-target wasm32-wasi32-wasi-http`), already routes
+arm64 Darwin, wasm32 WASI, `-target wasm32-wasi-http`), already routes
 IO through per-target runtime helpers, and already had (then
 generalised away) a per-request arena. The Roc framing turns that
 accumulation into an architecture: define the target profile as

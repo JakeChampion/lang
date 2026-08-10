@@ -3,11 +3,11 @@
 > **Update — the SELF-HOST compiler now matches on Linux.** Everything
 > below describes the *native* (Go) compiler, which reached the
 > no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had
-> only reached it for `-target arm64-linux` / `-target arm64-darwin`;
-> `-target x86-64-linux` still emitted `.s` for an external assembler. It now
+> only reached it for `-target arm64` / `-target arm64-darwin`;
+> `-target x86-64` still emitted `.s` for an external assembler. It now
 > assembles and links in-process too, via `examples/self_host/x86_native.fern`
 > (the merged encoder + GAS front-end, the x86 sibling of
-> `arm64_native.fern`) and `elf.fern`. `-target x86-64-linux-asm` is the escape
+> `arm64_native.fern`) and `elf.fern`. `-target x86-64-asm` is the escape
 > hatch that still emits GAS text — the shape a harness assembling with its
 > own toolchain wants, and the only way to observe the emitter in isolation.
 > This closes precondition 2 of the backend-retirement list in
@@ -39,7 +39,7 @@
 > longer accurate.
 
 > **Update — the wasm `wasm-tools` shell-out is gone.** `-target wasm32-wasi`
-> and `-target wasm32-wasi32-wasi-http` now compose Component Model components natively
+> and `-target wasm32-wasi-http` now compose Component Model components natively
 > in Go (`internal/wasm/component`), and the `-wasi-adapter` flag +
 > `emitPreview2ComponentFromCoreBytes` (`wasm-tools component new --adapt`)
 > have been deleted from the driver. A single classifier
@@ -410,7 +410,7 @@ End-to-end exit code 42 demo (covered by
 
 #### What's NOT yet shipped
 
-- **`-target wasm32-wasi` / `-target wasm32-wasi32-wasi-http` default-path wiring.
+- **`-target wasm32-wasi` / `-target wasm32-wasi-http` default-path wiring.
   Both shipped.** `-target wasm32-wasi` without `-wasi-adapter` flows
   through the Go-side preview-2 encoder when the program's
   imports are all preview-2-migrated; unsupported imports
@@ -751,7 +751,7 @@ End-to-end exit code 42 demo (covered by
     export-of-interface shape (the first in the codebase — lift the
     core `handle(own<incoming-request>, own<response-outparam>)` and
     export the interface, #1367), then `ComposeHttpHandler` + the
-    adapter-free `-target wasm32-wasi32-wasi-http` driver routing. Method lowerings
+    adapter-free `-target wasm32-wasi-http` driver routing. Method lowerings
     span every kind: no-opts scalar (headers / constructors /
     set-status-code), memory trampolines (consume / stream / body /
     write / append / response-outparam.set), memory+realloc (method /

@@ -135,7 +135,7 @@ IR that is already the default lowering path lifts to SSA that the existing
 optimiser and x86-64 codegen consume all the way to a running binary.
 
 **Slice 4 ✅ (landed — arm64 backend parity):** the lifted SSA now feeds the
-*second* production backend too. `ssa_lift_emit_run` grew a `-target arm64-linux`
+*second* production backend too. `ssa_lift_emit_run` grew a `-target arm64`
 that routes the same lifted `SFunc` through `ssa_arm64.emit_program` (the lift's
 SSA is target-agnostic — one `SFunc` feeds either backend, exactly as
 `build_func`'s output does in `ssa_emit_run`). `self_host_ssa_lift_emit_test.go`
@@ -237,7 +237,7 @@ consume the IR.
 
 The missing third consumer. New backend `emit_program(funcs:
 ssa.SFunc[]) : string` producing WAT, wired into `try_ssa` for
-`-target wasm32-wasi` (fall back to `wasm.fern` otherwise).
+`-target wasm` (fall back to `wasm.fern` otherwise).
 
 The one structural difference from x86/arm64: WAT has **no arbitrary
 jumps**, so the SSA CFG is lowered with the standard *dispatch-loop*
@@ -252,7 +252,7 @@ bookkeeping disappears here.
 `const_bool`, `binary`, `unary`, `call`, `param`, `copy`, `phi` over
 `ret` / `br` / `brif`. `ssa_wasm.supported()` lets `try_ssa` fall back to
 `wasm.fern` for any program that needs an instruction this backend
-doesn't lower yet, so output is never wrong — and `-target wasm32-wasi` is now
+doesn't lower yet, so output is never wrong — and `-target wasm` is now
 default-on through the IR for in-subset programs. Gated by 30 differential
 cases under `wasmtime` (`self_host_ssa_wasm_emit_test.go`, a subset of the
 `ssa_emit_test` matrix) plus a CLI integration case (`emit-ssa-wasm`).
