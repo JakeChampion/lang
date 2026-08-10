@@ -51740,9 +51740,22 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
         var lam_ok: boolean = false;
         var bname: string = "";
         var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false };
+        var nested: parser.ExprLambda[] = [];
         match (stmts[i]) {
-            parser.StmtVar(v) => { match (v.init) { parser.ExprLambda(l) => { lam = l; lam_ok = true; bname = v.name; }, _ => {} } },
-            parser.StmtReturn(r) => { match (r.value) { parser.ExprLambda(l) => { lam = l; lam_ok = true; }, _ => {} } },
+            parser.StmtVar(v) => {
+                match (v.init) {
+                    parser.ExprLambda(l) => { lam = l; lam_ok = true; bname = v.name; },
+                    _ => { nested = box_nested_lambdas(v.init, nested); }
+                }
+            },
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprLambda(l) => { lam = l; lam_ok = true; },
+                    _ => { nested = box_nested_lambdas(r.value, nested); }
+                }
+            },
+            parser.StmtAssign(a2) => { nested = box_nested_lambdas(a2.value, nested); },
+            parser.StmtExpr(e2) => { nested = box_nested_lambdas(e2.value, nested); },
             parser.StmtIf(f) => {
                 var a1: BoxScan = box_scan_stmts(f.then_body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
                 var a2: BoxScan = box_scan_stmts(f.else_body, fd, structs, mfuncs, otargets, dvars, a1);
@@ -51765,6 +51778,20 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
                 }
             },
             _ => {}
+        }
+        // A lambda in an OPERAND position — a struct-literal field, a call
+        // argument, an array element (#6539). The `var f = <lambda>` /
+        // `return <lambda>` shapes above match only when the value IS a
+        // lambda, so these were invisible at any depth: the capture kept its
+        // construction-time snapshot even at top level. Such a lambda is
+        // ESCAPING by construction — it is being stored into or passed to
+        // something, which is the make_closure env-box path whose snapshot the
+        // cell has to bypass — so it needs no `esc` test of its own.
+        var ni: i32 = 0;
+        while (ni < nested.len()) {
+            var nacc: BoxScan = box_apply_lambda(nested[ni], true, fd, structs, mfuncs, otargets, dvars, BoxScan { names: boxed, types: btypes });
+            boxed = nacc.names; btypes = nacc.types;
+            ni = ni + 1;
         }
         if (lam_ok) {
             var caps: string[] = lambda_captures(lam, fd);
@@ -51803,6 +51830,72 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
         i = i + 1;
     }
     return BoxScan { names: boxed, types: btypes };
+}
+
+// box_apply_lambda applies the two boxing clauses to one lambda's captures:
+// #2850 (an i32/boolean the LAMBDA body writes) and #5394 (any type the OUTER
+// body reassigns, for an escaping binding). Shared by the statement-shape path
+// and the operand-position path so the two cannot drift.
+function box_apply_lambda(lam: parser.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+    var boxed: string[] = acc.names;
+    var btypes: string[] = acc.types;
+    var caps: string[] = lambda_captures(lam, fd);
+    var wtargets: string[] = body_assign_targets(lam.body);
+    var ci: i32 = 0;
+    while (ci < caps.len()) {
+        var cn: string = caps[ci];
+        var ct: string = cap_type(cn, fd, structs, mfuncs);
+        if ((ct == "i32" || ct == "boolean") && util.index_of_str(wtargets, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
+            boxed = boxed.append(cn);
+            btypes = btypes.append("i32");
+        } else if (esc && ct.len() > 0 && util.index_of_str(otargets, cn) >= 0
+                && util.index_of_str(dvars, cn) >= 0 && util.index_of_str(boxed, cn) < 0) {
+            boxed = boxed.append(cn);
+            btypes = btypes.append(ct);
+        }
+        ci = ci + 1;
+    }
+    return BoxScan { names: boxed, types: btypes };
+}
+
+// box_nested_lambdas collects lambdas sitting in OPERAND positions of `e` —
+// struct-literal field, call argument or callee, array / tuple element, and the
+// arithmetic operands. It deliberately does NOT descend into a collected
+// lambda's own BODY: that is a different scope, whose captures belong to that
+// lambda's own frame and are handled when it is itself lifted.
+function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.ExprLambda[] {
+    var out: parser.ExprLambda[] = acc;
+    match (e) {
+        parser.ExprLambda(l) => { return out.append(l); },
+        parser.ExprStructLit(sl) => {
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { out = box_nested_lambdas(sl.field_values[i], out); i = i + 1; }
+            if (sl.has_base) { out = box_nested_lambdas(sl.base, out); }
+            return out;
+        },
+        parser.ExprCall(c) => {
+            out = box_nested_lambdas(c.callee, out);
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = box_nested_lambdas(c.args[i], out); i = i + 1; }
+            return out;
+        },
+        parser.ExprArray(ar) => {
+            var i: i32 = 0;
+            while (i < ar.elements.len()) { out = box_nested_lambdas(ar.elements[i], out); i = i + 1; }
+            return out;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { out = box_nested_lambdas(t.elements[i], out); i = i + 1; }
+            return out;
+        },
+        parser.ExprBinary(b) => { return box_nested_lambdas(b.right, box_nested_lambdas(b.left, out)); },
+        parser.ExprUnary(u) => { return box_nested_lambdas(u.operand, out); },
+        parser.ExprIndex(ix) => { return box_nested_lambdas(ix.index, box_nested_lambdas(ix.array, out)); },
+        parser.ExprFieldAccess(fa) => { return box_nested_lambdas(fa.obj, out); },
+        _ => { return out; }
+    }
+    return out;
 }
 
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
