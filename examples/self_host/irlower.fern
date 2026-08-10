@@ -29931,6 +29931,36 @@ function fieldmove_is_move_value(e: parser.Expr, name: string, sty: string, stru
     return !is_scalar_type_name(lt);
 }
 
+// fieldmove_alias_retained: a struct-literal FIELD VALUE that hands the new box a
+// COUNTED reference, so it is not an uncounted move out of `name`.
+//
+// The struct-literal override path retains a nested-struct or enum field value
+// unconditionally — only a fresh `Inner { … }` literal / a fresh variant ctor is
+// handed over uncounted, and a field read is neither — so `S { …, inner: o.inner }`
+// leaves o.inner at rc 2 and the superseded box's deep drop decs the dup rather
+// than freeing a box the successor still holds.
+//
+// Array and string fields are deliberately NOT admitted: their retain is
+// conditional (a bare ident naming an rc-array slot; `slit_reclaim` plus a
+// freshness test), so exempting them without first widening the retain would
+// trade this leak for a use-after-free — #6628.
+function fieldmove_alias_retained(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    var ft: string = decl_field_type(structs, sty, fa.field);
+                    if (ft.len() == 0) { return false; }
+                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+}
+
 // fieldmove_expr: the move positions reachable inside an expression — a direct
 // call argument, or an element of an array / tuple / struct literal (including a
 // functional-update base, which copies every field pointer into the new box).
@@ -29970,7 +30000,8 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
             }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs)) { return true; }
+                if (!fieldmove_alias_retained(sl.field_values[i], name, sty, structs)
+                    && fieldmove_is_move_value(sl.field_values[i], name, sty, structs)) { return true; }
                 if (fieldmove_expr(sl.field_values[i], name, sty, structs)) { return true; }
                 i = i + 1;
             }
