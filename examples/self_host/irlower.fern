@@ -23412,8 +23412,10 @@ function rctuple_payload_escapes(stmts: parser.Stmt[], name: string, ttype: stri
 
 // collect_fresh_rcenum_names gathers LOCAL names bound from a FRESH rc-payload
 // enum variant ctor (`var b = Full([i, i+1])`, fresh_rcpayload_enum_init) that is
-// SINGLE-OWNER + consumed by exactly one `match (b)` IN THE SAME BLOCK, dead after,
-// with no arm moving out an rc payload — the per-block, recursive analogue of
+// SINGLE-OWNER and either consumed by exactly one `match (b)` IN THE SAME BLOCK —
+// dead after, with no arm moving out an rc payload — or consumed by no match at
+// all, in which case non-escape is the whole condition — the per-block, recursive
+// analogue of
 // consumed_rcpayload_enum_frees (which scans only the TOP-LEVEL fn body and so
 // never covers a LOOP-LOCAL; the loop-local enum was reclaimed nowhere and leaked
 // per iteration, #4357). Credited "RCENUM:" for the DEEP loop-rebind reclaim
@@ -23476,7 +23478,7 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
     }
 }
 
-function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], borrowable: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -23503,19 +23505,33 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt(stmts, v.name, match_idx)) {
                         a = push_str_unique(a, v.name);
+                    } else if (match_idx < 0 && !body_unsafe_for(stmts, v.name, borrowable)) {
+                        // NO consuming match in this block. Every gate above exists to
+                        // prove the match neither retains the box nor hands out its
+                        // payload; with no match there is nothing to prove but that
+                        // the name never escapes, which is exactly body_unsafe_for —
+                        // and it reads a borrowable call argument as a borrow, so
+                        // `head(b)` qualifies while a callee that returns the payload
+                        // is not borrowable and refuses the name here.
+                        //
+                        // Requiring a match was leaving this whole shape uncredited:
+                        // an rc-enum loop-local passed to a helper, and one never used
+                        // at all, both grew 2.00x per doubling where the inline match
+                        // was flat (#6606).
+                        a = push_str_unique(a, v.name);
                     }
                 }
             },
-            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, a); },
-            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, a); },
+            parser.StmtIf(iff) => { a = collect_fresh_rcenum_names(iff.then_body, structs, opt_fresh_ret, borrowable, a); a = collect_fresh_rcenum_names(iff.else_body, structs, opt_fresh_ret, borrowable, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_rcenum_names(w.body, structs, opt_fresh_ret, borrowable, a); },
+            parser.StmtFor(f) => { a = collect_fresh_rcenum_names(f.body, structs, opt_fresh_ret, borrowable, a); },
             parser.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { a = collect_fresh_rcenum_names(m.arms[ai].body, structs, opt_fresh_ret, a); ai = ai + 1; }
+                while (ai < m.arms.len()) { a = collect_fresh_rcenum_names(m.arms[ai].body, structs, opt_fresh_ret, borrowable, a); ai = ai + 1; }
             },
             parser.StmtDefer(d) => {
                 match (d.action) {
-                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, a); },
+                    parser.StmtWhile(dw) => { a = collect_fresh_rcenum_names(dw.body, structs, opt_fresh_ret, borrowable, a); },
                     _ => {}
                 }
             },
@@ -26617,7 +26633,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // moved-out payload is rejected) before crediting. The consuming-match reclaim
     // (consumed_rcpayload_enum_frees) is top-level-only, so it never covers a
     // loop-local; this closes that gap (#4357) with no overlap.
-    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, []);
+    var rcenums: string[] = collect_fresh_rcenum_names(body, structs, opt_fresh_ret, borrowable, []);
     var rei: i32 = 0;
     while (rei < rcenums.len()) {
         // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
@@ -43837,6 +43853,69 @@ function param_consumed_in_body(stmts: parser.Stmt[], name: string, reassigned: 
     return false;
 }
 
+// param_match_binding_escapes: for every `match (name)` anywhere in `stmts`, does
+// any arm bind a name that escapes its arm (binding_escapes_arm)? This is the
+// hazard the scrutinee-is-a-borrow reading opens up on a PARAM: `b` itself is
+// never mentioned outside the match, so no walk over `b` can see a payload the
+// arm handed out, and a caller that then released `b` would free a live buffer.
+//
+// Every binding is checked, not just the rc-droppable ones match_arm_binds_rc_payload
+// filters to. That gate resolves a binding's type through the enum's StructDecl,
+// which the built-in Option / Result do not have — a `Some(p) => { return p; }`
+// would read as "no rc payload bound" and be admitted. Checking bindings without
+// consulting their type costs only the scalar arms, which no caller frees anyway.
+function param_match_binding_escapes(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (param_match_binding_escapes_stmt(stmts[i], name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function param_match_binding_escapes_stmt(st: parser.Stmt, name: string): boolean {
+    var none: string[] = [];
+    match (st) {
+        parser.StmtMatch(m) => {
+            var scrut_is_name: boolean = false;
+            match (m.scrutinee) {
+                parser.ExprIdent(sid) => { if (sid.name == name) { scrut_is_name = true; } },
+                _ => {}
+            }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                if (scrut_is_name) {
+                    match (arm.pattern) {
+                        parser.PatVariant(pv) => {
+                            if (pv.binding != "" && pv.binding != "_"
+                                && binding_escapes_arm(arm, pv.binding, none)) { return true; }
+                            var eb: i32 = 0;
+                            while (eb < pv.extra_bindings.len()) {
+                                var ebn: string = pv.extra_bindings[eb];
+                                if (ebn != "" && ebn != "_" && binding_escapes_arm(arm, ebn, none)) { return true; }
+                                eb = eb + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+                if (param_match_binding_escapes(arm.body, name)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtIf(iff) => {
+            return param_match_binding_escapes(iff.then_body, name)
+                || param_match_binding_escapes(iff.else_body, name);
+        },
+        parser.StmtWhile(w) => { return param_match_binding_escapes(w.body, name); },
+        parser.StmtFor(f) => { return param_match_binding_escapes(f.body, name); },
+        parser.StmtDefer(d) => { return param_match_binding_escapes_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     var none: string[] = [];
     var out: string[] = [];
@@ -43848,8 +43927,15 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
         var pj: i32 = 0;
         while (pj < funcs[k].params.len()) {
             var pname: string = funcs[k].params[pj].name;
+            // A bare-ident `match (pname)` scrutinee is a BORROW, not an escape —
+            // #6127's reading, which was applied to the local-reclaim analyses but
+            // never to this verdict. A param whose only use is being matched on
+            // therefore read as escaping, so `head(b)` refused every caller-side
+            // release and a loop-local enum passed to a helper leaked unboundedly
+            // (#6606) while the identical match written inline was flat.
             if (!param_consumed_in_body(funcs[k].body, pname, reasgn)
-                && !body_unsafe_for(funcs[k].body, pname, none)) { flags = flags + "1"; any = true; }
+                && !body_unsafe_for_match_borrow(funcs[k].body, pname, none)
+                && !param_match_binding_escapes(funcs[k].body, pname)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
@@ -43942,8 +44028,14 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                 var ip_reasgn: string[] = body_assign_targets(funcs[i].body);
                 var pj: i32 = 0;
                 while (pj < funcs[i].params.len()) {
+                    // The scrutinee of a `match (param)` is a BORROW — see
+                    // borrowable_params_of for why, and for what
+                    // param_match_binding_escapes has to rule out. Widening the set
+                    // keeps this pass monotone-decreasing: it only ever withholds a
+                    // 1->0 flip, so the convergence test is unaffected.
                     if (!param_consumed_in_body(funcs[i].body, funcs[i].params[pj].name, ip_reasgn)
-                        && !body_unsafe_for(funcs[i].body, funcs[i].params[pj].name, reg)) { flags = flags + "1"; any = true; }
+                        && !body_unsafe_for_match_borrow(funcs[i].body, funcs[i].params[pj].name, reg)
+                        && !param_match_binding_escapes(funcs[i].body, funcs[i].params[pj].name)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }

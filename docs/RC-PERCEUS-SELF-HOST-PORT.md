@@ -6307,3 +6307,71 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   flat controls, and the element-escape refusal),
   `TestSelfHostPerModuleEmitAllFixpointX86_64` (326.63 s, run FIRST), 29 targeted
   suites 0 skips. Refs #6319 #6360 #4451.
+
+- 2026-08-10: **A `match (param)` scrutinee is a BORROW in the borrowability
+  verdict too — #6606's enum row, an unbounded leak.** A fresh rc-payload enum
+  loop-local passed to a helper grew 2.00x per doubling (24000 bytes at 300 rounds
+  against 48000 at 600, `frees=0`) where the identical match written INLINE was
+  flat. Native is flat on both.
+
+  **Two independent gaps, and closing either alone leaves the shape leaking:**
+
+  1. `collect_fresh_rcenum_names` required a consuming `match` in the same block,
+     so a local with no match at all earned nothing. The reduction is not the
+     helper — `var b = Val([k, k+7]);` declared in a loop and NEVER USED leaked
+     identically. With no match there is nothing for the arm gates to prove, so
+     non-escape is the whole condition.
+  2. `borrowable_params_interproc` read a bare-ident `match (param)` scrutinee as
+     an ESCAPE, so `head(b)` refused every caller-side release. #6127 had already
+     made the opposite argument — a match reads the tag and the payload and
+     retains neither — and wired it into the local-reclaim analyses; it had never
+     reached the borrowability verdict.
+
+  | `enum Box { Val(i32[]), Empty }`, loop-local | before | after |
+  |---|---|---|
+  | `head(b)`, helper matches on it | 24000 / 48000 | **160 / 160** |
+  | declared, never used | 24000 / 48000 | **160 / 160** |
+  | inline consuming match *(control)* | 80 / 80 | 80 / 80 |
+  | callee RETURNS the payload *(hazard)* | refused | refused |
+
+  **THE TRAP THAT COST THE MOST TIME: there are TWO borrowability passes, and the
+  emit path uses the one that is not named `borrowable_params_of`.** The single
+  pass feeds the ~15 inspection passes and `precise_drop_names`; the emit path
+  overrides `sg.borrowable_params` with the `borrowable_params_interproc`
+  fixpoint. Fixing only the former left every probe measuring exactly as before,
+  while a standalone harness calling `borrowable_params_of` reported the param
+  borrowable — a diagnostic that agreed with the fix and disagreed with the
+  compiler. Both are corrected here so they cannot diverge again.
+
+  **`param_match_binding_escapes` is the new safety gate and it is load-bearing —
+  measured, not argued.** The scrutinee-is-a-borrow reading alone cannot see an
+  arm handing the payload OUT: `b` is never mentioned outside the match, so no
+  walk over `b` observes `Val(xs) => { return xs; }`. Deleting the gate takes the
+  hazard row from 401 frees to 800 and from 16000 live bytes to 40 — the enum
+  released under its other holder. It checks EVERY binding rather than the
+  rc-droppable ones `match_arm_binds_rc_payload` filters to, because that filter
+  resolves a binding's type through the enum's StructDecl, which the built-in
+  Option / Result do not have.
+
+  **The exit code does not move on that hazard, and no spelling made it.** A
+  same-shaped churn loop between the release and the read — the trick that made
+  #6467's string case discriminate — left both compilers at 30. So the byte count
+  is the only detector here, and the gate is pinned by an EXACT stranded count
+  (400 at 100 rounds, 800 at 200); the mutation reads 1, which any "some leak"
+  assertion would have accepted.
+
+  Still open, deliberately: the reclaimed rows keep an **80-byte** residue — the
+  final value, which no sweep reclaims for this class, constant at 100 and 200
+  rounds while allocs and frees both double. The inline-match control reaches an
+  exact 0 because its consuming match frees every iteration including the last.
+  That is a bounded last-value gap in the block-exit sweep, not this leak.
+  #6606's string row (a user function's string result is not a "fresh producer",
+  `str_free_producer_ident` being a hardcoded builtin allowlist) is untouched and
+  is adjacent to #6544.
+
+  VERIFIED: `TestSelfHostRcEnumBorrowHelperX86_64` (new — both reclaimed shapes at
+  two round counts, the inline-match control, and the payload-escape refusal),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (359.40 s, run FIRST — the
+  self-hosted compiler is itself full of `match (param)` helpers, so it is the
+  widening's own heaviest exercise), then 47 targeted suites 0 skips including
+  `TestSelfHostBorrowInferInterprocX86_64`. Refs #6606 #6127 #4365 #4451.
