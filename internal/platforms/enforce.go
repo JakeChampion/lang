@@ -226,11 +226,35 @@ func Enforce(prog *ast.Program, target string) []Violation {
 		granted[c] = true
 	}
 	var out []Violation
+	scanGatedCalls(prog, func(fn *ast.FuncDecl, call *ast.Call, builtin, capName string) {
+		if granted[capName] {
+			return
+		}
+		out = append(out, Violation{
+			Builtin:    builtin,
+			Capability: capName,
+			Target:     target,
+			Pos:        call.P,
+			FuncName:   fn.Name,
+			FuncModule: fn.SourceModule,
+		})
+	})
+	return out
+}
+
+// scanGatedCalls visits every call to a gated builtin in prog, at most
+// once per (function, builtin), in declaration-then-position order.
+//
+// The walk is flat rather than call-graph-following for the reason in
+// the package comment: callers hand over a program whose every surviving
+// function is part of the artifact, so "what this program can reach" is
+// exactly the union over all bodies.
+func scanGatedCalls(prog *ast.Program, visit func(fn *ast.FuncDecl, call *ast.Call, builtin, capability string)) {
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
-		seen := map[string]bool{} // builtin -> reported for this fn
+		seen := map[string]bool{} // builtin -> already visited for this fn
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			call, ok := n.(*ast.Call)
 			if !ok {
@@ -241,20 +265,32 @@ func Enforce(prog *ast.Program, target string) []Violation {
 				return true
 			}
 			capName, gated := gatedBuiltins[id.Name]
-			if !gated || granted[capName] || seen[id.Name] {
+			if !gated || seen[id.Name] {
 				return true
 			}
 			seen[id.Name] = true
-			out = append(out, Violation{
-				Builtin:    id.Name,
-				Capability: capName,
-				Target:     target,
-				Pos:        call.P,
-				FuncName:   fn.Name,
-				FuncModule: fn.SourceModule,
-			})
+			visit(fn, call, id.Name, capName)
 			return true
 		})
 	}
+}
+
+// Reach returns the host capabilities prog can reach, each mapped to one
+// builtin that demonstrates it — the target-independent half of Enforce.
+//
+// This is what makes "can this module be used without a host?" a DERIVED
+// property rather than an asserted one (#6512): a module whose reach is
+// empty is core-safe, and one that gains a host dependency changes its
+// reach without anyone having to remember to reclassify it.
+//
+// The example builtin is chosen deterministically (lowest name) so the
+// result is stable enough to pin in a test.
+func Reach(prog *ast.Program) map[string]string {
+	out := map[string]string{}
+	scanGatedCalls(prog, func(_ *ast.FuncDecl, _ *ast.Call, builtin, capName string) {
+		if prev, ok := out[capName]; !ok || builtin < prev {
+			out[capName] = builtin
+		}
+	})
 	return out
 }
