@@ -490,6 +490,12 @@ pub struct LowerState {
     // grow bracket skips them so the in-place accumulator fast paths stay
     // O(n). Set/cleared around each statement by lower_stmt's wrapper.
     grow_exempt: string[],
+    // grow_sole: the #6043 sole-occurrence deaths, computed ONCE per function
+    // (grow_sole_exempt_names_of) because the per-statement hook cannot see the
+    // whole body. A name here occurs exactly once in the entire body, so the one
+    // statement carrying that occurrence is the only one a bracket can consult it
+    // from — which is why lower_stmt_grow_exempt can union it in unconditionally.
+    grow_sole: string[],
     // own_params: the names of THIS function's `own` (consuming) parameters.
     // An `own` param was TRANSFERRED by the caller, so — unlike the borrowed
     // params the n_params boundary otherwise assumes — handing it back out of
@@ -14306,6 +14312,11 @@ pub function lower_stmt(st: parser.Stmt, s: LowerState): LowerState {
 
 function lower_stmt_grow_exempt(st: parser.Stmt, s: LowerState): LowerState {
     var gex: string[] = grow_exempt_names_of_stmt(st);
+    // #6048: fold in the per-function sole-occurrence deaths. Safe to add to every
+    // statement — the name occurs exactly once in the whole body, so only the
+    // statement holding that occurrence has a call bracket that can read it.
+    var gi: i32 = 0;
+    while (gi < s.grow_sole.len()) { gex = push_str_unique(gex, s.grow_sole[gi]); gi = gi + 1; }
     if (gex.len() == 0) { return lower_stmt_inner(st, s); }
     var gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
     var gnone: string[] = [];
@@ -38824,7 +38835,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], own_params: own_names, n_params: names.len(), ok: true, fail_why: "" };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "" };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -46506,7 +46517,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "" };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "" };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -53427,6 +53438,131 @@ pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): bool
 // grow_exempt_names_of_stmt returns the ident args exempt from the grow
 // bracket for this statement — the occurs-once self-reassign and
 // return-position shapes (see the grow_exempt field doc). Empty otherwise.
+// --- #6043 sole-occurrence death, ported (#6048) ------------------------------
+//
+// The two shapes above are the pre-#6043 rule: a self-reassign `x = f(.., x, ..)`
+// and a `return f(.., x, ..)`, each gated on the name occurring once in that
+// statement. Native's callArgDeaths grew a third: a PARAM read exactly once in the
+// WHOLE body, at a call no loop or lambda encloses, is dead at that call — so the
+// #4873 grow bracket need not force a full-buffer copy on it.
+//
+// Both of native's restrictions are carried over, and both are load-bearing:
+//
+//   - The LOOP/LAMBDA exclusion. A single textual read inside a repeating construct
+//     is still many dynamic reads, and the next iteration would observe the previous
+//     one's in-place growth — which the interpreter never performs. Without this the
+//     rule degenerates into the textually-last-occurrence heuristic callArgDeaths
+//     deliberately rejects.
+//   - PARAMS only. A param is bound once per frame from the caller, and the caller's
+//     own bracket already contains what the callee does to it, so a param that dies
+//     here is a complete account of this frame's interest in the buffer. A match-arm
+//     payload binding is a view into a scrutinee that outlives the arm, and the #4402
+//     borrowed-view exemption means not every `var` local takes the retain that would
+//     push a callee onto its copy path.
+//
+// A shadowing inner declaration of the same name inflates the census, which only ever
+// WITHHOLDS the verdict — the safe direction, same as native.
+
+function grow_ident_census(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = astwalk.collect_idents_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+
+function grow_count_in(xs: string[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < xs.len()) { if (xs[i] == name) { n = n + 1; } i = i + 1; }
+    return n;
+}
+
+// grow_repeating_idents: every ident read from inside a loop or a lambda — the
+// exclusion set. A while/for contributes its CONDITION and ITERATOR as well as its
+// body, since those re-evaluate too.
+function grow_repeating_idents(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtWhile(w) => {
+                a = astwalk.collect_idents_expr(w.cond, a);
+                a = grow_ident_census(w.body, a);
+            },
+            parser.StmtFor(f) => {
+                a = astwalk.collect_idents_expr(f.iter, a);
+                a = grow_ident_census(f.body, a);
+            },
+            parser.StmtIf(iff) => {
+                a = grow_repeating_idents(iff.then_body, a);
+                a = grow_repeating_idents(iff.else_body, a);
+            },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = grow_repeating_idents(m.arms[k].body, a); k = k + 1; }
+            },
+            _ => {},
+        }
+        // A lambda anywhere in the statement repeats on every call of the closure.
+        a = grow_lambda_idents_stmt(stmts[i], a);
+        i = i + 1;
+    }
+    return a;
+}
+
+function grow_lambda_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => { return grow_lambda_idents_expr(v.init, acc); },
+        parser.StmtAssign(a2) => { return grow_lambda_idents_expr(a2.value, acc); },
+        parser.StmtReturn(r) => { return grow_lambda_idents_expr(r.value, acc); },
+        parser.StmtExpr(e) => { return grow_lambda_idents_expr(e.value, acc); },
+        _ => { return acc; },
+    }
+    return acc;
+}
+
+function grow_lambda_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (e) {
+        parser.ExprLambda(_) => { return astwalk.collect_idents_expr(e, a); },
+        parser.ExprCall(c) => {
+            a = grow_lambda_idents_expr(c.callee, a);
+            var i: i32 = 0;
+            while (i < c.args.len()) { a = grow_lambda_idents_expr(c.args[i], a); i = i + 1; }
+            return a;
+        },
+        parser.ExprBinary(b) => { a = grow_lambda_idents_expr(b.left, a); return grow_lambda_idents_expr(b.right, a); },
+        parser.ExprUnary(u) => { return grow_lambda_idents_expr(u.operand, a); },
+        parser.ExprFieldAccess(fa) => { return grow_lambda_idents_expr(fa.obj, a); },
+        parser.ExprIndex(ix) => { a = grow_lambda_idents_expr(ix.array, a); return grow_lambda_idents_expr(ix.index, a); },
+        parser.ExprArray(ar) => {
+            var j: i32 = 0;
+            while (j < ar.elements.len()) { a = grow_lambda_idents_expr(ar.elements[j], a); j = j + 1; }
+            return a;
+        },
+        parser.ExprTuple(t) => {
+            var k: i32 = 0;
+            while (k < t.elements.len()) { a = grow_lambda_idents_expr(t.elements[k], a); k = k + 1; }
+            return a;
+        },
+        _ => { return a; },
+    }
+    return a;
+}
+
+pub function grow_sole_exempt_names_of(fn: parser.FuncDecl): string[] {
+    var all: string[] = grow_ident_census(fn.body, []);
+    var rep: string[] = grow_repeating_idents(fn.body, []);
+    var out: string[] = [];
+    var p: i32 = 0;
+    while (p < fn.params.len()) {
+        var nm: string = fn.params[p].name;
+        if (grow_count_in(all, nm) == 1 && util.index_of_str(rep, nm) < 0) { out = push_str_unique(out, nm); }
+        p = p + 1;
+    }
+    return out;
+}
+
 pub function grow_exempt_names_of_stmt(st: parser.Stmt): string[] {
     var out: string[] = [];
     match (st) {
