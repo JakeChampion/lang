@@ -460,6 +460,141 @@ function stmt_lambda_writes(st: parser.Stmt): string[] {
     return acc;
 }
 
+// ---- the OTHER capture clause: the outer body writes it (#6578) ----
+//
+// The rule above covers a lambda that ASSIGNS an enclosing local (#2850). The
+// language's other half is a lambda that only READS one which the ENCLOSING
+// body then reassigns: the reference (docs/LANGUAGE-REVIEW-2026-07.md — "scalar
+// captures are copied and mutable") has the closure observe the write, and both
+// natives do. The compiled path gets there via box_mutated_scalar_captures'
+// #5394 arm; the interpreter had no counterpart, so it snapshotted.
+//
+// eval_stmt sees one statement and an Env, never the rest of the enclosing
+// body, so "is this name reassigned LATER?" cannot be asked here. Instead every
+// scalar a lambda so much as MENTIONS is celled. That is sound rather than
+// merely convenient: a cell is a by-reference binding whose reads deref to the
+// current value, so for a name nothing ever writes it is indistinguishable from
+// the snapshot it replaces — and where something does write, sharing IS the
+// specified behaviour.
+//
+// Over-approximating is also the existing design here, not a new liberty:
+// lam_assign_targets already counts a write to a lambda's OWN local (the
+// inner-shadow case cells the outer name harmlessly), and cellify_env filters
+// what actually matters — an unbound name is skipped, a non-scalar returns from
+// cell_for unchanged, and a live cell is never re-seeded.
+
+// lam_caps_expr finds lambdas in `e` and collects every ident their bodies
+// mention; lam_body_idents / expr_idents are its walkers.
+function lam_caps_expr(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprLambda(lm) => { return lam_body_idents(lm.body, acc); },
+        parser.ExprBinary(b) => { return lam_caps_expr(b.right, lam_caps_expr(b.left, acc)); },
+        parser.ExprUnary(u) => { return lam_caps_expr(u.operand, acc); },
+        parser.ExprIndex(ix) => { return lam_caps_expr(ix.index, lam_caps_expr(ix.array, acc)); },
+        parser.ExprSlice(sl) => { return lam_caps_expr(sl.end, lam_caps_expr(sl.start, lam_caps_expr(sl.array, acc))); },
+        parser.ExprFieldAccess(fa) => { return lam_caps_expr(fa.obj, acc); },
+        parser.ExprCall(c) => {
+            acc = lam_caps_expr(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = lam_caps_expr(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = lam_caps_expr(a.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = lam_caps_expr(t.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprStructLit(sl2) => {
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { acc = lam_caps_expr(sl2.field_values[i], acc); i = i + 1; }
+            if (sl2.has_base) { acc = lam_caps_expr(sl2.base, acc); }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+function lam_body_idents(stmts: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { acc = expr_idents(v.init, acc); },
+            parser.StmtAssign(a) => { acc = acc.append(a.target); acc = expr_idents(a.value, acc); },
+            parser.StmtReturn(r) => { acc = expr_idents(r.value, acc); },
+            parser.StmtExpr(x) => { acc = expr_idents(x.value, acc); },
+            parser.StmtIf(f) => {
+                acc = expr_idents(f.cond, acc);
+                acc = lam_body_idents(f.then_body, acc);
+                acc = lam_body_idents(f.else_body, acc);
+            },
+            parser.StmtWhile(w) => { acc = expr_idents(w.cond, acc); acc = lam_body_idents(w.body, acc); },
+            parser.StmtFor(fo) => { acc = expr_idents(fo.iter, acc); acc = lam_body_idents(fo.body, acc); },
+            parser.StmtMatch(m) => {
+                acc = expr_idents(m.scrutinee, acc);
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) { acc = lam_body_idents(m.arms[ai].body, acc); ai = ai + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+function expr_idents(e: parser.Expr, acc: string[]): string[] {
+    match (e) {
+        parser.ExprIdent(id) => { return acc.append(id.name); },
+        parser.ExprLambda(lm) => { return lam_body_idents(lm.body, acc); },
+        parser.ExprBinary(b) => { return expr_idents(b.right, expr_idents(b.left, acc)); },
+        parser.ExprUnary(u) => { return expr_idents(u.operand, acc); },
+        parser.ExprIndex(ix) => { return expr_idents(ix.index, expr_idents(ix.array, acc)); },
+        parser.ExprSlice(sl) => { return expr_idents(sl.end, expr_idents(sl.start, expr_idents(sl.array, acc))); },
+        parser.ExprFieldAccess(fa) => { return expr_idents(fa.obj, acc); },
+        parser.ExprCall(c) => {
+            acc = expr_idents(c.callee, acc);
+            var i: i32 = 0;
+            while (i < c.args.len()) { acc = expr_idents(c.args[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { acc = expr_idents(a.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { acc = expr_idents(t.elements[i], acc); i = i + 1; }
+            return acc;
+        },
+        parser.ExprStructLit(sl2) => {
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { acc = expr_idents(sl2.field_values[i], acc); i = i + 1; }
+            if (sl2.has_base) { acc = expr_idents(sl2.base, acc); }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// stmt_lambda_caps: the read-capture set for `st`, the sibling of
+// stmt_lambda_writes.
+function stmt_lambda_caps(st: parser.Stmt): string[] {
+    var acc: string[] = [];
+    match (st) {
+        parser.StmtVar(v) => { return lam_caps_expr(v.init, acc); },
+        parser.StmtAssign(a) => { return lam_caps_expr(a.value, acc); },
+        parser.StmtReturn(r) => { return lam_caps_expr(r.value, acc); },
+        parser.StmtExpr(x) => { return lam_caps_expr(x.value, acc); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
 // raw_slot reads a slot WITHOUT the lookup deref — cellify needs to see whether
 // a binding is already a cell.
 function (e: Env) raw_slot(name: string): i32 {
@@ -1945,6 +2080,7 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // shared cell first, so the closure's env snapshot and this scope
             // point at the same one. Read-only captures are untouched.
             env = cellify_env(env, stmt_lambda_writes(st));
+            env = cellify_env(env, stmt_lambda_caps(st));
             var val: Value = eval_expr(v.init, env);
             // A runtime error in the initializer aborts the function rather
             // than being bound and silently swallowed (#4348 item 4). eval_expr
@@ -2053,6 +2189,12 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             return step_none(cur);
         },
         parser.StmtAssign(a) => {
+            // Cell the RHS's lambda captures BEFORE evaluating it (#6578): the
+            // closure snapshots its env as it is built, so a cell created after
+            // eval_expr is one the closure never sees. The #2850 write set is
+            // celled below, after the evaluation, because it only has to be
+            // visible to the SLOT — this set has to be visible to the CLOSURE.
+            env = cellify_env(env, stmt_lambda_caps(st));
             var av: Value = eval_expr(a.value, env);
             if (is_err(av)) { return step_stop(env, av); }
             // update silently no-ops on undefined names; surface

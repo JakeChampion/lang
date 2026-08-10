@@ -70,6 +70,25 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// cell path must stay entirely out of the way.
 		{"no-lambda-assign-control", `function main(): i32 { var x: i32 = 1; x = 41; return x + 1; }`},
 		{"loop-counter-control", `function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 5) { t = t + i; i = i + 1; } return t; }`},
+
+		// THE OTHER CLAUSE (#6578 / #5394): the lambda only READS the capture and
+		// the OUTER body reassigns it afterwards. Every case above has the
+		// LAMBDA do the writing (#2850), which is why this half went unnoticed —
+		// and why SH-057 read as closed on the strength of this file.
+		//
+		// These returned the construction-time snapshot on the self-host
+		// interpreter while the compiled path was already correct, so they lived
+		// in self_host_outer_write_capture_ir_test.go until this engine could
+		// host them.
+		//
+		// The struct-FIELD spelling stays behind in that file, for a reason that
+		// is not about captures: this interpreter cannot CALL a closure held in
+		// a struct field at all — `(cs[0].f)(0)` reads as a method call on `C`
+		// and errors, with or without any capture mutation, on a compiler built
+		// well before this work (#6596).
+		{"outer-write-toplevel", `function main(): i32 { var i: i32 = 0; var f: (i32) => i32 = ((x: i32) => x + i); i = 3; return f(0); }`},
+		{"outer-write-in-loop", `function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 3) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`},
+		{"outer-write-call-argument", `function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { var i: i32 = 0; var fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
