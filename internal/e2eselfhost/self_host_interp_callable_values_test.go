@@ -104,6 +104,20 @@ func TestSelfHostInterpCallableValues(t *testing.T) {
 		{"const-ref", `const LIMIT: i32 = 100; function main(): i32 { return LIMIT + 1; }`},
 		{"const-two", `const A: i32 = 7; const B: i32 = 5; function main(): i32 { return A + B; }`},
 		{"const-in-callee", `const K: i32 = 3; function add(x: i32): i32 { return x + K; } function main(): i32 { return add(4); }`},
+		// A const named directly in RECEIVER position (#6617). The call path
+		// probed the env with a raw lookup to decide "bare identifier with no
+		// runtime value = enum-variant construction". A const is a zero-arg
+		// function rather than a binding, so the probe missed and `S.len()`
+		// built a variant named `len` instead of dispatching a method.
+		{"const-receiver", `const S: string = "abcd"; function main(): i32 { return S.len(); }`},
+		// A const as an ARGUMENT, which always worked — arguments go through
+		// the ordinary evaluator. Kept so the two positions stay in step.
+		{"const-as-argument", `const K: i32 = 3; function main(): i32 { var x: i32 = 4; return x + K; }`},
+
+		// CONTROLS on that probe. It now classifies FEWER things as variant
+		// constructions, so enum construction is what breaks if it over-reaches.
+		{"enum-variant-nullary", `enum E { Red, Blue } function main(): i32 { var e: E = E.Red; return match (e) { Red => 1i32, Blue => 2i32 }; }`},
+		{"enum-variant-payload", `enum Opt { Some(i32), Nothing } function main(): i32 { var o: Opt = Opt.Some(9); return match (o) { Some(v) => v, Nothing => 0i32 }; }`},
 
 		// NOT covered here: calling a NON-fn field (`s.v(1)` for `v: i32`). The
 		// fallback is gated on the field holding a VFunc, so that shape still
