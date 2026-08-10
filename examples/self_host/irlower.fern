@@ -35166,6 +35166,21 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
                 },
                 parser.ExprFieldAccess(sccfa) => {
                     if (util.is_all_digits(sccfa.field) && expr_tuple_elem_tag(sccfa.obj, util.digits_to_i32(sccfa.field), s) == "clo") { el_call_ok = true; }
+                    else {
+                        // (d) a METHOD call whose result is provably one scalar
+                        // slot — iife_method_ret_i32 is sound by EXCLUSION (a
+                        // method registered as returning a string / array /
+                        // tuple / struct / Option is rejected), and its wide
+                        // sibling names an i64 / f64 result. Only the free-fn
+                        // form was admitted, so `(p.sum(), 165i64)` bailed the
+                        // whole module while `(f(6), 165i64)` lowered — the
+                        // difference being nothing but how the callee is
+                        // spelled.
+                        var mrty: string = expr_struct_type(sccfa.obj, s);
+                        if (mrty.len() > 0
+                                && (iife_method_ret_i32(mrty, sccfa.field, s)
+                                    || iife_method_ret_kind(mrty, sccfa.field, s).len() > 0)) { el_call_ok = true; }
+                    }
                 },
                 _ => {}
             }
