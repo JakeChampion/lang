@@ -57,20 +57,11 @@ func TestSelfHostDeclModifiersChecker(t *testing.T) {
 	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
 	for _, tc := range declModifierCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(checkerBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
+			code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src)
+			if code != 0 {
+				t.Fatalf("checker exited %d, want 0\nstderr: %s", code, stderr)
 			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Fatalf("checker exited %d, want 0\nstderr: %s", code, stderr.String())
-			}
-			if diag := strings.TrimSpace(stderr.String()); diag != "" {
+			if diag := strings.TrimSpace(stderr); diag != "" {
 				t.Errorf("checker reported %q, want no diagnostic", diag)
 			}
 		})
@@ -194,17 +185,8 @@ func TestSelfHostOpaqueUnderAttributes(t *testing.T) {
 
 	check := func(t *testing.T, src string) string {
 		t.Helper()
-		var cmd *exec.Cmd
-		if len(checkerRunner) == 0 {
-			cmd = exec.Command(checkerBin)
-		} else {
-			cmd = exec.Command(checkerRunner[0], append(checkerRunner[1:], checkerBin)...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		_ = cmd.Run()
-		return stderr.String()
+		_, stderr := runSelfHostChecker(t, checkerBin, checkerRunner, src)
+		return stderr
 	}
 
 	for _, p := range pairs {

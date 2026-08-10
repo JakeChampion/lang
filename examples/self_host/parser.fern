@@ -14365,6 +14365,324 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
     return probe;
 }
 
+// ============ numeric-literal settling (#6654) ============
+//
+// An integer literal written in a float position — `var x: f64 = 1;` — is an
+// UNSETTLED literal, not an i32: the destination decides its type. The native
+// checker resolves that with `settleNumeric`, which restamps the literal AST
+// node against the declared type before any comparison happens.
+//
+// The self-host had no counterpart, and the cost landed twice: the checker read
+// the literal as i32 and rejected seven ordinary shapes native accepts, and the
+// IR lowerer — which re-infers float-ness bottom-up from the expression, with no
+// destination hint — emitted an INTEGER constant into the float slot, so the
+// same programs computed wrong answers wherever they were not rejected first.
+//
+// Settling on the AST fixes both at once: `is_float` is what `check_expr` and
+// every `expr_is_f64` predicate read, so restamping the literal here means
+// neither has to learn about destinations. It runs at the shared parse entry,
+// the resolve_labels_module precedent, so every driver and backend sees settled
+// literals without opting in.
+//
+// SCOPE: same-module destinations. Imports are unresolved at parse time, so a
+// float parameter or field declared in ANOTHER module is not settled against —
+// that shape still behaves as it did before this pass existed.
+
+// is_float_type_name reports whether a declared type name denotes a float
+// scalar. `float` is the unsuffixed spelling; f32 is f64-shaped downstream.
+function is_float_type_name(t: string): boolean {
+    return t == "f64" || t == "f32" || t == "float";
+}
+
+// settle_float_expr stamps `is_float` on every unsettled integer literal in an
+// expression standing in a float destination: a bare `1`, and recursively the
+// operands of a unary `-`/`+` or a binary `+ - * /`. A literal carrying an
+// explicit integer suffix (`1i64`) is already settled and is left alone, as is
+// every other expression shape — so `var x: f64 = a;` for an i32 local `a` still
+// draws the error native gives it. Mirrors native's settleFloat.
+function settle_float_expr(e: Expr): Expr {
+    match (e) {
+        ExprNumber(n) => {
+            if (n.is_float || n.suffix.len() > 0) { return e; }
+            return ExprNumber { text: n.text, suffix: n.suffix, is_float: true, line: n.line, col: n.col };
+        },
+        ExprUnary(u) => {
+            if (u.op != "-" && u.op != "+") { return e; }
+            return ExprUnary { op: u.op, operand: settle_float_expr(u.operand), line: u.line, col: u.col };
+        },
+        ExprBinary(b) => {
+            if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/") { return e; }
+            return ExprBinary { op: b.op, left: settle_float_expr(b.left), right: settle_float_expr(b.right), line: b.line, col: b.col };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// settle_to_type settles `e` against the destination type `t`: a float scalar
+// settles the expression, an array settles each element of an array literal,
+// a tuple settles each element of a tuple literal. Any other destination — and
+// any expression that is not the matching literal form — is returned untouched.
+function settle_to_type(e: Expr, t: TypeRef): Expr {
+    if (t.array_depth > 0) {
+        var inner: TypeRef = TypeRef { base: t.base, args: t.args, array_depth: t.array_depth - 1, is_tuple: t.is_tuple };
+        match (e) {
+            ExprArray(a) => {
+                var els: Expr[] = [];
+                var ei: i32 = 0;
+                while (ei < a.elements.len()) { els = els.append(settle_to_type(a.elements[ei], inner)); ei = ei + 1; }
+                return ExprArray { elements: els };
+            },
+            _ => { return e; }
+        }
+        return e;
+    }
+    if (t.is_tuple) {
+        match (e) {
+            ExprTuple(tu) => {
+                var tels: Expr[] = [];
+                var ti: i32 = 0;
+                while (ti < tu.elements.len()) {
+                    if (ti < t.args.len()) { tels = tels.append(settle_to_type(tu.elements[ti], t.args[ti])); }
+                    else { tels = tels.append(tu.elements[ti]); }
+                    ti = ti + 1;
+                }
+                return ExprTuple { elements: tels, line: tu.line, col: tu.col };
+            },
+            _ => { return e; }
+        }
+        return e;
+    }
+    if (is_float_type_name(t.base)) { return settle_float_expr(e); }
+    return e;
+}
+
+// settle_to_name is settle_to_type against a declared type NAME, the spelling
+// every decl in the AST carries. An empty name is "no annotation" and settles
+// nothing.
+function settle_to_name(e: Expr, type_name: string): Expr {
+    if (type_name.len() == 0) { return e; }
+    return settle_to_type(e, parse_type_ref(type_name));
+}
+
+// Destination lookups over the module's own declarations. A call to a function
+// this module does not declare, or a literal of a struct it does not declare,
+// finds nothing and settles nothing.
+
+// settle_param_types returns the declared parameter type names of the
+// receiver-less function `name`, or an empty list when there is no such function.
+function settle_param_types(funcs: FuncDecl[], name: string): string[] {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var f: FuncDecl = funcs[i];
+        if (f.name == name && f.receiver_name.len() == 0) {
+            var out: string[] = [];
+            var pi: i32 = 0;
+            while (pi < f.params.len()) { out = out.append(f.params[pi].type_name); pi = pi + 1; }
+            return out;
+        }
+        i = i + 1;
+    }
+    return [];
+}
+
+// settle_field_type returns the declared type name of field `field` on struct
+// `type_name`, or "" when either is unknown.
+function settle_field_type(structs: StructDecl[], type_name: string, field: string): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        var sd: StructDecl = structs[i];
+        if (sd.name == type_name) {
+            var fi: i32 = 0;
+            while (fi < sd.fields.len()) {
+                if (sd.fields[fi].name == field) { return sd.fields[fi].type_name; }
+                fi = fi + 1;
+            }
+            return "";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// settle_local_type returns the declared type name bound to local `name` by the
+// enclosing scope's annotations (parameters and annotated `var`s), or "".
+function settle_local_type(names: string[], types: string[], name: string): string {
+    var i: i32 = names.len() - 1;
+    while (i >= 0) {
+        if (names[i] == name) { return types[i]; }
+        i = i - 1;
+    }
+    return "";
+}
+
+// settle_expr rebuilds `e` with every nested destination settled: a call's
+// arguments against the callee's declared parameter types, a struct literal's
+// field values against the struct's declared field types. Sub-expressions are
+// walked so a destination nested anywhere inside is reached.
+//
+// Method calls are NOT settled: resolving the receiver's type needs the
+// inference this pass deliberately does without.
+function settle_expr(e: Expr, funcs: FuncDecl[], structs: StructDecl[]): Expr {
+    match (e) {
+        ExprBinary(b) => {
+            return ExprBinary { op: b.op, left: settle_expr(b.left, funcs, structs), right: settle_expr(b.right, funcs, structs), line: b.line, col: b.col };
+        },
+        ExprUnary(u) => {
+            return ExprUnary { op: u.op, operand: settle_expr(u.operand, funcs, structs), line: u.line, col: u.col };
+        },
+        ExprCall(c) => {
+            var ptypes: string[] = [];
+            match (c.callee) {
+                ExprIdent(id) => { ptypes = settle_param_types(funcs, id.name); },
+                _ => { ptypes = []; }
+            }
+            var args: Expr[] = [];
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var arg: Expr = settle_expr(c.args[ai], funcs, structs);
+                if (ai < ptypes.len()) { arg = settle_to_name(arg, ptypes[ai]); }
+                args = args.append(arg);
+                ai = ai + 1;
+            }
+            return ExprCall { callee: settle_expr(c.callee, funcs, structs), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+        },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var i: i32 = 0;
+            while (i < a.elements.len()) { els = els.append(settle_expr(a.elements[i], funcs, structs)); i = i + 1; }
+            return ExprArray { elements: els };
+        },
+        ExprTuple(t) => {
+            var tels: Expr[] = [];
+            var ti: i32 = 0;
+            while (ti < t.elements.len()) { tels = tels.append(settle_expr(t.elements[ti], funcs, structs)); ti = ti + 1; }
+            return ExprTuple { elements: tels, line: t.line, col: t.col };
+        },
+        ExprIndex(x) => {
+            return ExprIndex { array: settle_expr(x.array, funcs, structs), index: settle_expr(x.index, funcs, structs), unchecked: x.unchecked, ty: x.ty };
+        },
+        ExprSlice(sl) => {
+            return ExprSlice { array: settle_expr(sl.array, funcs, structs), start: settle_expr(sl.start, funcs, structs), end: settle_expr(sl.end, funcs, structs), ty: sl.ty };
+        },
+        ExprStructLit(sl) => {
+            var vals: Expr[] = [];
+            var vi: i32 = 0;
+            while (vi < sl.field_values.len()) {
+                var v: Expr = settle_expr(sl.field_values[vi], funcs, structs);
+                if (vi < sl.field_names.len()) {
+                    v = settle_to_name(v, settle_field_type(structs, sl.type_name, sl.field_names[vi]));
+                }
+                vals = vals.append(v);
+                vi = vi + 1;
+            }
+            var base: Expr = sl.base;
+            if (sl.has_base) { base = settle_expr(sl.base, funcs, structs); }
+            return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: vals, has_base: sl.has_base, base: base, line: sl.line, col: sl.col };
+        },
+        ExprFieldAccess(fa) => {
+            return ExprFieldAccess { obj: settle_expr(fa.obj, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+        },
+        ExprLambda(lm) => {
+            return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: settle_block(lm.body, lm.ret_type, [], [], funcs, structs), use_infer: lm.use_infer };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// settle_stmt rebuilds `st` with its own destinations settled — an annotated
+// `var`'s init, a `return`'s value against `ret_type`, an assignment's value
+// against the target local's annotation — and recurses through every statement
+// container. `names`/`types` carry the annotated locals in scope.
+function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[], funcs: FuncDecl[], structs: StructDecl[]): Stmt {
+    match (st) {
+        StmtVar(v) => {
+            var init: Expr = settle_to_name(settle_expr(v.init, funcs, structs), v.type_name);
+            return StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str };
+        },
+        StmtReturn(r) => {
+            return StmtReturn { value: settle_to_name(settle_expr(r.value, funcs, structs), ret_type), line: r.line, col: r.col };
+        },
+        StmtAssign(a) => {
+            var val: Expr = settle_to_name(settle_expr(a.value, funcs, structs), settle_local_type(names, types, a.target));
+            return StmtAssign { target: a.target, value: val, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+        },
+        StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, funcs, structs) }; },
+        StmtIf(f) => {
+            return StmtIf { cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs) };
+        },
+        StmtWhile(w) => {
+            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label };
+        },
+        StmtFor(fr) => {
+            return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label };
+        },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var a: MatchArm = m.arms[ai];
+                arms = arms.append(MatchArm { pattern: a.pattern, body: settle_block(a.body, ret_type, names, types, funcs, structs), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                ai = ai + 1;
+            }
+            return StmtMatch { scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        StmtDefer(dd) => {
+            return StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, funcs, structs), on_error: dd.on_error };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// settle_block settles a statement list, extending the annotated-local scope as
+// each annotated `var` is passed. Shadowing works out because settle_local_type
+// scans from the end.
+function settle_block(stmts: Stmt[], ret_type: string, names: string[], types: string[], funcs: FuncDecl[], structs: StructDecl[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        out = out.append(settle_stmt(stmts[i], ret_type, names, types, funcs, structs));
+        match (stmts[i]) {
+            StmtVar(v) => {
+                if (v.type_name.len() > 0) { names = names.append(v.name); types = types.append(v.type_name); }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// settle_module restamps every unsettled integer literal in `mod` that stands in
+// a float destination the module itself declares. Idempotent: a settled literal
+// is left alone, so re-running after a merge only settles what the wider
+// signature set newly reaches.
+pub function settle_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        var names: string[] = [];
+        var types: string[] = [];
+        var pi: i32 = 0;
+        while (pi < fd.params.len()) {
+            names = names.append(fd.params[pi].name);
+            types = types.append(fd.params[pi].type_name);
+            pi = pi + 1;
+        }
+        if (fd.receiver_name.len() > 0) {
+            names = names.append(fd.receiver_name);
+            types = types.append(fd.receiver_type);
+        }
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: settle_block(fd.body, fd.ret_type, names, types, mod.funcs, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
+        i = i + 1;
+    }
+    var nonames: string[] = [];
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, mod.funcs, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+}
+
 pub function parse_module(toks: lexer.Token[]): Module {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
     var funcs: FuncDecl[] = [];
@@ -14698,7 +15016,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
     // driver/backend pipeline sees break/continue tags already baked in (the
     // per-driver prep pipelines diverge, so doing it here is the universal spot).
     // Idempotent: re-running on already-resolved tags recomputes the same depth.
-    return resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs });
+    //
+    // settle_module rides the same reasoning: an integer literal in a float
+    // destination is restamped here, at the one shared entry, so the checker and
+    // every backend read a literal that already carries its settled type (#6654).
+    return settle_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }));
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
