@@ -1,7 +1,7 @@
 # WASI Preview 2 migration plan
 
 > **Status (complete).** The migration is done: `fern -target wasm32-wasi` and
-> `-target wasm32-wasi32-wasi-http` compose Component Model components **natively** in
+> `-target wasm32-wasi-http` compose Component Model components **natively** in
 > Go (`internal/wasm/component`), with no `wasm-tools` shell-out and no
 > preview-1 adapter. The `-wasi-adapter` flag and the
 > `wasm-tools component new --adapt` step have been removed from the
@@ -23,7 +23,7 @@ Move the WASM backend from WASI Preview 1 (the legacy core-module
 Component Model components, native resource types, streams, and the
 `wasi:http` interface for edge-function serving.
 
-End state: `fern -target=wasm prog.fern` produces a `.component.wasm`
+End state: `fern -target=wasm32-wasi prog.fern` produces a `.component.wasm`
 that runs in any preview-2 host (`wasmtime run`, edge-function
 runtimes, etc.) and uses the modern WASI interfaces directly.
 
@@ -168,7 +168,7 @@ wasmtime allows `create-tcp-socket` and `start-bind`.
 
 ### Step 5 — Add `wasi:http` handler target (shipped)
 
-A new compile mode: `fern -target wasm32-wasi32-wasi-http prog.fern` produces
+A new compile mode: `fern -target wasm32-wasi-http prog.fern` produces
 a component implementing `wasi:http/incoming-handler.handle`.
 The Fern program declares:
 

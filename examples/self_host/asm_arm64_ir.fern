@@ -18,7 +18,7 @@
 // codegen for the op stream.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
-// driver (asm_ir_run -target arm64-linux) — asm_arm64.fern and the arm64 bootstrap stay
+// driver (asm_ir_run -target arm64) — asm_arm64.fern and the arm64 bootstrap stay
 // untouched until a later fold/flip slice.
 
 import "./parser";
@@ -6310,7 +6310,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 
 // emit_module_ir is the FORCED-IR whole-program emit — the use_ir branch of
 // emit_module without the eligibility fallback or the pre-codegen check, the
-// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64-linux -ir`
+// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64 -ir`
 // differential driver calls this (with an already lambda-lifted module) so the
 // IR orchestration lives in ONE place: the driver's old hand-copy of this
 // sequence drifted when emit_arm64_reclaim_drop_bodies was added to

@@ -52,7 +52,7 @@ Two consequences, and they are the load-bearing conclusions of this doc:
 | 13 | LTO without a linker | Whole-program IR → machine code → executable, no `.o` round-trip. `internal/native/{x86_64,arm64}` assemble and `elf`/`macho` link **in-process**: ~25 s / 2.6 GB where GNU `as` took ~36 s / 4.7 GB plus a link, and the 470 MB `.s` never touches disk |
 | 14 | Arena-based | The runtime is a bump arena over a 16 GiB `MAP_NORESERVE` mapping with a large-tier freelist; exhaustion is a distinct exit code (125), not an OOM |
 | 18 | Deterministic compilation | `ir/determinism_test.go` + `determinism_corpus_test.go`. The byte-identical self-compile fixpoint (gen0 == gen1) is a *much* stronger determinism gate than most compilers carry |
-| 23 | Self-contained toolchain | Parser, checker, optimizer, codegen, assembler (x86-64 + arm64), ELF + Mach-O writers, DWARF (`native/elf/dwarf.go`), Mach-O code signing (`macho/sign.go`), linker, package manager (`fern.toml`/`fern.lock`, MVS), LSP, doc generator. On `-target arm64-linux` the *self-host* compiler emits, assembles and links in-process — no gcc, no wasmtime |
+| 23 | Self-contained toolchain | Parser, checker, optimizer, codegen, assembler (x86-64 + arm64), ELF + Mach-O writers, DWARF (`native/elf/dwarf.go`), Mach-O code signing (`macho/sign.go`), linker, package manager (`fern.toml`/`fern.lock`, MVS), LSP, doc generator. On `-target arm64` the *self-host* compiler emits, assembles and links in-process — no gcc, no wasmtime |
 
 Item 23 is the one worth stating plainly, since it was framed as an
 aspiration: it's done. gcc/lld survive only as an automatic fallback when

@@ -8,7 +8,7 @@
 // codegen time and uses the `wasi:http/incoming-handler.handle`
 // export wrapper instead.
 //
-//   $ fern -target wasm32-wasi32-wasi-http -o echo.wasm echo_handler.fern
+//   $ fern -target wasm32-wasi-http -o echo.wasm echo_handler.fern
 //   $ wasmtime serve echo.wasm
 //
 //   $ fern -target arm64-linux -o echo echo_handler.fern

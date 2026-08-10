@@ -88,7 +88,7 @@ existing `FERN_LEAKCHECK` / `FERN_RC_TRACE` ports), so the flag goes to the
 compiler process, not to the program it produces:
 
 ```sh
-FERN_SANITIZE=1 bin/fern-selfhost -target x86-64-linux /ABS/prog.fern $PWD/internal/stdlib -o prog.s
+FERN_SANITIZE=1 bin/fern-selfhost -target x86-64 /ABS/prog.fern $PWD/internal/stdlib -o prog.s
 ```
 
 Its two gaps versus native are honest subsets, not silent differences: no

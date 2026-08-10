@@ -1362,7 +1362,7 @@ pub struct X86Asm {
     // recognise. A non-empty list means the byte stream is INCOMPLETE —
     // instructions were dropped — so drivers must fail instead of writing
     // the corrupt executable (SH-005; the arm64 assembler's `p.unknown`
-    // is the model — see fern.fern's -target arm64-linux check).
+    // is the model — see fern.fern's -target arm64 check).
     unknown: string[],
 }
 

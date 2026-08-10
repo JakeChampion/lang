@@ -35,7 +35,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
   with `-target` / `-check` / `-interp` / `-fmt` / `-o`, replacing the
   one-mode `*_run.fern` shims (gated by `self_host_cli_test.go`); and
 - a **self-hosted wasm backend** (`examples/self_host/wasm.fern`,
-  `fern -target wasm32-wasi`) that emits a runnable WASI core module (WAT) and
+  `fern -target wasm`) that emits a runnable WASI core module (WAT) and
   compiles the full non-generic core language — integers (non-trapping
   div/rem), control flow, recursion, the string library, i32/string
   arrays, structs + methods, Option/Result + `match`/`?`, struct-union
@@ -79,9 +79,9 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
 
   **Update (wasm packaging — now wired into the unified `fern` CLI).** What
   this section called "remaining for wasm" is largely done:
-  - `fern -target wasm32-wasi -emit core-module` emits a runnable **binary** `.wasm` (the
+  - `fern -target wasm-bin` emits a runnable **binary** `.wasm` (the
     self-hosted WAT→binary assembler, `watbin.fern`), not WAT text.
-  - `fern -target wasm32-wasi-component` emits a **Component-Model** `wasi:cli/run`
+  - `fern -target wasm-component` emits a **Component-Model** `wasi:cli/run`
     component, auto-selecting the framing from the program's WASI usage:
     no-I/O, stdout, filesystem (read / write / read+write), random, env,
     args, clock (wall / monotonic), stderr, exit, and the fs-paired
@@ -91,7 +91,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
     self-host emit supports**.
 
     The one wasm shape still missing is **`wasi:http/incoming-handler`**
-    (the native `-target wasm32-wasi32-wasi-http`): it needs a new self-host core emitter
+    (the native `-target wasm32-wasi-http`): it needs a new self-host core emitter
     that lowers the request/response **resource handles** — which builds on
     the in-progress own/borrow resource-handle work — so it's deferred until
     that lands.
@@ -1295,7 +1295,7 @@ smallest → largest:
     the in-Fern assembler's output is *executed* on the Linux CI box (the
     darwin path can only be run on a macOS runner). **Next:** `:lo12:` add
     parsing, `.bss`/`.skip` heap reservation (ELF memsz), and the rodata
-    `.ascii` path, then flip `fern.fern -target arm64-linux` to emit ELF directly.
+    `.ascii` path, then flip `fern.fern -target arm64` to emit ELF directly.
   - ✅ **slice 3u — `:lo12:` / `.ascii` / `.double` / `.bss` + array/string
     instruction forms (arm64-Linux runs the common surface)**: closed the
     remaining gaps so asm_arm64's real Linux output runs end-to-end under
@@ -1314,22 +1314,22 @@ smallest → largest:
     `TestSelfHostArm64NativeLinuxElfRuns` now runs print / concat / array /
     string-build under qemu (rodata strings, `:lo12:`, the heap, indexing,
     byte copy) in addition to exit42 / arith / fib. **Next:** flip
-    `fern.fern -target arm64-linux` to emit the ELF in-process (sweep the wider
+    `fern.fern -target arm64` to emit the ELF in-process (sweep the wider
     case list for any remaining forms, then drop the `.s` + gcc path). A
     follow-up sweep (structs/enums/options/i64/floats) found one more silent
     mis-encode — `ldr/str Dt, [Xn{, #off}]` (the SIMD&FP f64 load/store) was
     encoded as a general-register load, so floats never reached d-registers;
     fixed (`arm64_ldr_fp`/`arm64_str_fp`), byte-pinned, and `floats` runs
     under qemu. (Darwin floats were broken by this too.)
-  - ✅ **slice 3v — the flip: `fern.fern -target arm64-linux` emits the ELF
+  - ✅ **slice 3v — the flip: `fern.fern -target arm64` emits the ELF
     in-process**: `fern.fern` now `import`s `elf` and routes **both** emit
     paths through `arm64_elf_binary(asm)` — the SSA path (`ssa_arm64`, the
-    default for `-target arm64-linux`) and the AST fallback (`asm_arm64.emit_module`)
+    default for `-target arm64`) and the AST fallback (`asm_arm64.emit_module`)
     — which runs `arm64_gas_program` (unknown guard → `eprint` + exit 2) →
     `arm64_gas_link` (text_vaddr = `elf_text_vaddr()`, data 8-aligned after
     `.text`) → `elf_image_entry_bss` (entry = `_start`, memsz tail = the bss
     heap), packing the runnable ELF into the output string. **The `.s` + gcc/
-    ld path is gone** for `-target arm64-linux`. A pre-flip sweep confirmed the SSA
+    ld path is gone** for `-target arm64`. A pre-flip sweep confirmed the SSA
     path needed one extra form — `sbfiz Xd, Xn, #lsb, #width` (scaled-index
     addressing of an i32; SBFM alias) — now handled. Decisive proof:
     **`TestSelfHostArm64LinuxBuilds`** builds the flipped CLI (Go x86 backend)
@@ -1403,14 +1403,14 @@ smallest → largest:
     and run end-to-end (`TestSelfHostX86RodataRuns`: `lea rax,[rip+answer]`;
     `rax=[rax]`; exit — a `.quad 42` in `.rodata`, R+W+X data ELF, runs
     natively exiting 42).
-  - ✅ **slice 2 COMPLETE — `-target x86-64-linux` links in-process.** The
-    slices below were built but never wired to the CLI: `-target x86-64-linux`
+  - ✅ **slice 2 COMPLETE — `-target x86-64` links in-process.** The
+    slices below were built but never wired to the CLI: `-target x86-64`
     kept emitting `.s` for gcc. It no longer does. `x86_encode.fern` +
     `x86_gas.fern` were merged into `examples/self_host/x86_native.fern`
     (one module, so the CLI can `import` it without cross-module bare
     references — the same reason `arm64_native.fern` is one module), the
     remaining mnemonics were added, and `fern.fern`'s `x86_elf_binary`
-    drives assemble → `elf.fern` → executable. `-target x86-64-linux-asm` is the
+    drives assemble → `elf.fern` → executable. `-target x86-64-asm` is the
     new spelling for the GAS text. Both Linux targets now need nothing on
     `$PATH`.
 
@@ -1520,7 +1520,7 @@ smallest → largest:
     gains a `string` case (`write("hi!")`) that asserts **stdout** "hi!"
     (not just exit code) from the self-assembled native binary.
   - 🔧 **CLI wiring — blocked by the Go-vs-self-host semantic gap.** The
-    natural finish line is `fern -target x86-64-linux-elf -o OUT` emitting an ELF
+    natural finish line is `fern -target x86-64-elf -o OUT` emitting an ELF
     directly. Attempted (import `x86_encode`/`x86_gas`/`elf` into
     `fern.fern`, dispatch a new target through `x86_gas_assemble` +
     `elf`), but **`fern.fern` is built with the Go backend** in the CLI

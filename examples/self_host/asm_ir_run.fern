@@ -8,7 +8,7 @@
 // asserts identical exit codes — proving the IR path is behaviour-equivalent
 // to the production AST path (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3).
 //
-// `-target arm64-linux` selects the arm64 backends instead (#4398 part 1): the IR
+// `-target arm64` selects the arm64 backends instead (#4398 part 1): the IR
 // path via asm_arm64_ir.emit_module_ir, and IR-or-error via
 // asm_arm64_ir.emit_module_or_error — replacing the retired asm_arm64_ir_run mirror
 // driver. The target-independent probe modes (`-ir-probe` / `-ir-needs`)
@@ -144,7 +144,7 @@ function run(): i32 {
         while (ni < nds.len()) { print(nds[ni] + "\n"); ni = ni + 1; }
         return 0;
     }
-    // `-target arm64-linux`: the arm64 leg (replacing the retired asm_arm64_ir_run
+    // `-target arm64`: the arm64 leg (replacing the retired asm_arm64_ir_run
     // mirror). `-ir` + fully-eligible routes IR via asm_arm64_ir.emit_module_ir —
     // the SAME orchestration emit_module's use_ir dispatch runs (the old
     // mirror hand-copied that sequence and drifted: it missed the #3457
