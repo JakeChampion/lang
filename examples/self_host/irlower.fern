@@ -43912,10 +43912,76 @@ function rc_ml_last_use(body: parser.Stmt[], name: string, k: i32): boolean {
     return !name_used_after(body, name, k);
 }
 
+// rc_ml_arr_elem_rc_tracked: native arrElemIsRcTracked — array / struct / enum
+// / closure / tuple. Exactly the element kinds a buffer's deep drop walks and
+// dec's, which is what balances a skipped construction inc. STRINGS are
+// excluded: their two-word retain/release diverges per backend, the same reason
+// the struct-lit arm skips a string field.
+function rc_ml_arr_elem_rc_tracked(t: string, structs: parser.StructDecl[]): boolean {
+    if (t.len() == 0) { return false; }
+    if (is_array_type_name(t)) { return true; }
+    if (t.len() > 0 && t[0] == 40) { return true; }             // "(" — fn / tuple spelling
+    if (rc_struct_decl_index(structs, t) >= 0) { return true; }
+    return rc_fe_is_enum_name(structs, t);
+}
+
+// rc_ml_local_type: the declared type recorded for local `name`, or "".
+function rc_ml_local_type(name: string, types_n: string[], types_t: string[]): string {
+    if (name.len() == 0) { return ""; }
+    var i: i32 = 0;
+    while (i < types_n.len()) {
+        if (types_n[i] == name) { return types_t[i]; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// rc_ml_recv_elem_type: the ELEMENT type of an array-store RECEIVER. Native
+// reads this off the call's type argument, which the checker filled in; here it
+// is recovered from the declaration, so only the two receiver spellings that
+// can be resolved without a type pass are handled:
+//   - a bare local `xs`, and
+//   - a struct field of a local, `d.vals` — the accumulator-threading shape.
+// Anything else returns "", which declines the move rather than guessing. That
+// is the safe direction: a missed move is a retain the deep drop still
+// balances, whereas a wrong one would skip a retain that is needed.
+function rc_ml_recv_elem_type(obj: parser.Expr, types_n: string[], types_t: string[], structs: parser.StructDecl[]): string {
+    var t: string = "";
+    match (obj) {
+        parser.ExprIdent(rid) => { t = rc_ml_local_type(rid.name, types_n, types_t); },
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(bid) => {
+                    var bt: string = rc_ml_local_type(bid.name, types_n, types_t);
+                    var si: i32 = rc_struct_decl_index(structs, bt);
+                    if (si >= 0) {
+                        var fi: i32 = 0;
+                        while (fi < structs[si].fields.len()) {
+                            if (structs[si].fields[fi].name == fa.field) { t = structs[si].fields[fi].type_name; }
+                            fi = fi + 1;
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") { return t[0 : t.len() - 2] + ""; }
+    return "";
+}
+
 // rc_ml_construction_moves: bare-ident owned rc locals consumed at their last
 // use in a counted construction slot of `val` (struct-lit rc-tracked
-// NON-STRING field / array-literal element / tuple-literal element) — native
-// markConstructionMoves minus the closure-capture arm.
+// NON-STRING field / array-literal element / tuple-literal element / the
+// element of an array STORE) — native markConstructionMoves minus the
+// closure-capture arm.
+//
+// A container literal evaluates every operand unconditionally, so the caller's
+// dominance guard for this statement covers a construction NESTED in one of
+// those operands too — `d = Doc { ...d, vals: d.vals.append(v) }` reaches the
+// push, and with it v's move. Only the operands the match already visits are
+// descended into; nothing else about the statement is walked.
 function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
     var out: MlOut = moved;
     match (val) {
@@ -43944,7 +44010,35 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                     },
                     _ => {}
                 }
+                out = rc_ml_construction_moves(sl.field_values[i], body, k, fn, types_n, types_t, structs, out);
                 i = i + 1;
+            }
+        },
+        parser.ExprCall(c) => {
+            // `xs.append(v)` / `xs.with(i, v)` store the element into the buffer
+            // under the same counted retain an array literal's elements take, and
+            // the buffer's deep drop dec's it — so a moved last-use owned local
+            // balances there too (native storedArrayElemOperand).
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    var elem_idx: i32 = 0 - 1;
+                    if (fa.field == "append" && c.args.len() == 1) { elem_idx = 0; }
+                    if (fa.field == "with" && c.args.len() == 2) { elem_idx = 1; }
+                    if (elem_idx >= 0) {
+                        if (rc_ml_arr_elem_rc_tracked(rc_ml_recv_elem_type(fa.obj, types_n, types_t, structs), structs)) {
+                            match (c.args[elem_idx]) {
+                                parser.ExprIdent(eid) => {
+                                    if (rc_ml_owned_rc_local(eid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, eid.name, k) && util.index_of_str(out.names, eid.name) < 0) {
+                                        out = MlOut { names: out.names.append(eid.name), sites: out.sites.append(util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col)) };
+                                    }
+                                },
+                                _ => {}
+                            }
+                            out = rc_ml_construction_moves(c.args[elem_idx], body, k, fn, types_n, types_t, structs, out);
+                        }
+                    }
+                },
+                _ => {}
             }
         },
         parser.ExprArray(ar) => {
@@ -43958,6 +44052,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                     },
                     _ => {}
                 }
+                out = rc_ml_construction_moves(ar.elements[i], body, k, fn, types_n, types_t, structs, out);
                 i = i + 1;
             }
         },
@@ -43972,6 +44067,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                     },
                     _ => {}
                 }
+                out = rc_ml_construction_moves(tu.elements[i], body, k, fn, types_n, types_t, structs, out);
                 i = i + 1;
             }
         },
