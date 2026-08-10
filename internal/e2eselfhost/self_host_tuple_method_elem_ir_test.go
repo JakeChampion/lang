@@ -35,6 +35,13 @@ var tupleMethodElemCases = []struct {
 	{"method-arms-both", `struct Pair { fst: i32, snd: i32 } function (p: Pair) sum(): i32 { return p.snd; } function gen(p1: Pair, c: boolean): (i32, i64) { return ((if (c) { p1.sum() } else { p1.fst }), 165i64); } function main(): i32 { var t: (i32, i64) = gen(Pair { fst: 1i32, snd: 7i32 }, false); return (t.0 + (t.1 as i32)) & 63i32; }`, 38},
 	// No 64-bit element: the gap is the element's ADMISSION, not its width.
 	{"method-arm-all-i32-tuple", `struct Pair { fst: i32, snd: i32 } function (p: Pair) sum(): i32 { return p.snd; } function gen(p1: Pair, c: boolean): (i32, i32) { return ((if (c) { p1.sum() } else { 6i32 }), 165i32); } function main(): i32 { var t: (i32, i32) = gen(Pair { fst: 1i32, snd: 7i32 }, true); return (t.0 + t.1) & 63i32; }`, 44},
+	// A STRING or ARRAY receiver: the registry lookup is keyed on a struct /
+	// enum type name and cannot answer for a builtin receiver, so `.len()` in
+	// the same position bailed even after the method case above landed. A
+	// length is an i32 whatever it is measuring. Seed 253, the other half of
+	// the class.
+	{"len-arm-string-receiver", `function gen(p0: string, c: boolean): (i32, i64) { return ((if (c) { p0.len() } else { 6i32 }), 165i64); } function main(): i32 { var t: (i32, i64) = gen("abcd", true); return (t.0 + (t.1 as i32)) & 63i32; }`, 41},
+	{"len-arm-array-receiver", `function gen(xs: i32[], c: boolean): (i32, i64) { return ((if (c) { xs.len() } else { 6i32 }), 165i64); } function main(): i32 { var t: (i32, i64) = gen([1i32, 2i32, 3i32], true); return (t.0 + (t.1 as i32)) & 63i32; }`, 40},
 	{"free-fn-elem-unchanged", `function f(n: i32): i32 { return n + 1i32; } function gen(c: boolean): (i32, i64) { return ((if (c) { f(6i32) } else { 6i32 }), 165i64); } function main(): i32 { var t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 	{"literal-arms-unchanged", `function gen(c: boolean): (i32, i64) { return ((if (c) { 7i32 } else { 6i32 }), 165i64); } function main(): i32 { var t: (i32, i64) = gen(true); return (t.0 + (t.1 as i32)) & 63i32; }`, 44},
 }
