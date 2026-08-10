@@ -38,6 +38,19 @@ edge/CLI shapes reclaimed by the same RC rather than a special
 arena — and general-purpose, long-running programs are a first-class
 target, not an off-label use.
 
+**The reach extends below the OS too.** Fern targets hosted
+applications, guest libraries linked into someone else's firmware,
+device drivers, and kernels — the language being able to own the
+machine, not only run on one. The anchoring long-term goal is an
+entire operating system written from the ground up in Fern, with
+the self-host compiler running on it as the finish line. Epic #6506
+splits the OS-dependent runtime surface from the pure one;
+`BARE-METAL-PLAN.md` is what follows it, and records why the
+binding constraint is the memory model (an interrupt handler is a
+second context racing non-atomic refcounts) rather than the missing
+inline asm — and why per-process heaps make that constraint and an
+OS's natural structure the *same* design.
+
 Practical consequence for design work: when a feature would trade
 general-purpose fitness for a narrow edge/CLI optimisation (leaking
 because "the process exits soon", assuming single-threaded, assuming

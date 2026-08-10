@@ -497,14 +497,16 @@ pub struct LowerState {
     // return-transfer retain. See the return path's use for why that retain is
     // what made accumulator threading quadratic.
     own_params: string[],
-    // optret_pending: consumed-match Option/Result candidates whose arms are
-    // CURRENTLY being lowered — "slot#s" (string payload) / "slot#a"
-    // (leak-safe-array payload) entries. A `return` inside such an arm would
-    // make the post-match drop site dead code (the #4353 p1/p3 leak), so
-    // emit_dec_sweep_except_list (which every return form runs) drops the
-    // pending payload + box before op_return; the drop zeroes the slot, and
-    // fallthrough paths keep the post-match drop — each dynamic path frees
-    // the box exactly once. Set/restored around the candidate's match
+    // optret_pending: consumed-match candidates whose arms are CURRENTLY being
+    // lowered — "slot#s" (Option/Result string payload) / "slot#a"
+    // (Option/Result leak-safe-array payload) / "slot#b" (scalar-enum or
+    // scalar-Option box, shallow dec) / "slot#e<enum>;<moved…>" (rc-payload
+    // enum, runtime variant dispatch) entries. A `return` inside such an arm
+    // would make the post-match drop site dead code (the #4353 p1/p3 and #6219
+    // leaks), so emit_dec_sweep_except_list (which every return form runs)
+    // drops the pending payload + box before op_return; the drop zeroes the
+    // slot, and fallthrough paths keep the post-match drop — each dynamic path
+    // frees the box exactly once. Set/restored around the candidate's match
     // statement by the fn-body loop and lower_block; empty at fn end.
     optret_pending: string[],
     n_params: i32,
@@ -8533,6 +8535,17 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!ab0.ok) { return ab0; }
         return ab0.emit(ir.op_raw_arr_box());
     }
+    // __raw_data(s) — a live string's DATA pointer (#2649), the inverse of
+    // __raw_string and the last thing blocking tcp_send. It needs no op of its
+    // own: a string value already IS its box pointer, and the data word is slot
+    // 0 of that box, so this is raw_load_ptr(s, 0) — the same read __raw_string
+    // wrote. Only the checker had to be convinced the string is addressable.
+    if (cid.name == "__raw_data" && c.args.len() == 1) {
+        var rd0: LowerState = lower_expr(c.args[0], s);
+        if (!rd0.ok) { return rd0; }
+        var rd1: LowerState = rd0.emit(ir.op_const_i32(0));
+        return rd1.emit(ir.op_raw_load_ptr());
+    }
     // __raw_array(ptr) — the type-only bridge back to a typed array (#2649),
     // the array sibling of __raw_string. It emits NOTHING: the data pointer
     // already IS the array value, so only the checker needed convincing.
@@ -10334,6 +10347,59 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     return s.fail();
 }
 
+// ── the fresh-owned-container READ reclaim (#6491) ───────────────────────────
+//
+// `mk()[i]` / `mk().f` read a value out of a container NOTHING NAMES, so the
+// read is the only place that container can be reclaimed — there is no slot for
+// the exit sweep to find. Native bounds both shapes; the self-host leaked the
+// whole container per evaluation (measured 184 B a round on the three-read
+// probe, exactly x2 per doubling, against 0 on all three native backends).
+//
+// This is the discarded-`mk(i);` statement reclaim one expression position over,
+// and it deliberately borrows that site's admission rather than inventing one:
+// the callee must be in the STRICT-fresh registry, so the returned box is the
+// unambiguous sole owner (rc == 1) of itself and of every field buffer. The
+// releases are the same rc-guarded helpers, so a shared box degrades to today's
+// leak instead of dangling.
+//
+// SCALAR reads only. A pointer element/field ALIASES the container about to be
+// freed, so it needs the retain-and-deep-drop pair plus a binding site that
+// takes the read as a move — three sites that have to agree, and none of them
+// is here. A scalar is copied out of the buffer, so nothing survives the release
+// to dangle.
+
+// owned_scalar_field_type reports whether a declared field type names a value
+// that is COPIED out of its container rather than pointing back into it. Every
+// scalar width plus `boolean`; `string` / arrays / structs / enums are pointers
+// and are excluded. The index read needs no such test — its "ARR:" admission
+// already restricts the container to a scalar-element array.
+function owned_scalar_field_type(t: string): boolean {
+    return is_scalar_type_name(t) || t == "boolean" || t == "f32"
+        || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "char";
+}
+
+// owned_fresh_call_callee: the callee NAME when `e` is a direct call to a free
+// function in the strict-fresh registry (`kind` "" for the struct entries,
+// "ARR:" for the scalar-array ones), else "". A LOCAL callee is refused — the
+// registry is keyed by declaration name and a same-named local holds an unknown
+// closure body.
+function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (s.slot_of(cid.name) >= 0) { return ""; }
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
+                    return cid.name;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // lower_expr lowers one expression, stamping the bail description on the way
 // out of a failure (see LowerState.fail_why). The dispatch itself is
 // lower_expr_dispatch; this wrapper is the only place the tag is computed, and
@@ -10905,8 +10971,37 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             if (sty == "") { return s.fail(); }
             var idx: i32 = s.field_index_in(sty, fa.field);
             if (idx < 0) { return s.fail(); }
+            // A SCALAR field read off a fresh owned struct — `mk().k`, mk in the
+            // strict-fresh registry — reclaims that box here, the index read's
+            // sibling (#6491). The deep field drop rides the same admission the
+            // discarded-`mk(i);` reclaim uses: the strict-fresh registry proves
+            // the box sole-owns every field buffer, so __struct_drop_<T> cannot
+            // double-free one. A type with no reclaimable field skips straight
+            // to the box dec.
+            var faown: string = "";
+            if (owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))) {
+                faown = owned_fresh_call_callee(fa.obj, "", s);
+            }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
+            if (faown != "") {
+                var fan: string = "$ocfld" + util.i32_to_string(so.locals.len());
+                so = so.add_local(fan);
+                var faslot: i32 = so.slot_of(fan);
+                so = so.mark_struct_type(faslot, sty);
+                so = so.emit(ir.op_store_local(faslot));
+                so = so.emit(ir.op_load_local(faslot));
+                if (struct_field_is_i64(s.structs, sty, idx)) { so = so.emit(ir.op_struct_get_i64(idx)); }
+                else { so = so.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx))); }
+                if (struct_fields_reusable(s.structs, sty) && struct_has_reclaim_array_field(s.structs, sty)) {
+                    so = so.emit(ir.op_load_local(faslot));
+                    so = so.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drop the rc fields
+                    so = so.emit(ir.op_drop());                                   // discard the clobbered return
+                }
+                so = so.emit(ir.op_load_local(faslot));
+                so = so.emit(ir.op_call_direct("__fern_rc_dec", 1));              // free the box
+                return so.emit(ir.op_drop());
+            }
             // An i64 field reads an 8-byte integer (i64.load); f64 an 8-byte
             // float; i32 the 4-byte path. (An i64 field in an i32 context is a
             // checker error; a valid i64 read routes through lower_i64 below.)
@@ -11471,11 +11566,46 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // (the backend computes the element address for its layout). String
             // indexing `s[i]` reads a byte → `str_index` (an i32 byte value);
             // it shares the lower-array-then-index shape, just a different op.
+            // A SCALAR element read out of a fresh owned container — `mk()[i]`,
+            // mk an "ARR:"-registered producer — reclaims that container here
+            // (#6491; see the section comment above lower_expr). The buffer is
+            // spilled so the index expression can be lowered between the two
+            // reads of it, then released element-blind: every element rides the
+            // freed buffer and the loaded scalar is a copy.
+            // The element is scalar BY CONSTRUCTION: an "ARR:" entry is only
+            // issued for a callee whose return type is is_leaksafe_array_field,
+            // which excludes string[] and every struct/enum array. Asking the
+            // element TAG instead would be both redundant and wrong — `ix.ty` is
+            // checker-stamped, and the emit-only drivers do not stamp it, so the
+            // reclaim fired under `fern.fern` and silently declined under
+            // `asm_run.fern`.
+            var ixtag: string = ix_type_tag(ix, s);
+            var ixown: string = "";
+            if (!expr_is_str(ix.array, s)) {
+                ixown = owned_fresh_call_callee(ix.array, "ARR:", s);
+            }
             var sidx: LowerState = lower_expr(ix.array, s);
             if (!sidx.ok) { return sidx; }
+            var ixslot: i32 = 0 - 1;
+            if (ixown != "") {
+                var ixn: string = "$ocidx" + util.i32_to_string(sidx.locals.len());
+                sidx = sidx.add_local(ixn);
+                ixslot = sidx.slot_of(ixn);
+                sidx = sidx.emit(ir.op_store_local(ixslot));
+                sidx = sidx.emit(ir.op_load_local(ixslot));
+            }
             sidx = lower_expr(ix.index, sidx);
             if (!sidx.ok) { return sidx; }
             if (expr_is_str(ix.array, s)) { return sidx.emit(ir.op_str_index()); }
+            if (ixslot >= 0) {
+                var ixw: i32 = 32;
+                if (ixtag == "f64") { ixw = 64; }
+                if (ix.unchecked) { sidx = sidx.emit(ir.op_arr_get_nc(ixw)); }
+                else { sidx = sidx.emit(ir.op_arr_get(ixw)); }
+                sidx = sidx.emit(ir.op_load_local(ixslot));
+                sidx = sidx.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                return sidx.emit(ir.op_drop());
+            }
             // Element width from ix_type_tag: an f64[] reads an 8-byte f64
             // (arr_get width 64 → f64.load on wasm); i32[] / string[] the 4-byte
             // i32 path. This is the SAME leaf expr_is_f64's ExprIndex case reads,
@@ -20724,6 +20854,54 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
     return PreciseDrops { idxs: idxs, names: names, kinds: kinds };
 }
 
+// emit_scalar_enum_box_free releases a consumed scalar-enum / scalar-Option
+// local's box: a shallow dec (every payload is a scalar, so there is nothing to
+// walk) then zero the slot.
+//
+// Zeroing is what keeps the three emission sites disjoint. The post-match site,
+// its lower_block mirror, and the return-path sweep each claim the same
+// candidate, and on any one dynamic path at most one of them is reached; a
+// zeroed slot makes a second dec a no-op, since __fern_rc_dec is null-safe.
+function emit_scalar_enum_box_free(s: LowerState, slot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// rcenum_pending_entry encodes an rc-payload enum's return-path release as one
+// optret_pending entry: "<slot>#e<enum>;<moved…>". The deep-drop needs the enum
+// NAME (to walk its variants) and the MOVED set (fields an escaping arm binding
+// now owns), and both are only in hand at the match statement, not at the
+// `return` that has to emit the release. ';' is a safe separator: an enum name
+// and a "<Variant>#<index>" moved entry are both identifier-and-digit text.
+function rcenum_pending_entry(slot: i32, enum_name: string, moved: string[]): string {
+    var ent: string = util.i32_to_string(slot) + "#e" + enum_name;
+    var mi: i32 = 0;
+    while (mi < moved.len()) {
+        ent = ent + ";" + moved[mi];
+        mi = mi + 1;
+    }
+    return ent;
+}
+
+// split_semi is rcenum_pending_entry's inverse: the enum name first, then each
+// moved entry.
+function split_semi(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == 59) {   // 59 = ';'
+            out = out.append(s[start:i] + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(s[start:s.len()] + "");
+}
+
 // slot_list_has reports whether slot index `v` is in `xs` — the keep-set
 // membership test for emit_dec_sweep_except_list.
 function slot_list_has(xs: i32[], v: i32): boolean {
@@ -20758,13 +20936,15 @@ pub function emit_dec_sweep_except(s: LowerState, keep: i32): LowerState {
 // payload are never swept.
 pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState {
     var st: LowerState = s;
-    // Pending consumed-match Option/Result drops (#4353 p1/p3): a `return`
-    // inside a candidate's match arm runs this sweep, so drop the pending
-    // payload + box here — the post-match drop site is dead code on this
-    // path. The drop zeroes the slot; entries are "slot#s" (string payload,
-    // rc-aware str_free) / "slot#a" (leak-safe-array payload, shallow dec).
-    // Empty outside candidate arms (set/restored around the match), so the
-    // fn-end sweep and every unrelated return are byte-unchanged.
+    // Pending consumed-match drops (#4353 p1/p3, #6219): a `return` inside a
+    // candidate's match arm runs this sweep, so drop the pending payload + box
+    // here — the post-match drop site is dead code on this path. The drop
+    // zeroes the slot; entries are "slot#s" (string payload, rc-aware
+    // str_free) / "slot#a" (leak-safe-array payload, shallow dec) / "slot#b"
+    // (scalar-enum or scalar-Option box, shallow dec) / "slot#e<enum>;<moved…>"
+    // (rc-payload enum, runtime variant dispatch — rcenum_pending_entry). Empty
+    // outside candidate arms (set/restored around the match), so the fn-end
+    // sweep and every unrelated return are byte-unchanged.
     var opi: i32 = 0;
     while (opi < st.optret_pending.len()) {
         var ope: string = st.optret_pending[opi];
@@ -20772,7 +20952,15 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         while (oph < ope.len() && ope[oph] != 35) { oph = oph + 1; }   // 35 = '#'
         var opslot: i32 = util.digits_to_i32(ope[0:oph] + "");
         if (opslot >= st.n_params) {
-            if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
+            if (oph + 1 < ope.len() && ope[oph + 1] == 98) {   // 98 = 'b'
+                st = emit_scalar_enum_box_free(st, opslot);
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == 101) {   // 101 = 'e'
+                var eparts: string[] = split_semi(ope[oph + 2 : ope.len()] + "");
+                var emoved: string[] = [];
+                var emi: i32 = 1;
+                while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
+                st = emit_enum_variant_drops_moved(st, opslot, eparts[0], emoved);
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
                 st = emit_opt_str_payload_drop(st, opslot);
             } else {
                 st = emit_opt_payload_drop(st, opslot);
@@ -21674,6 +21862,28 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             }
             opj = opj + 1;
         }
+        // Same, for the block-local scalar-enum / scalar-Option box (#6219).
+        var sej: i32 = 0;
+        while (sej < scenfrees.idxs.len()) {
+            if (scenfrees.idxs[sej] == i) {
+                var seslot2: i32 = st.slot_of(scenfrees.names[sej]);
+                if (seslot2 >= st.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
+                }
+            }
+            sej = sej + 1;
+        }
+        // Same, for the block-local rc-PAYLOAD enum box.
+        var rej: i32 = 0;
+        while (rej < rcenfrees.idxs.len()) {
+            if (rcenfrees.idxs[rej] == i) {
+                var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
+                if (reslot2 >= st.n_params) {
+                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.structs))));
+                }
+            }
+            rej = rej + 1;
+        }
         // Is statement i a self-overwrite (functional-update) reuse site?
         var soi: i32 = 0 - 1;
         var c: i32 = 0;
@@ -21807,18 +22017,14 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         // for a LOOP body: the slot is re-declared next iteration, and a stale
         // pointer there would be dec'd twice. Emitted BEFORE retire_locals, while
         // the name still resolves — after retirement the slot is unfindable, which
-        // is why the function-exit sweep cannot do this job.
+        // is why the function-exit sweep cannot claim this on its own. It claims
+        // the `return`-out-of-an-arm paths only, off the "#b" pending entry set
+        // above, which records the SLOT while the name still resolves.
         var sef: i32 = 0;
         while (sef < scenfrees.idxs.len()) {
             if (scenfrees.idxs[sef] == i) {
                 var sslot: i32 = st.slot_of(scenfrees.names[sef]);
-                if (sslot >= st.n_params) {
-                    st = st.emit(ir.op_load_local(sslot));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                    st = st.emit(ir.op_const_i32(0));
-                    st = st.emit(ir.op_store_local(sslot));
-                }
+                if (sslot >= st.n_params) { st = emit_scalar_enum_box_free(st, sslot); }
             }
             sef = sef + 1;
         }
@@ -21826,18 +22032,16 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
         // scalar loop above, but the release is emit_enum_variant_drops_moved —
         // a runtime variant_is dispatch that decs the live variant's rc payload and
         // then frees the box, skipping any field whose arm binding escaped
-        // (match_moved_rc_payloads, #4400). Zeroing the slot afterwards is what
-        // keeps this disjoint from the RCENUM loop-rebind reclaim: on the next
-        // iteration emit_enum_deep_reinit_store would otherwise deep-drop the box
-        // this just freed.
+        // (match_moved_rc_payloads, #4400). The slot-zero inside that helper is
+        // what keeps this disjoint from the RCENUM loop-rebind reclaim: on the
+        // next iteration emit_enum_deep_reinit_store would otherwise deep-drop
+        // the box this just freed.
         var ref2: i32 = 0;
         while (ref2 < rcenfrees.idxs.len()) {
             if (rcenfrees.idxs[ref2] == i) {
                 var rslot2: i32 = st.slot_of(rcenfrees.names[ref2]);
                 if (rslot2 >= st.n_params) {
                     st = emit_enum_variant_drops_moved(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.structs));
-                    st = st.emit(ir.op_const_i32(0));
-                    st = st.emit(ir.op_store_local(rslot2));
                 }
             }
             ref2 = ref2 + 1;
@@ -26179,16 +26383,26 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     var asts: string[] = collect_fresh_arrstruct_names(body, structs, []);
     var asti: i32 = 0;
     while (asti < asts.len()) {
-        if (!body_unsafe_for(body, asts[asti], borrowable)
-            && util.index_of_str(reassigned, asts[asti]) < 0
+        // "A|" rows are append-BUILT markers, not candidates.
+        if (!(asts[asti].len() > 2 && asts[asti][0] == 65 && asts[asti][1] == 124)   // 65='A' 124='|'
+            && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs)
             && !arrarr_row_escapes(body, asts[asti])
             && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs)) {
-            out = out.append("ARRSTRUCT:" + asts[asti]);
+            // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
+            // blunt not-reassigned exclusion, validating each rebind
+            // individually (#6535) — the self-append is sanctioned, any other
+            // reassignment still sinks the credit outright.
+            if (util.index_of_str(asts, "A|" + asts[asti]) >= 0) {
+                out = out.append("ARRSTRUCTA:" + asts[asti]);
+            } else {
+                out = out.append("ARRSTRUCT:" + asts[asti]);
+            }
         }
         asti = asti + 1;
     }
     // Fresh SCALAR-FIELD struct-array locals (#4355): `var g = [P { .. }, P { .. }]`
-    // — every element a fresh no-base struct literal, and P has no rc-array field
+    // — every element fresh (a no-base struct literal, or a call to a strict-fresh
+    // struct-returning function — structarr_elem_store_ok), and P has no rc-array field
     // (the deep ARRSTRUCT path above only credits field-routing structs). Credited
     // "STRUCTARR:" so slot_is_reclaimable_structarr routes the exit sweep /
     // loop-rebind through __fern_arrarr_free (a rc-guarded box dec per element
@@ -26201,7 +26415,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // `for p in g { … p.field … }` iteration and `g[i].field` reads are fine). The
     // detector's struct_has_reclaim_array_field guard keeps this DISJOINT from
     // ARRSTRUCT — field structs deep-drop there, scalar structs shallow-free here.
-    var sarrs2: string[] = collect_fresh_structarr_names(body, []);
+    var sarrs2: string[] = collect_fresh_structarr_names(body, fresh_ret, []);
     var sa2i: i32 = 0;
     while (sa2i < sarrs2.len()) {
         // NOT excluded on `reassigned` any more (#6127) — the self-append rebind
@@ -26211,7 +26425,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // otherwise body_unsafe_for, so it subsumes both former checks.
         // "A|" rows are append-BUILT markers, not candidates.
         if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == 65 && sarrs2[sa2i][1] == 124)   // 65='A' 124='|'
-            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable)
+            && !structarr_unsafe_for(body, sarrs2[sa2i], borrowable, fresh_ret)
             && !structarr_elem_escapes(body, sarrs2[sa2i], borrowable)) {
             // Append-built candidates take the SEPARATE STRUCTARRA: credit,
             // which slot_is_reclaimable_structarr additionally gates on the
@@ -26469,6 +26683,149 @@ function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
     }
     return false;
 }
+// ── the LOCAL-built scalar-array producer (#6491 follow-up) ──────────────────
+//
+// `var out: i32[] = []; … out = out.append(v); … return out;` is how a producer
+// is actually written, and the literal-return rule above declines it — so the
+// caller's reclaims (the discarded `mk(i);` statement and the `mk()[i]` read)
+// both left the buffer to leak, 2824 B over 50 rounds where native is flat.
+//
+// The three predicates below admit it. Together they prove the returned buffer
+// is built ENTIRELY in this frame and reaches the caller as its sole rc == 1
+// reference: the init is a literal (so it cannot start as a param's buffer), the
+// only rebind is the self-append (so it cannot become one later), and nothing
+// else escapes it. Element freshness needs no proof at all here — the ret type
+// is is_leaksafe_array_field, so every element is a SCALAR, and the shallow
+// element-blind `__fern_rc_dec` both consumers emit has no pointer to dangle.
+
+// arr_returned_ident_names collects the name of every `return <ident>` in
+// `stmts`. Paired with body_has_nonident_arr_return, which refuses the function
+// outright if any return is some other shape.
+function arr_returned_ident_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(rid) => { a = push_str_unique(a, rid.name); },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = arr_returned_ident_names(f.then_body, a); a = arr_returned_ident_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = arr_returned_ident_names(w.body, a); },
+            parser.StmtFor(fo) => { a = arr_returned_ident_names(fo.body, a); },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { a = arr_returned_ident_names(m.arms[k].body, a); k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var ok: boolean = false;
+                match (r.value) { parser.ExprIdent(_) => { ok = true; }, _ => {} }
+                if (!ok) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonident_arr_return(f.then_body) || body_has_nonident_arr_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonident_arr_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonident_arr_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_has_nonident_arr_return(m.arms[k].body)) { return true; } k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arr_local_has_literal_init: `name` is declared in `stmts` as `var name = [ … ]`
+// (an empty `[]` qualifies — that is the accumulator idiom). Without this the
+// name could be seeded from a parameter and the caller would free the caller's
+// caller's buffer.
+function arr_local_has_literal_init(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) { parser.ExprArray(_) => { return true; }, _ => { return false; } }
+                }
+            },
+            parser.StmtIf(f) => { if (arr_local_has_literal_init(f.then_body, name) || arr_local_has_literal_init(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (arr_local_has_literal_init(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arr_local_has_literal_init(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_local_has_literal_init(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arr_reassigned_other_than_selfappend: `name` is rebound by anything other than
+// the sanctioned `name = name.append(v)`. body_unsafe_for_allow_ret cannot see
+// this — its StmtAssign arm inspects only the assigned VALUE, so `out = param`
+// reads as safe there while it is exactly what would alias a buffer this frame
+// does not own.
+function arr_reassigned_other_than_selfappend(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    var self_append: boolean = false;
+                    match (a.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprFieldAccess(fa) => {
+                                    if (fa.field == "append" && c.args.len() == 1) {
+                                        match (fa.obj) {
+                                            parser.ExprIdent(rid) => { self_append = rid.name == name; },
+                                            _ => {}
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!self_append) { return true; }
+                }
+            },
+            parser.StmtIf(f) => { if (arr_reassigned_other_than_selfappend(f.then_body, name) || arr_reassigned_other_than_selfappend(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (arr_reassigned_other_than_selfappend(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arr_reassigned_other_than_selfappend(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_reassigned_other_than_selfappend(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            parser.StmtDefer(d) => { if (arr_reassigned_other_than_selfappend([d.action], name)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// body_returns_local_built_arr: every return hands back a local this frame built
+// from a literal and only ever self-appended to, and nothing else escapes it.
+function body_returns_local_built_arr(stmts: parser.Stmt[]): boolean {
+    if (body_has_nonident_arr_return(stmts)) { return false; }
+    var names: string[] = arr_returned_ident_names(stmts, []);
+    if (names.len() == 0) { return false; }
+    var no_borrow: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (!arr_local_has_literal_init(stmts, names[i])) { return false; }
+        if (arr_reassigned_other_than_selfappend(stmts, names[i])) { return false; }
+        if (body_unsafe_for_allow_ret(stmts, names[i], no_borrow)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -26485,12 +26842,21 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // names convention) so the discarded-call reclaim in lower_stmt reads it
         // off LowerState with no new threading; every other consumer looks up bare
         // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
-        // match. Consumed ONLY by the discarded `mk(i);` statement reclaim — the
-        // caller-side shallow __fern_rc_dec of the returned rc=1 buffer (native's
+        // match. Consumed by the discarded `mk(i);` statement reclaim and by the
+        // `mk()[i]` read reclaim (#6491) — both the caller-side shallow
+        // __fern_rc_dec of the returned rc=1 buffer (native's
         // ownedCallResultType arc; the box is fresh-by-construction in return
         // position, so the dec is balanced and element-blind).
+        //
+        // Two return shapes qualify, and they are disjoint by construction: a
+        // direct array LITERAL, or a LOCAL this frame built from a literal and
+        // only ever self-appended to (body_returns_local_built_arr). The second
+        // is how a producer is normally written, and admitting it is what makes
+        // the accumulator idiom reclaimable rather than a per-call leak.
         if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_arrlit_return(funcs[k].body)) {
+                && body_has_return(funcs[k].body)
+                && (!body_has_nonfresh_arrlit_return(funcs[k].body)
+                    || body_returns_local_built_arr(funcs[k].body))) {
             out = out.append("ARR:" + funcs[k].name);
         }
         k = k + 1;
@@ -29907,17 +30273,31 @@ function structarr_lit_is_fresh(e: parser.Expr): boolean {
 // struct LITERAL, the same per-element rule structarr_lit_is_fresh applies to an
 // initializer. An ident element would alias a live local whose box the reclaim
 // would dangle; a `...base` copy shares the base's field pointers.
-function structarr_elem_store_ok(e: parser.Expr): boolean {
+//
+// A CALL to a strict-fresh struct-returning function (`fresh_ret` — every return
+// a no-base literal whose array fields come from fresh array literals) is the
+// same freshness one call frame out: the returned box is rc=1 and unaliased, so
+// the array is its sole owner exactly as for an inline literal. The looser
+// fresh_struct_ret_fns is NOT enough — it admits alias-inc'd field buffers. A
+// METHOD call declines: the receiver type is not known here, so `<Base>.<m>`
+// keys cannot be looked up (conservative, no admission).
+function structarr_elem_store_ok(e: parser.Expr, fresh_ret: string[]): boolean {
     match (e) {
         parser.ExprStructLit(sl) => { return !sl.has_base; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return util.index_of_str(fresh_ret, cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
 }
 
 // structarr_self_append_elem: `e` is the sanctioned self-append rebind of
-// `name` — `name.append(<fresh no-base struct literal>)`.
-function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
+// `name` — `name.append(<fresh element>)`, per structarr_elem_store_ok.
+function structarr_self_append_elem(e: parser.Expr, name: string, fresh_ret: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var is_self_append: boolean = false;
@@ -29934,7 +30314,7 @@ function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
             }
             if (!is_self_append) { return false; }
             if (c.args.len() != 1) { return false; }
-            return structarr_elem_store_ok(c.args[0]);
+            return structarr_elem_store_ok(c.args[0], fresh_ret);
         },
         _ => { return false; }
     }
@@ -29943,20 +30323,20 @@ function structarr_self_append_elem(e: parser.Expr, name: string): boolean {
 
 // structarr_name_is_appended: `name` takes at least one sanctioned self-append,
 // which is what admits an empty-literal init as an append-built candidate.
-function structarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean {
+function structarr_name_is_appended(stmts: parser.Stmt[], name: string, fresh_ret: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name)) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && structarr_self_append_elem(a.value, name, fresh_ret)) { return true; } },
             parser.StmtIf(f) => {
-                if (structarr_name_is_appended(f.then_body, name)) { return true; }
-                if (structarr_name_is_appended(f.else_body, name)) { return true; }
+                if (structarr_name_is_appended(f.then_body, name, fresh_ret)) { return true; }
+                if (structarr_name_is_appended(f.else_body, name, fresh_ret)) { return true; }
             },
-            parser.StmtWhile(w) => { if (structarr_name_is_appended(w.body, name)) { return true; } },
-            parser.StmtFor(fo) => { if (structarr_name_is_appended(fo.body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (structarr_name_is_appended(w.body, name, fresh_ret)) { return true; } },
+            parser.StmtFor(fo) => { if (structarr_name_is_appended(fo.body, name, fresh_ret)) { return true; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (structarr_name_is_appended(m.arms[mi].body, name)) { return true; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (structarr_name_is_appended(m.arms[mi].body, name, fresh_ret)) { return true; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -29974,27 +30354,27 @@ function structarr_name_is_appended(stmts: parser.Stmt[], name: string): boolean
 // Only the assign case differs from stmt_unsafe_for; everything else delegates,
 // which is sound because this class's own element hazard — a bound element box
 // — is checked separately by structarr_elem_escapes, applied alongside this gate.
-function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+function structarr_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], fresh_ret: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_structarr_unsafe_for(stmts[i], name, borrowable, fresh_ret)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], fresh_ret: string[]): boolean {
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
-                if (structarr_self_append_elem(a.value, name)) { return false; }
+                if (structarr_self_append_elem(a.value, name, fresh_ret)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return expr_unsafe_for(a.value, name, borrowable);
         },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return structarr_unsafe_for(f.then_body, name, borrowable) || structarr_unsafe_for(f.else_body, name, borrowable);
+            return structarr_unsafe_for(f.then_body, name, borrowable, fresh_ret) || structarr_unsafe_for(f.else_body, name, borrowable, fresh_ret);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return structarr_unsafe_for(w.body, name, borrowable);
+            return structarr_unsafe_for(w.body, name, borrowable, fresh_ret);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -30003,19 +30383,19 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return structarr_unsafe_for(fo.body, name, borrowable);
+            return structarr_unsafe_for(fo.body, name, borrowable, fresh_ret);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (structarr_unsafe_for(m.arms[ai].body, name, borrowable)) { return true; }
+                if (structarr_unsafe_for(m.arms[ai].body, name, borrowable, fresh_ret)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable); },
+        parser.StmtDefer(d) => { return stmt_structarr_unsafe_for(d.action, name, borrowable, fresh_ret); },
         _ => { return stmt_unsafe_for(st, name, borrowable); }
     }
     return false;
@@ -30028,7 +30408,7 @@ function stmt_structarr_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 // check is needed — the all-struct-literal init both proves freshness AND makes
 // the declaration path mark the slot is_arr with its element struct type, which
 // slot_is_reclaimable_structarr consults.
-function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): string[] {
+function collect_fresh_structarr_names(stmts: parser.Stmt[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -30042,7 +30422,7 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): str
                 // uncredited, leaking one element box per append. Measured on
                 // the leakcheck differential at 38400 bytes over 100 rounds,
                 // scaling linearly, where native leaks nothing.
-                else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name)) {
+                else if (arrarr_lit_is_empty(v.init) && structarr_name_is_appended(stmts, v.name, fresh_ret)) {
                     a = push_str_unique(a, v.name);
                     // "A|" marks it append-BUILT so the crediting loop can grant
                     // the separate, stricter STRUCTARRA: credit — same marker
@@ -30050,12 +30430,12 @@ function collect_fresh_structarr_names(stmts: parser.Stmt[], acc: string[]): str
                     a = push_str_unique(a, "A|" + v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, a); a = collect_fresh_structarr_names(f.else_body, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, a); },
+            parser.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_structarr_names(w.body, fresh_ret, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_structarr_names(fo.body, fresh_ret, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_structarr_names(m.arms[mi].body, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_structarr_names(m.arms[mi].body, fresh_ret, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -32294,9 +32674,120 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): b
     return false;
 }
 
+// arrstruct_self_append_elem / arrstruct_name_is_appended / arrstruct_unsafe_for:
+// the append-built half of this class (#6535), transcribed from the shallow
+// STRUCTARR siblings #6127 introduced. The literal-built credit refused any
+// REASSIGNED name, and `vals = vals.append(Val { .. })` is a reassignment — so
+// an append-built array-of-structs earned no credit at all and leaked its whole
+// structure per round, where the literal-built form of the identical value was
+// flat. Measured 35200 bytes over 100 rounds on a 4-element `Val { kind: i32,
+// kids: i32[] }[]`, doubling with the round count, against 0 for the literal.
+//
+// The element rule is the SAME one arrstruct_lit_is_fresh applies per element —
+// a fresh struct literal — so the element box is sole-owned exactly as in the
+// literal-built form the deep walk already frees. A bare-ident element is
+// refused: the array's deep drop and the live local's own sweep would both
+// release the element's field buffers.
+function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_self_append: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field == "append") {
+                        match (fa.obj) {
+                            parser.ExprIdent(rid) => { is_self_append = rid.name == name; },
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+            if (!is_self_append) { return false; }
+            if (c.args.len() != 1) { return false; }
+            return is_fresh_struct_init(c.args[0], structs);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs)) { return true; } },
+            parser.StmtIf(f) => {
+                if (arrstruct_name_is_appended(f.then_body, name, structs)) { return true; }
+                if (arrstruct_name_is_appended(f.else_body, name, structs)) { return true; }
+            },
+            parser.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs)) { return true; } },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { if (arrstruct_name_is_appended(m.arms[mi].body, name, structs)) { return true; } mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+// body_unsafe_for with exactly one sanctioned reassignment — the self-append
+// rebind. Only the assign case differs; everything else delegates, which is
+// sound because this class's own element hazards (an element alias, an element
+// field-payload extraction) are checked separately by arrarr_row_escapes and
+// arrstruct_elem_payload_escapes, applied alongside this gate.
+function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_arrstruct_unsafe_for(stmts[i], name, borrowable, structs)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+    match (st) {
+        parser.StmtAssign(a) => {
+            if (a.target == name) {
+                if (arrstruct_self_append_elem(a.value, name, structs)) { return false; }
+                return true;   // any other reassignment of the candidate
+            }
+            return expr_unsafe_for(a.value, name, borrowable);
+        },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },   // `for x in name`: borrow iteration
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (arrstruct_unsafe_for(m.arms[ai].body, name, borrowable, structs)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs); },
+        _ => { return stmt_unsafe_for(st, name, borrowable); }
+    }
+    return false;
+}
+
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
-// literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body.
-// Escape gates applied by reclaimable_names_of.
+// literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
+// or — #6535 — from an EMPTY literal the body then grows by self-append. Escape gates
+// applied by reclaimable_names_of.
 function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
@@ -32304,6 +32795,18 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.Str
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, v.name); }
+                // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
+                // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
+                // `[]` (no elements to prove fresh), which left every append-built
+                // array-of-structs uncredited. "A|" marks it append-BUILT so the
+                // crediting loop can grant the separate ARRSTRUCTA: credit, the
+                // same marker trick the STRUCTARR side uses.
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
+                    && arrarr_lit_is_empty(v.init)
+                    && arrstruct_name_is_appended(stmts, v.name, structs)) {
+                    a = push_str_unique(a, v.name);
+                    a = push_str_unique(a, "A|" + v.name);
+                }
             },
             parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a); a = collect_fresh_arrstruct_names(f.else_body, structs, a); },
             parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a); },
@@ -32450,6 +32953,32 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 },
                 _ => {}
             }
+            // `name.append(<fresh struct literal>)` — the sanctioned self-append
+            // rebind (#6535). Same whitelist shape and same reason as `.len()`
+            // above: the receiver is READ to copy the buffer, and the element
+            // stored is a freshly-built sole-owned box, so nothing here binds an
+            // element pointer or extracts a field payload. Without it the
+            // receiver fell to the bare-ident arm and every append-built
+            // array-of-structs refused the credit — the leak this closes.
+            //
+            // The shape is checked, not assumed: a non-append method, a
+            // non-literal element, or an append whose result goes SOMEWHERE ELSE
+            // all fall through to the generic tail below and still escape. The
+            // arg is walked, so `name.append(Val { xs: name[0].xs })` is caught.
+            match (c.callee) {
+                parser.ExprFieldAccess(afa) => {
+                    match (afa.obj) {
+                        parser.ExprIdent(aid3) => {
+                            if (aid3.name == name && afa.field == "append" && c.args.len() == 1
+                                && is_fresh_struct_init(c.args[0], structs)) {
+                                return arrstruct_elem_esc_expr(c.args[0], name, sty, structs);
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             if (arrstruct_elem_esc_expr(c.callee, name, sty, structs)) { return true; }
             var ci: i32 = 0;
             while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
@@ -32541,7 +33070,12 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
+    if (util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0) { return true; }
+    // APPEND-BUILT (#6535) carries a separate credit so the literal-built rule
+    // is not widened by accident — the two reach the same deep walk, and the
+    // rebind that distinguishes them is cow-guarded in
+    // emit_arrstruct_reclaim_store.
+    return util.index_of_str(s.reclaimable_names, "ARRSTRUCTA:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -32597,12 +33131,24 @@ function emit_arrstruct_deep_free(se: LowerState, slot: i32, sty: string): Lower
 
 // emit_arrstruct_reclaim_store: the loop-rebind. Stash `new`, deep-free the OLD
 // structure, store new. The null guard inside deep_free covers the first-iteration null.
+//
+// COW-GUARDED (old != new), like emit_structarr_reclaim_store. A self-append
+// (`vals = vals.append(v)`) hands back the SAME buffer whenever the rc==1 grow
+// happened in place, and the deep free would then destroy the elements the
+// stored value still points at — a use-after-free, not a leak. The guard is
+// what admits the append-built class at all; a genuine rebind to a different
+// array still frees, so the literal-built path is unchanged.
 function emit_arrstruct_reclaim_store(se: LowerState, slot: i32, sty: string): LowerState {
     var scratch: string = "$asr" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));            // stash new
+    st = st.emit(ir.op_load_local(slot));            // old
+    st = st.emit(ir.op_load_local(tmp));             // new
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
     st = emit_arrstruct_deep_free(st, slot, sty);    // free old structure
+    st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
 }
@@ -32644,39 +33190,49 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // broke self-compilation the first time this was attempted (#6129:
     // gen0/gen1 diverged on unit 2_s83).
     //
-    // `string` specifically is safe to admit, which the map / option / tuple
-    // kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
-    // admits only a no-base struct LITERAL, rejecting the bare-ident element
-    // that would alias a live local (965 such sites in the compiler's own
-    // sources, including every `s.ops.append(op)`) — so the shallow free
+    // `string` and `fn` specifically are safe to admit, which the map / option /
+    // tuple kinds are not: the element BOX is provably fresh — structarr_elem_store_ok
+    // admits only a no-base struct LITERAL or a strict-fresh-returning call,
+    // rejecting the bare-ident element that would alias a live local (965 such
+    // sites in the compiler's own sources, including every `s.ops.append(op)`)
+    // — so the shallow free
     // releases a box this array solely owns. Its string field then leaks
     // EXACTLY as it already does on the literal-built path for the same type,
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
     if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + reclaim_slot_name(s, i)) >= 0) {
-        return struct_all_scalar_or_string_fields(s.structs, sty);
+        return struct_all_scalar_string_or_fn_fields(s.structs, sty);
     }
     return false;
 }
 
-// struct_all_scalar_or_string_fields: every field of `sty` is a plain scalar or
-// a `string`, so a SHALLOW free of the struct's box releases the box itself and
-// leaks at most its string boxes. The append-built struct-array class admits
-// this because its elements are provably fresh no-base literals
-// (structarr_elem_store_ok), making the box sole-owned; the string leak is the
-// same one the literal-built class has always accepted for the same type.
-// Deliberately an allowlist rather than a denylist — a field type this does not
-// recognise keeps the struct out, which is the safe direction and stays safe as
-// the type system grows.
-function struct_all_scalar_or_string_fields(structs: parser.StructDecl[], sty: string): boolean {
+// struct_all_scalar_string_or_fn_fields: every field of `sty` is a plain scalar,
+// a `string`, or an `fn` (closure), so a SHALLOW free of the struct's box
+// releases the box itself and leaks at most its string / closure boxes. The
+// append-built struct-array class admits this because its elements are provably
+// fresh no-base literals (structarr_elem_store_ok), making the box sole-owned;
+// the string leak is the same one the literal-built class has always accepted
+// for the same type. Deliberately an allowlist rather than a denylist — a field
+// type this does not recognise keeps the struct out, which is the safe
+// direction and stays safe as the type system grows.
+//
+// `fn` rides the same argument as `string`: neither is a rc-ARRAY field (so
+// struct_has_reclaim_array_field still keeps this class disjoint from
+// ARRSTRUCT), and both are recovered rather than leaked when the type ALSO
+// routes field reclaim — the deep branch then walks each element through
+// __struct_drop_<T>, whose k_str / k_clo arms carry their own whole-program
+// admissions. Without `fn` here a single closure field took the entire array
+// out of the reclaim class, so its element boxes, strings AND closures all
+// leaked (#6461: 320 B/round for an 8-record table).
+function struct_all_scalar_string_or_fn_fields(structs: parser.StructDecl[], sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var n: i32 = decl_field_count(structs, sty);
     if (n == 0) { return false; }
     var fi: i32 = 0;
     while (fi < n) {
         var ft: string = decl_field_type_at(structs, sty, fi);
-        if (!is_scalar_field_type(ft) && ft != "string") { return false; }
+        if (!is_scalar_field_type(ft) && ft != "string" && ft != "fn") { return false; }
         fi = fi + 1;
     }
     return true;
@@ -37146,10 +37702,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // the statement and clobber a same-named outer local (the top-level
         // sibling of the lower_block fix; #3726).
         var stmt_sbase: i32 = s.locals.len();
-        // Statement j is a consumed-match Option/Result candidate's match: set
-        // the pending return-drop entries (#4353 p1/p3) so a `return` inside
-        // an arm frees the payload + box via the return-path sweep — the
-        // post-match drop below is dead code on those paths. Blockable kinds
+        // Statement j is a consumed-match candidate's match: set the pending
+        // return-drop entries (#4353 p1/p3, #6219) so a `return` inside an arm
+        // frees the payload + box via the return-path sweep — the post-match
+        // drop below is dead code on those paths. Blockable Option/Result kinds
         // only (string / leak-safe-array payloads carry a COMPLETE drop; a
         // struct payload's field release belongs to the fn-level machinery).
         // Restored right after the statement lowers.
@@ -37165,6 +37721,34 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 }
             }
             opj = opj + 1;
+        }
+        // Same, for the scalar-enum / scalar-Option box (#6219). The donor
+        // suppression mirrors the post-match emission below exactly: a donated
+        // box is consumed by a later reuse site, and keeping the two sites on
+        // one rule is what makes "freed on every path, by exactly one site"
+        // checkable by reading them side by side.
+        var sej: i32 = 0;
+        while (sej < enumfrees.idxs.len()) {
+            if (enumfrees.idxs[sej] == j && util.index_of_str(edon.donors, enumfrees.names[sej]) < 0) {
+                var seslot2: i32 = s.slot_of(enumfrees.names[sej]);
+                if (seslot2 >= s.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
+                }
+            }
+            sej = sej + 1;
+        }
+        // Same, for the rc-PAYLOAD enum box. Its release is the runtime
+        // variant_is dispatch, so the entry carries the enum name and the moved
+        // set too; the donor suppression mirrors its post-match emission.
+        var rej: i32 = 0;
+        while (rej < rcenumfrees.idxs.len()) {
+            if (rcenumfrees.idxs[rej] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
+                var reslot2: i32 = s.slot_of(rcenumfrees.names[rej]);
+                if (reslot2 >= s.n_params) {
+                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.structs))));
+                }
+            }
+            rej = rej + 1;
         }
         // Is statement j a self-overwrite reuse site? If so, lower it in place.
         var reuse_i: i32 = 0 - 1;
@@ -37427,21 +38011,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // single-owner, dead-after enum local, free its box now (dec + zero the
         // slot), mirroring the array precise drop. Sound: the box has an rc header
         // (op_struct_make) and the match already read its scalar payloads as
-        // borrows; the exit dec-sweep never sweeps struct/enum slots, so this is
-        // the only release — no double-free.
+        // borrows. This is the FALLTHROUGH release; an arm that `return`s never
+        // reaches it and is released by the "#b" pending entry set above instead.
         var ei: i32 = 0;
         while (ei < enumfrees.idxs.len()) {
             // Suppress the free if this donor's box was donated to a later enum-donor
             // reuse site (the reuse consumes the box; freeing it too is a double-free).
             if (enumfrees.idxs[ei] == j && util.index_of_str(edon.donors, enumfrees.names[ei]) < 0) {
                 var xslot: i32 = s.slot_of(enumfrees.names[ei]);
-                if (xslot >= s.n_params) {
-                    s = s.emit(ir.op_load_local(xslot));
-                    s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    s = s.emit(ir.op_drop());
-                    s = s.emit(ir.op_const_i32(0));
-                    s = s.emit(ir.op_store_local(xslot));
-                }
+                if (xslot >= s.n_params) { s = emit_scalar_enum_box_free(s, xslot); }
             }
             ei = ei + 1;
         }
@@ -41125,6 +41703,36 @@ pub function closure_and_fnptr_fns_of(funcs: parser.FuncDecl[], structs: parser.
     var rc: string[] = closure_ret_closure_fns_of(funcs, structs);
     var ri: i32 = 0;
     while (ri < rc.len()) { out = out.append("RETCLO2:" + rc[ri]); ri = ri + 1; }
+    // "PASSTHRU:<fn>:<argidx>" markers for an erased-generic parameter the
+    // function RETURNS unchanged (`id[T](x: T): T`, `pick[T](c, a, b: T): T`).
+    // A fn value at such a parameter is boxed by the lift, and the call hands
+    // that same box back — so the CALL is a closure box, which the read side
+    // (arr_elem_is_closure_box) cannot tell from any other call without this.
+    var pt: string[] = typevar_passthrough_markers_of(funcs);
+    var pi: i32 = 0;
+    while (pi < pt.len()) { out = out.append(pt[pi]); pi = pi + 1; }
+    return out;
+}
+
+// typevar_passthrough_markers_of lists "PASSTHRU:<fn>:<argidx>" for every
+// receiver-less generic function whose parameter at `argidx` is declared with
+// its own return type — the lift-side lift_callee_is_typevar_passthrough test,
+// carried to the read side, where the module funcs are no longer in scope.
+function typevar_passthrough_markers_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].type_param_count > 0) {
+            var p: i32 = 0;
+            while (p < funcs[i].params.len()) {
+                if (funcs[i].params[p].type_name.len() > 0 && funcs[i].params[p].type_name == funcs[i].ret_type) {
+                    out = out.append("PASSTHRU:" + funcs[i].name + ":" + util.i32_to_string(p));
+                }
+                p = p + 1;
+            }
+        }
+        i = i + 1;
+    }
     return out;
 }
 
@@ -46597,6 +47205,28 @@ function tuple_tag_i32_only(t: string): boolean {
 // lift-side body walkers (the fn-gates keep consequences to a declined or
 // extra lift, never a miscompile: the lifted capture param only labels the
 // hoisted function's parameter).
+// map_kv_type returns the KEY or VALUE type of a `Map[K, V]` type string, or ""
+// when the type is not a Map. The split is on the top-level comma, so a nested
+// `Map[i32, Pair[i32, i32]]` keeps its own brackets.
+function map_kv_type(mty: string, want_key: boolean): string {
+    if (mty.len() <= 5 || mty[0:4] != "Map[") { return ""; }
+    var inner: string = mty[4 : mty.len() - 1] + "";
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    var pos: i32 = 0 - 1;
+    while (i < inner.len()) {
+        if (inner[i] == 91) { depth = depth + 1; }
+        if (inner[i] == 93) { depth = depth - 1; }
+        if (inner[i] == 44 && depth == 0 && pos < 0) { pos = i; }
+        i = i + 1;
+    }
+    if (pos <= 0) { return ""; }
+    if (want_key) { return inner[0 : pos] + ""; }
+    var vstart: i32 = pos + 1;
+    while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
+    return inner[vstart : inner.len()] + "";
+}
+
 function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
     var i: i32 = 0;
     while (i < body.len()) {
@@ -46657,6 +47287,23 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // FIELD miscompiles (silent wrong values — the f5/f4 probes).
                 // A capture only labels the hoisted fn's param, so a miss
                 // stays a declined lift, never a miscompile.
+                // `for (k, v) in m` binds two names, encoded comma-joined, so
+                // the single-binder test below never matches either of them and
+                // a lambda capturing one resolved "" — the whole module fell to
+                // the AST path. The pair is a Map's key and value type.
+                if (rc_fe_is_destructure(fr.var_name)) {
+                    var kvn: string[] = rc_fe_split_csv(fr.var_name);
+                    var kvi: i32 = util.index_of_str(kvn, name);
+                    if (kvi >= 0) {
+                        match (fr.iter) {
+                            parser.ExprIdent(kvid) => {
+                                var kvt: string = map_kv_type(cap_type_at(kvid.name, fd, depth, structs, mfuncs), kvi == 0);
+                                if (kvt.len() > 0) { return kvt; }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
                 if (fr.var_name == name) {
                     var ity: string = "";
                     match (fr.iter) {
@@ -46691,27 +47338,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                                     if ((itfa.field == "keys" || itfa.field == "values") && itc.args.len() == 0) {
                                         match (itfa.obj) {
                                             parser.ExprIdent(itmid) => {
-                                                var mty: string = cap_type_at(itmid.name, fd, depth, structs, mfuncs);
-                                                if (mty.len() > 5 && mty[0:4] == "Map[") {
-                                                    var inner: string = mty[4 : mty.len() - 1] + "";
-                                                    var cdepth: i32 = 0;
-                                                    var ci2: i32 = 0;
-                                                    var cpos: i32 = 0 - 1;
-                                                    while (ci2 < inner.len()) {
-                                                        if (inner[ci2] == 91) { cdepth = cdepth + 1; }
-                                                        if (inner[ci2] == 93) { cdepth = cdepth - 1; }
-                                                        if (inner[ci2] == 44 && cdepth == 0 && cpos < 0) { cpos = ci2; }
-                                                        ci2 = ci2 + 1;
-                                                    }
-                                                    if (cpos > 0) {
-                                                        if (itfa.field == "keys") { ity = inner[0 : cpos] + ""; }
-                                                        else {
-                                                            var vstart: i32 = cpos + 1;
-                                                            while (vstart < inner.len() && inner[vstart] == 32) { vstart = vstart + 1; }
-                                                            ity = inner[vstart : inner.len()] + "";
-                                                        }
-                                                    }
-                                                }
+                                                ity = map_kv_type(cap_type_at(itmid.name, fd, depth, structs, mfuncs), itfa.field == "keys");
                                             },
                                             _ => {}
                                         }
@@ -47480,6 +48107,29 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
                     var niife: parser.Expr = parser.ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                     return InlineCloRes { expr: niife, funcs: br.funcs, counter: br.counter };
                 },
+                parser.ExprIdent(cid) => {
+                    // A generic passthrough (`id(<lambda>)`) hands its argument
+                    // straight back, so boxing the argument boxes the call. The
+                    // aggregate positions call this directly rather than through
+                    // the expression walk, so the call's own arguments were never
+                    // reached and the lambda inside stayed raw.
+                    var pfs: parser.FuncDecl[] = funcs;
+                    var pct: i32 = counter;
+                    var pargs: parser.Expr[] = [];
+                    var pi2: i32 = 0;
+                    while (pi2 < c.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, pi2)
+                                && lift_arg_is_fn_value(c.args[pi2], mfuncs)) {
+                            var pr: InlineCloRes = try_fn_field_value(c.args[pi2], fd, pfs, pct, gfns, mfuncs, structs);
+                            pfs = pr.funcs; pct = pr.counter; pargs = pargs.append(pr.expr);
+                        } else {
+                            pargs = pargs.append(c.args[pi2]);
+                        }
+                        pi2 = pi2 + 1;
+                    }
+                    if (pct == counter) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    return InlineCloRes { expr: parser.ExprCall { callee: c.callee, args: pargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, funcs: pfs, counter: pct };
+                },
                 _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
             }
         },
@@ -47682,6 +48332,88 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
         i = i + 1;
     }
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
+}
+
+// arr_elem_forces_box reports whether an array element makes the whole literal an
+// env-box array: a capturing lambda, or a generic-passthrough call carrying a fn
+// value (the lift boxes that argument unconditionally, so the call yields a box).
+function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    match (e) {
+        parser.ExprLambda(el) => { return lambda_captures(el, fd).len() > 0; },
+        parser.ExprCall(ec) => {
+            match (ec.callee) {
+                parser.ExprIdent(ecid) => {
+                    var i: i32 = 0;
+                    while (i < ec.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, ecid.name, i)
+                                && lift_arg_is_fn_value(ec.args[i], mfuncs)) { return true; }
+                        i = i + 1;
+                    }
+                },
+                parser.ExprLambda(eil) => {
+                    if (ec.args.len() == 0 && eil.params.len() == 0) { return iife_arm_lambda_captures(eil.body, fd); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// fd_returns_boxed_fn_array reports whether ANY `return [ … ]` in `fd` yields an
+// array the lift boxes. Every such literal in the function then has to box,
+// including a sibling return whose own elements are all plain lambdas: the
+// returns share the CALLER's binding, and a binding gets one dispatch ABI
+// (#5071 one container out, #6555). Without it `return (if (c) { [<lambda>] }
+// else { [id(<lambda>)] })` handed back a bare fn-pointer array down one path
+// and an env-box array down the other, and the caller env-first-dispatched
+// whichever arm ran — compiled clean, SIGSEGV.
+function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    var rets: parser.Expr[] = collect_returns(fd.body, []);
+    var i: i32 = 0;
+    while (i < rets.len()) {
+        match (rets[i]) {
+            parser.ExprArray(ra) => {
+                var e: i32 = 0;
+                while (e < ra.elements.len()) {
+                    if (arr_elem_forces_box(ra.elements[e], fd, mfuncs)) { return true; }
+                    e = e + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// array_holds_fn_value reports whether the literal has any fn-VALUED element, so
+// the uniformity rule above applies to it at all (an i32[] never does).
+function array_holds_fn_value(arr: parser.ExprArray, mfuncs: parser.FuncDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < arr.elements.len()) {
+        match (arr.elements[i]) {
+            parser.ExprLambda(_) => { return true; },
+            parser.ExprIdent(aid) => { if (lift_module_fn_arity(mfuncs, aid.name) >= 1) { return true; } },
+            parser.ExprCall(ac) => {
+                match (ac.callee) {
+                    parser.ExprIdent(acid) => {
+                        var a: i32 = 0;
+                        while (a < ac.args.len()) {
+                            if (lift_callee_is_typevar_passthrough(mfuncs, acid.name, a)
+                                    && lift_arg_is_fn_value(ac.args[a], mfuncs)) { return true; }
+                            a = a + 1;
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
@@ -47923,7 +48655,16 @@ function arr_elem_is_closure_box(e: parser.Expr, s: LowerState): boolean {
             match (cec.callee) {
                 parser.ExprIdent(cecid) => {
                     if (util.index_of_str(s.sigs.closure_fns, cecid.name) >= 0) { return true; }
-                    return cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$";
+                    if (cecid.name.len() > 8 && cecid.name[0:8] == "__mkclo$") { return true; }
+                    // A generic passthrough hands its argument back unchanged, so
+                    // the call is a box exactly when that argument is one.
+                    var pa: i32 = 0;
+                    while (pa < cec.args.len()) {
+                        if (util.index_of_str(s.sigs.closure_fns, "PASSTHRU:" + cecid.name + ":" + util.i32_to_string(pa)) >= 0
+                                && arr_elem_is_closure_box(cec.args[pa], s)) { return true; }
+                        pa = pa + 1;
+                    }
+                    return false;
                 },
                 // A value-position if/match ELEMENT whose arms the lift boxed
                 // (#6256): the element yields a box, so the array holding it is
@@ -48136,14 +48877,14 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
 // arrays holds a capturing lambda. It is the gate on rewriting the arms into
 // uniform env boxes: below the "every arm" half the binding would carry two
 // dispatch ABIs, and without the "some capture" half there is nothing to fix.
-function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl): boolean {
-    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0);
+function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0, mfuncs);
     return seen > 0;
 }
 
 // Returns the number of capturing lambda elements found, or -1 as soon as an arm
 // returns something that is not an array literal.
-function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32): i32 {
+function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: parser.FuncDecl[]): i32 {
     var n: i32 = seen;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -48153,10 +48894,7 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                     parser.ExprArray(arr) => {
                         var e: i32 = 0;
                         while (e < arr.elements.len()) {
-                            match (arr.elements[e]) {
-                                parser.ExprLambda(el) => { if (lambda_captures(el, fd).len() > 0) { n = n + 1; } },
-                                _ => {}
-                            }
+                            if (arr_elem_forces_box(arr.elements[e], fd, mfuncs)) { n = n + 1; }
                             e = e + 1;
                         }
                     },
@@ -48164,15 +48902,15 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                 }
             },
             parser.StmtIf(iff) => {
-                n = iife_arm_arrays_capturing(iff.then_body, fd, n);
+                n = iife_arm_arrays_capturing(iff.then_body, fd, n, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_arrays_capturing(iff.else_body, fd, n);
+                n = iife_arm_arrays_capturing(iff.else_body, fd, n, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             parser.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n);
+                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -48435,7 +49173,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // which it only can when every arm answers the same way.
                     // Anything else is left to bail exactly as before.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd)) {
+                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd, mfuncs)) {
                         var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, fd, fs, ct, gfns, structs, mfuncs);
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
@@ -48489,12 +49227,34 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                                 if (sccall.args.len() == 0 && scil.params.len() == 0
                                     && iife_arm_lambda_captures(scil.body, fd)) { has_cap_lam = true; }
                             },
+                            // A generic PASSTHROUGH element (`id(<lambda>)`,
+                            // `pick(c, <lambda>, …)`) forwards the box the lift
+                            // puts at its erased-generic parameter, so the array
+                            // holding it is on the env-first ABI whether or not
+                            // anything captures — the boxing at that parameter is
+                            // unconditional. Without this the sibling elements
+                            // stayed bare fn pointers under a binding that
+                            // dispatches every element as a box.
+                            parser.ExprIdent(scfid) => {
+                                var sa: i32 = 0;
+                                while (sa < sccall.args.len()) {
+                                    if (lift_callee_is_typevar_passthrough(mfuncs, scfid.name, sa)
+                                            && lift_arg_is_fn_value(sccall.args[sa], mfuncs)) { has_cap_lam = true; }
+                                    sa = sa + 1;
+                                }
+                            },
                             _ => {}
                         }
                     },
                     _ => {}
                 }
                 sc = sc + 1;
+            }
+            // #6555: a sibling `return` of this function yields a boxed fn
+            // array, so this literal boxes too — the returns share the caller's
+            // binding and a binding gets one dispatch ABI.
+            if (!has_cap_lam && array_holds_fn_value(arr, mfuncs) && fd_returns_boxed_fn_array(fd, mfuncs)) {
+                has_cap_lam = true;
             }
             // Bound names in this function's scope (params + body binders): a
             // bare fn-name ELEMENT is only an unshadowed module fn when it names

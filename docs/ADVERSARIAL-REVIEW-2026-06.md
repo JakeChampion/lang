@@ -167,7 +167,7 @@ above).
 
 ### I1 — SSA constant-folding ignores operand width → i32 wraparound lost
 
-- **Subsystem:** optimiser (SSA pipeline, `-target wasm-ssa`)
+- **Subsystem:** optimiser (SSA pipeline, `-target wasm -backend ssa`)
 - **Location:** `internal/ssa/constfold.go:251-297` (`tryFold` integer
   cases) and `internal/ssa/sccp.go:423-471` (`foldIntBinary`)
 - **Scenario:**

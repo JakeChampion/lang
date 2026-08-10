@@ -63,6 +63,12 @@ type Descriptor struct {
 	// Phase 3 wires it to runtime binding-fetch glue.
 	Bindings []string
 
+	// Entry is how the artifact is entered. It drives whether the
+	// native backends emit the process-entry runtime (`_start` /
+	// `_main` and the argc/argv/envp capture off the process stack),
+	// which only EntryProcess has.
+	Entry EntryShape
+
 	// NoBackend marks a target that is DECLARED and type-checkable
 	// but that no codegen backend emits yet, so `fern -check
 	// -target NAME` works and compiling is a clear refusal rather
@@ -72,6 +78,46 @@ type Descriptor struct {
 	// so the codegen that follows (#6510, #6511) is written
 	// against a compiler that already rejects what it may not do.
 	NoBackend bool
+}
+
+// EntryShape names how something outside the artifact transfers control
+// into it. It is a property of the host, not the ISA, so it lives on the
+// environment alongside capabilities.
+//
+// The three shapes are genuinely different contracts, not spellings of
+// one: EntryProcess is handed a populated process stack, EntryExports is
+// never "entered" at all, and EntryReset arrives with no stack pointer.
+type EntryShape string
+
+const (
+	// EntryProcess: something above (a kernel, dyld, a wasm runtime)
+	// enters the artifact at a known symbol with a process context
+	// already set up. `_start` on Linux ELF, `_main` on Mach-O.
+	EntryProcess EntryShape = "process"
+
+	// EntryExports: the artifact is a set of exported symbols its
+	// embedder calls. Nothing enters it; there is no entry symbol to
+	// emit and no process stack to read argv off.
+	EntryExports EntryShape = "exports"
+
+	// EntryReset: the artifact owns the machine and is entered at a
+	// reset vector, with no stack pointer, no heap and no caller.
+	//
+	// Declared but not yet emitted for by any target — it exists so
+	// the kernel posture is a second value here rather than a rewrite
+	// of everything keyed on "freestanding means exported symbols".
+	// docs/BARE-METAL-PLAN.md.
+	EntryReset EntryShape = "reset"
+)
+
+// OrDefault resolves the zero value to EntryProcess, so a caller that
+// predates the field — every codegen `Options{}` literal — keeps the
+// historical behaviour of emitting the process entry.
+func (e EntryShape) OrDefault() EntryShape {
+	if e == "" {
+		return EntryProcess
+	}
+	return e
 }
 
 // environments carry the per-HOST half of a target: what the platform
@@ -89,6 +135,7 @@ type environment struct {
 	capabilities []string
 	handlerKinds []string
 	bindings     []string
+	entry        EntryShape
 }
 
 var environments = map[string]environment{
@@ -104,6 +151,7 @@ var environments = map[string]environment{
 	"native": {
 		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
 		handlerKinds: []string{"handle"},
+		entry:        EntryProcess,
 	},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
@@ -115,6 +163,7 @@ var environments = map[string]environment{
 	"wasi": {
 		capabilities: []string{"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 		handlerKinds: []string{"main"},
+		entry:        EntryProcess,
 	},
 
 	// The proxy world: an HTTP handler and nothing else. No argv, no
@@ -126,6 +175,9 @@ var environments = map[string]environment{
 	"wasi-http": {
 		capabilities: []string{"log", "now", "env", "random", "fetch"},
 		handlerKinds: []string{"handle"},
+		// The proxy world never enters the component; the host calls
+		// the exported `handle`.
+		entry: EntryExports,
 		// `wasmtime serve --env KEY=VAL` style bindings; future hosts
 		// may add kv-namespace + service-binding shapes.
 		bindings: []string{"env"},
@@ -133,10 +185,14 @@ var environments = map[string]environment{
 
 	// No host at all. Everything a program can still reach is
 	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
-	// and every judgement call. No entry point either — a freestanding
-	// artifact is a set of exported symbols its embedder calls, which
-	// #6510 settles.
-	"freestanding": {},
+	// and every judgement call. No entry point either: a freestanding
+	// artifact is either a guest (exported symbols its embedder calls)
+	// or the host (entered at a reset vector), so #6510 needs to leave
+	// room for both — docs/BARE-METAL-PLAN.md.
+	//
+	// The guest shape is what is built first; EntryReset is the second
+	// value the day a target owns the machine.
+	"freestanding": {entry: EntryExports},
 }
 
 // table is the per-target descriptor registry: the ISA-and-object-format
@@ -202,6 +258,7 @@ func ForTarget(name string) *Descriptor {
 		Capabilities: env.capabilities,
 		HandlerKinds: env.handlerKinds,
 		Bindings:     env.bindings,
+		Entry:        env.entry,
 		NoBackend:    t.noBackend,
 	}
 }

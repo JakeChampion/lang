@@ -1,0 +1,446 @@
+// examples/proposals/dupelines.fern — proposal turn, line 9:
+// "A tool that finds duplicate lines in a file and reports their line numbers."
+//
+// The output of this tool is a PARTITION, and saying so turns a vague "does it
+// work?" into two properties that between them admit exactly one right answer:
+//
+//   - **Soundness.** Every line number in a group names a line whose text
+//     equals the group's. Nothing is reported that is not a duplicate.
+//   - **Completeness.** Every line number NOT reported names a line whose text
+//     occurs exactly once. Nothing that is a duplicate goes unreported.
+//
+// Either alone is trivially satisfiable — report nothing, or report everything
+// — so a tool that passes both has to be right. They are checked over generated
+// files whose duplicate structure is known by construction, and separately as
+// invariants over the tool's own output, which is what catches a group that
+// double-counts a line.
+//
+// The third property is the one this shape actually breaks on. A duplicate
+// finder is a hash map, and a hash map has no order, so the natural
+// implementation reports groups in whatever sequence the buckets happen to
+// yield — which changes with the seed, the capacity, or the insertion history.
+// That is invisible in a one-file test and infuriating in a diff. So the
+// contract is FIRST OCCURRENCE order, with ascending line numbers inside each
+// group, and it is asserted rather than assumed: the map here is used only for
+// lookup, and the ordering rides on a separate array. Running the same input
+// twice and comparing is the guard that keeps it that way.
+//
+// Two smaller decisions are pinned because they are the ones a user would
+// otherwise have to discover: matching is EXACT (a trailing space makes a
+// different line, and so does a capital letter), and blank lines duplicate one
+// another like any other text.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------------ model ---
+
+struct Group { text: string, lines: i32[] }
+
+struct Report { groups: Group[], dup_lines: i32 }
+
+// ---------------------------------------------------------------- the tool ---
+
+// The map holds text -> index into `all`, and is only ever READ. Order comes
+// from `all`, which is appended to in first-occurrence order — so the report is
+// deterministic without depending on anything about the map's iteration.
+function find_dups(lines: string[]): Report {
+    var index: Map[string, i32] = map_new(64);
+    var all: Group[] = [];
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        var text: string = lines[i];
+        var lineno: i32 = i + 1;
+        match (index.get(text)) {
+            Some(g) => {
+                var prev: Group = all[g];
+                all = all.with(g, Group { text: prev.text, lines: prev.lines.append(lineno) });
+            },
+            None => {
+                index = index.insert(text, all.len());
+                all = all.append(Group { text: text, lines: [lineno] });
+            }
+        }
+        i = i + 1;
+    }
+
+    var groups: Group[] = [];
+    var dup_lines: i32 = 0;
+    var k: i32 = 0;
+    while (k < all.len()) {
+        if (all[k].lines.len() > 1) {
+            groups = groups.append(all[k]);
+            dup_lines = dup_lines + all[k].lines.len();
+        }
+        k = k + 1;
+    }
+    return Report { groups: groups, dup_lines: dup_lines };
+}
+
+// ------------------------------------------------------------- generators ---
+
+struct Spec { text: string, times: i32 }
+
+struct Built { lines: string[], want: Group[] }
+
+function specs_of(kind: i32): Spec[] {
+    if (kind == 0) {
+        return [Spec { text: "alpha", times: 3 }, Spec { text: "beta", times: 1 },
+                Spec { text: "gamma", times: 2 }, Spec { text: "delta", times: 1 },
+                Spec { text: "epsilon", times: 4 }];
+    }
+    if (kind == 1) {
+        // Nothing is duplicated: the report must be empty.
+        return [Spec { text: "one", times: 1 }, Spec { text: "two", times: 1 },
+                Spec { text: "three", times: 1 }];
+    }
+    if (kind == 2) {
+        // Everything is duplicated, including a blank line and two texts that
+        // differ only in trailing space or case.
+        return [Spec { text: "", times: 3 }, Spec { text: "x", times: 2 },
+                Spec { text: "x ", times: 2 }, Spec { text: "X", times: 2 }];
+    }
+    return [Spec { text: "solo", times: 5 }];
+}
+
+// pattern 0 interleaves the copies maximally, 1 blocks them together, and 2
+// separates them with lines that are unique. A finder that only compares
+// ADJACENT lines passes 1 and fails the other two; one that compares against
+// only the previous distinct line fails 0.
+function build(specs: Spec[], pattern: i32): Built {
+    var lines: string[] = [];
+    var placed: i32[][] = [];
+    var s: i32 = 0;
+    while (s < specs.len()) { placed = placed.append([]); s = s + 1; }
+
+    if (pattern == 1) {
+        var a: i32 = 0;
+        while (a < specs.len()) {
+            var c: i32 = 0;
+            while (c < specs[a].times) {
+                lines = lines.append(specs[a].text);
+                placed = placed.with(a, placed[a].append(lines.len()));
+                c = c + 1;
+            }
+            a = a + 1;
+        }
+    } else {
+        var round: i32 = 0;
+        var remaining: boolean = true;
+        while (remaining) {
+            remaining = false;
+            var b: i32 = 0;
+            while (b < specs.len()) {
+                if (round < specs[b].times) {
+                    lines = lines.append(specs[b].text);
+                    placed = placed.with(b, placed[b].append(lines.len()));
+                    remaining = true;
+                }
+                b = b + 1;
+            }
+            if (pattern == 2) {
+                lines = lines.append("filler " + round.to_string());
+            }
+            round = round + 1;
+        }
+    }
+
+    // The oracle: exactly the specs that were emitted more than once, in spec
+    // order, carrying the positions recorded as they were placed.
+    var want: Group[] = [];
+    var w: i32 = 0;
+    while (w < specs.len()) {
+        if (specs[w].times > 1) {
+            want = want.append(Group { text: specs[w].text, lines: placed[w] });
+        }
+        w = w + 1;
+    }
+    return Built { lines: lines, want: want };
+}
+
+function occurrences(lines: string[], text: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (lines[i] == text) { n = n + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+function groups_equal(a: Group[], b: Group[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i].text != b[i].text) { return false; }
+        if (a[i].lines.len() != b[i].lines.len()) { return false; }
+        var k: i32 = 0;
+        while (k < a[i].lines.len()) {
+            if (a[i].lines[k] != b[i].lines[k]) { return false; }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ------------------------------------------------------------------ tests ---
+
+// The generative core: the report must equal the groups the file was built
+// from, including their order and the line numbers inside them.
+function test_the_report_matches_the_file_it_was_built_from(): test.TestOutcome {
+    var kind: i32 = 0;
+    while (kind < 4) {
+        var pattern: i32 = 0;
+        while (pattern < 3) {
+            var b: Built = build(specs_of(kind), pattern);
+            var r: Report = find_dups(b.lines);
+            if (!groups_equal(r.groups, b.want)) {
+                return test.fail("kind=" + kind.to_string() + " pattern=" + pattern.to_string()
+                    + ": got " + r.groups.len().to_string() + " groups, want "
+                    + b.want.len().to_string() + " (or the members differ)");
+            }
+            pattern = pattern + 1;
+        }
+        kind = kind + 1;
+    }
+    return test.pass();
+}
+
+// Soundness, as an invariant over the tool's own output: every line number in a
+// group names a line whose text is the group's.
+function test_every_reported_line_really_has_that_text(): test.TestOutcome {
+    var kind: i32 = 0;
+    while (kind < 4) {
+        var pattern: i32 = 0;
+        while (pattern < 3) {
+            var b: Built = build(specs_of(kind), pattern);
+            var r: Report = find_dups(b.lines);
+            var g: i32 = 0;
+            while (g < r.groups.len()) {
+                var grp: Group = r.groups[g];
+                if (grp.lines.len() < 2) {
+                    return test.fail("group " + g.to_string() + " has "
+                        + grp.lines.len().to_string() + " member(s) — not a duplicate");
+                }
+                var m: i32 = 0;
+                while (m < grp.lines.len()) {
+                    var ln: i32 = grp.lines[m];
+                    if (ln < 1 || ln > b.lines.len()) {
+                        return test.fail("group " + g.to_string() + " cites line "
+                            + ln.to_string() + ", out of range");
+                    }
+                    if (b.lines[ln - 1] != grp.text) {
+                        return test.fail("line " + ln.to_string() + " is `" + b.lines[ln - 1]
+                            + "`, reported under `" + grp.text + "`");
+                    }
+                    m = m + 1;
+                }
+                g = g + 1;
+            }
+            pattern = pattern + 1;
+        }
+        kind = kind + 1;
+    }
+    return test.pass();
+}
+
+// Completeness, stated the way that makes it checkable: any line NOT reported
+// must occur exactly once in the file. Together with soundness this pins the
+// output to the one correct partition.
+function test_every_unreported_line_is_unique(): test.TestOutcome {
+    var kind: i32 = 0;
+    while (kind < 4) {
+        var pattern: i32 = 0;
+        while (pattern < 3) {
+            var b: Built = build(specs_of(kind), pattern);
+            var r: Report = find_dups(b.lines);
+
+            var reported: boolean[] = [];
+            var z: i32 = 0;
+            while (z < b.lines.len()) { reported = reported.append(false); z = z + 1; }
+            var g: i32 = 0;
+            while (g < r.groups.len()) {
+                var m: i32 = 0;
+                while (m < r.groups[g].lines.len()) {
+                    var ln: i32 = r.groups[g].lines[m];
+                    if (reported[ln - 1]) {
+                        return test.fail("line " + ln.to_string() + " is reported twice");
+                    }
+                    reported = reported.with(ln - 1, true);
+                    m = m + 1;
+                }
+                g = g + 1;
+            }
+
+            var i: i32 = 0;
+            while (i < b.lines.len()) {
+                if (!reported[i]) {
+                    var n: i32 = occurrences(b.lines, b.lines[i]);
+                    if (n != 1) {
+                        return test.fail("line " + (i + 1).to_string() + " `" + b.lines[i]
+                            + "` occurs " + n.to_string() + " times but was not reported");
+                    }
+                }
+                i = i + 1;
+            }
+            pattern = pattern + 1;
+        }
+        kind = kind + 1;
+    }
+    return test.pass();
+}
+
+// The contract a hash map does not give you for free.
+function test_groups_are_in_first_occurrence_order(): test.TestOutcome {
+    var kind: i32 = 0;
+    while (kind < 4) {
+        var pattern: i32 = 0;
+        while (pattern < 3) {
+            var b: Built = build(specs_of(kind), pattern);
+            var r: Report = find_dups(b.lines);
+            var prev_first: i32 = 0;
+            var g: i32 = 0;
+            while (g < r.groups.len()) {
+                var grp: Group = r.groups[g];
+                var m: i32 = 1;
+                while (m < grp.lines.len()) {
+                    if (grp.lines[m] <= grp.lines[m - 1]) {
+                        return test.fail("group `" + grp.text + "` line numbers are not ascending: "
+                            + grp.lines[m - 1].to_string() + " then " + grp.lines[m].to_string());
+                    }
+                    m = m + 1;
+                }
+                if (grp.lines[0] <= prev_first) {
+                    return test.fail("group `" + grp.text + "` first occurs at "
+                        + grp.lines[0].to_string() + ", after a group that first occurs at "
+                        + prev_first.to_string());
+                }
+                prev_first = grp.lines[0];
+                g = g + 1;
+            }
+            pattern = pattern + 1;
+        }
+        kind = kind + 1;
+    }
+    return test.pass();
+}
+
+// A map-backed finder can report a different order on a different run. Running
+// the same input repeatedly and comparing is what keeps a future rewrite from
+// reintroducing that quietly.
+function test_the_report_is_deterministic(): test.TestOutcome {
+    var kind: i32 = 0;
+    while (kind < 4) {
+        var b: Built = build(specs_of(kind), 0);
+        var first: Report = find_dups(b.lines);
+        var run: i32 = 0;
+        while (run < 4) {
+            var again: Report = find_dups(b.lines);
+            if (!groups_equal(first.groups, again.groups)) {
+                return test.fail("kind=" + kind.to_string() + " run " + run.to_string()
+                    + " differs from the first run");
+            }
+            run = run + 1;
+        }
+        kind = kind + 1;
+    }
+    return test.pass();
+}
+
+// Matching is exact. These four texts are pairwise distinct, and a finder that
+// trims or case-folds collapses them.
+function test_matching_is_exact(): test.TestOutcome {
+    var lines: string[] = ["x", "x ", " x", "X", "x", "X"];
+    var r: Report = find_dups(lines);
+    if (r.groups.len() != 2) {
+        return test.fail("expected 2 groups (`x` and `X`), got " + r.groups.len().to_string());
+    }
+    if (r.groups[0].text != "x" || r.groups[0].lines.len() != 2) {
+        return test.fail("first group should be `x` at two lines");
+    }
+    if (r.groups[0].lines[0] != 1 || r.groups[0].lines[1] != 5) {
+        return test.fail("`x` should be at lines 1 and 5");
+    }
+    if (r.groups[1].text != "X" || r.groups[1].lines[0] != 4 || r.groups[1].lines[1] != 6) {
+        return test.fail("`X` should be at lines 4 and 6");
+    }
+    return test.pass();
+}
+
+// Blank lines are text like any other, and they duplicate.
+function test_blank_lines_duplicate_each_other(): test.TestOutcome {
+    var lines: string[] = ["a", "", "b", "", "c", ""];
+    var r: Report = find_dups(lines);
+    if (r.groups.len() != 1) {
+        return test.fail("expected 1 group of blanks, got " + r.groups.len().to_string());
+    }
+    if (r.groups[0].text != "") { return test.fail("the group is not the blank line"); }
+    if (r.groups[0].lines.len() != 3) {
+        return test.fail("expected 3 blank lines, got " + r.groups[0].lines.len().to_string());
+    }
+    if (r.groups[0].lines[0] != 2 || r.groups[0].lines[1] != 4 || r.groups[0].lines[2] != 6) {
+        return test.fail("blank lines should be at 2, 4, 6");
+    }
+    // A whitespace-only line is NOT the same as an empty one.
+    var mixed: Report = find_dups(["", " ", "", " "]);
+    if (mixed.groups.len() != 2) {
+        return test.fail("`` and ` ` should be two groups, got " + mixed.groups.len().to_string());
+    }
+    return test.pass();
+}
+
+function test_degenerate_inputs(): test.TestOutcome {
+    var empty: Report = find_dups([]);
+    if (empty.groups.len() != 0) { return test.fail("empty input reported groups"); }
+    if (empty.dup_lines != 0) { return test.fail("empty input counted duplicate lines"); }
+
+    var one: Report = find_dups(["only"]);
+    if (one.groups.len() != 0) { return test.fail("a single line was reported as duplicate"); }
+
+    var all_same: Report = find_dups(["s", "s", "s", "s"]);
+    if (all_same.groups.len() != 1) { return test.fail("four identical lines should be one group"); }
+    if (all_same.dup_lines != 4) {
+        return test.fail("dup_lines is " + all_same.dup_lines.to_string() + ", want 4");
+    }
+
+    var none: Report = find_dups(["a", "b", "c"]);
+    if (none.groups.len() != 0) { return test.fail("distinct lines were reported"); }
+    if (none.dup_lines != 0) { return test.fail("distinct lines counted as duplicates"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("dupelines — duplicate lines and where they are");
+
+    var lines: string[] = ["alpha", "beta", "alpha", "gamma", "beta", "alpha"];
+    var r: Report = find_dups(lines);
+    var g: i32 = 0;
+    while (g < r.groups.len()) {
+        var grp: Group = r.groups[g];
+        var at: string = "";
+        var m: i32 = 0;
+        while (m < grp.lines.len()) {
+            if (m > 0) { at = at + ", "; }
+            at = at + grp.lines[m].to_string();
+            m = m + 1;
+        }
+        eprint("  `" + grp.text + "` x" + grp.lines.len().to_string() + " at lines " + at);
+        g = g + 1;
+    }
+    eprint("  " + r.dup_lines.to_string() + " of " + lines.len().to_string()
+        + " lines are duplicates");
+
+    var t: test.TestRunner = test.test_new("dupelines");
+    t = t.it("the report matches the file it was built from", test_the_report_matches_the_file_it_was_built_from);
+    t = t.it("every reported line really has that text", test_every_reported_line_really_has_that_text);
+    t = t.it("every unreported line is unique", test_every_unreported_line_is_unique);
+    t = t.it("groups are in first-occurrence order", test_groups_are_in_first_occurrence_order);
+    t = t.it("the report is deterministic", test_the_report_is_deterministic);
+    t = t.it("matching is exact", test_matching_is_exact);
+    t = t.it("blank lines duplicate each other", test_blank_lines_duplicate_each_other);
+    t = t.it("degenerate inputs", test_degenerate_inputs);
+    return t.finish();
+}

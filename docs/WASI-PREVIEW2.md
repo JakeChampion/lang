@@ -7,7 +7,7 @@
 > `wasm-tools component new --adapt` step have been removed from the
 > toolchain. Any mix of the migrated preview-2 imports composes through
 > one unified path (`classifyComposeRequest` → `component.Compose`).
-> The preview-1 import shape survives only as the bare `-target wasm-bin`
+> The preview-1 import shape survives only as the bare `-target wasm -emit core-module`
 > raw-core escape hatch (runnable directly under `wasmtime run`). The e2e
 > test infrastructure (`buildComponent`) now composes natively in-process
 > too (`component.Compose`), so the suite's only external dependency is

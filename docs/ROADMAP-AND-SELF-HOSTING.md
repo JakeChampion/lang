@@ -510,7 +510,7 @@ Gated by 482 differential cases as of this writing. What remained for the
 wasm backend was packaging, not language — and that packaging is now wired
 into the unified `fern` CLI:
 
-- **`fern -target wasm-bin`** emits runnable **binary** `.wasm` via the
+- **`fern -target wasm -emit core-module`** emits runnable **binary** `.wasm` via the
   self-hosted WAT→binary assembler (`watbin.fern`), not WAT text.
 - **`fern -target wasm-component`** emits a **Component-Model `wasi:cli/run`**
   component, auto-selecting the framing from the program's WASI usage and

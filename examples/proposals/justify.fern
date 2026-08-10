@@ -1,0 +1,474 @@
+// examples/proposals/justify.fern — proposal turn, line 12:
+// "A word-wrap-aware text justifier that pads inter-word gaps evenly."
+//
+// "Evenly" is the word that looks vague and is not. With `s` spaces to spread
+// across `n` gaps, evenly means every gap is `s/n` or `s/n + 1` and never
+// anything else — so the widest and narrowest gap on a line differ by at most
+// one. That is a property, not a picture, and it holds for every line of every
+// paragraph at every width. The convention for WHICH gaps get the extra space
+// (the leftmost ones) is a second, separate assertion, because a justifier can
+// satisfy "differ by at most one" while scattering the wide gaps at random and
+// look visibly wrong.
+//
+// Around it sit the two claims that stop the padding from being achieved by
+// cheating:
+//
+//   - **Every full line is exactly `width` columns.** Not "about"; exactly.
+//     This is the one a fixture checks for the one paragraph it contains.
+//   - **The words survive.** Collapsing the output's whitespace must give back
+//     the input's words, in order, with nothing added, dropped, split or
+//     merged. A justifier that reaches the target width by inserting a
+//     character, or by hyphenating, fails this and nothing else.
+//
+// The last line is deliberately not justified — stretching it is the bug that
+// makes the final line of every paragraph look like a ransom note — and a line
+// holding a single word is not stretched either, since there is no gap to put
+// the spaces in.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------------ model ---
+
+function is_blank(c: u8): boolean { return c == 32 || c == 9 || c == 10 || c == 13; }
+
+function spaces(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + " "; i = i + 1; }
+    return out;
+}
+
+function words_of(text: string): string[] {
+    var out: string[] = [];
+    var at: i32 = 0;
+    while (at < text.len()) {
+        while (at < text.len() && is_blank(text[at])) { at = at + 1; }
+        var start: i32 = at;
+        while (at < text.len() && !is_blank(text[at])) { at = at + 1; }
+        if (at > start) { out = out.append(text[start:at].to_owned()); }
+    }
+    return out;
+}
+
+// --------------------------------------------------------------- wrapping ---
+
+// Greedy: a word joins the current line when it still fits with one space
+// before it. A word wider than the whole column gets a line to itself rather
+// than being split — hyphenation is a different program.
+function wrap(words: string[], width: i32): i32[] {
+    var breaks: i32[] = [];
+    if (words.len() == 0) { return breaks; }
+    var used: i32 = words[0].len();
+    var i: i32 = 1;
+    while (i < words.len()) {
+        var w: i32 = words[i].len();
+        if (used + 1 + w <= width) {
+            used = used + 1 + w;
+        } else {
+            breaks = breaks.append(i);
+            used = w;
+        }
+        i = i + 1;
+    }
+    return breaks;
+}
+
+// ------------------------------------------------------------ justifying ---
+
+// The whole definition of "evenly", in four lines: `base` everywhere, one extra
+// on the first `extra` gaps. Distributing the remainder anywhere else still
+// satisfies "differ by at most one" and still looks wrong, which is why the
+// tests check the placement separately from the spread.
+function justify_line(words: string[], from: i32, to: i32, width: i32, last: boolean): string {
+    var count: i32 = to - from;
+    if (count == 0) { return ""; }
+
+    var letters: i32 = 0;
+    var i: i32 = from;
+    while (i < to) { letters = letters + words[i].len(); i = i + 1; }
+
+    // A single word, or the final line, is set flush left with single spaces.
+    //
+    // Both accumulators below seed with `.to_owned()`. Without it `out` starts
+    // as a borrowed alias of the array element, and the taint that correctly
+    // protects that element rides through every self-append, so none of the
+    // intermediate buffers are ever reclaimed (#6567 — 64 B a round, all three
+    // backends). Copying at the seed says what is meant anyway: this buffer is
+    // ours to grow.
+    if (count == 1 || last) {
+        var out: string = words[from].to_owned();
+        var k: i32 = from + 1;
+        while (k < to) { out = out + " " + words[k]; k = k + 1; }
+        return out;
+    }
+
+    var gaps: i32 = count - 1;
+    var total: i32 = width - letters;
+    if (total < gaps) { total = gaps; }
+    var base: i32 = total / gaps;
+    var extra: i32 = total - base * gaps;
+
+    var line: string = words[from].to_owned();
+    var g: i32 = 0;
+    while (g < gaps) {
+        var pad: i32 = base;
+        if (g < extra) { pad = base + 1; }
+        line = line + spaces(pad) + words[from + 1 + g];
+        g = g + 1;
+    }
+    return line;
+}
+
+function layout(text: string, width: i32): string[] {
+    var words: string[] = words_of(text);
+    if (words.len() == 0) { return []; }
+    var breaks: i32[] = wrap(words, width);
+
+    var lines: string[] = [];
+    var start: i32 = 0;
+    var b: i32 = 0;
+    while (b < breaks.len()) {
+        lines = lines.append(justify_line(words, start, breaks[b], width, false));
+        start = breaks[b];
+        b = b + 1;
+    }
+    lines = lines.append(justify_line(words, start, words.len(), width, true));
+    return lines;
+}
+
+// ------------------------------------------------------------------ oracle ---
+
+// The gap widths on a rendered line, read back without reference to how they
+// were produced.
+function gaps_of(line: string): i32[] {
+    var out: i32[] = [];
+    var at: i32 = 0;
+    // Skip the first word; a justified line never starts with a space.
+    while (at < line.len() && line[at] != 32) { at = at + 1; }
+    while (at < line.len()) {
+        var run: i32 = 0;
+        while (at < line.len() && line[at] == 32) { run = run + 1; at = at + 1; }
+        if (run > 0) { out = out.append(run); }
+        while (at < line.len() && line[at] != 32) { at = at + 1; }
+    }
+    return out;
+}
+
+function join_words(ws: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < ws.len()) {
+        if (i > 0) { out = out + " "; }
+        out = out + ws[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------- generators ---
+
+function paragraphs(): string[] {
+    return [
+        "the quick brown fox jumps over the lazy dog and keeps on running past the fence",
+        "a b c d e f g h i j k l m n o p",
+        "supercalifragilistic expialidocious antidisestablishmentarianism short",
+        "one two three",
+        "singleword",
+        "  leading   and    trailing   whitespace  ",
+        "tiny a bb ccc dddd eeeee ffffff ggggggg hhhhhhhh",
+    ];
+}
+
+function widths(): i32[] { return [8, 12, 20, 40]; }
+
+// ------------------------------------------------------------------ tests ---
+
+// Exactly the target width, not approximately — for every line that is neither
+// the last nor a lone word too wide to pad.
+function test_every_full_line_is_exactly_the_width(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var lines: string[] = layout(ps[pi], width);
+            var i: i32 = 0;
+            while (i + 1 < lines.len()) {
+                var line: string = lines[i];
+                if (gaps_of(line).len() > 0 && line.len() != width) {
+                    return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                        + " line " + i.to_string() + " is " + line.len().to_string()
+                        + " wide: `" + line + "`");
+                }
+                i = i + 1;
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+// "Evenly", stated exactly: the widest and narrowest gap differ by at most one.
+function test_gaps_on_a_line_differ_by_at_most_one(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var lines: string[] = layout(ps[pi], width);
+            var i: i32 = 0;
+            while (i < lines.len()) {
+                var gs: i32[] = gaps_of(lines[i]);
+                if (gs.len() > 0) {
+                    var lo: i32 = gs[0];
+                    var hi: i32 = gs[0];
+                    var g: i32 = 1;
+                    while (g < gs.len()) {
+                        if (gs[g] < lo) { lo = gs[g]; }
+                        if (gs[g] > hi) { hi = gs[g]; }
+                        g = g + 1;
+                    }
+                    if (hi - lo > 1) {
+                        return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                            + " line " + i.to_string() + " has gaps from " + lo.to_string()
+                            + " to " + hi.to_string() + ": `" + lines[i] + "`");
+                    }
+                }
+                i = i + 1;
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+// The separate half: the wider gaps are the leftmost ones. A justifier can
+// spread evenly and still scatter the remainder, which passes the test above
+// and looks wrong on the page.
+function test_the_wider_gaps_come_first(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var lines: string[] = layout(ps[pi], width);
+            var i: i32 = 0;
+            while (i < lines.len()) {
+                var gs: i32[] = gaps_of(lines[i]);
+                var g: i32 = 1;
+                while (g < gs.len()) {
+                    if (gs[g] > gs[g - 1]) {
+                        return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                            + " line " + i.to_string() + ": gap " + g.to_string() + " is "
+                            + gs[g].to_string() + ", wider than the one before it ("
+                            + gs[g - 1].to_string() + "): `" + lines[i] + "`");
+                    }
+                    g = g + 1;
+                }
+                i = i + 1;
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+// Nothing added, dropped, split or merged: collapsing the output's whitespace
+// must give back the input's words in order.
+function test_the_words_survive_unchanged(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var want: string[] = words_of(ps[pi]);
+            var lines: string[] = layout(ps[pi], width);
+            var got: string[] = words_of(join_words(lines));
+            if (got.len() != want.len()) {
+                return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                    + ": " + want.len().to_string() + " words in, " + got.len().to_string()
+                    + " out");
+            }
+            var i: i32 = 0;
+            while (i < want.len()) {
+                if (got[i] != want[i]) {
+                    return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                        + " word " + i.to_string() + ": `" + got[i] + "`, want `" + want[i] + "`");
+                }
+                i = i + 1;
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+// The final line is set flush left with single spaces. Stretching it is what
+// makes the last line of a paragraph look like a ransom note.
+function test_the_last_line_is_not_stretched(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var lines: string[] = layout(ps[pi], width);
+            if (lines.len() == 0) { pi = pi + 1; continue; }
+            var last: string = lines[lines.len() - 1];
+            var gs: i32[] = gaps_of(last);
+            var g: i32 = 0;
+            while (g < gs.len()) {
+                if (gs[g] != 1) {
+                    return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                        + ": the last line has a gap of " + gs[g].to_string() + ": `" + last + "`");
+                }
+                g = g + 1;
+            }
+            if (last.len() > 0 && last[last.len() - 1] == 32) {
+                return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                    + ": the last line is padded on the right: `" + last + "`");
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+// A lone word has no gap to put the spaces in, so it is left as it is rather
+// than padded out to the column.
+function test_a_lone_word_is_not_padded(): test.TestOutcome {
+    var lines: string[] = layout("antidisestablishmentarianism is long", 12);
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        var gs: i32[] = gaps_of(lines[i]);
+        if (gs.len() == 0) {
+            if (lines[i].contains(" ")) {
+                return test.fail("a lone word carries padding: `" + lines[i] + "`");
+            }
+        }
+        i = i + 1;
+    }
+    var solo: string[] = layout("singleword", 20);
+    if (solo.len() != 1) { return test.fail("one word should be one line"); }
+    if (solo[0] != "singleword") {
+        return test.fail("one word was rewritten to `" + solo[0] + "`");
+    }
+    return test.pass();
+}
+
+// Greedy means greedy: the first word of a line could not have fitted on the
+// line before it. Without this a "justifier" could put one word per line and
+// pass everything above.
+function test_the_wrap_is_greedy(): test.TestOutcome {
+    var ps: string[] = paragraphs();
+    var ws: i32[] = widths();
+    var wi: i32 = 0;
+    while (wi < ws.len()) {
+        var width: i32 = ws[wi];
+        var pi: i32 = 0;
+        while (pi < ps.len()) {
+            var words: string[] = words_of(ps[pi]);
+            var breaks: i32[] = wrap(words, width);
+            var start: i32 = 0;
+            var b: i32 = 0;
+            while (b < breaks.len()) {
+                var used: i32 = 0;
+                var k: i32 = start;
+                while (k < breaks[b]) {
+                    if (k > start) { used = used + 1; }
+                    used = used + words[k].len();
+                    k = k + 1;
+                }
+                var next_len: i32 = words[breaks[b]].len();
+                if (used + 1 + next_len <= width) {
+                    return test.fail("width=" + width.to_string() + " para " + pi.to_string()
+                        + ": broke before `" + words[breaks[b]] + "` but it would have fitted ("
+                        + used.to_string() + " + 1 + " + next_len.to_string() + ")");
+                }
+                start = breaks[b];
+                b = b + 1;
+            }
+            pi = pi + 1;
+        }
+        wi = wi + 1;
+    }
+    return test.pass();
+}
+
+function test_degenerate_inputs(): test.TestOutcome {
+    if (layout("", 20).len() != 0) { return test.fail("empty text produced lines"); }
+    if (layout("     ", 20).len() != 0) { return test.fail("whitespace-only text produced lines"); }
+
+    // A word wider than the column gets its own line, unsplit.
+    var big: string[] = layout("tiny enormouslylongword tiny", 8);
+    var found: boolean = false;
+    var i: i32 = 0;
+    while (i < big.len()) {
+        if (big[i] == "enormouslylongword") { found = true; }
+        i = i + 1;
+    }
+    if (!found) {
+        return test.fail("an over-wide word was split or padded rather than left alone");
+    }
+
+    // Words survive even when every one of them exceeds the width.
+    var all_big: string[] = layout("alpha bravo charlie", 3);
+    var got: string[] = words_of(join_words(all_big));
+    if (got.len() != 3) {
+        return test.fail("width smaller than every word lost some: got "
+            + got.len().to_string() + " of 3");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("justify — wrap, then pad the gaps evenly");
+
+    var text: string = "the quick brown fox jumps over the lazy dog and keeps on running";
+    var lines: string[] = layout(text, 20);
+    eprint("  width 20:");
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        eprint("  |" + lines[i] + "|  (" + lines[i].len().to_string() + ")");
+        i = i + 1;
+    }
+    var narrow: string[] = layout(text, 12);
+    eprint("  width 12 gives " + narrow.len().to_string() + " lines");
+    var gs: i32[] = gaps_of(lines[0]);
+    var shown: string = "";
+    var g: i32 = 0;
+    while (g < gs.len()) {
+        if (g > 0) { shown = shown + " "; }
+        shown = shown + gs[g].to_string();
+        g = g + 1;
+    }
+    eprint("  first line gaps: " + shown);
+
+    var t: test.TestRunner = test.test_new("justify");
+    t = t.it("every full line is exactly the width", test_every_full_line_is_exactly_the_width);
+    t = t.it("gaps on a line differ by at most one", test_gaps_on_a_line_differ_by_at_most_one);
+    t = t.it("the wider gaps come first", test_the_wider_gaps_come_first);
+    t = t.it("the words survive unchanged", test_the_words_survive_unchanged);
+    t = t.it("the last line is not stretched", test_the_last_line_is_not_stretched);
+    t = t.it("a lone word is not padded", test_a_lone_word_is_not_padded);
+    t = t.it("the wrap is greedy", test_the_wrap_is_greedy);
+    t = t.it("degenerate inputs", test_degenerate_inputs);
+    return t.finish();
+}

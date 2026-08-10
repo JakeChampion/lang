@@ -66,6 +66,8 @@ so explicitly.
 | `NATIVE-CONVERGENCE.md` | [policy] | How `internal/` and the self-host converge; freeze preconditions in #4451. |
 | `ROADMAP-AND-SELF-HOSTING.md` | [record] | 2026-05-15 tech-debt + self-host-readiness snapshot; live roadmap is CLAUDE.md + issues. |
 | `RESEARCH-ROADMAP.md` | [record] | Reading-order meta-index for the research docs; recommendations now filed as #4412–#4416. |
+| `FREESTANDING-CORE.md` | [policy] | Which builtins need a host and which do not; the core-vs-host rule and every judgement call (#6506). |
+| `BARE-METAL-PLAN.md` | [plan] | Scope below the OS — guest, driver and kernel postures, and an OS in Fern as the north star; why the interrupt/RC memory model gates it, and the order for volatile / effect intrinsics / attributes / layout / atomics. |
 | `BOOTSTRAP-RESEARCH.md` | [research] | Bootstrap/trust strategy survey (Rust, Zig, Go, …). |
 | `TOOLCHAIN-SELF-HOSTING.md` | [record] | Zero-external-toolchain builds — complete for all targets. |
 | `PERFORMANCE-RESEARCH.md` | [research] | Compiler/runtime perf survey; recommendations tracked in #4412. |
@@ -95,7 +97,7 @@ so explicitly.
 | `SSA-DECISION.md` | [policy] | SSA shelved for production native backends (2026-05-31). |
 | `SELFHOST-SSA-DECISION.md` | [policy] | Stack IR is the single production lowering (2026-07-03, #4391). |
 | `SELFHOST-SSA-ALWAYS.md` | [record] | SSA-always-on plan — shelved by the decision above. |
-| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation (experimental `-target arm64-ssa`; #4112). |
+| `SSA-REGALLOC-PLAN.md` | [plan] | SSA register allocation (experimental `-target arm64 -backend ssa`; #4112). |
 | `SSA-CLOSURE-DISPATCH.md` | [plan] | Closure dispatch on the SSA path (#4112). |
 | `SSA-RC-RUNTIME.md` | [plan] | RC runtime helpers on the SSA path (#4112). |
 | `WASM-COMPONENT-GENERATOR.md` | [plan] | Generative component builder for the self-host wasm backend (#4368, poss. subsumed by #4315). |

@@ -147,6 +147,48 @@ func TestDescriptorStringIsHumanReadable(t *testing.T) {
 	}
 }
 
+// TestEveryTargetDeclaresAnEntryShape — the entry shape drives whether
+// the native backends emit `_start` and the argc/argv/envp capture
+// (#6510), so an environment that forgets to declare one would silently
+// get the zero value. OrDefault resolves that to EntryProcess, which is
+// the right fallback for a hosted target and exactly the wrong one for a
+// hostless target: it would emit an entry point that reads a process
+// stack no kernel populated. Fail here instead.
+func TestEveryTargetDeclaresAnEntryShape(t *testing.T) {
+	valid := map[EntryShape]bool{EntryProcess: true, EntryExports: true, EntryReset: true}
+	for _, name := range Targets() {
+		switch e := ForTarget(name).Entry; {
+		case e == "":
+			t.Errorf("target %q declares no entry shape; its environment needs one", name)
+		case !valid[e]:
+			t.Errorf("target %q declares unknown entry shape %q", name, e)
+		}
+	}
+}
+
+// TestFreestandingIsEnteredByNobody pins the guest shape as freestanding's
+// answer today. EntryReset — the artifact owning the machine — is the
+// second value the descriptor is shaped to hold rather than a rewrite;
+// docs/BARE-METAL-PLAN.md.
+func TestFreestandingIsEnteredByNobody(t *testing.T) {
+	if got := ForTarget("freestanding").Entry; got != EntryExports {
+		t.Errorf("freestanding entry = %q, want %q: nothing enters it, its embedder calls in", got, EntryExports)
+	}
+}
+
+// TestEntryShapeOrDefault pins the zero-value resolution the codegen
+// Options rely on, so an `Options{}` literal keeps emitting `_start`.
+func TestEntryShapeOrDefault(t *testing.T) {
+	if got := EntryShape("").OrDefault(); got != EntryProcess {
+		t.Errorf("zero EntryShape resolved to %q, want %q", got, EntryProcess)
+	}
+	for _, e := range []EntryShape{EntryProcess, EntryExports, EntryReset} {
+		if got := e.OrDefault(); got != e {
+			t.Errorf("%q.OrDefault() = %q, want it unchanged", e, got)
+		}
+	}
+}
+
 // TestNoTargetMissesLogCapability — `log` is the absolute
 // minimum capability every HOSTED target needs to surface
 // error output. Tests that we don't accidentally ship a

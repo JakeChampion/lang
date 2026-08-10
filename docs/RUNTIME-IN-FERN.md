@@ -17,7 +17,8 @@ opener, and the last leaf that had kept a register-ABI hand-asm
 `__fern_io_error` alive on arm64 (that copy is deleted; the bundle is the only
 one now), the two socket leaves that take only an fd (`tcp_close`,
 `tcp_accept`), `sleep_ms` + `poll` over the new `__syscall5`, and
-`proc_waitpid`, `timer_fd`, and `tcp_listen`. Each is ONE source across all three native
+`proc_waitpid`, `timer_fd`, `tcp_listen`, `tcp_connect`, `tcp_recv`, and
+`proc_exec`. Each is ONE source across all three native
 targets, with the syscall numbers, `AT_FDCWD`, open flag-sets and struct
 offsets coming from `asmcore.sysno` / `at_fdcwd` / `oflag` / `statoff` keyed
 by the target.
@@ -384,21 +385,50 @@ Audited per helper and **per target**, because
 the interesting question for the next slice is not "which helpers are
 hand-written" but "which of them the floor can already express".
 
-| still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
+**Scope.** This table only ever covered the leaves the #2649 slices took on —
+the fs / clock / socket / process family. It is NOT an inventory of every
+hand-written syscall body on the register backends. Do not read it as one.
+
+| the #2649 family, still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_connect` | `socket` + `connect` | 3 each | `__syscall3` |
-| `tcp_recv` | `read` | 3 | `__syscall3` |
-| `tcp_send` | `write` | 3 | `__syscall3`, but see below |
-| `proc_exec` | `execve` | 3 (+ a built argv) | `__syscall3` |
-| `proc_fork` | `fork` (x86) / **`clone`** (arm64) | 0 / **5** | `__syscall5` |
-| **`proc_fork` (Darwin)** | `fork` | — | **not expressible** |
+| **`proc_fork` (Darwin only)** | `fork` | — | **not expressible** |
+
+That family is done: every one of its leaves is now one Fern source, and the
+single hand-written body left in it is the one target the floor genuinely
+cannot reach. `tcp_pollable` is not on the list because it issues no syscall at
+all — a native socket's readiness token IS its fd.
+
+**What the table never covered, and what is therefore still hand-asm.** Grep
+both backends for a raw trap (`syscall` on x86-64, `svc #0` on arm64) and the
+remainder splits three ways:
+
+- **Still-migratable leaves**, in the same shape as the ones above and not yet
+  attempted: `print_str`, `print_int`, `putchar`, `eprint_str`, `read_line`,
+  `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`, `reader_close`,
+  and `udp_send`. These are plain `read`/`write`/`close` calls; nothing in the
+  audit above suggests a floor gap, so they are the natural continuation
+  whenever #2649 is picked up again.
+
+  `udp_send` is the odd one: its hand-asm exists **only on arm64**, and
+  `asm_ir.fern` has no `kind_tag == 208` case at all, so the op does not lower
+  on x86-64. That is a backend-parity gap rather than a migration one — worth
+  knowing before treating it as an ordinary next slice.
+- **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
+  exec, drain and reap in one body), `map_delete`, `strbuf_append`.
+- **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
+  (`oob_abort`, `san_abort`, `hev_f`).
 
 `tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
 only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
 floor has no 16- or 32-bit store and the port must be big-endian regardless of
 host. Its first two bytes are the struct's one per-target difference (XNU leads
 with a `sin_len` byte where Linux has a u16 `sin_family`), which `sockaddr_head`
-supplies; `tcp_pollable` issues no syscall at all. The remaining
+supplies. `tcp_connect` reuses that head, and migrating it **fixed
+arm64-darwin**: its hand-asm emitted `mov x8, #203` (Linux `connect`) on both
+targets and relied on `darwinize` to remap it, but `darwin_sysno` has no 203
+row — so the Mach-O output issued a Linux syscall through the Linux trap.
+Baking the number per target is exactly the mechanism that exists because
+`darwinize` cannot remap a number it only sees at run time; `tcp_pollable` issues no syscall at all. The remaining
 non-leaf entries
 (`runtime`, `runtime_fern_fn`, `map_hash_seed`, and the Perceus drop/reclaim
 machinery) are infrastructure, not migration targets.
@@ -413,7 +443,7 @@ did.
 leaf whose two targets disagree on the call itself, not just the number: Linux
 `nanosleep(&timespec, NULL)` against XNU
 `select(0, NULL, NULL, NULL, &timeval)`, five arguments and microseconds rather
-than nanoseconds. `proc_fork` (Linux) is unblocked by it and not yet done.
+than nanoseconds. `proc_fork` on arm64 Linux is its third consumer.
 
 `proc_waitpid` was the first leaf to need **no** per-target fork at all: `wait4`
 takes four arguments everywhere and only the number moves. Its Darwin hand-asm
@@ -421,22 +451,58 @@ carried a manual carry-flag check to turn `+errno` into `-errno`, which is not
 ported — `darwinize` already wraps every `__syscall*` with exactly that
 sequence, so keeping it would have negated twice.
 
-`tcp_send` and `tcp_recv` are a different kind of blocked: their syscall is a
-plain 3-argument `write` / `read`, but they need the **data pointer of a
-`string`**, and the floor only runs the other way — `__raw_string(data, len)`
-builds a string from raw bytes and nothing reads one back out. Expressing them
-today means copying the payload byte-by-byte on every call, which is a straight
-loss on a send path. What they want is the inverse bridge (a `__raw_data`), not
-a wider syscall wrapper.
+`tcp_send` was the last leaf, and it is the one the audit got most wrong. It was
+recorded here as blocked on the **direction** of the string bridge — a plain
+3-argument `write` that needs a live `string`'s data pointer, where the floor
+only runs the other way — with the choice framed as adding a `__raw_data` op
+versus copying the payload byte-by-byte on every call.
 
-Darwin's `fork` is the second helper after `monotonic_ns` that stays
-hand-written on principle rather than for want of a syscall wrapper: it reports
-failure in the **carry flag** and distinguishes child from parent by **x1**,
-and Fern can read neither. A `__syscall*` intrinsic returns one integer.
+**Neither was needed.** A string value already IS its box pointer, and the data
+word is slot 0 of that box, so `__raw_data(s)` lowers to `raw_load_ptr(s, 0)` —
+an op the floor has had since the beginning. It is a lowering entry and a
+checker type, no new op, no kind id, no sweep-list or golden change. `tcp_send`
+is a one-line helper that copies nothing.
 
-### Two ways this audit went wrong before it went right
+The lesson generalises past this leaf: "the floor cannot express X" is a claim
+about the floor's *reach*, and the reach of a set of primitives is not the union
+of what each was introduced for. `__raw_array` had already established that a
+bridge in this shape can be free — the pointer simply IS the value — and the
+same was true one type over, unnoticed for the whole migration.
 
-Both are cheap to repeat, so they are worth naming.
+`proc_fork` has since moved on **both Linux targets** — x86-64 through a bare
+no-argument `fork(2)`, arm64 through `clone(SIGCHLD, 0, 0, 0, 0)`. It is the
+first leaf to split by target for a reason other than a number or a struct
+layout: two of three targets are Fern and the third cannot be, so it joins
+`monotonic_ns` as a per-target pair. Both carry the `__fn___` name, because a
+zero-arg helper's stack and register conventions coincide and the call site
+should not have to learn which body it got.
+
+Darwin is the leaf's genuine floor limit, and only **half** of the reason
+usually given for it survives contact: the carry-flag errno convention would
+have cost nothing, since `darwinize` already injects that fold around every
+`__syscall*`. What no `__syscall*` can supply is **x1**, the register XNU uses
+to mark the child — and that is the entire content of the answer. A one-integer
+intrinsic cannot see a second return register.
+
+`proc_exec` has since moved too, and it is the one entry the audit table's
+"args" column undersold: the syscall is a plain 3-argument `execve`, but the
+third argument is a `char **` the helper has to **build** — `__raw_alloc` for
+the array, a NUL-terminated copy of the path and of every element of the
+`string[]`, `__raw_store_ptr` to fill the slots, and `__raw_environ()` for
+envp. Nothing in that needed a new floor primitive, which is why it landed
+ahead of `tcp_send` despite looking like the bigger job. None of those buffers
+are freed, deliberately: on success the address space is replaced, and on
+failure the caller is already reporting an error.
+
+`tcp_recv` runs **with** that direction: it allocates the buffer itself, `read`s
+into it, and hands the buffer to `__raw_string`, so it copies nothing either.
+A negative return is clamped to length 0: the op has no error channel, so a
+short read, EOF and `-errno` all arrive as the empty string, exactly as the
+hand-asm's `csel ... ge` did.
+
+### Three ways this audit went wrong before it went right
+
+All three are cheap to repeat, so they are worth naming.
 
 **Do not read arity off the registers a hand-asm body touches.** That gave
 `tcp_send` and `proc_exec` six arguments each; both are three, and the extra
@@ -448,6 +514,15 @@ reaches for a different syscall where x86-64 has a simpler one: `poll` becomes
 `ppoll`, `fork` becomes `clone`, and both jump from three arguments to five.
 It concluded `__syscall5` had a single consumer when it has three — the exact
 inversion of the decision it was meant to inform. Read all three bodies.
+
+**Do not treat a primitive's reach as the reason it was added.** `tcp_send` sat
+blocked for the whole migration on a missing `__raw_data`, with the recorded
+choice being "add the op or copy the payload". Neither applied: a string value
+already IS its box pointer, so `__raw_data` is `raw_load_ptr(s, 0)` — an op that
+had been in the floor from the start, introduced for array slots. `__raw_array`
+had even established the identical type-only bridge one type over. Before
+concluding the floor cannot express something, check what the existing
+primitives can address, not what they were named for.
 
 ## Validation strategy per slice
 

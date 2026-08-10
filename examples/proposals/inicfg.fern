@@ -1,0 +1,546 @@
+// examples/proposals/inicfg.fern — proposal turn, line 6:
+// "An INI/TOML-subset config parser with typed lookups and a useful error on
+// a malformed line."
+//
+// The interesting clause is the last one. Parsing `key = value` is a morning's
+// work; the part that is usually written once and never checked is the claim
+// that the error is USEFUL. "Useful" sounds unfalsifiable, so it gets skipped —
+// but it decomposes into two properties that a wrong parser fails outright:
+//
+//   - **The reported line is the malformed one.** Take a valid document, splice
+//     one bad line in at position p, and the parser must report exactly p. Swept
+//     over every position and every kind of malformation, so a parser that
+//     always says "line 1", or reports where it gave up rather than where the
+//     fault is, cannot pass.
+//   - **The count is of PHYSICAL lines.** Comments and blanks are skipped for
+//     meaning but must still be counted for position. This is the off-by-one
+//     that ships: a parser that increments its counter only on significant
+//     lines is correct on every example that has no comments, and wrong on
+//     every real config file. The test varies the number of comments and blanks
+//     ABOVE the fault and pins the reported number to the physical one.
+//
+// The typed lookups get the matching treatment. The failure mode there is not a
+// crash, it is a plausible zero: `get_int` on `mode = fast` returning 0, or a
+// missing key returning the type's default, so a typo in a config silently
+// becomes a valid-looking setting. Both are asserted to be errors, and the
+// no-coercion rule is stated in both directions — `get_bool` on `1` fails too,
+// because truthiness is exactly how that hole reopens.
+//
+// Two whole-document properties keep the parser from passing the above by
+// rejecting more than it should: every generated valid document must parse
+// clean, and rendering a parsed config back out and reparsing it must yield the
+// same entries — so nothing is dropped, invented, or retyped in the round trip.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+// ---------------------------------------------------------------- values ---
+
+// kind: 0 = int, 1 = bool, 2 = string
+struct Entry {
+    section: string,
+    key: string,
+    kind: i32,
+    i: i64,
+    b: boolean,
+    s: string,
+}
+
+struct Config { entries: Entry[] }
+
+// code: 1 no `=`, 2 bad section header, 3 empty key, 4 unterminated string,
+//       5 duplicate key, 10 not found, 11 wrong type
+struct Fault { line: i32, code: i32, msg: string }
+
+struct ParseR { ok: boolean, cfg: Config, err: Fault }
+struct IntR { ok: boolean, v: i64, err: Fault }
+struct BoolR { ok: boolean, v: boolean, err: Fault }
+struct StrR { ok: boolean, v: string, err: Fault }
+struct I64R { ok: boolean, v: i64 }
+
+function no_fault(): Fault { return Fault { line: 0, code: 0, msg: "" }; }
+
+function is_ws(c: u8): boolean { return c == 32 || c == 9 || c == 13; }
+function is_digit(c: u8): boolean { return c >= 48 && c <= 57; }
+
+// ---------------------------------------------------------------- parsing ---
+
+// A bare decimal integer, optionally signed. Returns ok=false for anything
+// else, INCLUDING the empty string and a lone "-", so a malformed number is
+// never silently a zero.
+function parse_i64(s: string): I64R {
+    var n: i32 = s.len();
+    if (n == 0) { return I64R { ok: false, v: 0 }; }
+    var neg: boolean = false;
+    var at: i32 = 0;
+    if (s[0] == 45) { neg = true; at = 1; }
+    if (at >= n) { return I64R { ok: false, v: 0 }; }
+    var acc: i64 = 0;
+    while (at < n) {
+        if (!is_digit(s[at])) { return I64R { ok: false, v: 0 }; }
+        acc = acc * 10 + ((s[at] - 48) as i64);
+        at = at + 1;
+    }
+    if (neg) { acc = 0 - acc; }
+    return I64R { ok: true, v: acc };
+}
+
+struct ValR { ok: boolean, kind: i32, i: i64, b: boolean, s: string, code: i32, msg: string }
+
+// Classify a trimmed value. Order matters: the quoted form is recognised by its
+// opening quote BEFORE the bare-string fallback, so `"unterminated` is a fault
+// rather than a bare string that happens to start with a quote.
+function classify(v: string): ValR {
+    if (v == "true") { return ValR { ok: true, kind: 1, i: 0, b: true, s: "", code: 0, msg: "" }; }
+    if (v == "false") { return ValR { ok: true, kind: 1, i: 0, b: false, s: "", code: 0, msg: "" }; }
+    if (v.len() > 0 && v[0] == 34) {
+        if (v.len() < 2 || v[v.len() - 1] != 34) {
+            return ValR { ok: false, kind: 0, i: 0, b: false, s: "", code: 4,
+                msg: "unterminated string value" };
+        }
+        return ValR { ok: true, kind: 2, i: 0, b: false, s: v.drop(1).take(v.len() - 2).to_owned(),
+            code: 0, msg: "" };
+    }
+    var num: I64R = parse_i64(v);
+    if (num.ok) { return ValR { ok: true, kind: 0, i: num.v, b: false, s: "", code: 0, msg: "" }; }
+    return ValR { ok: true, kind: 2, i: 0, b: false, s: v.to_owned(), code: 0, msg: "" };
+}
+
+function has_key(cfg: Config, section: string, key: string): boolean {
+    var i: i32 = 0;
+    while (i < cfg.entries.len()) {
+        var e: Entry = cfg.entries[i];
+        if (e.section == section && e.key == key) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// The line counter is over PHYSICAL lines: `lineno` advances once per element of
+// `lines`, before any decision about whether the line carries meaning. Skipping
+// a comment must not skip a number.
+function parse(text: string): ParseR {
+    var lines: string[] = text.split("\n");
+    var cfg: Config = Config { entries: [] };
+    var section: string = "";
+    var idx: i32 = 0;
+    while (idx < lines.len()) {
+        var lineno: i32 = idx + 1;
+        var raw: string = lines[idx].trim().to_owned();
+        idx = idx + 1;
+
+        if (raw.len() == 0) { continue; }
+        if (raw[0] == 35 || raw[0] == 59) { continue; }
+
+        if (raw[0] == 91) {
+            if (raw[raw.len() - 1] != 93) {
+                return ParseR { ok: false, cfg: cfg,
+                    err: Fault { line: lineno, code: 2, msg: "section header is missing its closing ]" } };
+            }
+            var name: string = raw.drop(1).take(raw.len() - 2).trim().to_owned();
+            if (name.len() == 0) {
+                return ParseR { ok: false, cfg: cfg,
+                    err: Fault { line: lineno, code: 2, msg: "section header has an empty name" } };
+            }
+            section = name;
+            continue;
+        }
+
+        var eq: i32 = raw.index_of("=");
+        if (eq < 0) {
+            return ParseR { ok: false, cfg: cfg,
+                err: Fault { line: lineno, code: 1, msg: "expected `key = value`, found no `=`" } };
+        }
+        var key: string = raw.take(eq).trim().to_owned();
+        if (key.len() == 0) {
+            return ParseR { ok: false, cfg: cfg,
+                err: Fault { line: lineno, code: 3, msg: "empty key before `=`" } };
+        }
+        var val: ValR = classify(raw.drop(eq + 1).trim().to_owned());
+        if (!val.ok) {
+            return ParseR { ok: false, cfg: cfg,
+                err: Fault { line: lineno, code: val.code, msg: val.msg } };
+        }
+        if (has_key(cfg, section, key)) {
+            return ParseR { ok: false, cfg: cfg,
+                err: Fault { line: lineno, code: 5, msg: "duplicate key in this section" } };
+        }
+        var e: Entry = Entry { section: section, key: key, kind: val.kind,
+            i: val.i, b: val.b, s: val.s };
+        cfg = Config { entries: cfg.entries.append(e) };
+    }
+    return ParseR { ok: true, cfg: cfg, err: no_fault() };
+}
+
+// ---------------------------------------------------------- typed lookups ---
+
+function find(cfg: Config, section: string, key: string): i32 {
+    var i: i32 = 0;
+    while (i < cfg.entries.len()) {
+        var e: Entry = cfg.entries[i];
+        if (e.section == section && e.key == key) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function missing(section: string, key: string): Fault {
+    return Fault { line: 0, code: 10, msg: "no key `" + key + "` in section `" + section + "`" };
+}
+
+function wrong_type(key: string, want: string): Fault {
+    return Fault { line: 0, code: 11, msg: "key `" + key + "` is not " + want };
+}
+
+// No coercion in either direction: an int-typed lookup of a bool or a string is
+// an error, and so is a bool-typed lookup of `1`. Returning a default here is
+// how a typo in a config file becomes a plausible setting.
+function get_int(cfg: Config, section: string, key: string): IntR {
+    var at: i32 = find(cfg, section, key);
+    if (at < 0) { return IntR { ok: false, v: 0, err: missing(section, key) }; }
+    var e: Entry = cfg.entries[at];
+    if (e.kind != 0) { return IntR { ok: false, v: 0, err: wrong_type(key, "an integer") }; }
+    return IntR { ok: true, v: e.i, err: no_fault() };
+}
+
+function get_bool(cfg: Config, section: string, key: string): BoolR {
+    var at: i32 = find(cfg, section, key);
+    if (at < 0) { return BoolR { ok: false, v: false, err: missing(section, key) }; }
+    var e: Entry = cfg.entries[at];
+    if (e.kind != 1) { return BoolR { ok: false, v: false, err: wrong_type(key, "a boolean") }; }
+    return BoolR { ok: true, v: e.b, err: no_fault() };
+}
+
+function get_str(cfg: Config, section: string, key: string): StrR {
+    var at: i32 = find(cfg, section, key);
+    if (at < 0) { return StrR { ok: false, v: "", err: missing(section, key) }; }
+    var e: Entry = cfg.entries[at];
+    if (e.kind != 2) { return StrR { ok: false, v: "", err: wrong_type(key, "a string") }; }
+    return StrR { ok: true, v: e.s, err: no_fault() };
+}
+
+// ----------------------------------------------------------------- render ---
+
+function render_value(e: Entry): string {
+    if (e.kind == 0) { return e.i.to_string(); }
+    if (e.kind == 1) {
+        if (e.b) { return "true"; }
+        return "false";
+    }
+    return "\"" + e.s + "\"";
+}
+
+// Every value is written in a form `classify` reads back as the SAME kind —
+// strings are re-quoted, so a string whose text is `42` does not come back as
+// an integer. That is the property the round-trip test exists to pin.
+function render(cfg: Config): string {
+    var out: string = "";
+    var sections: string[] = [];
+    var i: i32 = 0;
+    while (i < cfg.entries.len()) {
+        var s: string = cfg.entries[i].section;
+        var seen: boolean = false;
+        var k: i32 = 0;
+        while (k < sections.len()) {
+            if (sections[k] == s) { seen = true; }
+            k = k + 1;
+        }
+        if (!seen) { sections = sections.append(s); }
+        i = i + 1;
+    }
+    var si: i32 = 0;
+    while (si < sections.len()) {
+        var sec: string = sections[si];
+        if (sec.len() > 0) { out = out + "[" + sec + "]\n"; }
+        var j: i32 = 0;
+        while (j < cfg.entries.len()) {
+            var e: Entry = cfg.entries[j];
+            if (e.section == sec) { out = out + e.key + " = " + render_value(e) + "\n"; }
+            j = j + 1;
+        }
+        si = si + 1;
+    }
+    return out;
+}
+
+function same_entries(a: Config, b: Config): boolean {
+    if (a.entries.len() != b.entries.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.entries.len()) {
+        var x: Entry = a.entries[i];
+        var at: i32 = find(b, x.section, x.key);
+        if (at < 0) { return false; }
+        var y: Entry = b.entries[at];
+        if (x.kind != y.kind) { return false; }
+        if (x.kind == 0 && x.i != y.i) { return false; }
+        if (x.kind == 1 && x.b != y.b) { return false; }
+        if (x.kind == 2 && x.s != y.s) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ------------------------------------------------------------- generators ---
+
+function join_lines(lines: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        out = out + lines[i] + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+// A valid document with `pad` comment/blank lines interleaved. Varying `pad`
+// changes the PHYSICAL position of every later line without changing the
+// meaning of the document at all — which is exactly the asymmetry the
+// line-number test needs.
+function valid_lines(pad: i32): string[] {
+    var out: string[] = [];
+    var s: i32 = 0;
+    while (s < 3) {
+        var p: i32 = 0;
+        while (p < pad) {
+            if (p % 2 == 0) { out = out.append("# a comment"); } else { out = out.append(""); }
+            p = p + 1;
+        }
+        out = out.append("[sec" + s.to_string() + "]");
+        var k: i32 = 0;
+        while (k < 3) {
+            var key: string = "k" + k.to_string();
+            if (k == 0) { out = out.append(key + " = " + (s * 10 + k).to_string()); }
+            if (k == 1) {
+                if (s % 2 == 0) { out = out.append(key + " = true"); }
+                if (s % 2 != 0) { out = out.append(key + " = false"); }
+            }
+            if (k == 2) { out = out.append(key + " = \"v" + s.to_string() + "\""); }
+            k = k + 1;
+        }
+        s = s + 1;
+    }
+    return out;
+}
+
+// The malformations, each with the fault code it must produce.
+function bad_lines(): string[] {
+    return ["this line has no equals sign", "[unclosed", "= 12", "k9 = \"open", "[]"];
+}
+
+function bad_codes(): i32[] { return [1, 2, 3, 4, 2]; }
+
+function splice(lines: string[], at: i32, replacement: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (i == at) { out = out.append(replacement); }
+        if (i != at) { out = out.append(lines[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------------ tests ---
+
+// Sweep the fault over every position, for every malformation. A parser that
+// reports where it stopped, or a fixed line, or the count of SIGNIFICANT lines,
+// fails somewhere in this sweep.
+function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
+    var base: string[] = valid_lines(0);
+    var bads: string[] = bad_lines();
+    var codes: i32[] = bad_codes();
+    var b: i32 = 0;
+    while (b < bads.len()) {
+        var at: i32 = 0;
+        while (at < base.len()) {
+            var doc: string[] = splice(base, at, bads[b]);
+            var r: ParseR = parse(join_lines(doc));
+            if (r.ok) {
+                return test.fail("line " + (at + 1).to_string() + " `" + bads[b]
+                    + "` parsed clean; a malformed line must be rejected");
+            }
+            if (r.err.line != at + 1) {
+                return test.fail("`" + bads[b] + "` spliced at physical line "
+                    + (at + 1).to_string() + " was reported at line "
+                    + r.err.line.to_string());
+            }
+            if (r.err.code != codes[b]) {
+                return test.fail("`" + bads[b] + "` reported code "
+                    + r.err.code.to_string() + ", want " + codes[b].to_string());
+            }
+            at = at + 1;
+        }
+        b = b + 1;
+    }
+    return test.pass();
+}
+
+// The same fault, pushed down the file by comments and blanks that carry no
+// meaning. The reported number must track the physical position, not the
+// significant-line count.
+function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
+    var pad: i32 = 0;
+    while (pad < 5) {
+        var base: string[] = valid_lines(pad);
+        var at: i32 = base.len() - 1;
+        var doc: string[] = splice(base, at, "no equals here");
+        var r: ParseR = parse(join_lines(doc));
+        if (r.ok) { return test.fail("pad=" + pad.to_string() + ": malformed line parsed clean"); }
+        if (r.err.line != at + 1) {
+            return test.fail("pad=" + pad.to_string() + ": fault at physical line "
+                + (at + 1).to_string() + " reported at " + r.err.line.to_string()
+                + " — the counter is skipping comments/blanks");
+        }
+        pad = pad + 1;
+    }
+    return test.pass();
+}
+
+function test_a_valid_document_parses_clean(): test.TestOutcome {
+    var pad: i32 = 0;
+    while (pad < 5) {
+        var r: ParseR = parse(join_lines(valid_lines(pad)));
+        if (!r.ok) {
+            return test.fail("pad=" + pad.to_string() + ": valid document rejected at line "
+                + r.err.line.to_string() + ": " + r.err.msg);
+        }
+        if (r.cfg.entries.len() != 9) {
+            return test.fail("pad=" + pad.to_string() + ": got "
+                + r.cfg.entries.len().to_string() + " entries, want 9");
+        }
+        pad = pad + 1;
+    }
+    return test.pass();
+}
+
+function test_typed_lookups_agree_with_the_source(): test.TestOutcome {
+    var r: ParseR = parse(join_lines(valid_lines(2)));
+    if (!r.ok) { return test.fail("valid document rejected: " + r.err.msg); }
+    var s: i32 = 0;
+    while (s < 3) {
+        var sec: string = "sec" + s.to_string();
+        var iv: IntR = get_int(r.cfg, sec, "k0");
+        if (!iv.ok) { return test.fail(sec + ".k0: " + iv.err.msg); }
+        if (iv.v != ((s * 10) as i64)) {
+            return test.fail(sec + ".k0 = " + iv.v.to_string() + ", want " + (s * 10).to_string());
+        }
+        var bv: BoolR = get_bool(r.cfg, sec, "k1");
+        if (!bv.ok) { return test.fail(sec + ".k1: " + bv.err.msg); }
+        if (bv.v != (s % 2 == 0)) { return test.fail(sec + ".k1 has the wrong boolean"); }
+        var sv: StrR = get_str(r.cfg, sec, "k2");
+        if (!sv.ok) { return test.fail(sec + ".k2: " + sv.err.msg); }
+        if (sv.v != "v" + s.to_string()) {
+            return test.fail(sec + ".k2 = `" + sv.v + "`, want `v" + s.to_string() + "`");
+        }
+        s = s + 1;
+    }
+    return test.pass();
+}
+
+// The plausible-zero test. Every wrong-type lookup must FAIL rather than coerce,
+// including `get_bool` on `1` — truthiness is how the hole reopens.
+function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
+    var r: ParseR = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
+    if (!r.ok) { return test.fail("setup document rejected: " + r.err.msg); }
+
+    var a: IntR = get_int(r.cfg, "s", "flag");
+    if (a.ok) { return test.fail("get_int on a boolean returned " + a.v.to_string()); }
+    var b: IntR = get_int(r.cfg, "s", "name");
+    if (b.ok) { return test.fail("get_int on a string returned " + b.v.to_string()); }
+    var c: BoolR = get_bool(r.cfg, "s", "n");
+    if (c.ok) { return test.fail("get_bool on an integer succeeded"); }
+    var d: BoolR = get_bool(r.cfg, "s", "one");
+    if (d.ok) { return test.fail("get_bool on `1` succeeded — truthiness is a coercion"); }
+    var e: BoolR = get_bool(r.cfg, "s", "yes");
+    if (e.ok) { return test.fail("get_bool on the quoted string \"true\" succeeded"); }
+    var f: StrR = get_str(r.cfg, "s", "n");
+    if (f.ok) { return test.fail("get_str on an integer returned `" + f.v + "`"); }
+
+    if (a.err.code != 11 || c.err.code != 11 || f.err.code != 11) {
+        return test.fail("a wrong-type lookup reported a code other than 11");
+    }
+    return test.pass();
+}
+
+function test_a_missing_key_is_an_error_not_a_default(): test.TestOutcome {
+    var r: ParseR = parse("[s]\nn = 7\n");
+    if (!r.ok) { return test.fail("setup document rejected: " + r.err.msg); }
+    var a: IntR = get_int(r.cfg, "s", "absent");
+    if (a.ok) { return test.fail("a missing key returned " + a.v.to_string() + " instead of failing"); }
+    if (a.err.code != 10) { return test.fail("missing key reported code " + a.err.code.to_string()); }
+    var b: IntR = get_int(r.cfg, "nosuch", "n");
+    if (b.ok) { return test.fail("a key in a missing section returned " + b.v.to_string()); }
+    var c: BoolR = get_bool(r.cfg, "s", "absent");
+    if (c.ok) { return test.fail("a missing boolean returned false instead of failing"); }
+    var d: StrR = get_str(r.cfg, "s", "absent");
+    if (d.ok) { return test.fail("a missing string returned `" + d.v + "` instead of failing"); }
+    return test.pass();
+}
+
+// Rendering must not lose, invent, or retype an entry. The document deliberately
+// contains a STRING whose text is a number and a string whose text is `true`,
+// which is where an unquoted render would change the type on the way back in.
+function test_render_round_trips_through_the_parser(): test.TestOutcome {
+    var docs: string[] = [
+        join_lines(valid_lines(3)),
+        "[s]\nnum_like = \"42\"\nbool_like = \"true\"\nreal = 42\nreal_b = true\n",
+        "bare = 1\n[a]\nx = -5\n[b]\ny = \"hi there\"\n",
+    ];
+    var i: i32 = 0;
+    while (i < docs.len()) {
+        var first: ParseR = parse(docs[i]);
+        if (!first.ok) { return test.fail("doc " + i.to_string() + " rejected: " + first.err.msg); }
+        var again: ParseR = parse(render(first.cfg));
+        if (!again.ok) {
+            return test.fail("doc " + i.to_string() + ": rendered output does not parse: "
+                + again.err.msg);
+        }
+        if (!same_entries(first.cfg, again.cfg)) {
+            return test.fail("doc " + i.to_string() + ": round trip changed the entries");
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function test_a_duplicate_key_is_rejected(): test.TestOutcome {
+    var r: ParseR = parse("[s]\nn = 1\nm = 2\nn = 3\n");
+    if (r.ok) { return test.fail("a duplicate key parsed clean"); }
+    if (r.err.line != 4) {
+        return test.fail("duplicate reported at line " + r.err.line.to_string() + ", want 4");
+    }
+    if (r.err.code != 5) { return test.fail("duplicate reported code " + r.err.code.to_string()); }
+    // The same key in a DIFFERENT section is not a duplicate.
+    var ok: ParseR = parse("[a]\nn = 1\n[b]\nn = 2\n");
+    if (!ok.ok) { return test.fail("the same key in two sections was rejected: " + ok.err.msg); }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("inicfg — typed config lookups, and an error that names the line");
+
+    var doc: string = "# server settings\n\n[server]\nport = 8080\ntls = true\nhost = \"localhost\"\n";
+    var r: ParseR = parse(doc);
+    eprint("  parsed " + r.cfg.entries.len().to_string() + " entries");
+    var port: IntR = get_int(r.cfg, "server", "port");
+    eprint("  server.port = " + port.v.to_string());
+    var bad: IntR = get_int(r.cfg, "server", "host");
+    eprint("  get_int(server.host) -> " + bad.err.msg);
+
+    var broken: ParseR = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
+    eprint("  line " + broken.err.line.to_string() + ": " + broken.err.msg);
+
+    var t: test.TestRunner = test.test_new("inicfg");
+    t = t.it("the reported line is the malformed one", test_the_reported_line_is_the_malformed_one);
+    t = t.it("comments and blanks do not shift the line", test_comments_and_blanks_do_not_shift_the_line);
+    t = t.it("a valid document parses clean", test_a_valid_document_parses_clean);
+    t = t.it("typed lookups agree with the source", test_typed_lookups_agree_with_the_source);
+    t = t.it("a wrong-type lookup is an error", test_a_wrong_type_lookup_is_an_error);
+    t = t.it("a missing key is an error, not a default", test_a_missing_key_is_an_error_not_a_default);
+    t = t.it("render round-trips through the parser", test_render_round_trips_through_the_parser);
+    t = t.it("a duplicate key is rejected", test_a_duplicate_key_is_rejected);
+    return t.finish();
+}

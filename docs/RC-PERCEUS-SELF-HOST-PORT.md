@@ -5674,6 +5674,213 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   retains), `TestSelfHostPerModuleEmitAllFixpointX86_64` (380.38 s, run FIRST), 27
   targeted suites 0 skips. Refs #6319 #6360 #4451.
 
+- 2026-08-09: **The fresh-owned-container READ reclaim, scalar half (#6491).**
+  `mk()[i]` and `mk().f` read a value out of a container NOTHING NAMES, so the
+  read is the only place it can be reclaimed — there is no slot for the exit
+  sweep to find. The self-host leaked the whole container per evaluation.
+  Measured through `bin/fern-selfhost`, x86-64, fresh bytes at 50 and 100 rounds:
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `lit(n)[2]` — scalar elem, array-literal producer | 2800 / 5600 | **56 / 0** | 32 / 0 |
+  | `pair(n).k` — scalar field, scalar-only struct | 2400 / 4800 | **48 / 0** | 32 / 0 |
+  | `bag(n).k` — scalar field, `i32[]`-field struct | 5200 / 10400 | **104 / 0** | 64 / 0 |
+  | `nums(n)[1]` — scalar elem, LOCAL-built producer | 2824 / 5600 | 2824 / 5600 | 48 / 0 |
+  | `boxed(n).k` — scalar field, string-fielded struct | 3600 / 7200 | 1248 / 2400 | 32 / 0 |
+
+  The admission is **borrowed wholesale from the discarded-`mk(i);` statement
+  reclaim** rather than invented: the callee must be in
+  `return_fresh_struct_ret_fns` (bare entry for a struct, `"ARR:"` for a
+  scalar-element array), so the returned box is the unambiguous sole owner of
+  itself and of every field buffer. That is what makes the `__struct_drop_<T>`
+  in the `bag` row safe; a looser "any struct-returning call" would free the
+  caller's live buffer, which `borrowed-field-refused` pins by re-filling the
+  freed buffer and reading it back.
+
+  **SCALAR reads only, and that boundary is the whole reason this slice is
+  self-contained.** A pointer element/field ALIASES the container about to be
+  freed, so it needs three sites to agree — retain at the read, is_unique-gated
+  deep drop, and a binding that takes the read as a MOVE rather than an alias
+  (native's `isOwnedContainerRead` / `rhsTainted` pair). A scalar is copied out
+  of the buffer, so it needs none of them.
+
+  Two rows stay open, and the table above is what they cost rather than a guess:
+
+  - **A LOCAL-built producer** (`var out = []; out = out.append(x); return out;`)
+    earns no `"ARR:"` entry — that registry admits only a direct array-literal
+    return. `local-built-producer-still-grows` asserts it AS a leak, with the
+    `>` that must become `==` when the admission widens. (CLOSED by the
+    2026-08-10 entry below.)
+  - **The pointer half**, which is what `alloc_flat_index_of_fresh_container`
+    actually measures: its element and field are strings AND its producers are
+    local-built, so it needs both widenings. Its rows in all three
+    `selfhost-*-known-divergences.txt` files say so now instead of describing
+    the whole mechanism as missing.
+
+  The `boxed` residual is NOT this shape: it is 24 B/round of const_str box, the
+  pre-existing `var t: string = "abc"` leak, measured identically on a probe with
+  no container read in it at all. The Box itself is reclaimed.
+
+  VERIFIED: `TestSelfHostFreshContainerReadReclaimIRX86_64` (new — 5 rows),
+  every case additionally run through the self-host on **arm64 (qemu) and wasm
+  (wasmtime)**, where the leak reproduced identically on base (exit 92) and is
+  gone after. `TestSelfHostPerModuleEmitAllFixpointX86_64` run FIRST, per the
+  rule for reclaim changes. Refs #6491 #4451.
+
+- 2026-08-09: **A closure field no longer sinks its whole struct array (#6461).**
+  The issue asked which of two things the self-host was doing — refusing the
+  `clofld` admission, or granting it and reclaiming incompletely. Neither. The
+  admission was granted and the `k_clo` drop arm was ready; nothing ever called
+  it, because the array holding the records was not in a reclaim class at all.
+  `slot_is_reclaimable_structarr` gates the append-built class on a field
+  allowlist that did not know `fn`, so one closure field dropped the `P[]` local
+  to the generic shallow `__fern_rc_dec` — element boxes, strings and closures
+  leaking together.
+
+  The diagnostic that pins it is the same array with the field swapped: the
+  `i32`-field control reclaims *perfectly* (`allocs=5100 frees=5100`,
+  `live_bytes=0`), and adding one `fn` field takes it to `frees=2700`,
+  `live_bytes=102400`. A leak proportional to the whole structure, not to the
+  closure — which is what said to look one level up from `k_clo`.
+
+  Two admissions widen. `fn` joins scalar / `string` in the shallow-free
+  allowlist, on `string`'s own argument: what the class needs of a field type is
+  that leaking it is sound, and when the type ALSO routes field reclaim the deep
+  branch recovers both through `__struct_drop_<T>`, whose arms carry their own
+  whole-program admissions. And `structarr_elem_store_ok` now admits a call into
+  `return_fresh_struct_ret_fns` beside the no-base literal — strict-fresh proves
+  the returned box is rc=1 and unaliased, the literal's freshness one frame out.
+  A METHOD call still declines: the receiver type is unknown at the scan, so the
+  `<Base>.<method>` key cannot be looked up and the credit is not granted on a
+  guess.
+
+  Both were needed for the issue's reproducer, which builds its elements with
+  `mkP(i)`: `fn` alone fixes only the inline-literal spelling.
+
+  | heap high-water, 100 vs 200 rounds | before | after |
+  |---|---|---|
+  | x86-64 | 102600 / 205000 | **1224 / 1224** |
+  | arm64 | 102600 / 205000 | **1224 / 1224** |
+  | wasm | 64080 / 128080 | **720 / 720** |
+
+  Every before column is exactly 2.0x per doubling. Measured on each leg rather
+  than inferred from x86-64 — this is an `irlower` change, so all three move
+  together. Native was already flat on the same source and is untouched.
+
+  **Found and NOT fixed here:** a lambda capturing a MUTATED loop variable
+  snapshots it at construction on the self-host, where interp and native both
+  read it at call time (`(cs[0].f)(0)` -> 0 vs 3). Reproduced on a compiler built
+  from `main`, so it predates this and is not in its blast radius; whether the
+  self-host or the other two are wrong may be a language-design call. Filed as
+  #6539. The hazard cases added here deliberately use a non-capturing lambda or a
+  parameter capture so they do not ride on that question.
+
+  VERIFIED: `internal/e2eselfhost/self_host_closure_field_reclaim_test.go` loses
+  its `t.Skip` (delta 0 B at both round counts), a new call-element reclaim test,
+  three new hazard rows (passthrough callee, method call, closure read back out
+  of a reclaimed array), `TestSelfHostPerModuleEmitAllFixpointX86_64` (764.61 s),
+  and the arm64 + wasm structarr / arrstruct / elem-drop neighbours (316.56 s,
+  0 skips). Refs #6461 #4451.
+
+- 2026-08-10: **The LOCAL-built scalar-array producer — the pin the entry above
+  left (#6491).** `var out: i32[] = []; … out = out.append(v); … return out;` is
+  how a producer is actually written, and the `"ARR:"` rule declined it (direct
+  array literal only), so the caller's reclaims left the buffer to leak.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `nums(n)[1]` — scalar elem, LOCAL-built producer | 2824 / 5600 | **80 / 0** | 48 / 0 |
+
+  `body_returns_local_built_arr` admits it by proving the buffer is built
+  ENTIRELY in that frame, so it reaches the caller as its sole rc == 1 reference:
+  a literal init (it cannot START as a param's buffer), self-append as the only
+  rebind (it cannot BECOME one later), and `body_unsafe_for_allow_ret` for every
+  other escape. Element freshness needs no proof — `is_leaksafe_array_field`
+  makes every element a scalar, so the shallow element-blind `__fern_rc_dec` both
+  consumers emit has no pointer to dangle.
+
+  **`arr_reassigned_other_than_selfappend` is the load-bearing half, and it is
+  not redundant with the escape walk.** `body_unsafe_for_allow_ret`'s StmtAssign
+  arm inspects only the assigned VALUE, so `out = src` — seeding the local from a
+  parameter — never mentions `out` and reads as safe there. Without the rebind
+  scan the caller would free its own live buffer at the read.
+  `param-seeded-producer-refused` pins exactly that, re-filling the freed buffer
+  with 9s before reading the caller's array back, so a widened admission reports
+  90 rather than passing by luck.
+
+  This widens a registry the discarded-`mk(i);` statement reclaim also reads, so
+  that site now reclaims the accumulator idiom too — the same shallow dec, the
+  same soundness argument.
+
+  **Still open:** the POINTER half, which is what
+  `alloc_flat_index_of_fresh_container` measures. Its element and field are
+  strings, so it needs the retain / is_unique-gated deep drop / move-at-the-
+  binding trio that a scalar read does not.
+
+  VERIFIED: `TestSelfHostFreshContainerReadReclaimIRX86_64` at 6 rows (the
+  local-built row flipped from its `>` pin to `==`, plus the param-seeded
+  refusal), every case additionally run through the self-host on **x86-64, arm64
+  (qemu) and wasm (wasmtime)**, and
+  `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6491 #4451.
+
+- 2026-08-10: **RECLAIM — the consumed-match enum frees now run on the
+  `return`-out-of-an-arm paths (#6219).** Every consumed-enum release was
+  emitted AFTER its consuming `match` statement. When all arms of that match
+  `return`, control leaves the function before reaching the release, so nothing
+  was freed at all — one box per call, unbounded. Both families placed their
+  frees that way and both leaked: `consumed_scalar_enum_frees` (scalar enum and
+  scalar Option) and `consumed_rcpayload_enum_frees` (rc-payload enum, which
+  strands its array payload as well as its box).
+
+  The mechanism was already in the tree and was only ever wired to one family:
+  `optret_pending` (#4353 p1/p3) carries a release across the arm bodies, and
+  `emit_dec_sweep_except_list` — which every return form runs — emits it before
+  `op_return`. The fix adds two entry kinds, `"#b"` (shallow box dec) and
+  `"#e<enum>;<moved…>"` (runtime variant_is deep-drop), and sets them at all
+  four emission sites: the fn-body loop and its `lower_block` mirror, scalar and
+  rc-payload each.
+
+  **The post-match site stays exactly where it was.** It is the release for the
+  fallthrough paths; the pending entry is the release for the return paths. What
+  keeps a path from being claimed twice is the slot-zero both sites already
+  performed, plus `__fern_rc_dec` being null-safe — so the gate asserts an exact
+  `allocs == frees`, not `live_bytes == 0`, and every probe additionally checks
+  `__rc_underflow_count()`.
+
+  **The rc-payload entry has to carry the MOVED set, not just the slot.** When
+  an arm binds the array payload and returns it, `match_moved_rc_payloads` holds
+  that field and `emit_enum_variant_drops_moved` must skip its dec while still
+  freeing the box. Dropping the moved set on the return path would dangle the
+  buffer the caller is about to read, not merely mis-count it — which is why the
+  entry encodes enum name and moved fields rather than reusing the bare
+  `"slot#kind"` shape.
+
+  Measured, self-host x86-64, allocs/frees/live before → after (native was
+  already balanced on all seven, and every exit code is native's):
+
+  | shape | before | after |
+  |---|---|---|
+  | scalar enum, all arms return | 100/0/4800 | **100/100/0** |
+  | scalar enum, no arm returns (control) | 100/100/0 | 100/100/0 |
+  | scalar Option, all arms return | 100/0/4000 | **100/100/0** |
+  | rc-payload enum, all arms return | 200/0/8800 | **200/200/0** |
+  | rc-payload MOVED out of a returning arm | 200/100/4800 | **200/200/0** |
+  | one arm returns AND falls through | 100/51/2352 | **100/100/0** |
+  | candidate in a loop body, arm returns | 202/201/48 | **202/202/0** |
+
+  The two partial rows are the mechanism stated in numbers: the mixed shape
+  freed exactly the 51 rounds that fell through and leaked the 49 that returned;
+  the loop-block shape freed every iteration but the one that returned out.
+
+  Also deleted the redundant slot-zero after the block-level rc-payload free —
+  `emit_enum_variant_drops_moved` has always zeroed the slot itself.
+
+  VERIFIED: new `TestSelfHostReturningArmEnumFreeX86_64` (7 rows),
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (371 s, 36 units, run FIRST per
+  §the reclaim rule), the neighbouring enum/match reclaim gates, and all seven
+  probes run through the self-host on **x86-64, arm64 (qemu) and wasm
+  (wasmtime)**. Refs #6219 #4451.
+
 - 2026-08-10: **Two more nested-match rows, measured and left open on purpose —
   STRUCT and TUPLE payloads at block scope.** #6503 / #6517 / #6526 / #6538 closed
   #6319's grid (fn/block scope x flat/nested match) for the scalar Option and the

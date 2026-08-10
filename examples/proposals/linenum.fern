@@ -1,0 +1,412 @@
+// examples/proposals/linenum.fern — proposal turn, line 8:
+// "A line-numbering filter that skips blank lines and right-aligns the
+// numbers."
+//
+// Two words in that sentence carry all the risk.
+//
+// **Right-aligns.** The field width is decided by the LAST number, not the
+// first, so the width cannot be known until the whole input has been counted.
+// An implementation that sizes the field from what it has seen so far is
+// correct on every file with fewer than ten numbered lines and wrong on the
+// next one — and then wrong again at 100, and at 1000. The test sweeps the
+// counts straddling every one of those carries (8..12, 98..102, 998..1002) and
+// pins two things at each: that every field in a document is the same width,
+// and that the width is the digit count of the final number. A file of exactly
+// 9 and a file of exactly 10 are the pair that catches it.
+//
+// **Skips.** Blank lines are skipped for NUMBERING, not deleted — `nl` emits
+// them unnumbered, and a filter that drops them silently rewrites the file.
+// So the output has exactly as many lines as the input, the blanks come back
+// byte-identical, and the numbers on the rest are 1..k with no gaps.
+//
+// The strongest property is neither: stripping the prefix off the output must
+// reproduce the input EXACTLY. That is checkable without an expected document,
+// it holds over every generated case, and it fails the moment the filter
+// trims, pads, retabs, or reflows a line it was only supposed to prefix.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------------ model ---
+
+struct Numbered { lines: string[], width: i32, count: i32 }
+
+// The separator between the number field and the content. Two spaces rather
+// than a tab so the round trip is a fixed-width prefix strip, and so a tab in
+// the CONTENT can never be confused for the separator.
+function sep(): string { return "  "; }
+
+function is_blank(line: string): boolean {
+    var i: i32 = 0;
+    while (i < line.len()) {
+        var c: u8 = line[i];
+        if (c != 32 && c != 9 && c != 13) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function digits(n: i32): i32 {
+    if (n <= 0) { return 1; }
+    var d: i32 = 0;
+    var m: i32 = n;
+    while (m > 0) { d = d + 1; m = m / 10; }
+    return d;
+}
+
+function pad_left(s: string, width: i32): string {
+    var out: string = "";
+    var need: i32 = width - s.len();
+    var i: i32 = 0;
+    while (i < need) { out = out + " "; i = i + 1; }
+    return out + s;
+}
+
+// ---------------------------------------------------------------- numbering ---
+
+// Two passes, and the first one is the point: the width cannot be chosen until
+// every non-blank line has been counted, so the count comes first and the
+// formatting second. A single streaming pass is the shape that gets 9 -> 10
+// wrong.
+function number(lines: string[]): Numbered {
+    var count: i32 = 0;
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (!is_blank(lines[i])) { count = count + 1; }
+        i = i + 1;
+    }
+    var width: i32 = digits(count);
+
+    var out: string[] = [];
+    var n: i32 = 0;
+    var k: i32 = 0;
+    while (k < lines.len()) {
+        var line: string = lines[k];
+        if (is_blank(line)) {
+            out = out.append(line);
+        } else {
+            n = n + 1;
+            out = out.append(pad_left(n.to_string(), width) + sep() + line);
+        }
+        k = k + 1;
+    }
+    return Numbered { lines: out, width: width, count: count };
+}
+
+// The inverse, used only by the round-trip property: strip the fixed-width
+// prefix from every line that got one. A blank line got none.
+function unnumber(numbered: string[], width: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < numbered.len()) {
+        var line: string = numbered[i];
+        if (is_blank(line)) {
+            out = out.append(line);
+        } else {
+            out = out.append(line.drop(width + sep().len()).to_owned());
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The number carried by a numbered line, or -1 if the field is not a
+// right-aligned decimal. Reads the field independently of how it was written,
+// so the test is not just re-running the formatter.
+function field_number(line: string, width: i32): i32 {
+    if (line.len() < width) { return -1; }
+    var seen_digit: boolean = false;
+    var value: i32 = 0;
+    var i: i32 = 0;
+    while (i < width) {
+        var c: u8 = line[i];
+        if (c == 32) {
+            // Padding is only legal BEFORE the digits — a space after a digit
+            // means the number was left-aligned.
+            if (seen_digit) { return -1; }
+        } else {
+            if (c < 48 || c > 57) { return -1; }
+            seen_digit = true;
+            value = value * 10 + ((c - 48) as i32);
+        }
+        i = i + 1;
+    }
+    if (!seen_digit) { return -1; }
+    return value;
+}
+
+// ------------------------------------------------------------- generators ---
+
+// A document with `content` non-blank lines and blanks sprinkled through it in
+// a pattern that varies with `shape`, so the numbering is exercised against
+// leading, trailing, adjacent and interior blanks rather than one arrangement.
+function make_doc(content: i32, shape: i32): string[] {
+    var out: string[] = [];
+    if (shape % 3 == 1) { out = out.append(""); }
+    if (shape % 5 == 2) { out = out.append("   "); }
+    var i: i32 = 0;
+    while (i < content) {
+        // Some content lines carry leading and trailing whitespace of their
+        // own. Without them the round-trip property cannot see a filter that
+        // trims the line it was only asked to prefix — the negative control for
+        // exactly that bug was caught by one narrow test and slipped past the
+        // sweep.
+        if (i % 5 == 0) { out = out.append("  line " + (i + 1).to_string() + " indented"); }
+        if (i % 5 == 1) { out = out.append("line " + (i + 1).to_string() + " trailing   "); }
+        if (i % 5 == 2) { out = out.append("\tline " + (i + 1).to_string() + " tabbed"); }
+        if (i % 5 > 2) { out = out.append("line " + (i + 1).to_string() + " text"); }
+        if (shape % 2 == 0 && i % 4 == 3) { out = out.append(""); }
+        if (shape % 7 == 3 && i % 3 == 2) { out = out.append("\t"); }
+        i = i + 1;
+    }
+    if (shape % 3 == 2) { out = out.append(""); }
+    return out;
+}
+
+// The counts that straddle a digit carry, where a width chosen too early is
+// wrong for the first time.
+function boundary_counts(): i32[] {
+    return [1, 2, 8, 9, 10, 11, 12, 98, 99, 100, 101, 102, 998, 999, 1000, 1001, 1002];
+}
+
+// ------------------------------------------------------------------ tests ---
+
+// The headline. At every carry boundary, the field must be as wide as the LAST
+// number — no wider, no narrower.
+function test_the_width_is_the_digit_count_of_the_last_number(): test.TestOutcome {
+    var counts: i32[] = boundary_counts();
+    var ci: i32 = 0;
+    while (ci < counts.len()) {
+        var c: i32 = counts[ci];
+        var shape: i32 = 0;
+        while (shape < 4) {
+            var r: Numbered = number(make_doc(c, shape));
+            if (r.count != c) {
+                return test.fail("count=" + c.to_string() + " shape=" + shape.to_string()
+                    + ": numbered " + r.count.to_string() + " lines, want " + c.to_string());
+            }
+            if (r.width != digits(c)) {
+                return test.fail("count=" + c.to_string() + ": field width is "
+                    + r.width.to_string() + ", want " + digits(c).to_string());
+            }
+            shape = shape + 1;
+        }
+        ci = ci + 1;
+    }
+    return test.pass();
+}
+
+// Every numbered line in one document shares one field width, and the numbers
+// read back out of those fields are exactly 1..k in order.
+function test_the_numbers_are_one_to_k_in_a_uniform_field(): test.TestOutcome {
+    var counts: i32[] = boundary_counts();
+    var ci: i32 = 0;
+    while (ci < counts.len()) {
+        var c: i32 = counts[ci];
+        var shape: i32 = 0;
+        while (shape < 4) {
+            var r: Numbered = number(make_doc(c, shape));
+            var expect: i32 = 0;
+            var i: i32 = 0;
+            while (i < r.lines.len()) {
+                var line: string = r.lines[i];
+                if (!is_blank(line)) {
+                    expect = expect + 1;
+                    var got: i32 = field_number(line, r.width);
+                    if (got < 0) {
+                        return test.fail("count=" + c.to_string() + " line " + i.to_string()
+                            + ": field is not a right-aligned decimal: `" + line + "`");
+                    }
+                    if (got != expect) {
+                        return test.fail("count=" + c.to_string() + " line " + i.to_string()
+                            + ": numbered " + got.to_string() + ", want " + expect.to_string());
+                    }
+                }
+                i = i + 1;
+            }
+            if (expect != c) {
+                return test.fail("count=" + c.to_string() + ": emitted " + expect.to_string()
+                    + " numbered lines");
+            }
+            shape = shape + 1;
+        }
+        ci = ci + 1;
+    }
+    return test.pass();
+}
+
+// Skipped means unnumbered, not deleted. Same number of lines out as in, and
+// every blank comes back byte-identical — including a whitespace-only line,
+// which must not be trimmed on its way through.
+function test_blank_lines_are_preserved_unnumbered(): test.TestOutcome {
+    var shape: i32 = 0;
+    while (shape < 8) {
+        var src: string[] = make_doc(12, shape);
+        var r: Numbered = number(src);
+        if (r.lines.len() != src.len()) {
+            return test.fail("shape=" + shape.to_string() + ": " + src.len().to_string()
+                + " lines in, " + r.lines.len().to_string() + " out");
+        }
+        var i: i32 = 0;
+        while (i < src.len()) {
+            if (is_blank(src[i])) {
+                if (r.lines[i] != src[i]) {
+                    return test.fail("shape=" + shape.to_string() + " line " + i.to_string()
+                        + ": blank line changed from `" + src[i] + "` to `" + r.lines[i] + "`");
+                }
+            }
+            i = i + 1;
+        }
+        shape = shape + 1;
+    }
+    return test.pass();
+}
+
+// The strongest property, and the one that needs no expected document: strip
+// the prefix and the input must come back exactly.
+function test_stripping_the_prefix_recovers_the_input(): test.TestOutcome {
+    var counts: i32[] = boundary_counts();
+    var ci: i32 = 0;
+    while (ci < counts.len()) {
+        var shape: i32 = 0;
+        while (shape < 8) {
+            var src: string[] = make_doc(counts[ci], shape);
+            var r: Numbered = number(src);
+            var back: string[] = unnumber(r.lines, r.width);
+            if (back.len() != src.len()) {
+                return test.fail("count=" + counts[ci].to_string() + " shape=" + shape.to_string()
+                    + ": round trip changed the line count");
+            }
+            var i: i32 = 0;
+            while (i < src.len()) {
+                if (back[i] != src[i]) {
+                    return test.fail("count=" + counts[ci].to_string() + " line " + i.to_string()
+                        + ": round trip gave `" + back[i] + "`, want `" + src[i] + "`");
+                }
+                i = i + 1;
+            }
+            shape = shape + 1;
+        }
+        ci = ci + 1;
+    }
+    return test.pass();
+}
+
+// Right, not left. The field's last character is a digit and any padding is in
+// front of it — checked directly rather than inferred from the parsed value,
+// because `1 ` and ` 1` parse the same and align differently.
+function test_the_padding_is_on_the_left(): test.TestOutcome {
+    var r: Numbered = number(make_doc(10, 0));
+    var i: i32 = 0;
+    var seen: i32 = 0;
+    while (i < r.lines.len()) {
+        var line: string = r.lines[i];
+        if (!is_blank(line)) {
+            seen = seen + 1;
+            var last: u8 = line[r.width - 1];
+            if (last < 48 || last > 57) {
+                return test.fail("line " + i.to_string() + ": field does not end in a digit: `"
+                    + line + "`");
+            }
+            if (seen < 10 && line[0] != 32) {
+                return test.fail("line " + i.to_string() + ": single-digit number is not padded on"
+                    + " the left: `" + line + "`");
+            }
+        }
+        i = i + 1;
+    }
+    if (seen != 10) { return test.fail("expected 10 numbered lines, saw " + seen.to_string()); }
+    return test.pass();
+}
+
+// A whitespace-only line is blank for numbering purposes, and a line whose
+// content merely LOOKS blank after the prefix (leading spaces) is not.
+function test_whitespace_only_counts_as_blank(): test.TestOutcome {
+    var src: string[] = ["", "   ", "\t", " x ", "y"];
+    var r: Numbered = number(src);
+    if (r.count != 2) { return test.fail("counted " + r.count.to_string() + " non-blank, want 2"); }
+    if (r.lines[0] != "" || r.lines[1] != "   " || r.lines[2] != "\t") {
+        return test.fail("a whitespace-only line was altered");
+    }
+    if (field_number(r.lines[3], r.width) != 1) {
+        return test.fail("` x ` should be numbered 1, got `" + r.lines[3] + "`");
+    }
+    if (field_number(r.lines[4], r.width) != 2) {
+        return test.fail("`y` should be numbered 2, got `" + r.lines[4] + "`");
+    }
+    // Leading whitespace in the CONTENT survives the prefix.
+    var back: string[] = unnumber(r.lines, r.width);
+    if (back[3] != " x ") { return test.fail("content whitespace was trimmed: `" + back[3] + "`"); }
+    return test.pass();
+}
+
+// Degenerate inputs must not need a special case at the call site: no lines, no
+// non-blank lines, and one line each behave.
+function test_degenerate_inputs(): test.TestOutcome {
+    var empty: Numbered = number([]);
+    if (empty.lines.len() != 0) { return test.fail("empty input produced output lines"); }
+    if (empty.count != 0) { return test.fail("empty input counted " + empty.count.to_string()); }
+    if (empty.width < 1) { return test.fail("empty input gave width " + empty.width.to_string()); }
+
+    var blanks: Numbered = number(["", "  ", ""]);
+    if (blanks.count != 0) { return test.fail("all-blank counted " + blanks.count.to_string()); }
+    if (blanks.lines.len() != 3) { return test.fail("all-blank lost lines"); }
+    if (blanks.lines[1] != "  ") { return test.fail("all-blank altered a line"); }
+
+    var one: Numbered = number(["only"]);
+    if (one.width != 1) { return test.fail("one line gave width " + one.width.to_string()); }
+    if (one.lines[0] != "1" + sep() + "only") {
+        return test.fail("one line rendered as `" + one.lines[0] + "`");
+    }
+    return test.pass();
+}
+
+// The pair that catches a width chosen from the first number rather than the
+// last, stated on its own so a failure names it.
+function test_nine_and_ten_differ_in_width(): test.TestOutcome {
+    var nine: Numbered = number(make_doc(9, 0));
+    var ten: Numbered = number(make_doc(10, 0));
+    if (nine.width != 1) { return test.fail("9 lines gave width " + nine.width.to_string()); }
+    if (ten.width != 2) { return test.fail("10 lines gave width " + ten.width.to_string()); }
+    // In the 10-line document EVERY number is two wide, including the first.
+    var i: i32 = 0;
+    var seen: i32 = 0;
+    while (i < ten.lines.len()) {
+        if (!is_blank(ten.lines[i])) {
+            seen = seen + 1;
+            if (seen == 1 && ten.lines[i].take(2).to_owned() != " 1") {
+                return test.fail("in a 10-line document the first field is `"
+                    + ten.lines[i].take(2).to_owned() + "`, want ` 1`");
+            }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("linenum — number the non-blank lines, right-aligned");
+
+    var src: string[] = ["alpha", "", "beta", "   ", "gamma", "delta"];
+    var r: Numbered = number(src);
+    var i: i32 = 0;
+    while (i < r.lines.len()) { eprint("  |" + r.lines[i]); i = i + 1; }
+    eprint("  width " + r.width.to_string() + " for " + r.count.to_string() + " numbered lines");
+
+    var wide: Numbered = number(make_doc(10, 0));
+    eprint("  10 lines -> width " + wide.width.to_string()
+        + ", first field `" + wide.lines[0].take(2).to_owned() + "`");
+
+    var t: test.TestRunner = test.test_new("linenum");
+    t = t.it("the width is the digit count of the last number", test_the_width_is_the_digit_count_of_the_last_number);
+    t = t.it("the numbers are 1..k in a uniform field", test_the_numbers_are_one_to_k_in_a_uniform_field);
+    t = t.it("blank lines are preserved unnumbered", test_blank_lines_are_preserved_unnumbered);
+    t = t.it("stripping the prefix recovers the input", test_stripping_the_prefix_recovers_the_input);
+    t = t.it("the padding is on the left", test_the_padding_is_on_the_left);
+    t = t.it("whitespace-only counts as blank", test_whitespace_only_counts_as_blank);
+    t = t.it("degenerate inputs", test_degenerate_inputs);
+    t = t.it("nine and ten differ in width", test_nine_and_ten_differ_in_width);
+    return t.finish();
+}
