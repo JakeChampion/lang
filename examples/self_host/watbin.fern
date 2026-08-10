@@ -746,9 +746,9 @@ function local_decl_types(fnode: SExpr): string[] {
 
 // ---- instruction encoding ------------------------------------------------
 
-// arith_opcode maps a binary/unary i32 arithmetic / comparison op to its
-// wasm byte (0 if not one of them). Binary ops take two stack operands,
-// the unary `i32.eqz` one.
+// arith_opcode maps a binary/unary arithmetic / comparison / conversion op to
+// its wasm byte (0 if not one of them). Binary ops take two stack operands;
+// the unary ones (eqz, clz/ctz/popcnt, every conversion) take one.
 function arith_opcode(op: string): i32 {
     if (op == "i32.add") { return 106; }   // 0x6a
     if (op == "i32.sub") { return 107; }
@@ -776,6 +776,9 @@ function arith_opcode(op: string): i32 {
     if (op == "i32.ge_s") { return 78; }
     if (op == "i32.ge_u") { return 79; }   // 0x4f
     if (op == "i32.eqz") { return 69; }    // 0x45
+    if (op == "i32.clz") { return 103; }    // 0x67
+    if (op == "i32.ctz") { return 104; }    // 0x68
+    if (op == "i32.popcnt") { return 105; } // 0x69
     // i64 arithmetic / comparison (binary; i64.eqz is unary).
     if (op == "i64.add") { return 124; }   // 0x7c
     if (op == "i64.sub") { return 125; }
@@ -803,6 +806,9 @@ function arith_opcode(op: string): i32 {
     if (op == "i64.le_u") { return 88; }
     if (op == "i64.ge_s") { return 89; }
     if (op == "i64.ge_u") { return 90; }   // 0x5a
+    if (op == "i64.clz") { return 121; }    // 0x79
+    if (op == "i64.ctz") { return 122; }    // 0x7a
+    if (op == "i64.popcnt") { return 123; } // 0x7b
     // Numeric conversions (all unary — one stack operand).
     if (op == "i32.wrap_i64") { return 167; }       // 0xa7
     if (op == "i64.extend_i32_s") { return 172; }   // 0xac
@@ -815,6 +821,16 @@ function arith_opcode(op: string): i32 {
     if (op == "f64.convert_i32_u") { return 184; }  // 0xb8
     if (op == "f64.convert_i64_s") { return 185; }  // 0xb9
     if (op == "f64.convert_i64_u") { return 186; }  // 0xba
+    if (op == "f32.demote_f64") { return 182; }     // 0xb6
+    if (op == "f64.promote_f32") { return 187; }    // 0xbb
+    // Bit reinterprets — no conversion, the same bits under a different type.
+    // `f64_bits` / `f64_from_bits` reach these, and `to_string` on any numeric
+    // type reaches them through the decimal formatter, so a program that merely
+    // prints a number needs 0xbf.
+    if (op == "i32.reinterpret_f32") { return 188; } // 0xbc
+    if (op == "i64.reinterpret_f64") { return 189; } // 0xbd
+    if (op == "f32.reinterpret_i32") { return 190; } // 0xbe
+    if (op == "f64.reinterpret_i64") { return 191; } // 0xbf
     // f64 comparison (binary) + arithmetic (binary, except the unary math
     // ops abs/neg/ceil/floor/trunc/nearest/sqrt).
     if (op == "f64.eq") { return 97; }     // 0x61
@@ -883,6 +899,27 @@ function sat_trunc_opcode(op: string): i32 {
     if (op == "i64.trunc_sat_f64_s") { return 6; }
     if (op == "i64.trunc_sat_f64_u") { return 7; }
     return 0 - 1;
+}
+
+// bulk_mem_opcode maps a bulk-memory op to its 0xFC-prefixed sub-opcode index,
+// or -1 for anything else. Both take three stack operands and trailing memory
+// indexes: `memory.copy` two (dest, src), `memory.fill` one. The IR emitter
+// selects them for `__memcpy` / `__memset` — `string.bytes()` and core/map's
+// bucket init — so a program taking a string's bytes reaches them.
+function bulk_mem_opcode(op: string): i32 {
+    if (op == "memory.copy") { return 10; }
+    if (op == "memory.fill") { return 11; }
+    return 0 - 1;
+}
+
+// bulk_mem_tail appends everything after the 0xFC prefix: the LEB sub-opcode,
+// then the memory indexes — two for `memory.copy` (dest then src), one for
+// `memory.fill`.
+function bulk_mem_tail(out: i32[], idx: i32): i32[] {
+    var o: i32[] = leb_u32(out, idx);
+    o = o.append(0);
+    if (idx == 10) { o = o.append(0); }
+    return o;
 }
 
 // is_offset_atom reports whether an SExpr child is a folded `offset=N` memarg
@@ -1130,9 +1167,19 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(252);   // 0xFC
         return leb_u32(out, stf);
     }
+    var blk: i32 = bulk_mem_opcode(op);
+    if (blk >= 0) {
+        // Bulk memory: three operands, then `0xFC idx` and the memory indexes.
+        out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
+        out = wcat(out, enc_instr(node.items[3], lnames, fnames, gnames, labels, tnames));
+        out = out.append(252);   // 0xFC
+        return bulk_mem_tail(out, blk);
+    }
     var ao: i32 = arith_opcode(op);
     if (ao != 0) {
-        // unary (eqz) takes one operand; the rest take two.
+        // Arity comes from the node: a unary op (eqz, clz/ctz/popcnt, the
+        // conversions) is written with one child, a binary op with two.
         out = wcat(out, enc_instr(node.items[1], lnames, fnames, gnames, labels, tnames));
         if (op != "i32.eqz" && node.items.len() > 2) {
             out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
@@ -1274,6 +1321,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             var ms: i32 = mem_store_opcode(op);
             var ao: i32 = arith_opcode(op);
             var stf: i32 = sat_trunc_opcode(op);
+            var blk: i32 = bulk_mem_opcode(op);
             if (ml != 0) {
                 out = out.append(ml);
                 out = leb_u32(out, memarg_align(op));
@@ -1287,6 +1335,11 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 // already on the stack in the flat form).
                 out = out.append(252);   // 0xFC
                 out = leb_u32(out, stf);
+            } else if (blk >= 0) {
+                // Bulk memory: `0xFC idx` + memory indexes (the three operands
+                // are already on the stack in the flat form).
+                out = out.append(252);   // 0xFC
+                out = bulk_mem_tail(out, blk);
             } else if (ao != 0) {
                 out = out.append(ao);   // arithmetic / comparison (no immediate)
             } else if (op.len() > 0) {
