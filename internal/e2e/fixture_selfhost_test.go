@@ -230,7 +230,7 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				// Includes the in-process assembler's own refusal ("could not
 				// encode: …"), which names the mnemonic or operand shape.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -278,7 +278,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 				// instruction it does not yet support: …"), which names the
 				// mnemonic — a different and more actionable failure than the
 				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
