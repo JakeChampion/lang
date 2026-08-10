@@ -30,11 +30,15 @@ import (
 // shallower, was already correct. Without it the natural conclusion is that the
 // cell machinery is wrong, which points the fix somewhere far more invasive.
 //
-// These deliberately do NOT live in the two neighbouring capture suites:
+// These pin the COMPILED path specifically. The interpreter's own #5394 arm
+// landed with #6578 and is pinned separately by the `outer-write-*` cases in
+// TestSelfHostMutableScalarCaptureInterp, which oracles against the native
+// interpreter; the two engines reach the answer by different machinery
+// (box_mutated_scalar_captures here, a shared cell there), so both are worth
+// holding.
 //
-//   - TestSelfHostMutableScalarCaptureInterp drives the self-host INTERPRETER,
-//     which does not implement the #5394 arm at all — both shapes fail there,
-//     the top-level control included. That is a separate gap, filed as #6578.
+// They still do not belong in the other neighbouring suite:
+//
 //   - TestSelfHostCaptureLambdaX86IR requires every case to lift to `__lam_0`.
 //     The in-loop lambda is stored into an array, so it becomes a `__mkclo$`
 //     closure box instead and trips that precondition while computing the right

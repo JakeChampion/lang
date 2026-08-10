@@ -70,6 +70,32 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// cell path must stay entirely out of the way.
 		{"no-lambda-assign-control", `function main(): i32 { var x: i32 = 1; x = 41; return x + 1; }`},
 		{"loop-counter-control", `function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 5) { t = t + i; i = i + 1; } return t; }`},
+
+		// The OUTER-write clause (#5394), which this engine did not implement at
+		// all until #6578 — every case above has the LAMBDA do the writing, which
+		// is why twelve green cases coexisted with a silent wrong answer. Here the
+		// lambda only READS and the enclosing body reassigns afterwards, so a
+		// by-value snapshot freezes the pre-assignment value: the first case
+		// answered 0 against the oracle's 3.
+		{"outer-write-toplevel", `function main(): i32 { var i: i32 = 0; var f: (i32) => i32 = ((x: i32) => x + i); i = 3; return f(0); }`},
+		{"outer-write-in-loop", `function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 3) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`},
+		// The lambda sits in an OPERAND of the init rather than being it — here a
+		// call argument. Same clause, a position the statement-level scan has to
+		// look inside.
+		//
+		// The compiled-path suite's `struct-literal-field` twin has no entry here
+		// on purpose: this engine cannot CALL a closure held in a struct field at
+		// all (`(cs[0].f)(0)` → "undefined method `f` on `C`"), so the case dies
+		// before it reaches the capture clause. That is a separate interpreter
+		// gap, not this one.
+		{"outer-write-call-argument", `function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { var i: i32 = 0; var fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`},
+
+		// The guard on that clause, and the reason it is keyed on REASSIGNMENT
+		// rather than on being captured at all. `n` is declared fresh each
+		// iteration and never reassigned, so each closure must keep its own
+		// value: the oracle answers 0+1+2, not three copies of the last one.
+		// Celling every read capture would pass every case above and fail this.
+		{"per-iteration-capture-control", `function main(): i32 { var t: i32 = 0; var fs: (() => i32)[] = []; var k: i32 = 0; while (k < 3) { var n: i32 = k; fs = fs.append(() => n); k = k + 1; } for f in fs { t = t + f(); } return t; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
