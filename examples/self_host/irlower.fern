@@ -29986,18 +29986,27 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
     return false;
 }
 
-// fieldmove_selfrebind_alias: `e` is exactly `name.<f>`, where f is a nested-struct
-// or enum field of `sty`. In the self-rebind `name = T { …, f: name.f, … }` that
-// value goes into the box THIS SLOT is about to hold, and the struct-literal
-// override path RETAINS it — the nested-struct and enum arms inc unconditionally
-// for anything that is not a fresh literal / ctor, which a field read never is. So
-// the superseded box's deep drop decs the dup instead of freeing a live field, and
-// treating the read as a move only costs `name` its whole reclaim credit (#6623).
+// fieldmove_selfrebind_alias: `e` is exactly `name.<f>`, where f is a field whose
+// override retain is GUARANTEED. In the self-rebind `name = T { …, f: name.f, … }`
+// that value goes into the box THIS SLOT is about to hold, and the struct-literal
+// override path retains it, so the superseded box's deep drop decs the dup instead
+// of freeing a live field. Treating such a read as a move only costs `name` its
+// whole reclaim credit (#6623).
 //
-// ARRAY and STRING fields are deliberately NOT exempt: their override retain is
-// conditional — an array incs only for a bare ident naming an rc-array slot, a
-// string only under slit_reclaim and a freshness test — so a field read there can
-// genuinely reach the successor box uncounted.
+// Three field kinds qualify, each because its arm of the override path incs a field
+// READ with no further condition:
+//
+//   - a nested-struct or enum field, whose arms inc anything that is not a fresh
+//     literal / ctor — which a field read never is;
+//   - a scalar-element or array-of-struct field, whose ExprFieldAccess arm incs on
+//     `field_access_arr_field_type` resolving. It cannot silently decline: an
+//     unresolved receiver leaves `fav_ok` false and BAILS the whole lowering rather
+//     than emitting an uncounted store, so there is no third outcome to guard (#6628).
+//
+// STRING and `string[]` fields stay marked (the retain is gated on slit_reclaim plus
+// a freshness test), and so does an array-of-ENUM field: `Ty[]` enters neither array
+// gate, and the fallback retain below them admits only a bare IDENT, so a field read
+// there really can reach the successor box uncounted.
 function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprFieldAccess(fa) => {
@@ -30005,7 +30014,8 @@ function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, s
                 parser.ExprIdent(oid) => {
                     if (oid.name != name) { return false; }
                     var ft: string = decl_field_type(structs, sty, fa.field);
-                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft);
+                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft)
+                        || is_leaksafe_array_field(ft) || is_struct_array_field_type(structs, ft);
                 },
                 _ => { return false; }
             }
