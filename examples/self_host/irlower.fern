@@ -47898,6 +47898,88 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
     return InlineCloStmts { stmts: out, funcs: fs, counter: ct };
 }
 
+// arr_elem_forces_box reports whether an array element makes the whole literal an
+// env-box array: a capturing lambda, or a generic-passthrough call carrying a fn
+// value (the lift boxes that argument unconditionally, so the call yields a box).
+function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    match (e) {
+        parser.ExprLambda(el) => { return lambda_captures(el, fd).len() > 0; },
+        parser.ExprCall(ec) => {
+            match (ec.callee) {
+                parser.ExprIdent(ecid) => {
+                    var i: i32 = 0;
+                    while (i < ec.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, ecid.name, i)
+                                && lift_arg_is_fn_value(ec.args[i], mfuncs)) { return true; }
+                        i = i + 1;
+                    }
+                },
+                parser.ExprLambda(eil) => {
+                    if (ec.args.len() == 0 && eil.params.len() == 0) { return iife_arm_lambda_captures(eil.body, fd); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// fd_returns_boxed_fn_array reports whether ANY `return [ … ]` in `fd` yields an
+// array the lift boxes. Every such literal in the function then has to box,
+// including a sibling return whose own elements are all plain lambdas: the
+// returns share the CALLER's binding, and a binding gets one dispatch ABI
+// (#5071 one container out, #6555). Without it `return (if (c) { [<lambda>] }
+// else { [id(<lambda>)] })` handed back a bare fn-pointer array down one path
+// and an env-box array down the other, and the caller env-first-dispatched
+// whichever arm ran — compiled clean, SIGSEGV.
+function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    var rets: parser.Expr[] = collect_returns(fd.body, []);
+    var i: i32 = 0;
+    while (i < rets.len()) {
+        match (rets[i]) {
+            parser.ExprArray(ra) => {
+                var e: i32 = 0;
+                while (e < ra.elements.len()) {
+                    if (arr_elem_forces_box(ra.elements[e], fd, mfuncs)) { return true; }
+                    e = e + 1;
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// array_holds_fn_value reports whether the literal has any fn-VALUED element, so
+// the uniformity rule above applies to it at all (an i32[] never does).
+function array_holds_fn_value(arr: parser.ExprArray, mfuncs: parser.FuncDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < arr.elements.len()) {
+        match (arr.elements[i]) {
+            parser.ExprLambda(_) => { return true; },
+            parser.ExprIdent(aid) => { if (lift_module_fn_arity(mfuncs, aid.name) >= 1) { return true; } },
+            parser.ExprCall(ac) => {
+                match (ac.callee) {
+                    parser.ExprIdent(acid) => {
+                        var a: i32 = 0;
+                        while (a < ac.args.len()) {
+                            if (lift_callee_is_typevar_passthrough(mfuncs, acid.name, a)
+                                    && lift_arg_is_fn_value(ac.args[a], mfuncs)) { return true; }
+                            a = a + 1;
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
 // LowerState.callee_param_is_fn / asmcore.callee_param_is_fn, reading the module
@@ -48359,14 +48441,14 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
 // arrays holds a capturing lambda. It is the gate on rewriting the arms into
 // uniform env boxes: below the "every arm" half the binding would carry two
 // dispatch ABIs, and without the "some capture" half there is nothing to fix.
-function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl): boolean {
-    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0);
+function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0, mfuncs);
     return seen > 0;
 }
 
 // Returns the number of capturing lambda elements found, or -1 as soon as an arm
 // returns something that is not an array literal.
-function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32): i32 {
+function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: parser.FuncDecl[]): i32 {
     var n: i32 = seen;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -48376,10 +48458,7 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                     parser.ExprArray(arr) => {
                         var e: i32 = 0;
                         while (e < arr.elements.len()) {
-                            match (arr.elements[e]) {
-                                parser.ExprLambda(el) => { if (lambda_captures(el, fd).len() > 0) { n = n + 1; } },
-                                _ => {}
-                            }
+                            if (arr_elem_forces_box(arr.elements[e], fd, mfuncs)) { n = n + 1; }
                             e = e + 1;
                         }
                     },
@@ -48387,15 +48466,15 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                 }
             },
             parser.StmtIf(iff) => {
-                n = iife_arm_arrays_capturing(iff.then_body, fd, n);
+                n = iife_arm_arrays_capturing(iff.then_body, fd, n, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_arrays_capturing(iff.else_body, fd, n);
+                n = iife_arm_arrays_capturing(iff.else_body, fd, n, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             parser.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n);
+                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -48658,7 +48737,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     // which it only can when every arm answers the same way.
                     // Anything else is left to bail exactly as before.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd)) {
+                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd, mfuncs)) {
                         var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, fd, fs, ct, gfns, structs, mfuncs);
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
@@ -48734,6 +48813,12 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                     _ => {}
                 }
                 sc = sc + 1;
+            }
+            // #6555: a sibling `return` of this function yields a boxed fn
+            // array, so this literal boxes too — the returns share the caller's
+            // binding and a binding gets one dispatch ABI.
+            if (!has_cap_lam && array_holds_fn_value(arr, mfuncs) && fd_returns_boxed_fn_array(fd, mfuncs)) {
+                has_cap_lam = true;
             }
             // Bound names in this function's scope (params + body binders): a
             // bare fn-name ELEMENT is only an unshadowed module fn when it names
