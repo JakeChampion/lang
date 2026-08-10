@@ -74,8 +74,8 @@ func TestSelfHostProcForkIRX86_64(t *testing.T) {
 				t.Fatalf("routed through %q path, want \"ir\"", path)
 			}
 			asm := runCapture(t, gcc, runner, driverBin, src)
-			if !strings.Contains(string(asm), "__fern_proc_fork") {
-				t.Fatal("emitted asm has no __fern_proc_fork helper")
+			if !strings.Contains(string(asm), "__fn___fern_proc_fork:") {
+				t.Fatal("emitted asm has no Fern __fn___fern_proc_fork helper")
 			}
 			progBin := buildBin(t, gcc, dir, "procfork_"+tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -99,9 +99,9 @@ func TestSelfHostProcForkIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostProcForkIRArm64 is the arm64 half. arm64 Linux has no bare
-// fork(2): `__fern_proc_fork` is `clone(SIGCHLD, 0, 0, 0, 0)` (asm-generic
-// 220), whose return shape is already the builtin's contract. The asm-content
-// checks pin that dispatch and that real body, so a regression to a stubbed or
+// fork(2): proc_fork is `clone(SIGCHLD, 0, 0, 0, 0)` (asm-generic 220), whose
+// return shape is already the builtin's contract. The asm-content checks pin
+// that dispatch and that real body, so a regression to a stubbed or
 // mis-numbered syscall fails here rather than hanging under qemu.
 func TestSelfHostProcForkIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -128,12 +128,11 @@ func TestSelfHostProcForkIRArm64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
-			// proc_fork is still hand-asm (Darwin's fork reports failure in the carry
-			// flag, which Fern cannot read), so it keeps `mov x8, #220`.
-			// proc_waitpid is Fern since #2649: __syscall4 loads wait4's number as
-			// an ordinary operand and pops it into x8, so the number shows up as
-			// `mov x0, #260` and the symbol carries the stack-ABI prefix.
-			for _, want := range []string{"bl __fern_proc_fork", "bl __fn___fern_proc_waitpid", "mov x8, #220", "mov x0, #260"} {
+			// Both are Fern since #2649, so both carry the stack-ABI prefix and
+			// both syscall numbers arrive as ordinary pushed operands popped into
+			// x8 — hence `mov x0, #N` rather than `mov x8, #N`. clone is the
+			// five-argument __syscall5 form; wait4 is __syscall4.
+			for _, want := range []string{"bl __fn___fern_proc_fork", "bl __fn___fern_proc_waitpid", "mov x0, #220", "mov x0, #260"} {
 				if !strings.Contains(asm, want) {
 					t.Errorf("emitted arm64 asm missing %q", want)
 				}

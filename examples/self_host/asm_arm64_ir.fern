@@ -738,7 +738,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // no operands; __fern_proc_fork() -> i32 in x0 (0 child / pid parent
             // / -errno). Helper gated by the need, like random_i32 (#5686).
             s = s.need("proc_fork");
-            s = s.write("    bl __fern_proc_fork\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_proc_fork\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 212) {  // proc_waitpid
             // [pid] IS param[0] already; the stack ABI needs no marshalling.
             s = s.need("proc_waitpid");
@@ -6216,20 +6216,27 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write(".size __fern_map_hash_seed, .-__fern_map_hash_seed\n");
     }
     // proc_exec is Fern now (#2649) — see the migrated-helpers section.
-    // __fern_proc_fork() → 0 in the child, the child's pid in the parent,
-    // -errno on failure — the crash-only supervision primitive
-    // (docs/CRASH-ONLY-SERVE.md D2', #5686). arm64 Linux has no bare fork(2):
-    // it is clone(SIGCHLD, 0, 0, 0, 0) (asm-generic 220), whose return shape is
-    // already the contract. Darwin's fork (BSD 2) returns the pid in x0 with
-    // x1 = 0 parent / 1 child and the carry-set +errno convention, so it needs
-    // the libsyscall-style fold. Heap-independent, gated by its own need.
+    // proc_fork() → 0 in the child, the child's pid in the parent, -errno on
+    // failure — the crash-only supervision primitive (docs/CRASH-ONLY-SERVE.md
+    // D2', #5686). The kernel's return shape IS the contract.
+    //
+    // arm64 Linux is Fern (#2649): it has no bare fork(2) and spells it
+    // clone(SIGCHLD, 0, 0, 0, 0), which is exactly __syscall5.
+    //
+    // Darwin cannot be. XNU's fork returns the pid in x0 and marks the child in
+    // **x1**, and no __syscall* intrinsic can see a second return register — the
+    // carry-flag half would have been free, since darwinize already injects that
+    // fold. So this joins monotonic_ns as a hand-written Darwin body, under the
+    // __fn___ name its Fern sibling uses: a zero-arg helper's stack and register
+    // conventions coincide, so the call site never learns which one it got.
+    // Heap-independent, gated by its own need.
     if (s.has_need("proc_fork")) {
-        s = s.write(".globl __fern_proc_fork\n");
-        s = s.write(".type __fern_proc_fork, %function\n");
-        s = s.write("__fern_proc_fork:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
         if (darwin) {
+            s = s.write(".globl __fn___fern_proc_fork\n");
+            s = s.write(".type __fn___fern_proc_fork, %function\n");
+            s = s.write("__fn___fern_proc_fork:\n");
+            s = s.write("    stp x29, x30, [sp, #-16]!\n");
+            s = s.write("    mov x29, sp\n");
             s = s.write("    mov x16, #2\n");
             s = s.write("    svc #0x80\n");
             s = s.write("    b.cc .Lpf_ok\n");
@@ -6239,18 +6246,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
             s = s.write("    cbz x1, .Lpf_done\n");     // parent: x0 = child pid
             s = s.write("    mov x0, #0\n");            // child
             s = s.write(".Lpf_done:\n");
+            s = s.write("    ldp x29, x30, [sp], #16\n");
+            s = s.write("    ret\n");
+            s = s.write(".size __fn___fern_proc_fork, .-__fn___fern_proc_fork\n");
         } else {
-            s = s.write("    mov x0, #17\n");           // flags = SIGCHLD
-            s = s.write("    mov x1, #0\n");            // newsp = 0 (CoW share)
-            s = s.write("    mov x2, #0\n");            // parent_tid
-            s = s.write("    mov x3, #0\n");            // tls
-            s = s.write("    mov x4, #0\n");            // child_tid
-            s = s.write("    mov x8, #220\n");          // sys_clone
-            s = s.write("    svc #0\n");
+            s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork(tgt), s.struct_decls, s);
         }
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        s = s.write(".size __fern_proc_fork, .-__fern_proc_fork\n");
     }
     // __fern_str_chars is now a Fern runtime function (#2649): see
     // asmcore.rt_src_str_chars, emitted (need-gated) in the migrated-helpers
