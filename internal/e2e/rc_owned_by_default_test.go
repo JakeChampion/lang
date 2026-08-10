@@ -18,11 +18,11 @@ import (
 func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.OwnedByDefault
+		defer func() { ast.OwnedByDefault = prev }()
 		ast.OwnedByDefault = false
 		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		ast.OwnedByDefault = true
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
-		ast.OwnedByDefault = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -32,11 +32,11 @@ func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
 func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.OwnedByDefault
+		defer func() { ast.OwnedByDefault = prev }()
 		ast.OwnedByDefault = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		ast.OwnedByDefault = true
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
-		ast.OwnedByDefault = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -46,14 +46,14 @@ func TestArm64OwnedByDefaultMatchesBorrow(t *testing.T) {
 func TestWASMOwnedByDefaultMatchesBorrow(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.RcFreeEnabled
+		defer func() { ast.RcFreeEnabled = prev }()
 		ast.RcFreeEnabled = true
 		po := ast.OwnedByDefault
+		defer func() { ast.OwnedByDefault = po }()
 		ast.OwnedByDefault = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.OwnedByDefault = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
-		ast.OwnedByDefault = po
-		ast.RcFreeEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("owned-by-default diverged from borrow model:\n borrow=(exit %d) %q\n owned =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}

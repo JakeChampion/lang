@@ -17,11 +17,11 @@ import (
 func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.EnumRcPayloads
+		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
 		ast.EnumRcPayloads = true
 		outOn, exitOn := runFixtureX86_64FreeOn(t, f.mainPath, f.stdin)
-		ast.EnumRcPayloads = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("enum-rc-payloads-on diverged from move model:\n move=(exit %d) %q\n rc  =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -31,11 +31,11 @@ func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.EnumRcPayloads
+		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
 		ast.EnumRcPayloads = true
 		outOn, exitOn := runFixtureArm64FreeOn(t, f.mainPath, f.stdin)
-		ast.EnumRcPayloads = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("enum-rc-payloads-on diverged from move model:\n move=(exit %d) %q\n rc  =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
@@ -45,14 +45,14 @@ func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 func TestWASMEnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
 		prev := ast.RcFreeEnabled
+		defer func() { ast.RcFreeEnabled = prev }()
 		ast.RcFreeEnabled = true
 		pe := ast.EnumRcPayloads
+		defer func() { ast.EnumRcPayloads = pe }()
 		ast.EnumRcPayloads = false
 		outOff, exitOff := runFixtureWasm(t, f.mainPath, f.stdin)
 		ast.EnumRcPayloads = true
 		outOn, exitOn := runFixtureWasm(t, f.mainPath, f.stdin)
-		ast.EnumRcPayloads = pe
-		ast.RcFreeEnabled = prev
 		if outOff != outOn || exitOff != exitOn {
 			t.Errorf("enum-rc-payloads-on diverged from move model:\n move=(exit %d) %q\n rc  =(exit %d) %q", exitOff, outOff, exitOn, outOn)
 		}
