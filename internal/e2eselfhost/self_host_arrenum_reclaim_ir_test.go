@@ -41,9 +41,9 @@ import (
 // A literal-initialised string local declared INSIDE a loop body leaks 24 B/iteration on
 // x86-64 and arm64 (wasm is flat) regardless of what else the loop does — the plain
 // `i32[]` control leaks it identically, with no rc element anywhere — so leaving it in
-// the loop would make these cases fail on a defect they are not testing. That is a
-// separate bug, filed on its own; see the ARRENUM notes in
-// docs/RC-PERCEUS-SELF-HOST-PORT.md.
+// the loop would make these cases fail on a defect they are not testing — the first cut
+// of this gate did exactly that, reading 98 on x86-64 and arm64 while wasm passed, which
+// looks just like a partial fix to the class under test. Tracked as #6582.
 //
 // SOUNDNESS: admission here is deliberately much tighter than its siblings'. The only
 // admitted use of the local is `xs.len()`; ANY element extraction — `xs[i]` bare, as a

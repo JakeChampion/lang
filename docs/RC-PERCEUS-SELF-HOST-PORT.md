@@ -6019,6 +6019,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   independent of element type — the plain `i32[]` control leaks it identically with
   no rc element anywhere — so it is not an enum-array problem. The bounded-churn
   gate cases hoist the string above the loop so they fail only on what they test.
+  Filed as #6582, with the control table and the backend split.
 
   VERIFIED: new `TestSelfHostArrEnumReclaim{IRX86_64,IRArm64,WasmIR}` (6 rows × 3
   backends — 3 bounded-churn including an all-unit and an unqualified-ctor spelling,
