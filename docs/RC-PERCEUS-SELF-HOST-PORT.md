@@ -6418,3 +6418,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   loop-negative that asserts on CONTENTS rather than a count), the per-module fixpoint
   (581 s), and the grow / array / string reclaim suites (604 s). Refs #6048 #6043
   #6036 #4873.
+
+- 2026-08-10: **The self-rebind field-alias exemption widens to ARRAY fields (#6628),
+  and the residual it exposes is a third defect (#6653).** #6623 exempted a
+  nested-struct / enum field read in `name = T { …, f: name.f, … }` from the NODEEP
+  move scan; the array spelling `ys: o.ys` was left marked and still cost the local
+  its whole `__field_reclaim_S` credit.
+
+  | k | `ys: o.ys` before | after | `...o` control |
+  |---|---|---|---|
+  | 1 | 60 / 30 — **1440 B** | 60 / 50 — 480 B | 60 / 60 — **0** |
+  | 2 | 90 / 50 — **2160 B** | 90 / 80 — 480 B | 90 / 90 — **0** |
+  | 8 | 270 / 170 — **9840 B** | 270 / 260 — 480 B | 270 / 270 — **0** |
+  | 32 | 990 / 650 — **98160 B** | 990 / 980 — 480 B | 990 / 990 — **0** |
+
+  **#6628's premise that the retain is missing is wrong, and that is the whole
+  finding.** It reads the override path as inc'ing an array field value "only when it
+  is a bare ident naming an rc-array slot", so it asks for the retain to be widened
+  before the exemption. But the `ExprFieldAccess` arm of the array gate already incs
+  on `field_access_arr_field_type` resolving, and it cannot silently decline: an
+  unresolved receiver leaves `fav_ok` false and BAILS the whole lowering rather than
+  storing uncounted. So the exemption alone is sound, and the issue's two-sided
+  landing requirement does not apply. `is_struct_array_field_type` rides along —
+  the same arm, the same gate. `string`, `string[]` and array-of-ENUM stay marked:
+  `Ty[]` enters neither array gate and the fallback retain admits only a bare ident.
+
+  **The 480 B residual is NOT this defect and not #6605.** It is flat in k — one
+  stranded `ys` buffer per CALL, confirmed by scaling `ys` from 3 to 30 elements
+  (480 → 2640 B). The override incs the aliased field, `__field_reclaim_`'s array arm
+  COW-SKIPS a field that is pointer-equal in old and new, and nothing else decs it.
+  The `...o` spelling reaches an exact 0 because its base-copy path emits no inc for
+  an array field at all.
+
+  The same imbalance is why `TestSelfHostNestedFieldAliasRebindX86_64` was RED on
+  `2d9b85a`: #6627 was validated on a base without #6620, and once both were on main
+  the `...base` carry went to 0 while the explicit spelling stayed at 800. There the
+  route is different — the nested-struct arm of `__field_reclaim_S` is gated on
+  `structfldok:S`, and the explicit `o.inner` read is itself what disqualifies the
+  type, so the arm is absent from the emitted body entirely (visible in
+  `-target x86-64-asm`). Both routes are #6653; this change re-points that row at an
+  exact pin of the residual so main is green and the number cannot drift.
+
+  VERIFIED: `TestSelfHostNestedFieldAliasRebindX86_64` (2 new k-sweep rows + an
+  array fork-negative; the two new rows FAIL on the parent at 9840 / 98160 B),
+  cross-backend exit agreement with `fern -interp` on x86-64 / arm64 (qemu) / wasm
+  (wasmtime), `FERN_STRICT_IR=1` clean on both probes.
+  Refs #6628 #6653 #6623 #6605 #6620.
