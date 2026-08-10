@@ -159,6 +159,23 @@ func TestAssembleBasic(t *testing.T) {
 	}
 }
 
+// TestAssembleBrk covers the `brk #imm` mnemonic, which the in-process
+// assembler needs because it is the hostless "stop" the freestanding
+// codegen emits where a hosted build would `svc` (#6510). Without it the
+// emitted text assembles nowhere.
+func TestAssembleBrk(t *testing.T) {
+	got, err := arm64.Assemble("\t.text\n\tbrk #1\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := arm64.Put(nil, arm64.BRK(1)); !bytes.Equal(got, want) {
+		t.Fatalf("got % x, want % x", got, want)
+	}
+	if _, err := arm64.Assemble("\t.text\n\tbrk\n"); err == nil {
+		t.Error("expected an error for `brk` with no operand")
+	}
+}
+
 func TestAssembleErrors(t *testing.T) {
 	if _, err := arm64.Assemble("\tfjcvtzs x0, d1\n"); err == nil {
 		t.Error("expected error for unsupported instruction")

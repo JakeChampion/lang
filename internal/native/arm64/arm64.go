@@ -945,6 +945,16 @@ func SVC(imm16 uint16) uint32 {
 	return 0xD4000001 | (uint32(imm16) << 5)
 }
 
+// BRK encodes `brk #imm16` — a breakpoint, which raises a synchronous
+// exception rather than trapping to a syscall handler. This is the
+// hostless "stop": SIGTRAP under a kernel, an exception vector without
+// one (#6510).
+//
+// Encoding: 11010100 001 imm16 00000 → base 0xD4200000 | imm16<<5.
+func BRK(imm16 uint16) uint32 {
+	return 0xD4200000 | (uint32(imm16) << 5)
+}
+
 // RET encodes `ret Xn` — return to the address in Xn (x30 by the
 // usual convention).
 //

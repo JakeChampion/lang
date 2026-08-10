@@ -142,6 +142,8 @@ func TestEncodings(t *testing.T) {
 		{"br x0", arm64.BR(0), 0xd61f0000},
 		{"blr x1", arm64.BLR(1), 0xd63f0020},
 		{"svc #0", arm64.SVC(0), 0xd4000001},
+		{"brk #0", arm64.BRK(0), 0xd4200000},
+		{"brk #1", arm64.BRK(1), 0xd4200020},
 		{"ret (x30)", arm64.RET(30), 0xd65f03c0},
 	}
 	for _, c := range cases {
