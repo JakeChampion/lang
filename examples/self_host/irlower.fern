@@ -29975,6 +29975,35 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
     return false;
 }
 
+// fieldmove_selfrebind_alias: `e` is exactly `name.<f>`, where f is a nested-struct
+// or enum field of `sty`. In the self-rebind `name = T { …, f: name.f, … }` that
+// value goes into the box THIS SLOT is about to hold, and the struct-literal
+// override path RETAINS it — the nested-struct and enum arms inc unconditionally
+// for anything that is not a fresh literal / ctor, which a field read never is. So
+// the superseded box's deep drop decs the dup instead of freeing a live field, and
+// treating the read as a move only costs `name` its whole reclaim credit (#6623).
+//
+// ARRAY and STRING fields are deliberately NOT exempt: their override retain is
+// conditional — an array incs only for a bare ident naming an rc-array slot, a
+// string only under slit_reclaim and a freshness test — so a field read there can
+// genuinely reach the successor box uncounted.
+function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => {
+                    if (oid.name != name) { return false; }
+                    var ft: string = decl_field_type(structs, sty, fa.field);
+                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
     match (st) {
         // A direct `var t = x.f` init is a BORROW, not a move — the same split
@@ -29984,7 +30013,30 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
         // exactly the `s = lo.state` hazard, and dropping this case is what keeps
         // `var xs = r.hs; xs[1]()` deep-drop-worthy.
         parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs); },
-        parser.StmtAssign(a) => { return fieldmove_is_move_value(a.value, name, sty, structs) || fieldmove_expr(a.value, name, sty, structs); },
+        parser.StmtAssign(a) => {
+            // The self-rebind literal keeps its retained field aliases (see
+            // fieldmove_selfrebind_alias); every other value in it still marks.
+            if (a.target == name) {
+                match (a.value) {
+                    parser.ExprStructLit(asl) => {
+                        if (asl.has_base) {
+                            if (fieldmove_is_move_value(asl.base, name, sty, structs)) { return true; }
+                            if (fieldmove_expr(asl.base, name, sty, structs)) { return true; }
+                        }
+                        var fi: i32 = 0;
+                        while (fi < asl.field_values.len()) {
+                            if (!fieldmove_selfrebind_alias(asl.field_values[fi], name, sty, structs)
+                                && fieldmove_is_move_value(asl.field_values[fi], name, sty, structs)) { return true; }
+                            if (fieldmove_expr(asl.field_values[fi], name, sty, structs)) { return true; }
+                            fi = fi + 1;
+                        }
+                        return false;
+                    },
+                    _ => {}
+                }
+            }
+            return fieldmove_is_move_value(a.value, name, sty, structs) || fieldmove_expr(a.value, name, sty, structs);
+        },
         parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs) || fieldmove_expr(r.value, name, sty, structs); },
         parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs); },
         parser.StmtIf(f) => {
