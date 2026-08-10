@@ -6508,3 +6508,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   equality assertion against the carry), cross-backend exit agreement with
   `fern -interp` on x86-64 / arm64 (qemu) / wasm (wasmtime).
   Refs #6653 #6628 #6620 #6665.
+
+- 2026-08-10: **The rc-enum block's FINAL value now rides the exit sweep
+  ("RCENUMS:"), which is what flips #6608's pinned row.** #6622 killed the
+  unbounded per-iteration leak on a rc-payload enum loop-local, but left the tail:
+  on #6608's probe it measured `allocs=400 frees=396 live_bytes=160` — 2 stranded
+  per `work()` call, the last iteration's box + payload. Now 400/400, `live=0`,
+  exit **7** on both x86-64 and arm64.
+
+  **The credit is SPLIT rather than flipped, and that is the whole design.**
+  `reclaim_slot_name`'s class note listed "RCENUM:" among the classes that must NOT
+  be switched on at the sweep, because the consuming-match analysis frees the value
+  inside the block on every iteration including the last — sweeping it is a second
+  claim on a released box. That was right for the whole class until #6622 admitted
+  the half with NO consuming match, which nothing frees in-block (the rebind
+  releases only the PRIOR value). So the no-match half alone earns "RCENUMS:"
+  (`slot_is_reclaimable_rcenum_sweep`, keyed on `reclaim_slot_name` so a
+  `!retired!` block slot still finds its credit); the match-consumed half keeps
+  "RCENUM:" alone. Same shape as the "TUPRC:" / "TUPRCS:" split. The note has been
+  corrected — **a one-class-one-answer assumption is what made it wrong once the
+  class grew a second shape.**
+
+  | `enum Box { Val(i32[]), Empty }`, loop-local | frees | exit |
+  |---|---|---|
+  | before #6622 | 0 / 400 | 3 |
+  | after #6622 | 396 / 400 | 3 |
+  | after this | **400 / 400** | **7** |
+
+  **THE INSTRUMENT LESSON, which cost a merged PR a wrong claim.** #6622's own
+  suite asserts the SCALING — residue constant while allocs and frees both double —
+  and a constant tail cannot fail that by construction. #6608's row compares the
+  heap mark across two identical calls, so it sees a per-call tail directly. I
+  wrote on #6622 that whichever PR landed second would flip #6608's row to 7; it
+  did not, and main stayed green, because the two suites were measuring different
+  defects. The tail was only ever visible from the weaker-looking gate. Both are
+  now exact-balance assertions, and #6608's row is renamed
+  `enum-payload-reclaimed`.
+
+  Unchanged and deliberately so: the match-consumed control (800/800 before and
+  after — no second release), and the payload-escape refusal (401/801, still
+  stranded, exits matching `fern -interp`).
+
+  VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` **PASS 540.62 s, run
+  FIRST** — this is the deep variant walk on RETIRED block slots, the operation §9
+  records as segfaulting gen1 in #6285 / #6375, so it is the gate that matters
+  here. Then 162 targeted suites 0 skips, including
+  `TestSelfHostLoopVarReclaimIR{X86_64,Arm64}` (the flipped pin, both backends) and
+  `TestSelfHostRcEnumBorrowHelperX86_64`. Refs #6606 #6608 #4365 #4451.

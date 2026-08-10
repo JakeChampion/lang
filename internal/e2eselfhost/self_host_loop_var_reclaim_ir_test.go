@@ -59,23 +59,33 @@ var loopVarReclaimCases = []struct {
         acc = acc + (p.y - p.x) - 1;`,
 		want: 7,
 	},
-	// The LEAK this row was filed for is CLOSED — #6622 made a `match (param)`
-	// scrutinee a borrow, so the loop-local is admitted and released: 400
-	// allocs / 398 frees, live flat at 80 bytes, against 400/0/16000 when this
-	// row was written. What survives is a REUSE gap: the boxes are freed and
-	// the next iteration still takes fresh address space, so the mark grows
-	// where native's is flat.
+	// #6606's enum half, CLOSED in two steps, and this row is what proved the
+	// second one was outstanding.
 	//
-	// The row stays at 3 because that divergence from native is real and
-	// unfixed. It is renamed because "-still-grows" was being read as "still
-	// leaks" — including by me, on #6606 — and the two came apart here.
+	// #6622 made a `match (param)` scrutinee a borrow, so the loop-local is
+	// admitted and released — 400 allocs / 0 frees became 400 / 396. That killed
+	// the 2.00x-per-doubling leak but left this row at 3, and #6626 read the
+	// remainder correctly as the mark measuring REUSE rather than frees. Both
+	// halves of that reading were right: the boxes really were nearly all freed,
+	// and the mark really does grow for a freed-but-not-reused shape. What tied
+	// them together is that the 4 stranded boxes (each `work()` call's FINAL
+	// value, 2 per call) are exactly what kept the second run from reusing the
+	// first run's blocks.
+	//
+	// The "RCENUMS:" scope-exit sweep credit releases that tail: 400/400,
+	// live_bytes 0, and the mark goes flat. So this is the unambiguous 3 -> 7 the
+	// `want` note above describes, not a re-reading of a row that stayed put.
+	//
+	// Renamed a second time, and the churn is the point: "-still-grows" was read
+	// as "still leaks" (by me, on #6606), then "-freed-not-reused" named the
+	// intermediate state, and now neither holds.
 	{
-		name: "enum-payload-freed-not-reused",
+		name: "enum-payload-reclaimed",
 		decl: `enum Box { Val(i32[]), Empty }
 function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => { return 0; } } }`,
 		body: `        var b: Box = Val([i, i + 7]);
         acc = acc + head(b) - i;`,
-		want: 3,
+		want: 7,
 	},
 	// #6606's string half, PARTLY closed by #6624: the `var` binding now earns
 	// its credit, but the two INLINE suffix(i) calls are anonymous temps on the
