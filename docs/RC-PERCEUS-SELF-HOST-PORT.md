@@ -6160,6 +6160,76 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: `TestSelfHostRcPlanDiff` (+2 cases), the per-module fixpoint (440 s),
   `TestSelfHostIRLowerRoundTrip`. Refs #5935 #5931 #4482 #4451.
 
+
+- 2026-08-10: **`Option[P]` where P's only rc field is a `string` — CLOSED, and a
+  scalar-only P with it (#6360).** #6495's near-miss row. The OPTSTRUCT class — the
+  fresh, non-escaping `Option[<struct>]` local whose loop-rebind + exit sweep
+  deep-free the payload's fields, its box and the option box — admitted a payload
+  struct only when `struct_has_reclaim_array_field` held. A payload whose sole
+  reclaimable field is a bare `string` matched nothing at all: no credit, so no drop
+  of any kind, so the string AND both boxes leaked.
+
+  **Everything downstream was already ready; the leak was entirely in admission.**
+  `__struct_drop_<P>`'s k_str arm has freed string fields on all three backends since
+  #4355; `nddo_reach` has counted a string field as reclaimable since #4297 A2; and
+  the arm-binding escape checker (`optstruct_arm_expr_escapes`) is field-TYPE generic
+  — a bare `p.name` extraction escapes because `string` is non-scalar, `p.name.len()`
+  is a borrow. The evidence was in two controls: the same struct bound as a BARE local
+  has been reclaimed since #4357, and `P { name: string, xs: i32[] }` was already
+  clean, because the array field alone made the whole struct admissible. Emitted asm
+  says it flatly — `__struct_drop_P` appears zero times for the string-only payload
+  and four times for both controls.
+
+  So the fix is the predicate, now `optstruct_payload_reclaimable`, shared by
+  `optstruct_ann_is` (the credit) and `slot_is_reclaimable_optstruct` (the emit-time
+  routing) so the two cannot disagree.
+
+  **The string half is gated a SECOND time at emit**, by
+  `struct_routes_field_reclaim`'s whole-program STRFLDOK verdict. A type that scan
+  refuses emits no `__struct_drop_<P>` call, so the two boxes are still freed and only
+  the string is stranded — the conservative direction. The construction-side retain
+  (`slit_reclaim`) reads the same verdict, so an ALIASED string field is inc'd at
+  construction and the k_str dec is balanced rather than a double-release.
+
+  **A second row fell out of the sweep and is closed here too: a SCALAR-ONLY struct
+  payload.** It has nothing to deep-drop, which is exactly why it was excluded while
+  this was "the deep-drop class" — and nothing else claimed a block-scoped one, so
+  both boxes leaked per bind. Its drop is the two box decs alone, no walk.
+
+  Measured, self-host x86-64, allocs/frees/live before → after (native is 0 on every
+  row, and every exit code matches `fern -interp`):
+
+  | shape | before | after |
+  |---|---|---|
+  | `Option[P]`, P = `{ name: string, n: i32 }` | 2400/800/**48000** | 2400/2400/**0** |
+  | same, arm never reads the string | 2400/800/**48000** | 2400/2400/**0** |
+  | `Option[P]`, P scalar-only | 800/0/**35200** | 800/800/**0** |
+  | `Option[P]`, P = `{ name: string, xs: i32[], n }` (control) | 2800/2800/0 | 2800/2800/0 |
+  | ALIASED string field (hazard) | — | 3700/3500/3200, exit == interp |
+  | arm extracts `p.name` (hazard) | — | refused, 50400 stranded |
+
+  The two hazard rows are the conservative side and are pinned as such: the aliased
+  one must not over-release (its residual 3200 is the retain, not a defect), and the
+  extracting arm must stay refused because releasing there would dangle.
+
+  VERIFIED: new `TestSelfHostOptStructStringFieldX86_64` (8 rows, exact alloc/free
+  balance — which a bump-growth bound cannot separate from "freed the boxes, stranded
+  the string"), four new cases in the shared `optStructReclaimCases` table so they run
+  on **x86-64, arm64 (qemu) and wasm (wasmtime)**,
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` (398 s, run FIRST per §the reclaim
+  rule), and the OPTSTRUCT/OPTTUP/OPTARR/string-field/struct-drop/nested-match
+  neighbour gates. Refs #6360 #4451.
+
+  Re-measured at the same commit, unchanged and still open — the rest of #6495's list
+  is a different cause (a per-ELEMENT string release, or an unreachable credit), not
+  another payload-struct admission:
+
+  | shape | self-host | frees |
+  |---|---|---|
+  | `Option[string[]]` | 57600 | 1600/4000 |
+  | `Option[Option[i32[]]]` | 48000 | **0**/1200 |
+  | `Result[string[], string]` | 57600 | 1600/4000 |
+
 - 2026-08-10: **`<scalar>.to_string()` now earns the `STR:` reclaim credit (#6599).**
   `var s: string = i.to_string()` never freed its box on the self-host, unbounded in a
   loop, while native was flat. It matters out of proportion to the shape because every
