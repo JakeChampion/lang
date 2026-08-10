@@ -6074,3 +6074,46 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: new `TestSelfHostLitStrLocalReclaim{IRX86_64,IRArm64}` (4 rows × 2
   backends), the whole `TestSelfHostStr*` family, `TestSelfHostArrEnumReclaim`, and
   `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6582 #4451.
+
+- 2026-08-10: **`__alloc_u8` untaint ported to the self-host free-eligibility
+  analysis (#5935), and the issue's rationale corrected.** Native's #5931 untaints
+  the allocator — `__alloc_u8(n)` hands back a fresh block that cannot alias its
+  scalar size argument — so a dynamically sized buffer is free-eligible. The
+  self-host's generic any-arg-tainted rule said otherwise, leaving
+  `__alloc_u8(16)` eligible and `__alloc_u8(n_bytes)` not.
+
+  **Item 1 of the issue's work list was already done.** It states `rc_fe_walk_expr`
+  "has no cast arm at all"; the tree has one — an `ExprUnary` arm matching `as_<T>`
+  that escapes a pointer-shaped operand cast to a non-pointer target. Only the
+  untaint (item 2) and the coverage (item 3) were outstanding.
+
+  **This is a differential-parity fix, NOT a memory win, and the issue says
+  otherwise.** It predicts the port is "plausibly material to the arena pressure
+  tracked around #3425" because gen1 is "still leaking". In fact
+  `free_eligible_of` has exactly one consumer in the whole self-host —
+  `rc_plan_dump` — so the table drives no emission and porting it cannot change
+  what any generation reclaims. Measured rather than argued: a
+  `while (…) { var s = i.to_string(); }` loop compiled by the self-host reads
+  `allocs=400 frees=0 live_bytes=6400` both before and after the port. The issue
+  also says the win "cannot currently be quantified" for want of a self-host
+  `FERN_LEAKCHECK`; `FERN_LEAKCHECK=1` on a self-host-COMPILED program measures it
+  directly, which is how that number was obtained.
+
+  That `to_string` buffer leak is real and still open — it is simply a different
+  gap, not this one.
+
+  **Both new gate cases were verified load-bearing by disabling each half in turn**,
+  because a differential case that passes before and after is not a gate:
+
+  | case | with both halves | untaint disabled | cast guard disabled |
+  |---|---|---|---|
+  | `fe-alloc-u8-computed-size` | pass | **FAIL** — native `buf` vs self-host `""` | pass |
+  | `fe-alloc-u8-address-escapes` | pass | pass | **FAIL** — native `""` vs self-host `buf` |
+
+  The second row fails in the DANGEROUS direction: without the cast arm the
+  self-host calls a buffer eligible whose address was handed out as a raw integer
+  (`buf as usize` into `__memcpy`, which is what `std/string`'s `s.bytes()` does).
+  That is the ordering constraint the issue flags, now pinned rather than reasoned.
+
+  VERIFIED: `TestSelfHostRcPlanDiff` (+2 cases), the per-module fixpoint (440 s),
+  `TestSelfHostIRLowerRoundTrip`. Refs #5935 #5931 #4482 #4451.
