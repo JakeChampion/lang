@@ -810,14 +810,20 @@ var strictIRBailReasons = []struct {
 	// A match in VALUE position parses into an immediately-invoked zero-param
 	// lambda, so the bail lands on a call whose callee is a lambda the source
 	// never wrote. Naming it "a lambda" sent a reader looking for one; the
-	// reason names the desugar instead. Reduced from fernsmith seed 59: a
-	// checked shift with a non-literal shift amount as the scrutinee. The
-	// payload width is what keeps it here — the i32 and u32 spellings both
-	// lower, and u64 is the width the inlined match-expression's payload gate
-	// still declines.
-	{"iife-value-block", `function main(): i32 {
-    var v: u64 = 7u64;
-    var u: u64 = (match ((490u64) <<? (v)) { Some(c) => c, None => 9u64 });
+	// reason names the desugar instead.
+	//
+	// What keeps it here is the payload KIND. This was a u64 checked-shift
+	// scrutinee until #6647 admitted that width, which is the retirement this
+	// table's header describes: the fixture stopped demonstrating a reason and
+	// was replaced rather than weakened. An 8-byte-ELEMENT array payload is the
+	// gap that is still open — iife_payload_field_bindable admits
+	// is_scalar_array_type, whose binding mark does not carry the i64/f64
+	// element width, so an element read would default to i32 and read garbage.
+	// The i32[] spelling of this program lowers.
+	{"iife-value-block", `enum W { Wide(i64[]), Empty }
+function main(): i32 {
+    var w: W = Wide([5i64, 6i64]);
+    var u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: `var u` bound from immediately-invoked value block"},
