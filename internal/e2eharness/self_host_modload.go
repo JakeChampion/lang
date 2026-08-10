@@ -37,7 +37,7 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 }
 
 // RunDriverFile runs the compiled driver binary with `entry` as argv[1]
-// (plus any extra driver flags, e.g. "-target", "arm64-linux") and returns its
+// (plus any extra driver flags, e.g. "-target", "arm64") and returns its
 // stdout (the emitted asm).
 func RunDriverFile(t *testing.T, runner []string, bin, entry string, extraArgs ...string) []byte {
 	t.Helper()

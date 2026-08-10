@@ -36,7 +36,7 @@ func BuildModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin
 // an x86 HOST binary — it runs on x86 and emits aarch64 asm, the file-based
 // successor to bundle_run_arm64. Since the #4398 fold this is the SAME merged
 // asm_modload_run driver BuildModloadDriverX86 builds (one shared cached
-// build); callers select arm64 by passing "-target", "arm64-linux" through their
+// build); callers select arm64 by passing "-target", "arm64" through their
 // compile*/RunDriverFile invocation. Returns the x86 gcc/runner (for
 // executing the driver) and the driver binary path. The caller links the
 // emitted arm64 asm with the aarch64 cross toolchain.
