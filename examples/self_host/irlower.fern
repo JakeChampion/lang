@@ -31687,19 +31687,40 @@ function emit_opttup_reclaim_store(se: LowerState, slot: i32, inner: string): Lo
     return st.emit(ir.op_store_local(slot));
 }
 
-// ── OPTSTRUCT: reclaim `Option[<struct-with-array-field>]` locals (#4365) ──
+// ── OPTSTRUCT: reclaim `Option[<struct-with-rc-field>]` locals (#4365) ──
 // The struct sibling of OPTTUP: the Some payload is a STRUCT box (not a tuple), so the
 // inline deep-free drops it via the struct-field deep-drop (emit_struct_field_drops ->
 // __struct_drop_<P>) instead of the tuple deep-drop. some_opt_type records the full
 // Option[P] for a struct payload (no tuple-style element collapse), so no opt_ty override
 // is needed at the binding.
 
-// optstruct_ann_is: `type_name` is `Option[<struct-with-reclaim-array-field>]`.
+// optstruct_payload_reclaimable: the Some payload struct `sty` is one this class can
+// release. Three disjuncts, in descending amount of work at the drop:
+//   - an rc-array / nested-struct / enum field: __struct_drop_<P> walks it, then the
+//     two box decs (the original class).
+//   - a bare `string` field: __struct_drop_<P>'s k_str arm frees it, then the box decs.
+//     Gated a SECOND time at emit by struct_routes_field_reclaim's whole-program STRFLDOK
+//     verdict — a type that scan refuses emits no __struct_drop_<P> call, so the boxes are
+//     still freed and only the string is stranded, never over-released. The
+//     construction-side retain (slit_reclaim) consults the same verdict, so the k_str dec
+//     is balanced on an aliased field as well as a fresh one.
+//   - SCALAR-ONLY: nothing to walk, so the drop is the two box decs alone. It was excluded
+//     while this was "the deep-drop class" and nothing else claimed a block-scoped one, so
+//     both boxes leaked per bind.
+// A payload reaching NONE of the three (map / option / tuple fields only) stays refused:
+// its box free would be sound, but no probe measures it, so it keeps today's leak.
+function optstruct_payload_reclaimable(structs: parser.StructDecl[], sty: string): boolean {
+    return struct_has_reclaim_array_field(structs, sty)
+        || struct_has_string_field(structs, sty)
+        || struct_is_scalar_only(structs, sty);
+}
+
+// optstruct_ann_is: `type_name` is `Option[<struct with a reclaimable field>]`.
 function optstruct_ann_is(type_name: string, structs: parser.StructDecl[]): boolean {
     var inner: string = opttup_inner_type(type_name);
     if (inner == "") { return false; }
     if (!decl_is_struct(structs, inner)) { return false; }
-    return struct_has_reclaim_array_field(structs, inner);
+    return optstruct_payload_reclaimable(structs, inner);
 }
 
 // optstruct_init_is_fresh: the init is `Some(<fresh struct literal>)` (is_fresh_struct_init
@@ -31926,15 +31947,16 @@ function collect_fresh_optstruct_names(stmts: parser.Stmt[], structs: parser.Str
 }
 
 // slot_is_reclaimable_optstruct: slot i holds a fresh, non-escaping
-// `Option[<struct-with-array>]` local, credited "OPTSTRUCT:" by reclaimable_names_of. Gated
-// on the opt_type mark (an option-box slot whose inner is a reclaim-array struct) + credit.
+// `Option[<struct-with-rc-field>]` local, credited "OPTSTRUCT:" by reclaimable_names_of.
+// Gated on the opt_type mark (an option-box slot whose inner is such a struct) + credit —
+// the same optstruct_payload_reclaimable predicate the credit itself used.
 function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
     var inner: string = opttup_inner_type(s.locals[i].opt_type);
     if (!decl_is_struct(s.structs, inner)) { return false; }
-    if (!struct_has_reclaim_array_field(s.structs, inner)) { return false; }
+    if (!optstruct_payload_reclaimable(s.structs, inner)) { return false; }
     return util.index_of_str(s.reclaimable_names, "OPTSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
 }
 
