@@ -33,9 +33,17 @@ var loopVarReclaimCases = []struct {
 	name string
 	decl string
 	body string
-	// want is 7 when the loop-body var is reclaimed, 3 when the mark grows.
-	// A 3 here is a PINNED DIVERGENCE from native, not an expectation — see
-	// the comment on each such row.
+	// want is 7 when the bump mark is flat across the second run, 3 when it
+	// grows. A 3 is a PINNED DIVERGENCE from native, not an expectation.
+	//
+	// READ THE MARK FOR WHAT IT IS. It measures whether the allocator hands
+	// the second run the first run's buffers — so it grows for a leak AND for
+	// a shape that is freed but whose blocks are not reused. Those are
+	// different bugs and this probe cannot tell them apart; only FERN_LEAKCHECK
+	// (allocs/frees/live_bytes, a compile-time instrumentation with no
+	// in-language accessor) can. A row moving 3 -> 7 is unambiguous progress,
+	// but a row SITTING at 3 is not evidence the value still leaks, and naming
+	// one "-still-leaks" would assert more than the instrument supports.
 	want int
 }{
 	{
@@ -51,24 +59,35 @@ var loopVarReclaimCases = []struct {
         acc = acc + (p.y - p.x) - 1;`,
 		want: 7,
 	},
-	// #6606: the enum box and its array payload are both stranded, on all
-	// three backends (x86-64 / arm64 / wasm all measured at exactly 2.00x per
-	// doubling of the iteration count). Native is flat. Flip to 7 when it lands.
+	// The LEAK this row was filed for is CLOSED — #6622 made a `match (param)`
+	// scrutinee a borrow, so the loop-local is admitted and released: 400
+	// allocs / 398 frees, live flat at 80 bytes, against 400/0/16000 when this
+	// row was written. What survives is a REUSE gap: the boxes are freed and
+	// the next iteration still takes fresh address space, so the mark grows
+	// where native's is flat.
+	//
+	// The row stays at 3 because that divergence from native is real and
+	// unfixed. It is renamed because "-still-grows" was being read as "still
+	// leaks" — including by me, on #6606 — and the two came apart here.
 	{
-		name: "enum-payload-still-grows",
+		name: "enum-payload-freed-not-reused",
 		decl: `enum Box { Val(i32[]), Empty }
 function head(b: Box): i32 { match (b) { Val(xs) => { return xs[0]; }, Empty => { return 0; } } }`,
 		body: `        var b: Box = Val([i, i + 7]);
         acc = acc + head(b) - i;`,
 		want: 3,
 	},
-	// #6606 again, and a DIFFERENT reach: this one is flat on wasm and grows
-	// only on the two natives — the same backend split #6582 records for a
-	// literal-initialised string local. The `suffix` call is what stops the
-	// concat const-folding into a static literal, so a fresh heap string is
-	// built per iteration rather than a section-resident one.
+	// #6606's string half, PARTLY closed by #6624: the `var` binding now earns
+	// its credit, but the two INLINE suffix(i) calls are anonymous temps on the
+	// is_fresh_str_temp path, which keeps the builtin-allowlist limit the
+	// binding shed. Still a genuine leak, unlike the enum row above — 1000
+	// allocs / 798 frees, 202 boxes stranded and growing with the count.
+	//
+	// Also a DIFFERENT reach: flat on wasm, grows only on the two natives — the
+	// backend split #6582 records for a literal-initialised string local. The
+	// suffix call is what stops the concat const-folding into a static literal.
 	{
-		name: "string-concat-still-grows",
+		name: "string-concat-temps-still-leak",
 		decl: `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }`,
 		body: `        var s: string = "v-" + suffix(i);
         acc = acc + s.len() - 2 - suffix(i).len();`,
