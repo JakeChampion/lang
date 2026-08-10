@@ -169,6 +169,14 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 	}{
 		{
 			// Each block-scoped box is moved into a container read after the loop.
+			//
+			// The count moved 200 -> 1000 with #6535's bound-element admission, and
+			// 1000 is the right number: `keep` now earns the append-built ARRSTRUCT
+			// credit, so its deep walk releases the four boxes and their `xs` buffers
+			// per round instead of stranding them. Native prints the identical
+			// `allocs=1000 frees=1000 live_bytes=0` for this program, and the exit
+			// code below (a read of every element after the loop) is what says the
+			// release lands after the last live use rather than under it.
 			name: "boxes_escape_into_an_outer_container",
 			body: `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -185,7 +193,7 @@ function round(r: i32): i32 {
     return acc + r;
 }`,
 			want:      8,
-			wantFrees: 200,
+			wantFrees: 1000,
 		},
 		{
 			// Aliased to a local that outlives the block and is read after it.
