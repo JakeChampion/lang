@@ -1303,6 +1303,29 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                     var none_args: Value[] = [];
                     return v_variant("None", none_args);
                 }
+                // A top-level function named as a VALUE rather than called —
+                // `[inc, dbl]`, or passing `inc` to a higher-order function
+                // (#6611). Last of the three, which is what keeps consts
+                // working: a const IS a zero-arg function, so the scan above
+                // must claim it first and call it. A genuine zero-arg function
+                // therefore cannot be named as a value here, which costs
+                // nothing — doing so is E002 upstream.
+                var vfi: i32 = 0;
+                while (vfi < env.funcs.len()) {
+                    var vfd: parser.FuncDecl = env.funcs[vfi];
+                    if (vfd.name == id.name && vfd.receiver_name.len() == 0) {
+                        var no_names: string[] = [];
+                        var no_values: Value[] = [];
+                        return VFunc {
+                            params: vfd.params,
+                            ret_type: vfd.ret_type,
+                            body: vfd.body,
+                            captured_names: no_names,
+                            captured_values: no_values
+                        };
+                    }
+                    vfi = vfi + 1;
+                }
             }
             return idv;
         },
@@ -1863,6 +1886,23 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // variant. VStruct uses its declared type_name; primitive
     // variants map to the language's primitive type-keywords
     // so `function (s: string) len(): i32 { … }` dispatches.
+    // A fn-valued TUPLE element: `(t.0)(5)` parses as a call whose callee is a
+    // field access, so it arrives here as method dispatch (#6611). Checked
+    // ahead of the recv_type derivation below, which has no name for a tuple
+    // and would reject it first. A tuple has no methods, so a numeric index
+    // holding a closure is the only thing this spelling can mean.
+    match (recv) {
+        VTuple(tv) => {
+            var ti: i32 = util.digits_to_i32(name);
+            if (ti >= 0 && ti < tv.elements.len()) {
+                match (tv.elements[ti]) {
+                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases); },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
     var recv_type: string = "";
     match (recv) {
         VStruct(sv) => { recv_type = sv.type_name; },
