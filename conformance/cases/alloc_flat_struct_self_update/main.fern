@@ -28,6 +28,8 @@ import "std/i64";
 struct Pt { x: i32, y: i32 }
 struct Named { tag: string, n: i32 }
 struct Buf { xs: i32[], n: i32 }
+struct Inner { tag: i32, data: i32[] }
+struct Nest { xs: i32[], inner: Inner, n: i32 }
 
 function scalar_only(k: i32): i32 {
     var p: Pt = Pt { x: 0, y: 0 };
@@ -71,10 +73,32 @@ function fork_base(k: i32): i32 {
     return a.n + b.n + c.n + a.xs[0] + b.xs[1] + c.xs[0];
 }
 
+// An array field REPLACED while a sibling nested-struct field is CARRIED
+// through the base. The carried field is pointer-equal in old and new, so the
+// cow guard skipped it — correct as a FREE, wrong as a release: the base copy
+// took an rc-inc for it, paid to the new box's drop, and the superseded box's
+// own reference then died unreleased. That stranded `inner` and the array it
+// owns, once per rebind chain — flat in `k`, so it hid as a per-call constant
+// rather than as growth.
+//
+// `keep` aliases the inner box and is read AFTER the loop, so releasing it one
+// time too many prints a wrong number here instead of failing silently.
+function nested_struct(k: i32): i32 {
+    var o: Nest = Nest { xs: [1, 2], inner: Inner { tag: 3, data: [9] }, n: 0 };
+    var keep: Inner = o.inner;
+    var i: i32 = 0;
+    while (i < k) {
+        o = Nest { ...o, xs: o.xs.append(i) };
+        i = i + 1;
+    }
+    return o.xs.len() + o.inner.tag + keep.tag + keep.data[0];
+}
+
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
     for i in 0..n {
-        acc = acc + scalar_only(8) + with_string(8) + with_array(8) + fork_base(i);
+        acc = acc + scalar_only(8) + with_string(8) + with_array(8) + fork_base(i)
+            + nested_struct(8);
     }
     return acc;
 }

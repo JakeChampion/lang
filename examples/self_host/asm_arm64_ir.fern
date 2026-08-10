@@ -2018,9 +2018,17 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    ldr x1, [x11, #" + off + "]\n");      // old.field_k
-            s = s.write("    ldr x2, [x10, #" + off + "]\n");      // new.field_k
-            s = s.write("    cmp x1, x2\n");                       // == new? (cow)
-            s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
+            // Carried nested-struct / nested-enum fields skip the cow compare
+            // and always release — the x86 carried_release transcription
+            // (#6605). The base copy inc'd the field for the NEW box's drop,
+            // so the OLD box's reference has to be given back here or the
+            // inner box is stranded.
+            var carried_release: boolean = fr_struct || fr_enum;
+            if (!carried_release) {
+                s = s.write("    ldr x2, [x10, #" + off + "]\n");  // new.field_k
+                s = s.write("    cmp x1, x2\n");                   // == new? (cow)
+                s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
+            }
             s = s.write("    cbz x12, .Lafr_" + san + "_dec" + ks + "\n");  // snap == 0 (local)?
             s = s.write("    ldr x2, [x12, #" + off + "]\n");      // snap.field_k
             s = s.write("    cmp x1, x2\n");                       // == snap? (caller's)

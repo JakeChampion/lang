@@ -8535,9 +8535,21 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                     // nested (NOT a flat i32.or) so snap.field_k is never loaded
                     // when snap == 0: dec if snap == 0, else dec iff
                     // old.field_k != snap.field_k.
+                    //
+                    // A carried nested-struct / nested-enum field skips the cow
+                    // test and always releases — the wasm sibling of the x86
+                    // carried_release arm (#6605). The base copy inc'd it for
+                    // the NEW box's drop, so the OLD box's reference must be
+                    // given back or the inner block is stranded. The snap guard
+                    // still stands.
+                    if (frk_nest) {
+                        o = o + "      (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
+                        o = o + "        (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))\n";
+                    } else {
                     o = o + "      (if (i32.ne " + oldf + " " + newf + ") (then\n";
                     o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
                     o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";
+                    }
                 }
                 k = k + 1;
             }

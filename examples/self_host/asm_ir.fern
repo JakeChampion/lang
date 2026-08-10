@@ -5934,8 +5934,25 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
             s = s.write("    movq " + off + "(%r10), %rsi\n");      // old.field_k
-            s = s.write("    cmpq " + off + "(%r11), %rsi\n");      // == new.field_k? (cow)
-            s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
+            // A nested-struct / nested-enum field CARRIED through `...base` is
+            // pointer-equal in old and new, so the cow guard skipped it — right
+            // as a FREE, wrong as a release (#6605). The base copy took an
+            // `__fern_rc_inc` for it, paid to the NEW box's future
+            // __struct_drop; the OLD box's own reference then died here
+            // unreleased, stranding the inner box and anything it owns. One
+            // object per rebind chain, flat in the iteration count.
+            //
+            // So these field kinds skip the cow compare and always release.
+            // The same __fern_arr_dec serves both cases because it is
+            // rc-guarded: a REPLACED field is freed, a CARRIED one is at rc>=2
+            // (new box + old box) and merely decs back to the new box's sole
+            // claim. The snap guard below still stands — the caller's original
+            // is not ours to release.
+            var carried_release: boolean = fr_struct || fr_enum;
+            if (!carried_release) {
+                s = s.write("    cmpq " + off + "(%r11), %rsi\n");  // == new.field_k? (cow)
+                s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
+            }
             s = s.write("    testq %r9, %r9\n");                    // snap == 0 (local)?
             s = s.write("    jz .Lfr_" + san + "_dec" + ks + "\n");
             s = s.write("    cmpq " + off + "(%r9), %rsi\n");       // == snap.field_k? (caller's)
