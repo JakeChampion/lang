@@ -91,8 +91,8 @@ every target would grant `alloc` and the capability would carry no information.
 
 ## The target
 
-`-target freestanding` exists and grants nothing (#6509). It is **check-only**: the
-descriptor is declared, `fern -targets` lists it, and `fern -check -target freestanding`
+`-target arm64-freestanding` / `-target x86-64-freestanding` exist and grant nothing (#6509). It is **check-only**: the
+descriptor is declared, `fern -targets` lists it, and `fern -check -target arm64-freestanding`
 type-checks against its empty capability set — but no backend emits for it, and asking
 one to is a refusal naming the check path rather than the "unknown target" error, which
 would be false.
@@ -109,20 +109,71 @@ Two consequences worth knowing:
   target grants. A bare `fern -check` still means "does this type-check".
 - **`log` is no longer universal.** `TestNoTargetMissesLogCapability` exempts targets
   marked `NoBackend`. Keyed on the flag rather than the name, so the day something emits
-  for freestanding the invariant applies again — at which point *where does a
-  freestanding artifact put a panic message?* becomes a question with an answer instead
-  of an omission.
+  for freestanding the invariant applies again.
 
-The entry point is deliberately unspecified: `HandlerKinds` is empty, because a
-freestanding artifact is not entered at `main`. #6510 settles the shape.
+## The entry shape
 
-**There is more than one shape, and #6510 must not foreclose on the second.** A
-freestanding artifact can be a *guest* — a set of exported symbols its embedder calls,
-closer to the existing `-shared` / `-export` path than to any handler kind — or it can
-be the *host*, entered at a reset vector, owning the vector table and the MMU. Fern
-targets both (`docs/BARE-METAL-PLAN.md`). The guest shape is the near-term one and the
-right thing to build first; hard-coding it as *the* freestanding shape is what turns the
-host shape into a rewrite instead of a second descriptor field.
+`HandlerKinds` is empty because a freestanding artifact is not entered at `main`. What
+replaces it is `Descriptor.Entry`, an `EntryShape` on the environment (#6510):
+
+| shape | who transfers control | native backends emit |
+| --- | --- | --- |
+| `EntryProcess` | a kernel / dyld, with a populated process stack | `_start` (`_main` on Mach-O) + the argc/argv/envp capture |
+| `EntryExports` | nobody; the embedder calls exported symbols | neither |
+| `EntryReset` | a reset vector, with no stack pointer | not emitted for yet |
+
+Freestanding is `EntryExports` today. **`EntryReset` exists so the kernel posture is a
+second value rather than a rewrite** of everything keyed on "freestanding means exported
+symbols" — Fern targets both postures (`docs/BARE-METAL-PLAN.md`). The zero value
+resolves to `EntryProcess` via `OrDefault`, so a codegen `Options{}` keeps the hosted
+behaviour.
+
+### Where a hostless panic goes: nowhere — it traps
+
+Capability gating removes most of the hosted runtime for free: a freestanding program
+*cannot call* `read_file` / `tcp_*` / `print` / the clocks, so their `uses*` flags never
+set and their syscalls are never emitted. Three pieces do not fall out that way, because
+nothing in the program has to name them:
+
+- **`__fern_report`**, the abort reporter, emitted for every program — it writes the
+  cause to stderr and `exit_group`s.
+- **`__fern_exit`**, because `exit` is core (above) and so must exist everywhere.
+- **`__fern_alloc`'s lazy `mmap`**, because essentially every program allocates.
+
+On an entry shape other than `EntryProcess` all three become a trap — `ud2` on x86-64,
+`brk #1` on arm64 — rather than a syscall. That is the answer to *where does a
+freestanding artifact put a panic message?*: it does not have one, and stopping is the
+only honest thing left. The symbols stay defined (call sites branch to them); only the
+bodies change, and the backtrace string is dropped since nothing writes it.
+
+### The heap is handed in, not acquired
+
+A hostless target cannot `mmap` a region, and with no MMU may have no address space to
+reserve one in. So the heap becomes the embedder's (#6511): off the process path the
+backends export
+
+```
+__fern_heap_init(base, len)     // rdi/rsi on System V, x0/x1 on AAPCS64
+```
+
+which seeds `__fern_heap_ptr` (cursor), `__fern_heap_base` (high-water reference) and
+`__fern_heap_end` (`base + len`). **Only the seeding moves.** The 16-byte rounding, the
+RC header and the two-tier segregated freelist all work against a region regardless of
+where it came from — `docs/ARENA-DECISION.md` is why there is exactly one cursor pair to
+reseed. Hosted targets keep the lazy `mmap` and do *not* get this symbol; one allocator
+with two ways to seed its cursor is two sources of truth.
+
+The contract is that the embedder calls it once before anything that allocates.
+
+**Two defined failure modes, both a trap:**
+
+- **Allocating before `__fern_heap_init`.** `__fern_heap_ptr` is still zero, which is the
+  unseeded sentinel, so `__fern_alloc` stops instead of bumping a null cursor. (A region
+  based at address 0 is therefore not expressible — not a real heap on any target.)
+- **Exhausting the region.** The existing `.Lalloc_oom` bounds check already routes to
+  `__fern_report`, which off the process path is the trap above. So exhaustion is the
+  same "stop" as every other hostless abort rather than an exit code the embedder cannot
+  see anyway.
 
 ## Adding a builtin
 

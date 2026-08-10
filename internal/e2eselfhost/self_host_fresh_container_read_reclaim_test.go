@@ -121,16 +121,13 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// KNOWN OPEN, asserted as a leak so it stays measured rather than becoming
-	// folklore. `nums` builds its result in a LOCAL and returns that, so it earns
-	// no "ARR:" entry — the registry admits only a direct array-literal return —
-	// and the read reclaims nothing (2824 B / 50 rounds, doubling; native is flat).
-	// Closing it means widening the producer admission to a locally-built,
-	// non-escaping array; when that lands this case fails with 94 and its `>` must
-	// become the `==` the three rows above use. Self-host only, deliberately:
-	// native already reclaims this shape, so compiling this one case with `fern`
-	// reports 94 and is not a divergence.
-	{"local-built-producer-still-grows", `function nums(n: i32): i32[] {
+	// The accumulator idiom — the way a producer is actually written. `nums`
+	// builds its result in a LOCAL and returns that, which the literal-return rule
+	// declines; `body_returns_local_built_arr` admits it by proving the buffer is
+	// built entirely in that frame (literal init, self-append only, no other
+	// escape), so it reaches the caller as its sole rc == 1 reference. Leaked
+	// 2824 B / 50 rounds, doubling, before that admission.
+	{"local-built-producer", `function nums(n: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
     while (i < 4) { out = out.append(n + i); i = i + 1; }
@@ -150,7 +147,33 @@ function main(): i32 {
     var b2: i64 = __heap_bump_bytes();
     if (x != 1275) { return 91; }
     if (y != 5050) { return 93; }
-    if ((b2 - b1) <= (b1 - b0)) { return 94; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The refusal that keeps the local-built admission honest. `seeded` rebinds its
+	// local FROM A PARAMETER before appending, so the buffer it hands back is the
+	// caller's — reclaiming it at the read would free `live` out from under main.
+	// `body_unsafe_for_allow_ret` cannot catch this on its own (its assign arm reads
+	// only the assigned value, and `out = src` never mentions `out`), which is why
+	// `arr_reassigned_other_than_selfappend` exists. The churn re-fills the freed
+	// buffer with 9s, so a widened admission reports 90 rather than passing by luck.
+	{"param-seeded-producer-refused", `function seeded(src: i32[], n: i32): i32[] {
+    var out: i32[] = [];
+    out = src;
+    out = out.append(n);
+    return out;
+}
+function main(): i32 {
+    var live: i32[] = [1, 2, 3];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + seeded(live, i)[0]; i = i + 1; }
+    var churn1: i32[] = [9, 9, 9];
+    var churn2: i32[] = [9, 9, 9];
+    if (t != 100) { return 91; }
+    if (live[0] + live[1] + live[2] != 6) { return 90; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},

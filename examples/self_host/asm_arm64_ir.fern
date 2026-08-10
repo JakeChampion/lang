@@ -871,9 +871,13 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_tcp_connect\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 194) {  // tcp_send
-            // [fd, str box] -> __fern_tcp_send(x0=fd, x1=box) -> bytes / -errno.
-            s = s.need("heap");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_tcp_send\n    str x0, [sp, #-16]!\n");
+            // [fd, str box] -> __fern_tcp_send(fd, s) -> bytes / -errno. No
+            // allocation any more (the helper writes out of the string's own
+            // buffer), so this needs the helper and not the heap runtime.
+            s = s.need("tcp_send");
+            // the box is on top but param[0] is fd, so swap before the call.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_tcp_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max] -> __fern_tcp_recv(fd, max) -> string box. Allocates
             // (calls __fern_alloc), so the heap runtime must be present.
@@ -4648,18 +4652,7 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 
     // tcp_recv is Fern now (#2649) — see the migrated-helpers section.
 
-    // __fern_tcp_send(x0 = fd, x1 = string box) → bytes written / -errno.
-    // write(fd, box.data, box.len). Leaf.
-    s = s.write(".globl __fern_tcp_send\n");
-    s = s.write(".type __fern_tcp_send, %function\n");
-    s = s.write("__fern_tcp_send:\n");
-    s = s.write("    ldr x9, [x1]\n");          // data = box[0]
-    s = s.write("    ldr x2, [x1, #8]\n");      // len  = box[8]
-    s = s.write("    mov x1, x9\n");            // x1 = data ptr
-    s = s.write("    mov x8, #64\n");           // write (x0=fd intact)
-    s = s.write("    svc #0\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_tcp_send, .-__fern_tcp_send\n");
+    // tcp_send is Fern now (#2649) — see the migrated-helpers section.
 
 
     // tcp_connect is Fern now (#2649) — see the migrated-helpers section. Its
@@ -6184,6 +6177,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // tcp_recv: read(2) into a fresh buffer, boxed by __raw_string.
     if (s.has_need("tcp_recv")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv(tgt), s.struct_decls, s);
+    }
+    // tcp_send: write(2) straight out of the string's buffer, via __raw_data.
+    if (s.has_need("tcp_send")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send(tgt), s.struct_decls, s);
     }
     // proc_exec: execve over an argv built from the args array.
     if (s.has_need("proc_exec")) {

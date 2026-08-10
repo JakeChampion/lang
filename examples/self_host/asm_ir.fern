@@ -447,19 +447,8 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_tcp_recv is a Fern runtime function (#2649): asmcore.rt_src_tcp_recv
 // — read(2) into a fresh buffer, boxed by __raw_string.
 
-// emit_ir_tcp_send appends __fern_tcp_send(%rdi = fd, %rsi = string box) -> bytes
-// written / -errno. Reads the self-host string box [data@0, len@8] and write()s
-// those bytes. Leaf (no frame, no alloc).
-function emit_ir_tcp_send(s: asmcore.EmitState): asmcore.EmitState {
-    s = s.write("__fern_tcp_send:\n");
-    s = s.write("    movq (%rsi), %r9\n");           // data = box[0]
-    s = s.write("    movq 8(%rsi), %rdx\n");         // len = box[8]
-    s = s.write("    movq %r9, %rsi\n");             // %rsi = data ptr
-    s = s.write("    movq $1, %rax\n");              // write (fd in %rdi)
-    s = s.write("    syscall\n");
-    s = s.write("    ret\n");
-    return s;
-}
+// __fern_tcp_send is a Fern runtime function (#2649): asmcore.rt_src_tcp_send
+// — write(2) straight out of the string's own buffer, via __raw_data.
 // __fern_tcp_listen is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_listen — socket + bind + listen over a sockaddr_in built
 // byte-wise in __fern_scratch.
@@ -4154,7 +4143,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
-        "__fn___fern_tcp_recv", "__fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
+        "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
@@ -4860,8 +4849,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_tcp_connect\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("tcp_connect");
         } else if (o.kind_tag == 194) {  // tcp_send
-            // [fd, str box]; __fern_tcp_send(%rdi=fd, %rsi=box) -> bytes / -errno.
-            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_tcp_send\n    pushq %rax\n");
+            // [fd, str box] with the box on top; the stack ABI wants param[0]
+            // (fd) lowest, so pop and re-push swapped.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_tcp_send\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("tcp_send");
         } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max] with max on top; the stack ABI wants param[0] (fd)
@@ -7354,7 +7345,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv("x86_64"), all_structs, s);
     }
-    if (s.has_need("tcp_send")) { s = emit_ir_tcp_send(s); }
+    if (s.has_need("tcp_send")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), all_structs, s);
+    }
     if (s.has_need("tcp_listen")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86_64"), all_structs, s);

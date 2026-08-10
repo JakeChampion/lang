@@ -16,7 +16,7 @@ func writeFern(t *testing.T, src string) string {
 	return p
 }
 
-// `-check -target freestanding` is the #6509 deliverable: the target is
+// `-check -target arm64-freestanding` is the #6509 deliverable: the target is
 // declared and checkable before any backend emits for it, so E066 names
 // the missing capability instead of a build dying on an undefined label.
 func TestCheckTargetFreestandingRejectsHostBuiltins(t *testing.T) {
@@ -54,7 +54,7 @@ func TestCheckWithoutTargetSkipsEnforcement(t *testing.T) {
 		t.Fatalf("bare -check should not enforce a target: %v", err)
 	}
 	if err := runCheck(entry, "arm64-linux"); err == nil {
-		t.Fatal("-check -target arm64 should reject subprocess")
+		t.Fatal("-check -target arm64-linux should reject subprocess")
 	}
 }
 

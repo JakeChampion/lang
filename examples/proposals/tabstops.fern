@@ -1,0 +1,430 @@
+// examples/proposals/tabstops.fern — proposal turn, line 11:
+// "A tool that converts between tabs and spaces with configurable tab stops."
+//
+// There is exactly one thing this tool must not do, and it is not stated in the
+// prompt: it must not move anything. Converting tabs to spaces and back is only
+// ever worth doing if the file LOOKS the same afterwards, so the property that
+// matters is that every character keeps its display column. That is computable
+// without an expected document, it holds for both directions, and it is what a
+// hand-written before/after fixture checks only for the one indentation depth
+// the author happened to type.
+//
+// Underneath it sits the arithmetic everyone gets wrong once. A tab does not
+// advance by `ts` columns — it advances TO the next multiple of `ts`. A tab at
+// column 3 with stops of 4 is one space, not four. An implementation that emits
+// `ts` spaces per tab is right for exactly the tabs that sit on a stop already,
+// which in a normally indented file is most of them, so the bug ships. The
+// arithmetic is therefore swept directly: for every stop width and every column
+// a tab can start at, the expansion must be exactly `ts - (col % ts)` spaces.
+//
+// The two directions are not symmetric and the tests say so. `expand` is total
+// — it can always render tabs as spaces. `unexpand` is lossy, because a run of
+// spaces that happens to reach a stop could have been either. So the round trip
+// is not `unexpand(expand(x)) == x`, which is false and would be the wrong
+// thing to want; it is that the RENDERING survives:
+//
+//     expand(unexpand(expand(x))) == expand(x)
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------------ model ---
+
+function is_tab(c: u8): boolean { return c == 9; }
+function is_space(c: u8): boolean { return c == 32; }
+
+// The column a tab starting at `col` advances to. The whole tool is this line.
+function next_stop(col: i32, ts: i32): i32 {
+    if (ts < 1) { return col + 1; }
+    return col + (ts - (col % ts));
+}
+
+function spaces(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + " "; i = i + 1; }
+    return out;
+}
+
+// ------------------------------------------------------------- conversions ---
+
+// Every tab becomes the spaces needed to reach the next stop, counting columns
+// from the start of the LINE — not from the previous tab, which is the other
+// half of the same arithmetic bug.
+function expand(line: string, ts: i32): string {
+    var out: string = "";
+    var col: i32 = 0;
+    var i: i32 = 0;
+    while (i < line.len()) {
+        var c: u8 = line[i];
+        if (is_tab(c)) {
+            var target: i32 = next_stop(col, ts);
+            out = out + spaces(target - col);
+            col = target;
+        } else {
+            out = out + line[i:i + 1].to_owned();
+            col = col + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Leading whitespace only, which is `unexpand`'s default and the only place the
+// conversion is safe: a run of spaces INSIDE a line may be data (a column in a
+// fixed-width table, the gap in an ASCII diagram) and turning it into tabs
+// changes the file's meaning even when it preserves its appearance.
+//
+// Within the leading run, emit a tab whenever it lands exactly on a stop and
+// the run reaches that far; the remainder is spaces.
+function unexpand(line: string, ts: i32): string {
+    if (ts < 1) { return line; }
+    var blank_len: i32 = 0;
+    var col: i32 = 0;
+    while (blank_len < line.len()) {
+        var c: u8 = line[blank_len];
+        if (is_space(c)) { col = col + 1; }
+        else if (is_tab(c)) { col = next_stop(col, ts); }
+        else { break; }
+        blank_len = blank_len + 1;
+    }
+    var target: i32 = col;
+
+    var out: string = "";
+    var at: i32 = 0;
+    while (next_stop(at, ts) <= target) {
+        out = out + "\t";
+        at = next_stop(at, ts);
+    }
+    out = out + spaces(target - at);
+    return out + line.drop(blank_len).to_owned();
+}
+
+// ------------------------------------------------------------------ oracle ---
+
+// The display column of each NON-BLANK character, computed by a walk that knows
+// nothing about expand or unexpand.
+//
+// Both whitespace kinds are skipped, and that is the whole point rather than a
+// convenience: the conversion turns tabs into spaces and back, so any oracle
+// that records an entry for one and not the other reports a difference on every
+// successful conversion. (It did — the first version of this function counted
+// spaces and skipped tabs, and failed `\tx` at ts=1 by comparing a one-element
+// array against a two-element one. The tool was right.) What must not move is
+// where the visible glyphs land; the blanks are the thing being rewritten.
+function columns_of(line: string, ts: i32): i32[] {
+    var out: i32[] = [];
+    var col: i32 = 0;
+    var i: i32 = 0;
+    while (i < line.len()) {
+        var c: u8 = line[i];
+        if (is_tab(c)) {
+            col = next_stop(col, ts);
+        } else {
+            if (!is_space(c)) { out = out.append(col); }
+            col = col + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// The non-blank characters in order, so a column comparison is only meaningful
+// alongside the fact that the same glyphs are there.
+function visible_of(line: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < line.len()) {
+        if (!is_tab(line[i]) && !is_space(line[i])) { out = out + line[i:i + 1].to_owned(); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function same_columns(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function has_tab(s: string): boolean {
+    var i: i32 = 0;
+    while (i < s.len()) { if (is_tab(s[i])) { return true; } i = i + 1; }
+    return false;
+}
+
+// ------------------------------------------------------------- generators ---
+
+// Lines whose whitespace sits at, before and after a stop, with tabs leading,
+// interior and adjacent, plus runs of spaces that a naive unexpand would eat.
+function corpus(): string[] {
+    return [
+        "",
+        "x",
+        "\tx",
+        "\t\tx",
+        " \tx",
+        "  \tx",
+        "   \tx",
+        "    \tx",
+        "a\tb",
+        "ab\tc",
+        "abc\td",
+        "abcd\te",
+        "a\tb\tc",
+        "\t",
+        "   ",
+        "        x",
+        "  a  b  ",
+        "\ta\tb  c",
+        "no whitespace at all",
+        " leading one space",
+    ];
+}
+
+function stops(): i32[] { return [1, 2, 3, 4, 8]; }
+
+// ------------------------------------------------------------------ tests ---
+
+// The arithmetic, on its own, before anything is built on it: a tab at column
+// `col` must reach exactly the next multiple of `ts`.
+function test_a_tab_advances_to_the_next_stop(): test.TestOutcome {
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var col: i32 = 0;
+        while (col < ts * 3 + 2) {
+            var got: i32 = next_stop(col, ts);
+            var want: i32 = col + (ts - (col % ts));
+            if (got != want) {
+                return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
+                    + ": next stop is " + got.to_string() + ", want " + want.to_string());
+            }
+            if (got <= col) { return test.fail("a tab must advance at least one column"); }
+            if (got % ts != 0) {
+                return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
+                    + ": landed on " + got.to_string() + ", not a multiple of the stop");
+            }
+            // The expansion width the tool will emit.
+            var width: i32 = got - col;
+            if (width < 1 || width > ts) {
+                return test.fail("ts=" + ts.to_string() + " col=" + col.to_string()
+                    + ": expansion is " + width.to_string() + " spaces");
+            }
+            col = col + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// The property the tool exists to satisfy, in the total direction.
+function test_expand_moves_nothing(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            var src: string = lines[i];
+            var out: string = expand(src, ts);
+            if (!same_columns(columns_of(src, ts), columns_of(out, ts))) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: expand moved a character");
+            }
+            if (visible_of(out) != visible_of(src)) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: expand changed the visible characters");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+function test_expand_leaves_no_tabs_and_is_idempotent(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            var once: string = expand(lines[i], ts);
+            if (has_tab(once)) {
+                return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
+                    + "`: a tab survived expansion");
+            }
+            var twice: string = expand(once, ts);
+            if (twice != once) {
+                return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
+                    + "`: expand is not idempotent");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// The same property in the lossy direction.
+function test_unexpand_moves_nothing(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            var src: string = lines[i];
+            var out: string = unexpand(src, ts);
+            if (!same_columns(columns_of(src, ts), columns_of(out, ts))) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: unexpand moved a character");
+            }
+            if (visible_of(out) != visible_of(src)) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: unexpand changed the visible characters");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// The round trip that is actually true. `unexpand(expand(x)) == x` is NOT — a
+// run of spaces reaching a stop is indistinguishable from a tab — so the claim
+// is that the rendering survives the lossy hop.
+function test_the_rendering_survives_the_round_trip(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            var e: string = expand(lines[i], ts);
+            var back: string = expand(unexpand(e, ts), ts);
+            if (back != e) {
+                return test.fail("ts=" + ts.to_string() + " on `" + lines[i]
+                    + "`\n  expand      `" + e + "`\n  round trip  `" + back + "`");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// Interior whitespace is data. A run of spaces in the middle of a line survives
+// unexpand untouched even when it would fit a tab exactly.
+function test_unexpand_touches_only_the_leading_run(): test.TestOutcome {
+    var cases: string[] = ["a        b", "ab      cd", "x   y", "a\tb"];
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < cases.len()) {
+            var src: string = cases[i];
+            var out: string = unexpand(src, ts);
+            // These all start with a non-blank, so unexpand must be the identity.
+            if (out != src) {
+                return test.fail("ts=" + ts.to_string() + ": unexpand changed `" + src
+                    + "` to `" + out + "` — it touched something after the leading run");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// Converting to tabs must not make the line longer in bytes — that is the only
+// reason to do it — and converting from tabs must not make it shorter.
+function test_the_byte_counts_move_the_right_way(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ss: i32[] = stops();
+    var si: i32 = 0;
+    while (si < ss.len()) {
+        var ts: i32 = ss[si];
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            var src: string = lines[i];
+            if (unexpand(src, ts).len() > src.len()) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: unexpand made the line longer");
+            }
+            if (expand(src, ts).len() < src.len()) {
+                return test.fail("ts=" + ts.to_string() + " on `" + src
+                    + "`: expand made the line shorter");
+            }
+            i = i + 1;
+        }
+        si = si + 1;
+    }
+    return test.pass();
+}
+
+// The cases that need no special-casing at the call site, plus the one stop
+// width that makes tabs and spaces interchangeable.
+function test_degenerate_stops_and_lines(): test.TestOutcome {
+    if (expand("", 4) != "") { return test.fail("expanding an empty line produced output"); }
+    if (unexpand("", 4) != "") { return test.fail("unexpanding an empty line produced output"); }
+    if (expand("abc", 4) != "abc") { return test.fail("a line with no whitespace changed"); }
+
+    // ts=1: every tab is exactly one space, and every leading space is a tab.
+    if (expand("\t\tx", 1) != "  x") {
+        return test.fail("ts=1 expand gave `" + expand("\t\tx", 1) + "`, want `  x`");
+    }
+    if (unexpand("  x", 1) != "\t\tx") {
+        return test.fail("ts=1 unexpand gave `" + unexpand("  x", 1) + "`, want two tabs");
+    }
+
+    // The tab-at-a-stop case: with ts=4, a tab at column 4 is a full four
+    // spaces, and at column 3 it is one.
+    if (expand("abcd\te", 4) != "abcd    e") {
+        return test.fail("a tab landing on a stop gave `" + expand("abcd\te", 4) + "`");
+    }
+    if (expand("abc\td", 4) != "abc d") {
+        return test.fail("a tab one short of a stop gave `" + expand("abc\td", 4)
+            + "`, want `abc d`");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("tabstops — expand and unexpand, without moving anything");
+
+    var sample: string[] = ["\tif (x) {", "\t\treturn 1;", "\t}", "abc\tdef\tghi"];
+    var i: i32 = 0;
+    while (i < sample.len()) {
+        var e: string = expand(sample[i], 4);
+        eprint("  ts=4 `" + sample[i] + "` -> `" + e + "`");
+        i = i + 1;
+    }
+    var wide: string = expand("\tif (x) {", 8);
+    eprint("  ts=8 `\tif (x) {` -> `" + wide + "`");
+    eprint("  round trip at ts=4: `" + expand(unexpand(expand("  \tx", 4), 4), 4) + "`");
+
+    var t: test.TestRunner = test.test_new("tabstops");
+    t = t.it("a tab advances to the next stop", test_a_tab_advances_to_the_next_stop);
+    t = t.it("expand moves nothing", test_expand_moves_nothing);
+    t = t.it("expand leaves no tabs and is idempotent", test_expand_leaves_no_tabs_and_is_idempotent);
+    t = t.it("unexpand moves nothing", test_unexpand_moves_nothing);
+    t = t.it("the rendering survives the round trip", test_the_rendering_survives_the_round_trip);
+    t = t.it("unexpand touches only the leading run", test_unexpand_touches_only_the_leading_run);
+    t = t.it("the byte counts move the right way", test_the_byte_counts_move_the_right_way);
+    t = t.it("degenerate stops and lines", test_degenerate_stops_and_lines);
+    return t.finish();
+}

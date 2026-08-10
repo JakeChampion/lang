@@ -385,10 +385,38 @@ Audited per helper and **per target**, because
 the interesting question for the next slice is not "which helpers are
 hand-written" but "which of them the floor can already express".
 
-| still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
+**Scope.** This table only ever covered the leaves the #2649 slices took on —
+the fs / clock / socket / process family. It is NOT an inventory of every
+hand-written syscall body on the register backends. Do not read it as one.
+
+| the #2649 family, still hand-asm | syscall (x86-64 / arm64 Linux) | args | floor |
 | --- | --- | --- | --- |
-| `tcp_send` | `write` | 3 | `__syscall3`, but see below |
 | **`proc_fork` (Darwin only)** | `fork` | — | **not expressible** |
+
+That family is done: every one of its leaves is now one Fern source, and the
+single hand-written body left in it is the one target the floor genuinely
+cannot reach. `tcp_pollable` is not on the list because it issues no syscall at
+all — a native socket's readiness token IS its fd.
+
+**What the table never covered, and what is therefore still hand-asm.** Grep
+both backends for a raw trap (`syscall` on x86-64, `svc #0` on arm64) and the
+remainder splits three ways:
+
+- **Still-migratable leaves**, in the same shape as the ones above and not yet
+  attempted: `print_str`, `print_int`, `putchar`, `eprint_str`, `read_line`,
+  `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`, `reader_close`,
+  and `udp_send`. These are plain `read`/`write`/`close` calls; nothing in the
+  audit above suggests a floor gap, so they are the natural continuation
+  whenever #2649 is picked up again.
+
+  `udp_send` is the odd one: its hand-asm exists **only on arm64**, and
+  `asm_ir.fern` has no `kind_tag == 208` case at all, so the op does not lower
+  on x86-64. That is a backend-parity gap rather than a migration one — worth
+  knowing before treating it as an ordinary next slice.
+- **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
+  exec, drain and reap in one body), `map_delete`, `strbuf_append`.
+- **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
+  (`oob_abort`, `san_abort`, `hev_f`).
 
 `tcp_close`, `tcp_accept` and `tcp_listen` have since moved — the first two take
 only an fd, and `tcp_listen` builds its `sockaddr_in` a byte at a time, since the
@@ -423,12 +451,23 @@ carried a manual carry-flag check to turn `+errno` into `-errno`, which is not
 ported — `darwinize` already wraps every `__syscall*` with exactly that
 sequence, so keeping it would have negated twice.
 
-`tcp_send` is blocked on the **direction** of the string bridge, not on a
-syscall: it is a plain 3-argument `write`, but it needs the **data pointer of a
-`string`**, and the floor only runs the other way. Expressing it today means
-copying the payload byte-by-byte on every call, which is a straight loss on a
-send path. What it wants is the inverse bridge (a `__raw_data`), not a wider
-syscall wrapper.
+`tcp_send` was the last leaf, and it is the one the audit got most wrong. It was
+recorded here as blocked on the **direction** of the string bridge — a plain
+3-argument `write` that needs a live `string`'s data pointer, where the floor
+only runs the other way — with the choice framed as adding a `__raw_data` op
+versus copying the payload byte-by-byte on every call.
+
+**Neither was needed.** A string value already IS its box pointer, and the data
+word is slot 0 of that box, so `__raw_data(s)` lowers to `raw_load_ptr(s, 0)` —
+an op the floor has had since the beginning. It is a lowering entry and a
+checker type, no new op, no kind id, no sweep-list or golden change. `tcp_send`
+is a one-line helper that copies nothing.
+
+The lesson generalises past this leaf: "the floor cannot express X" is a claim
+about the floor's *reach*, and the reach of a set of primitives is not the union
+of what each was introduced for. `__raw_array` had already established that a
+bridge in this shape can be free — the pointer simply IS the value — and the
+same was true one type over, unnoticed for the whole migration.
 
 `proc_fork` has since moved on **both Linux targets** — x86-64 through a bare
 no-argument `fork(2)`, arm64 through `clone(SIGCHLD, 0, 0, 0, 0)`. It is the
@@ -455,17 +494,15 @@ ahead of `tcp_send` despite looking like the bigger job. None of those buffers
 are freed, deliberately: on success the address space is replaced, and on
 failure the caller is already reporting an error.
 
-`tcp_recv` runs **with** that direction and so has since moved: it allocates the
-buffer itself, `read`s into it, and hands the buffer to `__raw_string` — the
-copy tcp_send cannot avoid never happens. An earlier revision of this table
-listed the two together as equally blocked, which had the asymmetry backwards.
+`tcp_recv` runs **with** that direction: it allocates the buffer itself, `read`s
+into it, and hands the buffer to `__raw_string`, so it copies nothing either.
 A negative return is clamped to length 0: the op has no error channel, so a
 short read, EOF and `-errno` all arrive as the empty string, exactly as the
 hand-asm's `csel ... ge` did.
 
-### Two ways this audit went wrong before it went right
+### Three ways this audit went wrong before it went right
 
-Both are cheap to repeat, so they are worth naming.
+All three are cheap to repeat, so they are worth naming.
 
 **Do not read arity off the registers a hand-asm body touches.** That gave
 `tcp_send` and `proc_exec` six arguments each; both are three, and the extra
@@ -477,6 +514,15 @@ reaches for a different syscall where x86-64 has a simpler one: `poll` becomes
 `ppoll`, `fork` becomes `clone`, and both jump from three arguments to five.
 It concluded `__syscall5` had a single consumer when it has three — the exact
 inversion of the decision it was meant to inform. Read all three bodies.
+
+**Do not treat a primitive's reach as the reason it was added.** `tcp_send` sat
+blocked for the whole migration on a missing `__raw_data`, with the recorded
+choice being "add the op or copy the payload". Neither applied: a string value
+already IS its box pointer, so `__raw_data` is `raw_load_ptr(s, 0)` — an op that
+had been in the floor from the start, introduced for array slots. `__raw_array`
+had even established the identical type-only bridge one type over. Before
+concluding the floor cannot express something, check what the existing
+primitives can address, not what they were named for.
 
 ## Validation strategy per slice
 

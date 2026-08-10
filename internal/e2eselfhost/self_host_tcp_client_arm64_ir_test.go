@@ -29,9 +29,10 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}
-	// tcp_close, tcp_connect and tcp_recv are migrated (#2649) and so carry
-	// the stack-ABI __fn_ prefix; send/pollable are still hand-asm.
-	for _, sym := range []string{"bl __fn___fern_tcp_connect", "bl __fern_tcp_send", "bl __fn___fern_tcp_recv", "bl __fn___fern_tcp_close", "bl __fern_tcp_pollable"} {
+	// Every tcp op but pollable is migrated (#2649) and so carries the
+	// stack-ABI __fn_ prefix. pollable issues no syscall at all — it is the
+	// identity on a native fd — so there is nothing to move.
+	for _, sym := range []string{"bl __fn___fern_tcp_connect", "bl __fn___fern_tcp_send", "bl __fn___fern_tcp_recv", "bl __fn___fern_tcp_close", "bl __fern_tcp_pollable"} {
 		if !strings.Contains(string(asm), sym) {
 			t.Errorf("emitted arm64 asm missing %q (tcp op did not lower through the IR path)", sym)
 		}
