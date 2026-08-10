@@ -108,12 +108,12 @@ function bump(p: Point): Point {
 }
 function main(): i32 { return bump(Point { x: 1, y: 2 }).x; }`
 	prev := ast.OwnedByDefault
+	defer func() { ast.OwnedByDefault = prev }()
 
 	ast.OwnedByDefault = false
 	off := allocReuseCount(funcByName(lowerForTest(t, src), "bump"))
 	ast.OwnedByDefault = true
 	on := allocReuseCount(funcByName(lowerForTest(t, src), "bump"))
-	ast.OwnedByDefault = prev
 
 	if off != 0 {
 		t.Errorf("borrow model: borrowed param must not reuse in place, got %d", off)
