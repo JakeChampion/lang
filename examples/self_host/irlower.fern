@@ -4622,6 +4622,16 @@ pub function str_producer_ownership(e: parser.Expr, s: LowerState): i32 {
                     // `name: i32_to_string(n)` struct field was construction-
                     // retained (Borrowed) and leaked one count per rebind.
                     if (cid.name == "i32_to_string" && c.args.len() == 1) { return 0; }
+                    // A whole-program str-fresh-ret free function (every return
+                    // freshly allocated) is Owned for the same reason the builtin
+                    // producers above are. Without it a user producer read as
+                    // Borrowed, so a `name: wide(n)` struct field took the
+                    // construction retain meant for a possible alias — an inc
+                    // nothing ever decs, since the callee's own reference was
+                    // moved out and dropped. The registry is the one the
+                    // caller-side binding reclaim already trusts to FREE such a
+                    // result at scope exit, a strictly stronger claim than this.
+                    if (util.index_of_str(s.sigs.str_fresh_ret_fns, cid.name) >= 0 && s.slot_of(cid.name) < 0) { return 0; }
                     return 1;
                 },
                 parser.ExprFieldAccess(cfa) => {
@@ -9630,6 +9640,20 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                         _ => {}
                     }
                 },
+                // An owned-container READ in receiver position — `strs(i)[0].len()`
+                // / `boxed(i).name.len()` (#6491). The read below releases the
+                // container and hands this frame the extracted box; with no
+                // destination to own it, the borrowing read is where it dies. This
+                // is the binding credit's twin: between them every position that
+                // consumes such a read reclaims it.
+                parser.ExprIndex(lri) => {
+                    if (owned_fresh_call_callee(lri.array, "STRARR:", s) != "") { lfresh = true; }
+                },
+                parser.ExprFieldAccess(lrfa) => {
+                    var lrfty: string = expr_struct_type(lrfa.obj, s);
+                    if (lrfty != "" && decl_field_type(s.structs, lrfty, lrfa.field) == "string"
+                            && owned_fresh_call_callee(lrfa.obj, "STRFLDF:", s) != "") { lfresh = true; }
+                },
                 _ => {}
             }
             if (lfresh) {
@@ -10978,9 +11002,16 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // the box sole-owns every field buffer, so __struct_drop_<T> cannot
             // double-free one. A type with no reclaimable field skips straight
             // to the box dec.
+            // A `string` field takes the MOVE form instead ("STRFLDF:", #6491):
+            // the registry proves the box sole-owns that field's box, so the read
+            // hands the reference on unchanged and the box dec below is the whole
+            // release. No retain and no field drop — the struct carries no
+            // rc-array field on this admission, so nothing else touches it.
             var faown: string = "";
             if (owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))) {
                 faown = owned_fresh_call_callee(fa.obj, "", s);
+            } else if (decl_field_type(s.structs, sty, fa.field) == "string") {
+                faown = owned_fresh_call_callee(fa.obj, "STRFLDF:", s);
             }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
@@ -11579,10 +11610,22 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // checker-stamped, and the emit-only drivers do not stamp it, so the
             // reclaim fired under `fern.fern` and silently declined under
             // `asm_run.fern`.
+            // The POINTER-element half rides the same spill, with a different
+            // release: the loaded element ALIASES the buffer, so retain it and
+            // then DEEP-free the container ("STRARR:", #6491). The retain is what
+            // nets the extracted string to the one reference its destination
+            // owns; without it __fern_str_arr_free would free it out from under
+            // the read, and without the deep free the three elements it did not
+            // extract would strand.
             var ixtag: string = ix_type_tag(ix, s);
             var ixown: string = "";
+            var ixdeep: boolean = false;
             if (!expr_is_str(ix.array, s)) {
                 ixown = owned_fresh_call_callee(ix.array, "ARR:", s);
+                if (ixown == "") {
+                    ixown = owned_fresh_call_callee(ix.array, "STRARR:", s);
+                    if (ixown != "") { ixdeep = true; }
+                }
             }
             var sidx: LowerState = lower_expr(ix.array, s);
             if (!sidx.ok) { return sidx; }
@@ -11602,6 +11645,12 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 if (ixtag == "f64") { ixw = 64; }
                 if (ix.unchecked) { sidx = sidx.emit(ir.op_arr_get_nc(ixw)); }
                 else { sidx = sidx.emit(ir.op_arr_get(ixw)); }
+                if (ixdeep) {
+                    sidx = sidx.emit(ir.op_call_direct("__fern_rc_inc", 1));   // the element outlives the buffer
+                    sidx = sidx.emit(ir.op_load_local(ixslot));
+                    sidx = sidx.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                    return sidx.emit(ir.op_drop());
+                }
                 sidx = sidx.emit(ir.op_load_local(ixslot));
                 sidx = sidx.emit(ir.op_call_direct("__fern_rc_dec", 1));
                 return sidx.emit(ir.op_drop());
@@ -24165,6 +24214,71 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
     return flags;
 }
 
+// body_declares_name: `name` is declared as a LOCAL anywhere in the body. The
+// read reclaim refuses a call whose callee NAME is a local (it holds an unknown
+// closure body, not the registered producer), and this credit has to refuse the
+// same shape — otherwise the sweep would free a string no read ever retained.
+function body_declares_name(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { return true; } },
+            parser.StmtIf(f) => { if (body_declares_name(f.then_body, name) || body_declares_name(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (body_declares_name(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (fo.var_name == name || body_declares_name(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_declares_name(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// owned_container_read_str_binding: `init` reads a `string` OUT of a container
+// the read reclaim releases at the read — `strs(i)[1]` (a "STRARR:" producer) or
+// `boxed(i).name` (a "STRFLDF:" one). Either way the destination receives the
+// container's own single reference to that box, so it owns it: this is the third
+// site of the pointer-half triple (#6491), and without it the read's retain / move
+// would strand the extracted string exactly as the container used to strand.
+function owned_container_read_str_binding(init: parser.Expr, body: parser.Stmt[], fresh_ret: string[]): boolean {
+    var callee: string = "";
+    var kind: string = "";
+    match (init) {
+        parser.ExprIndex(ix) => { kind = "STRARR:"; match (ix.array) { parser.ExprCall(c) => { match (c.callee) { parser.ExprIdent(cid) => { callee = cid.name; }, _ => {} } }, _ => {} } },
+        parser.ExprFieldAccess(fa) => { kind = "STRFLDF:"; match (fa.obj) { parser.ExprCall(c) => { match (c.callee) { parser.ExprIdent(cid) => { callee = cid.name; }, _ => {} } }, _ => {} } },
+        _ => {}
+    }
+    if (callee.len() == 0) { return false; }
+    if (body_declares_name(body, callee)) { return false; }
+    return util.index_of_str(fresh_ret, kind + callee) >= 0;
+}
+
+// collect_owned_container_read_str_names: the `var s: string = <owned container
+// read>` destinations. The `string` ANNOTATION is required — an unannotated
+// binding leaves the slot's type to inference the analysis cannot see, and a
+// mis-credit here frees a box the read never handed over.
+function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0
+                        && owned_container_read_str_binding(v.init, body, fresh_ret)) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, fresh_ret, reassigned, a); a = collect_owned_container_read_str_names(f.else_body, body, fresh_ret, reassigned, a); },
+            parser.StmtWhile(w) => { a = collect_owned_container_read_str_names(w.body, body, fresh_ret, reassigned, a); },
+            parser.StmtFor(fo) => { a = collect_owned_container_read_str_names(fo.body, body, fresh_ret, reassigned, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, fresh_ret, reassigned, a); ai = ai + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // collect_fresh_tuple_ret_call_names: tuple LOCALS bound from a tuple-fresh-ret
 // free CALL (`var t = f(..)`, f in tup_fresh_ret) that are NOT reassigned. The
 // escape gate (body_unsafe_for) is applied by reclaimable_names_of before
@@ -26136,6 +26250,16 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         if (!body_unsafe_for(body, frets[fri], borrowable)) { out = out.append("STR:" + frets[fri]); }
         fri = fri + 1;
     }
+    // Owned-container READ destinations (#6491 pointer half): `var s: string =
+    // mk()[i]` / `= mk().f`. The read releases the container and hands over its
+    // single reference to the extracted box, so s owns it exactly as a
+    // fresh-producer binding does — same two gates, same "STR:" class.
+    var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, []);
+    var oci: i32 = 0;
+    while (oci < ocrs.len()) {
+        if (!body_unsafe_for(body, ocrs[oci], borrowable)) { out = out.append("STR:" + ocrs[oci]); }
+        oci = oci + 1;
+    }
     // `?`-bound string payloads (#4355): `var s: string = mk(pre)?` where mk is
     // an opt-fresh producer whose success payloads are all fresh (flag "f") —
     // the `?` edge frees the source box (lower_try) and MOVES the payload's
@@ -26826,8 +26950,196 @@ function body_returns_local_built_arr(stmts: parser.Stmt[]): boolean {
     return true;
 }
 
+// ── the POINTER half of the fresh-owned-container read (#6491) ───────────────
+//
+// The scalar half above copies the value out of the container, so releasing the
+// container cannot dangle it. A `string` element / field POINTS BACK INTO what
+// is being freed, so admitting one needs a stronger property than "the container
+// is sole-owned": the extracted reference must be one the container SOLE-OWNS
+// too, else the read hands the destination a reference someone else still
+// releases. The predicates below prove exactly that, per producer.
+
+// strarr_value_is_fresh: `e` produces a string box this frame constructs and
+// nothing else names — a literal (const_str builds a fresh rc=1 box per
+// evaluation), a concat / string-method producer (str_local_binding_is_fresh),
+// or a call to a whole-program str-fresh-ret free function. A bare ident /
+// param / field read is refused: it may alias a live box, and transferring it
+// out of the container would leave two owners of one reference.
+function strarr_value_is_fresh(e: parser.Expr, str_fresh: string[]): boolean {
+    match (e) {
+        parser.ExprString(_) => { return true; },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (util.index_of_str(str_fresh, cid.name) >= 0) { return true; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return str_local_binding_is_fresh(e);
+}
+
+// body_has_nonfresh_strarr_lit_return: any return whose value is NOT a direct,
+// non-empty string-array LITERAL of fresh elements. The `string[]` sibling of
+// body_has_nonfresh_arrlit_return, with the element proof that one does not need
+// (its elements are scalars).
+function body_has_nonfresh_strarr_lit_return(stmts: parser.Stmt[], str_fresh: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var fresh: boolean = false;
+                match (r.value) {
+                    parser.ExprArray(ae) => {
+                        fresh = ae.elements.len() > 0;
+                        var ei: i32 = 0;
+                        while (ei < ae.elements.len()) {
+                            if (!strarr_value_is_fresh(ae.elements[ei], str_fresh)) { fresh = false; }
+                            ei = ei + 1;
+                        }
+                    },
+                    _ => {}
+                }
+                if (!fresh) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfresh_strarr_lit_return(f.then_body, str_fresh) || body_has_nonfresh_strarr_lit_return(f.else_body, str_fresh)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_strarr_lit_return(w.body, str_fresh)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_strarr_lit_return(fo.body, str_fresh)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_strarr_lit_return(m.arms[a].body, str_fresh)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// strarr_local_stores_nonfresh: `name` is initialised or self-appended with a
+// value that is not provably fresh. Paired with arr_local_has_literal_init /
+// arr_reassigned_other_than_selfappend (which prove the BUFFER is this frame's),
+// it proves every ELEMENT is this frame's too.
+function strarr_local_stores_nonfresh(stmts: parser.Stmt[], name: string, str_fresh: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) {
+                        parser.ExprArray(ae) => {
+                            var ei: i32 = 0;
+                            while (ei < ae.elements.len()) {
+                                if (!strarr_value_is_fresh(ae.elements[ei], str_fresh)) { return true; }
+                                ei = ei + 1;
+                            }
+                        },
+                        _ => { return true; }
+                    }
+                }
+            },
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    var ok: boolean = false;
+                    match (a.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprFieldAccess(fa) => {
+                                    if (fa.field == "append" && c.args.len() == 1) { ok = strarr_value_is_fresh(c.args[0], str_fresh); }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!ok) { return true; }
+                }
+            },
+            parser.StmtIf(f) => { if (strarr_local_stores_nonfresh(f.then_body, name, str_fresh) || strarr_local_stores_nonfresh(f.else_body, name, str_fresh)) { return true; } },
+            parser.StmtWhile(w) => { if (strarr_local_stores_nonfresh(w.body, name, str_fresh)) { return true; } },
+            parser.StmtFor(fo) => { if (strarr_local_stores_nonfresh(fo.body, name, str_fresh)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (strarr_local_stores_nonfresh(m.arms[k].body, name, str_fresh)) { return true; } k = k + 1; } },
+            parser.StmtDefer(d) => { if (strarr_local_stores_nonfresh([d.action], name, str_fresh)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// body_returns_local_built_strarr: the accumulator idiom for a `string[]` —
+// body_returns_local_built_arr plus the per-element freshness proof.
+function body_returns_local_built_strarr(stmts: parser.Stmt[], str_fresh: string[]): boolean {
+    if (!body_returns_local_built_arr(stmts)) { return false; }
+    var names: string[] = arr_returned_ident_names(stmts, []);
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (strarr_local_stores_nonfresh(stmts, names[i], str_fresh)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// body_strfields_all_fresh: every return is a struct literal whose every
+// `string`-typed DECL field is set from a fresh producer. Applied on top of the
+// strict-fresh admission, this is what lets the field read MOVE the string out
+// of the box: the box holds the value's only reference (a fresh field takes no
+// construction alias-inc), so handing it to the destination and freeing the box
+// is one owner in, one owner out.
+function body_strfields_all_fresh(stmts: parser.Stmt[], structs: parser.StructDecl[], str_fresh: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprStructLit(slit) => {
+                        var fi: i32 = 0;
+                        while (fi < slit.field_names.len()) {
+                            if (decl_field_type(structs, slit.type_name, slit.field_names[fi]) == "string"
+                                    && !strarr_value_is_fresh(slit.field_values[fi], str_fresh)) { return false; }
+                            fi = fi + 1;
+                        }
+                    },
+                    _ => { return false; }
+                }
+            },
+            parser.StmtIf(f) => { if (!body_strfields_all_fresh(f.then_body, structs, str_fresh) || !body_strfields_all_fresh(f.else_body, structs, str_fresh)) { return false; } },
+            parser.StmtWhile(w) => { if (!body_strfields_all_fresh(w.body, structs, str_fresh)) { return false; } },
+            parser.StmtFor(fo) => { if (!body_strfields_all_fresh(fo.body, structs, str_fresh)) { return false; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_strfields_all_fresh(m.arms[a].body, structs, str_fresh)) { return false; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// decl_has_string_field: `sty` declares at least one `string` field.
+function decl_has_string_field(structs: parser.StructDecl[], sty: string): boolean {
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (decl_field_type_at(structs, sty, fi) == "string") { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
+    // The whole-program str-fresh-ret registry, needed to prove a `string`
+    // element / field value is this frame's own box. Computed once, and only
+    // when some function can actually produce a pointer-bearing container —
+    // the walk is linear in every body, so a module with no such producer must
+    // not pay for it.
+    var str_fresh: string[] = [];
+    var pk: i32 = 0;
+    var want_str_fresh: boolean = false;
+    while (pk < funcs.len()) {
+        if (funcs[pk].ret_type == "string[]") { want_str_fresh = true; }
+        else if (decl_is_struct(structs, funcs[pk].ret_type) && decl_has_string_field(structs, funcs[pk].ret_type)) { want_str_fresh = true; }
+        pk = pk + 1;
+    }
+    if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
@@ -26858,6 +27170,33 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
                 && (!body_has_nonfresh_arrlit_return(funcs[k].body)
                     || body_returns_local_built_arr(funcs[k].body))) {
             out = out.append("ARR:" + funcs[k].name);
+        }
+        // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
+        // function returning a `string[]` every element of which this frame
+        // allocated. The read reclaim retains the extracted element and then
+        // DEEP-frees the container (__fern_str_arr_free), so the other elements
+        // and the buffer go back and the extracted one arrives at the destination
+        // holding its own single reference. "ARR:" cannot carry this: its
+        // consumers release the buffer element-blind, which for a string[] would
+        // strand every element it did not extract.
+        if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type == "string[]"
+                && body_has_return(funcs[k].body)
+                && (!body_has_nonfresh_strarr_lit_return(funcs[k].body, str_fresh)
+                    || body_returns_local_built_strarr(funcs[k].body, str_fresh))) {
+            out = out.append("STRARR:" + funcs[k].name);
+        }
+        // "STRFLDF:<name>" — the field-read half: a strict-fresh struct producer
+        // whose every `string` field is fresh, and whose return type carries no
+        // rc-ARRAY field (so the read's release is the bare box dec, with no
+        // __struct_drop_<T> to also touch the field being moved out). The read
+        // then MOVES the string: no retain, no field dec, one owner in and one
+        // owner out. Every OTHER string field of the box leaks with it — the
+        // established safe floor, never an over-release.
+        if (funcs[k].receiver_type.len() == 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
+                && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
+                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs)
+                && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
+            out = out.append("STRFLDF:" + funcs[k].name);
         }
         k = k + 1;
     }

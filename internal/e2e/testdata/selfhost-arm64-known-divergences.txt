@@ -99,15 +99,6 @@
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
 
-# --- fresh-owned-container read: not reclaimed by the self-host ------------
-# Same bug, same measured value, on all three legs — see the x86-64 sibling for
-# the split measurements and why a plain container drop would be a
-# use-after-free rather than a leak. #6491.
-#
-#     got:  8361 / 16762 / grows
-#     want: 8361 / 16762 / flat
-alloc_flat_index_of_fresh_container 6491 self-host: a POINTER element / field read out of a container nothing names is never reclaimed — grows, native flat
-
 # --- array-store element: the move is not ported ---------------------------
 # Same bug, same measured value, on all three legs — see the x86-64 sibling for
 # why the element ends up holding a retain nothing gives back, and for the two
