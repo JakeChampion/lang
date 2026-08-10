@@ -1,0 +1,507 @@
+// examples/proposals/grepish.fern — proposal turn, line 10:
+// "A grep-like tool supporting literal, glob and anchored patterns with a
+// context window."
+//
+// Two subsystems that fail in completely different ways.
+//
+// **Matching** is checkable against predicates that already exist. For a
+// pattern with no metacharacters, `^p$` matches a line exactly when the line
+// EQUALS p, `^p` exactly when it starts with p, `p$` exactly when it ends with
+// p, and a bare `p` exactly when it contains p. The matcher here does not
+// branch on those four cases — it runs one scan and applies the anchors as
+// constraints on the position it found — so comparing it against
+// `==` / `starts_with` / `ends_with` / `contains` is a real cross-check against
+// four independent implementations rather than a restatement of its own logic.
+//
+// **The context window** is where the bugs actually are, and they are all one
+// bug: two matches close together produce overlapping windows. Emit each window
+// separately and lines appear twice; emit them merged but forget to merge the
+// separators and the output claims a gap where the file is continuous. So the
+// output is modelled as BLOCKS, and the invariants are structural:
+//
+//   - blocks ascend, never overlap, and are never adjacent — two blocks with no
+//     omitted line between them are one block that failed to merge;
+//   - the union of their lines is exactly the clamped union of the per-match
+//     windows, computed separately from the tool;
+//   - every line appears at most once anywhere in the output.
+//
+// That last one is the property a naive implementation fails on the very first
+// file where two matches are three lines apart, and it is invisible in any test
+// whose fixture has one match in it.
+//
+// The app writes its report to stderr; stdout carries TAP-13 from std/test.
+import "std/test";
+import "std/i32";
+import "std/string";
+
+// ------------------------------------------------------------------ model ---
+
+// mode: 0 = literal (metacharacters are ordinary bytes), 1 = glob
+struct Pattern { body: string, mode: i32, at_start: boolean, at_end: boolean }
+
+struct Line { lineno: i32, text: string, is_match: boolean }
+
+struct Block { lines: Line[] }
+
+struct Report { blocks: Block[], matches: i32[] }
+
+// ---------------------------------------------------------------- matching ---
+
+// `^` and `$` are anchors wherever they appear at the ends, in BOTH modes — a
+// glob is still anchorable, and a literal search for a line ending in `$` is
+// what the literal mode's escape hatch is for (search for it unanchored).
+function compile(raw: string, mode: i32): Pattern {
+    var body: string = raw;
+    var at_start: boolean = false;
+    var at_end: boolean = false;
+    if (body.len() > 0 && body[0] == 94) {
+        at_start = true;
+        body = body.drop(1).to_owned();
+    }
+    if (body.len() > 0 && body[body.len() - 1] == 36) {
+        at_end = true;
+        body = body.take(body.len() - 1).to_owned();
+    }
+    return Pattern { body: body, mode: mode, at_start: at_start, at_end: at_end };
+}
+
+function equal_at(text: string, at: i32, body: string): boolean {
+    if (at + body.len() > text.len()) { return false; }
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (text[at + i] != body[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// One scan, with the anchors as constraints on where a hit is allowed to sit.
+// Deliberately NOT four branches calling four stdlib predicates — the tests
+// compare against those, and a matcher built out of them could not disagree.
+function literal_match(p: Pattern, text: string): boolean {
+    var last: i32 = text.len() - p.body.len();
+    if (last < 0) { return false; }
+    var at: i32 = 0;
+    while (at <= last) {
+        if (equal_at(text, at, p.body)) {
+            var start_ok: boolean = !p.at_start || at == 0;
+            var end_ok: boolean = !p.at_end || at + p.body.len() == text.len();
+            if (start_ok && end_ok) { return true; }
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// `*` matches any run including empty, `?` exactly one byte. The single `star`
+// backtrack point is what keeps this linear-ish instead of exponential; the
+// `mark` advance is the retry.
+function glob_match(pat: string, text: string): boolean {
+    var p: i32 = 0;
+    var t: i32 = 0;
+    var star: i32 = -1;
+    var mark: i32 = 0;
+    while (t < text.len()) {
+        if (p < pat.len() && (pat[p] == 63 || pat[p] == text[t])) {
+            p = p + 1;
+            t = t + 1;
+        } else if (p < pat.len() && pat[p] == 42) {
+            star = p;
+            mark = t;
+            p = p + 1;
+        } else if (star >= 0) {
+            p = star + 1;
+            mark = mark + 1;
+            t = mark;
+        } else {
+            return false;
+        }
+    }
+    while (p < pat.len() && pat[p] == 42) { p = p + 1; }
+    return p == pat.len();
+}
+
+function matches(p: Pattern, text: string): boolean {
+    if (p.mode == 0) { return literal_match(p, text); }
+    var eff: string = p.body;
+    if (!p.at_start) { eff = "*" + eff; }
+    if (!p.at_end) { eff = eff + "*"; }
+    return glob_match(eff, text);
+}
+
+// ---------------------------------------------------------- context window ---
+
+// The whole design in one place: mark every line the windows cover, THEN cut
+// the marked set into runs. Merging and clamping both fall out of that order —
+// there is no code path on which two windows can emit the same line twice,
+// because coverage is a set before it is ever a list.
+function search(lines: string[], p: Pattern, before: i32, after: i32): Report {
+    var matched: i32[] = [];
+    var covered: boolean[] = [];
+    var i: i32 = 0;
+    while (i < lines.len()) { covered = covered.append(false); i = i + 1; }
+
+    var k: i32 = 0;
+    while (k < lines.len()) {
+        if (matches(p, lines[k])) {
+            matched = matched.append(k + 1);
+            var lo: i32 = k - before;
+            if (lo < 0) { lo = 0; }
+            var hi: i32 = k + after;
+            if (hi > lines.len() - 1) { hi = lines.len() - 1; }
+            var c: i32 = lo;
+            while (c <= hi) { covered = covered.with(c, true); c = c + 1; }
+        }
+        k = k + 1;
+    }
+
+    var blocks: Block[] = [];
+    var at: i32 = 0;
+    while (at < lines.len()) {
+        if (!covered[at]) { at = at + 1; continue; }
+        var run: Line[] = [];
+        while (at < lines.len() && covered[at]) {
+            var hit: boolean = matches(p, lines[at]);
+            run = run.append(Line { lineno: at + 1, text: lines[at], is_match: hit });
+            at = at + 1;
+        }
+        blocks = blocks.append(Block { lines: run });
+    }
+    return Report { blocks: blocks, matches: matched };
+}
+
+// ------------------------------------------------------------- generators ---
+
+function corpus(): string[] {
+    return ["alpha", "beta", "alphabet", "the alpha line", "gamma", "",
+            "alpha beta gamma", "betalpha", "x", "ALPHA", "a", "ab",
+            "ends with alpha", "alpha starts", "nothing here"];
+}
+
+function metachar_free_patterns(): string[] {
+    return ["alpha", "beta", "a", "x", "nothing", "", "zzz"];
+}
+
+// ------------------------------------------------------------------ tests ---
+
+// The four anchor forms, each against a predicate written by someone else.
+function test_anchors_agree_with_the_obvious_predicates(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var pats: string[] = metachar_free_patterns();
+    var pi: i32 = 0;
+    while (pi < pats.len()) {
+        var body: string = pats[pi];
+        var li: i32 = 0;
+        while (li < lines.len()) {
+            var text: string = lines[li];
+
+            var exact: boolean = matches(compile("^" + body + "$", 0), text);
+            if (exact != (text == body)) {
+                return test.fail("`^" + body + "$` on `" + text + "`: matcher says "
+                    + exact.to_string() + ", equality says " + (text == body).to_string());
+            }
+            var pre: boolean = matches(compile("^" + body, 0), text);
+            if (pre != text.starts_with(body)) {
+                return test.fail("`^" + body + "` on `" + text + "`: matcher says "
+                    + pre.to_string() + ", starts_with says " + text.starts_with(body).to_string());
+            }
+            var suf: boolean = matches(compile(body + "$", 0), text);
+            if (suf != text.ends_with(body)) {
+                return test.fail("`" + body + "$` on `" + text + "`: matcher says "
+                    + suf.to_string() + ", ends_with says " + text.ends_with(body).to_string());
+            }
+            var any: boolean = matches(compile(body, 0), text);
+            if (any != text.contains(body)) {
+                return test.fail("`" + body + "` on `" + text + "`: matcher says "
+                    + any.to_string() + ", contains says " + text.contains(body).to_string());
+            }
+            li = li + 1;
+        }
+        pi = pi + 1;
+    }
+    return test.pass();
+}
+
+// Literal mode means literal: a `*` is an asterisk, not a wildcard. This is the
+// pair of assertions that keeps the two modes from collapsing into one.
+function test_literal_mode_treats_metacharacters_as_bytes(): test.TestOutcome {
+    var star: Pattern = compile("a*b", 0);
+    if (!matches(star, "a*b")) { return test.fail("literal `a*b` should match `a*b`"); }
+    if (matches(star, "aXb")) { return test.fail("literal `a*b` must not match `aXb`"); }
+    if (matches(star, "ab")) { return test.fail("literal `a*b` must not match `ab`"); }
+
+    var q: Pattern = compile("a?b", 0);
+    if (!matches(q, "a?b")) { return test.fail("literal `a?b` should match `a?b`"); }
+    if (matches(q, "aXb")) { return test.fail("literal `a?b` must not match `aXb`"); }
+
+    // The same patterns in GLOB mode do the opposite, which is the point.
+    var gstar: Pattern = compile("^a*b$", 1);
+    if (!matches(gstar, "aXb")) { return test.fail("glob `a*b` should match `aXb`"); }
+    if (!matches(gstar, "ab")) { return test.fail("glob `a*b` should match `ab` (empty run)"); }
+    if (!matches(gstar, "axxb")) { return test.fail("glob `a*b` should match `axxb`"); }
+    var gq: Pattern = compile("^a?b$", 1);
+    if (!matches(gq, "aXb")) { return test.fail("glob `a?b` should match `aXb`"); }
+    if (matches(gq, "ab")) { return test.fail("glob `a?b` must not match `ab` (? is exactly one)"); }
+    if (matches(gq, "axxb")) { return test.fail("glob `a?b` must not match `axxb`"); }
+    return test.pass();
+}
+
+// Glob semantics stated as properties over the whole corpus rather than a table:
+// `^*$` matches everything, `^?$` matches exactly the one-byte lines, and a
+// trailing `*` is prefix matching.
+function test_glob_wildcards_behave_as_specified(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        var text: string = lines[i];
+        if (!matches(compile("^*$", 1), text)) {
+            return test.fail("`^*$` should match everything, missed `" + text + "`");
+        }
+        var one: boolean = matches(compile("^?$", 1), text);
+        if (one != (text.len() == 1)) {
+            return test.fail("`^?$` on `" + text + "`: matcher says " + one.to_string()
+                + ", length is " + text.len().to_string());
+        }
+        var pre: boolean = matches(compile("^al*", 1), text);
+        if (pre != text.starts_with("al")) {
+            return test.fail("`^al*` on `" + text + "`: matcher says " + pre.to_string()
+                + ", starts_with says " + text.starts_with("al").to_string());
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+// The structural invariants that make overlapping windows impossible to get
+// wrong: ascending, non-overlapping, and never adjacent.
+function test_blocks_ascend_and_never_touch(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ctx: i32 = 0;
+    while (ctx < 5) {
+        var r: Report = search(lines, compile("a", 0), ctx, ctx);
+        var prev_end: i32 = -1;
+        var b: i32 = 0;
+        while (b < r.blocks.len()) {
+            var blk: Line[] = r.blocks[b].lines;
+            if (blk.len() == 0) { return test.fail("ctx=" + ctx.to_string() + ": empty block"); }
+            var s: i32 = blk[0].lineno;
+            var e: i32 = blk[blk.len() - 1].lineno;
+            if (e - s + 1 != blk.len()) {
+                return test.fail("ctx=" + ctx.to_string() + " block " + b.to_string()
+                    + " spans " + s.to_string() + ".." + e.to_string() + " but holds "
+                    + blk.len().to_string() + " lines — it is not contiguous");
+            }
+            if (s <= prev_end + 1) {
+                return test.fail("ctx=" + ctx.to_string() + " block " + b.to_string()
+                    + " starts at " + s.to_string() + " with the previous ending at "
+                    + prev_end.to_string() + " — these should have merged");
+            }
+            prev_end = e;
+            b = b + 1;
+        }
+        ctx = ctx + 1;
+    }
+    return test.pass();
+}
+
+// Coverage computed a second way, from the match list alone, and compared to
+// what the blocks actually contain.
+function test_coverage_is_the_clamped_union_of_windows(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var ctx: i32 = 0;
+    while (ctx < 5) {
+        var r: Report = search(lines, compile("a", 0), ctx, ctx);
+
+        var want: boolean[] = [];
+        var z: i32 = 0;
+        while (z < lines.len()) { want = want.append(false); z = z + 1; }
+        var m: i32 = 0;
+        while (m < r.matches.len()) {
+            var at: i32 = r.matches[m] - 1;
+            var lo: i32 = at - ctx;
+            if (lo < 0) { lo = 0; }
+            var hi: i32 = at + ctx;
+            if (hi > lines.len() - 1) { hi = lines.len() - 1; }
+            var c: i32 = lo;
+            while (c <= hi) { want = want.with(c, true); c = c + 1; }
+            m = m + 1;
+        }
+
+        var got: boolean[] = [];
+        var y: i32 = 0;
+        while (y < lines.len()) { got = got.append(false); y = y + 1; }
+        var b: i32 = 0;
+        while (b < r.blocks.len()) {
+            var k: i32 = 0;
+            while (k < r.blocks[b].lines.len()) {
+                var ln: i32 = r.blocks[b].lines[k].lineno;
+                if (got[ln - 1]) {
+                    return test.fail("ctx=" + ctx.to_string() + ": line " + ln.to_string()
+                        + " appears twice in the output");
+                }
+                got = got.with(ln - 1, true);
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+
+        var i: i32 = 0;
+        while (i < lines.len()) {
+            if (got[i] != want[i]) {
+                return test.fail("ctx=" + ctx.to_string() + " line " + (i + 1).to_string()
+                    + ": emitted " + got[i].to_string() + ", window says " + want[i].to_string());
+            }
+            i = i + 1;
+        }
+        ctx = ctx + 1;
+    }
+    return test.pass();
+}
+
+// Every match is present and flagged; every flagged line really matches.
+function test_matches_are_present_and_flagged(): test.TestOutcome {
+    var lines: string[] = corpus();
+    var p: Pattern = compile("alpha", 0);
+    var ctx: i32 = 0;
+    while (ctx < 4) {
+        var r: Report = search(lines, p, ctx, ctx);
+        var seen: i32 = 0;
+        var b: i32 = 0;
+        while (b < r.blocks.len()) {
+            var k: i32 = 0;
+            while (k < r.blocks[b].lines.len()) {
+                var ln: Line = r.blocks[b].lines[k];
+                var really: boolean = matches(p, lines[ln.lineno - 1]);
+                if (ln.is_match != really) {
+                    return test.fail("line " + ln.lineno.to_string() + " flagged "
+                        + ln.is_match.to_string() + ", actually " + really.to_string());
+                }
+                if (ln.text != lines[ln.lineno - 1]) {
+                    return test.fail("line " + ln.lineno.to_string() + " carries the wrong text");
+                }
+                if (ln.is_match) { seen = seen + 1; }
+                k = k + 1;
+            }
+            b = b + 1;
+        }
+        if (seen != r.matches.len()) {
+            return test.fail("ctx=" + ctx.to_string() + ": " + seen.to_string()
+                + " flagged lines but " + r.matches.len().to_string() + " matches");
+        }
+        ctx = ctx + 1;
+    }
+    return test.pass();
+}
+
+// Windows clamp at both ends rather than producing line 0 or line n+1.
+function test_windows_clamp_at_the_file_edges(): test.TestOutcome {
+    var lines: string[] = ["hit", "b", "c", "d", "hit"];
+    var r: Report = search(lines, compile("^hit$", 0), 10, 10);
+    if (r.blocks.len() != 1) {
+        return test.fail("huge context should give one block, got " + r.blocks.len().to_string());
+    }
+    var blk: Line[] = r.blocks[0].lines;
+    if (blk.len() != 5) { return test.fail("expected the whole file, got " + blk.len().to_string()); }
+    if (blk[0].lineno != 1 || blk[4].lineno != 5) {
+        return test.fail("clamping produced " + blk[0].lineno.to_string() + ".."
+            + blk[blk.len() - 1].lineno.to_string());
+    }
+    var zero: Report = search(lines, compile("^hit$", 0), 0, 0);
+    if (zero.blocks.len() != 2) {
+        return test.fail("zero context should give two blocks, got " + zero.blocks.len().to_string());
+    }
+    if (zero.blocks[0].lines.len() != 1 || zero.blocks[1].lines.len() != 1) {
+        return test.fail("zero context should give one line per block");
+    }
+    return test.pass();
+}
+
+// Two matches three lines apart, with a window that makes them touch: the
+// output must be ONE block, and no line may repeat. This is the case a
+// per-match emitter gets wrong first.
+function test_overlapping_windows_merge_into_one_block(): test.TestOutcome {
+    // Matches on lines 2 and 6 of seven. At context 1 the windows are 1..3 and
+    // 5..7, so line 4 is uncovered and there are two blocks; at context 2 they
+    // are 1..4 and 4..7, which share line 4 and must become one. Picking the
+    // fixture so the two contexts straddle the merge is the point — with the
+    // matches one line closer, context 1 already covers everything and the
+    // "does it merge?" half of the test asserts nothing.
+    var lines: string[] = ["a", "hit", "c", "d", "e", "hit", "g"];
+    var apart: Report = search(lines, compile("^hit$", 0), 1, 1);
+    if (apart.blocks.len() != 2) {
+        return test.fail("context 1 leaves line 4 uncovered, want 2 blocks, got "
+            + apart.blocks.len().to_string());
+    }
+    var merged: Report = search(lines, compile("^hit$", 0), 2, 2);
+    if (merged.blocks.len() != 1) {
+        return test.fail("context 2 makes the windows touch, want 1 block, got "
+            + merged.blocks.len().to_string());
+    }
+    if (merged.blocks[0].lines.len() != 7) {
+        return test.fail("merged block should hold all 7 lines, holds "
+            + merged.blocks[0].lines.len().to_string());
+    }
+    // Exactly touching (no overlap, no gap) must also merge.
+    var touch: Report = search(["hit", "b", "c", "hit"], compile("^hit$", 0), 1, 1);
+    if (touch.blocks.len() != 1) {
+        return test.fail("touching windows should merge, got " + touch.blocks.len().to_string());
+    }
+    return test.pass();
+}
+
+function test_degenerate_inputs(): test.TestOutcome {
+    var none: Report = search(corpus(), compile("zzz", 0), 2, 2);
+    if (none.blocks.len() != 0) { return test.fail("no matches should give no blocks"); }
+    if (none.matches.len() != 0) { return test.fail("no matches should give no match list"); }
+
+    var empty: Report = search([], compile("a", 0), 3, 3);
+    if (empty.blocks.len() != 0) { return test.fail("empty input gave blocks"); }
+
+    // The empty pattern matches every line, so the whole file is one block.
+    var all: Report = search(corpus(), compile("", 0), 0, 0);
+    if (all.blocks.len() != 1) {
+        return test.fail("the empty pattern should match every line, got "
+            + all.blocks.len().to_string() + " blocks");
+    }
+    if (all.matches.len() != corpus().len()) {
+        return test.fail("the empty pattern matched " + all.matches.len().to_string()
+            + " of " + corpus().len().to_string() + " lines");
+    }
+    return test.pass();
+}
+
+function main(): i32 {
+    eprint("grepish — literal, glob and anchored patterns with context");
+
+    var lines: string[] = corpus();
+    var r: Report = search(lines, compile("alpha", 0), 1, 1);
+    eprint("  `alpha` with context 1 -> " + r.blocks.len().to_string() + " block(s), "
+        + r.matches.len().to_string() + " match(es)");
+    var b: i32 = 0;
+    while (b < r.blocks.len()) {
+        if (b > 0) { eprint("  --"); }
+        var k: i32 = 0;
+        while (k < r.blocks[b].lines.len()) {
+            var ln: Line = r.blocks[b].lines[k];
+            var mark: string = "-";
+            if (ln.is_match) { mark = ":"; }
+            eprint("  " + ln.lineno.to_string() + mark + " " + ln.text);
+            k = k + 1;
+        }
+        b = b + 1;
+    }
+    var g: Report = search(lines, compile("^al*a$", 1), 0, 0);
+    eprint("  glob `^al*a$` matched " + g.matches.len().to_string() + " line(s)");
+
+    var t: test.TestRunner = test.test_new("grepish");
+    t = t.it("anchors agree with the obvious predicates", test_anchors_agree_with_the_obvious_predicates);
+    t = t.it("literal mode treats metacharacters as bytes", test_literal_mode_treats_metacharacters_as_bytes);
+    t = t.it("glob wildcards behave as specified", test_glob_wildcards_behave_as_specified);
+    t = t.it("blocks ascend and never touch", test_blocks_ascend_and_never_touch);
+    t = t.it("coverage is the clamped union of windows", test_coverage_is_the_clamped_union_of_windows);
+    t = t.it("matches are present and flagged", test_matches_are_present_and_flagged);
+    t = t.it("windows clamp at the file edges", test_windows_clamp_at_the_file_edges);
+    t = t.it("overlapping windows merge into one block", test_overlapping_windows_merge_into_one_block);
+    t = t.it("degenerate inputs", test_degenerate_inputs);
+    return t.finish();
+}

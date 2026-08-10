@@ -159,7 +159,7 @@ func TestCmdFernNativeArm64(t *testing.T) {
 		t.Fatal(err)
 	}
 	outPath := filepath.Join(dir, "n.out")
-	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "arm64", "-native", "-o", outPath, srcPath)
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "arm64-linux", "-native", "-o", outPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -native failed: %v\n%s", err, out)

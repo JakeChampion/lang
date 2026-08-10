@@ -15,7 +15,7 @@ shipping backends — `internal/codegen/{arm64,x86_64,wasmbin}` — all consume
 the flat, structured-control-flow `ir.Program` and run only the
 peephole-grade passes in `internal/ir/` (`fold`, `dce`, `copyprop`,
 `constprop`, `inline`, `strength`, `tco`, `defunctionalise`). The only
-consumer of the SSA layer is the experimental `-target wasm-ssa` emitter
+consumer of the SSA layer is the experimental `-target wasm32-wasi -backend ssa` emitter
 (`internal/codegen/wasmssa/`), which covers i32/i64/f32/f64 + memory + a
 reducible-CFG subset.
 
@@ -26,7 +26,7 @@ the migration so the code's status is explicit rather than ambient.
 
 ## Decision: shelve, with a tripwire
 
-We **shelve** the SSA-on-production migration for now and keep `wasm-ssa` as
+We **shelve** the SSA-on-production migration for now and keep `-backend ssa` (wasm) as
 the experimental proving ground. Rationale:
 
 1. **It is not load-bearing for current priorities.** The active fronts are
@@ -50,7 +50,7 @@ the experimental proving ground. Rationale:
    the shared lowering all native backends consume.
 
 4. **Shelving ≠ deleting.** The framework stays, stays tested, and stays
-   exercised through `wasm-ssa`. We are deferring the *production cutover*,
+   exercised through `-backend ssa` (wasm). We are deferring the *production cutover*,
    not abandoning the investment.
 
 ## Tripwires (any one flips this back to "schedule the cutover")
@@ -62,7 +62,7 @@ the experimental proving ground. Rationale:
 - The self-hosted compiler's own generated code becomes a measured
   bottleneck for `make distcheck` / bootstrap turnaround in a way SSA passes
   would address.
-- `wasm-ssa` reaches feature parity with `wasmbin` and outperforms it on the
+- `-backend ssa` (wasm) reaches feature parity with `wasmbin` and outperforms it on the
   e2e corpus by a margin that justifies making it the default wasm path
   (which would make SSA production by definition).
 - The flat-IR optimizer in `internal/ir/` grows enough ad-hoc
@@ -84,10 +84,10 @@ On 2026-09-01, revisit with fresh numbers:
 So the framework doesn't rot:
 
 - Keep `internal/ssa/` building and its tests green in CI (they already run).
-- Keep `-target wasm-ssa` in the e2e matrix so the layer stays exercised
+- Keep `-target wasm32-wasi -backend ssa` in the e2e matrix so the layer stays exercised
   end-to-end, not just unit-tested.
 - New IR ops / language features are **not** required to land in the SSA
-  layer while it is shelved — but if `wasm-ssa` can't express a feature, that
+  layer while it is shelved — but if `-backend ssa` (wasm) can't express a feature, that
   gap is logged here, because a growing gap raises the cutover cost and is
   itself a signal.
 
@@ -99,7 +99,7 @@ Since this doc was written, two native SSA backends grew —
 early: it is an **extension of the "keep an experimental proving ground"
 maintenance contract above**, not a production cutover. The decision stands —
 SSA remains shelved for production; these backends are the sanctioned proving
-ground on the native side, exactly as `wasm-ssa` is.
+ground on the native side, exactly as `-backend ssa` (wasm) is.
 
 **Their gate (so the status is explicit, not ambient):**
 
@@ -112,7 +112,7 @@ ground on the native side, exactly as `wasm-ssa` is.
   must stay byte-identical-in-behaviour to the flat-IR backends and the
   interpreter across their covered subset. A divergence is a bug in the
   proving ground, not a reason to ship it.
-- **Not required to carry new features.** As with `wasm-ssa`, a language
+- **Not required to carry new features.** As with `-backend ssa` (wasm), a language
   feature these backends can't yet express is a logged gap, not a blocker.
 
 **The 2026-09-01 re-evaluation is unchanged.** If a tripwire fires before then

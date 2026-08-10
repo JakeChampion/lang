@@ -378,7 +378,7 @@ func dynAllBackends(t *testing.T, src, wantInterp string) {
 	if want != wantInterp {
 		t.Fatalf("interp baseline = %q, want %q", want, wantInterp)
 	}
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		got := runWasmCapturingStdout(t, src)
 		if got != want {
 			t.Errorf("wasm = %q, want %q (interp)", got, want)
@@ -394,7 +394,7 @@ func dynAllBackends(t *testing.T, src, wantInterp string) {
 			t.Errorf("x86-64 = %q, want %q (interp)", got, want)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		got, code := compileAndRunArm64(t, src)
 		got = strings.TrimSpace(got)
 		if code != 0 {
@@ -414,7 +414,7 @@ func dynAllBackends(t *testing.T, src, wantInterp string) {
 // §4.1). The compiled backends carry the width, so they dispatch correctly.
 func dynCompiledBackends(t *testing.T, src, want string) {
 	t.Helper()
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		got := runWasmCapturingStdout(t, src)
 		if got != want {
 			t.Errorf("wasm = %q, want %q", got, want)
@@ -430,7 +430,7 @@ func dynCompiledBackends(t *testing.T, src, want string) {
 			t.Errorf("x86-64 = %q, want %q", got, want)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		got, code := compileAndRunArm64(t, src)
 		got = strings.TrimSpace(got)
 		if code != 0 {

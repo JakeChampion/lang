@@ -112,7 +112,7 @@ is entered and left inside a single op:
   (i+1)*8]`… Always 8-byte."
 
 This is not merely how the comments read; it is what the backend emits. For
-`var c: f64 = a * b + a`, `fern -target x86-64` produces:
+`var c: f64 = a * b + a`, `fern -target x86-64-linux` produces:
 
 ```
     movabs $0x400c000000000000,%rax   ; f64 bit pattern in a GPR
@@ -506,7 +506,7 @@ as if that were the whole prerequisite, and it is not:
 > **The in-process assemblers must be able to ENCODE vector instructions, and
 > they could not.**
 
-`internal/native/x86_64` — which `-target x86-64` uses by default, `-cc` being
+`internal/native/x86_64` — which `-target x86-64-linux` uses by default, `-cc` being
 the opt-out — had no vector surface whatsoever. Only the scalar float ops the
 code generator uses to shuttle f64 through xmm. Not `movdqu`, not `pcmpeqb`,
 not `pmovmskb`, not even `bsf`. The first SSE2 kernel therefore assembled
@@ -557,7 +557,7 @@ than encoding it.
 ### 3.4 Ordering across seven backends
 
 **Seven, not six.** This section said six through the whole of `__memchr`'s
-build, and the miscount was not free: `arm64-ssa`
+build, and the miscount was not free: `-backend ssa` (arm64)
 (`internal/codegen/arm64ssa`, reached via `ssa.LiftFromIR`, with its own
 hand-written `runtimeHelperEmitters` table) was adopted-past rather than
 ported, and CI reported it as `branch to undefined label
@@ -592,7 +592,7 @@ two words with no address, so there is nothing for `v128.load` to point at.
 The three *self-host* backends followed, and there step 1's scalar-first
 ordering is the whole point rather than a formality: `asm_ir.fern` /
 `asm_arm64_ir.fern` emit an inline byte loop, `wasm_ir.fern` a
-`$__fern_memchr` WAT helper. `arm64-ssa` was the seventh and, as above, the
+`$__fern_memchr` WAT helper. `-backend ssa` (arm64) was the seventh and, as above, the
 forgotten one; it is scalar too. Step 1 is therefore **complete — the intrinsic
 is total** — and step 2 (`std/string` adoption) landed at ~43x on the
 single-byte search path.
@@ -603,7 +603,7 @@ seven non-trivial. Native x86-64 uses a one-word `string`; native arm64 and
 native wasm use two words with small-string optimisation (and wasm's SSO form
 has no address at all, so its kernel needs a second scalar path); the self-host
 backends use a `[data@0, len@8]` box on the register targets and a
-`[len@0][bytes@4]` block on wasm; `arm64-ssa` uses one word with the length at
+`[len@0][bytes@4]` block on wasm; `-backend ssa` (arm64) uses one word with the length at
 `[ptr-4]`. The op is the same op in all seven; nothing below it is.
 
 **`__ascii_run`, the second kernel.** Total across all seven, and — unlike
@@ -635,7 +635,7 @@ ASCII unchanged). Worth generalising alongside the input-vs-needle rule below:
 **the rule says whether a kernel pays on its intended corpus; it says nothing
 about what the kernel costs on the corpus it was not chosen for.** Measure both.
 
-Remaining: step 3 for the self-host and `arm64-ssa` tiers — swapping those
+Remaining: step 3 for the self-host and `-backend ssa` (arm64) tiers — swapping those
 scalar bodies for vector ones. Unlike the native tier that is pure speed with
 no totality argument behind it, so it ranks below §4's other items.
 

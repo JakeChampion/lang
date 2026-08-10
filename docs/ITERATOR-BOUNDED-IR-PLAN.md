@@ -221,7 +221,7 @@ just 1+2.
 
 1. `go build -o /tmp/fern ./cmd/fern`; copy `examples/self_host/*.fern` to a
    scratch dir; patch as above.
-2. Build the driver: `/tmp/fern -target x86-64 scratch/asm_load_run.fern > d.s`
+2. Build the driver: `/tmp/fern -target x86-64-linux scratch/asm_load_run.fern > d.s`
    then `gcc -nostdlib -static -o alr d.s` (~3 min).
 3. Decide/probe a repro:
    `echo 'import "core/iter"; function main(): i32 { var xs: i32[] = [1,2,3,4]; return iter.sum(iter.of(xs)); }' > t.fern`

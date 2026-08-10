@@ -49,13 +49,13 @@ func TestAliasGrowNoOverRelease(t *testing.T) {
 			t.Errorf("exit %d, want 0: a name was reclaimed under its owner (shared-buffer grow copied its elements without a retain)", code)
 		}
 	})
-	t.Run("arm64", func(t *testing.T) {
+	t.Run("arm64-linux", func(t *testing.T) {
 		_, code := compileAndRunArm64(t, src)
 		if code != 0 {
 			t.Errorf("exit %d, want 0: a name was reclaimed under its owner (shared-buffer grow copied its elements without a retain)", code)
 		}
 	})
-	t.Run("wasm", func(t *testing.T) {
+	t.Run("wasm32-wasi", func(t *testing.T) {
 		// A regression guard, NOT proof the _move_str retain fires: this leg
 		// also passes with that retain disabled, because the shape is inert on
 		// wasm today — a two-word `string[]` self-append never reclaims its

@@ -38,8 +38,8 @@
 //	}
 //	  Compiles src for one of the supported targets and returns
 //	  the textual output the corresponding cmd/fern `-target`
-//	  flag would have written. Targets: "arm64" (Linux ELF),
-//	  "arm64-darwin" (Mach-O variant), "x86-64" (Linux ELF).
+//	  flag would have written. Targets: "arm64-linux" (Linux ELF),
+//	  "arm64-darwin" (Mach-O variant), "x86-64-linux" (Linux ELF).
 //	  The playground's "View assembly" pane consumes this for
 //	  the Godbolt-style side-by-side experience. (The wasm
 //	  target retired with the WAT backend — the wasmbin path
@@ -53,7 +53,7 @@
 //	  Compiles src to a Component Model binary — the same bytes
 //	  `fern -target wasm` / `-target wasi-http` write — so the page
 //	  can offer it for download and local `wasmtime` / jco runs.
-//	  Worlds: "wasm" (a wasi:cli/run component) and "wasi-http" (a
+//	  Worlds: "wasm32-wasi" (a wasi:cli/run component) and "wasm32-wasi-http" (a
 //	  wasi:http/incoming-handler component). Bytes come back
 //	  base64-encoded so they survive the syscall/js boundary as a
 //	  plain string; the page decodes with atob into a Uint8Array.
@@ -263,14 +263,14 @@ func compile(src, target string) map[string]any {
 
 	var out string
 	switch target {
-	case "arm64":
+	case "arm64-linux":
 		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{})
 	case "arm64-darwin":
 		out, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-	case "x86-64":
+	case "x86-64-linux":
 		out, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{})
 	default:
-		result["error"] = fmt.Sprintf("unknown target %q (want arm64, arm64-darwin, x86-64)", target)
+		result["error"] = fmt.Sprintf("unknown target %q (want arm64-linux, arm64-darwin, x86-64-linux)", target)
 		return result
 	}
 	if err != nil {

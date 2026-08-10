@@ -43,7 +43,7 @@ function main(): i32 {
 func TestX86_64AppendReturnPosBounded(t *testing.T) {
 	_, n1 := compileAndRunX86_64FreeOn(t, appendReturnPosBumpSrc("60"))
 	_, n2 := compileAndRunX86_64FreeOn(t, appendReturnPosBumpSrc("120"))
-	assertSubQuadratic(t, "x86-64", n1, n2)
+	assertSubQuadratic(t, "x86-64-linux", n1, n2)
 }
 
 func TestWASMAppendReturnPosBounded(t *testing.T) {
@@ -52,5 +52,5 @@ func TestWASMAppendReturnPosBounded(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	n1 := runWasm(t, appendReturnPosBumpSrc("60"))
 	n2 := runWasm(t, appendReturnPosBumpSrc("120"))
-	assertSubQuadratic(t, "wasm", n1, n2)
+	assertSubQuadratic(t, "wasm32-wasi", n1, n2)
 }

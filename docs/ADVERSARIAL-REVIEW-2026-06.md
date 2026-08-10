@@ -153,7 +153,7 @@ above).
 - **Location:** `internal/codegen/x86_64/x86_64.go:1978`
   (`emitIntDivRem`, dispatched from `OpDivS`/`OpRemS`, lines 958-961)
 - **Scenario:** `var x: usize = 5_000_000_000; var y = x / 3;` compiled
-  `-target x86-64`.
+  `-target x86-64-linux`.
 - **Why it's wrong:** `w64 := op.Width == 64`. For `usize` the checker
   stamps `Width == ir.WidthPtr (-1)`, so `w64` is false and the 32-bit
   path (`cdq`/`idiv ecx`) runs, truncating the dividend to its low 32
@@ -167,7 +167,7 @@ above).
 
 ### I1 — SSA constant-folding ignores operand width → i32 wraparound lost
 
-- **Subsystem:** optimiser (SSA pipeline, `-target wasm-ssa`)
+- **Subsystem:** optimiser (SSA pipeline, `-target wasm32-wasi -backend ssa`)
 - **Location:** `internal/ssa/constfold.go:251-297` (`tryFold` integer
   cases) and `internal/ssa/sccp.go:423-471` (`foldIntBinary`)
 - **Scenario:**

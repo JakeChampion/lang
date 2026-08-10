@@ -246,7 +246,7 @@ it starts from a solved position.
 
 ## Layer 2 — component composer: THE BLOCKER (historical — now solved for timers)
 
-`fern -target wasm` wraps the emitted core module into a Preview-2
+`fern -target wasm32-wasi` wraps the emitted core module into a Preview-2
 **component** via `internal/wasm/component`. `ClassifyCore`
 (`classify.go`) routes each core WASI import to a real implementation;
 anything unrecognised → `unsupported` → the compile fails with
@@ -294,7 +294,7 @@ available, so it's fully testable once Layer 2 lands.
 
 ## SELF-HOST wasm-IR path — a SEPARATE component-composition blocker (poll/tcp)
 
-Everything above is the **native** (Go) reactor: `fern -target wasm`
+Everything above is the **native** (Go) reactor: `fern -target wasm32-wasi`
 wraps the core module with `internal/wasm/component` (the Go composer,
 `compose_*.go` + `componenttype`), which declares + canonically lowers
 `wasi:io/poll.poll(list<pollable>)`, the tcp streams/resources, etc. —

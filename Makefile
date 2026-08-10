@@ -70,7 +70,7 @@ freeze:
 # produced was SIGKILLed at exec, which is why the target did not exist.
 #
 #   make selfhost-cli
-#   bin/fern-selfhost -target wasm /ABS/prog.fern $(PWD)/internal/stdlib -o p.wat
+#   bin/fern-selfhost -target wasm32-wasi /ABS/prog.fern $(PWD)/internal/stdlib -o p.wat
 #   wasmtime run p.wat; echo $$?        # oracle: ./bin/fern -interp /ABS/prog.fern
 #
 # Use ABSOLUTE paths. A relative one was unopenable from an arm64-darwin binary
@@ -90,7 +90,7 @@ examples: $(BINS)
 
 build/%.s: examples/%.fern bin/fern
 	@mkdir -p build
-	./bin/fern -target arm64 $< > $@
+	./bin/fern -target arm64-linux $< > $@
 
 build/%: build/%.s
 	$(AARCH64_GCC) -static -nostdlib $< -o $@

@@ -21,7 +21,7 @@ function main(): i32 {
 | path | `reverse` | `rotate_left` | `drop` |
 |---|---|---|---|
 | native `-interp` (oracle) | 45 | 45 | 45 |
-| native compiled `-target x86-64` | 45 | 45 | 45 |
+| native compiled `-target x86-64-linux` | 45 | 45 | 45 |
 | **self-host `-target wasm`** | **15** | **0** | **0** |
 | self-host `-target x86-64` | 45 | — | — |
 

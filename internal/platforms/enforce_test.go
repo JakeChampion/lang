@@ -56,7 +56,7 @@ func TestEnforceSubprocessRejectedOnCompiledTargets(t *testing.T) {
     var r = subprocess("/bin/echo", ["hi"], "");
     return r.exit_code;
 }`
-	for _, target := range []string{"wasm", "x86-64", "arm64", "arm64-darwin", "arm64-android"} {
+	for _, target := range []string{"wasm32-wasi", "x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
 		t.Run(target, func(t *testing.T) {
 			prog := prepared(t, src, false)
 			vs := platforms.Enforce(prog, target)
@@ -90,12 +90,12 @@ func TestEnforceProcByTarget(t *testing.T) {
     }
     return proc_waitpid(pid);
 }`
-	for _, target := range []string{"x86-64", "arm64", "arm64-darwin", "arm64-android"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
 		if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 			t.Errorf("%s: unexpected violations: %+v", target, vs)
 		}
 	}
-	for _, target := range []string{"wasm", "wasi-http"} {
+	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
 		t.Run(target, func(t *testing.T) {
 			vs := platforms.Enforce(prepared(t, src, false), target)
 			if len(vs) != 3 {
@@ -114,7 +114,7 @@ func TestEnforceProcByTarget(t *testing.T) {
 					break
 				}
 			}
-			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, "x86-64") || !strings.Contains(msg, "arm64") {
+			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, "x86-64-linux") || !strings.Contains(msg, "arm64-linux") {
 				t.Errorf("provider hint missing native targets: %s", msg)
 			}
 		})
@@ -128,12 +128,12 @@ func TestEnforceFsByTarget(t *testing.T) {
     var r = read_file("/etc/config");
     return 0;
 }`
-	for _, target := range []string{"x86-64", "wasm", "arm64"} {
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi", "arm64-linux"} {
 		if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 			t.Errorf("%s: unexpected violations: %+v", target, vs)
 		}
 	}
-	vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+	vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
 	if len(vs) != 1 || vs[0].Capability != "fs" {
 		t.Fatalf("wasi-http violations = %+v, want one fs violation", vs)
 	}
@@ -152,7 +152,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }`
 	prog := prepared(t, src, true)
-	if vs := platforms.Enforce(prog, "wasi-http"); len(vs) != 0 {
+	if vs := platforms.Enforce(prog, "wasm32-wasi-http"); len(vs) != 0 {
 		t.Fatalf("clean handler tripped enforcement: %+v", vs)
 	}
 }
@@ -168,7 +168,7 @@ function main(): i32 {
     var s = helper();
     return 0;
 }`
-	vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+	vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
 	if len(vs) != 1 {
 		t.Fatalf("violations = %d, want 1: %+v", len(vs), vs)
 	}
@@ -177,14 +177,22 @@ function main(): i32 {
 	}
 }
 
-// Unknown targets (e.g. experimental backends without a descriptor)
-// skip enforcement entirely.
+// A target with no descriptor skips enforcement entirely — the fallback
+// that lets a name Enforce has never heard of pass through rather than
+// erroring.
+//
+// This used to be demonstrated with "wasm-ssa", which was a real
+// -target value at the time. That was the bug, not the illustration:
+// the SSA backends had no descriptor, so choosing one silently opted a
+// build out of the capability gate. They are `-backend ssa` on an
+// ordinary target now (#6536), so the only names left without a
+// descriptor are genuine typos.
 func TestEnforceUnknownTargetSkips(t *testing.T) {
 	src := `function main(): i32 {
     var r = subprocess("/bin/echo", [], "");
     return r.exit_code;
 }`
-	if vs := platforms.Enforce(prepared(t, src, false), "wasm-ssa"); vs != nil {
+	if vs := platforms.Enforce(prepared(t, src, false), "no-such-target"); vs != nil {
 		t.Fatalf("unknown target should skip enforcement, got %+v", vs)
 	}
 }
@@ -203,14 +211,14 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
     __heap_release_to(m);
     return (__heap_bump_bytes() as i32);
 }`
-	for _, target := range []string{"x86-64", "arm64", "arm64-darwin", "arm64-android"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
 		t.Run(target+"/allowed", func(t *testing.T) {
 			if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 				t.Errorf("native target %q should provide `arena`; violations = %+v", target, vs)
 			}
 		})
 	}
-	for _, target := range []string{"wasm", "wasi-http"} {
+	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
 		t.Run(target+"/rejected", func(t *testing.T) {
 			vs := platforms.Enforce(prepared(t, src, false), target)
 			// Both calls are gated; __heap_bump_bytes is not.
@@ -226,7 +234,7 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 				}
 				// The message must point at the targets that DO provide it,
 				// not read as interp-only the way subprocess does.
-				if msg := v.Message("<stdin>"); !strings.Contains(msg, "x86-64") {
+				if msg := v.Message("<stdin>"); !strings.Contains(msg, "x86-64-linux") {
 					t.Errorf("message should list the providing targets: %s", msg)
 				}
 			}
@@ -272,7 +280,7 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 		"handle":  `function main(): i32 { var w = stdout(); return 0; }`,
 	}
 	for name, src := range srcs {
-		for _, target := range []string{"arm64", "arm64-darwin", "arm64-android", "x86-64", "wasm"} {
+		for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
 			t.Run(name+"/"+target, func(t *testing.T) {
 				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 					t.Errorf("%s on %s: unexpected violations: %+v", name, target, vs)
@@ -280,7 +288,7 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 			})
 		}
 		t.Run(name+"/wasi-http", func(t *testing.T) {
-			vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+			vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
 			if len(vs) != 1 || vs[0].Capability != "stdout" {
 				t.Fatalf("%s on wasi-http: violations = %+v, want one stdout violation", name, vs)
 			}
@@ -326,15 +334,15 @@ func TestClassificationCoversCheckerRegistry(t *testing.T) {
 // argv. This is the same shape as the stdout finding in #6507.
 func TestEnforceArgsNotOnProxyWorld(t *testing.T) {
 	src := `function main(): i32 { var a: string[] = args(); return 0; }`
-	for _, target := range []string{"arm64", "arm64-darwin", "arm64-android", "x86-64", "wasm"} {
+	for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
 				t.Errorf("%s: unexpected violations: %+v", target, vs)
 			}
 		})
 	}
-	t.Run("wasi-http", func(t *testing.T) {
-		vs := platforms.Enforce(prepared(t, src, false), "wasi-http")
+	t.Run("wasm32-wasi-http", func(t *testing.T) {
+		vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
 		if len(vs) != 1 || vs[0].Capability != "args" {
 			t.Fatalf("violations = %+v, want one args violation", vs)
 		}
@@ -380,7 +388,7 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 	}
 	for name, src := range srcs {
 		t.Run(name, func(t *testing.T) {
-			vs := platforms.Enforce(prepared(t, src, false), "freestanding")
+			vs := platforms.Enforce(prepared(t, src, false), "arm64-freestanding")
 			if len(vs) == 0 {
 				t.Fatalf("%s: freestanding should grant no host capability, got no violations", name)
 			}
@@ -397,7 +405,7 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
     var b: i64 = f64_bits(1.5);
     return ((b + 1) as i32);
 }`
-	if vs := platforms.Enforce(prepared(t, src, false), "freestanding"); len(vs) != 0 {
+	if vs := platforms.Enforce(prepared(t, src, false), "arm64-freestanding"); len(vs) != 0 {
 		t.Fatalf("core-only program rejected on freestanding: %+v", vs)
 	}
 }
@@ -406,32 +414,40 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
 // #6509 ordering, where the constraint becomes real before there is
 // codegen to constrain.
 func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
-	d := platforms.ForTarget("freestanding")
-	if d == nil {
-		t.Fatal("freestanding has no descriptor")
+	free := []string{"arm64-freestanding", "x86-64-freestanding"}
+	for _, name := range free {
+		t.Run(name, func(t *testing.T) {
+			d := platforms.ForTarget(name)
+			if d == nil {
+				t.Fatalf("%s has no descriptor", name)
+			}
+			if !d.NoBackend {
+				t.Errorf("%s should be marked NoBackend until #6510/#6511 land", name)
+			}
+			if len(d.Capabilities) != 0 {
+				t.Errorf("%s grants %v, want nothing", name, d.Capabilities)
+			}
+			if d.Environment != "freestanding" {
+				t.Errorf("%s environment = %q, want freestanding", name, d.Environment)
+			}
+		})
 	}
-	if !d.NoBackend {
-		t.Error("freestanding should be marked NoBackend until #6510/#6511 land")
-	}
-	if len(d.Capabilities) != 0 {
-		t.Errorf("freestanding grants %v, want nothing", d.Capabilities)
-	}
-	var listed bool
+	// The freestanding pairs are the ONLY non-emitting targets, and they
+	// are listed, so `fern -targets` shows them. Deriving both from the
+	// environment rather than a name list means a third freestanding ISA
+	// needs no change here.
+	listed := map[string]bool{}
 	for _, n := range platforms.Targets() {
-		if n == "freestanding" {
-			listed = true
+		listed[n] = true
+		emits := !platforms.ForTarget(n).NoBackend
+		isFree := platforms.ForTarget(n).Environment == "freestanding"
+		if emits == isFree {
+			t.Errorf("target %q: emits=%v but freestanding=%v — they must be opposites", n, emits, isFree)
 		}
 	}
-	if !listed {
-		t.Error("freestanding missing from Targets(), so `fern -targets` won't show it")
-	}
-	// Every other target must still emit.
-	for _, n := range platforms.Targets() {
-		if n == "freestanding" {
-			continue
-		}
-		if platforms.ForTarget(n).NoBackend {
-			t.Errorf("target %q unexpectedly marked NoBackend", n)
+	for _, n := range free {
+		if !listed[n] {
+			t.Errorf("%s missing from Targets(), so `fern -targets` won't show it", n)
 		}
 	}
 }

@@ -584,15 +584,15 @@
   <button id="share" class="secondary">Share</button>
   <button id="viewAsm" class="secondary btn-asm" disabled>View assembly</button>
   <select id="targetSelect" title="Backend for the assembly view">
-    <option value="arm64">arm64</option>
+    <option value="arm64-linux">arm64-linux</option>
     <option value="arm64-darwin">arm64-darwin</option>
-    <option value="x86-64">x86-64</option>
+    <option value="x86-64-linux">x86-64-linux</option>
   </select>
   <button id="buildComponent" class="secondary" disabled
           title="Compile to a WebAssembly Component and run it in-browser via jco">Build component</button>
   <select id="worldSelect" title="WIT world to compose">
-    <option value="wasm">wasi:cli/run</option>
-    <option value="wasi-http">wasi:http/incoming-handler</option>
+    <option value="wasm32-wasi">wasi:cli/run</option>
+    <option value="wasm32-wasi-http">wasi:http/incoming-handler</option>
   </select>
   <select id="example">
     <option value="">— pick an example —</option>
@@ -614,7 +614,7 @@
 </div>
 
 <!-- Request editor for the wasi:http world. Hidden unless the world
-     select is "wasi-http"; "Run (wasm)" then sends this request
+     select is "wasm32-wasi-http"; "Run (wasm)" then sends this request
      through the compiled handler via web/wasi-http-shim.js. -->
 <div class="http-req" id="httpReq" hidden>
   <h2>request</h2>
@@ -659,9 +659,9 @@
               aria-selected="false">Assembly</button>
       <select class="tab-target hidden" id="embedTarget"
               title="Backend for the assembly view">
-        <option value="arm64">arm64</option>
+        <option value="arm64-linux">arm64-linux</option>
         <option value="arm64-darwin">arm64-darwin</option>
-        <option value="x86-64">x86-64</option>
+        <option value="x86-64-linux">x86-64-linux</option>
       </select>
     </div>
     <h2>output</h2>
@@ -1190,7 +1190,7 @@ exampleEl.addEventListener("change", () => {
     // every other example is a cli/run program. Flip the world
     // select (+ request editor) to match so "Run (wasm)" does the
     // right thing without the user having to also change the world.
-    worldSelectEl.value = v === "http" ? "wasi-http" : "wasm";
+    worldSelectEl.value = v === "http" ? "wasm32-wasi-http" : "wasm32-wasi";
     syncHttpReqVisibility();
     outEl.textContent = "";
     metaEl.textContent = "";
@@ -1327,7 +1327,7 @@ function renderHttpResponse(resp) {
 // request (from the request editor) through web/wasi-http-shim.js.
 // Both paths run the real compiled backend in-browser, no jco.
 function runWasmOnce() {
-  const httpWorld = worldSelectEl.value === "wasi-http";
+  const httpWorld = worldSelectEl.value === "wasm32-wasi-http";
   const compileFn = httpWorld
     ? globalThis.fernCompileHttpHandlerCore
     : globalThis.fernCompileCoreWasm;
@@ -1397,7 +1397,7 @@ runWasmBtn.addEventListener("click", runWasmOnce);
 // the wasm bundle has booted (initial HTML keeps it disabled).
 let runtimeReady = false;
 function syncHttpReqVisibility() {
-  const http = worldSelectEl.value === "wasi-http";
+  const http = worldSelectEl.value === "wasm32-wasi-http";
   httpReqEl.hidden = !http;
   if (runtimeReady) {
     runBtn.disabled = http;
@@ -1412,8 +1412,8 @@ syncHttpReqVisibility();
 // ---- Build a WebAssembly Component ----
 //
 // `fernCompileComponent(src, world)` returns the base64 of a real
-// Component Model binary (the same bytes `fern -target wasm` /
-// `-target wasi-http` write). We decode it and offer a download plus
+// Component Model binary (the same bytes `fern -target wasm32-wasi` /
+// `-target wasm32-wasi-http` write). We decode it and offer a download plus
 // the exact command to run it locally.
 //
 // Note: we intentionally do NOT transpile/run the component in the
@@ -1431,9 +1431,9 @@ function b64ToBytes(b64) {
 function offerDownload(bytes, world) {
   const blob = new Blob([bytes], { type: "application/wasm" });
   const url = URL.createObjectURL(blob);
-  const name = world === "wasi-http" ? "handler.component.wasm" : "main.component.wasm";
+  const name = world === "wasm32-wasi-http" ? "handler.component.wasm" : "main.component.wasm";
   const cmd =
-    world === "wasi-http"
+    world === "wasm32-wasi-http"
       ? "wasmtime serve " + name
       : "wasmtime run " + name;
   metaEl.innerHTML =
@@ -1448,7 +1448,7 @@ function buildComponentOnce() {
     outEl.textContent = "(runtime not ready)";
     return;
   }
-  const world = worldSelectEl.value || "wasm";
+  const world = worldSelectEl.value || "wasm32-wasi";
   buildComponentBtn.disabled = true;
   buildComponentBtn.textContent = "Building…";
   outEl.textContent = "compiling to a " + world + " component…";
@@ -1492,7 +1492,7 @@ let asmPanelOpen = false;
 let asmAutoRebuild = false; // turned on after first explicit open
 function refreshAsm() {
   if (typeof globalThis.fernCompile !== "function") return;
-  const target = targetSelectEl.value || "arm64";
+  const target = targetSelectEl.value || "arm64-linux";
   asmStatusEl.textContent = `compiling for ${target}…`;
   asmPanel.classList.remove("errored");
   // Defer to the event loop so the "compiling…" label paints

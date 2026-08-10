@@ -102,7 +102,7 @@ func TestSimDriverNativeX86_64(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "sim.bin")
-	if o, err := exec.Command(bin, "-target", "x86-64", "-o", out, srcPath).CombinedOutput(); err != nil {
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, srcPath).CombinedOutput(); err != nil {
 		t.Fatalf("x86-64 build of a std/sim program failed: %v\n%s", err, o)
 	}
 	cmd := runX86Bin(qemu, out)

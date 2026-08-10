@@ -91,7 +91,7 @@ section in `ROADMAP-AND-SELF-HOSTING.md` for detail:
     self-host emit supports**.
 
     The one wasm shape still missing is **`wasi:http/incoming-handler`**
-    (the native `-target wasi-http`): it needs a new self-host core emitter
+    (the native `-target wasm32-wasi-http`): it needs a new self-host core emitter
     that lowers the request/response **resource handles** — which builds on
     the in-progress own/borrow resource-handle work — so it's deferred until
     that lands.

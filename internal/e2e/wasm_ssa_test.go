@@ -1,5 +1,5 @@
 // E2E tests for the experimental SSA-direct wasm backend
-// (`-target wasm-ssa`). Builds the lang CLI from this
+// (`-target wasm -backend ssa`). Builds the lang CLI from this
 // checkout, compiles a small Lang program with the new target,
 // validates the emitted module via wasm-tools, then runs it
 // under wasmtime.
@@ -57,7 +57,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 
 	outWasm := filepath.Join(dir, "sum.wasm")
 	emit := exec.Command(bin,
-		"-target", "wasm-ssa",
+		"-target", "wasm32-wasi", "-backend", "ssa",
 		"-o", outWasm,
 		srcPath,
 	)
@@ -65,7 +65,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm-ssa: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+		t.Fatalf("fern -target wasm -backend ssa: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// wasm-tools validate confirms the emitted module is
@@ -93,7 +93,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 	}
 }
 
-// TestWasmSSAComponentWrapCli — `-target wasm-ssa
+// TestWasmSSAComponentWrapCli — `-target wasm -backend ssa
 // -component-wrap-cli` lifts the wasm-ssa core module as a
 // preview-2 component implementing wasi:cli/run@0.2.0. Such
 // a component runs under plain `wasmtime run prog.wasm` (no
@@ -150,7 +150,7 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 			}
 			outWasm := filepath.Join(dir, c.name+".wasm")
 			emit := exec.Command(bin,
-				"-target", "wasm-ssa",
+				"-target", "wasm32-wasi", "-backend", "ssa",
 				"-component-wrap-cli",
 				"-o", outWasm,
 				srcPath,
@@ -159,7 +159,7 @@ func TestWasmSSAComponentWrapCli(t *testing.T) {
 			emit.Stdout = &obuf
 			emit.Stderr = &ebuf
 			if err := emit.Run(); err != nil {
-				t.Fatalf("fern -target wasm-ssa -component-wrap-cli: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+				t.Fatalf("fern -target wasm -backend ssa -component-wrap-cli: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 			}
 			if out, err := exec.Command("wasm-tools", "validate", outWasm).CombinedOutput(); err != nil {
 				t.Fatalf("wasm-tools validate: %v\n%s", err, out)

@@ -82,20 +82,20 @@ func checkStructUpdateSpread(t *testing.T, backend string, gotValue, gotCliff in
 func TestX86_64StructUpdateSpreadReuse(t *testing.T) {
 	_, value := compileAndRunX86_64FreeOn(t, structUpdateSpreadSrc)
 	_, cliff := compileAndRunX86_64FreeOn(t, structUpdateSpreadCliffSrc)
-	checkStructUpdateSpread(t, "x86-64", value, cliff)
+	checkStructUpdateSpread(t, "x86-64-linux", value, cliff)
 }
 
 func TestArm64StructUpdateSpreadReuse(t *testing.T) {
 	_, value := compileAndRunArm64(t, structUpdateSpreadSrc)
 	_, cliff := compileAndRunArm64(t, structUpdateSpreadCliffSrc)
-	checkStructUpdateSpread(t, "arm64", value, cliff)
+	checkStructUpdateSpread(t, "arm64-linux", value, cliff)
 }
 
 func TestWASMStructUpdateSpreadReuse(t *testing.T) {
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
 	defer func() { ast.RcFreeEnabled = prev }()
-	checkStructUpdateSpread(t, "wasm", runWasm(t, structUpdateSpreadSrc), runWasm(t, structUpdateSpreadCliffSrc))
+	checkStructUpdateSpread(t, "wasm32-wasi", runWasm(t, structUpdateSpreadSrc), runWasm(t, structUpdateSpreadCliffSrc))
 }
 
 // The interpreter has no refcounts, so it reuses nothing and crosses nothing —

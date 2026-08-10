@@ -178,7 +178,7 @@ func TestWasmP3AsyncExportU64FromFern(t *testing.T) {
 }
 
 // TestCmdLangAsyncExport drives a Fern program through the actual CLI
-// (`fern -target wasm-bin -async-export`) and runs the produced
+// (`fern -target wasm -emit core-module -async-export`) and runs the produced
 // component's `run: async func() -> u32` export under wasmtime's async
 // features — the user-facing surface for WASI Preview-3 async exports.
 func TestCmdLangAsyncExport(t *testing.T) {
@@ -192,7 +192,7 @@ func TestCmdLangAsyncExport(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "aexport.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin", "-async-export", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-async-export", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -async-export failed: %v\n%s", err, out)
@@ -224,7 +224,7 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "akw.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern (async function) failed: %v\n%s", err, out)
@@ -246,7 +246,7 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 // is lifted as `half: async func() -> f64` (the CLI derives the component result
 // valtype from the source's return type). Running `half()` under wasmtime's
 // async features prints 3.5 — proving the async export width plumbing works end
-// to end from `fern -target wasm-bin`, not just the i32 default.
+// to end from `fern -target wasm -emit core-module`, not just the i32 default.
 func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -259,7 +259,7 @@ func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "akwf.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin", "-o", compPath, srcPath)
+		"-target", "wasm32-wasi", "-emit", "core-module", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern (async function f64) failed: %v\n%s", err, out)

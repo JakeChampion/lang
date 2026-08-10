@@ -116,7 +116,7 @@ func TestX86_64CallResultMaterialiseCliff(t *testing.T) {
 	for _, c := range materialiseCases {
 		t.Run(c.name, func(t *testing.T) {
 			_, got := compileAndRunX86_64FreeOn(t, c.src())
-			c.check(t, "x86-64", got)
+			c.check(t, "x86-64-linux", got)
 		})
 	}
 }
@@ -125,7 +125,7 @@ func TestArm64CallResultMaterialiseCliff(t *testing.T) {
 	for _, c := range materialiseCases {
 		t.Run(c.name, func(t *testing.T) {
 			_, got := compileAndRunArm64(t, c.src())
-			c.check(t, "arm64", got)
+			c.check(t, "arm64-linux", got)
 		})
 	}
 }
@@ -136,7 +136,7 @@ func TestWASMCallResultMaterialiseCliff(t *testing.T) {
 	defer func() { ast.RcFreeEnabled = prev }()
 	for _, c := range materialiseCases {
 		t.Run(c.name, func(t *testing.T) {
-			c.check(t, "wasm", runWasm(t, c.src()))
+			c.check(t, "wasm32-wasi", runWasm(t, c.src()))
 		})
 	}
 }

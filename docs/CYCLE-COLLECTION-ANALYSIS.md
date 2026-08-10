@@ -224,7 +224,7 @@ Observed:
 
 - `fern -check`  → OK (no type error).
 - `fern -interp` → prints `cycle built`, exits **2**.
-- `fern -target x86-64` (native, free-on by default) → exits **2**.
+- `fern -target x86-64-linux` (native, free-on by default) → exits **2**.
 
 The traversal `a.next[0]` is `b`, `b.next[0]` is `a`, `a.next[0]`
 is `b` → `b.val == 2`. The cycle is real and its back-edges

@@ -1,5 +1,5 @@
 // E2E tests for the experimental SSA-direct arm64 backend
-// (`-target arm64-ssa`). Builds the fern CLI from this checkout,
+// (`-target arm64 -backend ssa`). Builds the fern CLI from this checkout,
 // compiles small Fern programs with the new target, and runs the
 // resulting static AArch64 ELF, asserting the process exit code
 // (main's return value, low byte).
@@ -1290,11 +1290,11 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			out := filepath.Join(dir, c.name+".bin")
-			emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
+			emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
 			var eb bytes.Buffer
 			emit.Stderr = &eb
 			if err := emit.Run(); err != nil {
-				t.Fatalf("fern -target arm64-ssa: %v\nstderr:\n%s", err, eb.String())
+				t.Fatalf("fern -target arm64 -backend ssa: %v\nstderr:\n%s", err, eb.String())
 			}
 			run := runArm64Bin(qemu, out)
 			// The child inherits this environment either way (qemu-user forwards
@@ -1318,14 +1318,19 @@ function main(): i32 {
 	}
 }
 
-// TestArm64SSACoverageGapErrors confirms a program needing a runtime builtin the
-// arm64-ssa path doesn't emit yet (here the `subprocess` builtin, which reaches
-// the still-unported `subprocess` helper) fails with a clean compile/link error
-// rather than a miscompile — the experimental-backend contract that lets the epic
-// widen coverage incrementally.
+// TestArm64SSACoverageGapErrors confirms a program reaching a builtin the SSA
+// path can't produce fails cleanly rather than miscompiling — the
+// experimental-backend contract that lets the epic widen coverage incrementally.
+//
+// `subprocess` now fails EARLIER than it used to. Under the old `-target
+// arm64-ssa` spelling the target had no descriptor, so capability enforcement
+// was skipped and the failure came from the backend as an unknown-callee
+// message with no source position; as `-target arm64 -backend ssa` the target
+// keeps its descriptor and E066 rejects it at check time (#6536). The contract
+// this test guards — no miscompile — is unchanged; which layer refuses is not.
 func TestArm64SSACoverageGapErrors(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("arm64-ssa not exercised on windows")
+		t.Skip("arm64 -backend ssa not exercised on windows")
 	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fern")
@@ -1340,14 +1345,19 @@ func TestArm64SSACoverageGapErrors(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	out := filepath.Join(dir, "sub.bin")
-	emit := exec.Command(bin, "-target", "arm64-ssa", "-o", out, srcPath)
+	emit := exec.Command(bin, "-target", "arm64-linux", "-backend", "ssa", "-o", out, srcPath)
 	var eb bytes.Buffer
 	emit.Stderr = &eb
 	err := emit.Run()
 	if err == nil {
-		t.Fatalf("expected a coverage-gap error for the subprocess() builtin, got success")
+		t.Fatalf("expected a refusal for the subprocess() builtin, got success")
 	}
-	if !bytes.Contains(eb.Bytes(), []byte("arm64-ssa")) {
-		t.Errorf("error not attributed to arm64-ssa:\n%s", eb.String())
+	// A positioned, explainable diagnostic — not the backend's internal
+	// unknown-callee message, which is what this path produced while the
+	// SSA spelling was its own descriptor-less target.
+	for _, want := range []string{"E066", "subprocess", srcPath} {
+		if !bytes.Contains(eb.Bytes(), []byte(want)) {
+			t.Errorf("refusal missing %q:\n%s", want, eb.String())
+		}
 	}
 }

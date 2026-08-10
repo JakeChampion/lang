@@ -215,6 +215,41 @@ function main(): i32 { return w(); }`,
 			anchor: map[string]map[string]string{"w": {"movedLocals": "x"}}, // moveSites agreement-checked (ident col)
 		},
 		{
+			// ARRAY-STORE MOVE (#6535, native #6532): `xs.append(v)` stores the
+			// element under the same counted retain an array literal's elements
+			// take, and the buffer's deep drop dec's it — so a last-use owned rc
+			// local is a MOVE there too. The element type gate is
+			// arrElemIsRcTracked, so `Wrap[]` qualifies and an `i32[]` would not.
+			name: "move-on-array-store",
+			src: `struct Wrap { items: i32[] }
+function w(): i32 {
+	var v: Wrap = Wrap { items: [1, 2] };
+	var xs: Wrap[] = [];
+	xs = xs.append(v);
+	return xs[0].items[0];
+}
+function main(): i32 { return w(); }`,
+			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}}, // moveSites agreement-checked (ident col)
+		},
+		{
+			// The SAME store one level down, inside a struct literal's field —
+			// the shape a walk that only looks one level into the statement
+			// misses. A container literal evaluates every operand
+			// unconditionally, so the statement's dominance guard already
+			// covers it.
+			name: "move-on-nested-array-store",
+			src: `struct Wrap { items: i32[] }
+struct Doc { vals: Wrap[], root: i32 }
+function w(): i32 {
+	var d: Doc = Doc { vals: [], root: 0 };
+	var v: Wrap = Wrap { items: [3, 4] };
+	d = Doc { ...d, vals: d.vals.append(v) };
+	return d.vals[0].items[1];
+}
+function main(): i32 { return w(); }`,
+			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}},
+		},
+		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
 			// mention — the destructure's alias inc cancels t's sweep dec.
 			// (freeEligible carries the same native-only parse-time

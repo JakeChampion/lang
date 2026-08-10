@@ -9402,7 +9402,7 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -9543,7 +9543,7 @@ function main(): i32 {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "envecho.wasm")
-	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("fern -component-wrap-cli (env+tcp) failed: %v\n%s", err, out)
@@ -9645,7 +9645,7 @@ func TestCmdLangComponentWrapWrapsExit(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "exits.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -9705,7 +9705,7 @@ func TestCmdLangComponentWrapCli(t *testing.T) {
 			}
 			compPath := filepath.Join(dir, "cli.wasm")
 			cmd := exec.Command("go", "run", "./cmd/fern",
-				"-target", "wasm-bin",
+				"-target", "wasm32-wasi", "-emit", "core-module",
 				"-component-wrap-cli",
 				"-o", compPath, srcPath)
 			cmd.Dir = projectRoot(t)
@@ -9763,7 +9763,7 @@ func TestCmdLangComponentWrapCliWithExit(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "exits.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -9809,7 +9809,7 @@ func TestCmdLangComponentWrapCliWithPrintExit(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, "pe.wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (print+exit) failed: %v\n%s", err, out)
@@ -9877,7 +9877,7 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "rand.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -9926,7 +9926,7 @@ func TestCmdLangComponentWrapCliWithMonotonic(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "mono.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -9976,7 +9976,7 @@ func TestCmdLangComponentWrapCliWithNowNs(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "now.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10023,7 +10023,7 @@ func TestCmdLangComponentWrapCliVoidMain(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "void.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10066,7 +10066,7 @@ func TestCmdLangComponentWrapCliWithPrint(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "hello.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10119,7 +10119,7 @@ func TestCmdLangComponentWrapCliWithReadLine(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "rd.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10180,7 +10180,7 @@ func TestCmdLangComponentWrapCliWithReadLinePrint(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "rp.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -component-wrap-cli (read_line+print) failed: %v\n%s", err, out)
@@ -10237,7 +10237,7 @@ func TestCmdLangComponentWrapCliComposedCombos(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -10312,7 +10312,7 @@ func TestCmdLangComponentWrapCliComposedFileRead(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -10387,7 +10387,7 @@ func TestCmdLangComponentWrapCliComposedFileWrite(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -10456,7 +10456,7 @@ func TestCmdLangComponentWrapCliComposedMemTramp(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -10521,7 +10521,7 @@ func TestCmdLangComponentWrapCliWithStdinReadLine(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "sr.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -component-wrap-cli (stdin().read_line) failed: %v\n%s", err, out)
@@ -10575,7 +10575,7 @@ func TestCmdLangComponentWrapCliWithArgs(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "a.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10635,7 +10635,7 @@ func TestCmdLangComponentWrapCliWithEnv(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "e.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10705,7 +10705,7 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "rf.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10741,7 +10741,7 @@ func TestCmdLangComponentWrapCliWithReadFile(t *testing.T) {
 		t.Fatalf("write miss src: %v", err)
 	}
 	missComp := filepath.Join(dir, "rfmiss.wasm")
-	mc := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", missComp, miss)
+	mc := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", missComp, miss)
 	mc.Dir = projectRoot(t)
 	if out, err := mc.CombinedOutput(); err != nil {
 		t.Fatalf("fern (read_file miss) failed: %v\n%s", err, out)
@@ -10775,7 +10775,7 @@ func TestCmdLangComponentWrapCliWithOpenReader(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -10864,7 +10864,7 @@ func TestCmdLangComponentWrapCliWithWriteFile(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "wf.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -10935,7 +10935,7 @@ func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "ow.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -component-wrap-cli (open_writer) failed: %v\n%s", err, out)
@@ -10980,7 +10980,7 @@ func TestCmdLangComponentWrapCliBareOpen(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		compPath := filepath.Join(dir, name+".wasm")
-		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+		cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 		cmd.Dir = projectRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("fern -component-wrap-cli (%s) failed: %v\n%s", name, err, out)
@@ -11045,7 +11045,7 @@ func TestCmdLangComponentWrapCliWithOpenAppender(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	compPath := filepath.Join(dir, "ap.wasm")
-	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm-bin", "-component-wrap-cli", "-o", compPath, srcPath)
+	cmd := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-emit", "core-module", "-component-wrap-cli", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fern -component-wrap-cli (open_appender) failed: %v\n%s", err, out)
@@ -11092,7 +11092,7 @@ func TestCmdLangComponentWrapCliWithWrite(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "hello.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11134,7 +11134,7 @@ func TestCmdLangComponentWrapCliWithEprint(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "oops.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11192,7 +11192,7 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "putc.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11243,7 +11243,7 @@ function main(): i32 {
 	}
 	compPath := filepath.Join(dir, "randint.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11297,7 +11297,7 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "multi.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11354,7 +11354,7 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "randbytes.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap-cli",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11404,7 +11404,7 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "ok.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm",
+		"-target", "wasm32-wasi",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -11450,7 +11450,7 @@ func TestCmdLangComponentWrapVoidMain(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "void.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
@@ -11490,7 +11490,7 @@ func TestCmdLangComponentWrap(t *testing.T) {
 	}
 	compPath := filepath.Join(dir, "min.wasm")
 	cmd := exec.Command("go", "run", "./cmd/fern",
-		"-target", "wasm-bin",
+		"-target", "wasm32-wasi", "-emit", "core-module",
 		"-component-wrap",
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)

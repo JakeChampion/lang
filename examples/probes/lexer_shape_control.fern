@@ -1,7 +1,7 @@
 // A NEGATIVE control for the #3457 load leak (docs/SELFHOST-AST-RETIREMENT.md):
 // a faithful mimic of `lexer.tokenize`'s shape that does NOT leak.
 //
-//   FERN_LEAKCHECK=1 fern -target x86-64 -o /tmp/p examples/probes/lexer_shape_control.fern
+//   FERN_LEAKCHECK=1 fern -target x86-64-linux -o /tmp/p examples/probes/lexer_shape_control.fern
 //   /tmp/p; # stderr: leakcheck: allocs=1340 frees=1340 live_bytes=0
 //
 // It carries every structural feature the real lexer was assumed to leak on:

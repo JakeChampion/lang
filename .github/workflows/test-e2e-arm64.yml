@@ -47,7 +47,7 @@ jobs:
       - name: go test (arm64 e2e)
         # `^TestArm64` covers internal/e2e/arm64_test.go +
         # cross_module_variant_test.go's Arm64 subset + arm64_ssa_test.go
-        # (the experimental `-target arm64-ssa` round-trip). Anchored at
+        # (the experimental `-target arm64-linux -backend ssa` round-trip). Anchored at
         # the top so it doesn't pick up `TestX86_64`-named tests that
         # happen to mention arm64 in subtest names.
         #

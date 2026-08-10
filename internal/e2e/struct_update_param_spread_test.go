@@ -40,17 +40,17 @@ function main(): i32 { var x: T = T { a: 0, n: 0 }; x = emit(x); x = emit(x); re
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Run("x86-64", func(t *testing.T) {
+			t.Run("x86-64-linux", func(t *testing.T) {
 				if _, code := compileAndRunX86_64(t, c.src); code != c.want {
 					t.Errorf("x86-64 exit = %d, want %d", code, c.want)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, code := compileAndRunArm64(t, c.src); code != c.want {
 					t.Errorf("arm64 exit = %d, want %d", code, c.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if got := runWasm(t, c.src); got != c.want {
 					t.Errorf("wasm main() = %d, want %d", got, c.want)
 				}

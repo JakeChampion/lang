@@ -32,6 +32,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
@@ -230,6 +231,12 @@ type Options struct {
 	// source-line table (#5537 slice 2). Set under `fern -g`. Mirror of the
 	// x86-64 backend's DebugLines.
 	DebugLines bool
+
+	// Entry is the target's entry shape (#6510). The zero value means
+	// platforms.EntryProcess: emit `_start` (`_main` on Darwin) plus the
+	// argc/argv/envp capture off the process stack. Any other shape emits
+	// neither — there is no kernel to have populated that stack.
+	Entry platforms.EntryShape
 }
 
 // Emit produces the assembly text for prog.
@@ -321,7 +328,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
 	ir.OptimizeCleanup(ip)
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault()}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -375,7 +382,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
-	g.emitStartRuntime()
+	if g.entry == platforms.EntryProcess {
+		g.emitStartRuntime()
+	}
 	for i, fn := range prog.Funcs {
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
@@ -1200,8 +1209,18 @@ func (g *generator) emitAbortRuntime() {
 	g.line(".global __fern_report")
 	g.typeDirective("__fern_report")
 	g.label("__fern_report") // x1 = msg ptr, x2 = length, x0 = exit code
-	g.emit("mov x19, x0")    // stash exit code (x19 survives the writes; we never return)
-	g.emit("mov x0, #2")     // fd = stderr; x1/x2 already set by emitAbort
+	if g.entry != platforms.EntryProcess {
+		// Nowhere to write the diagnostic (no `log` / `stdout` capability)
+		// and no kernel to exit through, so a hostless abort can only stop
+		// (#6510). Abort sites still load the message address, so the
+		// strings stay; the backtrace header is dead here.
+		g.emit("brk #1")
+		g.sizeDirective("__fern_report")
+		g.emitAbortMessages(false)
+		return
+	}
+	g.emit("mov x19, x0") // stash exit code (x19 survives the writes; we never return)
+	g.emit("mov x0, #2")  // fd = stderr; x1/x2 already set by emitAbort
 	g.syscall("write")
 	// Backtrace (#5538): walk the x29 frame-pointer chain and print each
 	// return address (the saved x30 at [fp+8]) in hex. With `-g` (the
@@ -1270,8 +1289,16 @@ func (g *generator) emitAbortRuntime() {
 	g.sizeDirective("__fern_print_hex")
 	g.line(".ltorg")
 
-	// Read-only message strings. Mach-O has no `.rodata`; its read-only
-	// constants live in __TEXT,__const (matching emitDataSections).
+	g.emitAbortMessages(true)
+}
+
+// emitAbortMessages writes the read-only strings the abort sites point at.
+// withBacktrace adds the reporter's own "backtrace:" header, which only the
+// process-entry reporter writes.
+//
+// Mach-O has no `.rodata`; its read-only constants live in __TEXT,__const
+// (matching emitDataSections).
+func (g *generator) emitAbortMessages(withBacktrace bool) {
 	if g.darwin {
 		g.line(".section __TEXT,__const")
 	} else {
@@ -1284,8 +1311,10 @@ func (g *generator) emitAbortRuntime() {
 		g.label(m.label)
 		g.line("\t.asciz " + escapeForGAS(m.text))
 	}
-	g.label("__fern_msg_bt")
-	g.line("\t.asciz " + escapeForGAS(abortBacktraceMsg))
+	if withBacktrace {
+		g.label("__fern_msg_bt")
+		g.line("\t.asciz " + escapeForGAS(abortBacktraceMsg))
+	}
 	g.line(".text")
 }
 
@@ -1330,6 +1359,9 @@ func (g *generator) emitAllocRuntime() {
 	// small-RAM boards like a 4 GB Raspberry Pi). The exit-137 bounds
 	// check in the allocator remains the real out-of-memory guard.
 	const heapBytes = 17179869184 // 0x400000000, 16 GiB
+	if g.entry != platforms.EntryProcess {
+		g.emitHeapInitRuntime()
+	}
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -1420,6 +1452,16 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("mov x13, #1") // mmap hint base = 0x1000_0000 (lsl #28 below)
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
+	if g.entry != platforms.EntryProcess {
+		// No kernel to mmap from, so there is no lazy reservation: the heap
+		// is the region the embedder passed to __fern_heap_init, which sets
+		// __fern_heap_ptr non-zero so the branch above has already jumped
+		// past this. Reaching here means allocating before that call, which
+		// has no answer but to stop (#6511).
+		g.emit("brk #1")
+		g.emitAllocHeapReady()
+		return
+	}
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).
 	g.emit("mov x9, x0")
 	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 — MUST stay 0x10000000: the below-heap guards (emitRcInc/RcDec/rcop) classify `ptr >= 0x10000000` as heap-allocated, so a lower arena base silently no-ops every rc inc/dec (learned the hard way: an 0x04000000 hint corrupted COW/alias semantics across the whole native arm64 fixture suite)
@@ -1454,6 +1496,41 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add x3, x10, x3")
 	g.emit("str x3, [x12]")
 	g.emit("mov x0, x9")
+	g.emitAllocHeapReady()
+}
+
+// emitHeapInitRuntime emits `__fern_heap_init(base, len)` — the hostless
+// heap seam (#6511). A target with no kernel cannot `mmap` a region and,
+// with no MMU, may have no address space to reserve one in either, so the
+// heap is handed in rather than acquired: the embedder calls this once
+// with a region it owns, before calling anything that allocates.
+//
+// Only the SEEDING moves. The cursor pair, the 16-byte rounding, the RC
+// header and the segregated freelist all work against a region regardless
+// of where it came from (docs/ARENA-DECISION.md).
+//
+// AAPCS64: x0 = base, x1 = length in bytes.
+func (g *generator) emitHeapInitRuntime() {
+	g.line("")
+	g.line(".global __fern_heap_init")
+	g.typeDirective("__fern_heap_init")
+	g.label("__fern_heap_init")
+	g.adrpAdd("x2", "__fern_heap_ptr")
+	g.emit("str x0, [x2]") // cursor starts at the base
+	g.adrpAdd("x2", "__fern_heap_base")
+	g.emit("str x0, [x2]") // high-water mark reference
+	g.emit("add x1, x0, x1")
+	g.adrpAdd("x2", "__fern_heap_end")
+	g.emit("str x1, [x2]") // end = base + len
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_init")
+	g.line(".ltorg")
+}
+
+// emitAllocHeapReady emits __fern_alloc's bump path — everything from the
+// point the heap region is known. Split out so the hostless build, which
+// has no lazy-mmap reservation to emit, still shares one bump allocator.
+func (g *generator) emitAllocHeapReady() {
 	g.label(".Lalloc_have_heap")
 	g.emit("ldr x2, [x11]")
 	g.emit("add x3, x2, x0")
@@ -4893,6 +4970,15 @@ func (g *generator) emitExitRuntime() {
 	g.line(".global __fern_exit")
 	g.typeDirective("__fern_exit")
 	g.label("__fern_exit")
+	if g.entry != platforms.EntryProcess {
+		// `exit` is core — every target can define "stop" — but a hostless
+		// one has no kernel to stop it, so "stop" is a trap (#6510,
+		// docs/FREESTANDING-CORE.md). The exit code is discarded: there is
+		// nothing to report it to.
+		g.emit("brk #1")
+		g.sizeDirective("__fern_exit")
+		return
+	}
 	if ast.LeakCheckEnabled {
 		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
 		// _start epilogue, so report here too. The code parks in x19 —
@@ -9142,6 +9228,9 @@ type generator struct {
 	// pie emits the static-PIE self-relocation prologue at `_start`
 	// (see Options.PIE). Linux only.
 	pie bool
+
+	// entry is the resolved entry shape (Options.Entry, never empty).
+	entry platforms.EntryShape
 
 	// stringLabel / stringOrder hold the string-pool scheme:
 	// each unique string literal in the program gets a single

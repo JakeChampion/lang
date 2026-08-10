@@ -45,12 +45,12 @@ func TestArrayWithValueSemantics(t *testing.T) {
 					t.Errorf("x86_64 = %d, want %d", got, c.want)
 				}
 			})
-			t.Run("arm64", func(t *testing.T) {
+			t.Run("arm64-linux", func(t *testing.T) {
 				if _, got := compileAndRunArm64(t, c.src); got != c.want {
 					t.Errorf("arm64 = %d, want %d", got, c.want)
 				}
 			})
-			t.Run("wasm", func(t *testing.T) {
+			t.Run("wasm32-wasi", func(t *testing.T) {
 				if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
 					t.Errorf("wasm = %d, want %d", got, c.want)
 				}

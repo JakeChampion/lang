@@ -86,7 +86,7 @@ func TestArm64TrmcConsumePeakHalved(t *testing.T) {
 	ast.OwnedByDefault = false
 	off := mustRunArm64FreeOn(t, src)
 	ast.OwnedByDefault = prev
-	assertConsumeHalves(t, "arm64", on, off)
+	assertConsumeHalves(t, "arm64-linux", on, off)
 	if _, code := compileAndRunArm64FreeOn(t, trmcConsumeSoundSrc); code != 0 {
 		t.Errorf("arm64 consume soundness: got %d, want 0", code)
 	}
@@ -103,7 +103,7 @@ func TestWASMTrmcConsumePeakHalved(t *testing.T) {
 	off := runWasm(t, src)
 	ast.OwnedByDefault = prev
 	ast.RcFreeEnabled = prc
-	assertConsumeHalves(t, "wasm", on, off)
+	assertConsumeHalves(t, "wasm32-wasi", on, off)
 
 	ast.RcFreeEnabled = true
 	if got := runWasm(t, trmcConsumeSoundSrc); got != 0 {

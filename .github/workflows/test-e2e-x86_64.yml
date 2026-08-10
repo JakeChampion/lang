@@ -40,7 +40,7 @@ jobs:
 
   # The pure-Go in-process assembler+linker (internal/native/x86_64 +
   # internal/native/elf) is the DEFAULT assemble+link path for
-  # `cmd/fern -target x86-64` — and it falls back to gcc automatically on any
+  # `cmd/fern -target x86-64-linux` — and it falls back to gcc automatically on any
   # instruction it cannot encode, so a gap in it degrades silently rather than
   # failing. FERN_NATIVE_ASM=1 routes the whole fixture corpus through it with
   # no fallback (an encode error is a hard NATIVE-ASM-FAIL), which is the only
