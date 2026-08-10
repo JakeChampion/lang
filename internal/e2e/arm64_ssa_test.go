@@ -1281,6 +1281,59 @@ function main(): i32 {
 }`,
 			want: 66,
 		},
+		// Map (#6609). `map_new` and the `__method_Map_*` surface are CODEGEN
+		// ALIASES onto core/map.fern's `_impl` functions, and this backend
+		// applied the alias in neither place it has to: not at the call site (so
+		// it emitted `bl fn_map_new`) and not in the reachability walk (so
+		// `map_new_impl` was culled as unreachable). Two different causes, one
+		// dangling-label symptom. Map programs were also missing seven runtime
+		// helpers the Map runtime is written against — the raw-memory
+		// intrinsics, __alloc / __free, __memcpy, __fern_map_drop,
+		// __fern_map_hash_seed and __fern_drop_arr_ptr.
+		//
+		// This case would compile-fail, not mis-answer, on any regression: the
+		// in-process assembler refuses a branch to an undefined label.
+		{
+			name: "map_string_keys",
+			src: `import "core/map";
+import "std/i32";
+function main(): i32 {
+  var m: Map[string, i32] = map_new(4);
+  var i: i32 = 0;
+  // Past the 75% load factor of a cap-4 table, so this grows several times
+  // (__map_grow_keyed → __alloc + __memcpy + __memset + __free).
+  while (i < 40) { m = m.insert("k" + i.to_string(), i * 2); i = i + 1; }
+  if (m.len() != 40) { return 1; }
+  if (m.get_or("k7", 0 - 1) != 14) { return 2; }
+  if (!m.has("k39")) { return 3; }
+  if (m.has("nope")) { return 4; }
+  var (m2, ok) = m.without("k7");
+  if (!ok) { return 5; }
+  m = m2;
+  if (m.len() != 39) { return 6; }
+  if (m.has("k7")) { return 7; }
+  // Iteration (__map_iter_impl + the __mapiter_* cursor).
+  var sum: i32 = 0;
+  for (k, v) in m { sum = sum + v; }
+  if (sum != 1546) { return 8; }   // 2*(0+..+39) - 14
+  return 42;
+}`,
+			want: 42,
+		},
+		{
+			name: "map_scalar_keys",
+			src: `import "core/map";
+function main(): i32 {
+  var n: Map[i32, i32] = map_new(8);
+  n = n.insert(3, 30);
+  n = n.insert(4, 40);
+  if (n.get_or(3, 0) != 30) { return 1; }
+  if (n.get_or(99, 7) != 7) { return 2; }
+  if (n.len() != 2) { return 3; }
+  return 42;
+}`,
+			want: 42,
+		},
 	}
 
 	for _, c := range cases {

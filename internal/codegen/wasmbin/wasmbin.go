@@ -2505,7 +2505,7 @@ func emitOp(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 //     for that reason.
 //
 // Names not in the map pass through unchanged.
-var CallDirectAliases = map[string]string{
+var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// Synthetic runtime helpers.
 	"exit":         "__fern_exit",
 	"print":        "__fern_print",
@@ -2601,33 +2601,25 @@ var CallDirectAliases = map[string]string{
 	"tcp_close":    "__fern_tcp_close",
 	"udp_send":     "__fern_udp_send",
 
-	// Map / MapIter generic-method dispatch — the lang doesn't yet
-	// support generic methods on a generic struct, so the stdlib
-	// declares concrete `_impl` counterparts and call sites route
-	// through these aliases. Mirrors codegenAliasMap in the WAT
-	// path verbatim.
-	"map_new":             "map_new_impl",
-	"__method_Map_len":    "__map_len_impl",
-	"__method_Map_has":    "__map_has_impl",
-	"__method_Map_get":    "__map_get_impl",
-	"__method_Map_get_or": "__map_get_or_impl",
-	"__method_Map_set":    "__map_set_impl",
-	"__method_Map_delete": "__map_delete_impl",
-	// Struct/enum (keyKind-3) keys: `_keyed` variants take the key
-	// type's derived hash/eq as trailing fn-value args (#2671).
-	"__method_Map_has_keyed":    "__map_has_keyed_impl",
-	"__method_Map_get_keyed":    "__map_get_keyed_impl",
-	"__method_Map_get_or_keyed": "__map_get_or_keyed_impl",
-	"__method_Map_set_keyed":    "__map_set_keyed_impl",
-	"__method_Map_delete_keyed": "__map_delete_keyed_impl",
-	"__method_Map_clear":        "__map_clear_impl",
-	"__method_Map_keys":         "__map_keys_impl",
-	"__method_Map_values":       "__map_values_impl",
-	"__method_Map_iter":         "__map_iter_impl",
-	"__method_MapIter_has_next": "__mapiter_has_next_impl",
-	"__method_MapIter_key":      "__mapiter_key_impl",
-	"__method_MapIter_value":    "__mapiter_value_impl",
-	"__method_MapIter_advance":  "__mapiter_advance_impl",
+	// Map / MapIter dispatch is target-independent — it is a fact about where
+	// core/map.fern puts its `_impl` functions — so it lives in ir.CodegenAliases
+	// and is merged in below rather than repeated here. Everything above IS
+	// wasm-specific naming (its own `__fern_*` runtime helpers).
+})
+
+// mergeCodegenAliases folds ir.CodegenAliases into this backend's own alias
+// table. Kept as one map so callDirectAlias and LiveFunctionsWithAliases see the
+// same set — a name resolved at emit time but missing from the reachability walk
+// gets its target culled, which surfaces as a dangling symbol from a completely
+// different cause (#6609).
+func mergeCodegenAliases(own map[string]string) map[string]string {
+	for k, v := range ir.CodegenAliases {
+		if prev, dup := own[k]; dup && prev != v {
+			panic("wasmbin: alias for " + k + " disagrees with ir.CodegenAliases: " + prev + " vs " + v)
+		}
+		own[k] = v
+	}
+	return own
 }
 
 // callDirectAlias is the function-form lookup over CallDirectAliases.
