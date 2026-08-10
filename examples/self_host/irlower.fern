@@ -26115,7 +26115,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -26604,14 +26604,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
-    var asts: string[] = collect_fresh_arrstruct_names(body, structs, []);
+    var asts: string[] = collect_fresh_arrstruct_names(body, structs, [], msites);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
         if (!(asts[asti].len() > 2 && asts[asti][0] == 65 && asts[asti][1] == 124)   // 65='A' 124='|'
-            && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs)
+            && !arrstruct_unsafe_for(body, asts[asti], borrowable, structs, msites)
             && !arrarr_row_escapes(body, asts[asti])
-            && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs)) {
+            && !arrstruct_elem_payload_escapes(body, asts[asti], arrstruct_elem_type_of_decl(body, asts[asti], structs), structs, msites)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -33122,12 +33122,29 @@ function arrstruct_lit_is_fresh(e: parser.Expr, structs: parser.StructDecl[]): b
 // flat. Measured 35200 bytes over 100 rounds on a 4-element `Val { kind: i32,
 // kids: i32[] }[]`, doubling with the round count, against 0 for the literal.
 //
-// The element rule is the SAME one arrstruct_lit_is_fresh applies per element —
-// a fresh struct literal — so the element box is sole-owned exactly as in the
-// literal-built form the deep walk already frees. A bare-ident element is
-// refused: the array's deep drop and the live local's own sweep would both
-// release the element's field buffers.
-function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[]): boolean {
+// Two element shapes qualify. A fresh struct LITERAL is the rule
+// arrstruct_lit_is_fresh applies per element — the box is sole-owned exactly as
+// in the literal-built form the deep walk already frees. A BARE IDENT qualifies
+// only when the construction-move analysis names this exact site (#6535): the
+// local is an owned rc local at its LAST USE, so it hands its single reference
+// to the buffer and the deep walk is the one release. Any other bare ident is
+// still refused — the array's deep drop and a live local that outlives the push
+// (one declared outside the loop, appended every iteration) would release the
+// element's field buffers twice.
+
+// arrstruct_moved_elem: `e` is a bare ident the move analysis recorded at this
+// source position. Keyed on line:col, not the name, so a local that is moved at
+// one push and merely read at another admits only the push that moved it.
+function arrstruct_moved_elem(e: parser.Expr, msites: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => {
+            return util.index_of_str(msites, util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) >= 0;
+        },
+        _ => {}
+    }
+    return false;
+}
+function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             var is_self_append: boolean = false;
@@ -33144,26 +33161,27 @@ function arrstruct_self_append_elem(e: parser.Expr, name: string, structs: parse
             }
             if (!is_self_append) { return false; }
             if (c.args.len() != 1) { return false; }
+            if (arrstruct_moved_elem(c.args[0], msites)) { return true; }
             return is_fresh_struct_init(c.args[0], structs);
         },
         _ => { return false; }
     }
     return false;
 }
-function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
+function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs: parser.StructDecl[], msites: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs)) { return true; } },
+            parser.StmtAssign(a) => { if (a.target == name && arrstruct_self_append_elem(a.value, name, structs, msites)) { return true; } },
             parser.StmtIf(f) => {
-                if (arrstruct_name_is_appended(f.then_body, name, structs)) { return true; }
-                if (arrstruct_name_is_appended(f.else_body, name, structs)) { return true; }
+                if (arrstruct_name_is_appended(f.then_body, name, structs, msites)) { return true; }
+                if (arrstruct_name_is_appended(f.else_body, name, structs, msites)) { return true; }
             },
-            parser.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs)) { return true; } },
-            parser.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs, msites)) { return true; } },
+            parser.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs, msites)) { return true; } },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { if (arrstruct_name_is_appended(m.arms[mi].body, name, structs)) { return true; } mi = mi + 1; }
+                while (mi < m.arms.len()) { if (arrstruct_name_is_appended(m.arms[mi].body, name, structs, msites)) { return true; } mi = mi + 1; }
             },
             _ => {}
         }
@@ -33176,27 +33194,27 @@ function arrstruct_name_is_appended(stmts: parser.Stmt[], name: string, structs:
 // sound because this class's own element hazards (an element alias, an element
 // field-payload extraction) are checked separately by arrarr_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
-function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+function arrstruct_unsafe_for(stmts: parser.Stmt[], name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (stmt_arrstruct_unsafe_for(stmts[i], name, borrowable, structs)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (stmt_arrstruct_unsafe_for(stmts[i], name, borrowable, structs, msites)) { return true; } i = i + 1; }
     return false;
 }
-function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[]): boolean {
+function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: string[], structs: parser.StructDecl[], msites: string[]): boolean {
     match (st) {
         parser.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_append_elem(a.value, name, structs)) { return false; }
+                if (arrstruct_self_append_elem(a.value, name, structs, msites)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             return expr_unsafe_for(a.value, name, borrowable);
         },
         parser.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
-            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs);
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites);
         },
         parser.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
-            return arrstruct_unsafe_for(w.body, name, borrowable, structs);
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites);
         },
         parser.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -33205,19 +33223,19 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
             }
             if (iter_unsafe) { return true; }
-            return arrstruct_unsafe_for(fo.body, name, borrowable, structs);
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites);
         },
         parser.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
-                if (arrstruct_unsafe_for(m.arms[ai].body, name, borrowable, structs)) { return true; }
+                if (arrstruct_unsafe_for(m.arms[ai].body, name, borrowable, structs, msites)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs); },
+        parser.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites); },
         _ => { return stmt_unsafe_for(st, name, borrowable); }
     }
     return false;
@@ -33227,7 +33245,7 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
 // literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
 // or — #6535 — from an EMPTY literal the body then grows by self-append. Escape gates
 // applied by reclaimable_names_of.
-function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[], msites: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -33242,17 +33260,17 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.Str
                 // same marker trick the STRUCTARR side uses.
                 else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
                     && arrarr_lit_is_empty(v.init)
-                    && arrstruct_name_is_appended(stmts, v.name, structs)) {
+                    && arrstruct_name_is_appended(stmts, v.name, structs, msites)) {
                     a = push_str_unique(a, v.name);
                     a = push_str_unique(a, "A|" + v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a); a = collect_fresh_arrstruct_names(f.else_body, structs, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, structs, a); },
+            parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a, msites); a = collect_fresh_arrstruct_names(f.else_body, structs, a, msites); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a, msites); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, structs, a, msites); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_arrstruct_names(m.arms[mi].body, structs, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_arrstruct_names(m.arms[mi].body, structs, a, msites); mi = mi + 1; }
             },
             _ => {}
         }
@@ -33294,7 +33312,7 @@ function arrstruct_elem_type_of_decl(stmts: parser.Stmt[], name: string, structs
 // ARRAY / nested-struct / enum field extracted bare escapes. `name[i].f[j]` (indexed
 // array-field read) and `name[i].f.len()` are borrows; a BARE `name[i]` element (the
 // struct box) or a bare `name` escapes.
-function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[], msites: string[]): boolean {
     match (e) {
         parser.ExprIdent(id) => { return id.name == name; },
         parser.ExprNumber(_) => { return false; },
@@ -33308,14 +33326,14 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                             if (aid.name == name) {
                                 var ft: string = decl_field_type(structs, sty, fa.field);
                                 if (ft != "" && !is_scalar_type_name(ft)) { return true; }   // bare non-scalar field extract
-                                return arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+                                return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites);
                             }
                         },
                         _ => {}
                     }
-                    return arrstruct_elem_esc_expr(fa.obj, name, sty, structs);
+                    return arrstruct_elem_esc_expr(fa.obj, name, sty, structs, msites);
                 },
-                _ => { return arrstruct_elem_esc_expr(fa.obj, name, sty, structs); }
+                _ => { return arrstruct_elem_esc_expr(fa.obj, name, sty, structs, msites); }
             }
         },
         parser.ExprIndex(ix) => {
@@ -33327,7 +33345,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                             match (bix.array) {
                                 parser.ExprIdent(bid) => {
                                     if (bid.name == name) {
-                                        return arrstruct_elem_esc_expr(bix.index, name, sty, structs) || arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+                                        return arrstruct_elem_esc_expr(bix.index, name, sty, structs, msites) || arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites);
                                     }
                                 },
                                 _ => {}
@@ -33339,7 +33357,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 parser.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] struct box
                 _ => {}
             }
-            return arrstruct_elem_esc_expr(ix.array, name, sty, structs) || arrstruct_elem_esc_expr(ix.index, name, sty, structs);
+            return arrstruct_elem_esc_expr(ix.array, name, sty, structs, msites) || arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites);
         },
         parser.ExprCall(c) => {
             // `name[i].f.len()`: the one whitelisted borrow method — safe receiver, check args.
@@ -33352,9 +33370,9 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                                     match (pix.array) {
                                         parser.ExprIdent(pid) => {
                                             if (pid.name == name && cfa.field == "len") {
-                                                if (arrstruct_elem_esc_expr(pix.index, name, sty, structs)) { return true; }
+                                                if (arrstruct_elem_esc_expr(pix.index, name, sty, structs, msites)) { return true; }
                                                 var ai: i32 = 0;
-                                                while (ai < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ai], name, sty, structs)) { return true; } ai = ai + 1; }
+                                                while (ai < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ai], name, sty, structs, msites)) { return true; } ai = ai + 1; }
                                                 return false;
                                             }
                                         },
@@ -33383,7 +33401,7 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                         parser.ExprIdent(lid) => {
                             if (lid.name == name && lfa.field == "len") {
                                 var li: i32 = 0;
-                                while (li < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[li], name, sty, structs)) { return true; } li = li + 1; }
+                                while (li < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[li], name, sty, structs, msites)) { return true; } li = li + 1; }
                                 return false;
                             }
                         },
@@ -33409,8 +33427,8 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                     match (afa.obj) {
                         parser.ExprIdent(aid3) => {
                             if (aid3.name == name && afa.field == "append" && c.args.len() == 1
-                                && is_fresh_struct_init(c.args[0], structs)) {
-                                return arrstruct_elem_esc_expr(c.args[0], name, sty, structs);
+                                && (is_fresh_struct_init(c.args[0], structs) || arrstruct_moved_elem(c.args[0], msites))) {
+                                return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites);
                             }
                         },
                         _ => {}
@@ -33418,80 +33436,80 @@ function arrstruct_elem_esc_expr(e: parser.Expr, name: string, sty: string, stru
                 },
                 _ => {}
             }
-            if (arrstruct_elem_esc_expr(c.callee, name, sty, structs)) { return true; }
+            if (arrstruct_elem_esc_expr(c.callee, name, sty, structs, msites)) { return true; }
             var ci: i32 = 0;
-            while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs)) { return true; } ci = ci + 1; }
+            while (ci < c.args.len()) { if (arrstruct_elem_esc_expr(c.args[ci], name, sty, structs, msites)) { return true; } ci = ci + 1; }
             return false;
         },
-        parser.ExprBinary(b) => { return arrstruct_elem_esc_expr(b.left, name, sty, structs) || arrstruct_elem_esc_expr(b.right, name, sty, structs); },
-        parser.ExprUnary(u) => { return arrstruct_elem_esc_expr(u.operand, name, sty, structs); },
-        parser.ExprSlice(sl) => { return arrstruct_elem_esc_expr(sl.array, name, sty, structs) || arrstruct_elem_esc_expr(sl.start, name, sty, structs) || arrstruct_elem_esc_expr(sl.end, name, sty, structs); },
+        parser.ExprBinary(b) => { return arrstruct_elem_esc_expr(b.left, name, sty, structs, msites) || arrstruct_elem_esc_expr(b.right, name, sty, structs, msites); },
+        parser.ExprUnary(u) => { return arrstruct_elem_esc_expr(u.operand, name, sty, structs, msites); },
+        parser.ExprSlice(sl) => { return arrstruct_elem_esc_expr(sl.array, name, sty, structs, msites) || arrstruct_elem_esc_expr(sl.start, name, sty, structs, msites) || arrstruct_elem_esc_expr(sl.end, name, sty, structs, msites); },
         parser.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { if (arrstruct_elem_esc_expr(ar.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < ar.elements.len()) { if (arrstruct_elem_esc_expr(ar.elements[i], name, sty, structs, msites)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (arrstruct_elem_esc_expr(t.elements[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (arrstruct_elem_esc_expr(t.elements[i], name, sty, structs, msites)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(slb) => {
-            if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs)) { return true; }
+            if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs, msites)) { return true; }
             var i: i32 = 0;
-            while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs, msites)) { return true; } i = i + 1; }
             return false;
         },
         _ => { return false; }
     }
     return false;
 }
-function arrstruct_elem_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function arrstruct_elem_esc_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[], msites: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return arrstruct_elem_esc_expr(v.init, name, sty, structs); },
-        parser.StmtReturn(r) => { return arrstruct_elem_esc_expr(r.value, name, sty, structs); },
-        parser.StmtExpr(e) => { return arrstruct_elem_esc_expr(e.value, name, sty, structs); },
-        parser.StmtAssign(a) => { return arrstruct_elem_esc_expr(a.value, name, sty, structs); },
+        parser.StmtVar(v) => { return arrstruct_elem_esc_expr(v.init, name, sty, structs, msites); },
+        parser.StmtReturn(r) => { return arrstruct_elem_esc_expr(r.value, name, sty, structs, msites); },
+        parser.StmtExpr(e) => { return arrstruct_elem_esc_expr(e.value, name, sty, structs, msites); },
+        parser.StmtAssign(a) => { return arrstruct_elem_esc_expr(a.value, name, sty, structs, msites); },
         parser.StmtIf(f) => {
-            if (arrstruct_elem_esc_expr(f.cond, name, sty, structs)) { return true; }
+            if (arrstruct_elem_esc_expr(f.cond, name, sty, structs, msites)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (arrstruct_elem_esc_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (arrstruct_elem_esc_stmt(f.then_body[ti], name, sty, structs, msites)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (arrstruct_elem_esc_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (arrstruct_elem_esc_stmt(f.else_body[ei], name, sty, structs, msites)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (arrstruct_elem_esc_expr(w.cond, name, sty, structs)) { return true; }
+            if (arrstruct_elem_esc_expr(w.cond, name, sty, structs, msites)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (arrstruct_elem_esc_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (arrstruct_elem_esc_stmt(w.body[i], name, sty, structs, msites)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (arrstruct_elem_esc_expr(fo.iter, name, sty, structs)) { return true; }
+            if (arrstruct_elem_esc_expr(fo.iter, name, sty, structs, msites)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (arrstruct_elem_esc_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (arrstruct_elem_esc_stmt(fo.body[i], name, sty, structs, msites)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
-            if (arrstruct_elem_esc_expr(m.scrutinee, name, sty, structs)) { return true; }
+            if (arrstruct_elem_esc_expr(m.scrutinee, name, sty, structs, msites)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && arrstruct_elem_esc_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                if (m.arms[ai].has_guard && arrstruct_elem_esc_expr(m.arms[ai].guard, name, sty, structs, msites)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (arrstruct_elem_esc_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (arrstruct_elem_esc_stmt(m.arms[ai].body[bi], name, sty, structs, msites)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return arrstruct_elem_esc_stmt(d.action, name, sty, structs); },
+        parser.StmtDefer(d) => { return arrstruct_elem_esc_stmt(d.action, name, sty, structs, msites); },
         _ => { return false; }
     }
     return false;
 }
-function arrstruct_elem_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function arrstruct_elem_payload_escapes(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[], msites: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (arrstruct_elem_esc_stmt(stmts[i], name, sty, structs)) { return true; }
+        if (arrstruct_elem_esc_stmt(stmts[i], name, sty, structs, msites)) { return true; }
         i = i + 1;
     }
     return false;
@@ -37715,7 +37733,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     struct_ret_fns_aug = register_fnvalue_local_struct_rets(fn.body, struct_ret_fns_aug);
     // Struct reclamation: the fresh, non-escaping struct locals this function may
     // free at scope exit / loop-rebind (conservative escape analysis above).
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns);
+    // move_sites_of is the array-store construction-move analysis (#6569), until
+    // now dump-only. The append-built ARRSTRUCT credit consults it to decide
+    // whether a BOUND element may be admitted: a moved local hands its single
+    // reference to the buffer, so the buffer's deep walk is the one release.
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs));
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -44422,7 +44444,66 @@ function rc_ml_recv_elem_type(obj: parser.Expr, types_n: string[], types_t: stri
 // those operands too — `d = Doc { ...d, vals: d.vals.append(v) }` reaches the
 // push, and with it v's move. Only the operands the match already visits are
 // descended into; nothing else about the statement is walked.
-function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
+// rc_ml_move_ok is the loop-body `allow` gate (native markLoopBodyConstruction-
+// Moves' closure). At a dominating TOP-LEVEL statement every candidate is
+// allowed. Inside a LOOP BODY only a name declared in THAT body before this
+// statement qualifies: one declared outside lives across iterations, so moving
+// it would hand the same box to every iteration's container — a use-after-free
+// rather than a leak.
+function rc_ml_move_ok(name: string, allow: string[], restrict: boolean): boolean {
+    if (!restrict) { return true; }
+    return util.index_of_str(allow, name) >= 0;
+}
+
+// rc_ml_block_has_early_exit: `return` / `break` / `continue` anywhere in the
+// loop body, nested included. With one present a construction later in the body
+// is conditional, so its move cannot be assumed to happen on every iteration and
+// the whole body is refused (native blockHasEarlyExit).
+function rc_ml_block_has_early_exit(stmts: parser.Stmt[]): boolean {
+    return rc_ml_block_has_early_exit_from(stmts, 0);
+}
+// rc_ml_block_has_early_exit_from is the same scan started past a desugared
+// loop prologue (rc_ml_loop_prologue_len).
+function rc_ml_block_has_early_exit_from(stmts: parser.Stmt[], from: i32): boolean {
+    var i: i32 = from;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(_) => { return true; },
+            parser.StmtBreak(_) => { return true; },
+            parser.StmtContinue(_) => { return true; },
+            parser.StmtIf(f) => { if (rc_ml_block_has_early_exit(f.then_body) || rc_ml_block_has_early_exit(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (rc_ml_block_has_early_exit(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (rc_ml_block_has_early_exit(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (rc_ml_block_has_early_exit(m.arms[a].body)) { return true; } a = a + 1; } },
+            parser.StmtDefer(d) => { if (rc_ml_block_has_early_exit([d.action])) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// rc_ml_decl_count: how many times `name` is declared as a local in the whole
+// function. Native's localNameUnique guard — with two declarations the
+// body-local `declared` set no longer identifies which one a use refers to.
+function rc_ml_decl_count(stmts: parser.Stmt[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
+            parser.StmtIf(f) => { n = n + rc_ml_decl_count(f.then_body, name) + rc_ml_decl_count(f.else_body, name); },
+            parser.StmtWhile(w) => { n = n + rc_ml_decl_count(w.body, name); },
+            parser.StmtFor(fo) => { if (fo.var_name == name) { n = n + 1; } n = n + rc_ml_decl_count(fo.body, name); },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { n = n + rc_ml_decl_count(m.arms[a].body, name); a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut, allow: string[], restrict: boolean): MlOut {
     var out: MlOut = moved;
     match (val) {
         parser.ExprStructLit(sl) => {
@@ -44442,7 +44523,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                             }
                         }
                         var rc_field: boolean = is_array_type_name(ft) || (ft.len() > 0 && ft[0] == 40) || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
-                        if (rc_field && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_field && rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             // native keys the construction-move site on the
                             // consumed IDENT node.
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
@@ -44450,7 +44531,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                     },
                     _ => {}
                 }
-                out = rc_ml_construction_moves(sl.field_values[i], body, k, fn, types_n, types_t, structs, out);
+                out = rc_ml_construction_moves(sl.field_values[i], body, k, fn, types_n, types_t, structs, out, allow, restrict);
                 i = i + 1;
             }
         },
@@ -44468,13 +44549,13 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                         if (rc_ml_arr_elem_rc_tracked(rc_ml_recv_elem_type(fa.obj, types_n, types_t, structs), structs)) {
                             match (c.args[elem_idx]) {
                                 parser.ExprIdent(eid) => {
-                                    if (rc_ml_owned_rc_local(eid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, eid.name, k) && util.index_of_str(out.names, eid.name) < 0) {
+                                    if (rc_ml_move_ok(eid.name, allow, restrict) && rc_ml_owned_rc_local(eid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, eid.name, k) && util.index_of_str(out.names, eid.name) < 0) {
                                         out = MlOut { names: out.names.append(eid.name), sites: out.sites.append(util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col)) };
                                     }
                                 },
                                 _ => {}
                             }
-                            out = rc_ml_construction_moves(c.args[elem_idx], body, k, fn, types_n, types_t, structs, out);
+                            out = rc_ml_construction_moves(c.args[elem_idx], body, k, fn, types_n, types_t, structs, out, allow, restrict);
                         }
                     }
                 },
@@ -44486,13 +44567,13 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
             while (i < ar.elements.len()) {
                 match (ar.elements[i]) {
                     parser.ExprIdent(id) => {
-                        if (rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
                         }
                     },
                     _ => {}
                 }
-                out = rc_ml_construction_moves(ar.elements[i], body, k, fn, types_n, types_t, structs, out);
+                out = rc_ml_construction_moves(ar.elements[i], body, k, fn, types_n, types_t, structs, out, allow, restrict);
                 i = i + 1;
             }
         },
@@ -44501,17 +44582,109 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
             while (i < tu.elements.len()) {
                 match (tu.elements[i]) {
                     parser.ExprIdent(id) => {
-                        if (rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
                         }
                     },
                     _ => {}
                 }
-                out = rc_ml_construction_moves(tu.elements[i], body, k, fn, types_n, types_t, structs, out);
+                out = rc_ml_construction_moves(tu.elements[i], body, k, fn, types_n, types_t, structs, out, allow, restrict);
                 i = i + 1;
             }
         },
         _ => {}
+    }
+    return out;
+}
+
+// rc_ml_loop_prologue_len: the length of a range-`for`'s DESUGARED prologue —
+// the advance assign and the `if (done) { break; }` guard the desugar puts at the
+// top of the while body. This analysis runs after that desugar while native's
+// runs on the `for` node itself, so counting the guard as an early exit would
+// refuse every range-for body — which is most of them. Only that exact two-
+// statement shape is skipped (an assign, then an if whose then-body is a lone
+// break and whose else-body is empty); a user `break` anywhere else still
+// disqualifies the body, exactly as native's blockHasEarlyExit does.
+function rc_ml_loop_prologue_len(blk: parser.Stmt[]): i32 {
+    if (blk.len() < 2) { return 0; }
+    var is_assign: boolean = false;
+    match (blk[0]) { parser.StmtAssign(_) => { is_assign = true; }, _ => {} }
+    if (!is_assign) { return 0; }
+    var is_guard: boolean = false;
+    match (blk[1]) {
+        parser.StmtIf(f) => {
+            if (f.then_body.len() == 1 && f.else_body.len() == 0) {
+                match (f.then_body[0]) { parser.StmtBreak(_) => { is_guard = true; }, _ => {} }
+            }
+        },
+        _ => {}
+    }
+    if (!is_guard) { return 0; }
+    return 2;
+}
+
+// rc_ml_loop_body_moves extends the construction-move scan into LOOP BODIES —
+// native markLoopBodyConstructionMoves, the half #6569 did not port. The
+// top-level driver walks fn.body's own statements only, so `for i in 0..n { var
+// v = Val { .. }; vals = vals.append(v); }` — the shape an accumulator is
+// actually written in — recorded no move at all, and the append-built credit
+// consequently refused every bound element.
+//
+// A local declared INSIDE the body dies at the end of its iteration, so a
+// construction that consumes it there takes its single reference. The `declared`
+// set is what enforces that, and it is why the pass cannot simply reuse the
+// top-level walk.
+function rc_ml_loop_body_moves(stmts: parser.Stmt[], fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
+    var out: MlOut = moved;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtWhile(w) => {
+                out = rc_ml_one_loop_body(w.body, fn, types_n, types_t, structs, out);
+                out = rc_ml_loop_body_moves(w.body, fn, types_n, types_t, structs, out);
+            },
+            parser.StmtFor(fo) => {
+                out = rc_ml_one_loop_body(fo.body, fn, types_n, types_t, structs, out);
+                out = rc_ml_loop_body_moves(fo.body, fn, types_n, types_t, structs, out);
+            },
+            parser.StmtIf(f) => {
+                out = rc_ml_loop_body_moves(f.then_body, fn, types_n, types_t, structs, out);
+                out = rc_ml_loop_body_moves(f.else_body, fn, types_n, types_t, structs, out);
+            },
+            parser.StmtMatch(m) => {
+                var a: i32 = 0;
+                while (a < m.arms.len()) { out = rc_ml_loop_body_moves(m.arms[a].body, fn, types_n, types_t, structs, out); a = a + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// rc_ml_one_loop_body scans a single loop body, admitting a construction move
+// only for a name this body declared before the site (and declared exactly once
+// in the function, so the set identifies it unambiguously). Last use is measured
+// WITHIN the body, which is the right scope for a name that dies with the
+// iteration.
+function rc_ml_one_loop_body(blk: parser.Stmt[], fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
+    var first: i32 = rc_ml_loop_prologue_len(blk);
+    if (rc_ml_block_has_early_exit_from(blk, first)) { return moved; }
+    var out: MlOut = moved;
+    var declared: string[] = [];
+    var i: i32 = first;
+    while (i < blk.len()) {
+        match (blk[i]) {
+            parser.StmtVar(v) => {
+                out = rc_ml_construction_moves(v.init, blk, i, fn, types_n, types_t, structs, out, declared, true);
+                if (rc_ml_decl_count(fn.body, v.name) == 1) { declared = push_str_unique(declared, v.name); }
+            },
+            parser.StmtAssign(a) => {
+                out = rc_ml_construction_moves(a.value, blk, i, fn, types_n, types_t, structs, out, declared, true);
+            },
+            _ => {}
+        }
+        i = i + 1;
     }
     return out;
 }
@@ -44556,7 +44729,7 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
                         },
                         _ => {}
                     }
-                    moved = rc_ml_construction_moves(v.init, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                    moved = rc_ml_construction_moves(v.init, fn.body, k, fn, st.types_n, st.types_t, structs, moved, [], false);
                 },
                 parser.StmtAssign(a) => {
                     match (a.value) {
@@ -44567,12 +44740,12 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
                         },
                         _ => {}
                     }
-                    moved = rc_ml_construction_moves(a.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                    moved = rc_ml_construction_moves(a.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved, [], false);
                 },
                 parser.StmtReturn(r) => {
                     // construction moves only (a bare `return x` rides
                     // move-on-return, a different mechanism/table).
-                    moved = rc_ml_construction_moves(r.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved);
+                    moved = rc_ml_construction_moves(r.value, fn.body, k, fn, st.types_n, st.types_t, structs, moved, [], false);
                 },
                 _ => {}
             }
@@ -44580,7 +44753,7 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
         if (rc_ml_stmt_has_return(fn.body[k])) { saw_return = true; }
         k = k + 1;
     }
-    return moved;
+    return rc_ml_loop_body_moves(fn.body, fn, st.types_n, st.types_t, structs, moved);
 }
 
 // moved_locals_of / move_sites_of: the two pub views over rc_ml_compute.
