@@ -5709,7 +5709,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   - **A LOCAL-built producer** (`var out = []; out = out.append(x); return out;`)
     earns no `"ARR:"` entry — that registry admits only a direct array-literal
     return. `local-built-producer-still-grows` asserts it AS a leak, with the
-    `>` that must become `==` when the admission widens.
+    `>` that must become `==` when the admission widens. (CLOSED by the
+    2026-08-10 entry below.)
   - **The pointer half**, which is what `alloc_flat_index_of_fresh_container`
     actually measures: its element and field are strings AND its producers are
     local-built, so it needs both widenings. Its rows in all three
@@ -5780,3 +5781,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   of a reclaimed array), `TestSelfHostPerModuleEmitAllFixpointX86_64` (764.61 s),
   and the arm64 + wasm structarr / arrstruct / elem-drop neighbours (316.56 s,
   0 skips). Refs #6461 #4451.
+
+- 2026-08-10: **The LOCAL-built scalar-array producer — the pin the entry above
+  left (#6491).** `var out: i32[] = []; … out = out.append(v); … return out;` is
+  how a producer is actually written, and the `"ARR:"` rule declined it (direct
+  array literal only), so the caller's reclaims left the buffer to leak.
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `nums(n)[1]` — scalar elem, LOCAL-built producer | 2824 / 5600 | **80 / 0** | 48 / 0 |
+
+  `body_returns_local_built_arr` admits it by proving the buffer is built
+  ENTIRELY in that frame, so it reaches the caller as its sole rc == 1 reference:
+  a literal init (it cannot START as a param's buffer), self-append as the only
+  rebind (it cannot BECOME one later), and `body_unsafe_for_allow_ret` for every
+  other escape. Element freshness needs no proof — `is_leaksafe_array_field`
+  makes every element a scalar, so the shallow element-blind `__fern_rc_dec` both
+  consumers emit has no pointer to dangle.
+
+  **`arr_reassigned_other_than_selfappend` is the load-bearing half, and it is
+  not redundant with the escape walk.** `body_unsafe_for_allow_ret`'s StmtAssign
+  arm inspects only the assigned VALUE, so `out = src` — seeding the local from a
+  parameter — never mentions `out` and reads as safe there. Without the rebind
+  scan the caller would free its own live buffer at the read.
+  `param-seeded-producer-refused` pins exactly that, re-filling the freed buffer
+  with 9s before reading the caller's array back, so a widened admission reports
+  90 rather than passing by luck.
+
+  This widens a registry the discarded-`mk(i);` statement reclaim also reads, so
+  that site now reclaims the accumulator idiom too — the same shallow dec, the
+  same soundness argument.
+
+  **Still open:** the POINTER half, which is what
+  `alloc_flat_index_of_fresh_container` measures. Its element and field are
+  strings, so it needs the retain / is_unique-gated deep drop / move-at-the-
+  binding trio that a scalar read does not.
+
+  VERIFIED: `TestSelfHostFreshContainerReadReclaimIRX86_64` at 6 rows (the
+  local-built row flipped from its `>` pin to `==`, plus the param-seeded
+  refusal), every case additionally run through the self-host on **x86-64, arm64
+  (qemu) and wasm (wasmtime)**, and
+  `TestSelfHostPerModuleEmitAllFixpointX86_64`. Refs #6491 #4451.

@@ -26598,6 +26598,149 @@ function body_has_nonfresh_arrlit_return(stmts: parser.Stmt[]): boolean {
     }
     return false;
 }
+// ── the LOCAL-built scalar-array producer (#6491 follow-up) ──────────────────
+//
+// `var out: i32[] = []; … out = out.append(v); … return out;` is how a producer
+// is actually written, and the literal-return rule above declines it — so the
+// caller's reclaims (the discarded `mk(i);` statement and the `mk()[i]` read)
+// both left the buffer to leak, 2824 B over 50 rounds where native is flat.
+//
+// The three predicates below admit it. Together they prove the returned buffer
+// is built ENTIRELY in this frame and reaches the caller as its sole rc == 1
+// reference: the init is a literal (so it cannot start as a param's buffer), the
+// only rebind is the self-append (so it cannot become one later), and nothing
+// else escapes it. Element freshness needs no proof at all here — the ret type
+// is is_leaksafe_array_field, so every element is a SCALAR, and the shallow
+// element-blind `__fern_rc_dec` both consumers emit has no pointer to dangle.
+
+// arr_returned_ident_names collects the name of every `return <ident>` in
+// `stmts`. Paired with body_has_nonident_arr_return, which refuses the function
+// outright if any return is some other shape.
+function arr_returned_ident_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                match (r.value) {
+                    parser.ExprIdent(rid) => { a = push_str_unique(a, rid.name); },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => { a = arr_returned_ident_names(f.then_body, a); a = arr_returned_ident_names(f.else_body, a); },
+            parser.StmtWhile(w) => { a = arr_returned_ident_names(w.body, a); },
+            parser.StmtFor(fo) => { a = arr_returned_ident_names(fo.body, a); },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { a = arr_returned_ident_names(m.arms[k].body, a); k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var ok: boolean = false;
+                match (r.value) { parser.ExprIdent(_) => { ok = true; }, _ => {} }
+                if (!ok) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonident_arr_return(f.then_body) || body_has_nonident_arr_return(f.else_body)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonident_arr_return(w.body)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonident_arr_return(fo.body)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_has_nonident_arr_return(m.arms[k].body)) { return true; } k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arr_local_has_literal_init: `name` is declared in `stmts` as `var name = [ … ]`
+// (an empty `[]` qualifies — that is the accumulator idiom). Without this the
+// name could be seeded from a parameter and the caller would free the caller's
+// caller's buffer.
+function arr_local_has_literal_init(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => {
+                if (v.name == name) {
+                    match (v.init) { parser.ExprArray(_) => { return true; }, _ => { return false; } }
+                }
+            },
+            parser.StmtIf(f) => { if (arr_local_has_literal_init(f.then_body, name) || arr_local_has_literal_init(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (arr_local_has_literal_init(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arr_local_has_literal_init(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_local_has_literal_init(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arr_reassigned_other_than_selfappend: `name` is rebound by anything other than
+// the sanctioned `name = name.append(v)`. body_unsafe_for_allow_ret cannot see
+// this — its StmtAssign arm inspects only the assigned VALUE, so `out = param`
+// reads as safe there while it is exactly what would alias a buffer this frame
+// does not own.
+function arr_reassigned_other_than_selfappend(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (a.target == name) {
+                    var self_append: boolean = false;
+                    match (a.value) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprFieldAccess(fa) => {
+                                    if (fa.field == "append" && c.args.len() == 1) {
+                                        match (fa.obj) {
+                                            parser.ExprIdent(rid) => { self_append = rid.name == name; },
+                                            _ => {}
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!self_append) { return true; }
+                }
+            },
+            parser.StmtIf(f) => { if (arr_reassigned_other_than_selfappend(f.then_body, name) || arr_reassigned_other_than_selfappend(f.else_body, name)) { return true; } },
+            parser.StmtWhile(w) => { if (arr_reassigned_other_than_selfappend(w.body, name)) { return true; } },
+            parser.StmtFor(fo) => { if (arr_reassigned_other_than_selfappend(fo.body, name)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_reassigned_other_than_selfappend(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            parser.StmtDefer(d) => { if (arr_reassigned_other_than_selfappend([d.action], name)) { return true; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// body_returns_local_built_arr: every return hands back a local this frame built
+// from a literal and only ever self-appended to, and nothing else escapes it.
+function body_returns_local_built_arr(stmts: parser.Stmt[]): boolean {
+    if (body_has_nonident_arr_return(stmts)) { return false; }
+    var names: string[] = arr_returned_ident_names(stmts, []);
+    if (names.len() == 0) { return false; }
+    var no_borrow: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (!arr_local_has_literal_init(stmts, names[i])) { return false; }
+        if (arr_reassigned_other_than_selfappend(stmts, names[i])) { return false; }
+        if (body_unsafe_for_allow_ret(stmts, names[i], no_borrow)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -26614,12 +26757,21 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // names convention) so the discarded-call reclaim in lower_stmt reads it
         // off LowerState with no new threading; every other consumer looks up bare
         // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
-        // match. Consumed ONLY by the discarded `mk(i);` statement reclaim — the
-        // caller-side shallow __fern_rc_dec of the returned rc=1 buffer (native's
+        // match. Consumed by the discarded `mk(i);` statement reclaim and by the
+        // `mk()[i]` read reclaim (#6491) — both the caller-side shallow
+        // __fern_rc_dec of the returned rc=1 buffer (native's
         // ownedCallResultType arc; the box is fresh-by-construction in return
         // position, so the dec is balanced and element-blind).
+        //
+        // Two return shapes qualify, and they are disjoint by construction: a
+        // direct array LITERAL, or a LOCAL this frame built from a literal and
+        // only ever self-appended to (body_returns_local_built_arr). The second
+        // is how a producer is normally written, and admitting it is what makes
+        // the accumulator idiom reclaimable rather than a per-call leak.
         if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
-                && body_has_return(funcs[k].body) && !body_has_nonfresh_arrlit_return(funcs[k].body)) {
+                && body_has_return(funcs[k].body)
+                && (!body_has_nonfresh_arrlit_return(funcs[k].body)
+                    || body_returns_local_built_arr(funcs[k].body))) {
             out = out.append("ARR:" + funcs[k].name);
         }
         k = k + 1;
