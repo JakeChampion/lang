@@ -49,6 +49,15 @@
 
 # Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
 TestSelfHostModloadPerModuleWholeCompilerX86_64 460
+# The #5914 shape again, from a MISSING entry rather than a stale one: this
+# emits the whole compiler as 28 wasm units, links a 13 MB WAT, validates it,
+# and then RUNS the wasm-hosted compiler under wasmtime — and it had no entry
+# at all, so LPT ranked it with the sub-second tests. Its shard finished at
+# 14m47s against an 18m budget on an unrelated PR and hit the wall on the next
+# two, deterministically. Measured 170.3 s locally (4-core, drivers warm)
+# 2026-08-10; a CI log has it 3m33s in and still running, so 240 is the honest
+# floor, not a guess at the ceiling.
+TestSelfHostWasmWholeCompilerShardedLink 240
 # Two whole-compiler emit-all passes at batch=4 (gen0 40 s + gen1 79 s),
 # measured on the x86_64 lane 2026-07-29 with the modload driver warm. Well
 # above the ~1 s norm, so LPT gives it its own bucket rather than stacking it
