@@ -1,0 +1,22 @@
+// A match-arm PAYLOAD BINDING returned as a value block's value, in a position
+// with nothing else to supply the width. The return-type inference resolved
+// idents against parameters only, so the binding was invisible to it and the
+// lifted block kept the parser's syntax-only i32 guess (#6468).
+//
+// A checked operator is what makes the width recoverable: it yields its OPERAND
+// type rather than an `Option[…]` spelling.
+//
+// Reduced from fernsmith seed s0161 against a differential oracle — parent bails,
+// this compiles AND agrees with the interpreter. Hand-built probes of this shape
+// do not reproduce; that issue records the trap four times over.
+function id[T](x: T): T { return x; }
+
+function gen(): i64 {
+    var fe: i64[] = [(match ((1099511628358i64) +? (200i64)) { Some(n) => n, None => id(1099511628488i64) })];
+    return fe[0];
+}
+
+function main(): i32 {
+    if (gen() != 1099511628558i64) { return 1; }
+    return 0;
+}
