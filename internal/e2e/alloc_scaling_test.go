@@ -370,6 +370,57 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// The TUPLE payload the case above does not reach (#6409). Its
+		// eligibility looked identical — a tuple is pointer-shaped, `x.0`
+		// reads as confined, and emitOwnedSlotDrop has a TupleType branch —
+		// so the leak was assumed to be a partial reclaim below the gate.
+		// It was not: the payload never reached the release at all.
+		//
+		// `variantPayloads` holds the DECLARED payload types, so `Some`'s is
+		// still `ParamType{T}` for a generic Option, and exprNoParamEscape's
+		// TupleLit case matches on the slot BEING a TupleType. StructLit and
+		// ArrayLit carry their own type and never consult the slot, which is
+		// why the same shape in a struct or an array was flat while the tuple
+		// leaked its whole box every round.
+		//
+		// Constant in n on all three backends. The four shapes are what
+		// separated cause from symptom: the plain tuple and the tuple with a
+		// pointer ELEMENT would both be explained by a partial reclaim, the
+		// NESTED tuple would not, and the Result case proves the fix is on the
+		// generic-substitution path rather than special to Option.
+		name: "pair-form-tuple-payload",
+		decls: `function mkt(k: i32): Option[(i32, i32)] {
+    if (k == 0) { return None; }
+    return Some((k, k + 1));
+}
+function mkta(k: i32): Option[(i32[], i32)] {
+    if (k == 0) { return None; }
+    return Some(([k, k + 1, k + 2], k));
+}
+function mktn(k: i32): Option[((i32, i32), i32)] {
+    if (k == 0) { return None; }
+    return Some(((k, k), k));
+}
+function mkr(k: i32): Result[(i32, i32), (i32, i32)] {
+    if (k == 0) { return Err((0, 0)); }
+    return Ok((k, k + 1));
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        match (mkt(1))  { Some(a) => { t = t + a.0; }, None => { }, }
+        match (mkta(1)) { Some(a) => { t = t + a.1; }, None => { }, }
+        match (mktn(1)) { Some(a) => { t = t + a.1; }, None => { }, }
+        match (mkr(1))  { Ok(a) => { t = t + a.0; }, Err(e) => { t = t + e.0; }, }
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.
