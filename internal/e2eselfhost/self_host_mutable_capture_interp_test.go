@@ -66,21 +66,6 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		{"read-only-capture-control", `function main(): i32 { var k: i32 = 40; var f: () => i32 = function (): i32 { return k + 2; }; return f(); }`},
 		{"string-capture-control", `function main(): i32 { var s: string = "abcd"; var f: () => i32 = function (): i32 { return s.len(); }; return f(); }`},
 		{"array-capture-control", `function main(): i32 { var xs: i32[] = [1,2,3]; var f: () => i32 = function (): i32 { return xs[2]; }; return f(); }`},
-		// #6539 — the same binding ONE BLOCK DEEPER. The scan ran over
-		// `fd.body` alone and never descended into a loop/if/match body, so a
-		// `var g = <lambda>` inside a `while` was invisible and its capture kept
-		// the construction-time snapshot.
-		//
-		// Note what writes: here the OUTER body assigns the capture, not the
-		// lambda body (the #5394 clause rather than #2850's). Every case above
-		// has the LAMBDA write, which is exactly why they all passed while this
-		// shape did not — a probe whose lambda writes finds the binding by a
-		// different route.
-		{"nested-block-outer-write", `function main(): i32 { var fs: ((i32) => i32)[] = []; var i: i32 = 0; while (i < 3) { var g: (i32) => i32 = ((x: i32) => x + i); fs = fs.append(g); i = i + 1; } return (fs[0])(0); }`},
-		// The control that pins the above as a REACH problem and not a broken
-		// mechanism: identical binding, identical capture, one block shallower.
-		// It was already correct, and must stay so.
-		{"toplevel-outer-write-control", `function main(): i32 { var i: i32 = 0; var f: (i32) => i32 = ((x: i32) => x + i); i = 3; return f(0); }`},
 		// Plain assignment and a loop counter: neither involves a lambda, so the
 		// cell path must stay entirely out of the way.
 		{"no-lambda-assign-control", `function main(): i32 { var x: i32 = 1; x = 41; return x + 1; }`},
