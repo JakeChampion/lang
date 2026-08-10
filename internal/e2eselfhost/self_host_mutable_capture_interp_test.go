@@ -83,12 +83,13 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 		// call argument. Same clause, a position the statement-level scan has to
 		// look inside.
 		//
-		// The compiled-path suite's `struct-literal-field` twin has no entry here
-		// on purpose: this engine cannot CALL a closure held in a struct field at
-		// all (`(cs[0].f)(0)` → "undefined method `f` on `C`"), so the case dies
-		// before it reaches the capture clause. That is a separate interpreter
-		// gap, not this one.
+		// The compiled-path suite's `struct-literal-field` twin joins them now
+		// that this engine can CALL a closure held in a struct field (#6596). It
+		// used to die before reaching the capture clause at all, on
+		// "undefined method `f` on `C`" — a separate gap that made the shape
+		// untestable here rather than a capture failure.
 		{"outer-write-call-argument", `function take(f: (i32) => i32): i32 { return f(0); } function main(): i32 { var i: i32 = 0; var fs: ((i32) => i32)[] = []; fs = fs.append(((x: i32) => x + i)); i = 4; return take(fs[0]); }`},
+		{"outer-write-struct-field", `struct C { f: (i32) => i32, n: i32 } function main(): i32 { var cs: C[] = []; var i: i32 = 0; while (i < 2) { cs = cs.append(C { f: ((x: i32) => x + i), n: i }); i = i + 1; } return (cs[0].f)(0); }`},
 
 		// The guard on that clause, and the reason it is keyed on REASSIGNMENT
 		// rather than on being captured at all. `n` is declared fresh each
