@@ -4897,6 +4897,9 @@ func (g *generator) emitAllocRuntime() {
 	// rather than a signed-disp32 `lea [base + heapBytes]`, which caps at
 	// 0x7FFFFFFF.
 	const heapBytes = 17179869184 // 0x400000000, 16 GiB
+	if g.entry != platforms.EntryProcess {
+		g.emitHeapInitRuntime()
+	}
 	g.line("")
 	g.line(".globl __fern_alloc")
 	g.line(".type __fern_alloc, @function")
@@ -5005,12 +5008,11 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("test rax, rax")
 	g.emit("jnz .Lalloc_have_heap")
 	if g.entry != platforms.EntryProcess {
-		// No kernel to mmap the arena from, so there is no lazy reservation
-		// to make: the heap becomes a region the embedder hands in (#6511).
-		// Until that lands, reaching the unseeded path on a hostless target
-		// traps rather than reserving memory that is not ours. Once the
-		// region is seeded, __fern_heap_ptr is non-zero and the branch above
-		// has already jumped past this.
+		// No kernel to mmap from, so there is no lazy reservation: the heap
+		// is the region the embedder passed to __fern_heap_init, which sets
+		// __fern_heap_ptr non-zero so the branch above has already jumped
+		// past this. Reaching here means allocating before that call, which
+		// has no answer but to stop (#6511).
 		g.emit("ud2")
 		g.emitAllocHeapReady()
 		return
@@ -5044,6 +5046,30 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("add rcx, rax")
 	g.emit("mov [r12], rcx")
 	g.emitAllocHeapReady()
+}
+
+// emitHeapInitRuntime emits `__fern_heap_init(base, len)` — the hostless
+// heap seam (#6511). A target with no kernel cannot `mmap` a region and,
+// with no MMU, may have no address space to reserve one in either, so the
+// heap is handed in rather than acquired: the embedder calls this once
+// with a region it owns, before calling anything that allocates.
+//
+// Only the SEEDING moves. The cursor pair, the 16-byte rounding, the RC
+// header and the segregated freelist all work against a region regardless
+// of where it came from (docs/ARENA-DECISION.md).
+//
+// System V: rdi = base, rsi = length in bytes.
+func (g *generator) emitHeapInitRuntime() {
+	g.line("")
+	g.line(".globl __fern_heap_init")
+	g.line(".type __fern_heap_init, @function")
+	g.label("__fern_heap_init")
+	g.emit("mov [rip + __fern_heap_ptr], rdi")  // cursor starts at the base
+	g.emit("mov [rip + __fern_heap_base], rdi") // high-water mark reference
+	g.emit("add rsi, rdi")                      // end = base + len
+	g.emit("mov [rip + __fern_heap_end], rsi")
+	g.emit("ret")
+	g.line(".size __fern_heap_init, .-__fern_heap_init")
 }
 
 // emitAllocHeapReady emits __fern_alloc's bump path — everything from the

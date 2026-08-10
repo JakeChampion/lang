@@ -1359,6 +1359,9 @@ func (g *generator) emitAllocRuntime() {
 	// small-RAM boards like a 4 GB Raspberry Pi). The exit-137 bounds
 	// check in the allocator remains the real out-of-memory guard.
 	const heapBytes = 17179869184 // 0x400000000, 16 GiB
+	if g.entry != platforms.EntryProcess {
+		g.emitHeapInitRuntime()
+	}
 	g.line("")
 	g.line(".global __fern_alloc")
 	g.typeDirective("__fern_alloc")
@@ -1450,12 +1453,11 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	if g.entry != platforms.EntryProcess {
-		// No kernel to mmap the arena from, so there is no lazy reservation
-		// to make: the heap becomes a region the embedder hands in (#6511).
-		// Until that lands, reaching the unseeded path on a hostless target
-		// traps rather than reserving memory that is not ours. Once the
-		// region is seeded, __fern_heap_ptr is non-zero and the branch above
-		// has already jumped past this.
+		// No kernel to mmap from, so there is no lazy reservation: the heap
+		// is the region the embedder passed to __fern_heap_init, which sets
+		// __fern_heap_ptr non-zero so the branch above has already jumped
+		// past this. Reaching here means allocating before that call, which
+		// has no answer but to stop (#6511).
 		g.emit("brk #1")
 		g.emitAllocHeapReady()
 		return
@@ -1495,6 +1497,34 @@ func (g *generator) emitAllocRuntime() {
 	g.emit("str x3, [x12]")
 	g.emit("mov x0, x9")
 	g.emitAllocHeapReady()
+}
+
+// emitHeapInitRuntime emits `__fern_heap_init(base, len)` — the hostless
+// heap seam (#6511). A target with no kernel cannot `mmap` a region and,
+// with no MMU, may have no address space to reserve one in either, so the
+// heap is handed in rather than acquired: the embedder calls this once
+// with a region it owns, before calling anything that allocates.
+//
+// Only the SEEDING moves. The cursor pair, the 16-byte rounding, the RC
+// header and the segregated freelist all work against a region regardless
+// of where it came from (docs/ARENA-DECISION.md).
+//
+// AAPCS64: x0 = base, x1 = length in bytes.
+func (g *generator) emitHeapInitRuntime() {
+	g.line("")
+	g.line(".global __fern_heap_init")
+	g.typeDirective("__fern_heap_init")
+	g.label("__fern_heap_init")
+	g.adrpAdd("x2", "__fern_heap_ptr")
+	g.emit("str x0, [x2]") // cursor starts at the base
+	g.adrpAdd("x2", "__fern_heap_base")
+	g.emit("str x0, [x2]") // high-water mark reference
+	g.emit("add x1, x0, x1")
+	g.adrpAdd("x2", "__fern_heap_end")
+	g.emit("str x1, [x2]") // end = base + len
+	g.emit("ret")
+	g.sizeDirective("__fern_heap_init")
+	g.line(".ltorg")
 }
 
 // emitAllocHeapReady emits __fern_alloc's bump path — everything from the
