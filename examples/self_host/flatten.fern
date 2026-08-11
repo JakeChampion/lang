@@ -314,7 +314,8 @@ function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
                 binding: pv.binding,
                 extra_bindings: pv.extra_bindings,
                 nested: pv.nested,
-                at_binding: pv.at_binding
+                at_binding: pv.at_binding,
+                field_names: pv.field_names
             };
         },
         _ => { return p; }
@@ -696,7 +697,8 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             line: mod.structs[j].line,
             col: mod.structs[j].col,
             enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
-            must_consume: mod.structs[j].must_consume
+            must_consume: mod.structs[j].must_consume,
+            variant_field_names: mod.structs[j].variant_field_names
         });
         j = j + 1;
     }

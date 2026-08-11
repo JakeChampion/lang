@@ -80,9 +80,38 @@ unchanged.
   shape.
 - Printer: `fern -fmt` round-trips the named decl + pattern forms.
 
+### Self-host (#6676)
+
+Same layout, same "names are a front-end concern" split:
+
+- `parser.StructDecl.variant_field_names` — parallel to the variant record's
+  fields, which keep the positional `__ev` / `__ev1` marker names, so nothing
+  downstream of the parser changes.
+- `parser.PatVariant.field_names` — the fields a `V { f, … }` arm named, with
+  the bindings holding the locals they were bound to.
+  `resolve_variant_fields_module` settles the pattern against the declaration:
+  bindings become the fields in declaration order and `field_names` is cleared.
+  It runs at the end of `parse_module` and again on the bundle (where a variant
+  from an import has a declaration to settle against); a settled pattern carries
+  no field names, so the second run is a no-op.
+- A pattern that does not settle keeps its field names and the checker's
+  `record_pattern_diags` reports it — the same E015 set native reports,
+  including the renaming (`f: local`) rejection.
+- `V { … }` at an arm is also how a struct pattern is spelled. The self-host
+  parser decides on the head name: a struct declared in the same file takes the
+  struct-pattern desugar, anything else (a record variant, or a name from an
+  import) takes the variant path. `Par.structnames` is pre-scanned from the
+  token stream so the decision does not depend on decl order.
+
+`fern -fmt` reconstructs the record DECL form; a settled record PATTERN prints
+as the positional pattern it was rewritten to, which re-parses to the same
+program.
+
 ## Follow-ups
 
 - `Rect { w: …, h: … }` **construction** syntax.
-- Named-field patterns in `if let` / `let … else` (match-only for now).
-- Self-host compiler support (the self-host parser doesn't yet parse the
-  named forms; no stdlib uses them, so the bootstrap is unaffected).
+- Named-field patterns in `let … else` — `match` and `if let` take them, but
+  `let Rect { w, h } = e else { … }` is a parse error on native, so the
+  self-host leaves it one too rather than growing surface native lacks.
+- Self-host `@derive(Display/Debug/Json)` renders a record variant's payloads
+  positionally, where native renders the named shape.

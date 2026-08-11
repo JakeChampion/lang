@@ -441,3 +441,171 @@ function elf_static_executable_data_x86_wx(text: i32[], data: i32[]): i32[] {
 pub function elf_static_executable_bss_x86_wx_at(text: i32[], data: i32[], bss: i32, entry_off: i32): i32[] {
     return elf_image_wx(text, data, elf_em_x86_64(), entry_off, bss);
 }
+
+// ---- section headers + .symtab (#6637) ---------------------------------
+//
+// Every writer above emits program headers only: `e_shoff` is 0 and there
+// are no sections, which is all a loader needs to RUN a static binary.
+// `nm`, a debugger and a profiler read the SECTION side, so a symbol table
+// needs that whole layer underneath it — a symbol's `st_shndx` has to name
+// a real section index to resolve at all.
+//
+// This is written as an APPEND over a finished image rather than as a
+// variant of any one writer. The images differ (one segment vs the W^X two,
+// ET_EXEC vs the PIE ET_DYN) but the section layer is identical for all of
+// them, and appending keeps it that way: sections are not loaded, so adding
+// them past the last segment cannot disturb what is.
+//
+// Scope matches native's `-g` exactly: a static `.symtab`, not DWARF.
+
+// Elf64_Sym is 24 bytes; Elf64_Shdr is 64.
+pub function elf_sym_size(): i32 { return 24; }
+pub function elf_sh_size(): i32 { return 64; }
+
+// elf_align8_buf appends zero bytes until the length is a multiple of 8.
+// Both .symtab and the section-header table are 8-aligned structures.
+function elf_align8_buf(b: i32[]): i32[] {
+    var out: i32[] = b;
+    while ((out.len() % 8) != 0) { out = out.append(0); }
+    return out;
+}
+
+// elf_str_bytes appends `s`'s bytes and a NUL. Byte-at-a-time because
+// elf.fern is deliberately import-free.
+function elf_str_bytes(b: i32[], s: string): i32[] {
+    var out: i32[] = b;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        out = out.append(s[i] as i32);
+        i = i + 1;
+    }
+    return out.append(0);
+}
+
+// elf_patch_le16 / elf_patch_le32 overwrite an already-emitted field.
+// Subscripts are read-only in Fern, so this rebuilds through `.with`.
+function elf_patch_le16(b: i32[], off: i32, v: i32): i32[] {
+    var out: i32[] = b.with(off, v & 255);
+    return out.with(off + 1, (v >> 8) & 255);
+}
+
+function elf_patch_le32(b: i32[], off: i32, v: i32): i32[] {
+    var out: i32[] = b.with(off, v & 255);
+    out = out.with(off + 1, (v >> 8) & 255);
+    out = out.with(off + 2, (v >> 16) & 255);
+    return out.with(off + 3, (v >> 24) & 255);
+}
+
+// elf_shdr appends one 64-byte Elf64_Shdr.
+function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, off: i64, size: i64, link: i32, info: i32, align: i64, entsize: i64): i32[] {
+    var out: i32[] = b;
+    out = elf_le32(out, name_off);
+    out = elf_le32(out, sh_type);
+    out = elf_le64(out, flags);
+    out = elf_le64(out, addr);
+    out = elf_le64(out, off);
+    out = elf_le64(out, size);
+    out = elf_le32(out, link);
+    out = elf_le32(out, info);
+    out = elf_le64(out, align);
+    out = elf_le64(out, entsize);
+    return out;
+}
+
+// elf_append_symtab appends a static `.symtab` to a finished ELF image,
+// naming each (sym_names[i], sym_offs[i]) as an STT_FUNC / STB_GLOBAL
+// symbol at `text_vaddr + sym_offs[i]`, and adds the section-header table
+// the symbols need to resolve: NULL, .text, .symtab, .strtab, .shstrtab.
+//
+// `text_off` / `text_len` locate .text within the image, and `text_vaddr`
+// is the address it loads at — all three differ between the single-segment
+// and W^X writers, so the caller supplies them rather than this guessing.
+//
+// An EMPTY `sym_names` returns the image UNCHANGED. That is what makes the
+// section layer safe to land ahead of the `-g` flag: every existing caller
+// keeps a byte-identical image, and not by re-deriving one that ought to
+// match — by not touching it.
+pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[]): i32[] {
+    if (sym_names.len() == 0) { return img; }
+
+    var nsym: i32 = sym_names.len();
+    var zero64: i64 = 0;
+
+    // .strtab: index 0 is the empty name, then each symbol's, recording the
+    // st_name offset as it goes.
+    var strtab: i32[] = [0];
+    var name_offs: i32[] = [];
+    var si: i32 = 0;
+    while (si < nsym) {
+        name_offs = name_offs.append(strtab.len());
+        strtab = elf_str_bytes(strtab, sym_names[si]);
+        si = si + 1;
+    }
+
+    // .shstrtab, laid out in section-index order.
+    var shstrtab: i32[] = [0];
+    var n_text: i32 = shstrtab.len();
+    shstrtab = elf_str_bytes(shstrtab, ".text");
+    var n_symtab: i32 = shstrtab.len();
+    shstrtab = elf_str_bytes(shstrtab, ".symtab");
+    var n_strtab: i32 = shstrtab.len();
+    shstrtab = elf_str_bytes(shstrtab, ".strtab");
+    var n_shstrtab: i32 = shstrtab.len();
+    shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
+
+    var out: i32[] = elf_align8_buf(img);
+
+    var symtab_off: i32 = out.len();
+    var symtab_size: i32 = (nsym + 1) * elf_sym_size();
+
+    // Entry 0 is the reserved null symbol: every field zero.
+    var z: i32 = 0;
+    while (z < elf_sym_size()) { out = out.append(0); z = z + 1; }
+
+    var k: i32 = 0;
+    while (k < nsym) {
+        out = elf_le32(out, name_offs[k]);                        // st_name
+        out = out.append(18);                                     // st_info = (STB_GLOBAL<<4)|STT_FUNC
+        out = out.append(0);                                      // st_other
+        out = elf_le16(out, 1);                                   // st_shndx = .text
+        out = elf_le64(out, (text_vaddr + sym_offs[k]) as i64);   // st_value
+        out = elf_le64(out, zero64);                              // st_size (not tracked)
+        k = k + 1;
+    }
+
+    var strtab_off: i32 = out.len();
+    out = elf_cat(out, strtab);
+    var shstrtab_off: i32 = out.len();
+    out = elf_cat(out, shstrtab);
+
+    out = elf_align8_buf(out);
+    var sh_off: i32 = out.len();
+
+    // NULL
+    out = elf_shdr(out, 0, 0, zero64, zero64, zero64, zero64, 0, 0, zero64, zero64);
+    // .text — SHT_PROGBITS, SHF_ALLOC|SHF_EXECINSTR
+    out = elf_shdr(out, n_text, 1, 6, text_vaddr as i64, text_off as i64, text_len as i64, 0, 0, 16, zero64);
+    // .symtab — sh_link is .strtab (3); sh_info is the first non-local
+    // symbol index, which is 1 because the null symbol is the only local.
+    out = elf_shdr(out, n_symtab, 2, zero64, zero64, symtab_off as i64, symtab_size as i64, 3, 1, 8, elf_sym_size() as i64);
+    // .strtab
+    out = elf_shdr(out, n_strtab, 3, zero64, zero64, strtab_off as i64, strtab.len() as i64, 0, 0, 1, zero64);
+    // .shstrtab
+    out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
+
+    // Point the header at the table just written. e_shoff is 8 bytes at
+    // 0x28; an image this size never needs the high word.
+    out = elf_patch_le32(out, 40, sh_off);
+    out = elf_patch_le16(out, 58, elf_sh_size());   // e_shentsize
+    out = elf_patch_le16(out, 60, 5);               // e_shnum
+    out = elf_patch_le16(out, 62, 4);               // e_shstrndx = .shstrtab
+    return out;
+}
+
+// elf_wx_text_off is where .text begins in a W^X two-segment image: just
+// past the ELF header and its two program headers. The symbol appender
+// needs it, and so does anything else locating .text in that layout.
+pub function elf_wx_text_off(): i32 { return elf_eh_size() + 2 * elf_ph_size(); }
+
+// elf_wx_text_vaddr is the address that offset loads at.
+pub function elf_wx_text_vaddr(): i32 { return elf_base_vaddr() + elf_wx_text_off(); }

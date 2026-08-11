@@ -21,8 +21,8 @@ import "./util";
 function main(): i32 {
     // Fixtures: two struct names, one union alias.
     var structs: checker.StructSig[] = [
-        checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [] },
-        checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [] }
+        checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [] },
+        checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [] }
     ];
     var unions: checker.UnionSig[] = [
         checker.UnionSig { name: "Shape", variants: [] }
