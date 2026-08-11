@@ -80,7 +80,7 @@ function main(): i32 {
     // contract so a later rewrite that rebuilds rather than returns has to
     // prove it still matches byte for byte.
     var plain: i32[] = elf.elf_static_executable_bss_x86_wx_at(text, [], 0, 0);
-    var plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs);
+    var plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs);
     if (!bytes_equal(plain, plain_syms)) { return 1; }
 
     // A plain image really does carry no section table.
@@ -91,7 +91,7 @@ function main(): i32 {
     var names: string[] = ["_start", "helper"];
     var offs: i32[] = [0, 5];
     var sizes: i32[] = [5, 7];
-    var img: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), names, offs, sizes);
+    var img: i32[] = elf.elf_append_symtab(plain, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), text.len(), names, offs, sizes);
 
     // e_shoff (8 bytes at 0x28) is non-zero, and the section-table
     // description is the five-section layout.
@@ -135,11 +135,11 @@ function main(): i32 {
     var e1: i32 = symtab_off + elf.elf_sym_size();
     if (img[e1 + 4] != 18) { return 32; }            // st_info
     if (le16_at(img, e1 + 6) != 1) { return 33; }    // st_shndx = .text
-    if (le32_at(img, e1 + 8) != elf.elf_wx_text_vaddr()) { return 34; }
+    if (le32_at(img, e1 + 8) != elf.elf_text_vaddr_wx()) { return 34; }
 
     // Entry 2 is `helper` at text_vaddr + 5.
     var e2: i32 = symtab_off + 2 * elf.elf_sym_size();
-    if (le32_at(img, e2 + 8) != elf.elf_wx_text_vaddr() + 5) { return 35; }
+    if (le32_at(img, e2 + 8) != elf.elf_text_vaddr_wx() + 5) { return 35; }
     // Its name sits later in .strtab than `_start`'s, which is the check
     // that the two symbols are not sharing one name offset.
     if (le32_at(img, e2) <= le32_at(img, e1)) { return 36; }

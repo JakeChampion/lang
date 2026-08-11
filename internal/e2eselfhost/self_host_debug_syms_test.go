@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,10 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	stdlib := langSrcAbs(t, "internal/stdlib")
 
 	build := func(out string, extra ...string) string {
-		args := append([]string{"-target", "x86-64"}, extra...)
+		args := extra
+		if !slices.Contains(args, "-target") {
+			args = append([]string{"-target", "x86-64"}, args...)
+		}
 		args = append(args, "-o", out, src, stdlib)
 		cmd := exec.Command(cli, args...)
 		if b, err := cmd.CombinedOutput(); err != nil {
@@ -95,5 +99,23 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	plainOut, _ := exec.Command("nm", plain).CombinedOutput()
 	if strings.Contains(string(plainOut), "__fn_main") {
 		t.Errorf("the non-g build carries symbols; -g should be opt-in\n%s", plainOut)
+	}
+
+	// arm64 reaches the ELF layer through a different writer — the W^X
+	// two-segment image, where .text sits past TWO program headers rather
+	// than one. That is the case an x86-only test cannot cover, and the
+	// reason the symtab layer takes the offset and vaddr from its caller.
+	//
+	// nm reads a foreign architecture happily, so the symbols are checked
+	// without needing qemu; execution stays x86-only above.
+	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64", "-g")
+	a64Out, err := exec.Command("nm", a64).Output()
+	if err != nil {
+		t.Fatalf("nm on the arm64 build: %v", err)
+	}
+	for _, want := range []string{"__fn_helper", "__fn_main", "_start"} {
+		if !strings.Contains(string(a64Out), want) {
+			t.Errorf("arm64 nm output missing %q\n--- got ---\n%s", want, a64Out)
+		}
 	}
 }
