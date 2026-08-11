@@ -747,6 +747,39 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cast-string-to-f64", "function main(): i32 { var s: string = \"x\"; var f: f64 = s as f64; return 0; }\n", []string{"E033"}},
 		{"cast-f64-to-i32-ok", "function main(): i32 { var f: f64 = 1.0; var x: i32 = f as i32; return 0; }\n", nil},
 		{"cast-i32-to-f64-ok", "function main(): i32 { var x: i32 = 1; var y: f64 = x as f64; return 0; }\n", nil},
+		// Numeric-literal settling (#6654): an unsuffixed integer literal reads
+		// at the destination's type, so every one of these is clean on native
+		// and had been an over-reject here — the self-host types every numeric
+		// literal i32 and compared it directly against the declared type. One
+		// row per position that got it wrong, plus the composite destinations
+		// whose element types the settle has to recurse into.
+		{"settle-var-init-ok", "function main(): i32 { var x: f64 = 1; return 0; }\n", nil},
+		{"settle-assign-ok", "function main(): i32 { var x: f64 = 1.0; x = 2; return 0; }\n", nil},
+		{"settle-return-ok", "function g(): f64 { return 1; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"settle-call-arg-ok", "function g(x: f64): i32 { return 1; }\nfunction main(): i32 { return g(1); }\n", nil},
+		{"settle-method-arg-ok", "struct S { v: i32 }\nfunction (s: S) take(x: f64): i32 { return 1; }\nfunction main(): i32 { var s = S { v: 1 }; return s.take(1); }\n", nil},
+		{"settle-struct-field-ok", "struct S { x: f64 }\nfunction main(): i32 { var s: S = S { x: 1 }; return 0; }\n", nil},
+		{"settle-array-literal-ok", "function main(): i32 { var xs: f64[] = [1, 2]; return 0; }\n", nil},
+		{"settle-tuple-literal-ok", "function main(): i32 { var t: (f64, i32) = (1, 2); return 0; }\n", nil},
+		{"settle-nested-array-ok", "function main(): i32 { var xs: f64[][] = [[1], [2]]; return 0; }\n", nil},
+		{"settle-struct-array-field-ok", "struct S { xs: f64[] }\nfunction main(): i32 { var s: S = S { xs: [1, 2] }; return 0; }\n", nil},
+		{"settle-variant-payload-ok", "enum W { Wrap(f64), Empty }\nfunction f(): W { return Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"settle-f32-ok", "function main(): i32 { var x: f32 = 1; return 0; }\n", nil},
+		// The expression set that settles: an unsuffixed literal, unary minus,
+		// and the four arithmetic binaries over those. Same set native's
+		// settleFloat descends.
+		{"settle-unary-minus-ok", "function main(): i32 { var x: f64 = -5; return 0; }\n", nil},
+		{"settle-arithmetic-ok", "function main(): i32 { var x: f64 = 2 * 3 + 1; return 0; }\n", nil},
+		// Settling is literal-only, not an i32 -> f64 widening: native rejects
+		// each of these too, and they are what stops the rule going too far. A
+		// typed suffix has already picked its width, and an identifier is not a
+		// literal however it was initialised.
+		{"settle-not-an-ident", "function main(): i32 { var a: i32 = 1; var x: f64 = a; return 0; }\n", []string{"E003"}},
+		{"settle-not-a-suffixed-literal", "function main(): i32 { var x: f64 = 1i64; return 0; }\n", []string{"E003"}},
+		{"settle-variant-payload-ident", "enum W { Wrap(f64), Empty }\nfunction f(a: i32): W { return Wrap(a); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"settle-tuple-bad-element", "function main(): i32 { var t: (f64, i32) = (1, \"x\"); return 0; }\n", []string{"E003"}},
+		{"settle-array-bad-element", "function main(): i32 { var xs: f64[] = [1, \"x\"]; return 0; }\n", []string{"E034"}},
+		{"settle-not-a-string", "function main(): i32 { var x: f64 = \"a\"; return 0; }\n", []string{"E003"}},
 		{"field-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x = 5; return p.x; }\n", []string{"E048"}},
 		{"field-compound-assign", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; p.x += 5; return p.x; }\n", []string{"E048"}},
 		{"nested-field-assign", "struct Q { a: i32 }\nstruct P { q: Q }\nfunction main(): i32 { var p: P = P { q: Q { a: 1 } }; p.q.a = 9; return 0; }\n", []string{"E048"}},
