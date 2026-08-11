@@ -255,6 +255,47 @@ func TestSelfHostWorkflowShardCountsMatchVerifyExpectations(t *testing.T) {
 	}
 }
 
+// DRIFT GUARD for OWN_JOB_TESTS (#6667). A name listed there is EXCLUDED from
+// the shard partition, so it runs only if some job below names it — and a job
+// that never runs it is invisible: `-test.list` still reports the test, the
+// shards still skip it, and every lane stays green while the coverage is gone.
+// The testname gate cannot see this; it only checks that the name resolves to a
+// real test function, which a dropped-but-still-listed test does.
+//
+// Also fails on a weights entry for such a name: the partition never sees the
+// name, so the weight steers nothing and reads as scheduling that is not there.
+func TestSelfHostWorkflowOwnJobTestsEachHaveAJob(t *testing.T) {
+	wf, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	src := string(wf)
+
+	m := regexp.MustCompile(`(?m)^\s*OWN_JOB_TESTS:\s*"([^"]*)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("workflow does not define OWN_JOB_TESTS — did the env block change?")
+	}
+	weights, err := os.ReadFile(filepath.Join("..", "..", ".github", "selfhost-test-weights.txt"))
+	if err != nil {
+		t.Fatalf("read weights: %v", err)
+	}
+
+	for _, name := range strings.Split(m[1], "|") {
+		if name == "" {
+			continue
+		}
+		if !strings.Contains(src, "-test.run '^"+name+"$'") {
+			t.Errorf("OWN_JOB_TESTS names %s but no job runs it with -test.run '^%s$' — "+
+				"it is excluded from the shards and run nowhere", name, name)
+		}
+		weightRe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `\s`)
+		if weightRe.Match(weights) {
+			t.Errorf("%s is in OWN_JOB_TESTS and also weighted in selfhost-test-weights.txt — "+
+				"the partition never sees it, so the weight is dead", name)
+		}
+	}
+}
+
 func mustAtoi(t *testing.T, s string) int {
 	t.Helper()
 	n, err := strconv.Atoi(s)
