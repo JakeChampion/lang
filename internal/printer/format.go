@@ -291,6 +291,7 @@ func (f *formatter) formatConstDecl(cd *ast.ConstDecl) {
 // shape and keeps round-trips byte-stable for short enums.
 func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	f.writeDeriveAttr(ed.Derives)
+	f.writeMustConsumeAttr(ed.MustConsume)
 	if ed.PackageScoped {
 		f.b.WriteString("pub(package) ")
 	} else if ed.Public {
@@ -406,6 +407,17 @@ func (f *formatter) writeDeriveAttr(derives []string) {
 	f.b.WriteString(")\n")
 }
 
+// writeMustConsumeAttr emits `@must_consume` on its own line. Dropping it (the
+// pre-existing default) disarmed E067: the obligation walk keys on the
+// attribute, so a formatted file type-checked CLEAN where the original was
+// rejected — the same class of semantics change writeDeriveAttr exists to stop.
+func (f *formatter) writeMustConsumeAttr(mustConsume bool) {
+	if !mustConsume {
+		return
+	}
+	f.b.WriteString("@must_consume\n")
+}
+
 // writeTypeParams emits a generic parameter list `[A, B: Trait + Other,
 // C: From[i32]]`. `bounds` maps a parameter name to its trait bounds
 // (nil / absent for an unbounded param), and `boundArgs` carries the
@@ -451,6 +463,7 @@ func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, 
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	f.writeDeriveAttr(sd.Derives)
+	f.writeMustConsumeAttr(sd.MustConsume)
 	if sd.PackageScoped {
 		f.b.WriteString("pub(package) ")
 	} else if sd.Public {

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -978,6 +979,43 @@ func TestFormatDeriveAttr(t *testing.T) {
 	eout := formatSrc(t, `@derive(Eq) enum Color { Red, Green } function main(): i32 { return 0; }`)
 	if !strings.Contains(eout, "@derive(Eq)") {
 		t.Errorf("formatted output dropped @derive on an enum:\n%s", eout)
+	}
+}
+
+// checkRejects reports whether the checker rejects src.
+func checkRejects(t *testing.T, src string) bool {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = checker.Check(prog)
+	return err != nil
+}
+
+// Format must preserve `@must_consume` on structs and enums. Dropping it was
+// not cosmetic: the attribute is what E067's obligation walk keys on, so a
+// formatted file type-checked CLEAN where the original was rejected — the
+// formatter silently disarmed the analysis the annotation exists to drive.
+// Asserted through the CHECKER rather than on the text, because the text is
+// only a proxy for the property that matters.
+func TestFormatMustConsumeAttr(t *testing.T) {
+	for _, src := range []string{
+		"@must_consume struct Res { code: i32 } function main(): i32 { var r: Res = Res { code: 7 }; return r.code; }",
+		"@must_consume enum R { Ok, Bad } function main(): i32 { var r: R = Ok; return 0; }",
+	} {
+		out := formatSrc(t, src)
+		if !strings.Contains(out, "@must_consume") {
+			t.Errorf("formatted output dropped @must_consume:\n%s", out)
+		}
+		// The original is rejected; so must the formatted form be. Asserted
+		// through the checker because the text is only a proxy for that.
+		if !checkRejects(t, src) {
+			t.Fatalf("fixture does not trip E067 to begin with, so the round trip proves nothing:\n%s", src)
+		}
+		if !checkRejects(t, out) {
+			t.Errorf("the formatted file type-checks clean — formatting disarmed E067:\n%s", out)
+		}
 	}
 }
 
