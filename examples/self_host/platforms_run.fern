@@ -1,0 +1,175 @@
+// examples/self_host/platforms_run.fern — driver for the target-capability
+// boundary (platforms.fern, #6633).
+//
+// Every rule is asserted in BOTH directions: a program the target may not
+// compile, and one it may. The permissive half is the one that matters. A
+// capability gate that fires on a valid program rejects code every backend
+// would have built correctly, and the compiler is the only thing that can be
+// wrong — which is the failure mode a boundary added late is most likely to
+// have.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies the one
+// that failed, so a regression names its own case without a stdout diff.
+
+import "./lexer";
+import "./parser";
+import "./platforms";
+import "./util";
+
+// violations parses `src` and enforces `target` over it, flat (no
+// tree-shaking — every function in the source is deliberately reachable).
+function violations(src: string, target: string): platforms.Violation[] {
+    return platforms.enforce(parser.parse_module(lexer.tokenize(src)), target);
+}
+
+function count(src: string, target: string): i32 { return violations(src, target).len(); }
+
+// first_msg renders the first violation, or "" when there is none.
+function first_msg(src: string, target: string): string {
+    var vs: platforms.Violation[] = violations(src, target);
+    if (vs.len() == 0) { return ""; }
+    return platforms.violation_message(vs[0]);
+}
+
+function main(): i32 {
+    // ---- 1. the descriptor table ---------------------------------------
+    // Each target resolves to an environment, and the environment decides
+    // the capability set — the ISA has nothing to say about whether there is
+    // a filesystem.
+    var wasm: platforms.Descriptor = platforms.for_target("wasm");
+    if (!wasm.known) { return 1; }
+    if (wasm.isa != "wasm32" || wasm.environment != "wasi") { return 2; }
+
+    var x86: platforms.Descriptor = platforms.for_target("x86-64");
+    if (x86.isa != "x86-64" || x86.environment != "linux") { return 3; }
+
+    // An unknown target is `known: false`, which enforcement skips — the
+    // driver's own -target validation owns that error.
+    if (platforms.for_target("vax-11").known) { return 4; }
+    if (platforms.forbidden_gates("vax-11").len() != 0) { return 5; }
+
+    // The output-form spellings share the target's capabilities: stopping at
+    // the emitter's text does not change what the program reaches.
+    if (platforms.for_target("arm64-asm").environment != "linux") { return 6; }
+    if (platforms.for_target("wasm-bin").environment != "wasi") { return 7; }
+
+    // ---- 2. capability membership --------------------------------------
+    // The wasi CLI world has a filesystem and sockets but no process model
+    // and no bump-arena rewind; the hosted natives have all four.
+    if (!platforms.has_capability("wasm", "fs")) { return 10; }
+    if (!platforms.has_capability("wasm", "tcp")) { return 11; }
+    if (platforms.has_capability("wasm", "proc")) { return 12; }
+    if (platforms.has_capability("wasm", "arena")) { return 13; }
+    if (!platforms.has_capability("x86-64", "proc")) { return 14; }
+    if (!platforms.has_capability("arm64-darwin", "arena")) { return 15; }
+    // `subprocess` is the one entry that differs from native's table: the
+    // self-host's native emitters lower it, so the hosted profile grants it
+    // and the wasi ones do not. Both halves are asserted — dropping either
+    // would let the divergence widen unnoticed.
+    if (!platforms.has_capability("x86-64", "subprocess")) { return 16; }
+    if (platforms.has_capability("wasm", "subprocess")) { return 19; }
+    // Unknown target, unknown capability: both false, neither an error.
+    if (platforms.has_capability("vax-11", "fs")) { return 17; }
+    if (platforms.has_capability("wasm", "telepathy")) { return 18; }
+
+    // ---- 3. builtin classification -------------------------------------
+    if (platforms.gated_capability("read_file") != "fs") { return 20; }
+    if (platforms.gated_capability("proc_fork") != "proc") { return 21; }
+    if (platforms.gated_capability("__heap_mark") != "arena") { return 22; }
+    // Reading the bump cursor works everywhere; only rewinding it is native.
+    if (platforms.gated_capability("__heap_bump_bytes").len() != 0) { return 23; }
+    // `exit` is core with a target-specific lowering, not a capability.
+    if (!platforms.core_builtin("exit")) { return 24; }
+    if (platforms.gated_capability("exit").len() != 0) { return 25; }
+    // The two halves of the classification never overlap: a builtin is gated
+    // or it needs no host, never both.
+    var cores: string[] = platforms.core_builtins();
+    var ci: i32 = 0;
+    while (ci < cores.len()) {
+        if (platforms.gated_capability(cores[ci]).len() != 0) { return 26; }
+        ci = ci + 1;
+    }
+    // Every gate names a capability at least one target actually grants. A
+    // gate on a capability no descriptor lists is the typo that makes a
+    // builtin unreachable everywhere while looking like a deliberate refusal
+    // — native's TestGatedCapabilitiesResolvable is the same check — and it
+    // is what lets violation_message assume a non-empty provider list.
+    var gates: platforms.Gate[] = platforms.gated_builtins();
+    var gi: i32 = 0;
+    while (gi < gates.len()) {
+        if (gates[gi].builtin.len() == 0) { return 27; }
+        if (platforms.targets_providing(gates[gi].capability).len() == 0) { return 28; }
+        gi = gi + 1;
+    }
+
+    // ---- 4. enforcement over a program ---------------------------------
+    var forks: string = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
+    if (count(forks, "wasm") != 1) { return 30; }
+    if (count(forks, "x86-64") != 0) { return 31; }
+    // The same program under the wasm output-form spellings, which share the
+    // descriptor.
+    if (count(forks, "wasm-bin") != 1) { return 32; }
+    if (count(forks, "wasm-component") != 1) { return 33; }
+    // An unknown target enforces nothing.
+    if (count(forks, "vax-11") != 0) { return 34; }
+
+    // `subprocess` is refused on the wasm worlds and allowed on the natives,
+    // which is the emitter support (#4320) the profile records.
+    var spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
+    if (count(spawns, "wasm") != 1) { return 35; }
+    if (count(spawns, "x86-64") != 0) { return 36; }
+
+    // Dedup is per (function, builtin): a builtin called twice in one body
+    // reports once, and a second function calling it reports again.
+    var twice: string = "function f(): i32 { var a: i32 = proc_fork(); return a + proc_fork(); }\n";
+    if (count(twice, "wasm") != 1) { return 37; }
+    var two_fns: string = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
+    if (count(two_fns, "wasm") != 2) { return 38; }
+
+    // ---- 5. what must NOT be reported ----------------------------------
+    // A local whose NAME matches a gated builtin is not a call to it. `env`
+    // is the live case: it is both a capability-gated builtin and the most
+    // natural name for a variable holding one.
+    var shadow: string = "function main(): i32 { var env: i32 = 3; return env; }\n";
+    if (count(shadow, "wasm") != 0) { return 40; }
+
+    // Builtins are free functions, so a method whose name matches one is not
+    // a violation either.
+    var method: string = "struct S { n: i32 }\nfunction (s: S) stat(): i32 { return s.n; }\nfunction main(): i32 { var s: S = S { n: 1 }; return s.stat(); }\n";
+    if (count(method, "wasm") != 0) { return 41; }
+
+    // An UNGATED builtin is never reported, on any target.
+    var ungated: string = "function main(): i32 { return __heap_bump_bytes(); }\n";
+    if (count(ungated, "wasm") != 0) { return 42; }
+
+    // ---- 6. where the scan has to reach --------------------------------
+    // A lambda body is part of what the artifact executes, so a gated call
+    // inside one counts. Free-variable analysis subtracts a lambda's
+    // bindings; this walk descends into it instead.
+    var in_lambda: string = "function main(): i32 { var f: fn(): i32 = function(): i32 { return proc_fork(); }; return f(); }\n";
+    if (count(in_lambda, "wasm") != 1) { return 50; }
+
+    // A call nested in an argument, a condition, or a match arm is still a
+    // call — the walk is not top-level-statement shaped.
+    var nested: string = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
+    if (count(nested, "wasm") != 1) { return 51; }
+
+    // ---- 7. the message ------------------------------------------------
+    var m: string = first_msg(forks, "wasm");
+    // The text tracks native's wording (internal/platforms.Violation.Message)
+    // so the two are diffable by eye; the CODE is what a differential pins.
+    if (!util.contains(m, "target \"wasm\" does not provide `proc`")) { return 60; }
+    if (!util.contains(m, "required by `proc_fork`")) { return 61; }
+    // The hint names the targets that DO provide it, which is the actionable
+    // half — an error that only says no leaves the user guessing.
+    if (!util.contains(m, "targets providing it: [")) { return 62; }
+    if (!util.contains(m, "x86-64")) { return 63; }
+
+    // The wasm refusal names the natives as the way out.
+    var ms: string = first_msg(spawns, "wasm");
+    if (!util.contains(ms, "does not provide `subprocess`")) { return 64; }
+    if (!util.contains(ms, "arm64-darwin")) { return 65; }
+
+    write("platforms: every capability rule agrees\n");
+    return 0;
+}

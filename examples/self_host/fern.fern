@@ -51,6 +51,8 @@ import "./ssa_arm64";
 import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
+import "./platforms";
+import "./treeshake";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
@@ -489,6 +491,40 @@ function write_output(out_path: string, data: string, t: string): Result[void, I
     return write_file(out_path, data);
 }
 
+// capability_violations reports every call to a builtin the target does not
+// grant (E066 — platforms.fern), printing one diagnostic per violation, and
+// returns true when the program must be rejected.
+//
+// Two passes, because reachability is the expensive half. The flat scan over
+// the whole bundle over-approximates: an imported stdlib wrapper nothing calls
+// still counts. That answer is usually "nothing", and when it is, there is no
+// reason to pay for the tree-shake — so the shake runs only once a candidate
+// exists, and it is the shaken module's answer that is reported. Native does
+// the same enforcement on an already-shaken program (cmd/fern's
+// enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
+// module whose answer cannot change.
+function capability_violations(merged: parser.Module, target: string): boolean {
+    if (platforms.enforce(merged, target).len() == 0) { return false; }
+    var vs: platforms.Violation[] = platforms.enforce(treeshake.treeshake(merged), target);
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        var v: platforms.Violation = vs[i];
+        var msg: string = "error[E066]: " + platforms.violation_message(v);
+        // Only the entry module's positions index the file being reported on
+        // — an imported module's line numbers index ITS source, so a
+        // violation from one degrades to a position-less line whose message
+        // names the function and module instead. Native's renderer makes the
+        // same split.
+        if (v.fn_module.len() == 0 && v.line > 0) {
+            eprint(checker.itoa_nn(v.line) + ":" + checker.itoa_nn(v.col) + ": " + msg + "\n");
+        } else {
+            eprint(msg + "\n");
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
 function run(): i32 {
     var av: string[] = args();
 
@@ -504,6 +540,11 @@ function run(): i32 {
     var optimize: boolean = false;
     var emit_syms: boolean = false;
     var have_entry: boolean = false;
+    // Whether -target was given, as distinct from the default above. It only
+    // matters to `-check`: native type-checks against a capability set only
+    // when asked for a target, so enforcing the default one here would refuse
+    // a program `fern -check` accepts.
+    var target_given: boolean = false;
 
     var i: i32 = 1;
     while (i < av.len()) {
@@ -541,6 +582,7 @@ function run(): i32 {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
             target = av[i];
+            target_given = true;
         } else if (a == "-o") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -666,7 +708,17 @@ function run(): i32 {
             }
             di = di + 1;
         }
-        if (mt.all_well_typed) { return 0; }
+        // The capability boundary, when a target was asked for. It runs
+        // whatever the checker concluded: the scan is syntactic — a call to a
+        // named builtin — so it holds where the partial checker collapses an
+        // expression to TypeUnknown (#4346), and that is exactly where a
+        // violation would otherwise go unreported while native names it.
+        var caps_violated: boolean = false;
+        if (target_given) { caps_violated = capability_violations(merged, target); }
+        if (mt.all_well_typed) {
+            if (caps_violated) { return 1; }
+            return 0;
+        }
         // The module is ill-typed but produced no coded diagnostic — an
         // expression collapsed to TypeUnknown on a type the partial checker
         // can't model yet (#4346). Surface a best-effort hint so `-check`
@@ -738,6 +790,14 @@ function run(): i32 {
         }
         return 1;
     }
+
+    // Target-capability gate (E066 — platforms.fern): reject, before codegen,
+    // a call to a runtime builtin the target's descriptor does not grant
+    // (`subprocess` anywhere compiled, `proc_fork` / `__heap_mark` on wasm).
+    // Without it the self-host compiles a program native refuses, and the
+    // failure lands mid-build as an undefined label or, on wasm, as a
+    // host-side instantiation error.
+    if (capability_violations(merged, target)) { return 1; }
 
     // -O: constant-fold the program before codegen (constfold.fold_module),
     // matching the native compiler's constant folding. Compile-only — applied

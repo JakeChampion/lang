@@ -39,26 +39,14 @@ var pubUseSelfHostProgram = map[string]string{
 }
 
 // writeSelfHostCLIProject lays out every source the unified self-host CLI
-// driver (fern.fern) needs to build with the Go backend, mirroring the
-// file set TestSelfHostCLIX86_64 uses.
+// driver (fern.fern) needs, derived from the driver's own imports rather than
+// listed here. The list this replaces went stale the moment fern.fern gained
+// an import, which is the failure CopySelfHostDriver exists to make
+// impossible.
 func writeSelfHostCLIProject(t *testing.T) string {
 	t.Helper()
-	dir := writeSelfHostAsmProject(t)
-	for _, name := range []string{
-		"flatten.fern", "wasm_ir.fern",
-		"checker.fern", "interp.fern", "printer.fern", "ssa.fern",
-		"ssa_x86.fern", "ssa_arm64.fern", "ssa_wasm.fern", "watbin.fern",
-		"constfold.fern", "arm64_native.fern", "x86_native.fern",
-		"elf.fern", "fern.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "fern.fern")
 	return dir
 }
 
