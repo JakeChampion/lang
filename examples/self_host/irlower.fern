@@ -48725,7 +48725,7 @@ function lift_call_arg(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: parser.ExprIdent { name: nm, line: 0, col: 0 }, acc: nacc };
             }
@@ -49966,7 +49966,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }); cj = cj + 1; }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
-    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
     var capargs: parser.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(parser.ExprIdent { name: caps[ca], line: 0, col: 0 }); ca = ca + 1; }
@@ -50136,7 +50136,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -50227,7 +50227,7 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -50236,7 +50236,7 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails to AST.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.FuncDecl[]): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
     var fi: i32 = 0;
     while (fi < mfuncs.len()) {
         if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
@@ -50262,7 +50262,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
             // Binding EITHER aggregate to a local fixes it; binding a scalar
             // field value does not. The underlying lowering defect is #5674 —
             // this hoist works around it at the one site that is known to hit it.
-            var mkf: parser.FuncDecl = parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+            var mkf: parser.FuncDecl = parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
             return HoistResult { func: mkf, ok: true };
         }
         fi = fi + 1;
@@ -50400,7 +50400,7 @@ function iife_scope_fd(fd: parser.FuncDecl, body: parser.Stmt[]): parser.FuncDec
     var nb: parser.Stmt[] = fd.body;
     var i: i32 = 0;
     while (i < body.len()) { nb = nb.append(body[i]); i = i + 1; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
 }
 
 // Returns the number of lambda arms found, or -1 as soon as an arm yields
@@ -51310,7 +51310,7 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false };
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true };
     var ncall: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: nm, line: 0, col: 0 }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -52964,7 +52964,7 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.
     if (!has_wide_cap_stmts(fd.body, fd, gfns, structs, mfuncs, atargets)) { return fd; }
     var b: WCapBody = box_wide_captures_stmts(fd.body, fd, gfns, structs, mfuncs, atargets);
     if (!b.changed) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: b.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: b.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
 }
 
 // box_mutated_scalar_captures finds `fd`'s locals to box into shared cells
@@ -52979,7 +52979,7 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     var boxed: string[] = acc.names;
     var btypes: string[] = acc.types;
     if (boxed.len() == 0) { return fd; }
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed, btypes), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: box_rewrite_stmts(fd.body, boxed, btypes), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
 }
 
 // BoxScan: box_scan_stmts' paired accumulator — boxed capture NAMES and the
@@ -53197,7 +53197,7 @@ function unwrap_sole_iife_return(fd: parser.FuncDecl): parser.FuncDecl {
                             // the tail return (desugar_nontail_lambda_returns).
                             // Without it an arm lambda asked for a `<fd>$clo`
                             // nothing built.
-                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_nontail_lambda_returns(lam.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
+                            return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: desugar_nontail_lambda_returns(lam.body), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
                         },
                         _ => { return fd; }
                     }
@@ -53286,7 +53286,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         var wf: parser.FuncDecl = mod.funcs[wlcp];
         var wdlr: DesugarRet = desugar_lambda_returns(wf.body, 0);
         if (wdlr.counter != 0) {
-            wf = parser.FuncDecl { name: wf.name, receiver_name: wf.receiver_name, receiver_type: wf.receiver_type, type_params: wf.type_params, params: wf.params, ret_type: wf.ret_type, body: wdlr.body, line: wf.line, col: wf.col, import_iface: wf.import_iface, import_wit: wf.import_wit, type_param_count: wf.type_param_count, bound_traits: wf.bound_traits, fip: wf.fip, ret_str: wf.ret_str, async: wf.async, is_const: wf.is_const };
+            wf = parser.FuncDecl { name: wf.name, receiver_name: wf.receiver_name, receiver_type: wf.receiver_type, type_params: wf.type_params, params: wf.params, ret_type: wf.ret_type, body: wdlr.body, line: wf.line, col: wf.col, import_iface: wf.import_iface, import_wit: wf.import_wit, type_param_count: wf.type_param_count, bound_traits: wf.bound_traits, fip: wf.fip, ret_str: wf.ret_str, async: wf.async, is_const: wf.is_const, is_pub: wf.is_pub };
         }
         worklist = worklist.append(wf); wlcp = wlcp + 1;
     }
@@ -53318,7 +53318,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
         var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, sigs);
         if (ic.funcs.len() > 0) {
-            fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
+            fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
             var ici: i32 = 0;
             while (ici < ic.funcs.len()) { acc = LiftAcc { funcs: acc.funcs.append(ic.funcs[ici]), counter: acc.counter + 1 }; ici = ici + 1; }
         }
@@ -53342,7 +53342,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         var r: LiftStmts = lift_stmts(cbody, acc, gfns);
         acc = r.acc;
         var nb: parser.Stmt[] = r.stmts;
-        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const });
+        newfuncs = newfuncs.append(parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nb, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.
