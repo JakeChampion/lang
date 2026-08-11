@@ -238,7 +238,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n");   // end > src len (unsigned) → abort
         s = s.write("    cmp x20, x19\n");
         s = s.write("    b.ls 1f\n    b __fern_oob_abort\n1:\n");   // start > end (unsigned) → abort
-        s = s.write("    mov x0, #24\n    bl __fern_alloc\n");
+        // i32_imm is the FRAME form (#6713): base+1 names the first of three
+        // reserved local slots, so the 24-byte box is addressed out of this
+        // frame instead of allocated. Slot i sits at [x29, #-8*(i+1)], so the
+        // three slots [base, base+2] span the 24 bytes whose LOWEST address —
+        // the box base — is x29 - 8*(base+3).
+        if (o.i32_imm > 0) {
+            s = fr_sub_imm(s, "x0", "x29", 8 * (o.i32_imm - 1 + 3));
+        } else {
+            s = s.write("    mov x0, #24\n    bl __fern_alloc\n");
+        }
         s = s.write("    mov x1, #-1\n    str x1, [x0]\n");
         s = s.write("    ldr x1, [x21]\n    add x1, x1, x20\n    str x1, [x0, #8]\n");
         s = s.write("    sub x1, x19, x20\n    str x1, [x0, #16]\n");

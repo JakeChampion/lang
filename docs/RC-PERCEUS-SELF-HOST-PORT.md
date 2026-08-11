@@ -6867,3 +6867,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   rather than a behaviour. A string-array-element row was dropped for the
   opposite reason: it allocates nothing on the self-host, so its flatness holds
   vacuously.
+
+- 2026-08-11: **A borrow-only string VIEW takes its box from the frame, not the
+  heap (#6713).** A slice `s[a:b]` is a zero-copy view whose 24-byte box
+  `[rc=-1, data, len]` points into the SOURCE string's buffer. Sharing is why the
+  box is born immortal — freeing it would attack the middle of someone else's
+  allocation — and immortal is why it is unreclaimable: every `rc_dec` skips it.
+  So the cost was one permanent box per EVALUATION, where native has no box at
+  all. The issue's reproducer, x86-64, `FERN_LEAKCHECK=1`:
+
+  | k | before | after | native |
+  |---|---|---|---|
+  | 400 | `allocs=401 frees=0` 9624 B | `allocs=1 frees=0` **24 B** | 0 |
+  | 800 | `allocs=801 frees=0` 19224 B | `allocs=1 frees=0` **24 B** | 0 |
+
+  Flat rather than merely smaller: the residual 24 B is the source literal's own
+  box, and it does not move with k. This is route **2-lite** from the issue's
+  comment — placement, not reclamation. Layout, the `rc=-1` sentinel and every
+  consumer are byte-identical; only the storage changes, so the binding's slot
+  marking, the exit sweep and `__fern_str_free`'s immortal skip are untouched.
+
+  **The whitelist is the whole design, and it is narrow because there are two
+  hazards.** A reference outliving the FRAME dangles — the obvious one. But one
+  frame slot serves a SITE across every iteration, so a reference outliving the
+  next execution of that site silently reads the newer view instead. Copying the
+  name into a second local (`prev = cur`) is the second hazard's shape and is
+  refused even though the frame is very much alive, which is why the rule is
+  "every use borrows" rather than "the value does not escape the frame".
+  Admitted: the `.len()` receiver, a byte index `t[i]`, a comparison or concat
+  operand, and the source of a further slice — whose own data pointer aims at the
+  SOURCE buffer, so it outlives the box it was cut from. Everything else, and
+  anything at all inside a lambda, is refused.
+
+  Three anonymous local slots (`!view!`, unreachable by `slot_of` for the same
+  reason `!retired!` is) carry the box, so `n_locals` sizes the frame and the
+  zero-init covers it with no new plumbing. The set is seeded per function as
+  `VIEWFRAME:<name>` in `reclaimable_names` — LowerState is pinned at 33 fields,
+  and prefix-tagged registries are the established way past that.
+
+  wasm is deliberately untouched: its `str_slice` COPIES into a fresh inline
+  block, so there is no box to place, and `view_frame_binding_ok` declines under
+  `for_wasm()`.
+
+  **The escape cases were verified to FAIL without the analysis**, which is the
+  only evidence that a negative test is a test: with the borrow scan stubbed to
+  admit everything, `strview-escape-alias-safe` and `strview-escape-store-safe`
+  exit 95 and `strview-escape-return-safe` exits 96. Two of them needed a
+  frame-reusing `churn()` call between the escape and the read — a dangling frame
+  read is usually still intact, so a value guard alone does not discriminate.
+  Refs #6713 #6604 #4294 #4451.
