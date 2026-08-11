@@ -28,11 +28,18 @@ import (
 // throughout, which is why nothing caught this: a compiler that reclaims NOTHING
 // satisfies a value-and-underflow assertion perfectly. Only the byte counts move.
 //
-// THE ASSERTION IS THE SCALING, NOT THE BALANCE. Each row is compiled at two round
-// counts. A per-iteration leak doubles the residue with the rounds; the surviving
-// 80 bytes is the FINAL value, which no sweep reclaims for this class — a constant,
-// and the honest thing to pin. The inline-match control reaches an exact 0 because
-// its consuming match frees every iteration including the last.
+// EACH ROW IS COMPILED AT TWO ROUND COUNTS, so a per-iteration leak shows up as a
+// residue that doubles with the rounds rather than as a single number needing a
+// magic constant.
+//
+// These rows landed asserting a surviving 80-byte tail — the FINAL value, which no
+// sweep reclaimed for this class. That tail is gone: the "RCENUMS:" sweep credit
+// releases it, and the rows are now an exact balance. The tail was never visible to
+// THIS suite's scaling assertion (a constant cannot fail it); what caught it was
+// #6608's `enum-payload-still-grows`, which compares the heap mark across two
+// identical calls and so sees a per-call tail directly. That is why the rows below
+// pin `allocs == frees` outright now — the weaker scaling property would ratify a
+// regression back to the tail.
 
 const rcenumBorrowedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
@@ -173,16 +180,17 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Doubling the rounds must double the allocations and the frees while leaving
-	// the residue untouched. Equality of the residue is the whole assertion: before
-	// the fix it was 2.00x per doubling, frees=0.
+	// Doubling the rounds must double the allocations and the frees, and every
+	// allocation must be freed at both counts. Before the borrow fix this shape was
+	// 2.00x per doubling with frees=0; before the sweep credit it balanced except
+	// for the final value of each block.
 	for _, tc := range []struct {
 		name      string
 		src       string
 		wantStuck int64 // allocs - frees, at BOTH round counts
 	}{
-		{"helper_borrows_the_enum", rcenumBorrowedSrc, 2},
-		{"never_used", rcenumNeverUsedSrc, 2},
+		{"helper_borrows_the_enum", rcenumBorrowedSrc, 0},
+		{"never_used", rcenumNeverUsedSrc, 0},
 		{"inline_match_control", rcenumInlineMatchSrc, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,12 +205,15 @@ func TestSelfHostRcEnumBorrowHelperX86_64(t *testing.T) {
 				t.Errorf("%s: unfreed allocations %d at 100 rounds and %d at 200, want %d at "+
 					"both. This shape leaked EVERY iteration (frees=0, 24000 bytes at 300 "+
 					"rounds against 48000 at 600) because the enum earned no credit without "+
-					"a consuming match, and `head(b)` read as an escape",
+					"a consuming match, and `head(b)` read as an escape. A residue of 2 that "+
+					"does NOT grow with the rounds is the separate tail case: the block's "+
+					"final value, released by the \"RCENUMS:\" sweep credit",
 					tc.name, a1-f1, a2-f2, tc.wantStuck)
 			}
-			if l1 != l2 {
-				t.Errorf("%s: live_bytes %d at 100 rounds and %d at 200 — the residue must be "+
-					"the final value alone, which does not grow with the loop", tc.name, l1, l2)
+			if l1 != 0 || l2 != 0 {
+				t.Errorf("%s: live_bytes %d at 100 rounds and %d at 200, want 0 at both — "+
+					"every box and payload is accounted for once the sweep releases the "+
+					"final value", tc.name, l1, l2)
 			}
 		})
 	}

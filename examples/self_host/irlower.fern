@@ -845,9 +845,19 @@ function slot_name_retired(n: string): boolean {
 //
 // Three classes are deliberately NOT here, each for a different measured reason.
 //
-// "RCENUM:" and "OPTARR:" are already flat at 0 — their consuming-match analyses
-// are per-block (#4357) and free the value before the block ends. Switching them
-// on would be a second claim on a released box.
+// "OPTARR:" is already flat at 0 — its consuming-match analysis is per-block
+// (#4357) and frees the value before the block ends. Switching it on would be a
+// second claim on a released box.
+//
+// "RCENUM:" was listed here for the same reason, and that held while every
+// credited rc-enum local had a consuming match. #6606 admitted the half with NO
+// consuming match, which nothing frees in-block — the rebind releases only the
+// PRIOR value — so that half leaked its final value and needed the sweep after
+// all. It is credited separately as "RCENUMS:" (slot_is_reclaimable_rcenum_sweep)
+// rather than by flipping "RCENUM:", because the match-consumed half is still
+// exactly the double-release this note warns about. A one-class-one-answer
+// assumption is what made the original note wrong once the class grew a second
+// shape.
 //
 // The BARE-name struct credit (slot_is_reclaimable_struct) leaks 8800 here and
 // stays leaking, because switching it on **segfaults the gen1 self-compile**.
@@ -21387,6 +21397,22 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rtj = rtj + 1;
     }
+    // Sweepable rc-payload ENUM locals ("RCENUMS:", the no-consuming-match half):
+    // deep-free the final value's payload then its box by runtime variant dispatch,
+    // the same release the loop rebind runs on each SUPERSEDED box. Without this the
+    // last value of every such block leaked — 396 of 400 freed on #6608's probe,
+    // the n-1-of-n signature of a retired slot missing its credit. The slot is
+    // zeroed after the drop so a second sweep on another return edge is a no-op,
+    // and slots are entry-zeroed (arr_slots_of) so an untaken branch routes null.
+    var rej: i32 = st.n_params;
+    while (rej < st.locals.len()) {
+        if (!slot_list_has(keeps, rej) && slot_is_reclaimable_rcenum_sweep(st, rej)) {
+            st = emit_enum_variant_drops(st, rej, st.struct_type_of_slot(rej));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(rej));
+        }
+        rej = rej + 1;
+    }
     // Reclaimable Option[<tuple-with-array>] locals (#4365): deep-free the final
     // live box (Some payload tuple + option box) via the same inline path the
     // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes a dedicated
@@ -23596,7 +23622,19 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
                         // an rc-enum loop-local passed to a helper, and one never used
                         // at all, both grew 2.00x per doubling where the inline match
                         // was flat (#6606).
-                        a = push_str_unique(a, v.name);
+                        //
+                        // Marked "S:" because this half is ALSO sweepable at scope
+                        // exit, and the match-consumed half above is not: the
+                        // consuming match frees the value inside the block on every
+                        // iteration including the last, so sweeping it would be a
+                        // second claim on a released box. With no match nothing frees
+                        // the FINAL value — the loop rebind only ever releases the
+                        // PRIOR one — so it survives to function exit. The caller
+                        // splits this marker into the "RCENUM:" and "RCENUMS:"
+                        // credits; the marker keeps the split to a single walk of the
+                        // body, which matters because this runs per lower_func inside
+                        // the fixed bump arena.
+                        a = push_str_unique(a, "S:" + v.name);
                     }
                 }
             },
@@ -26777,7 +26815,19 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // collect_fresh_rcenum_names already proved single-owner + consumed-by-one-
         // match + dead-after + non-escaping (name_escapes_outside_stmt skipping the
         // match) + no moved arm payload, per block — so credit directly.
-        out = out.append("RCENUM:" + rcenums[rei]);
+        //
+        // An "S:" marker means the name has NO consuming match, so its final value
+        // reaches function exit unreleased and earns the extra "RCENUMS:" sweep
+        // credit beside the rebind one. Both are emitted for that half; the
+        // match-consumed half gets "RCENUM:" alone.
+        var rname: string = rcenums[rei];
+        if (rname.len() > 2 && rname[0] == 83 && rname[1] == 58) {   // "S:"
+            var bare: string = rname[2:rname.len()] + "";
+            out = out.append("RCENUM:" + bare);
+            out = out.append("RCENUMS:" + bare);
+        } else {
+            out = out.append("RCENUM:" + rname);
+        }
         rei = rei + 1;
     }
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
@@ -30764,6 +30814,29 @@ function slot_is_reclaimable_rcenum(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "RCENUM:" + s.locals[i].slot_name) >= 0;
+}
+
+// slot_is_reclaimable_rcenum_sweep: an rc-payload enum slot whose FINAL value the
+// scope-exit sweep may deep-free — credited "RCENUMS:" (#6606 follow-up), which is
+// the strictly narrower half with NO consuming match in its block.
+//
+// Keyed on reclaim_slot_name, unlike slot_is_reclaimable_rcenum above, and that is
+// the whole point: retire_locals renames a block-scoped local to "!retired!<name>"
+// on block exit, so a name-keyed credit misses it and the sweep skips the slot.
+// That is the "n-1 of n freed per round" signature retire_locals' own note
+// describes — the loop rebind releases each PRIOR value and the last one survives.
+//
+// The match-consumed half deliberately has no sweep credit. Its consuming match
+// frees the value inside the block on every iteration including the last, so
+// sweeping it would be a second claim on a released box — which is exactly what
+// reclaim_slot_name's class note recorded when it listed "RCENUM:" among the
+// classes that must NOT be switched on. That note was right for the whole class
+// until the no-match half was admitted; it is now right for only one half.
+function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.struct_type_of_slot(i).len() == 0) { return false; }
+    return util.index_of_str(s.reclaimable_names, "RCENUMS:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
