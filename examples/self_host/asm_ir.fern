@@ -4312,7 +4312,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ja __fern_oob_abort\n");
         s = s.write("    cmpq %r12, %r13\n");      // start > end (unsigned) → abort
         s = s.write("    ja __fern_oob_abort\n");
-        s = s.write("    movq $24, %rdi\n    call __fern_alloc\n");
+        // i32_imm is the FRAME form (#6713): base+1 names the first of three
+        // reserved local slots, so the 24-byte box is `leaq`'d out of this
+        // frame instead of allocated. Slot i sits at -8*(i+1)(%rbp), so the
+        // three slots [base, base+2] span the 24 bytes whose LOWEST address —
+        // the box base — is -8*(base+3)(%rbp).
+        if (o.i32_imm > 0) {
+            s = s.write("    leaq " + util.i32_to_string(0 - 8 * (o.i32_imm - 1 + 3)) + "(%rbp), %rax\n");
+        } else {
+            s = s.write("    movq $24, %rdi\n    call __fern_alloc\n");
+        }
         s = s.write("    movq $-1, (%rax)\n");
         s = s.write("    movq (%r14), %rcx\n    addq %r13, %rcx\n    movq %rcx, 8(%rax)\n");
         s = s.write("    movq %r12, %rcx\n    subq %r13, %rcx\n    movq %rcx, 16(%rax)\n");

@@ -752,6 +752,14 @@ pub function (s: LowerState) is_self_assign_reuse_name(name: string): boolean {
     return util.index_of_str(s.reclaimable_names, "SAREUSE:" + name) >= 0;
 }
 
+// is_view_frame_name reports whether `name` is a local whose string-slice VIEW
+// box may be taken from the frame rather than the heap (#6713) — every use of it
+// borrows it and none outlives the frame. Seeded once per function by lower_func
+// as "VIEWFRAME:<name>" (see view_frame_names_of for the rule).
+pub function (s: LowerState) is_view_frame_name(name: string): boolean {
+    return util.index_of_str(s.reclaimable_names, "VIEWFRAME:" + name) >= 0;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -15116,6 +15124,50 @@ pub struct VarTypes {
     opt_ty: string,
 }
 
+// view_frame_binding_ok decides whether `var <name> = <expr>` may take the
+// frame-allocated form of the string view its initialiser builds (#6713):
+// a STRING slice (an array slice copies, so it has no view box), a name the
+// per-function borrow scan approved, and a register backend — wasm's str_slice
+// copies into a fresh inline block, so there is no box to place in a frame.
+function view_frame_binding_ok(v: parser.StmtVar, s: LowerState): boolean {
+    if (s.for_wasm()) { return false; }
+    if (!s.is_view_frame_name(v.name)) { return false; }
+    match (v.init) {
+        parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// view_frame_slot_name is the name the reserved box slots carry. No source
+// identifier can start with `!` (the same reservation lower_block's `!retired!`
+// shadow-prefix relies on), so the three slots are unreachable by slot_of and
+// are never swept — they hold a box the RC layer already treats as immortal.
+function view_frame_slot_name(): string { return "!view!"; }
+
+// lower_str_slice_frame lowers `s[a:b]` with its box in the frame: the same
+// [src, start, end] operands as the heap form, then three reserved local slots
+// (24 bytes, the box) named in the op's immediate.
+function lower_str_slice_frame(e: parser.Expr, s: LowerState): LowerState {
+    match (e) {
+        parser.ExprSlice(slc) => {
+            var fvs: LowerState = lower_expr(slc.array, s);
+            if (!fvs.ok) { return fvs; }
+            fvs = lower_expr(slc.start, fvs);
+            if (!fvs.ok) { return fvs; }
+            fvs = lower_expr(slc.end, fvs);
+            if (!fvs.ok) { return fvs; }
+            var fvbase: i32 = fvs.locals.len();
+            fvs = fvs.add_local(view_frame_slot_name());
+            fvs = fvs.add_local(view_frame_slot_name());
+            fvs = fvs.add_local(view_frame_slot_name());
+            return fvs.emit(ir.op_str_slice_frame(fvbase));
+        },
+        _ => { return s.fail(); }
+    }
+    return s.fail();
+}
+
 // bind_var_slot is lower_stmt_var's second half: allocate the local's slot,
 // stamp the classified type facts onto it, and emit the initialising store.
 // `s` is the state on entry to the statement, `se` the state after the
@@ -16569,7 +16621,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     var vaal: i32 = append_alias_recv_slot(v.init, s);
     var vas: LowerState = s;
     if (vaal >= 0) { vas = emit_arr_share(vas, vaal, "__fern_arr_share_inc"); }
-    var se: LowerState = lower_expr(v.init, vas);
+    var se: LowerState = vas;
+    // #6713: `var t = s[a:b]` where every use of `t` borrows the view takes the
+    // 24-byte box from the frame instead of the heap. Only the storage changes —
+    // same layout, same rc=-1 immortal sentinel — so the binding's own slot
+    // marking below is untouched.
+    if (view_frame_binding_ok(v, vas)) { se = lower_str_slice_frame(v.init, vas); }
+    else { se = lower_expr(v.init, vas); }
     if (!se.ok) { return se; }
     if (vaal >= 0) { se = emit_arr_share(se, vaal, "__fern_arr_share_dec"); }
     // Perceus alias-inc + array tracking: a fresh array literal is
@@ -22576,6 +22634,201 @@ function walk_stmt_escapes(st: parser.Stmt, acc: string[]): string[] {
         parser.StmtDefer(d) => { return walk_stmt_escapes(d.action, acc); },
         _ => { return acc; },
     }
+}
+
+// --- frame-allocated string views (#6713) ------------------------------------
+//
+// A string slice `s[a:b]` is a zero-copy VIEW: a 24-byte box
+// [rc=-1, data = src.data + start, len] sharing the source buffer. Sharing is
+// why it is born IMMORTAL (rc=-1, #4294) — freeing it would attack the middle
+// of the source's allocation — and immortal is why it is never reclaimed, so a
+// slice in a loop costs one unreclaimable box per EVALUATION where native, which
+// has no box at all, allocates nothing.
+//
+// view_frame_names_of returns the local names whose box may live in the FRAME
+// instead of the heap: names bound from a slice and used ONLY where the box is
+// borrowed for the duration of one expression — the `.len()` receiver, a byte
+// index `t[i]`, a comparison or concat operand, and the source of a further
+// slice (whose own data pointer aims at the SOURCE buffer, not at this box, so
+// it outlives it safely).
+//
+// Everything else is refused, and the whitelist has to be that narrow because
+// there are two distinct hazards, not one. A reference that outlives the FRAME
+// dangles. A reference that outlives the next execution of the same SITE reads
+// the newer view instead — one frame slot serves a site, so a loop rewrites it
+// once per iteration. Copying the name into a second local (`var u = t`,
+// `prev = cur`)
+// is the second hazard's classic shape, which is why a bare ident in a binding
+// position is refused even though the frame is still very much alive.
+function ident_named_is(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// expr_mentions_name: does `name` appear anywhere in `e`? The fallback for an
+// expression shape the borrow whitelist does not model — mentioned there at all
+// means refused.
+function expr_mentions_name(e: parser.Expr, name: string): boolean {
+    return util.index_of_str(astwalk.collect_idents_expr(e, []), name) >= 0;
+}
+
+// view_borrow_binop reports whether a binary operator merely READS its string
+// operands: the bytes are consumed by the operator itself, and whatever it
+// produces is a fresh value that does not point into either operand's box.
+function view_borrow_binop(op: string): boolean {
+    return op == "+" || op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=";
+}
+
+// expr_view_borrow_only: every occurrence of `name` in `e` borrows it.
+function expr_view_borrow_only(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name != name; },
+        parser.ExprNumber(_) => { return true; },
+        parser.ExprString(_) => { return true; },
+        parser.ExprBool(_) => { return true; },
+        parser.ExprUnary(u) => { return expr_view_borrow_only(u.operand, name); },
+        parser.ExprIndex(ix) => {
+            if (ident_named_is(ix.array, name)) { return expr_view_borrow_only(ix.index, name); }
+            return expr_view_borrow_only(ix.array, name) && expr_view_borrow_only(ix.index, name);
+        },
+        parser.ExprSlice(sl) => {
+            var arr_ok: boolean = ident_named_is(sl.array, name) || expr_view_borrow_only(sl.array, name);
+            return arr_ok && expr_view_borrow_only(sl.start, name) && expr_view_borrow_only(sl.end, name);
+        },
+        parser.ExprBinary(b) => {
+            if (view_borrow_binop(b.op)) {
+                var l_ok: boolean = ident_named_is(b.left, name) || expr_view_borrow_only(b.left, name);
+                var r_ok: boolean = ident_named_is(b.right, name) || expr_view_borrow_only(b.right, name);
+                return l_ok && r_ok;
+            }
+            return expr_view_borrow_only(b.left, name) && expr_view_borrow_only(b.right, name);
+        },
+        parser.ExprCall(c) => {
+            var args_ok: boolean = true;
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (!expr_view_borrow_only(c.args[ai], name)) { args_ok = false; }
+                ai = ai + 1;
+            }
+            if (!args_ok) { return false; }
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    // `t.len()` reads the box's length word and keeps nothing.
+                    if (c.args.len() == 0 && fa.field == "len" && ident_named_is(fa.obj, name)) { return true; }
+                    return expr_view_borrow_only(fa.obj, name);
+                },
+                _ => { return expr_view_borrow_only(c.callee, name); }
+            }
+        },
+        parser.ExprFieldAccess(fa) => { return expr_view_borrow_only(fa.obj, name); },
+        // A capture outlives the frame in the closure's env box.
+        parser.ExprLambda(lm) => { return !body_mentions_name(lm.body, name); },
+        _ => { return !expr_mentions_name(e, name); }
+    }
+    return false;
+}
+
+function stmts_view_borrow_only(stmts: parser.Stmt[], name: string): boolean {
+    var ok: boolean = true;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (!stmt_view_borrow_only(stmts[i], name)) { ok = false; }
+        i = i + 1;
+    }
+    return ok;
+}
+
+function stmt_view_borrow_only(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_view_borrow_only(v.init, name); },
+        parser.StmtReturn(r) => { return expr_view_borrow_only(r.value, name); },
+        parser.StmtExpr(ex) => { return expr_view_borrow_only(ex.value, name); },
+        parser.StmtAssign(asn) => {
+            // Rebinding the name itself just overwrites the slot; a target that
+            // merely STARTS with it is a write through the view, which the
+            // whitelist has no model for.
+            if (asn.target != name && asn.target.len() > name.len()
+                    && asn.target[0 : name.len()] == name) { return false; }
+            return expr_view_borrow_only(asn.value, name);
+        },
+        parser.StmtIf(iff) => {
+            return expr_view_borrow_only(iff.cond, name)
+                && stmts_view_borrow_only(iff.then_body, name)
+                && stmts_view_borrow_only(iff.else_body, name);
+        },
+        parser.StmtWhile(w) => {
+            return expr_view_borrow_only(w.cond, name) && stmts_view_borrow_only(w.body, name);
+        },
+        parser.StmtFor(f) => {
+            return expr_view_borrow_only(f.iter, name) && stmts_view_borrow_only(f.body, name);
+        },
+        parser.StmtMatch(m) => {
+            var mok: boolean = expr_view_borrow_only(m.scrutinee, name);
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard && !expr_view_borrow_only(m.arms[i].guard, name)) { mok = false; }
+                if (!stmts_view_borrow_only(m.arms[i].body, name)) { mok = false; }
+                i = i + 1;
+            }
+            return mok;
+        },
+        parser.StmtDefer(d) => { return stmt_view_borrow_only(d.action, name); },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// view_slice_binding_names collects every name bound from a slice expression —
+// the candidates the borrow scan then filters.
+function view_slice_binding_names(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        a = view_slice_binding_names_stmt(stmts[i], a);
+        i = i + 1;
+    }
+    return a;
+}
+
+function view_slice_binding_names_stmt(st: parser.Stmt, acc: string[]): string[] {
+    match (st) {
+        parser.StmtVar(v) => {
+            match (v.init) {
+                parser.ExprSlice(_) => { return push_str_unique(acc, v.name); },
+                _ => { return acc; }
+            }
+        },
+        parser.StmtIf(iff) => {
+            return view_slice_binding_names(iff.else_body, view_slice_binding_names(iff.then_body, acc));
+        },
+        parser.StmtWhile(w) => { return view_slice_binding_names(w.body, acc); },
+        parser.StmtFor(f) => { return view_slice_binding_names(f.body, acc); },
+        parser.StmtMatch(m) => {
+            var a: string[] = acc;
+            var i: i32 = 0;
+            while (i < m.arms.len()) { a = view_slice_binding_names(m.arms[i].body, a); i = i + 1; }
+            return a;
+        },
+        parser.StmtDefer(d) => { return view_slice_binding_names_stmt(d.action, acc); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// view_frame_names_of: the slice-bound names of `body` that only ever borrow
+// their view. Seeded once per function by lower_func as "VIEWFRAME:<name>".
+pub function view_frame_names_of(body: parser.Stmt[]): string[] {
+    var cands: string[] = view_slice_binding_names(body, []);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < cands.len()) {
+        if (stmts_view_borrow_only(body, cands[i])) { out = out.append(cands[i]); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // --- in-place self-reassign alias guard (#3599) ------------------------------
@@ -38943,6 +39196,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         var sari: i32 = 0;
         while (sari < sar.len()) { reclaim = reclaim.append("SAREUSE:" + sar[sari]); sari = sari + 1; }
     }
+    // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
+    // the slice-bound locals whose every use borrows the view (view_frame_names_of).
+    // Prefix-tagged like the registries above; inert for every other
+    // reclaimable_names consumer.
+    var vfrn: string[] = view_frame_names_of(fn.body);
+    var vfri: i32 = 0;
+    while (vfri < vfrn.len()) { reclaim = reclaim.append("VIEWFRAME:" + vfrn[vfri]); vfri = vfri + 1; }
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {

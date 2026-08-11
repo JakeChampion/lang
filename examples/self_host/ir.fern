@@ -378,6 +378,17 @@ pub function op_str_index(): Op { return op0("str_index"); }
 // (no separate data pointer), so it COPIES via $__fern_substr. Bounds-checked at
 // construction (#5419): traps unless 0 <= start <= end <= len.
 pub function op_str_slice(): Op { return op0("str_slice"); }
+// op_str_slice_frame is `str_slice` with its 24-byte view box taken from the
+// FRAME instead of the heap (#6713): `i32_imm` is `base + 1`, where base is the
+// first of three consecutive local slots reserved for the box, so 0 keeps the
+// heap form. Same layout, same rc=-1 immortal sentinel, same operands — only the
+// storage differs, so every consumer of the pushed box is unchanged. The
+// register backends read the immediate; wasm ignores it (its str_slice copies
+// into a fresh inline block, so there is no box to place). irlower emits this
+// form only for a view whose whole life is inside the frame that made it.
+pub function op_str_slice_frame(base: i32): Op {
+    return Op { kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
 // `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
 // (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
 // payloads via __fern_arr_slice. Bounds-checked at construction (#5419):
@@ -2198,7 +2209,10 @@ pub function render_op(o: Op): string {
     if (o.kind_tag == 99) { return "str_eq"; }
     if (o.kind_tag == 100) { return "str_cmp"; }
     if (o.kind_tag == 101) { return "str_index"; }
-    if (o.kind_tag == 102) { return "str_slice"; }
+    if (o.kind_tag == 102) {
+        if (o.i32_imm > 0) { return "str_slice frame:" + util.i32_to_string(o.i32_imm - 1); }
+        return "str_slice";
+    }
     if (o.kind_tag == 96) { return "arr_slice"; }
     if (o.kind_tag == 120) { return "opt_make " + util.i32_to_string(o.i32_imm); }
     if (o.kind_tag == 121) { return "opt_none"; }
