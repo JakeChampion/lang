@@ -2853,7 +2853,7 @@ function ret_diags(stmts: parser.Stmt[], s: Scope, ret_ty: Type, unions: UnionSi
                     out = out.append(dg_at("E012", "return without value in function returning " + type_label(ret_ty), r.line, r.col));
                 } else {
                     var t: Type = check_expr(r.value, cur);
-                    if (!is_unknown(t) && !type_assignable(t, ret_ty, unions)) {
+                    if (!is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !type_assignable(t, ret_ty, unions)) {
                         out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t), r.line, r.col));
                     }
                 }
@@ -4545,6 +4545,87 @@ function mlit_is_base(e: parser.Expr): boolean {
     return false;
 }
 
+// unsettled_int_literal: is `e` an integer literal that has not been pinned to a
+// width — a bare `1`, not `1i64` and not `1.0` — or an arithmetic combination of
+// only those? This is the expression set native's settleFloat descends
+// (`internal/checker/checker.go`): a NumberLit, unary minus, and the four
+// arithmetic binaries. Everything else is already typed and settles nothing,
+// which is why an IDENTIFIER is absent: native rejects `var a: i32 = 1; var x:
+// f64 = a;` exactly as the self-host does, so the rule is literal-only rather
+// than an i32 -> f64 widening.
+function unsettled_int_literal(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprNumber(n) => { return !n.is_float && n.suffix.len() == 0; },
+        parser.ExprUnary(u) => {
+            if (u.op == "-") { return unsettled_int_literal(u.operand); }
+            return false;
+        },
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                return unsettled_int_literal(b.left) && unsettled_int_literal(b.right);
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// settles_to: would `e` reach type `want` once its unsettled integer literals
+// are read at the destination's type (#6654)? The self-host types every numeric
+// literal i32 and has no counterpart to native's settleNumeric, which stamps the
+// destination type onto a polymorphic literal BEFORE the assignability compare —
+// so `var x: f64 = 1;` was an over-reject in seven positions where native is
+// silent. There is no mutable AST to stamp here, so the same question is asked
+// as a predicate at each destination instead.
+//
+// Composite destinations recurse element-wise, mirroring settleNumeric's
+// ArrayType and TupleType arms: an element already assignable on its own needs
+// no settling, which is what lets `var t: (f64, i32) = (1, 2);` through while
+// still rejecting a genuinely wrong element.
+function settles_to(e: parser.Expr, want: Type, s: Scope): boolean {
+    match (want) {
+        TypeFloat(_) => { return unsettled_int_literal(e); },
+        TypeArray(wa) => {
+            match (e) {
+                parser.ExprArray(arr) => {
+                    var i: i32 = 0;
+                    while (i < arr.elements.len()) {
+                        if (!settles_or_assignable(arr.elements[i], wa.elem, s)) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        TypeTuple(wt) => {
+            match (e) {
+                parser.ExprTuple(tl) => {
+                    if (tl.elements.len() != wt.elements.len()) { return false; }
+                    var i: i32 = 0;
+                    while (i < wt.elements.len()) {
+                        if (!settles_or_assignable(tl.elements[i], wt.elements[i], s)) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// settles_or_assignable: one element of a composite destination — either it
+// settles, or it already types to something the slot accepts.
+function settles_or_assignable(e: parser.Expr, want: Type, s: Scope): boolean {
+    if (settles_to(e, want, s)) { return true; }
+    var t: Type = check_expr(e, s);
+    return is_unknown(t) || type_assignable(t, want, s.unions);
+}
+
 // variant_ctor_diags checks a variant-constructor call's ARGUMENTS against the
 // variant's declared payloads — arity, then each payload's type (E036, #6650).
 // check_call_expr types such a call to its enum and returns before the
@@ -4556,11 +4637,6 @@ function mlit_is_base(e: parser.Expr): boolean {
 // without `__ev` is either payload-less (`Nil`) or a struct-union member
 // (`type U = A | B`) — indistinguishable here, which is why
 // variant_payload_count returns -1 for both and this skips them.
-//
-// An integer argument in a FLOAT payload slot is also skipped: the self-host
-// types every numeric literal as i32 and has no settling pass (#6654), so
-// flagging it would reject `Wrap(1)` for `Wrap(f64)`. Delete the skip with
-// #6654.
 function variant_ctor_diags(id: parser.ExprIdent, c: parser.ExprCall, s: Scope): Diag[] {
     var out: Diag[] = [];
     if (s.lookup_sig(id.name).name.len() > 0) { return out; }
@@ -4574,8 +4650,7 @@ function variant_ctor_diags(id: parser.ExprIdent, c: parser.ExprCall, s: Scope):
     while (i < c.args.len() && i < want) {
         var at: Type = check_expr(c.args[i], s);
         var pt: Type = variant_payload_type_at(s, id.name, i);
-        var int_into_float: boolean = type_eq(at, t_i32()) && type_eq(pt, t_float());
-        if (!is_unknown(at) && !is_unknown(pt) && !int_into_float && !type_assignable(at, pt, s.unions)) {
+        if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !type_assignable(at, pt, s.unions)) {
             out = out.append(dg_at("E036", "variant " + id.name + " payload " + itoa_nn(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
         }
         i = i + 1;
@@ -4737,7 +4812,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                     // unknown) — the arg can't be checked against
                                     // it, so skip rather than mis-flag E038. (An
                                     // unknown ARG is already skipped above.)
-                                    if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !type_assignable(at, sig.param_types[ai], s.unions)) {
+                                    if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !type_assignable(at, sig.param_types[ai], s.unions)) {
                                         out = out.append(dg_at("E038", "argument " + itoa_nn(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
                                     }
                                     // E034: a composite-array literal argument's
@@ -4855,7 +4930,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                         var mat: Type = check_expr(c.args[mi], s);
                                         // Skip an opaque generic param type (see
                                         // the free-function E038 note above).
-                                        if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
+                                        if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
                                             out = out.append(dg_at("E038", "argument " + itoa_nn(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                                         }
                                         // E034: composite-array method argument
@@ -5324,7 +5399,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                     if (fidx >= 0) {
                         var ft: Type = ssig.field_types[fidx];
                         var vt: Type = check_expr(sl.field_values[fi], s);
-                        if (!is_unknown(ft) && !is_unknown(vt) && !type_assignable(vt, ft, s.unions)) {
+                        if (!is_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[fi], ft, s) && !type_assignable(vt, ft, s.unions)) {
                             out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
                         }
                         // E034: a struct-literal field of composite-array type
@@ -5912,7 +5987,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 if (v.type_name.len() > 0) {
                     var declared: Type = type_from_name_with_structs_unions(v.type_name, cur.structs, cur.unions);
                     var initt: Type = check_expr(v.init, cur);
-                    if (!is_unknown(declared) && !is_unknown(initt) && !type_assignable(initt, declared, unions)) {
+                    if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
                         out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared), v.line, v.col));
                     }
                 }
@@ -5952,7 +6027,7 @@ function stmts_assign_diags(stmts: parser.Stmt[], s: Scope, unions: UnionSig[]):
                 } else {
                     var tt: Type = cur.lookup(a.target);
                     var vt: Type = check_expr(a.value, cur);
-                    if (!is_unknown(tt) && !is_unknown(vt) && !type_assignable(vt, tt, unions)) {
+                    if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !type_assignable(vt, tt, unions)) {
                         out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt), a.line, a.col));
                     }
                 }
