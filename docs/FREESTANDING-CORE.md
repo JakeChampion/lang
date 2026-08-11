@@ -216,6 +216,14 @@ If it needs a **new** capability, add the name to every descriptor that provides
 names a capability no descriptor grants, which is the typo that would otherwise make a
 builtin unreachable everywhere.
 
+The self-host compiler carries its own copy of the classification —
+`examples/self_host/platforms.fern` (#6633), since it cannot import Go — so a new
+builtin has to be classified there too. `TestSelfHostGatedBuiltinsMatch` /
+`TestSelfHostCoreBuiltinsMatch` in `internal/platforms` read that file as data and fail
+on any entry the two tables disagree about, which is the only way the drift shows up:
+neither compiler can see the other's table, and the symptom is a program one builds and
+the other refuses.
+
 Note the **second, independent** capability system: `internal/caps` governs what a
 *package* may reach (`net`, `fs`, `env`, `random`, `subprocess`, `time`) for dependency
 grants, documented in `docs/PACKAGE-CAPABILITIES-BRIEF.md`. It has its own completeness

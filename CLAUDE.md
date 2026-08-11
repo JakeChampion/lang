@@ -301,7 +301,9 @@ it.
   `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.
   `internal/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
   **A new builtin usually needs classifying in both**; a completeness test in each
-  fails when one is missed.
+  fails when one is missed. The self-host mirrors the target half in
+  `examples/self_host/platforms.fern`, pinned entry-for-entry by a parity test in
+  `internal/platforms`.
 
 ## Keeping this file small
 

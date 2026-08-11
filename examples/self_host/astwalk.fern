@@ -241,6 +241,160 @@ function append_bound_name(acc: string[], name: string): string[] {
     return acc;
 }
 
+// CallSite is one call to a bare-identifier callee, located at the call.
+// Method calls carry a field-access callee and are not recorded: the
+// capability boundary (platforms.fern) gates BUILTINS, which are free
+// functions, so a `.write(…)` on a user type is not one of them.
+pub struct CallSite { name: string, line: i32, col: i32 }
+
+// collect_calls_expr appends every bare-identifier call in `e` whose callee is
+// NAMED in `want` to `acc`.
+//
+// The filter is not a convenience: the only caller looks for a handful of
+// names across the whole bundle, and collecting every call first would
+// allocate one CallSite per call site in the program — on the compiler's own
+// sources that is the kind of pass that walks a self-compile into the arena
+// wall. Matching during the walk keeps the allocation proportional to the
+// hits, which is normally none.
+//
+// Unlike collect_idents_expr this descends INTO a lambda body rather than
+// subtracting its bindings: a lambda's calls are part of what the artifact
+// executes, which is the question here, where free-variable analysis asks
+// what the enclosing scope must capture.
+pub function collect_calls_expr(e: parser.Expr, want: string[], acc: CallSite[]): CallSite[] {
+    match (e) {
+        parser.ExprIdent(_) => { return acc; },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_calls_expr(b.left, want, acc);
+            return collect_calls_expr(b.right, want, acc);
+        },
+        parser.ExprUnary(u) => { return collect_calls_expr(u.operand, want, acc); },
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (util.has_str(want, id.name)) { acc = acc.append(CallSite { name: id.name, line: c.line, col: c.col }); }
+                },
+                _ => { acc = collect_calls_expr(c.callee, want, acc); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                acc = collect_calls_expr(c.args[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                acc = collect_calls_expr(a.elements[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                acc = collect_calls_expr(t.elements[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_calls_expr(x.array, want, acc);
+            return collect_calls_expr(x.index, want, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_calls_expr(sl.array, want, acc);
+            acc = collect_calls_expr(sl.start, want, acc);
+            return collect_calls_expr(sl.end, want, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_calls_expr(sl.base, want, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                acc = collect_calls_expr(sl.field_values[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return collect_calls_expr(fa.obj, want, acc); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = collect_calls_stmt(lm.body[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// collect_calls_stmt is collect_calls_expr's statement half.
+pub function collect_calls_stmt(st: parser.Stmt, want: string[], acc: CallSite[]): CallSite[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_calls_stmt(d.action, want, acc); },
+        parser.StmtVar(v) => { return collect_calls_expr(v.init, want, acc); },
+        parser.StmtReturn(r) => { return collect_calls_expr(r.value, want, acc); },
+        parser.StmtExpr(e) => { return collect_calls_expr(e.value, want, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_calls_expr(i.cond, want, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                acc = collect_calls_stmt(i.then_body[ti], want, acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                acc = collect_calls_stmt(i.else_body[ei], want, acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_calls_expr(w.cond, want, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                acc = collect_calls_stmt(w.body[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return collect_calls_expr(a.value, want, acc); },
+        parser.StmtMatch(m) => {
+            acc = collect_calls_expr(m.scrutinee, want, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) { acc = collect_calls_expr(m.arms[ai].guard, want, acc); }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    acc = collect_calls_stmt(m.arms[ai].body[bi], want, acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_calls_expr(f.iter, want, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                acc = collect_calls_stmt(f.body[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
 pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
         parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },

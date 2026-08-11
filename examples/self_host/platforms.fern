@@ -1,0 +1,409 @@
+// examples/self_host/platforms.fern — the target-capability boundary,
+// mirroring native's internal/platforms (#6633).
+//
+// A target is what the artifact runs ON, so it decides what the artifact may
+// reach: `subprocess` has no meaning on a wasm world, `__heap_mark` rewinds a
+// bump arena only the native backends keep, and a freestanding artifact has no
+// host at all. Every capability-gated builtin surviving the tree-shake must be
+// granted by the target's descriptor; one that is not is E066 at compile time,
+// which is where the failure is a sentence rather than an "undefined label"
+// from the assembler or a host-side instantiation error.
+//
+// The table is the same shape as native's — a target names an ENVIRONMENT, an
+// environment names a capability PROFILE — so the two can be diffed rather
+// than compared by reading. internal/platforms/selfhost_parity_test.go reads
+// this file as data and pins the builtin classification and the profiles
+// against native's maps entry-for-entry, so a builtin classified on one side
+// and not the other fails a test instead of diverging silently. A rename or
+// reformat of the tables below has to keep them extractable by that test —
+// it fails loudly rather than vacuously when its patterns stop matching.
+//
+// Target NAMES here are the self-host driver's own (`arm64`, `wasm`, and the
+// `-asm` / `-bin` output-form spellings), which cannot express an environment
+// — #6635 renames them to native's `<isa>-<environment>` pairs, at which point
+// the form spellings collapse into their base target and this table's keys
+// become native's. Nothing below reads a name for anything but the lookup.
+
+import "./parser";
+import "./astwalk";
+import "./util";
+
+// ---- descriptors -------------------------------------------------------
+
+// Descriptor is one target's runtime surface: which ISA selects the backend,
+// which environment says what the host provides, and what that environment
+// grants. `known` is false for a target with no entry in the table — native
+// returns a nil *Descriptor there and callers skip enforcement, since the
+// -target flag validation owns that error.
+//
+// Native's descriptor also carries handler kinds, bindings and an entry shape.
+// They are absent here rather than mirrored-and-unread: nothing on the
+// self-host path consumes them yet, and the day one does is the day it can
+// say what it needs.
+pub struct Descriptor {
+    name: string,
+    isa: string,
+    environment: string,
+    capabilities: string[],
+    known: boolean,
+}
+
+// capability_profile lists what a host underneath grants. Profiles exist
+// because the list belongs to the host and not the ISA: linux / darwin /
+// android are genuinely different environments — different object formats,
+// different syscall vectors — and grant exactly the same set.
+//
+// NOTE `subprocess` is absent from every profile: it is an INTERP-ONLY
+// builtin (no compiled backend lowers it), so E066 refuses it up front on all
+// compiled targets rather than letting it reach the assembler.
+function capability_profile(profile: string): string[] {
+    if (profile == "hosted-native") {
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"];
+    }
+    if (profile == "wasi-cli") {
+        // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
+        // process model, so no `proc`, and no bump-arena rewind, so no
+        // `arena`.
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"];
+    }
+    if (profile == "wasi-proxy") {
+        // The proxy world: an HTTP handler and nothing else. No argv, no
+        // stdout stream, no filesystem.
+        return ["log", "now", "env", "random", "fetch"];
+    }
+    // "none" — no host at all. Everything still reachable is core_builtin.
+    var empty: string[] = [];
+    return empty;
+}
+
+// environment_profile names the capability profile an environment draws on,
+// or "" when the environment is not one this compiler knows.
+function environment_profile(environment: string): string {
+    if (environment == "linux" || environment == "darwin" || environment == "android") { return "hosted-native"; }
+    if (environment == "wasi") { return "wasi-cli"; }
+    if (environment == "wasi-http") { return "wasi-proxy"; }
+    if (environment == "freestanding") { return "none"; }
+    return "";
+}
+
+// target_environment maps a driver target name to its environment, or "" when
+// the name is not a target. The `-asm`, `-bin` and `-component` spellings are
+// output FORMS of the target above them and share its environment: what the
+// artifact can reach does not depend on whether the driver stops at the
+// emitter's text or links it (#6635 moves the forms off the target name).
+function target_environment(name: string): string {
+    if (name == "x86-64" || name == "x86-64-asm") { return "linux"; }
+    if (name == "arm64" || name == "arm64-asm") { return "linux"; }
+    if (name == "arm64-android") { return "android"; }
+    if (name == "arm64-darwin" || name == "arm64-darwin-asm") { return "darwin"; }
+    if (name == "wasm" || name == "wasm-bin" || name == "wasm-component") { return "wasi"; }
+    return "";
+}
+
+function target_isa(name: string): string {
+    if (name == "x86-64" || name == "x86-64-asm") { return "x86-64"; }
+    if (name == "wasm" || name == "wasm-bin" || name == "wasm-component") { return "wasm32"; }
+    return "arm64";
+}
+
+// targets lists every target name the descriptor table answers for, in a
+// stable order.
+pub function targets(): string[] {
+    return ["arm64", "arm64-android", "arm64-asm", "arm64-darwin", "arm64-darwin-asm",
+            "wasm", "wasm-bin", "wasm-component", "x86-64", "x86-64-asm"];
+}
+
+// for_target resolves a target name to its descriptor. An unknown name comes
+// back with `known: false`; enforcement skips it rather than reporting, since
+// the driver's own -target validation owns that error.
+pub function for_target(name: string): Descriptor {
+    var env_name: string = target_environment(name);
+    var empty: string[] = [];
+    if (env_name.len() == 0) {
+        return Descriptor { name: name, isa: "", environment: "", capabilities: empty, known: false };
+    }
+    return Descriptor {
+        name: name,
+        isa: target_isa(name),
+        environment: env_name,
+        capabilities: capability_profile(environment_profile(env_name)),
+        known: true,
+    };
+}
+
+// has_capability reports whether the target grants the named capability.
+// False for an unknown target — call for_target first to tell the two apart.
+pub function has_capability(target: string, capability: string): boolean {
+    var d: Descriptor = for_target(target);
+    if (!d.known) { return false; }
+    return util.has_str(d.capabilities, capability);
+}
+
+// targets_providing lists the targets granting a capability, for E066's
+// "targets providing it" hint.
+pub function targets_providing(capability: string): string[] {
+    var out: string[] = [];
+    var all: string[] = targets();
+    var i: i32 = 0;
+    while (i < all.len()) {
+        if (has_capability(all[i], capability)) { out = out.append(all[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- builtin classification --------------------------------------------
+
+// Gate pairs a capability-gated builtin with the capability a target must
+// grant for it to be callable.
+pub struct Gate { builtin: string, capability: string }
+
+// gated_builtins is the gated half of the user-callable builtin registry.
+// A builtin NOT listed here is ungated — every target provides it (arithmetic,
+// the map/array/string runtime, the async readiness helpers).
+//
+// Pinned against native's platforms.gatedBuiltins entry-for-entry by
+// TestSelfHostPlatformsGatesMatchNative.
+pub function gated_builtins(): Gate[] {
+    return [
+        // Process spawning. Interp-only, so no compiled target grants it.
+        Gate { builtin: "subprocess", capability: "subprocess" },
+
+        // Process supervision (fork/waitpid). Native-only: wasm worlds have
+        // no processes.
+        Gate { builtin: "proc_fork", capability: "proc" },
+        Gate { builtin: "proc_waitpid", capability: "proc" },
+        Gate { builtin: "proc_exec", capability: "proc" },
+
+        // One-level bump-arena checkpoint. Both natives rewind the heap
+        // pointer and shadow the freelist heads; wasm's linear-memory
+        // allocator has no room for that below its head table.
+        // `__heap_bump_bytes` stays ungated — reading the cursor works
+        // everywhere, only rewinding it is native.
+        Gate { builtin: "__heap_mark", capability: "arena" },
+        Gate { builtin: "__heap_release_to", capability: "arena" },
+
+        // Blocking stdin reads.
+        Gate { builtin: "read_line", capability: "stdin" },
+        Gate { builtin: "stdin", capability: "stdin" },
+
+        // `log` is somewhere to put a line of diagnostics; `stdout` is an
+        // actual stdout stream. The proxy world grants the first and has no
+        // wasi:cli/stdout, which is what puts `write` on the far side of the
+        // line from `print` despite being print-without-the-newline.
+        Gate { builtin: "print", capability: "log" },
+        Gate { builtin: "eprint", capability: "log" },
+        Gate { builtin: "stdout", capability: "stdout" },
+        Gate { builtin: "stderr", capability: "stdout" },
+        Gate { builtin: "write", capability: "stdout" },
+        Gate { builtin: "putchar", capability: "stdout" },
+
+        // Clocks, and the wakeups driven by them. The pollable constructors
+        // carry the authority; the helpers that WAIT on one do not.
+        Gate { builtin: "now_unix_ms", capability: "now" },
+        Gate { builtin: "now_ns", capability: "now" },
+        Gate { builtin: "monotonic_ns", capability: "now" },
+        Gate { builtin: "sleep_ms", capability: "now" },
+        Gate { builtin: "timer_fd", capability: "now" },
+        Gate { builtin: "wasm_timer_pollable", capability: "now" },
+
+        // The ambient invocation environment. argv and envp are adjacent on
+        // the process stack, but they are separate capabilities because the
+        // proxy world has envp and no argv.
+        Gate { builtin: "env", capability: "env" },
+        Gate { builtin: "args", capability: "args" },
+
+        // Entropy — a syscall on native, a host import on wasm, never
+        // something the program can compute.
+        Gate { builtin: "random_bytes", capability: "random" },
+        Gate { builtin: "random_i32", capability: "random" },
+
+        // Sockets.
+        Gate { builtin: "tcp_listen", capability: "tcp" },
+        Gate { builtin: "tcp_accept", capability: "tcp" },
+        Gate { builtin: "tcp_connect", capability: "tcp" },
+        Gate { builtin: "tcp_recv", capability: "tcp" },
+        Gate { builtin: "tcp_send", capability: "tcp" },
+        Gate { builtin: "tcp_close", capability: "tcp" },
+        Gate { builtin: "tcp_pollable", capability: "tcp" },
+        Gate { builtin: "udp_send", capability: "tcp" },
+
+        // Filesystem.
+        Gate { builtin: "read_file", capability: "fs" },
+        Gate { builtin: "write_file", capability: "fs" },
+        Gate { builtin: "write_file_exec", capability: "fs" },
+        Gate { builtin: "open_reader", capability: "fs" },
+        Gate { builtin: "open_writer", capability: "fs" },
+        Gate { builtin: "open_appender", capability: "fs" },
+        Gate { builtin: "stat", capability: "fs" },
+        Gate { builtin: "read_dir", capability: "fs" },
+        Gate { builtin: "remove_file", capability: "fs" },
+        Gate { builtin: "remove_dir_all", capability: "fs" },
+        Gate { builtin: "temp_dir", capability: "fs" }
+    ];
+}
+
+// core_builtins is the other half of the classification: user-callable
+// builtins that need no host, so even a freestanding target provides them.
+// Three groups, each core for its own reason — allocation needs an ALLOCATOR
+// and not an OS; the float bit casts are a register move; the readiness
+// helpers wait on a pollable whose constructor is gated above, so gating the
+// wait too would double-count the same authority.
+//
+// `exit` is the judgement call: every target can define "stop", including a
+// freestanding one, so it is core with a target-specific lowering rather than
+// a capability an artifact could be refused for.
+pub function core_builtins(): string[] {
+    return ["exit",
+            "map_new", "cell_new", "string_from_bytes_unchecked",
+            "strbuf_reset", "strbuf_append", "strbuf_take",
+            "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
+            "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop"];
+}
+
+// core_builtin reports whether the named builtin needs no host.
+pub function core_builtin(name: string): boolean {
+    return util.has_str(core_builtins(), name);
+}
+
+// gated_capability returns the capability gating a builtin, or "" when it is
+// ungated.
+pub function gated_capability(name: string): string {
+    var gates: Gate[] = gated_builtins();
+    var i: i32 = 0;
+    while (i < gates.len()) {
+        if (gates[i].builtin == name) { return gates[i].capability; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// forbidden_gates lists the gates a target does NOT satisfy — usually a
+// handful (one for the hosted natives, six for the wasi CLI world), which is
+// what keeps the call-site scan a membership test against a short list rather
+// than a scan of the whole registry per call.
+pub function forbidden_gates(target: string): Gate[] {
+    var out: Gate[] = [];
+    var d: Descriptor = for_target(target);
+    if (!d.known) { return out; }
+    var gates: Gate[] = gated_builtins();
+    var i: i32 = 0;
+    while (i < gates.len()) {
+        if (!util.has_str(d.capabilities, gates[i].capability)) { out = out.append(gates[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- enforcement -------------------------------------------------------
+
+// Violation is one gated call the target cannot satisfy. `fn_name` is the
+// function the call was found in and `fn_module` the module it came from —
+// empty for the entry module, since flatten.bundle mangles an imported
+// function to `<module>__<name>` and leaves the entry module's own names bare.
+pub struct Violation {
+    builtin: string,
+    capability: string,
+    target: string,
+    line: i32,
+    col: i32,
+    fn_name: string,
+    fn_module: string,
+}
+
+// split_mangled_module returns the bundle prefix of a mangled name
+// (`io__read_all` -> `io`), or "" for an unmangled entry-module name. A
+// leading `__` (a lifted lambda, `__lam_0`) is not a module prefix.
+function split_mangled_module(name: string): string {
+    var i: i32 = 1;
+    while (i + 1 < name.len()) {
+        if (name[i] == 95 && name[i + 1] == 95) { return name[0:i] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// split_mangled_name returns a mangled name's own half (`io__read_all` ->
+// `read_all`), or the name unchanged when it carries no module prefix.
+function split_mangled_name(name: string): string {
+    var i: i32 = 1;
+    while (i + 1 < name.len()) {
+        if (name[i] == 95 && name[i + 1] == 95) { return name[i + 2 : name.len()] + ""; }
+        i = i + 1;
+    }
+    return name;
+}
+
+// enforce scans an ALREADY TREE-SHAKEN module for calls to gated builtins the
+// target does not grant. Every surviving function is part of the artifact, so
+// a flat scan of every body is exactly "what this program can reach" — the
+// same argument native's Enforce makes for not following the call graph.
+//
+// Results are in declaration order, then source order, deduplicated per
+// (function, builtin) so a builtin called in a loop reports once.
+pub function enforce(mod: parser.Module, target: string): Violation[] {
+    var out: Violation[] = [];
+    var forbidden: Gate[] = forbidden_gates(target);
+    if (forbidden.len() == 0) { return out; }
+    var wanted: string[] = [];
+    var wi: i32 = 0;
+    while (wi < forbidden.len()) { wanted = wanted.append(forbidden[wi].builtin); wi = wi + 1; }
+
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[fi];
+        var calls: astwalk.CallSite[] = [];
+        var bi: i32 = 0;
+        while (bi < fd.body.len()) {
+            calls = astwalk.collect_calls_stmt(fd.body[bi], wanted, calls);
+            bi = bi + 1;
+        }
+        var seen: string[] = [];
+        var ci: i32 = 0;
+        while (ci < calls.len()) {
+            var gi: i32 = 0;
+            while (gi < forbidden.len()) {
+                if (calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
+                    seen = seen.append(calls[ci].name);
+                    out = out.append(Violation {
+                        builtin: forbidden[gi].builtin,
+                        capability: forbidden[gi].capability,
+                        target: target,
+                        line: calls[ci].line,
+                        col: calls[ci].col,
+                        fn_name: split_mangled_name(fd.name),
+                        fn_module: split_mangled_module(fd.name),
+                    });
+                }
+                gi = gi + 1;
+            }
+            ci = ci + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// violation_message renders E066's text. It names the capability rather than
+// the builtin first, because the capability is what the user has to change
+// target for; the builtin is the evidence.
+pub function violation_message(v: Violation): string {
+    var where: string = "";
+    if (v.fn_module.len() > 0) {
+        where = " (reached via \"" + v.fn_name + "\" from module \"" + v.fn_module + "\")";
+    }
+    var providers: string[] = targets_providing(v.capability);
+    if (providers.len() == 0) {
+        return "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
+            + v.builtin + "`" + where + "; no compiled target provides it (available under `fern -interp` only)";
+    }
+    var list: string = "";
+    var i: i32 = 0;
+    while (i < providers.len()) {
+        if (i > 0) { list = list + " "; }
+        list = list + providers[i];
+        i = i + 1;
+    }
+    return "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
+        + v.builtin + "`" + where + "; targets providing it: [" + list + "]";
+}
