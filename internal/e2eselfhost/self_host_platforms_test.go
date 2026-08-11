@@ -167,9 +167,13 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 		// what keeps this from being "anything heap-shaped is native-only".
 		{"heap-mark-wasm", "wasm", "wasm32-wasi", "function main(): i32 {\n    var m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
 		{"heap-bump-bytes-wasm-ok", "wasm", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
-		// No compiled target provides `subprocess` — it is interp-only, so
-		// this is refused on the natives too.
-		{"subprocess-native", "x86-64", "x86-64-linux", "function main(): i32 {\n    var argv: string[] = [];\n    var r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
+		// The wasm worlds have no process model, so spawning is refused there
+		// by both. On the NATIVE targets the two tables disagree on purpose —
+		// native gates `subprocess` everywhere because no Go backend lowers
+		// it, while the self-host's emitters do — so that pairing is asserted
+		// in internal/platforms (profileExceptions) rather than here, where a
+		// row would read as an unexplained divergence.
+		{"subprocess-wasm", "wasm", "wasm32-wasi", "function main(): i32 {\n    var argv: string[] = [];\n    var r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		// The capabilities a wasm program legitimately has: a filesystem, a
 		// clock, entropy, stdout. If the gate fired on these it would refuse
 		// most real programs.

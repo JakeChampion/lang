@@ -3,6 +3,7 @@ package platforms
 import (
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -104,6 +105,23 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 	}
 }
 
+// profileExceptions records, per profile, the capabilities the self-host
+// grants and this package does not — deliberately, and with a reason.
+//
+// There is exactly one. `subprocess` is gated in both tables, but no Go
+// backend lowers it, so native grants it nowhere: its table records a codegen
+// limitation as a target property. The self-host's x86-64 and arm64 emitters
+// DO lower it (`__fern_subprocess`; TestSelfHostArm64DarwinBuilds runs four
+// spawn cases end-to-end), so its hosted profile grants what its artifacts can
+// actually reach. The wasi profiles grant it on neither side.
+//
+// Listing it here rather than relaxing the comparison is the point: any OTHER
+// difference, in either direction, still fails — and this entry dies the day
+// native's backends lower it.
+var profileExceptions = map[string]map[string]bool{
+	"hosted-native": {"subprocess": true},
+}
+
 // TestSelfHostCapabilityProfilesMatch compares the capability sets themselves,
 // per profile. The target NAMES differ until #6635 lands, but a profile is the
 // same object on both sides — which host grants what — so a capability added
@@ -130,12 +148,23 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 			continue
 		}
 		w := append([]string(nil), want...)
-		g := append([]string(nil), got...)
+		var g []string
+		for _, c := range got {
+			if profileExceptions[name][c] {
+				continue
+			}
+			g = append(g, c)
+		}
 		sort.Strings(w)
 		sort.Strings(g)
 		if strings.Join(w, ",") != strings.Join(g, ",") {
-			t.Errorf("profile %q: native grants [%s], the self-host grants [%s]",
+			t.Errorf("profile %q: native grants [%s], the self-host grants [%s] (documented exceptions aside)",
 				name, strings.Join(w, " "), strings.Join(g, " "))
+		}
+		for c := range profileExceptions[name] {
+			if !slices.Contains(got, c) {
+				t.Errorf("profile %q: the self-host no longer grants %q, so its exception entry in profileExceptions is stale — delete it", name, c)
+			}
 		}
 	}
 	for name := range found {

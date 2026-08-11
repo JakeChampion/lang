@@ -53,12 +53,19 @@ pub struct Descriptor {
 // android are genuinely different environments — different object formats,
 // different syscall vectors — and grant exactly the same set.
 //
-// NOTE `subprocess` is absent from every profile: it is an INTERP-ONLY
-// builtin (no compiled backend lowers it), so E066 refuses it up front on all
-// compiled targets rather than letting it reach the assembler.
+// `subprocess` is the ONE entry that differs from native's table, and
+// deliberately. Native grants it nowhere, because no Go backend lowers it —
+// its table records a codegen limitation as a target property. The self-host's
+// x86-64 and arm64 emitters DO lower it (`__fern_subprocess`: pipe / fork /
+// execve / wait4, exercised end-to-end by TestSelfHostArm64DarwinBuilds), so
+// refusing it here would delete working, tested functionality to match a
+// limitation this compiler does not have. The wasm side is unchanged: the
+// wasi profiles grant it nowhere, which turns wasm_ir's late "unsupportable on
+// wasm" bail (#4320) into an up-front diagnostic — the same improvement
+// native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -166,7 +173,8 @@ pub struct Gate { builtin: string, capability: string }
 // TestSelfHostPlatformsGatesMatchNative.
 pub function gated_builtins(): Gate[] {
     return [
-        // Process spawning. Interp-only, so no compiled target grants it.
+        // Process spawning. Granted by the hosted-native profile (see the
+        // note there); the wasm worlds have no process model.
         Gate { builtin: "subprocess", capability: "subprocess" },
 
         // Process supervision (fork/waitpid). Native-only: wasm worlds have
@@ -392,11 +400,10 @@ pub function violation_message(v: Violation): string {
     if (v.fn_module.len() > 0) {
         where = " (reached via \"" + v.fn_name + "\" from module \"" + v.fn_module + "\")";
     }
+    // Every gated capability has at least one target granting it — asserted
+    // in platforms_run.fern, which is what makes an empty provider list a
+    // typo in the gate table rather than a shape the message has to render.
     var providers: string[] = targets_providing(v.capability);
-    if (providers.len() == 0) {
-        return "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
-            + v.builtin + "`" + where + "; no compiled target provides it (available under `fern -interp` only)";
-    }
     var list: string = "";
     var i: i32 = 0;
     while (i < providers.len()) {

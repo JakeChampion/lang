@@ -62,8 +62,12 @@ function main(): i32 {
     if (platforms.has_capability("wasm", "arena")) { return 13; }
     if (!platforms.has_capability("x86-64", "proc")) { return 14; }
     if (!platforms.has_capability("arm64-darwin", "arena")) { return 15; }
-    // No compiled target grants `subprocess` — it is interp-only.
-    if (platforms.targets_providing("subprocess").len() != 0) { return 16; }
+    // `subprocess` is the one entry that differs from native's table: the
+    // self-host's native emitters lower it, so the hosted profile grants it
+    // and the wasi ones do not. Both halves are asserted — dropping either
+    // would let the divergence widen unnoticed.
+    if (!platforms.has_capability("x86-64", "subprocess")) { return 16; }
+    if (platforms.has_capability("wasm", "subprocess")) { return 19; }
     // Unknown target, unknown capability: both false, neither an error.
     if (platforms.has_capability("vax-11", "fs")) { return 17; }
     if (platforms.has_capability("wasm", "telepathy")) { return 18; }
@@ -85,14 +89,16 @@ function main(): i32 {
         if (platforms.gated_capability(cores[ci]).len() != 0) { return 26; }
         ci = ci + 1;
     }
-    // Every gate names a capability some environment profile actually grants,
-    // or names none at all (subprocess) — a gate on a capability no profile
-    // has and no target refuses would be unreachable either way.
+    // Every gate names a capability at least one target actually grants. A
+    // gate on a capability no descriptor lists is the typo that makes a
+    // builtin unreachable everywhere while looking like a deliberate refusal
+    // — native's TestGatedCapabilitiesResolvable is the same check — and it
+    // is what lets violation_message assume a non-empty provider list.
     var gates: platforms.Gate[] = platforms.gated_builtins();
     var gi: i32 = 0;
     while (gi < gates.len()) {
-        if (gates[gi].capability.len() == 0) { return 27; }
-        if (gates[gi].builtin.len() == 0) { return 28; }
+        if (gates[gi].builtin.len() == 0) { return 27; }
+        if (platforms.targets_providing(gates[gi].capability).len() == 0) { return 28; }
         gi = gi + 1;
     }
 
@@ -107,10 +113,11 @@ function main(): i32 {
     // An unknown target enforces nothing.
     if (count(forks, "vax-11") != 0) { return 34; }
 
-    // A builtin no compiled target provides is refused everywhere.
+    // `subprocess` is refused on the wasm worlds and allowed on the natives,
+    // which is the emitter support (#4320) the profile records.
     var spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
-    if (count(spawns, "x86-64") != 1) { return 35; }
-    if (count(spawns, "wasm") != 1) { return 36; }
+    if (count(spawns, "wasm") != 1) { return 35; }
+    if (count(spawns, "x86-64") != 0) { return 36; }
 
     // Dedup is per (function, builtin): a builtin called twice in one body
     // reports once, and a second function calling it reports again.
@@ -158,10 +165,10 @@ function main(): i32 {
     if (!util.contains(m, "targets providing it: [")) { return 62; }
     if (!util.contains(m, "x86-64")) { return 63; }
 
-    // A capability no compiled target provides says so instead of printing an
-    // empty list.
-    var ms: string = first_msg(spawns, "x86-64");
-    if (!util.contains(ms, "no compiled target provides it")) { return 64; }
+    // The wasm refusal names the natives as the way out.
+    var ms: string = first_msg(spawns, "wasm");
+    if (!util.contains(ms, "does not provide `subprocess`")) { return 64; }
+    if (!util.contains(ms, "arm64-darwin")) { return 65; }
 
     write("platforms: every capability rule agrees\n");
     return 0;
