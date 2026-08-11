@@ -2144,22 +2144,89 @@ pub function reduce_strength(ops: Op[]): Op[] {
     return reduce_strength_ex(ops).ops;
 }
 
-// optimize_ops runs the op-list peepholes to a fixpoint. The two feed each
-// other: folding makes a constant adjacent to the op that consumes it, and a
-// strength rewrite's `drop ; const_i32 0` puts a fresh constant next to
-// whatever constant follows. fold_const_binaries already self-iterates, so a
-// strength pass that rewrote nothing is the fixpoint; the round cap is
-// defensive.
+// ---- dead-code elimination (#6638, native internal/ir/dce.go) -----------
+//
+// An op list routinely carries stretches that cannot be reached because an
+// earlier op in the same scope already left it. The commonest shape is the
+// lowering's own: a match arm ends `return ; br 1`, and the `br` is dead the
+// moment the `return` is emitted. Every one of those ops is emitted, assembled
+// and linked today.
+//
+// The walk is linear, tracks scope depth, and drops everything between a
+// terminator and the next merge:
+//
+//   terminators — `return` (leaves the function) and `br` (leaves its target
+//     scope, so nothing after it in THIS scope can fall through).
+//   merges — `end` at the depth the terminator sat at (the dead region's
+//     scope closes) and `else` at that depth (the other arm starts fresh).
+//
+// `brif` is conditional and terminates nothing. A scope OPENED inside a dead
+// region is depth-tracked so its `end` lines up, but its body goes with it.
+//
+// `exit` is deliberately NOT a terminator here, though is_terminator_kind
+// counts it: the process does not come back, but the operand stack is not
+// polymorphic after it. Every backend emits `exit` as a call plus a dummy
+// result that the following `drop` consumes, so dropping the ops after it
+// would leave the enclosing scope one slot high — a wasm module that fails
+// validation rather than a smaller one.
+pub function eliminate_dead_code(ops: Op[]): Op[] {
+    var out: Op[] = [];
+    var depth: i32 = 0;
+    var dead: boolean = false;
+    var dead_depth: i32 = 0;
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_if: i32 = kind_id("if");
+    var k_else: i32 = kind_id("else");
+    var k_end: i32 = kind_id("end");
+    var k_br: i32 = kind_id("br");
+    var k_return: i32 = kind_id("return");
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_block || t == k_loop || t == k_if) {
+            if (!dead) { out = out.append(ops[i]); }
+            depth = depth + 1;
+        } else if (t == k_end) {
+            if (dead && depth == dead_depth) { dead = false; }
+            if (!dead) { out = out.append(ops[i]); }
+            depth = depth - 1;
+        } else if (t == k_else) {
+            if (dead && depth == dead_depth) { dead = false; }
+            if (!dead) { out = out.append(ops[i]); }
+        } else if (!dead) {
+            out = out.append(ops[i]);
+            if (t == k_return || t == k_br) {
+                dead = true;
+                dead_depth = depth;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// optimize_ops runs the op-list peepholes to a fixpoint, then drops what the
+// result cannot reach. The first two feed each other: folding makes a constant
+// adjacent to the op that consumes it, and a strength rewrite's
+// `drop ; const_i32 0` puts a fresh constant next to whatever constant
+// follows. fold_const_binaries already self-iterates, so a strength pass that
+// rewrote nothing is the fixpoint; the round cap is defensive.
+//
+// Dead-code elimination runs LAST and once: it only removes ops, so it can
+// neither create a foldable adjacency (the ops it drops are unreachable, and
+// the ops around the hole were never adjacent in any executed path) nor
+// benefit from another round of itself — it is idempotent by construction.
 pub function optimize_ops(ops: Op[]): Op[] {
     var cur: Op[] = fold_const_binaries(ops);
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return cur; }
+        if (!r.changed) { return eliminate_dead_code(cur); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return cur;
+    return eliminate_dead_code(cur);
 }
 
 // is_commutative_kind reports whether `id` is an integer binary op whose

@@ -118,6 +118,61 @@ function main(): i32 {
     if (render(twice) == render(once)) { stable = 1; }
     out = out + "idempotent=" + util.i32_to_string(stable) + "\n";
 
+    // 11. Dead-code elimination (#6638). Each case is asserted in BOTH
+    //     directions — a stretch the pass must drop, and one it must not
+    //     touch — because a pass that drops one op too many produces a
+    //     backend input that is still well-formed and no longer the program.
+    // 11a. The lowering's own shape: a match arm's `return` followed by the
+    //      `br` that would have left the arm block.
+    var arm: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_return(), ir.op_br(1), ir.op_end()];
+    out = out + "dce_arm: " + render(ir.eliminate_dead_code(arm)) + "\n";
+
+    // 11b. A `br` kills the rest of ITS scope; the scope's end revives.
+    var afterbr: ir.Op[] = [ir.op_block(0), ir.op_br(0), ir.op_const_i32(1), ir.op_drop(), ir.op_end(),
+                            ir.op_const_i32(2), ir.op_drop()];
+    out = out + "dce_after_br: " + render(ir.eliminate_dead_code(afterbr)) + "\n";
+
+    // 11c. `brif` is conditional and kills nothing.
+    var afterbrif: ir.Op[] = [ir.op_block(0), ir.op_brif(0), ir.op_const_i32(1), ir.op_drop(), ir.op_end()];
+    out = out + "dce_after_brif: " + render(ir.eliminate_dead_code(afterbrif)) + "\n";
+
+    // 11d. `else` revives: the then-arm's dead tail goes, the else-arm stays.
+    var arms: ir.Op[] = [ir.op_if(0), ir.op_return(), ir.op_const_i32(1), ir.op_drop(),
+                         ir.op_else(), ir.op_const_i32(2), ir.op_drop(), ir.op_end()];
+    out = out + "dce_else_revives: " + render(ir.eliminate_dead_code(arms)) + "\n";
+
+    // 11e. A scope OPENED inside a dead region goes with it, and its `end`
+    //      does not close the dead region early — the depth has to be tracked
+    //      through ops that are being dropped.
+    var nested: ir.Op[] = [ir.op_const_i32(1), ir.op_return(),
+                           ir.op_block(0), ir.op_const_i32(2), ir.op_drop(), ir.op_end(),
+                           ir.op_const_i32(3), ir.op_drop()];
+    out = out + "dce_nested_dead: " + render(ir.eliminate_dead_code(nested)) + "\n";
+
+    // 11f. `exit` is NOT a terminator here even though is_terminator_kind
+    //      counts it: every backend emits it as a call plus a dummy result
+    //      that the following `drop` consumes, so dropping what follows would
+    //      leave the scope one operand high.
+    var ex: ir.Op[] = [ir.op_const_i32(3), ir.op_exit(), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+    out = out + "dce_exit_kept: " + render(ir.eliminate_dead_code(ex)) + "\n";
+
+    // 11g. Nothing to drop: a live stream is returned unchanged.
+    var live: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
+    out = out + "dce_live: " + render(ir.eliminate_dead_code(live)) + "\n";
+
+    // 11h. Idempotent by construction — it only removes.
+    var dce_once: ir.Op[] = ir.eliminate_dead_code(arm);
+    var dce_twice: ir.Op[] = ir.eliminate_dead_code(dce_once);
+    var dce_stable: i32 = 0;
+    if (render(dce_twice) == render(dce_once)) { dce_stable = 1; }
+    out = out + "dce_idempotent=" + util.i32_to_string(dce_stable) + "\n";
+
+    // 11i. optimize_ops runs it last: the fold collapses `2 + 2` to a
+    //      constant and the dead tail after the return still goes.
+    var both: ir.Op[] = [ir.op_const_i32(2), ir.op_const_i32(2), ir.op_bin("add", 0, false),
+                         ir.op_return(), ir.op_const_i32(9), ir.op_drop()];
+    out = out + "dce_in_optimize: " + render(ir.optimize_ops(both)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.
