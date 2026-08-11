@@ -13175,20 +13175,31 @@ function iife_payload_field_bindable(ft: string, name: string, arm: parser.Match
     // named the width, so `match (a -? b) { Some(c) => c, … }` on u32 operands
     // refused where the i32 spelling lowered (#6400).
     if (ft == "u32") { return true; }
-    if (ft == "i64" || ft == "f64") {
+    // u64 is i64-WIDE — only the signedness of its own ops differs, and that is
+    // selected at the producing expression, not here (the same reading
+    // i64_ret_fns_of states for the 64-bit signature path). The StmtMatch binder
+    // carries the unsignedness on the slot, which is why the STATEMENT form of
+    // this match already lowers. Normalise before the wide arm rather than adding
+    // a `|| ft == "u64"` to it: the arm forwards `ft` into the payload-arith
+    // shape tests, which compare against "i64", so threading the raw "u64" would
+    // widen the admission while silently stopping those tests matching — failing
+    // toward a wrong answer instead of a bail (#6647).
+    var wft: string = ft;
+    if (wft == "u64") { wft = "i64"; }
+    if (wft == "i64" || wft == "f64") {
         if (iife_arm_returns_ident(arm, name) || iife_arm_returns_narrowed_payload(arm, name)) { return true; }
         // `(arith-over-payload) as i32` (`Some(x) => (x + 2) as i32`, `Some(v) =>
         // (v * 4.0) as i32`): a wide i64/f64 intermediate over the payload, narrowed
         // to an i32 result temp. The cast narrows, so the result temp is i32 either
         // way; iife_arm_returns_narrowed_payload_arith certifies the wide-arith shape.
-        if ((ft == "i64" || ft == "f64") && iife_arm_returns_narrowed_payload_arith(arm, name, ft, s)) { return true; }
+        if (iife_arm_returns_narrowed_payload_arith(arm, name, wft, s)) { return true; }
         // An i64/f64 ARITHMETIC composition over the BARE wide payload (`V(n) => n + 1`,
         // `V(n) => n + 1.5`): the result temp was classified i64/f64 by the matching
         // iife_payload_arith_kind shape (iife_arm_payload_result_kind), and the
         // StmtMatch arm-body store routes the wide RHS through lower_i64 / the f64 path
         // (statement-position already lowers `return n + 1`). res_kind names the wide
         // width; admit when the arm tail is that wide-arith shape over the payload.
-        if ((res_kind == "i64" || res_kind == "f64") && iife_payload_arith_kind(iife_arm_tail_expr(arm), name, ft, res_kind, s)) { return true; }
+        if ((res_kind == "i64" || res_kind == "f64") && iife_payload_arith_kind(iife_arm_tail_expr(arm), name, wft, res_kind, s)) { return true; }
         // The binding is DEAD — the arm body never references `name` (`Some(x) => 1`,
         // an i64/f64 payload bound to a name the arm doesn't read). The payload width
         // is then irrelevant to the result temp (driven solely by the arm's actual
@@ -13546,7 +13557,10 @@ function iife_payload_result_width(m: parser.StmtMatch, s: LowerState): string {
                             match (r.value) {
                                 parser.ExprIdent(rid) => {
                                     var ft: string = iife_variant_payload_field(pv, rid.name, s);
-                                    if (ft == "i64") { return "i64"; }
+                                    // u64 classifies as the i64-wide temp — the temp
+                                    // records WIDTH, and the slot carries the payload's
+                                    // own signedness (#6647).
+                                    if (ft == "i64" || ft == "u64") { return "i64"; }
                                     if (ft == "f64") { return "f64"; }
                                 },
                                 _ => {}
