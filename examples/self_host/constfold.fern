@@ -287,7 +287,7 @@ pub function fold_module(mod: parser.Module): parser.Module {
             body: fold_block(fd.body),
             line: fd.line, col: fd.col,
             import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, ret_str: fd.ret_str, async: fd.async
-        });
+       , is_const: false });
         i = i + 1;
     }
     return parser.Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fold_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };

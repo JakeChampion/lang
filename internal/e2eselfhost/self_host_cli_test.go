@@ -1431,6 +1431,46 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("fmt-const", func(t *testing.T) {
+		// A `const` desugars to a zero-arg FuncDecl, and print_module skips
+		// decls with no source position so `@derive`'s synthesised methods stay
+		// out of the output. The desugar left the position at zero, so the
+		// declaration was dropped while every reference to it survived —
+		// output naming an undefined symbol (#6688).
+		//
+		// Asserting the `const` SPELLING, not just that the name appears:
+		// emitting the desugar as `function LIMIT(): i32 { … }` also makes the
+		// name resolve and the self-host still compiles it, but native rejects
+		// that form, so it is a silent rewrite into something only one compiler
+		// accepts.
+		srcPath := filepath.Join(dir, "const_fmt.fern")
+		src := "const LIMIT: i32 = 41;\nfunction main(): i32 { return LIMIT + 1; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Fatalf("-fmt exited %d, want 0", code)
+		}
+		if !strings.Contains(string(out1), "const LIMIT: i32 = 41;") {
+			t.Errorf("-fmt did not reconstruct the const:\n%s", out1)
+		}
+		if strings.Contains(string(out1), "function LIMIT") {
+			t.Errorf("-fmt emitted the const as its desugared function:\n%s", out1)
+		}
+		fmtPath := filepath.Join(dir, "const_fmt_out.fern")
+		if err := os.WriteFile(fmtPath, out1, 0o644); err != nil {
+			t.Fatalf("write formatted: %v", err)
+		}
+		out2, code2 := runDriver(t, "-fmt", fmtPath)
+		if code2 != 0 {
+			t.Fatalf("second -fmt exited %d, want 0", code2)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("-fmt is not idempotent on a const:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
+		}
+	})
+
 	t.Run("emit-target-arm64", func(t *testing.T) {
 		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
 		// directly under -target arm64 (in-process via arm64_native + elf.fern,
