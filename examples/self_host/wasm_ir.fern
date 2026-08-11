@@ -8322,7 +8322,7 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // (see irlower.strfld_reclaim_ok_types_of).
     var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, irlower.borrowable_params_interproc(mod.funcs));
     var frti: i32 = 0;
     while (frti < frt.len()) {
         out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0);

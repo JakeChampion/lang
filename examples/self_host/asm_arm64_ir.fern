@@ -6407,7 +6407,7 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, irlower.borrowable_params_interproc(mod.funcs));
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
@@ -6483,7 +6483,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm, whole-program.
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, bparams);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: seed the plain-fn-pointer-array field registry as needs so

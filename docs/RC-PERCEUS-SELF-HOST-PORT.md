@@ -6656,3 +6656,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: new `TestSelfHostBorrowedFieldArgReclaimX86_64` (k-sweep + the
   retaining-callee negative; the sweep FAILS on the parent, where the byte count
   tracks k). Refs #6691 #6653 #4451.
+
+- 2026-08-11: **The `structfldok:` read scan stops counting a BORROWABLE call
+  argument as an escape (#6698).** The read-scan sibling of #6691, and the last
+  door left open on the #6653 imbalance. Two spellings of one program, differing
+  only in the final read:
+
+  | read | before | after | native |
+  |---|---|---|---|
+  | `o.inner.tag` — direct | 0 B | 0 B | 0 |
+  | `itag(o.inner)` — call arg | **800 B** | **0** | 0 |
+
+  A marked field NAME disqualifies its whole type from `structfldok:`, which gates
+  the nested-struct / enum arms of BOTH `__field_reclaim_<T>` and
+  `__struct_drop_<T>`. So one call argument refused `S` outright and the
+  struct-literal override's retain on `o.inner` had nothing to pair with. The scan
+  already models one borrow — a method call's receiver chain goes through
+  `structfld_safe_operand`, which walks beneath without marking — and a borrowable
+  free-function argument is the same thing with a stronger warrant.
+
+  It also recovered part of #6691's residual: the enum probe there goes 880 → 480,
+  the enum BOX now being released and only its payload array left. That remainder
+  is the shallow `k_enum` drop, filed as #6696 with the `__drop_enum_<E>` shape
+  native uses (`emitEnumDropViaGenFn`).
+
+  **`strfld_reclaim_ok_types_of`, the STRING sibling, is deliberately not moved.**
+  It has the identical call-arg coarseness and the identical argument would apply,
+  but it is the scan whose over-admission produced the #3425 whole-compiler
+  corruption, so it wants its own measurement rather than riding along.
+
+  **Cost note:** three of the four call sites had no `borrowable_params_interproc`
+  verdict in scope and now compute one (the arm64 flat path already had `bparams`
+  and reuses it). That is a whole-program fixpoint per emitted unit, which is the
+  kind of per-unit addition §9 records as OOM-killing the per-module emit before —
+  so the emit-all numbers are part of the evidence below, not just the pass/fail.
+
+  Unchanged and deliberately so: a callee that RETAINS its argument.
+  `keepi(v: I): I { return v; }` is refused by `borrowable_params_of`, so
+  `var p = keepi(o.inner)` keeps the type marked; the probe reads `p`'s scalar AND
+  its array back after the rebind loop, and measures identically on the parent.
+
+  VERIFIED: `TestSelfHostBorrowedFieldArgReclaimX86_64` — two new rows (a k-sweep
+  comparing the call spelling against the direct read, and the retaining-callee
+  negative); the call-spelling row FAILS on the parent at 800 B. Exits agree with
+  `fern -interp` on every probe. Refs #6698 #6691 #6653 #6604 #4451.

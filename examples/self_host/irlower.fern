@@ -41197,11 +41197,11 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
 // whose nested field is merely read through. Here the receiver of a borrow chain
 // is a borrow — the inner read is judged under its own field's name — which is
 // the one structural difference between the two scans.
-pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     var unsafe_names: string[] = [];
     var ki: i32 = 0;
     while (ki < funcs.len()) {
-        unsafe_names = structfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
+        unsafe_names = structfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names, borrowable);
         ki = ki + 1;
     }
     var out: string[] = [];
@@ -41228,12 +41228,12 @@ pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: pa
 // RECEIVER as a borrow. This is the difference from strfld_mark, which recurses
 // into the receiver as unsafe: reaching `g` through `o.f.g` retains only g's
 // box, so `f` is borrowed and stays admissible.
-function structfld_mark(e: parser.Expr, acc: string[]): string[] {
+function structfld_mark(e: parser.Expr, acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         parser.ExprFieldAccess(fa) => {
             a = push_str_unique(a, fa.field);
-            a = structfld_safe_operand(fa.obj, a);
+            a = structfld_safe_operand(fa.obj, a, borrowable);
         },
         _ => {}
     }
@@ -41242,35 +41242,35 @@ function structfld_mark(e: parser.Expr, acc: string[]): string[] {
 
 // structfld_safe_operand: the DIRECT read here is a transient borrow — do not
 // mark it, but keep walking beneath.
-function structfld_safe_operand(e: parser.Expr, acc: string[]): string[] {
+function structfld_safe_operand(e: parser.Expr, acc: string[], borrowable: string[]): string[] {
     match (e) {
-        parser.ExprFieldAccess(fa) => { return structfld_safe_operand(fa.obj, acc); },
+        parser.ExprFieldAccess(fa) => { return structfld_safe_operand(fa.obj, acc, borrowable); },
         _ => {}
     }
-    return structfld_collect_unsafe(e, acc);
+    return structfld_collect_unsafe(e, acc, borrowable);
 }
 
 // structfld_collect_unsafe: every field NAME read in a position that could
 // outlive its box. A bare ExprFieldAccess reached here — not consumed by one of
 // the borrow parents — is unsafe by default.
-function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
+function structfld_collect_unsafe(e: parser.Expr, acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     match (e) {
-        parser.ExprFieldAccess(_) => { return structfld_mark(e, a); },
+        parser.ExprFieldAccess(_) => { return structfld_mark(e, a, borrowable); },
         parser.ExprBinary(b) => {
-            a = structfld_safe_operand(b.left, a);
-            return structfld_safe_operand(b.right, a);
+            a = structfld_safe_operand(b.left, a, borrowable);
+            return structfld_safe_operand(b.right, a, borrowable);
         },
-        parser.ExprUnary(u) => { return structfld_collect_unsafe(u.operand, a); },
+        parser.ExprUnary(u) => { return structfld_collect_unsafe(u.operand, a, borrowable); },
         parser.ExprIndex(ix) => {
-            a = structfld_safe_operand(ix.array, a);
-            return structfld_collect_unsafe(ix.index, a);
+            a = structfld_safe_operand(ix.array, a, borrowable);
+            return structfld_collect_unsafe(ix.index, a, borrowable);
         },
         parser.ExprSlice(sl) => {
-            a = structfld_collect_unsafe(sl.array, a);
-            match (sl.array) { parser.ExprFieldAccess(_) => { a = structfld_mark(sl.array, a); }, _ => {} }
-            a = structfld_collect_unsafe(sl.start, a);
-            return structfld_collect_unsafe(sl.end, a);
+            a = structfld_collect_unsafe(sl.array, a, borrowable);
+            match (sl.array) { parser.ExprFieldAccess(_) => { a = structfld_mark(sl.array, a, borrowable); }, _ => {} }
+            a = structfld_collect_unsafe(sl.start, a, borrowable);
+            return structfld_collect_unsafe(sl.end, a, borrowable);
         },
         // A struct-literal FIELD VALUE re-homes the box into the new literal
         // (`PS { node: other.node }`) — the new owner outlives this one, so the
@@ -41280,12 +41280,12 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
         parser.ExprStructLit(sl2) => {
             var fi: i32 = 0;
             while (fi < sl2.field_values.len()) {
-                a = structfld_collect_unsafe(sl2.field_values[fi], a);
+                a = structfld_collect_unsafe(sl2.field_values[fi], a, borrowable);
                 fi = fi + 1;
             }
             // A functional-update BASE (`S { ..o, n: 1 }`) copies o's field
             // pointers into the new box, so every one of them gains an owner.
-            if (sl2.has_base) { a = structfld_collect_unsafe(sl2.base, a); }
+            if (sl2.has_base) { a = structfld_collect_unsafe(sl2.base, a, borrowable); }
             return a;
         },
         // A tuple element is a store into a box that outlives the read, the
@@ -41293,7 +41293,7 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
         parser.ExprTuple(tl2) => {
             var ti2: i32 = 0;
             while (ti2 < tl2.elements.len()) {
-                a = structfld_collect_unsafe(tl2.elements[ti2], a);
+                a = structfld_collect_unsafe(tl2.elements[ti2], a, borrowable);
                 ti2 = ti2 + 1;
             }
             return a;
@@ -41303,25 +41303,39 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
         parser.ExprArray(arr) => {
             var ai2: i32 = 0;
             while (ai2 < arr.elements.len()) {
-                a = structfld_collect_unsafe(arr.elements[ai2], a);
+                a = structfld_collect_unsafe(arr.elements[ai2], a, borrowable);
                 ai2 = ai2 + 1;
             }
             return a;
         },
         parser.ExprCall(c) => {
+            // A BORROWABLE param position cannot retain what it is handed, so
+            // `f(o.inner)` there is a transient borrow like the method receiver
+            // below — judged by structfld_safe_operand, which keeps walking
+            // beneath without marking the field. Same registry and same rule
+            // expr_unsafe_for and the NODEEP field-move scan (#6691) already
+            // apply; here it is what lets the type keep its nested-struct / enum
+            // arms at all. Free calls only: method-param borrowability is not in
+            // the free-function-keyed registry.
+            var callee_name: string = "";
             match (c.callee) {
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
                 parser.ExprFieldAccess(cfa) => {
                     // A method CALL on a field borrows its receiver for the
                     // call — `o.f.len()` / `o.f.method()` read through it. The
                     // receiver chain is judged by structfld_safe_operand; the
                     // arguments below are what can retain.
-                    a = structfld_safe_operand(cfa.obj, a);
+                    a = structfld_safe_operand(cfa.obj, a, borrowable);
                 },
-                _ => { a = structfld_collect_unsafe(c.callee, a); }
+                _ => { a = structfld_collect_unsafe(c.callee, a, borrowable); }
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                a = structfld_collect_unsafe(c.args[ai], a);
+                if (callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) {
+                    a = structfld_safe_operand(c.args[ai], a, borrowable);
+                } else {
+                    a = structfld_collect_unsafe(c.args[ai], a, borrowable);
+                }
                 ai = ai + 1;
             }
             return a;
@@ -41343,7 +41357,7 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
 // Every other value in the literal still marks, and a fork to a DIFFERENT local
 // (`p = S { f: o.f }`) is not this shape: there the read genuinely creates a
 // second owner, and the read scan must keep refusing the type.
-function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: string[]): string[] {
+function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     match (v) {
         parser.ExprStructLit(sl) => {
@@ -41352,55 +41366,55 @@ function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: st
                 // Only a DIRECT `target.<f>`: a deeper chain reaches a box the
                 // successor does not supersede (selfrebind_field_alias).
                 if (!selfrebind_field_alias(sl.field_values[fi], target)) {
-                    a = structfld_collect_unsafe(sl.field_values[fi], a);
+                    a = structfld_collect_unsafe(sl.field_values[fi], a, borrowable);
                 }
                 fi = fi + 1;
             }
-            if (sl.has_base) { a = structfld_collect_unsafe(sl.base, a); }
+            if (sl.has_base) { a = structfld_collect_unsafe(sl.base, a, borrowable); }
             return a;
         },
         _ => {}
     }
-    return structfld_collect_unsafe(v, a);
+    return structfld_collect_unsafe(v, a, borrowable);
 }
 
 // structfld_collect_unsafe_stmts: a direct `var t = x.f` init is SAFE — the
 // binding is a borrow the exit sweep does not double-free — while a REASSIGN
 // `t = x.f` is not, matching the string scan's split.
-function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[], borrowable: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { a = structfld_safe_operand(v.init, a); },
-            parser.StmtReturn(r) => { a = structfld_collect_unsafe(r.value, a); },
-            parser.StmtAssign(as2) => { a = structfld_collect_unsafe_assign(as2.target, as2.value, a); },
-            parser.StmtExpr(ex) => { a = structfld_collect_unsafe(ex.value, a); },
+            parser.StmtVar(v) => { a = structfld_safe_operand(v.init, a, borrowable); },
+            parser.StmtReturn(r) => { a = structfld_collect_unsafe(r.value, a, borrowable); },
+            parser.StmtAssign(as2) => { a = structfld_collect_unsafe_assign(as2.target, as2.value, a, borrowable); },
+            parser.StmtExpr(ex) => { a = structfld_collect_unsafe(ex.value, a, borrowable); },
             parser.StmtIf(iff) => {
-                a = structfld_collect_unsafe(iff.cond, a);
-                a = structfld_collect_unsafe_stmts(iff.then_body, a);
-                a = structfld_collect_unsafe_stmts(iff.else_body, a);
+                a = structfld_collect_unsafe(iff.cond, a, borrowable);
+                a = structfld_collect_unsafe_stmts(iff.then_body, a, borrowable);
+                a = structfld_collect_unsafe_stmts(iff.else_body, a, borrowable);
             },
             parser.StmtWhile(w) => {
-                a = structfld_collect_unsafe(w.cond, a);
-                a = structfld_collect_unsafe_stmts(w.body, a);
+                a = structfld_collect_unsafe(w.cond, a, borrowable);
+                a = structfld_collect_unsafe_stmts(w.body, a, borrowable);
             },
             parser.StmtFor(fo) => {
-                a = structfld_collect_unsafe(fo.iter, a);
-                a = structfld_collect_unsafe_stmts(fo.body, a);
+                a = structfld_collect_unsafe(fo.iter, a, borrowable);
+                a = structfld_collect_unsafe_stmts(fo.body, a, borrowable);
             },
             parser.StmtMatch(m) => {
-                a = structfld_collect_unsafe(m.scrutinee, a);
+                a = structfld_collect_unsafe(m.scrutinee, a, borrowable);
                 var mi: i32 = 0;
                 while (mi < m.arms.len()) {
-                    if (m.arms[mi].has_guard) { a = structfld_collect_unsafe(m.arms[mi].guard, a); }
-                    a = structfld_collect_unsafe_stmts(m.arms[mi].body, a);
+                    if (m.arms[mi].has_guard) { a = structfld_collect_unsafe(m.arms[mi].guard, a, borrowable); }
+                    a = structfld_collect_unsafe_stmts(m.arms[mi].body, a, borrowable);
                     mi = mi + 1;
                 }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                a = structfld_collect_unsafe_stmts(one, a);
+                a = structfld_collect_unsafe_stmts(one, a, borrowable);
             },
             _ => {}
         }
