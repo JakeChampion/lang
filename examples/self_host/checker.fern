@@ -5851,6 +5851,19 @@ function stmts_call_diags(stmts: parser.Stmt[], s: Scope): Diag[] {
                             }
                         }
                     },
+                    // Scalar scrutinee — native's checkLiteralMatch domain
+                    // (number / string / bool). Tuple and struct scrutinees
+                    // take their own native paths and are left alone here.
+                    //
+                    // Only the boolean arm is reachable today: a numeric or
+                    // string arm pattern is a LITERAL, and this parser drops
+                    // those arms, so such a match never arrives here at all
+                    // (it surfaces as a spurious E052 instead — #6683). The
+                    // other three arms are the same rule for when it does.
+                    TypeBool(_) => { out = scalar_match_exhaustive_diags(m, out); },
+                    TypeI32(_) => { out = scalar_match_exhaustive_diags(m, out); },
+                    TypeString(_) => { out = scalar_match_exhaustive_diags(m, out); },
+                    TypeFloat(_) => { out = scalar_match_exhaustive_diags(m, out); },
                     _ => { }
                 }
                 var a: i32 = 0;
@@ -6232,6 +6245,37 @@ function dg(code: string, message: string): Diag {
 }
 function dg_at(code: string, message: string, line: i32, col: i32): Diag {
     return Diag { code: code, message: message, line: line, col: col };
+}
+
+// scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
+// boolean scrutinee that carries no unguarded `_` arm.
+//
+// Native requires the wildcard across every scalar domain, and its
+// checkLiteralMatch comment records that boolean is deliberately not
+// special-cased — `true` / `false` arms do NOT make the match exhaustive
+// there, "the `_` arm covers it more uniformly". Without this rule the
+// self-host silently ACCEPTED `match (b) { true => …, false => … }` and then
+// compiled and ran it, so the same source built under one compiler and not
+// the other (#6594). Reported at the `match` keyword, Go's `n.P`.
+//
+// A GUARDED `_` may fall through, so it does not count — the same rule the
+// union arm above applies to a guarded variant arm.
+//
+// if-let / let-else desugars are skipped: their scrutinee is an enum and
+// native reports E022 on a non-enum source, from a different path.
+function scalar_match_exhaustive_diags(m: parser.StmtMatch, acc: Diag[]): Diag[] {
+    if (m.origin.len() > 0) { return acc; }
+    var saw_wild: boolean = false;
+    var i: i32 = 0;
+    while (i < m.arms.len()) {
+        match (m.arms[i].pattern) {
+            parser.PatWildcard(_) => { if (!m.arms[i].has_guard) { saw_wild = true; } },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    if (saw_wild) { return acc; }
+    return acc.append(dg_at("E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm", m.line, m.col));
 }
 
 // expr_line / expr_col read the 1-based source position off a positioned

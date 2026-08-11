@@ -680,6 +680,27 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-shadowed-builtin-read-ok", "function main(): i32 { var Some = 4; return Some; }\n", nil},
 		{"variant-unshadowed-bare-read", "enum W { Wrap(i32), Empty }\nfunction main(): i32 { var x: W = Wrap; return 0; }\n", []string{"E036"}},
 		{"variant-unshadowed-ctor-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A match on a SCALAR scrutinee needs an unguarded `_`, in both
+		// frontends (#6594). The self-host had no rule at all here, so it
+		// accepted these silently and then compiled and ran them — the
+		// dangerous direction, since the same source builds under one compiler
+		// and not the other.
+		//
+		// `boolean` is the interesting row: `true` / `false` really are the
+		// whole domain, and native still requires the wildcard (its
+		// checkLiteralMatch comment records that as deliberate). Widening the
+		// language to accept it is a change to BOTH compilers; this is parity
+		// with what native does today.
+		//
+		// The guarded-wildcard row is what stops `has_guard` being ignored — a
+		// guarded `_` may fall through, so it does not make the match
+		// exhaustive. The accept rows are what stop the rule being a blanket
+		// rejection of every scalar match.
+		{"match-bool-two-literals-expr-no-wildcard", "function main(): i32 {\n    var b: boolean = true;\n    return (match (b) { true => 7i32, false => 1i32 });\n}\n", []string{"E030"}},
+		{"match-bool-two-literals-stmt-no-wildcard", "function main(): i32 { var b: boolean = true; match (b) { true => { return 1; }, false => { return 2; } } }\n", []string{"E030"}},
+		{"match-bool-with-wildcard-ok", "function main(): i32 { var b: boolean = true; match (b) { true => { return 7; }, _ => { return 1; } } }\n", nil},
+		{"match-int-with-wildcard-ok", "function main(): i32 { var n: i32 = 1; match (n) { 0 => { return 5; }, _ => { return 6; } } }\n", nil},
+		{"match-enum-exhaustive-no-wildcard-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
