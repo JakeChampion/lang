@@ -81,7 +81,7 @@ func runMemchrIR(t *testing.T, target string) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
 	var driverBin, linkGcc string
-	if target == "arm64" {
+	if target == "arm64-linux" {
 		var qemu string
 		_, runner, driverBin = buildModloadArm64DriverX86(t)
 		linkGcc, qemu = arm64Tooling(t)
@@ -110,13 +110,13 @@ func runMemchrIR(t *testing.T, target string) int {
 }
 
 func TestSelfHostMemchrIRX86_64(t *testing.T) {
-	if got := runMemchrIR(t, "x86-64"); got != 42 {
+	if got := runMemchrIR(t, "x86-64-linux"); got != 42 {
 		t.Errorf("__memchr self-host x86-64 = %d, want 42 (see memchrIRProg for what each code means)", got)
 	}
 }
 
 func TestSelfHostMemchrIRArm64(t *testing.T) {
-	if got := runMemchrIR(t, "arm64"); got != 42 {
+	if got := runMemchrIR(t, "arm64-linux"); got != 42 {
 		t.Errorf("__memchr self-host arm64 = %d, want 42 (see memchrIRProg for what each code means)", got)
 	}
 }

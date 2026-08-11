@@ -83,7 +83,7 @@ func runReadAllStdinIR(t *testing.T, target, src string, in []byte) int {
 	// name, which is why TestSelfHostReadAllStdinIRRoutingX86_64 asserts the
 	// routing separately.
 	wantSym := "__fern_read_all_stdin"
-	if target == "arm64" {
+	if target == "arm64-linux" {
 		var qemu string
 		_, runner, driverBin = buildModloadArm64DriverX86(t)
 		linkGcc, qemu = arm64Tooling(t)
@@ -121,19 +121,19 @@ func runReadAllStdinIR(t *testing.T, target, src string, in []byte) int {
 }
 
 func TestSelfHostReadAllStdinIRX86_64(t *testing.T) {
-	if got := runReadAllStdinIR(t, "x86-64", readAllStdinIRProg, []byte("alpha\nbeta\n")); got != 42 {
+	if got := runReadAllStdinIR(t, "x86-64-linux", readAllStdinIRProg, []byte("alpha\nbeta\n")); got != 42 {
 		t.Errorf("read_all_stdin IR x86-64 = %d, want 42", got)
 	}
-	if got := runReadAllStdinIR(t, "x86-64", readAllStdinIRBigProg, bigStdinInput()); got != 7 {
+	if got := runReadAllStdinIR(t, "x86-64-linux", readAllStdinIRBigProg, bigStdinInput()); got != 7 {
 		t.Errorf("read_all_stdin IR x86-64 3 MiB = %d, want 7", got)
 	}
 }
 
 func TestSelfHostReadAllStdinIRArm64(t *testing.T) {
-	if got := runReadAllStdinIR(t, "arm64", readAllStdinIRProg, []byte("alpha\nbeta\n")); got != 42 {
+	if got := runReadAllStdinIR(t, "arm64-linux", readAllStdinIRProg, []byte("alpha\nbeta\n")); got != 42 {
 		t.Errorf("read_all_stdin IR arm64 = %d, want 42", got)
 	}
-	if got := runReadAllStdinIR(t, "arm64", readAllStdinIRBigProg, bigStdinInput()); got != 7 {
+	if got := runReadAllStdinIR(t, "arm64-linux", readAllStdinIRBigProg, bigStdinInput()); got != 7 {
 		t.Errorf("read_all_stdin IR arm64 3 MiB = %d, want 7", got)
 	}
 }

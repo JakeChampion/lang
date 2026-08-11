@@ -110,13 +110,13 @@ func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 		backend string
 	}{
 		{
-			target:  "x86-64",
+			target:  "x86-64-linux",
 			want:    "shlq $3, %rax",
 			unwant:  []string{"imulq", "andl $31, %ecx"},
 			backend: "asm_ir.fern",
 		},
 		{
-			target:  "arm64",
+			target:  "arm64-linux",
 			want:    "lsl x0, x0, #3",
 			unwant:  []string{"mul x0, x0, x1", "and x1, x1, #31"},
 			extra:   []string{"-target", "arm64-linux"},
