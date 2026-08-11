@@ -41331,7 +41331,19 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[], borrowable: str
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) {
+                // Shape first, registry second. param_is_borrowable is a linear
+                // walk of the registry with a char compare per entry, and this
+                // scan visits every call argument in the whole program once per
+                // emitted unit — asking it about every argument cost the
+                // per-module emit-all ~50%. A bare field access is the only
+                // argument shape this arm marks directly, so it is the only one
+                // whose answer can change anything.
+                var arg_is_field: boolean = false;
+                match (c.args[ai]) {
+                    parser.ExprFieldAccess(_) => { arg_is_field = true; },
+                    _ => {}
+                }
+                if (arg_is_field && callee_name.len() > 0 && param_is_borrowable(borrowable, callee_name, ai)) {
                     a = structfld_safe_operand(c.args[ai], a, borrowable);
                 } else {
                     a = structfld_collect_unsafe(c.args[ai], a, borrowable);
