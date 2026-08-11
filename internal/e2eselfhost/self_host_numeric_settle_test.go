@@ -53,6 +53,37 @@ var numericSettleCases = []struct {
 	// A negated literal settles through the unary.
 	{"negated-literal",
 		`function main(): i32 { var x: f64 = 0 - 1; if (x < 0.0 - 0.5) { return 19; } return 20; }`, 19},
+	// A value-position if / match is desugared into an immediately-invoked
+	// closure whose return type is read off the arms, so the literal ends up one
+	// level down with no destination to settle against (#6679). Settling fans
+	// into the branches, which is what native's settleFloat does with its
+	// IfExpr / MatchExpr / BlockExpr arms.
+	{"value-if",
+		`function main(): i32 { var x: f64 = if (1 < 2) { 1 } else { 2 }; var y: f64 = x + 0.5; if (y > 1.4) { return 21; } return 22; }`, 21},
+	// The else branch settles too — a fix that only reached the first arm would
+	// pass the row above and fail this one.
+	{"value-if-else-branch",
+		`function main(): i32 { var x: f64 = if (1 > 2) { 1 } else { 3 }; var y: f64 = x + 0.5; if (y > 3.4) { return 23; } return 24; }`, 23},
+	{"value-match",
+		`enum E { A, B } function main(): i32 { var e: E = B; var x: f64 = match (e) { A => 1, B => 3 }; var y: f64 = x + 0.5; if (y > 3.4) { return 25; } return 26; }`, 25},
+	{"value-if-return",
+		`function g(): f64 { return if (1 < 2) { 1 } else { 2 }; } function main(): i32 { if (g() > 0.5) { return 27; } return 28; }`, 27},
+	// An `else if` chain is an else body holding one StmtIf, so the settle
+	// recurses down it.
+	{"value-else-if-chain",
+		`function main(): i32 { var x: f64 = if (1 > 2) { 1 } else if (2 < 3) { 3 } else { 5 }; var y: f64 = x + 0.5; if (y > 3.4) { return 29; } return 30; }`, 29},
+	// A branch with leading statements yields its trailing value (native's
+	// BlockExpr tail).
+	{"value-if-block-tail",
+		`function main(): i32 { var x: f64 = if (1 < 2) { var q: i32 = 7; 1 } else { 2 }; var y: f64 = x + 0.5; if (y > 1.4) { return 31; } return 32; }`, 31},
+	{"value-if-nested",
+		`function main(): i32 { var x: f64 = if (1 < 2) { if (2 < 3) { 1 } else { 2 } } else { 3 }; var y: f64 = x + 0.5; if (y > 1.4) { return 33; } return 34; }`, 33},
+	// Arithmetic over bare literals settles as a unit inside a branch too, so
+	// this is float division (3.5), not integer division (3).
+	{"value-if-arithmetic-arm",
+		`function main(): i32 { var x: f64 = if (1 < 2) { 7 / 2 } else { 1 }; if (x > 3.4) { return 35; } return 36; }`, 35},
+	{"value-if-call-argument",
+		`function g(v: f64): f64 { return v + 0.25; } function main(): i32 { if (g(if (1 < 2) { 1 } else { 2 }) > 1.2) { return 37; } return 38; }`, 37},
 }
 
 // numericSettleRejects are the shapes settling must NOT swallow: the literalness
@@ -74,6 +105,19 @@ var numericSettleRejects = []struct {
 	// pins this shape, and a settle that recursed unconditionally broke it.
 	{"mixed-binary", `function main(): i32 { var f: f64 = 1 + 2.5; return 0; }`, "E009"},
 	{"mixed-binary-reversed", `function main(): i32 { var f: f64 = 2.5 + 1; return 0; }`, "E009"},
+	// A value-if branch the settle cannot see the type of (#6679): an i32 VALUE
+	// is not a literal, so the whole if is left unsettled and draws E003 rather
+	// than being widened under the destination. Stamping the closure's return
+	// type alone would have turned this into a miscompile — an i32 arm feeding a
+	// float slot — which is why the settle is all-or-nothing across the branches.
+	{"value-if-i32-local-arm",
+		`function main(): i32 { var n: i32 = 1; var x: f64 = if (1 < 2) { n } else { 2 }; return 0; }`, "E003"},
+	{"value-if-string-arm",
+		`function main(): i32 { var x: f64 = if (1 < 2) { 1 } else { "s" }; return 0; }`, "E031"},
+	{"value-match-string-arm",
+		`enum E { A, B } function main(): i32 { var e: E = A; var x: f64 = match (e) { A => 1, B => "s" }; return 0; }`, "E031"},
+	{"value-if-mixed-binary-arm",
+		`function main(): i32 { var x: f64 = if (1 < 2) { 1 + 2.5 } else { 1 }; return 0; }`, "E009"},
 }
 
 // TestSelfHostNumericSettleChecker pins the accept side: every case checks clean
