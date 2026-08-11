@@ -1,0 +1,41 @@
+// A 64-bit value-block TAIL: an if / match expression that is the value of a
+// block, reached with a statement PRECEDING it. That route (lower_value_block's
+// non-return tail) once emitted wasm the validator rejected — the array
+// literal's ops landed ahead of the branch computing the value, so the store
+// read a slot nothing wrote (#6267). Nothing pinned the shape afterwards, which
+// is why it was possible for the issue's repro to start passing unnoticed.
+enum Pick { Lo, Hi }
+
+function boxed(p: i64): i64[] {
+    var v: i64 = if (p > 4i64) { p * 3i64 } else { 7i64 };
+    return [v];
+}
+
+function led(p: i64): i64 {
+    return { var t: i64 = p + 1i64; if (t > 4i64) { t * 3i64 } else { 7i64 } };
+}
+
+function led_u(p: u64): u64 {
+    return { var t: u64 = p + 1u64; if (t > 4u64) { t * 3u64 } else { 7u64 } };
+}
+
+function picked(p: i64, k: Pick): i64 {
+    return { var t: i64 = p * 2i64; match (k) { Lo => { t + 1i64 }, Hi => { t + 100i64 } } };
+}
+
+function main(): i32 {
+    if (boxed(9i64)[0] != 27i64) { return 1; }
+    if (boxed(2i64)[0] != 7i64) { return 2; }
+    if (led(9i64) != 30i64) { return 3; }
+    if (led(1i64) != 7i64) { return 4; }
+    if (led_u(9u64) != 30u64) { return 5; }
+    if (picked(5i64, Lo) != 11i64) { return 6; }
+    if (picked(5i64, Hi) != 110i64) { return 7; }
+    // Above 2^31, which is what makes this a gate. The defect widened the block
+    // value from a TRUNCATED i32, so every assertion above still passed on the
+    // register backends while the answer was silently wrong here — only wasm,
+    // whose validator rejects the mismatched extend outright, failed loudly.
+    if (led(5000000000i64) != 15000000003i64) { return 8; }
+    if (picked(4000000000i64, Lo) != 8000000001i64) { return 9; }
+    return 0;
+}
