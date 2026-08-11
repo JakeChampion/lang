@@ -224,6 +224,12 @@ function print_func_decl(fd: parser.FuncDecl): string {
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
+    // `fip` selects the E053 no-allocation walk, so dropping it does not just
+    // reformat the file — it silently stops verifying the guarantee the
+    // annotation exists to state (#6660). The self-host models `fip` as a plain
+    // boolean and drops the graded `fip(n)` / `fbip` spellings at parse time, so
+    // those still normalise to bare `fip` here; the flag itself survives.
+    if (fd.fip) { out = out + "fip "; }
     out = out + "function ";
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
@@ -253,7 +259,19 @@ function print_func_decl(fd: parser.FuncDecl): string {
 }
 
 function print_struct_decl(sd: parser.StructDecl): string {
-    var out: string = "struct " + sd.name + " {";
+    var out: string = "";
+    // `@must_consume` arms the E067 analysis (docs/MUST-CONSUME.md); dropping it
+    // disarms the check without changing anything visible (#6660).
+    if (sd.must_consume) { out = out + "@must_consume\n"; }
+    // `@derive(…)` is NOT emitted, deliberately. synth_derives runs at PARSE
+    // time and leaves no mark on the FuncDecls it appends, so `mod.funcs`
+    // already carries the expansion by the time the printer sees it — emitting
+    // the attribute as well would redefine every synthesised method on the next
+    // parse. The expansion is what gets printed, which keeps the output
+    // compiling and behaving the same; what is lost is `sd.derives` itself, and
+    // with it the checker's E021 derive-field conformance pre-check. Suppressing
+    // the synthesised funcs needs a marker on FuncDecl that does not exist yet.
+    out = out + "struct " + sd.name + " {";
     var i: i32 = 0;
     while (i < sd.fields.len()) {
         if (i > 0) { out = out + ","; }
@@ -635,6 +653,25 @@ function main(): i32 {
     if (rtI.funcs[0].import_iface != "wasi:random/random@0.2.0") { return 187; }
     if (rtI.funcs[0].import_wit != "get-random-u64") { return 188; }
     if (rtI.funcs[0].body.len() != 0) { return 189; }
+
+    // Declaration MODIFIERS round-trip (#6660). These read the flag back rather
+    // than the name: the printer dropped both, and a shape-only assertion
+    // round-tripped "successfully" while the formatted file quietly stopped
+    // being checked — `fip` disarms E053, `@must_consume` disarms E067.
+    var srcM: string = "@must_consume\nstruct Handle { id: i32 }\n"
+        + "fip function pure_add(a: i32, b: i32): i32 { return a + b; }\n"
+        + "function plain(a: i32): i32 { return a; }\n";
+    var modM: parser.Module = parser.parse_module(lexer.tokenize(srcM));
+    if (!modM.funcs[0].fip) { return 190; }
+    if (modM.funcs[1].fip) { return 191; }
+    if (!modM.structs[0].must_consume) { return 192; }
+    var rtM: parser.Module = roundtrip_module(srcM);
+    if (rtM.funcs.len() != 2) { return 193; }
+    if (!rtM.funcs[0].fip) { return 194; }
+    // The un-annotated sibling must NOT acquire the modifier.
+    if (rtM.funcs[1].fip) { return 195; }
+    if (rtM.structs.len() != 1) { return 196; }
+    if (!rtM.structs[0].must_consume) { return 197; }
 
     return 0;
 }
