@@ -385,7 +385,26 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
 	}
-	for i, fn := range prog.Funcs {
+	// Name-keyed AST↔IR pairing, mirroring the x86-64 backend: the slices are
+	// still built in lockstep so the emission order and output are unchanged,
+	// but an index walk mispairs silently as soon as an IR pass adds or removes
+	// a whole function — the blocker on ir.Inline + the dead-function cull
+	// (#4377). A name with no IR function was culled; skip it.
+	irIdx := make(map[string]int, len(ip.Funcs))
+	for i, f := range ip.Funcs {
+		irIdx[f.Name] = i
+	}
+	for _, fn := range prog.Funcs {
+		i, ok := irIdx[fn.Name]
+		if !ok {
+			// Nothing removes whole functions from ip.Funcs yet, so a name with
+			// no IR function means lowering dropped it — a bug, not a cull.
+			// Report it rather than emitting nothing: a silent skip here would
+			// produce a binary missing a function body and fail at the link,
+			// far from the cause. The change that turns on the dead-function
+			// cull flips this to a `continue`.
+			return "", fmt.Errorf("codegen: no IR function for %q", fn.Name)
+		}
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", err
 		}

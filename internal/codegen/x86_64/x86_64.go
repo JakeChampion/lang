@@ -459,7 +459,28 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.entry == platforms.EntryProcess {
 		g.emitStartRuntime()
 	}
-	for i, fn := range prog.Funcs {
+	// AST↔IR pairing is BY NAME, not by index. The two slices are still built
+	// in lockstep today, so this emits the same functions in the same order and
+	// the output is byte-identical — but an index walk silently mispairs the
+	// moment an IR-level pass adds or removes a whole function, which is what
+	// blocked ir.Inline + the dead-function cull from running here (#4377).
+	// A name with no IR function was culled: skip it rather than emit a body
+	// the optimiser proved unreachable.
+	irIdx := make(map[string]int, len(ip.Funcs))
+	for i, f := range ip.Funcs {
+		irIdx[f.Name] = i
+	}
+	for _, fn := range prog.Funcs {
+		i, ok := irIdx[fn.Name]
+		if !ok {
+			// Nothing removes whole functions from ip.Funcs yet, so a name with
+			// no IR function means lowering dropped it — a bug, not a cull.
+			// Report it rather than emitting nothing: a silent skip here would
+			// produce a binary missing a function body and fail at the link,
+			// far from the cause. The change that turns on the dead-function
+			// cull flips this to a `continue`.
+			return "", nil, fmt.Errorf("codegen: no IR function for %q", fn.Name)
+		}
 		if err := g.emitFunc(fn, ip.Funcs[i]); err != nil {
 			return "", nil, err
 		}
