@@ -6693,14 +6693,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the `wp_fn_sigs` the modload driver builds ONCE outside its per-unit loop, so the
   hot path now reads it instead. Only the two single-module driver paths (arm64
   `emit_module_ir`, wasm `emit_ir_rc_bodies_from`) still compute their own, once per
-  compile. Peak memory was never the issue (2.15 → 2.32 GB); time was.
+  compile.
+
+  That still left gen0 at 365.3 s, and the second half was the LOOKUP:
+  `param_is_borrowable` walks the registry with a char compare per entry, and this
+  scan visits every call argument in the whole program once per unit. A bare field
+  access is the only argument shape the arm marks directly, so the SHAPE is tested
+  first and the registry consulted only for those. Peak memory was never the issue
+  at any point (2.15 → 2.33 GB); time was.
+
+  | emit-all | gen0 | gen1 | total |
+  |---|---|---|---|
+  | parent | 129.3 s | 357.9 s | 585.8 s |
+  | recompute the verdict per unit | 745.4 s | 832.2 s | **1663.9 s** |
+  | reuse `b.borrowable_params` | 365.3 s | 447.8 s | 889.4 s |
+  | + shape before registry | 163.9 s | 320.7 s | **561.2 s** |
+
+  **Both cuts needed measuring; neither was visible from the diff.** The first is
+  the one §9 already warns about (per-unit whole-program analyses), the second is
+  not — a lookup that is O(registry) per call ARGUMENT reads as free until it runs
+  36 times over every call in the compiler.
 
   Unchanged and deliberately so: a callee that RETAINS its argument.
   `keepi(v: I): I { return v; }` is refused by `borrowable_params_of`, so
   `var p = keepi(o.inner)` keeps the type marked; the probe reads `p`'s scalar AND
   its array back after the rebind loop, and measures identically on the parent.
 
-  VERIFIED: `TestSelfHostBorrowedFieldArgReclaimX86_64` — two new rows (a k-sweep
-  comparing the call spelling against the direct read, and the retaining-callee
-  negative); the call-spelling row FAILS on the parent at 800 B. Exits agree with
-  `fern -interp` on every probe. Refs #6698 #6691 #6653 #6604 #4451.
+  VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` PASS 561.24 s (gen0 ==
+  gen1 across 36 units, no OOM). `TestSelfHostBorrowedFieldArgReclaimX86_64` — two
+  new rows: a k-sweep comparing the call spelling against the direct read, and the
+  retaining-callee negative; the call-spelling row FAILS on the parent at 800 B.
+  Exits agree with `fern -interp` on every probe.
+  Refs #6698 #6691 #6653 #6604 #4451.
