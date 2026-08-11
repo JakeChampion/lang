@@ -96,6 +96,10 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
         ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs)), mod.trait_reqs),
         borrowable_params: bp,
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bp),
+        // The same reason the two above are re-derived here: emit_ir_rc_bodies_from
+        // gates its string arm on this verdict, so the routing and the arm must
+        // come from ONE registry (#6703).
+        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs, bp),
         // Array-param moves stay scoped to THIS module.
         move_arr_params: irlower.move_arr_params_of(mod.funcs),
     };
@@ -8320,9 +8324,10 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // #4355: replaced-STRING-field admission — the wasm IR driver is
     // single-module whole-program, so mod.funcs is the full read scope
     // (see irlower.strfld_reclaim_ok_types_of).
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, irlower.borrowable_params_interproc(mod.funcs));
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var frti: i32 = 0;
     while (frti < frt.len()) {
         out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0);

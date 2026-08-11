@@ -1895,6 +1895,10 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
         ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod)), mod.trait_reqs),
         borrowable_params: bparams,
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
+        // Re-derived against the fixpoint registry, not fn_sigs_of's single
+        // pass — emit_module_ir seeds "strfldok:" from the same verdict, and
+        // the routing and the arm it gates must agree (#6703).
+        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
         struct_ret_fns: irlower.struct_ret_fns_of(mod.funcs, s.struct_decls),
@@ -1934,7 +1938,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls),
+        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
@@ -6403,11 +6407,12 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     s = s.close_needs();
     // #4355: replaced-STRING-field admission — this driver route is
     // single-module whole-program, so mod.funcs IS the full read scope.
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, irlower.borrowable_params_interproc(mod.funcs));
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
@@ -6451,10 +6456,16 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
     // emit_module_funcs).
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
+    // #4355: the replaced-STRING-field admission, from the WHOLE-PROGRAM read
+    // scan (all_funcs — see asm_ir.emit_module_ir_unit's sibling seeding and
+    // irlower.strfld_reclaim_ok_types_of). Derived here so the LOWERING below
+    // and the "strfldok:" seeding further down are one verdict.
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs, bparams);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_of(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs)),
         borrowable_params: bparams,
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
+        strfld_ok_types: sfok,
         // These two stay scoped to THIS module rather than the whole program.
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
         fn_names: irlower.fn_names_of(mod.funcs),
@@ -6476,10 +6487,8 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = emit_function_via_ir(mod.funcs[fi], s, sg);
         fi = fi + 1;
     }
-    // #4355: admit the replaced-STRING-field arm per type from the
-    // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
-    // sibling seeding and irlower.strfld_reclaim_ok_types_of).
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    // #4355: admit the replaced-STRING-field arm per type, from the sfok the
+    // lowering above routed on.
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm, whole-program.

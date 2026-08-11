@@ -6725,3 +6725,53 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   retaining-callee negative; the call-spelling row FAILS on the parent at 800 B.
   Exits agree with `fern -interp` on every probe.
   Refs #6698 #6691 #6653 #6604 #4451.
+
+- 2026-08-11: **The `strfldok:` read scan stops counting a BORROWABLE call
+  argument as an escape (#6703).** The STRING half of #6698, deliberately left
+  for its own measurement because this is the scan whose over-admission produced
+  the #3425 whole-compiler corruption. Two spellings of one program, differing
+  only in the final read (ten calls of `work(8)`, x86-64, `FERN_LEAKCHECK=1`):
+
+  | read | before | after | native |
+  |---|---|---|---|
+  | `o.name.len()` — direct | 0 B | 0 B | 0 |
+  | `slen(o.name)` — call arg | **2800 B** | **0** | 0 |
+
+  Bigger than the struct one because the replaced string strands every ITERATION
+  rather than once per call. A marked field NAME disqualifies its type from
+  `strfldok:`, which gates the `k_str` arm of `__struct_drop_<T>`, the `fr_str`
+  arm of `__field_reclaim_<T>` and the construction-side retain that pairs with
+  them — so one call argument left the type on its arrays-only body.
+
+  Why it is sound for strings specifically: `borrowable_params_of` refuses a param
+  that is SLICED, and a slice/`trim` view into the buffer is exactly the uncounted
+  alias `__fern_str_free` would dangle. It also refuses returned, stored and
+  captured params, so the callee holds nothing after it returns.
+
+  **The verdict is now threaded, not recomputed — that is the load-bearing half of
+  the diff.** `strfld_reclaim_ok_types_of` takes the borrowability registry, and
+  every emit path overrides `FnSigs.strfld_ok_types` wherever it overrides
+  `FnSigs.borrowable_params`. Without that, the backend would seed `strfldok:`
+  from the interprocedural fixpoint while the LOWERING routed on `fn_sigs_of`'s
+  single pass — the fixpoint admits strictly more borrows, so the backend would
+  free fields the construction side never retained. The x86 per-unit seeding now
+  reads `b.strfld_ok_types` (the `wp_fn_sigs` the driver builds once outside its
+  per-unit loop) rather than re-running the whole-program walk per emitted unit.
+
+  **#6704 is why the shape of the fix is what it is.** That attempt threaded the
+  registry through `strfld_collect_unsafe` itself and cost +50% emit-all, timing
+  out a CI shard. The control run isolated it: threading a `string[]` through
+  that recursive walk cost **172 s with the exemption disabled**, i.e. most of the
+  regression was the parameter, not the lookups or the extra emitted arms. So the
+  walk takes no new parameter here. A borrowable-position field read is PARKED in
+  the accumulator as a `?<callee>#<idx>:<field>` record — inert for every exact
+  field-name lookup — and `strfld_resolve_deferred` settles all of them once,
+  after the walk. Records are skipped for a field already marked (no verdict can
+  un-mark it) and deduped, so the registry walks are proportional to the fields
+  that can still change the answer rather than to call arguments.
+
+  Unchanged and deliberately so: a callee that RETAINS its argument.
+  `keeps(v: string): string { return v; }` is refused by `borrowable_params_of`,
+  so `var kept = keeps(o.name)` keeps the type marked — measured identically
+  before and after at 12160 B, with `kept` read back after the rebind loop so an
+  over-release would be a wrong exit, not a byte count.

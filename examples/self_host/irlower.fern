@@ -40952,6 +40952,49 @@ function strfld_safe_operand(e: parser.Expr, acc: string[]): string[] {
     return strfld_collect_unsafe(e, acc);
 }
 
+// strfld_defer_arg parks the verdict on `callee(… <field> …)` at position
+// `idx` — a borrowable position is a transient borrow, any other retains — as
+// a "?<callee>#<idx>:<field>" record in the same accumulator. The record is
+// inert for every exact field-name lookup, so it does not admit anything on
+// its own; strfld_resolve_deferred turns the non-borrowable ones into marks.
+// A field already marked cannot be un-marked by any verdict, so it parks
+// nothing — which is what keeps the record count (and the resolve's registry
+// walks) proportional to the fields that can still change the answer.
+function strfld_defer_arg(acc: string[], callee: string, idx: i32, field: string): string[] {
+    if (util.index_of_str(acc, field) >= 0) { return acc; }
+    return push_str_unique(acc, "?" + callee + "#" + util.i32_to_string(idx) + ":" + field);
+}
+
+// strfld_resolve_deferred settles every parked call-argument record against
+// the borrowability registry: a field handed to a position the callee only
+// reads stays admissible, every other one marks. `borrowable_params_of` admits
+// a param only when the callee provably never returns, stores, SLICES or
+// captures it — the slice exclusion is what makes this sound for strings
+// specifically, a view into the buffer being the one alias a later
+// `__fern_str_free` would dangle.
+function strfld_resolve_deferred(names: string[], borrowable: string[]): string[] {
+    var a: string[] = names;
+    var n: i32 = names.len();
+    var i: i32 = 0;
+    while (i < n) {
+        var e: string = names[i];
+        if (e.len() > 0 && e[0] == 63) {                                  // 63 = '?'
+            var h: i32 = 1;
+            while (h < e.len() && e[h] != 35) { h = h + 1; }              // 35 = '#'
+            var c: i32 = h + 1;
+            var idx: i32 = 0;
+            while (c < e.len() && e[c] != 58) { idx = idx * 10 + ((e[c] as i32) - 48); c = c + 1; }   // 58 = ':', 48 = '0'
+            if (c < e.len() && h < e.len()) {
+                if (!param_is_borrowable(borrowable, e[1:h], idx)) {
+                    a = push_str_unique(a, e[c + 1:e.len()]);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
 // strfld_collect_unsafe walks one expression and accumulates every field
 // NAME read in a position that could outlive its box (see the section
 // comment). A bare ExprFieldAccess reached here — i.e. not consumed by one
@@ -40980,6 +41023,9 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
             return strfld_collect_unsafe(sl.end, a);
         },
         parser.ExprCall(c) => {
+            // Free calls only: the borrowability registry is keyed by function
+            // name, and a method's params are not in it.
+            var callee_name: string = "";
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
                     // read-only / fresh-copy string methods borrow their
@@ -40994,13 +41040,31 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
                         match (cfa.obj) { parser.ExprFieldAccess(_) => { a = strfld_mark(cfa.obj, a); }, _ => {} }
                     }
                 },
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
                 _ => { a = strfld_collect_unsafe(c.callee, a); }
             }
-            // ANY argument may retain the value (helpers, appends, map sets
-            // are all calls) — direct reads there are unsafe.
+            // An argument may retain the value (helpers, appends, map sets are
+            // all calls), so a direct read there is unsafe by default — unless
+            // the position is BORROWABLE, which is the same warrant the method
+            // receiver above gets. The verdict lives in a registry this walk
+            // does not carry: threading it through cost the per-module emit-all
+            // ~170 s of walk time on its own (#6703), so the site is PARKED as
+            // a "?callee#idx:field" record and strfld_resolve_deferred settles
+            // every one of them, once, after the walk.
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                a = strfld_collect_unsafe(c.args[ai], a);
+                var deferred: boolean = false;
+                if (callee_name.len() > 0) {
+                    match (c.args[ai]) {
+                        parser.ExprFieldAccess(fa2) => {
+                            a = strfld_defer_arg(a, callee_name, ai, fa2.field);
+                            a = strfld_collect_unsafe(fa2.obj, a);
+                            deferred = true;
+                        },
+                        _ => {}
+                    }
+                }
+                if (!deferred) { a = strfld_collect_unsafe(c.args[ai], a); }
                 ai = ai + 1;
             }
             return a;
@@ -41081,7 +41145,14 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
 // construction-retain decisions — the two must agree, so both come from this
 // one scan); partial-funcs emit paths must pass [] funcs (admitting nothing)
 // rather than a unit-local list.
-pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+//
+// `borrowable` is the SAME registry the caller's FnSigs carries. The two must
+// come from one verdict: the interprocedural fixpoint admits more borrows than
+// the single pass, so a backend seeding "strfldok:" from the fixpoint while the
+// lowering routed on the single pass would free fields nothing retained. Every
+// emit path therefore overrides FnSigs.strfld_ok_types wherever it overrides
+// FnSigs.borrowable_params.
+pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     // Single pass: collect every unsafely-read field NAME across the whole
     // program, then admit each candidate type iff none of its string-field
     // names is in the set.
@@ -41091,6 +41162,7 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         unsafe_names = strfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
         ki = ki + 1;
     }
+    unsafe_names = strfld_resolve_deferred(unsafe_names, borrowable);
     var out: string[] = [];
     var si: i32 = 0;
     while (si < structs.len()) {
@@ -44618,6 +44690,10 @@ pub function array_ret_fn_names(funcs: parser.FuncDecl[]): string[] {
 // precomputed fixpoint (borrowable_params_interproc), which is deliberately NOT
 // borrowable_params_of's single pass.
 pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_ret_fns: string[]): FnSigs {
+    // One verdict for both fields: strfld_reclaim_ok_types_of reads the same
+    // borrowability this FnSigs publishes, so an override of one is an override
+    // of the other (see its contract note).
+    var bparams: string[] = borrowable_params_of(funcs);
     return FnSigs {
         arr_ret_fns: arr_ret_fns,
         str_ret_fns: str_ret_fns_of(funcs),
@@ -44637,14 +44713,14 @@ pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], 
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
         const_fns: const_fns_of(funcs),
-        borrowable_params: borrowable_params_of(funcs),
+        borrowable_params: bparams,
         fn_names: fn_names_of(funcs),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: opt_fresh_ret_fns_of(funcs, structs),
-        strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs),
+        strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs, bparams),
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
     };
