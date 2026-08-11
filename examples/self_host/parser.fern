@@ -2396,30 +2396,48 @@ function parse_lit_alts(p: Par): (Expr[], Expr[], boolean[], boolean[], Par) {
 // it as `if (scrut == lit) { body } else { rest }` (a guard folds in as
 // `scrut == lit && guard`). The caller only routes here when at least
 // one literal arm exists, so the result is always an if statement.
-// EXCEPTION: a wildcard `_` that isn't the LAST arm is an E026 error
-// (native: "wildcard `_` arm must be last"). The backward desugar would
-// silently swallow the unreachable post-`_` arms, and with no StmtMatch
-// left the checker can't see the misplaced wildcard. So in that case we
-// DON'T desugar: we hand back a real StmtMatch (the `_` arm as
-// PatWildcard, every literal arm as a bare PatVariant("") whose empty
-// type-name the E028 / E015 / E030 checks all skip) so the existing
-// match_diags / block_exits passes emit exactly E026 — the same single
-// code native produces. Such a program never type-checks, so this
-// StmtMatch never reaches codegen, and a well-formed literal match
-// (wildcard last or absent) still desugars unchanged.
+// EXCEPTIONS: two shapes are handed back as a real StmtMatch instead of
+// being desugared, because with no StmtMatch left the checker cannot see
+// the arms at all — and both are errors it has a rule for.
+//
+//   * a wildcard `_` that isn't the LAST arm is E026 (native: "wildcard
+//     `_` arm must be last"); the backward desugar would silently swallow
+//     the unreachable post-`_` arms.
+//   * NO unguarded `_` anywhere is E030 — the i32 / string / f64 / boolean
+//     domains are open, so native requires the wildcard and
+//     scalar_match_exhaustive_diags ports that rule. Desugared, the chain
+//     just ends with an empty else, and the arms' `return`s became
+//     invisible to the return-path walk: the diagnostic the user got was
+//     E052 ("can fall off the end"), naming the wrong problem entirely,
+//     and in a void function there was no diagnostic at all (#6683).
+//
+// The StmtMatch spells the `_` arm as PatWildcard and every literal arm as
+// a bare PatVariant("") whose empty type-name the E028 / E015 / union-E030
+// checks all skip, so the existing match_diags / block_exits passes emit
+// exactly the one code native produces. Neither shape ever type-checks, so
+// this StmtMatch never reaches codegen, and a well-formed literal match
+// (an unguarded wildcard, last) still desugars unchanged.
 function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i32): Stmt {
     var wi: i32 = 0;
     var non_last_wild: boolean = false;
+    var saw_wild: boolean = false;
     while (wi < arms.len()) {
-        // Only an UNGUARDED `_` is a true catch-all that makes the
-        // following arms dead (and that native treats as exhaustive, so
-        // E026 is its only diagnostic). A guarded `_ when c` is
-        // conditional — its exhaustiveness (E030) is a separate concern —
-        // so leave those on the normal desugar path.
-        if (arms[wi].is_wild && !arms[wi].has_guard && wi < arms.len() - 1) { non_last_wild = true; }
+        // The two questions take DIFFERENT views of a guarded `_ when c`.
+        //
+        // E026 ("wildcard `_` arm must be last") counts it: native reports the
+        // misplaced-wildcard error for any `_` before the end, guard or no
+        // guard, and the self-host accepted `_ when c => …, _ => …` outright
+        // until this counted it too.
+        //
+        // Exhaustiveness does not: a guarded `_` may fall through, so only an
+        // UNGUARDED one closes the domain and answers E030.
+        if (arms[wi].is_wild) {
+            if (!arms[wi].has_guard) { saw_wild = true; }
+            if (wi < arms.len() - 1) { non_last_wild = true; }
+        }
         wi = wi + 1;
     }
-    if (non_last_wild) {
+    if (non_last_wild || !saw_wild) {
         var marms: MatchArm[] = [];
         var mi: i32 = 0;
         while (mi < arms.len()) {

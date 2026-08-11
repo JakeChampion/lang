@@ -701,6 +701,32 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-bool-with-wildcard-ok", "function main(): i32 { var b: boolean = true; match (b) { true => { return 7; }, _ => { return 1; } } }\n", nil},
 		{"match-int-with-wildcard-ok", "function main(): i32 { var n: i32 = 1; match (n) { 0 => { return 5; }, _ => { return 6; } } }\n", nil},
 		{"match-enum-exhaustive-no-wildcard-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
+		// The NUMERIC and STRING forms of the same rule (#6683). `true`/`false`
+		// arms parse variant-shaped and so kept their StmtMatch, but a numeric or
+		// string literal arm had no Pattern shape to live in: build_literal_match
+		// desugared the whole match to an if-chain, and with the arms gone the
+		// rule could not see them. What the user got instead was E052 — "can fall
+		// off the end", naming the wrong problem — and in a VOID function nothing
+		// at all, so the self-host compiled and ran a program native rejects.
+		{"match-int-literals-no-wildcard", "function main(): i32 { var n: i32 = 1; match (n) { 0 => { return 5; }, 1 => { return 6; } } }\n", []string{"E030"}},
+		{"match-string-literals-no-wildcard", "function main(): i32 { var s: string = \"a\"; match (s) { \"a\" => { return 1; } } }\n", []string{"E030"}},
+		{"match-float-literals-no-wildcard", "function main(): i32 { var x: f64 = 1.5; match (x) { 1.5 => { return 5; } } }\n", []string{"E030"}},
+		{"match-range-arm-no-wildcard", "function main(): i32 { var n: i32 = 1; match (n) { 0..3 => { return 5; } } }\n", []string{"E030"}},
+		// A guarded `_` may fall through, so it does not make the match
+		// exhaustive — the numeric sibling of the boolean guarded-wildcard row.
+		{"match-int-guarded-wildcard-only", "function main(): i32 { var n: i32 = 1; match (n) { 0 => { return 5; }, _ when n > 9 => { return 6; } } return 7; }\n", []string{"E030"}},
+		// A misplaced wildcard must still report E026 alone, not E026+E030: the
+		// same StmtMatch hand-back serves both, and reporting one code where
+		// native reports one is the point.
+		{"match-int-misplaced-wildcard", "function main(): i32 { var n: i32 = 1; match (n) { _ => { return 5; }, 1 => { return 6; } } }\n", []string{"E026"}},
+		// Found while fixing the above: a GUARDED `_` before the end is E026 on
+		// native too — the misplaced-wildcard rule does not care about the guard,
+		// only exhaustiveness does. The self-host had accepted this outright.
+		{"match-int-misplaced-guarded-wildcard", "function main(): i32 { var n: i32 = 12; match (n) { 0 => { return 5; }, _ when n > 9 => { return 11; }, _ => { return 6; } } }\n", []string{"E026"}},
+		{"match-enum-misplaced-guarded-wildcard", "enum E { A, B }\nfunction main(): i32 { var e: E = A; match (e) { A => { return 5; }, _ when 1 > 2 => { return 6; }, _ => { return 7; } } }\n", []string{"E026"}},
+		{"match-int-guarded-wildcard-last-ok", "function main(): i32 { var n: i32 = 1; match (n) { 0 => { return 5; }, _ when n > 9 => { return 6; } } return 7; }\n", []string{"E030"}},
+		{"match-string-with-wildcard-ok", "function main(): i32 { var s: string = \"a\"; match (s) { \"a\" => { return 1; }, _ => { return 2; } } }\n", nil},
+		{"match-range-with-wildcard-ok", "function main(): i32 { var n: i32 = 1; match (n) { 0..3 => { return 5; }, _ => { return 6; } } }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
