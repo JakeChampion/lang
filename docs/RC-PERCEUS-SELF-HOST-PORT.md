@@ -6812,8 +6812,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   un-mark it) and deduped, so the registry walks are proportional to the fields
   that can still change the answer rather than to call arguments.
 
+  **The cost is inside run-to-run variance, measured against the same tree on the
+  same box** — which is the only comparison worth making here, because the
+  entry above measures 86.4 s / 206.8 s for the deduped gen0 / gen1 and this
+  4-core container does not reproduce those figures for `main` at all:
+
+  | emit-all (batch=8) | gen0 | gen1 | wall | peak gen0 / gen1 |
+  |---|---|---|---|---|
+  | `main` @ 97dad1d | 163.6 s | 283.0 s | 533.5 s | 2.24 / 9.24 GB |
+  | with this change | 167.9 s | 299.5 s | 553.3 s | 2.16 / 9.22 GB |
+
+  +2.6% / +5.8%, against the ±16% spread two samples of the same tree showed in
+  #6704's session. **Quote a machine's own baseline, not the number in the entry
+  above** — the gap between 86.4 s and 163.6 s for the same commit is the size of
+  the hardware difference between two dev boxes, and #6704 was withdrawn partly
+  on a cross-box comparison.
+
   Unchanged and deliberately so: a callee that RETAINS its argument.
   `keeps(v: string): string { return v; }` is refused by `borrowable_params_of`,
   so `var kept = keeps(o.name)` keeps the type marked — measured identically
   before and after at 12160 B, with `kept` read back after the rebind loop so an
   over-release would be a wrong exit, not a byte count.
+
+  VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` PASS (gen0 == gen1
+  across 36 units, no OOM) on this change AND on its `main` baseline;
+  `TestSelfHostBorrowedFieldArgReclaimX86_64` — two new rows, a k-sweep of the
+  call spelling against the direct read and the retaining-callee negative, the
+  sweep FAILING on the parent where the byte count tracks k; and the eight other
+  `strfldok` suites (`FieldReclaimStr` x86-64 + wasm, `StrOnlyStructExitDrop`,
+  `StructArrStrFieldReclaim`, `StructArrStrFieldHazards`,
+  `StructStrFieldReclaim`, `StrFldDropGate`, `OptStructStringField`) green.
+  Refs #6703 #6704 #6698 #6707 #4451.
