@@ -165,7 +165,7 @@ function arm64_elf_binary_pie(asm: string): string {
 // x86_resolve fixes .rodata references against the 8-byte-padded .text
 // length, which is exactly this layout. W^X would need the assembler to
 // resolve against a page-aligned data vaddr, as arm64_gas_link does.
-function x86_elf_binary(asm: string): string {
+function x86_elf_binary(asm: string, emit_syms: boolean): string {
     var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
     // Absolute `.quad <label>` pointers need the load address, which the ELF
     // container picks — the analogue of arm64_gas_link's data-vaddr argument.
@@ -184,6 +184,18 @@ function x86_elf_binary(asm: string): string {
         return "";
     }
     var bin: i32[] = elf.elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, eoff);
+    if (emit_syms) {
+        // `-g`: a static .symtab so nm / a debugger / a profiler can map an
+        // address back to a function. Only .text labels (section 0) become
+        // symbols, and the sizes span to the end of the code, which is what
+        // lets a backtrace attribute an address INSIDE a function rather
+        // than only an exact entry point.
+        var end: i32 = a.code.len();
+        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr(), elf.elf_text_off(), a.code.len(),
+            elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+            elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
+            elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end));
+    }
     return string_from_bytes_unchecked(to_u8(bin));
 }
 
@@ -479,6 +491,7 @@ function run(): i32 {
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
     var optimize: boolean = false;
+    var emit_syms: boolean = false;
     var have_entry: boolean = false;
 
     var i: i32 = 1;
@@ -505,6 +518,12 @@ function run(): i32 {
             // the whole merged program (non-bailing), then exit. Measures
             // per-function SSA coverage without the all-or-nothing try_ssa bail.
             mode_scan = true;
+        } else if (a == "-g") {
+            // Emit a static .symtab into the native binary (#6637). x86-64
+            // Linux only for now: arm64 links through arm64_gas_link's W^X
+            // image, which needs its own wiring. Native excludes darwin and
+            // android from -g too.
+            emit_syms = true;
         } else if (a == "-O") {
             optimize = true;
         } else if (a == "-target") {
@@ -739,7 +758,7 @@ function run(): i32 {
             // as-is.
             var ssa_out: string = sr.asm;
             if (target == "x86-64") {
-                ssa_out = x86_elf_binary(sr.asm);
+                ssa_out = x86_elf_binary(sr.asm, emit_syms);
                 if (ssa_out.len() == 0) { return 2; }
             } else if (target == "arm64") {
                 ssa_out = arm64_elf_binary(sr.asm);
@@ -909,7 +928,7 @@ function run(): i32 {
         // The text is then assembled + linked in-process (x86_native + elf.fern),
         // so `-target x86-64` produces a runnable binary like `-target arm64`
         // does and needs nothing on $PATH.
-        out_asm = x86_elf_binary(asm_ir.emit_module_or_error(full));
+        out_asm = x86_elf_binary(asm_ir.emit_module_or_error(full), emit_syms);
         if (out_asm.len() == 0) { return 2; }
     }
     if (out_path.len() > 0) {
