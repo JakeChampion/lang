@@ -17,9 +17,11 @@
 // self-referential: it does not care whether the compiler reproduces
 // itself, only whether the ops it emitted can be lowered at all.
 //
-// This file checks STRUCTURE. Native's sibling verifystack.go (operand-stack
-// discipline) and verifyprovided.go have no counterpart yet — #6639 slices 2
-// and 4.
+// This file checks STRUCTURE. Operand-stack discipline is its sibling
+// irverifystack.fern (#6639 slice 2), which reuses this file's Problem and
+// stands down wherever the two overlap — a malformed scope or an
+// out-of-range branch depth is reported here and only here. Native's
+// verifyprovided.go still has no counterpart (slice 4).
 
 import "./ir";
 import "./util";

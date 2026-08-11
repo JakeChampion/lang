@@ -1,5 +1,6 @@
-// examples/self_host/irverify_run.fern — driver for the IR structure
-// verifier (irverify.fern, #6639 slice 1).
+// examples/self_host/irverify_run.fern — driver for the IR verifiers: the
+// structure pass (irverify.fern, #6639 slice 1) and the operand-stack pass
+// (irverifystack.fern, slice 2).
 //
 // Every check is asserted in BOTH directions: a malformed op stream it must
 // report, and a well-formed one it must stay silent on. The silent half is
@@ -13,6 +14,7 @@
 
 import "./ir";
 import "./irverify";
+import "./irverifystack";
 import "./util";
 
 function no_sigs(): irverify.FnSig[] { return []; }
@@ -27,6 +29,133 @@ function first_msg(ops: ir.Op[], n_params: i32, n_locals: i32): string {
     var ps: irverify.Problem[] = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
     if (ps.len() == 0) { return ""; }
     return irverify.problem_str(ps[0]);
+}
+
+// ---- operand-stack pass helpers (#6639 slice 2) ------------------------
+
+// sp_count is how many stack problems `ops` draws. A bailed function reports
+// nothing, so this is 0 for an unmodelled stream — sp_bail is what
+// distinguishes "clean" from "not looked at".
+function sp_count(ops: ir.Op[]): i32 {
+    return irverifystack.verify_stack_fn("f", ops).problems.len();
+}
+
+function sp_msg(ops: ir.Op[]): string {
+    var r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
+    if (r.problems.len() == 0) { return ""; }
+    return irverify.problem_str(r.problems[0]);
+}
+
+function sp_bail(ops: ir.Op[]): string {
+    return irverifystack.verify_stack_fn("f", ops).bail;
+}
+
+// stack_checks runs the operand-stack assertions and returns 0, or the failing
+// case's id. Split out of main because the two passes' cases are independent
+// and the driver's exit code has to name exactly one of them.
+function stack_checks(): i32 {
+    // ---- 1. the balanced baseline -------------------------------------
+    // A stream that pushes its result and returns it is clean, and so is one
+    // that ends at height 0: both backends append a fallthrough result past
+    // the last op, so an empty stack at the end IS the well-formed shape.
+    if (sp_count([ir.op_const_i32(1), ir.op_return()]) != 0) { return 70; }
+    if (sp_count([ir.op_const_i32(1), ir.op_drop()]) != 0) { return 71; }
+    if (sp_count([]) != 0) { return 72; }
+
+    // A value still held where the function falls off its end is the case
+    // that backend fallthrough cannot absorb: it would be pushed ON TOP.
+    var dangling: ir.Op[] = [ir.op_const_i32(1)];
+    if (sp_count(dangling) != 1) { return 73; }
+    if (!util.contains(sp_msg(dangling), "falls off its end holding 1 operand slot")) { return 74; }
+
+    // ---- 2. underflow --------------------------------------------------
+    // An op with no operands to take. One report, not one per following op.
+    var starved: ir.Op[] = [ir.op_bin("add", 0, false), ir.op_return()];
+    if (sp_count(starved) != 1) { return 75; }
+    if (!util.contains(sp_msg(starved), "operand stack underflow - needs 2 operand slot(s)")) { return 76; }
+    if (sp_count([ir.op_drop()]) != 1) { return 77; }
+
+    // A scope's floor is its own: the enclosing frame's values are not
+    // reachable from inside it, which is what makes each `end` checkable.
+    if (sp_count([ir.op_const_i32(1), ir.op_block(0), ir.op_drop(), ir.op_end(), ir.op_return()]) != 1) { return 78; }
+
+    // ---- 3. scope height -----------------------------------------------
+    // Every scope irlower opens is void, so it must leave the stack where it
+    // found it.
+    var leaky_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+    if (sp_count(leaky_if) != 1) { return 80; }
+    if (!util.contains(sp_msg(leaky_if), "the if opened at op 1 leaves 1 operand slot(s), but it is void")) { return 81; }
+
+    // The then-arm is checked at the `else`, so a two-armed if names which
+    // arm is unbalanced rather than blaming the end.
+    var leaky_then: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_else(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+    if (sp_count(leaky_then) != 1) { return 82; }
+    if (!util.contains(sp_msg(leaky_then), "the then-arm leaves 1 operand slot(s)")) { return 83; }
+
+    // A balanced if/else, and a balanced loop, are clean.
+    var balanced_if: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(2), ir.op_drop(), ir.op_else(), ir.op_const_i32(3), ir.op_drop(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+    if (sp_count(balanced_if) != 0) { return 84; }
+    var wloop: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_const_i32(1), ir.op_brif(1), ir.op_br(0), ir.op_end(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+    if (sp_count(wloop) != 0) { return 85; }
+
+    // ---- 4. unreachable code is polymorphic ----------------------------
+    // After a `br` the rest of the scope cannot be entered, so wasm validates
+    // it against a polymorphic stack — and so does this pass, or every
+    // lowered `return` inside a match arm would report an underflow.
+    if (sp_count([ir.op_block(0), ir.op_br(0), ir.op_bin("add", 0, false), ir.op_end(), ir.op_const_i32(0), ir.op_return()]) != 0) { return 86; }
+    if (sp_count([ir.op_const_i32(1), ir.op_return(), ir.op_drop()]) != 0) { return 87; }
+
+    // A branch to the FUNCTION BODY is the return-shaped exit, so it carries
+    // the result — the one label in the function that is not void.
+    if (sp_count([ir.op_br(0)]) != 1) { return 88; }
+    if (!util.contains(sp_msg([ir.op_br(0)]), "branch to the function body needs 1 operand slot")) { return 89; }
+    if (sp_count([ir.op_const_i32(0), ir.op_br(0)]) != 0) { return 90; }
+
+    // ---- 5. arities the corpus sweep pinned ----------------------------
+    // The three composite-element writes consume their value; the raw store
+    // intrinsics beside them re-push it. Getting either backwards leaves a
+    // slot at the enclosing end, which is how the sweep found them.
+    if (sp_count([ir.op_const_i32(0), ir.op_const_i32(0), ir.op_const_i32(0), ir.op_arr_set(32)]) != 0) { return 91; }
+    if (sp_count([ir.op_const_i32(0), ir.op_const_i32(0), ir.op_struct_set(0, 0)]) != 0) { return 92; }
+    if (sp_count([ir.op_const_i32(0), ir.op_const_i32(0), ir.op_store_i32(), ir.op_drop()]) != 0) { return 93; }
+    // map_new takes its size hint from the stack, unlike the nullary builtins.
+    if (sp_count([ir.op_const_i32(4), ir.op_map_new(1, ""), ir.op_return()]) != 0) { return 94; }
+    // call_indirect pops its arguments AND the funcref pushed above them.
+    if (sp_count([ir.op_const_i32(1), ir.op_const_func(0, "f"), ir.op_call_indirect(1), ir.op_return()]) != 0) { return 95; }
+    if (sp_count([ir.op_const_func(0, "f"), ir.op_call_indirect(1), ir.op_return()]) != 1) { return 96; }
+
+    // ---- 6. fail-soft --------------------------------------------------
+    // An op the pass does not model abandons the function rather than
+    // guessing at its arity, and says which op it was.
+    var unmodelled: ir.Op[] = [ir.op_load(32)];
+    if (sp_bail(unmodelled) != "unmodelled op load") { return 100; }
+    if (sp_count(unmodelled) != 0) { return 101; }
+
+    // A non-void scope is not something irlower emits; modelling what it
+    // leaves behind would be guessing.
+    if (!util.contains(sp_bail([ir.op_block(1), ir.op_end()]), "non-void block type 1")) { return 102; }
+
+    // The malformed-scope shapes belong to the structure pass, so this one
+    // stands down rather than reporting the same defect twice.
+    if (sp_bail([ir.op_end()]) != "end with no open scope") { return 103; }
+    if (sp_bail([ir.op_block(0), ir.op_else(), ir.op_end()]) != "malformed else") { return 104; }
+    if (sp_bail([ir.op_block(0), ir.op_br(9), ir.op_end()]) != "branch depth has no target") { return 105; }
+
+    // A clean function bails with nothing, which is what makes the coverage
+    // number meaningful.
+    if (sp_bail([ir.op_const_i32(1), ir.op_return()]).len() != 0) { return 106; }
+
+    // ---- 7. coverage ---------------------------------------------------
+    var cov: irverifystack.Coverage = irverifystack.coverage_new();
+    cov = irverifystack.coverage_add(cov, "a", "");
+    cov = irverifystack.coverage_add(cov, "b", "unmodelled op load");
+    cov = irverifystack.coverage_add(cov, "c", "unmodelled op load");
+    if (cov.funcs != 3 || cov.modelled != 1) { return 110; }
+    if (cov.skipped_fns.len() != 2 || cov.skipped_fns[0] != "b") { return 111; }
+    if (!util.contains(irverifystack.coverage_str(cov), "modelled 1/3")) { return 112; }
+    // Reasons are grouped by cause, so a systemic skip reads as one line.
+    if (!util.contains(irverifystack.coverage_str(cov), "skipped 2: unmodelled op load")) { return 113; }
+    return 0;
 }
 
 function main(): i32 {
@@ -173,6 +302,10 @@ function main(): i32 {
     // A clean function renders to the empty string.
     if (irverify.format_problems(irverify.verify_fn("f", balanced, 0, 1, no_sigs()), 10).len() != 0) { return 66; }
 
+    var sc: i32 = stack_checks();
+    if (sc != 0) { return sc; }
+
     print("irverify: all structural checks agree");
+    print("irverifystack: all stack checks agree");
     return 0;
 }
