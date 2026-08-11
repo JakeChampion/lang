@@ -3868,6 +3868,28 @@ function ir_bin_asm(tag: i32, width: i32): string {
     return "    # ir: unsupported bin " + ir.kind_name(tag) + "\n";
 }
 
+// ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
+// immediately before it, and "" when that doesn't apply. In a stack machine
+// the op right before a binary pushes its rhs, so a readable const there is
+// the shift count — the same adjacency ir.reduce_strength keys off.
+//
+// Worth special-casing because the register form is two instructions, not one:
+// the count has to be masked (`andl $31, %ecx`) before a variable-count shift.
+// With the count known the mask folds into the immediate, and `shlq $3` is a
+// single-uop shift where `shlq %cl` is not. Without this, ir.reduce_strength's
+// `x * 8` -> `x << 3` would trade one imul for a mask plus a variable shift and
+// come out behind.
+function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
+    if (tag != 31 && tag != 32 && tag != 33) { return ""; }
+    if (!ir.const_i32_readable(prev)) { return ""; }
+    var k: i32 = ir.const_i32_value(prev) & 31;
+    if (width == 64) { k = ir.const_i32_value(prev) & 63; }
+    var imm: string = " $" + util.i32_to_string(k) + ", %rax\n";
+    if (tag == 31) { return "    shlq" + imm; }
+    if (tag == 32) { return "    sarq" + imm; }
+    return "    shrq" + imm;
+}
+
 // ir_div_guarded renders a non-trapping i32/i64 signed/unsigned div or rem
 // (dividend in %rax, divisor in %rcx, result in %rax). x86 idivq/divq raise
 // #DE (SIGFPE) on a zero divisor and on INT_MIN/-1 overflow, but the language
@@ -5776,7 +5798,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
                 // label base — reuse the loop prefix + this op's index.
                 s = s.write(ir_div_guarded(o.kind_tag, o.width, lp + util.i32_to_string(i)));
             } else {
-                s = s.write(ir_bin_asm(o.kind_tag, o.width));
+                var shimm: string = "";
+                if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
+                if (shimm.len() > 0) { s = s.write(shimm); }
+                else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
             }
             s = s.write("    pushq %rax\n");
         }

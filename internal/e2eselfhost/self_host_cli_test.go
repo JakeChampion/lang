@@ -53,6 +53,56 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		return out, cmd.ProcessState.ExitCode()
 	}
 
+	// `async function` end-to-end (#6631). printer.fern's own round-trip
+	// assertions cover parse → print → parse; what they cannot show is that
+	// the annotation survives the REAL driver, whose module pipeline runs the
+	// AST-rewrite passes (label resolution, range desugar, defer lowering)
+	// that each rebuild a FuncDecl field by field. A copy site hardcoding
+	// `async: false` drops the bit there and nowhere else.
+	t.Run("async-function-through-the-driver", func(t *testing.T) {
+		src := "async function work(): i32 { return 7; }\nfunction main(): i32 { return work(); }\n"
+		path := filepath.Join(dir, "async_prog.fern")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		out, code := runDriver(t, "-fmt", path)
+		if code != 0 {
+			t.Fatalf("-fmt exit = %d, want 0 (out: %s)", code, out)
+		}
+		if !strings.HasPrefix(string(out), "async function work") {
+			t.Errorf("-fmt dropped the async modifier; got:\n%s", out)
+		}
+		// And the annotated function still runs — `async` is a marker, so the
+		// body must behave exactly as an unannotated one.
+		if _, code := runDriver(t, "-interp", path); code != 7 {
+			t.Errorf("-interp exit = %d, want 7", code)
+		}
+		// `-check` has to be clean on BOTH channels. A modifier that is not
+		// recognised at the decl dispatch does not fail the parse: it falls
+		// through to `parse_stmt` as a bare identifier expression and the
+		// declaration behind it parses normally, so the run still exits 0
+		// while the checker reports `undefined name "async"` on stderr.
+		// Exit status alone therefore proves nothing here (#6659).
+		checkCmd := exec.Command(fernBin, "-check", path)
+		var checkErr bytes.Buffer
+		checkCmd.Stderr = &checkErr
+		if err := checkCmd.Run(); err != nil {
+			t.Errorf("-check failed: %v (stderr: %s)", err, checkErr.String())
+		}
+		if checkErr.Len() != 0 {
+			t.Errorf("-check exited 0 but wrote diagnostics:\n%s", checkErr.String())
+		}
+		// Contextual: `async` in any other position stays an identifier.
+		identPath := filepath.Join(dir, "async_ident.fern")
+		identSrc := "function main(): i32 { var async: i32 = 3; return async + 4; }\n"
+		if err := os.WriteFile(identPath, []byte(identSrc), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if _, code := runDriver(t, "-interp", identPath); code != 7 {
+			t.Errorf("`async` as an identifier: exit = %d, want 7", code)
+		}
+	})
+
 	// The u32 decimal formatter is reachable ONLY through this driver. It needs
 	// `import "std/u32"` (or std/string, which uses it), and every other
 	// self-host wasm driver — wasm_run, wasm_ir_run, wasm_modload_run — parses

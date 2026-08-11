@@ -1,0 +1,125 @@
+// examples/self_host/ir_strength_run.fern — driver for the stack IR's
+// strength-reduction peephole (ir.fern's reduce_strength / optimize_ops, the
+// op-list twin of native's internal/ir/strength.go, issue #6638).
+//
+// Each case builds a small op list, runs the pass, and prints the rendered
+// result. The companion Go test (internal/e2eselfhost/self_host_ir_strength_test.go)
+// asserts the exact stdout, so a rewrite that changes shape — or one that
+// starts firing where it must NOT (signed div/rem by a power of two, a
+// 64-bit-width binary, a non-decimal literal) — fails the golden rather than
+// silently changing what every backend receives.
+//
+// The last cases cover optimize_ops, where folding and strength reduction feed
+// each other, and assert the pass is idempotent (a second run is a no-op).
+
+import "./ir";
+import "./util";
+
+// render joins an op list into one line, so a case's whole shape is a single
+// comparable string.
+function render(ops: ir.Op[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (i > 0) { s = s + " ; "; }
+        s = s + ir.render_op(ops[i]);
+        i = i + 1;
+    }
+    return s;
+}
+
+// base is the `<expr>` every case's `const K ; binop` pair sits after.
+function base(): ir.Op {
+    return ir.op_load_local(0);
+}
+
+// case_bin renders reduce_strength over `load_local 0 ; const k ; <kind@width>`.
+function case_bin(label: string, k: i32, kind: string, width: i32): string {
+    var ops: ir.Op[] = [base(), ir.op_const_i32(k), ir.op_bin(kind, width, false)];
+    return label + ": " + render(ir.reduce_strength(ops)) + "\n";
+}
+
+function main(): i32 {
+    var out: string = "";
+
+    // 1. Multiplication.
+    out = out + case_bin("mul_1", 1, "mul", 0);
+    out = out + case_bin("mul_0", 0, "mul", 0);
+    out = out + case_bin("mul_8", 8, "mul", 0);
+    out = out + case_bin("mul_2", 2, "mul", 0);
+    out = out + case_bin("mul_3", 3, "mul", 0);
+    out = out + case_bin("mul_neg8", 0 - 8, "mul", 0);
+
+    // 2. Additive / bitwise / shift identities on a zero constant.
+    out = out + case_bin("add_0", 0, "add", 0);
+    out = out + case_bin("sub_0", 0, "sub", 0);
+    out = out + case_bin("or_0", 0, "or", 0);
+    out = out + case_bin("xor_0", 0, "xor", 0);
+    out = out + case_bin("shl_0", 0, "shl", 0);
+    out = out + case_bin("shr_s_0", 0, "shr_s", 0);
+    out = out + case_bin("shr_u_0", 0, "shr_u", 0);
+    out = out + case_bin("add_1", 1, "add", 0);
+
+    // 3. Masking.
+    out = out + case_bin("and_0", 0, "and", 0);
+    out = out + case_bin("and_neg1", 0 - 1, "and", 0);
+    out = out + case_bin("and_7", 7, "and", 0);
+
+    // 4. Division / remainder. The SIGNED power-of-two forms must survive
+    //    untouched — div_s rounds toward zero where shr_s rounds toward
+    //    negative infinity, and rem_s keeps the dividend's sign.
+    out = out + case_bin("div_s_1", 1, "div_s", 0);
+    out = out + case_bin("div_s_8", 8, "div_s", 0);
+    out = out + case_bin("div_u_1", 1, "div_u", 0);
+    out = out + case_bin("div_u_8", 8, "div_u", 0);
+    out = out + case_bin("div_u_6", 6, "div_u", 0);
+    out = out + case_bin("rem_s_1", 1, "rem_s", 0);
+    out = out + case_bin("rem_s_8", 8, "rem_s", 0);
+    out = out + case_bin("rem_u_1", 1, "rem_u", 0);
+    out = out + case_bin("rem_u_8", 8, "rem_u", 0);
+    out = out + case_bin("rem_u_6", 6, "rem_u", 0);
+
+    // 5. Width guard: a 64-bit binary keeps its i32 constant untouched — the
+    //    replacement const is an op_const_i32, so splicing one in would hand
+    //    the backend a mismatched-width operand.
+    out = out + case_bin("mul_8_w64", 8, "mul", 64);
+    out = out + case_bin("add_0_w64", 0, "add", 64);
+
+    // 6. Literal shapes. A source literal lowers to const_i32_text, which
+    //    qualifies only when its text is a plain decimal i32 — a hex literal
+    //    reads as 0 through digits_to_i32 and must not be mistaken for `* 0`.
+    var textdec: ir.Op[] = [base(), ir.op_const_i32_text("8"), ir.op_bin("mul", 0, false)];
+    out = out + "mul_text_8: " + render(ir.reduce_strength(textdec)) + "\n";
+    var texthex: ir.Op[] = [base(), ir.op_const_i32_text("0x10"), ir.op_bin("mul", 0, false)];
+    out = out + "mul_text_hex: " + render(ir.reduce_strength(texthex)) + "\n";
+
+    // 7. A chain reduces in a single walk: the rewrite's output is appended
+    //    rather than rescanned, but the remaining input still is.
+    var chain: ir.Op[] = [base(), ir.op_const_i32(4), ir.op_bin("mul", 0, false),
+                          ir.op_const_i32(2), ir.op_bin("mul", 0, false)];
+    out = out + "chain: " + render(ir.reduce_strength(chain)) + "\n";
+
+    // 8. optimize_ops — folding feeds strength: `2 + 2` collapses to 4, which
+    //    is then a power of two.
+    var fold_then: ir.Op[] = [base(), ir.op_const_i32(2), ir.op_const_i32(2),
+                              ir.op_bin("add", 0, false), ir.op_bin("mul", 0, false)];
+    out = out + "fold_then_strength: " + render(ir.optimize_ops(fold_then)) + "\n";
+
+    // 9. optimize_ops — strength feeds folding: `* 0` leaves a `const_i32 0`
+    //    next to the constant that followed, which the next fold round eats.
+    var strength_then: ir.Op[] = [base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
+                                  ir.op_const_i32(5), ir.op_bin("add", 0, false)];
+    var once: ir.Op[] = ir.optimize_ops(strength_then);
+    out = out + "strength_then_fold: " + render(once) + "\n";
+
+    // 10. Idempotence: the fixpoint is a fixpoint.
+    var twice: ir.Op[] = ir.optimize_ops(once);
+    var stable: i32 = 0;
+    if (render(twice) == render(once)) { stable = 1; }
+    out = out + "idempotent=" + util.i32_to_string(stable) + "\n";
+
+    write(out);
+
+    // Exit code: 0 when the fixpoint held.
+    return 1 - stable;
+}

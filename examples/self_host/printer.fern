@@ -224,6 +224,10 @@ function print_func_decl(fd: parser.FuncDecl): string {
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
+    // `async` selects the WASI Preview-3 `canon lift async` export surface, so
+    // dropping it changes what a `-target wasm-bin` build exports. Native
+    // rejects `async` combined with `fip`, so the two never both print.
+    if (fd.async) { out = out + "async "; }
     // `fip` selects the E053 no-allocation walk, so dropping it here would make
     // formatting a file stop verifying the guarantee the annotation exists to
     // state. The parser models `fip: boolean` only — it folds the graded
@@ -796,6 +800,32 @@ function main(): i32 {
     if (rtDrv.structs[0].derives[0] != "Eq") { return 198; }
     if (rtDrv.funcs.len() != modDrv.funcs.len()) { return 199; }
 
+    // `async` is the same class of modifier (#6631): it selects the Preview-3
+    // `canon lift async` export surface, so dropping it changes what a
+    // `-target wasm-bin` build exports. The bit has to survive BOTH the parse
+    // and the print — the AST-rewrite passes each rebuild a FuncDecl field by
+    // field, so a copy site that hardcodes `async: false` drops it downstream
+    // of a parse that reported it set, which only the round trip catches.
+    var srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
+    var modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
+    if (modJ.funcs.len() != 2) { return 200; }
+    if (!modJ.funcs[0].async) { return 201; }
+    if (modJ.funcs[1].async) { return 202; }
+    var rtJ: parser.Module = roundtrip_module(srcJ);
+    if (rtJ.funcs.len() != 2) { return 203; }
+    if (!rtJ.funcs[0].async) { return 204; }
+    if (rtJ.funcs[1].async) { return 205; }
+    // `pub async function` — `pub` is stripped by the parser and stays dropped
+    // (#6633); the `async` bit behind it must still survive.
+    var rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
+    if (rtK.funcs.len() != 1) { return 206; }
+    if (!rtK.funcs[0].async) { return 207; }
+    // Contextual only: `async` followed by anything else stays an ordinary
+    // identifier, and no function is marked.
+    var rtL: parser.Module = roundtrip_module("function main(): i32 { var async: i32 = 3; return async + 4; }");
+    if (rtL.funcs.len() != 1) { return 208; }
+    if (rtL.funcs[0].async) { return 209; }
+
     // An enum must survive as an ENUM. The parser desugars it into one struct
     // per variant, so a printer with no enum arm renders those structs and the
     // type itself disappears — output that no longer compiles, because the
@@ -805,51 +835,51 @@ function main(): i32 {
     var srcEnum: string = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { var c: Color = Red; return 0; }";
     var modEnum: parser.Module = parser.parse_module(lexer.tokenize(srcEnum));
     var rtEnum: parser.Module = roundtrip_module(srcEnum);
-    if (rtEnum.enums.len() != 1) { return 200; }
-    if (rtEnum.enums[0].name != "Color") { return 201; }
-    if (rtEnum.enums[0].variant_names.len() != 2) { return 202; }
-    if (rtEnum.enums[0].variant_names[0] != "Red") { return 203; }
-    if (rtEnum.enums[0].variant_names[1] != "Green") { return 204; }
+    if (rtEnum.enums.len() != 1) { return 210; }
+    if (rtEnum.enums[0].name != "Color") { return 211; }
+    if (rtEnum.enums[0].variant_names.len() != 2) { return 212; }
+    if (rtEnum.enums[0].variant_names[0] != "Red") { return 213; }
+    if (rtEnum.enums[0].variant_names[1] != "Green") { return 214; }
     var rgi: i32 = variant_decl_index(rtEnum.structs, "Color", "Green");
-    if (rgi < 0) { return 205; }
-    if (rtEnum.structs[rgi].fields.len() != 1) { return 206; }
-    if (rtEnum.structs[rgi].fields[0].type_name != "i32") { return 207; }
+    if (rgi < 0) { return 215; }
+    if (rtEnum.structs[rgi].fields.len() != 1) { return 216; }
+    if (rtEnum.structs[rgi].fields[0].type_name != "i32") { return 217; }
     // …and the payload-less variant must not acquire one.
     var rri: i32 = variant_decl_index(rtEnum.structs, "Color", "Red");
-    if (rri < 0) { return 208; }
-    if (rtEnum.structs[rri].fields.len() != 0) { return 209; }
+    if (rri < 0) { return 218; }
+    if (rtEnum.structs[rri].fields.len() != 0) { return 219; }
     // No variant may come back as a free-standing struct.
     var esi: i32 = 0;
     while (esi < rtEnum.structs.len()) {
-        if (rtEnum.structs[esi].enum_owner.len() == 0) { return 210; }
+        if (rtEnum.structs[esi].enum_owner.len() == 0) { return 220; }
         esi = esi + 1;
     }
     // `@derive` once on the enum, not once per variant: the re-parse
     // synthesises the same method set the first parse did.
-    if (rtEnum.structs[rgi].derives.len() != 1) { return 211; }
-    if (rtEnum.structs[rgi].derives[0] != "Eq") { return 212; }
-    if (rtEnum.funcs.len() != modEnum.funcs.len()) { return 213; }
+    if (rtEnum.structs[rgi].derives.len() != 1) { return 221; }
+    if (rtEnum.structs[rgi].derives[0] != "Eq") { return 222; }
+    if (rtEnum.funcs.len() != modEnum.funcs.len()) { return 223; }
 
     // Generic parameters and `@must_consume` live on the EnumDecl, not on the
     // variant records, so they travel a different route out of the printer.
     var srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
     var rtEG: parser.Module = roundtrip_module(srcEG);
-    if (rtEG.enums.len() != 1) { return 214; }
-    if (!rtEG.enums[0].must_consume) { return 215; }
-    if (rtEG.enums[0].type_params.len() != 1) { return 216; }
-    if (rtEG.enums[0].type_params[0] != "T") { return 217; }
+    if (rtEG.enums.len() != 1) { return 224; }
+    if (!rtEG.enums[0].must_consume) { return 225; }
+    if (rtEG.enums[0].type_params.len() != 1) { return 226; }
+    if (rtEG.enums[0].type_params[0] != "T") { return 227; }
     var fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
-    if (fgi < 0) { return 218; }
-    if (rtEG.structs[fgi].fields[0].type_name != "T") { return 219; }
+    if (fgi < 0) { return 228; }
+    if (rtEG.structs[fgi].fields[0].type_name != "T") { return 229; }
 
     // A multi-payload variant keeps every payload, in order.
     var srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
     var rtEM: parser.Module = roundtrip_module(srcEM);
     var tpi: i32 = variant_decl_index(rtEM.structs, "Pair", "Two");
-    if (tpi < 0) { return 220; }
-    if (rtEM.structs[tpi].fields.len() != 2) { return 221; }
-    if (rtEM.structs[tpi].fields[0].type_name != "i32") { return 222; }
-    if (rtEM.structs[tpi].fields[1].type_name != "string") { return 223; }
+    if (tpi < 0) { return 230; }
+    if (rtEM.structs[tpi].fields.len() != 2) { return 231; }
+    if (rtEM.structs[tpi].fields[0].type_name != "i32") { return 232; }
+    if (rtEM.structs[tpi].fields[1].type_name != "string") { return 233; }
 
     return 0;
 }

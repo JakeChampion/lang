@@ -18,12 +18,14 @@ import (
 // still compiled — a program native accepts, rejected by the self-host for
 // a name the source never used.
 //
-// The self-host DROPS both marks (parser.skip_decl_modifier): it emits no
-// component-model async surface (#6636), and native's E021 opaque-access
-// rule needs per-decl module provenance the self-host checker does not
-// carry. So the contract these tests pin is that each form parses, checks
-// clean, and reaches codegen as an ordinary function / struct decl — plus
-// that both names stay usable as ordinary identifiers.
+// `async` is STAMPED onto the FuncDecl and reprinted by `-fmt`; `opaque` is
+// DROPPED, because native's E021 opaque-access rule needs per-decl module
+// provenance the self-host checker does not carry. Neither mark changes
+// codegen — the self-host emits no component-model async surface (#6636) —
+// so the contract these tests pin is that each form parses, checks clean,
+// and reaches codegen as an ordinary function / struct decl, plus that both
+// names stay usable as ordinary identifiers. The `async` bit's own
+// round-trip is pinned in printer.fern and the CLI driver test.
 var declModifierCases = []struct {
 	name     string
 	src      string
@@ -150,6 +152,53 @@ func TestSelfHostDeclModifiersIRWasm(t *testing.T) {
 			}
 			if code := run.ProcessState.ExitCode(); code != tc.expected {
 				t.Errorf("decl-modifier wasm IR %q = %d, want %d", tc.name, code, tc.expected)
+			}
+		})
+	}
+}
+
+// TestSelfHostImportAsyncFunctionChecks covers `@import(iface, wit) async
+// function …` — the Preview-3 async import, which reaches the decl dispatch
+// through the attribute arm rather than the top-level probe.
+//
+// It also pins the body-less exemption from E052. An `@import` declaration
+// legitimately has no body, and the self-host checker used to run the
+// missing-return walk over it anyway, so EVERY body-less import — async or
+// not — drew a spurious "can fall off the end" diagnostic that native does
+// not report. The empty block in `function f(): i32 { }` is the same empty
+// array to the self-host, so the import attribute is what separates the two;
+// the last case pins that the real E052 still fires.
+func TestSelfHostImportAsyncFunctionChecks(t *testing.T) {
+	checkerBin, runner, _ := buildCheckerDriverBin(t, "checker_run.fern", false)
+	const importDecl = `@import("wasi:random/random@0.2.0", "get-random-u64")`
+	cases := []struct {
+		name, src string
+		wantDiag  string
+	}{
+		{"async-import",
+			importDecl + "\nasync function get_random_u64(): i64;\nfunction main(): i32 { return 0; }", ""},
+		{"plain-import",
+			importDecl + "\nfunction get_random_u64(): i64;\nfunction main(): i32 { return 0; }", ""},
+		{"pub-async-import",
+			importDecl + "\npub async function get_random_u64(): i64;\nfunction main(): i32 { return 0; }", ""},
+		// Not an import: an empty body still falls off the end.
+		{"empty-body-still-e052",
+			"function f(): i32 { }\nfunction main(): i32 { return 0; }", "error[E052]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stderr := runSelfHostChecker(t, checkerBin, runner, tc.src)
+			if tc.wantDiag == "" {
+				if code != 0 {
+					t.Fatalf("checker exited %d, want 0\nstderr: %s", code, stderr)
+				}
+				if diag := strings.TrimSpace(stderr); diag != "" {
+					t.Errorf("checker reported %q, want no diagnostic", diag)
+				}
+				return
+			}
+			if got := diagCodes(stderr); got != tc.wantDiag {
+				t.Errorf("checker codes = %q, want %q\nstderr: %s", got, tc.wantDiag, stderr)
 			}
 		})
 	}

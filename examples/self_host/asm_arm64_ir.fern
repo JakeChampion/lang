@@ -123,6 +123,27 @@ function ir_bin_asm(tag: i32, width: i32): string {
     return "    // ir: unsupported bin " + ir.kind_name(tag) + "\n";
 }
 
+// ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
+// immediately before it, and "" when that doesn't apply. In a stack machine
+// the op right before a binary pushes its rhs, so a readable const there is
+// the shift count — the same adjacency ir.reduce_strength keys off.
+//
+// Worth special-casing because the register form is two instructions, not one:
+// the count has to be masked (`and x1, x1, #31`) before a variable-count shift.
+// With the count known the mask folds into the immediate. Without this,
+// ir.reduce_strength's `x * 8` -> `x << 3` would trade one mul for a mask plus
+// a variable shift and come out behind. Mirrors asm_ir.fern's twin.
+function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
+    if (tag != 31 && tag != 32 && tag != 33) { return ""; }
+    if (!ir.const_i32_readable(prev)) { return ""; }
+    var k: i32 = ir.const_i32_value(prev) & 31;
+    if (width == 64) { k = ir.const_i32_value(prev) & 63; }
+    var imm: string = " x0, x0, #" + util.i32_to_string(k) + "\n";
+    if (tag == 31) { return "    lsl" + imm; }
+    if (tag == 32) { return "    asr" + imm; }
+    return "    lsr" + imm;
+}
+
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_function_via_ir's dispatch — see ir.is_str_op_kind). The runtime helpers
 // come from asm_arm64.emit_runtime, gated by the mark_* needs set here.
@@ -1744,7 +1765,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else {
             // binary op: pop rhs (x1), lhs (x0), combine, push.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-            s = s.write(ir_bin_asm(o.kind_tag, o.width));
+            var shimm: string = "";
+            if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
+            if (shimm.len() > 0) { s = s.write(shimm); }
+            else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
             s = s.write("    str x0, [sp, #-16]!\n");
         }
         i = i + 1;
