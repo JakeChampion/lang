@@ -43,6 +43,65 @@ func TestSelfHostPlatformsCapabilityRules(t *testing.T) {
 	}
 }
 
+// TestSelfHostCapabilityCorpusAgreesWithNative runs both compilers over every
+// conformance fixture and requires the same E066 diagnostics from each.
+//
+// This is the false-positive gate, and it is the one that decides whether the
+// boundary is usable. The corpus is known-good code compiled for a target with
+// a real host, so an E066 here is the self-host refusing a program every
+// backend would have built — a failure the user cannot work around, unlike a
+// missing gate. It is also the only place a shake difference would show:
+// enforcement runs on the tree-shaken module, and the two compilers shake with
+// different root sets.
+//
+// A fixture the self-host cannot load at all contributes no E066 on either
+// side and passes vacuously; that is the same coverage the other corpus
+// sweeps have, and the sweep still runs the whole frontend on every case.
+func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("corpus sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("capability corpus sweep runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	cases, err := filepath.Glob(filepath.Join("..", "..", "conformance", "cases", "*", "main.fern"))
+	if err != nil {
+		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	if len(cases) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
+	}
+
+	var diffs []string
+	for _, c := range cases {
+		nativeOut, _ := exec.Command(nativeBin, "-check", "-target", "wasm32-wasi", c).CombinedOutput()
+		shOut, _ := exec.Command(driverBin, "-check", "-target", "wasm", c, stdlib).CombinedOutput()
+		want := strings.Join(e066Sites(string(nativeOut)), " ")
+		got := strings.Join(e066Sites(string(shOut)), " ")
+		if want != got {
+			diffs = append(diffs, filepath.Base(filepath.Dir(c))+": native ["+want+"], self-host ["+got+"]")
+		}
+	}
+	if len(diffs) > 0 {
+		max := 15
+		if len(diffs) < max {
+			max = len(diffs)
+		}
+		t.Errorf("E066 disagreements on %d of %d conformance fixtures:\n  %s",
+			len(diffs), len(cases), strings.Join(diffs[:max], "\n  "))
+	}
+}
+
 // e066Sites reduces a compiler's output to the E066 diagnostics it emitted, as
 // `line:col` (or a bare marker when the diagnostic carries no position, which
 // is how both compilers report a violation inside an imported module).
