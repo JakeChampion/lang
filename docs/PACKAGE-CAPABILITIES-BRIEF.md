@@ -150,6 +150,46 @@ Rules:
    from the same table, so the compile-time story and the runtime
    sandbox agree.
 
+## The self-host port
+
+The self-hosted compiler carries its own copy of phases 1 and 2 in
+`examples/self_host/caps.fern` (#6634) — vocabulary, builtin
+classification, the reachability walk, the report, and E070 — because
+it cannot import Go. `fern.fern` runs the report behind
+`-capabilities` and enforcement on the compile / `-check` / `-interp`
+paths, exactly where cmd/fern does.
+
+Three things about that copy are worth knowing before touching either
+side:
+
+- **The classification is pinned, not copied by hand.**
+  `internal/caps/selfhost_parity_test.go` reads the Fern tables as data
+  and compares them with `BuiltinCaps` / `Ungated` / `Capabilities`
+  entry-for-entry, so a builtin tagged on one side and not the other
+  fails a fast Go test. `frontend_ungated()` is the one list with no
+  native counterpart: names the self-host front end registers as
+  builtins that native's checker does not (`len`, `chr`, `print_int`,
+  …), each held to being absent from native's registry.
+- **Package identity comes from the ENTRY manifest.** Native resolves a
+  module's package from the nearest governing `fern.toml`; the
+  self-host driver's loader resolves every import from the entry
+  directory, so a dependency's own dependencies are not reachable and
+  there is no deeper package to attribute. Deps are resolved through
+  the manifest (path / workspace / lock / vendor / store) by
+  `modloader.resolve_module_src` — before #6634 the driver could not
+  load a manifest dependency at all.
+- **The example chain is spelled differently.** Both compilers mangle
+  an imported function as `<module>__<name>`, but native's module is
+  the dependency's lib FILE (`lib__save`) and the self-host's is the
+  name the import used (`helper__save`). The severity, package,
+  capability and builtin all match exactly — the differential in
+  `internal/e2eselfhost/self_host_caps_test.go` compares those and
+  normalises the chain.
+
+Phases 3 and 4 have no self-host counterpart yet: attenuation is a
+load-time check over a dependency graph the self-host loader does not
+build.
+
 ## Non-goals
 
 - No runtime checks on native — this is a static property.

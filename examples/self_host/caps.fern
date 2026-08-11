@@ -1,0 +1,544 @@
+// examples/self_host/caps.fern — the PACKAGE capability boundary, mirroring
+// native's internal/caps (#6634).
+//
+// This is the second, independent capability system. platforms.fern gates what
+// a TARGET provides — the OS boundary, E066. This one gates what a PACKAGE may
+// reach: a dependency's declared functions are walked for their transitive
+// reach into the tagged-builtin table, and a package reaching past the
+// `capabilities` grant in the manifest that declares it is E070
+// (docs/PACKAGE-CAPABILITIES-BRIEF.md, #5361). The two are deliberately
+// separate — a new builtin needs classifying in BOTH — and the way that goes
+// wrong is one side being updated and the other not, so each carries its own
+// completeness gate: caps_run.fern holds this table against
+// parser.builtin_function_names(), and internal/caps/selfhost_parity_test.go
+// holds it against native's maps entry-for-entry. A rename or reformat of the
+// tables below has to keep them extractable by that test — it fails loudly
+// rather than vacuously when its patterns stop matching.
+//
+// Reachability, not syntax, is what makes this different from the target
+// boundary: `helper` reaches `net` when anything it declares can call
+// tcp_connect, however many stdlib frames sit in between. So the analysis is a
+// call-graph walk (analyze), and the report and enforcement are two readings of
+// its one result — the report is all usage, enforcement is usage minus grants.
+
+import "./parser";
+import "./astwalk";
+import "./util";
+
+// ---- vocabulary + classification ---------------------------------------
+
+// capabilities is the v1 vocabulary, sorted. Deliberately coarse (see the
+// brief): path- or host-level filtering is out of scope for v1. The sort is
+// load-bearing — analyze emits a row's uses in this order rather than sorting
+// them afterwards.
+pub function capabilities(): string[] {
+    return ["env", "fs", "net", "random", "subprocess", "time"];
+}
+
+// BuiltinCap pairs a capability-relevant runtime builtin with the capability
+// reaching it grants.
+pub struct BuiltinCap { builtin: string, capability: string }
+
+// builtin_caps is the tagged half of the classification. Boundary cases, all
+// shared with native's table:
+//
+//   - `poll` is NOT tagged: it waits on pollables from both sockets and
+//     timers, so the capability lives on the pollable CONSTRUCTORS — the tcp
+//     family under `net`, the timer family under `time` — not on the wait.
+//     Same for the generic wasm_block / wasm_poll / wasm_pollable_drop
+//     readiness helpers.
+//   - `time` covers observing clocks and creating time-driven wakeups: the
+//     surface a "package is sim-pure" property would need to gate.
+//   - stdio and argv are ungated below — they are host-mediated channels the
+//     invoker already handed the process, not ambient authority a dependency
+//     escalates through.
+pub function builtin_caps(): BuiltinCap[] {
+    return [
+        BuiltinCap { builtin: "tcp_listen", capability: "net" },
+        BuiltinCap { builtin: "tcp_accept", capability: "net" },
+        BuiltinCap { builtin: "tcp_connect", capability: "net" },
+        BuiltinCap { builtin: "tcp_recv", capability: "net" },
+        BuiltinCap { builtin: "tcp_send", capability: "net" },
+        BuiltinCap { builtin: "tcp_close", capability: "net" },
+        BuiltinCap { builtin: "tcp_pollable", capability: "net" },
+        BuiltinCap { builtin: "udp_send", capability: "net" },
+
+        BuiltinCap { builtin: "read_file", capability: "fs" },
+        BuiltinCap { builtin: "write_file", capability: "fs" },
+        BuiltinCap { builtin: "write_file_exec", capability: "fs" },
+        BuiltinCap { builtin: "open_reader", capability: "fs" },
+        BuiltinCap { builtin: "open_writer", capability: "fs" },
+        BuiltinCap { builtin: "open_appender", capability: "fs" },
+        BuiltinCap { builtin: "stat", capability: "fs" },
+        BuiltinCap { builtin: "read_dir", capability: "fs" },
+        BuiltinCap { builtin: "remove_file", capability: "fs" },
+        BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
+        BuiltinCap { builtin: "temp_dir", capability: "fs" },
+
+        BuiltinCap { builtin: "env", capability: "env" },
+
+        BuiltinCap { builtin: "subprocess", capability: "subprocess" },
+        BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
+        BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },
+        BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
+
+        BuiltinCap { builtin: "now_unix_ms", capability: "time" },
+        BuiltinCap { builtin: "now_ns", capability: "time" },
+        BuiltinCap { builtin: "monotonic_ns", capability: "time" },
+        BuiltinCap { builtin: "sleep_ms", capability: "time" },
+        BuiltinCap { builtin: "timer_fd", capability: "time" },
+        BuiltinCap { builtin: "wasm_timer_pollable", capability: "time" },
+
+        BuiltinCap { builtin: "random_bytes", capability: "random" },
+        BuiltinCap { builtin: "random_i32", capability: "random" }
+    ];
+}
+
+// ungated lists the user-callable builtins known to require NO capability:
+// stdio, argv, process exit, pure math / bit casts, the strbuf scratch buffer,
+// the in-heap constructors, and the readiness helpers whose authority lives on
+// the pollable constructors instead. Mirrors native's Ungated exactly.
+pub function ungated(): string[] {
+    return ["putchar", "print", "write", "eprint", "read_line",
+            "stdin", "stdout", "stderr", "args", "exit",
+            "strbuf_reset", "strbuf_append", "strbuf_take",
+            "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
+            "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
+            "map_new", "cell_new", "string_from_bytes_unchecked",
+            "int_to_string"];
+}
+
+// frontend_ungated is the self-host's own extension to that list: names in
+// parser.builtin_function_names() that native's checker does not register as
+// builtins at all, so its table has nothing to say about them. They are kept
+// apart from ungated() rather than merged into it so the parity test can hold
+// the shared half to an exact match and still see these named.
+//
+// Every one is a channel or a pure computation, by the same rules as the list
+// above: print_int / eprint_int are print with an integer argument, arg_at /
+// args_count read the argv the invoker passed, read_int / read_all_stdin are
+// stdin reads, and map_new_i32 / chr / len allocate or compute.
+pub function frontend_ungated(): string[] {
+    return ["print_int", "eprint_int", "arg_at", "args_count",
+            "read_int", "read_all_stdin", "map_new_i32", "chr", "len"];
+}
+
+// capability_of returns the capability a builtin reaches, or "" when the name
+// is not tagged (ungated, or not a builtin at all).
+pub function capability_of(name: string): string {
+    var bs: BuiltinCap[] = builtin_caps();
+    var i: i32 = 0;
+    while (i < bs.len()) {
+        if (bs[i].builtin == name) { return bs[i].capability; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// classified reports whether `name` is accounted for by this table — tagged,
+// ungated, or a compiler-internal `__` name. caps_run.fern asserts it over the
+// whole builtin registry, so an I/O-shaped addition cannot silently dodge the
+// classification.
+pub function classified(name: string): boolean {
+    if (name.len() >= 2 && name[0] == 95 && name[1] == 95) { return true; }   // `__` internal
+    if (capability_of(name).len() > 0) { return true; }
+    if (util.has_str(ungated(), name)) { return true; }
+    return util.has_str(frontend_ungated(), name);
+}
+
+// ---- packages ----------------------------------------------------------
+
+// Pkg is one bundle module's package identity, assembled by the caller (the
+// driver) from the entry manifest:
+//
+//   - `module` is the bundle prefix flatten mangles that module's functions
+//     with — "" for the entry module, whose own names stay bare.
+//   - `root` marks the root package (the entry's own module and every local
+//     sibling), which is never enforced or warned: the program's author is
+//     trusting themselves, and grants restrict DEPENDENCIES.
+//   - `governed` is true when the dependency entry declaring this package
+//     carries a `capabilities` key; reaching outside `grants` is then E070.
+//     A dependency with no key is warn-and-allow, the migration default.
+//
+// A module with no Pkg entry folds through: its functions are traversal nodes,
+// never roots, so a stdlib module's tcp_connect shows up on the row of
+// whichever package calls into it.
+pub struct Pkg {
+    module: string,
+    name: string,
+    root: boolean,
+    governed: boolean,
+    grants: string[],
+}
+
+// pkg_of names the package owning a bundle module prefix, or "" for a
+// fold-through module.
+pub function pkg_of(pkgs: Pkg[], module: string): string {
+    var i: i32 = 0;
+    while (i < pkgs.len()) {
+        if (pkgs[i].module == module) { return pkgs[i].name; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// pkg_index finds a package by NAME (several modules can share one), or -1.
+function pkg_index(pkgs: Pkg[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < pkgs.len()) {
+        if (pkgs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// enforceable reports whether any function in the bundle belongs to a
+// non-root package. When nothing does, the whole reachability walk can be
+// skipped: there is no dependency to enforce or warn about, which is the
+// common single-package compile.
+pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[i].name));
+        if (p.len() > 0) {
+            var k: i32 = pkg_index(pkgs, p);
+            if (k >= 0 && !pkgs[k].root) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---- report ------------------------------------------------------------
+
+// Use is one capability a package can reach, with an example call chain from
+// one of the package's own functions down to the tagged builtin. Chain
+// elements are function names as they appear in the bundle (module-mangled);
+// the last element is the builtin.
+pub struct Use { capability: string, chain: string[] }
+
+// Row is one package's report line: its uses, in capability order.
+pub struct Row { pkg: string, uses: Use[] }
+
+function has_i32(xs: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == v) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// func_index finds a top-level function by bundle name, or -1. A method's
+// name is its simple name, which several types can share — those are found by
+// method_edges instead, which is why this returns the first match rather than
+// pretending the name is unique.
+function func_index(mod: parser.Module, name: string): i32 {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// analysis_want is the callee-name filter astwalk collects against: every
+// tagged builtin, plus the simple name of every method in the bundle. The
+// method half is what lets a `.save()` be followed — the self-host resolves
+// method dispatch during emit rather than rewriting the call to its hoisted
+// name in the AST, so the walk has to do the resolution itself.
+function analysis_want(mod: parser.Module): string[] {
+    var want: string[] = [];
+    var bs: BuiltinCap[] = builtin_caps();
+    var i: i32 = 0;
+    while (i < bs.len()) { want = want.append(bs[i].builtin); i = i + 1; }
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        if (mod.funcs[fi].receiver_type.len() > 0) {
+            var sn: string = util.mangled_name(mod.funcs[fi].name);
+            if (!util.has_str(want, sn)) { want = want.append(sn); }
+        }
+        fi = fi + 1;
+    }
+    return want;
+}
+
+// chain_of renders the call chain reaching `builtin` at BFS position `at`:
+// the path back to the package function the walk started from, in call order.
+function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, builtin: string): string[] {
+    var rev: string[] = [];
+    var p: i32 = at;
+    while (p >= 0) {
+        rev = rev.append(mod.funcs[order[p]].name);
+        p = parent[p];
+    }
+    var out: string[] = [];
+    var i: i32 = rev.len() - 1;
+    while (i >= 0) {
+        out = out.append(rev[i]);
+        i = i - 1;
+    }
+    return out.append(builtin);
+}
+
+// walk BFSes from a package's declared functions and returns the capabilities
+// reached, each with the first chain the walk discovers.
+//
+// Nodes are function INDICES, not names: two types' methods share a simple
+// name, and keying the visited set by name would let the first one visited
+// stand in for the other. `order` is the queue and the visited set at once —
+// BFS appends, never removes — with `parent[i]` the position in `order` that
+// discovered `order[i]`, or -1 for a root.
+//
+// Membership is a linear scan of `order`, which makes the walk quadratic in
+// the functions REACHED. That is affordable because it runs on a program with
+// dependency packages (enforceable() is the gate) or on an explicit
+// -capabilities request, never on the ordinary single-package compile.
+function walk(mod: parser.Module, roots: i32[], want: string[]): Use[] {
+    var order: i32[] = [];
+    var parent: i32[] = [];
+    var ri: i32 = 0;
+    while (ri < roots.len()) {
+        if (!has_i32(order, roots[ri])) {
+            order = order.append(roots[ri]);
+            parent = parent.append(0 - 1);
+        }
+        ri = ri + 1;
+    }
+
+    var found_cap: string[] = [];
+    var found_at: i32[] = [];
+    var found_builtin: string[] = [];
+
+    var qi: i32 = 0;
+    while (qi < order.len()) {
+        var fd: parser.FuncDecl = mod.funcs[order[qi]];
+
+        // Calls: a tagged builtin is a direct use, a method call is an edge to
+        // every method of that simple name. Builtins count only in call
+        // position (they are free functions and cannot be taken as values), so
+        // a local shadowing a builtin name never misreports a capability.
+        var calls: astwalk.CallSite[] = [];
+        var bi: i32 = 0;
+        while (bi < fd.body.len()) {
+            calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
+            bi = bi + 1;
+        }
+        var ci: i32 = 0;
+        while (ci < calls.len()) {
+            if (calls[ci].method) {
+                var mi: i32 = 0;
+                while (mi < mod.funcs.len()) {
+                    if (mod.funcs[mi].receiver_type.len() > 0 && util.mangled_name(mod.funcs[mi].name) == calls[ci].name) {
+                        if (!has_i32(order, mi)) {
+                            order = order.append(mi);
+                            parent = parent.append(qi);
+                        }
+                    }
+                    mi = mi + 1;
+                }
+            } else {
+                var cap: string = capability_of(calls[ci].name);
+                if (cap.len() > 0 && !util.has_str(found_cap, cap)) {
+                    found_cap = found_cap.append(cap);
+                    found_at = found_at.append(qi);
+                    found_builtin = found_builtin.append(calls[ci].name);
+                }
+            }
+            ci = ci + 1;
+        }
+
+        // Identifiers: every bare name that resolves to a top-level function
+        // is an edge, which covers both ordinary calls and function VALUES
+        // passed to higher-order code. A lambda's body is walked as part of
+        // the enclosing function, so a callback package A hands to package B
+        // stays A's usage even though B invokes it.
+        var ids: string[] = [];
+        var si: i32 = 0;
+        while (si < fd.body.len()) {
+            ids = astwalk.collect_idents_stmt(fd.body[si], ids);
+            si = si + 1;
+        }
+        var ii: i32 = 0;
+        while (ii < ids.len()) {
+            var fx: i32 = func_index(mod, ids[ii]);
+            if (fx >= 0 && !has_i32(order, fx)) {
+                order = order.append(fx);
+                parent = parent.append(qi);
+            }
+            ii = ii + 1;
+        }
+        qi = qi + 1;
+    }
+
+    // Emit in vocabulary order — which is sorted, so the row is deterministic
+    // without a comparator, and a capability outside the vocabulary would
+    // simply never render (caps_run.fern pins the two tables together).
+    var uses: Use[] = [];
+    var vocab: string[] = capabilities();
+    var vi: i32 = 0;
+    while (vi < vocab.len()) {
+        var k: i32 = util.index_of_str(found_cap, vocab[vi]);
+        if (k >= 0) {
+            uses = uses.append(Use { capability: vocab[vi], chain: chain_of(mod, order, parent, found_at[k], found_builtin[k]) });
+        }
+        vi = vi + 1;
+    }
+    return uses;
+}
+
+// sort_rows orders rows by package name (selection sort — one row per package
+// in the program, so the list is short).
+function sort_rows(rows: Row[]): Row[] {
+    var taken: i32[] = [];
+    var i: i32 = 0;
+    while (i < rows.len()) { taken = taken.append(0); i = i + 1; }
+    var out: Row[] = [];
+    var k: i32 = 0;
+    while (k < rows.len()) {
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < rows.len()) {
+            if (taken[j] == 0) {
+                if (best < 0 || util.str_less(rows[j].pkg, rows[best].pkg)) { best = j; }
+            }
+            j = j + 1;
+        }
+        taken = taken.with(best, 1);
+        out = out.append(rows[best]);
+        k = k + 1;
+    }
+    return out;
+}
+
+// analyze computes per-package capability usage for a bundled program by
+// call-graph reachability. Each package's roots are ALL the functions it
+// declares — declared reachability: an uncalled-but-declared function still
+// counts, because the report says what the package's code could do, not what
+// this program's live paths do — and the walk follows callees wherever they
+// live, through the stdlib and through deeper packages.
+//
+// Rows come back sorted by package name, uses by capability.
+pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
+    var want: string[] = analysis_want(mod);
+    var names: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var p: string = pkg_of(pkgs, util.mangled_module(mod.funcs[fi].name));
+        if (p.len() > 0 && !util.has_str(names, p)) { names = names.append(p); }
+        fi = fi + 1;
+    }
+
+    var rows: Row[] = [];
+    var pi: i32 = 0;
+    while (pi < names.len()) {
+        var roots: i32[] = [];
+        var fj: i32 = 0;
+        while (fj < mod.funcs.len()) {
+            if (pkg_of(pkgs, util.mangled_module(mod.funcs[fj].name)) == names[pi]) { roots = roots.append(fj); }
+            fj = fj + 1;
+        }
+        rows = rows.append(Row { pkg: names[pi], uses: walk(mod, roots, want) });
+        pi = pi + 1;
+    }
+    return sort_rows(rows);
+}
+
+// join renders a chain as `a → b → c`.
+function join_chain(chain: string[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < chain.len()) {
+        if (i > 0) { out = out + " → "; }
+        out = out + chain[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+// format_rows renders the report: one line per package —
+//
+//     app  fs,net  (example: main → lib__save → write_file)
+//
+// with the example chain belonging to the row's first (alphabetical)
+// capability, and `-` for a package that reaches none.
+pub function format_rows(rows: Row[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < rows.len()) {
+        if (rows[i].uses.len() == 0) {
+            out = out + rows[i].pkg + "  -\n";
+        } else {
+            var names: string = "";
+            var u: i32 = 0;
+            while (u < rows[i].uses.len()) {
+                if (u > 0) { names = names + ","; }
+                names = names + rows[i].uses[u].capability;
+                u = u + 1;
+            }
+            out = out + rows[i].pkg + "  " + names + "  (example: " + join_chain(rows[i].uses[0].chain) + ")\n";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- enforcement -------------------------------------------------------
+
+// Violation is one package reaching a capability outside its grant.
+// `governed` selects the severity: true is a checker-grade error (E070),
+// false a warn-and-allow diagnostic.
+pub struct Violation {
+    pkg: string,
+    capability: string,
+    chain: string[],
+    governed: boolean,
+}
+
+// enforce filters analyze's rows against the per-package grants — the same
+// traversal serves both modes: the report is all usage, enforcement is usage
+// minus grants. At most one violation per package+capability, in analyze's
+// order (package, then capability); the caller splits them by `governed`,
+// which is the severity.
+pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
+    var out: Violation[] = [];
+    var ri: i32 = 0;
+    while (ri < rows.len()) {
+        var k: i32 = pkg_index(pkgs, rows[ri].pkg);
+        var is_root: boolean = k >= 0 && pkgs[k].root;
+        if (!is_root) {
+            var governed: boolean = k >= 0 && pkgs[k].governed;
+            var ui: i32 = 0;
+            while (ui < rows[ri].uses.len()) {
+                var u: Use = rows[ri].uses[ui];
+                var granted: boolean = false;
+                if (governed) { granted = util.has_str(pkgs[k].grants, u.capability); }
+                if (!granted) {
+                    out = out.append(Violation {
+                        pkg: rows[ri].pkg,
+                        capability: u.capability,
+                        chain: u.chain,
+                        governed: governed,
+                    });
+                }
+                ui = ui + 1;
+            }
+        }
+        ri = ri + 1;
+    }
+    return out;
+}
+
+// violation_message renders the diagnostic's text, without the
+// `error[E070]:` / `warning:` label — the caller owns severity rendering.
+pub function violation_message(v: Violation): string {
+    var builtin: string = "";
+    if (v.chain.len() > 0) { builtin = v.chain[v.chain.len() - 1]; }
+    var head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
+    if (v.governed) {
+        return head + " without a capability grant: " + join_chain(v.chain)
+            + "; add \"" + v.capability + "\" to its capabilities in fern.toml or remove the call";
+    }
+    return head + " but no capabilities key governs it: " + join_chain(v.chain)
+        + "; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)";
+}

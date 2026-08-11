@@ -6474,10 +6474,14 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = emit_function_via_ir(mod.funcs[fi], s, sg);
         fi = fi + 1;
     }
-    // #4355: admit the replaced-STRING-field arm per type from the WHOLE-PROGRAM
-    // read scan — sg.strfld_ok_types IS that scan, and it is the one the lowering
-    // above routed on, which is what keeps the construction retain and this arm's
-    // free paired (see asm_ir.emit_module_ir_unit's sibling seeding).
+    // #4355: admit the replaced-STRING-field arm per type from the
+    // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
+    // sibling seeding and irlower.strfld_reclaim_ok_types_of).
+    // sg.strfld_ok_types is that verdict over the same lists, already computed by
+    // the fn_sigs_for_borrow above — so it is the scan the LOWERING routed on,
+    // keeping the construction retain and this arm's free paired, and the scan
+    // (three whole-program passes, the most-repeated analysis in a compile at 7
+    // runs against the nested-struct scan's 1) does not run twice here.
     var sfok: string[] = sg.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }

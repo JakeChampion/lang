@@ -241,14 +241,17 @@ function append_bound_name(acc: string[], name: string): string[] {
     return acc;
 }
 
-// CallSite is one call to a bare-identifier callee, located at the call.
-// Method calls carry a field-access callee and are not recorded: the
-// capability boundary (platforms.fern) gates BUILTINS, which are free
-// functions, so a `.write(…)` on a user type is not one of them.
-pub struct CallSite { name: string, line: i32, col: i32 }
+// CallSite is one call located at the call, with `method` saying which kind of
+// callee it had: false for a bare identifier, true for a field access
+// (`x.write(…)`). Both are recorded, and the flag matters — the target
+// boundary (platforms.fern) gates BUILTINS, which are free functions, so it
+// reads only the bare-identifier half, while the package boundary (caps.fern)
+// follows the method half as a call-graph edge.
+pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 
-// collect_calls_expr appends every bare-identifier call in `e` whose callee is
-// NAMED in `want` to `acc`.
+// collect_calls_expr appends every call in `e` whose callee is NAMED in `want`
+// to `acc` — the callee's own name for a bare identifier, the field name for a
+// method call.
 //
 // The filter is not a convenience: the only caller looks for a handful of
 // names across the whole bundle, and collecting every call first would
@@ -275,7 +278,11 @@ pub function collect_calls_expr(e: parser.Expr, want: string[], acc: CallSite[])
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
-                    if (util.has_str(want, id.name)) { acc = acc.append(CallSite { name: id.name, line: c.line, col: c.col }); }
+                    if (util.has_str(want, id.name)) { acc = acc.append(CallSite { name: id.name, line: c.line, col: c.col, method: false }); }
+                },
+                parser.ExprFieldAccess(fa) => {
+                    if (util.has_str(want, fa.field)) { acc = acc.append(CallSite { name: fa.field, line: c.line, col: c.col, method: true }); }
+                    acc = collect_calls_expr(fa.obj, want, acc);
                 },
                 _ => { acc = collect_calls_expr(c.callee, want, acc); }
             }

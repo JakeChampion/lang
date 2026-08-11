@@ -22267,6 +22267,10 @@ pub struct LowerResult {
     // f64_slots: the local slots holding f64 values; the wasm backend declares
     // these (local f64). The register backends ignore it (f64 shares the slot).
     f64_slots: i32[],
+    // str_slots: the local slots holding strings. Carried for the verifier
+    // (#6639), not for emission — a string is one operand slot on the
+    // registers and two on wasm32, so a stack model needs the distinction.
+    str_slots: i32[],
     // why: why this function did not lower — either a SIGNATURE refusal raised
     // in lower_func itself (an unlowerable return / receiver / param type) or
     // the body's innermost failing node, carried out of LowerState.fail_why.
@@ -22282,7 +22286,7 @@ pub struct LowerResult {
 function lower_failed(fn: parser.FuncDecl, why: string): LowerResult {
     var noops: ir.Op[] = [];
     var noslots: i32[] = [];
-    return LowerResult { ok: false, ops: noops, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, why: why };
+    return LowerResult { ok: false, ops: noops, n_locals: 0, n_params: fn.params.len(), erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: why };
 }
 
 // fail_why_or_unknown reads a failed state's bail description, naming the gap
@@ -22329,6 +22333,22 @@ function f64_slots_of(s: LowerState): i32[] {
     var i: i32 = 0;
     while (i < s.locals.len()) {
         if (s.is_f64_slot(i)) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// str_slots_of: the local slots holding STRING values. A string is one
+// operand slot on the register backends and TWO on wasm32 (ptr + len, per
+// ir.UseTwoWordStrings), so a pass that models the operand stack cannot get a
+// function's height right without knowing which slots are strings — #6639
+// slice 2 is the consumer. Nothing on the emit path reads it: the backends
+// already carry the same fact through LowerState.
+function str_slots_of(s: LowerState): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.locals.len()) {
+        if (s.is_str_slot(i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -39222,7 +39242,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     if (trmc_ctor != "") {
         var ts: LowerState = emit_trmc(fn, trmc_ctor, s);
         if (ts.ok) {
-            return LowerResult { ok: true, ops: ir.optimize_ops(ts.ops), n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts), why: "" };
+            return LowerResult { ok: true, ops: ir.optimize_ops(ts.ops), n_locals: ts.locals.len(), n_params: ts.n_params, erased_wide: erased_wide_stmts(fn.body, ts), arr_slots: arr_slots_of(ts), i64_slots: i64_slots_of(ts), f64_slots: f64_slots_of(ts), str_slots: str_slots_of(ts), why: "" };
         }
         return lower_failed(fn, "TRMC body did not lower: " + fail_why_or_unknown(ts));
     }
@@ -39404,7 +39424,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             s = lower_stmt_or_self_assign_reuse(fn.body[j], s);
         }
         s = s.with_optret_pending(optret_prev);
-        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, why: fail_why_or_unknown(s) }; }
+        if (!s.ok) { return LowerResult { ok: false, ops: s.ops, n_locals: 0, n_params: s.n_params, erased_wide: false, arr_slots: noslots, i64_slots: noslots, f64_slots: noslots, str_slots: noslots, why: fail_why_or_unknown(s) }; }
         var pi: i32 = 0;
         while (pi < pdrops.idxs.len()) {
             if (pdrops.idxs[pi] == j) {
@@ -39615,11 +39635,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // behind -O), in the shared lowering rather than per backend, so all three
     // get it. See ir.optimize_ops.
     tco_ops = ir.optimize_ops(tco_ops);
-    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), why: "" };
+    return LowerResult { ok: true, ops: tco_ops, n_locals: s.locals.len(), n_params: s.n_params, erased_wide: erased_wide_stmts(fn.body, s), arr_slots: arr_slots_of(s), i64_slots: i64_slots_of(s), f64_slots: f64_slots_of(s), str_slots: str_slots_of(s), why: "" };
 }
 
 // LoweredFn is one function's lowered form, tagged with its name + arity so
 // the interpreter and the backend can resolve direct calls.
+//
+// The slot lists and `ret_type` are what a pass ANALYSING the ops needs and
+// the emit path does not: the backends reach the same facts through
+// LowerState, which does not survive lowering. Without them a verifier can
+// only count operands, and counting is wrong for exactly the values the
+// compiler's own sources are full of — a string is one operand slot on the
+// register backends and two on wasm32 (#6639 slice 2).
 pub struct LoweredFn {
     name: string,
     ok: boolean,
@@ -39627,6 +39654,13 @@ pub struct LoweredFn {
     n_locals: i32,
     n_params: i32,
     arr_slots: i32[],
+    i64_slots: i32[],
+    f64_slots: i32[],
+    str_slots: i32[],
+    // ret_type is the DECLARED return type, verbatim from the FuncDecl
+    // ("i32", "string", "" for void) — the type the ops must leave on the
+    // stack at the end of the function.
+    ret_type: string,
 }
 
 // lower_module lowers every function in a program. It first collects the
@@ -47754,7 +47788,7 @@ pub function lower_module(funcs: parser.FuncDecl[], structs: parser.StructDecl[]
         if (funcs[i].receiver_type.len() > 0) {
             fname = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
         }
-        out = out.append(LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots });
+        out = out.append(LoweredFn { name: fname, ok: r.ok, ops: r.ops, n_locals: r.n_locals, n_params: r.n_params, arr_slots: r.arr_slots, i64_slots: r.i64_slots, f64_slots: r.f64_slots, str_slots: r.str_slots, ret_type: funcs[i].ret_type });
         i = i + 1;
     }
     return out;

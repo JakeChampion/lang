@@ -6852,11 +6852,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // emit_ir_field_reclaim_one can gate its string arm; every unit sees the
     // same verdict, so the weak-deduped bodies agree.
     //
-    // b.strfld_ok_types IS that scan, run once over all_funcs/all_structs by
-    // the wp_fn_sigs the driver builds outside its per-unit loop — and it is
-    // the one the LOWERING routed on, which is what keeps the construction
-    // retain and this arm's free paired. Re-running it here would be a
-    // whole-program walk per emitted unit.
+    // b.strfld_ok_types IS that verdict, over the same all_funcs/all_structs,
+    // computed once by the wp_fn_sigs the caller built outside its per-unit loop
+    // — and it is the one the LOWERING routed on, which is what keeps the
+    // construction retain and this arm's free paired. Recomputing it here ran
+    // the scan (three whole-program passes) once per emitted unit, and it is
+    // already the most-repeated analysis in a compile: 7 runs per compile
+    // against the nested-struct scan's 1.
     var sfok: string[] = b.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) {
