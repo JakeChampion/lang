@@ -607,6 +607,11 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
     return out;
 }
 
+// elf_text_off is where .text begins in a SINGLE-segment image: just past
+// the ELF header and its one program header. The x86-64 binary path uses
+// this layout; arm64's W^X link uses elf_wx_text_off below.
+pub function elf_text_off(): i32 { return elf_eh_size() + elf_ph_size(); }
+
 // elf_wx_text_off is where .text begins in a W^X two-segment image: just
 // past the ELF header and its two program headers. The symbol appender
 // needs it, and so does anything else locating .text in that layout.
