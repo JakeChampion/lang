@@ -7944,7 +7944,7 @@ function clone_bg(fd: FuncDecl, key: string): FuncDecl {
         ret_type: subst_ty(fd.ret_type, tparams, cts),
         body: subst_stmts(fd.body, tparams, cts), line: fd.line, col: fd.col,
         import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async
-   , is_const: false };
+   , is_const: fd.is_const };
 }
 
 // ---- generic array-method monomorphisation (slice 1) ----------------
@@ -8386,7 +8386,7 @@ pub function register_struct_method_generics(mod: Module): Module {
                 ret_type: fd.ret_type,
                 body: fd.body, line: fd.line, col: fd.col,
                 import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: tps.len(), bound_traits: bnames, fip: false, ret_str: fd.ret_str, async: fd.async
-           , is_const: false });
+           , is_const: fd.is_const });
         } else {
             out = out.append(fd);
         }
@@ -8439,7 +8439,7 @@ pub function monomorphize_module(mod: Module): Module {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
                 type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rb.rstmts, line: fd.line, col: fd.col,
                 import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async
-           , is_const: false });
+           , is_const: fd.is_const });
         }
         i = i + 1;
     }
@@ -8469,7 +8469,7 @@ pub function monomorphize_module(mod: Module): Module {
                 name: cl.name, receiver_name: "", receiver_type: "",
                 type_params: cl.type_params, params: cl.params, ret_type: cl.ret_type, body: crb.rstmts, line: cl.line, col: cl.col,
                 import_iface: cl.import_iface, import_wit: cl.import_wit, type_param_count: cl.type_param_count, bound_traits: [], fip: cl.fip, ret_str: cl.ret_str, async: cl.async
-           , is_const: false });
+           , is_const: cl.is_const });
         }
         wi = wi + 1;
     }
@@ -8923,7 +8923,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: I
             name: fn.name, receiver_name: fn.receiver_name, receiver_type: rcv.ty,
             type_params: fn.type_params, params: nparams, ret_type: rt.ty, body: br.rstmts, line: fn.line, col: fn.col,
             import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str, async: fn.async
-       , is_const: false },
+       , is_const: fn.is_const },
         fins: cur
     };
 }
@@ -8975,7 +8975,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
         type_params: notp, params: nparams, ret_type: rt,
         body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), line: m.line, col: m.col,
         import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str, async: m.async
-   , is_const: false };
+   , is_const: m.is_const };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
@@ -9072,7 +9072,7 @@ pub function monomorphize_structs(mod: Module): Module {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
                         type_params: clm.type_params, params: clm.params, ret_type: clm.ret_type, body: br2.rstmts, line: clm.line, col: clm.col,
                         import_iface: clm.import_iface, import_wit: clm.import_wit, type_param_count: clm.type_param_count, bound_traits: [], fip: clm.fip, ret_str: clm.ret_str, async: clm.async
-                   , is_const: false });
+                   , is_const: clm.is_const });
                 }
                 mi = mi + 1;
             }
@@ -10063,7 +10063,7 @@ pub function monomorphize_enums(mod: Module): Module {
             type_params: fn.type_params, params: me_rewrite_params(fn.params, mod.enums, mod.funcs),
             ret_type: me_rewrite_ty(fn.ret_type, mod.enums, mod.funcs), body: rb.rstmts, line: fn.line, col: fn.col,
             import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str, async: fn.async
-       , is_const: false });
+       , is_const: fn.is_const });
         fi = fi + 1;
     }
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
@@ -10759,7 +10759,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
             type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: fn_body,
             line: fn.line, col: fn.col, import_iface: fn.import_iface, import_wit: fn.import_wit,
             type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str, async: fn.async
-       , is_const: false });
+       , is_const: fn.is_const });
         i = i + 1;
     }
     var tencl: string[] = hl_collect_var_names(mod.top_stmts);
@@ -10814,7 +10814,7 @@ function lower_defers_func(fn: FuncDecl): FuncDecl {
         name: fn.name, receiver_name: fn.receiver_name, receiver_type: fn.receiver_type,
         type_params: fn.type_params, params: fn.params, ret_type: fn.ret_type, body: body, line: fn.line, col: fn.col,
         import_iface: fn.import_iface, import_wit: fn.import_wit, type_param_count: fn.type_param_count, bound_traits: [], fip: fn.fip, ret_str: fn.ret_str, async: fn.async
-   , is_const: false };
+   , is_const: fn.is_const };
 }
 
 pub function lower_defers_module(mod: Module): Module {
@@ -12985,7 +12985,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
             type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type,
             body: cf_inline_fn_body(fd.body, mod.funcs), line: fd.line, col: fd.col,
             import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async
-       , is_const: false });
+       , is_const: fd.is_const });
         i = i + 1;
     }
     return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
@@ -14558,7 +14558,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
             ret_type: rt,
             body: m.body, line: m.line, col: m.col,
             import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str, async: m.async
-       , is_const: false };
+       , is_const: m.is_const };
     }
     // Receiver method: peel the first param (`self`) into the receiver
     // and rewrite `Self` -> impl_type across the remaining params.
@@ -14584,7 +14584,7 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
         ret_type: rt,
         body: m.body, line: m.line, col: m.col,
         import_iface: m.import_iface, import_wit: m.import_wit, type_param_count: m.type_param_count, bound_traits: [], fip: m.fip, ret_str: m.ret_str, async: m.async
-   , is_const: false };
+   , is_const: m.is_const };
 }
 
 // parse_trait_decl consumes a `trait Name { <method>; … }` block. The
@@ -15620,7 +15620,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
             ret_type: fd.ret_type,
             body: fd.body, line: fd.line, col: fd.col,
             import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async
-       , is_const: false });
+       , is_const: fd.is_const });
         fi = fi + 1;
     }
     var nstructs: StructDecl[] = into.structs;
