@@ -301,9 +301,10 @@ it.
   `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.
   `internal/caps` gates what a *package* may reach — `docs/PACKAGE-CAPABILITIES-BRIEF.md`.
   **A new builtin usually needs classifying in both**; a completeness test in each
-  fails when one is missed. The self-host mirrors the target half in
-  `examples/self_host/platforms.fern`, pinned entry-for-entry by a parity test in
-  `internal/platforms`.
+  fails when one is missed. The self-host mirrors both — the target half in
+  `examples/self_host/platforms.fern`, the package half in
+  `examples/self_host/caps.fern` — each pinned entry-for-entry by a parity test
+  in the Go package it mirrors, so **a new builtin is now four classifications**.
 
 ## Keeping this file small
 

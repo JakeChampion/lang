@@ -52,6 +52,9 @@ import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
 import "./platforms";
+import "./caps";
+import "./modloader";
+import "./fern_toml";
 import "./treeshake";
 import "./arm64_native";
 import "./x86_native";
@@ -255,11 +258,13 @@ function join_path(dir: string, name: string): string {
 // contains_name -> util.has_str (SH-020).
 
 // should_load decides whether an import path names a module file to
-// load. Local (`./…`) imports always load; `std/…` / `core/…` load only
-// when a stdlib root is given.
-function should_load(import_path: string, root: string): boolean {
+// load. Local (`./…`) imports always load; a name `deps` declares (the entry
+// manifest's dependencies) loads through the manifest; `std/…` / `core/…`
+// load only when a stdlib root is given.
+function should_load(import_path: string, root: string, deps: string[]): boolean {
     if (import_path.len() == 0) { return false; }
     if (is_local(import_path)) { return true; }
+    if (util.has_str(deps, module_name(import_path))) { return true; }
     if (root.len() == 0) { return false; }
     return true;
 }
@@ -274,11 +279,11 @@ function resolve_path(import_path: string, entry_dir: string, root: string): str
 
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
-function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
+function add_imports(paths: string[], mod: parser.Module, root: string, deps: string[]): string[] {
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
-        if (should_load(ip, root) && !util.has_str(paths, ip)) {
+        if (should_load(ip, root, deps) && !util.has_str(paths, ip)) {
             paths = paths.append(ip);
         }
         i = i + 1;
@@ -293,7 +298,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-android|arm64-darwin|arm64-darwin-asm|wasm|wasm-bin|wasm-component] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target x86-64|x86-64-asm|arm64|arm64-asm|arm64-android|arm64-darwin|arm64-darwin-asm|wasm|wasm-bin|wasm-component] [-o OUT] <entry.fern> [stdlib-root]\n");
     return 2;
 }
 
@@ -525,6 +530,105 @@ function capability_violations(merged: parser.Module, target: string): boolean {
     return true;
 }
 
+// read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
+// has none — which is every compiler source, and a program with no packages
+// to govern.
+function read_manifest(dir_slash: string): fern_toml.Manifest {
+    match (read_file(dir_slash + "fern.toml")) {
+        Ok(src) => { return fern_toml.parse(src); },
+        Err(e) => { },
+    }
+    var no_deps: fern_toml.Dep[] = [];
+    var no_members: string[] = [];
+    return fern_toml.Manifest { name: "", lib: "lib.fern", deps: no_deps, members: no_members };
+}
+
+// root_pkg is the entry's own package: its manifest's [package] name, or
+// `(root)` when nothing governs the program. It is never enforced or warned —
+// grants restrict DEPENDENCIES, and the program's author is trusting
+// themselves.
+function root_pkg(man: fern_toml.Manifest): caps.Pkg {
+    var name: string = "(root)";
+    if (man.name.len() > 0) { name = man.name; }
+    var no_grants: string[] = [];
+    return caps.Pkg { module: "", name: name, root: true, governed: false, grants: no_grants };
+}
+
+// dep_pkg_name is a dependency's REPORT name: the [package] name in its own
+// manifest, falling back to the key that declared it. Native attributes by the
+// governing manifest, so a dep declared under a different key still reports
+// under its own name.
+function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): string {
+    match (fern_toml.dep_path(man, dep)) {
+        Some(dp) => {
+            match (read_file(dir_slash + dp + "/fern.toml")) {
+                Ok(src) => {
+                    var dm: fern_toml.Manifest = fern_toml.parse(src);
+                    if (dm.name.len() > 0) { return dm.name; }
+                },
+                Err(e) => { },
+            }
+        },
+        None => { },
+    }
+    return dep;
+}
+
+// add_pkg records the package a just-loaded module belongs to. Three cases,
+// matching native's resolver: a local sibling folds into the root package, a
+// declared dependency is its own package carrying that entry's grant, and
+// anything else (the stdlib) gets no entry at all — caps.analyze folds a
+// module with no entry into whichever package calls it.
+//
+// Only the ENTRY manifest is consulted, because that is as far as this
+// driver's loader resolves: a dependency's own dependencies are not reachable
+// from here, so there is no deeper package to attribute.
+function add_pkg(pkgs: caps.Pkg[], man: fern_toml.Manifest, dir_slash: string, import_path: string): caps.Pkg[] {
+    var mod: string = module_name(import_path);
+    var no_grants: string[] = [];
+    if (is_local(import_path)) {
+        return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
+    }
+    if (fern_toml.dep_kind(man, mod).len() == 0) { return pkgs; }
+    return pkgs.append(caps.Pkg {
+        module: mod,
+        name: dep_pkg_name(man, dir_slash, mod),
+        root: false,
+        governed: fern_toml.dep_governed(man, mod),
+        grants: fern_toml.dep_caps(man, mod),
+    });
+}
+
+// package_violations is phase 2 of docs/PACKAGE-CAPABILITIES-BRIEF.md: hold
+// every dependency package to the grant in the manifest that declares it
+// (caps.fern — E070). A governed package reaching outside its grant is an
+// error; an ungoverned one warns and is allowed, which is the migration
+// default for manifests predating the key. Returns true when the program must
+// be rejected.
+//
+// The reachability walk is skipped outright when no non-root package has any
+// function in the bundle — the common single-package compile, including every
+// compiler source.
+function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
+    if (!caps.enforceable(merged, pkgs)) { return false; }
+    var vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
+    var bad: boolean = false;
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        if (!vs[i].governed) { eprint("warning: " + caps.violation_message(vs[i]) + "\n"); }
+        i = i + 1;
+    }
+    var k: i32 = 0;
+    while (k < vs.len()) {
+        if (vs[k].governed) {
+            eprint("error[E070]: " + caps.violation_message(vs[k]) + "\n");
+            bad = true;
+        }
+        k = k + 1;
+    }
+    return bad;
+}
+
 function run(): i32 {
     var av: string[] = args();
 
@@ -535,6 +639,7 @@ function run(): i32 {
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
+    var mode_caps: boolean = false;
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
     var optimize: boolean = false;
@@ -576,6 +681,8 @@ function run(): i32 {
             // image, which needs its own wiring. Native excludes darwin and
             // android from -g too.
             emit_syms = true;
+        } else if (a == "-capabilities") {
+            mode_caps = true;
         } else if (a == "-O") {
             optimize = true;
         } else if (a == "-target") {
@@ -649,7 +756,17 @@ function run(): i32 {
         return 0;
     }
 
-    var paths: string[] = add_imports([], entry_mod, root);
+    // The entry's own manifest, when it has one: it names the dependency
+    // packages, which are both a way to RESOLVE an import the sibling-file and
+    // stdlib-root rules cannot name, and the identity every capability grant
+    // is attached to (caps.fern / #6634).
+    var dir_slash: string = "";
+    if (dir.len() > 0) { dir_slash = dir + "/"; }
+    var man: fern_toml.Manifest = read_manifest(dir_slash);
+    var deps: string[] = fern_toml.dep_names(man);
+    var pkgs: caps.Pkg[] = [root_pkg(man)];
+
+    var paths: string[] = add_imports([], entry_mod, root, deps);
     var loaded: flatten.LoadedModule[] = [];
     var done: string[] = [];
     var j: i32 = 0;
@@ -666,6 +783,18 @@ function run(): i32 {
                 Err(e) => { mok = false; },
             }
             if (!mok) {
+                // Manifest fallback: a DECLARED dependency resolves through
+                // fern.toml across the disk-resolvable forms (path, workspace
+                // member, lock, vendor tree, content-addressed store). It is
+                // the only way to reach a package that carries its own
+                // manifest — the rules above can only name a sibling file or
+                // something under the stdlib root.
+                match (modloader.resolve_module_src(dir_slash, ipath, module_name(ipath))) {
+                    Some(s3) => { msrc = s3; mok = true; },
+                    None => { },
+                }
+            }
+            if (!mok) {
                 eprint("fern: cannot read module: ");
                 eprint(mpath);
                 eprint("\n");
@@ -673,7 +802,8 @@ function run(): i32 {
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
             loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
-            paths = add_imports(paths, m, root);
+            pkgs = add_pkg(pkgs, man, dir_slash, ipath);
+            paths = add_imports(paths, m, root, deps);
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
@@ -684,6 +814,15 @@ function run(): i32 {
     // settle against until the bundle exists; parse_module resolved the
     // same-module ones already, and the pass is idempotent.
     merged = parser.resolve_variant_fields_module(merged);
+
+    // `-capabilities`: print the per-package capability report and stop
+    // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
+    // nothing — the grants are enforced on the compile / -check / -interp
+    // paths below.
+    if (mode_caps) {
+        write(caps.format_rows(caps.analyze(merged, pkgs)));
+        return 0;
+    }
 
     if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 
@@ -715,6 +854,10 @@ function run(): i32 {
         // violation would otherwise go unreported while native names it.
         var caps_violated: boolean = false;
         if (target_given) { caps_violated = capability_violations(merged, target); }
+        // The package boundary (E070) runs whether or not a target was named:
+        // what a dependency may reach is a property of the manifests, not of
+        // what the program is being built for.
+        if (package_violations(merged, pkgs)) { caps_violated = true; }
         if (mt.all_well_typed) {
             if (caps_violated) { return 1; }
             return 0;
@@ -740,6 +883,10 @@ function run(): i32 {
     }
 
     if (mode_interp) {
+        // Package-capability gate (E070 — caps.fern): a dependency reaching
+        // past its grant is refused before the program runs, not after it has
+        // already opened the socket.
+        if (package_violations(merged, pkgs)) { return 1; }
         // Evaluate via the tree-walking interpreter; the program's
         // result becomes the process exit code (VInt → its value,
         // VBool → 1/0), matching interp_run.fern. A non-i32/bool
@@ -798,6 +945,11 @@ function run(): i32 {
     // failure lands mid-build as an undefined label or, on wasm, as a
     // host-side instantiation error.
     if (capability_violations(merged, target)) { return 1; }
+
+    // Package-capability gate (E070 — caps.fern): the other capability
+    // system, gating what a DEPENDENCY may reach rather than what the target
+    // provides. Without it the self-host builds a program native refuses.
+    if (package_violations(merged, pkgs)) { return 1; }
 
     // -O: constant-fold the program before codegen (constfold.fold_module),
     // matching the native compiler's constant folding. Compile-only — applied
