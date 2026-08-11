@@ -1,0 +1,178 @@
+// examples/self_host/irverify_run.fern — driver for the IR structure
+// verifier (irverify.fern, #6639 slice 1).
+//
+// Every check is asserted in BOTH directions: a malformed op stream it must
+// report, and a well-formed one it must stay silent on. The silent half is
+// the one that matters most — a verifier that reports a problem on valid IR
+// is worse than none at all, because it would fire on the compiler
+// compiling itself and there would be nothing to fix.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies which
+// one failed, so a regression names its own case without needing the
+// stdout diff.
+
+import "./ir";
+import "./irverify";
+import "./util";
+
+function no_sigs(): irverify.FnSig[] { return []; }
+
+// count_problems verifies `ops` and returns how many problems came back.
+function count_problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
+    return irverify.verify_fn("f", ops, n_params, n_locals, no_sigs()).len();
+}
+
+// first_msg returns the first problem's rendered message, or "" if clean.
+function first_msg(ops: ir.Op[], n_params: i32, n_locals: i32): string {
+    var ps: irverify.Problem[] = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
+    if (ps.len() == 0) { return ""; }
+    return irverify.problem_str(ps[0]);
+}
+
+function main(): i32 {
+    // ---- 1. local index bounds ----------------------------------------
+    // A frame of 3 slots admits 0..2 and refuses 3 and -1.
+    var in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];
+    if (count_problems(in_range, 1, 3) != 0) { return 1; }
+
+    var past_end: ir.Op[] = [ir.op_load_local(3)];
+    if (count_problems(past_end, 1, 3) != 1) { return 2; }
+
+    var negative_idx: ir.Op[] = [ir.op_store_local(0 - 1)];
+    if (count_problems(negative_idx, 1, 3) != 1) { return 3; }
+
+    // The message names the frame breakdown, not just the index.
+    var m1: string = first_msg(past_end, 1, 3);
+    if (!util.contains(m1, "local index 3 is outside the frame")) { return 4; }
+    if (!util.contains(m1, "1 params + 2 locals = 3 slots")) { return 5; }
+
+    // A zero-slot frame refuses every index, including 0.
+    if (count_problems([ir.op_load_local(0)], 0, 0) != 1) { return 6; }
+
+    // ---- 2. control scope discipline ----------------------------------
+    // Balanced block/end is clean, and so is a nested if/else/end.
+    var balanced: ir.Op[] = [ir.op_block(0), ir.op_end()];
+    if (count_problems(balanced, 0, 1) != 0) { return 10; }
+
+    var if_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_end()];
+    if (count_problems(if_else, 0, 1) != 0) { return 11; }
+
+    var nested: ir.Op[] = [ir.op_block(0), ir.op_loop(0), ir.op_if(0), ir.op_else(), ir.op_end(), ir.op_end(), ir.op_end()];
+    if (count_problems(nested, 0, 1) != 0) { return 12; }
+
+    // An unclosed scope is reported once, against the op that opened it.
+    var unclosed: ir.Op[] = [ir.op_block(0)];
+    if (count_problems(unclosed, 0, 1) != 1) { return 13; }
+    if (!util.contains(first_msg(unclosed, 0, 1), "scope is never closed")) { return 14; }
+
+    // Two unclosed scopes are two problems, not one.
+    if (count_problems([ir.op_block(0), ir.op_loop(0)], 0, 1) != 2) { return 15; }
+
+    // An end with nothing open.
+    var extra_end: ir.Op[] = [ir.op_end()];
+    if (count_problems(extra_end, 0, 1) != 1) { return 16; }
+    if (!util.contains(first_msg(extra_end, 0, 1), "end with no open scope")) { return 17; }
+
+    // An else against a block rather than an if.
+    var else_on_block: ir.Op[] = [ir.op_block(0), ir.op_else(), ir.op_end()];
+    if (count_problems(else_on_block, 0, 1) != 1) { return 18; }
+    if (!util.contains(first_msg(else_on_block, 0, 1), "else closes a block")) { return 19; }
+
+    // A second else for one if.
+    var double_else: ir.Op[] = [ir.op_if(0), ir.op_else(), ir.op_else(), ir.op_end()];
+    if (count_problems(double_else, 0, 1) != 1) { return 20; }
+    if (!util.contains(first_msg(double_else, 0, 1), "second else")) { return 21; }
+
+    // An else with nothing open at all.
+    if (count_problems([ir.op_else()], 0, 1) != 1) { return 22; }
+
+    // ---- 3. branch depth ----------------------------------------------
+    // Inside one block, depth 0 targets it and depth 1 targets the implicit
+    // function-body scope — both legal. Depth 2 has no target.
+    var br0: ir.Op[] = [ir.op_block(0), ir.op_br(0), ir.op_end()];
+    if (count_problems(br0, 0, 1) != 0) { return 30; }
+
+    var br1: ir.Op[] = [ir.op_block(0), ir.op_br(1), ir.op_end()];
+    if (count_problems(br1, 0, 1) != 0) { return 31; }
+
+    var br2: ir.Op[] = [ir.op_block(0), ir.op_br(2), ir.op_end()];
+    if (count_problems(br2, 0, 1) != 1) { return 32; }
+    if (!util.contains(first_msg(br2, 0, 1), "branch depth 2 has no target")) { return 33; }
+
+    // brif obeys the same rule.
+    if (count_problems([ir.op_block(0), ir.op_brif(1), ir.op_end()], 0, 1) != 0) { return 34; }
+    if (count_problems([ir.op_block(0), ir.op_brif(2), ir.op_end()], 0, 1) != 1) { return 35; }
+
+    // A branch at the top level may still target the function body (depth 0).
+    if (count_problems([ir.op_br(0)], 0, 1) != 0) { return 36; }
+    if (count_problems([ir.op_br(1)], 0, 1) != 1) { return 37; }
+
+    // A negative depth has no target either.
+    if (count_problems([ir.op_block(0), ir.op_br(0 - 1), ir.op_end()], 0, 1) != 1) { return 38; }
+
+    // ---- 4. call arity -------------------------------------------------
+    var sigs: irverify.FnSig[] = [
+        irverify.FnSig { name: "takes2", n_params: 2 },
+        irverify.FnSig { name: "takes0", n_params: 0 }
+    ];
+
+    // Exact arity is clean.
+    var call_ok: ir.Op[] = [ir.op_call_direct("takes2", 2)];
+    if (irverify.verify_fn("f", call_ok, 0, 1, sigs).len() != 0) { return 40; }
+
+    // One fewer than declared is the closure-environment shape, also clean.
+    var call_env: ir.Op[] = [ir.op_call_direct("takes2", 1)];
+    if (irverify.verify_fn("f", call_env, 0, 1, sigs).len() != 0) { return 41; }
+
+    // Two fewer is a real mismatch.
+    var call_bad: ir.Op[] = [ir.op_call_direct("takes2", 0)];
+    var bad_ps: irverify.Problem[] = irverify.verify_fn("f", call_bad, 0, 1, sigs);
+    if (bad_ps.len() != 1) { return 42; }
+    if (!util.contains(irverify.problem_str(bad_ps[0]), "calls takes2 with 0 args, but it declares 2")) { return 43; }
+
+    // Too many is a mismatch as well.
+    if (irverify.verify_fn("f", [ir.op_call_direct("takes2", 3)], 0, 1, sigs).len() != 1) { return 44; }
+
+    // An UNKNOWN callee is deliberately not reported — the self-host has no
+    // builtin inventory, so it cannot tell a builtin from a typo (#6639
+    // slice 4). This is the check that keeps the pass false-positive-free
+    // on real modules, which call builtins and __-prefixed helpers
+    // constantly.
+    if (irverify.verify_fn("f", [ir.op_call_direct("__fern_rc_inc", 1)], 0, 1, sigs).len() != 0) { return 45; }
+    if (irverify.verify_fn("f", [ir.op_call_direct("print", 1)], 0, 1, sigs).len() != 0) { return 46; }
+
+    // With no signatures at all, arity is skipped entirely rather than
+    // every call becoming a problem.
+    if (count_problems([ir.op_call_direct("takes2", 99)], 0, 1) != 0) { return 47; }
+
+    // A negative count is impossible regardless of the callee.
+    if (count_problems([ir.op_call_direct("anything", 0 - 1)], 0, 1) != 1) { return 48; }
+
+    // An empty callee name.
+    if (count_problems([ir.op_call_direct("", 1)], 0, 1) != 1) { return 49; }
+
+    // Indirect and closure calls check the count only.
+    if (count_problems([ir.op_call_indirect(2)], 0, 1) != 0) { return 50; }
+    if (count_problems([ir.op_call_indirect(0 - 1)], 0, 1) != 1) { return 51; }
+
+    // ---- 5. reporting --------------------------------------------------
+    // Problems accumulate in op order across classes.
+    var many: ir.Op[] = [ir.op_load_local(9), ir.op_end(), ir.op_br(4)];
+    var mp: irverify.Problem[] = irverify.verify_fn("g", many, 0, 1, no_sigs());
+    if (mp.len() != 3) { return 60; }
+    if (mp[0].op != 0 || mp[1].op != 1 || mp[2].op != 2) { return 61; }
+    if (mp[0].fn_name != "g") { return 62; }
+
+    // The rendered form names function, op index and kind.
+    if (!util.contains(irverify.problem_str(mp[0]), "g: op 0 (load_local):")) { return 63; }
+
+    // format_problems caps its output and says how many it dropped.
+    if (!util.contains(irverify.format_problems(mp, 2), "... and 1 more")) { return 64; }
+    if (util.contains(irverify.format_problems(mp, 10), "more")) { return 65; }
+
+    // A clean function renders to the empty string.
+    if (irverify.format_problems(irverify.verify_fn("f", balanced, 0, 1, no_sigs()), 10).len() != 0) { return 66; }
+
+    print("irverify: all structural checks agree");
+    return 0;
+}
