@@ -810,7 +810,7 @@ function main(): i32 {
     // that retired the asm_arm64_modload_run mirror). Default x86_64 keeps
     // every pre-fold caller byte-identical; module loading, the probe, and the
     // per-module analyses are target-agnostic.
-    var target: string = "x86_64";
+    var target: string = "x86-64-linux";
     // `-per-module-emit-all -out-dir DIR` emits every unit in ONE process (#3457
     // slice 2), sharing the whole-program side-table bases. `-func-budget N` sets
     // the per-window function budget (default 100, matching the harness
@@ -876,6 +876,18 @@ function main(): i32 {
             if (ci + 1 <= rng.len()) { pm_hi = util.digits_to_i32(rng[ci + 1:rng.len()]); }
             ai = ai + 1;
         }
+
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux") {
+        eprint("asm_modload_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)\n");
+        return 2;
+    }
+
         else if (entry_path == "") { entry_path = a[ai]; }
         ai = ai + 1;
     }

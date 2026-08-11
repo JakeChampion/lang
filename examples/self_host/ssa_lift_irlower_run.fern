@@ -35,6 +35,18 @@ function main(): i32 {
         ai = ai + 1;
     }
 
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux") {
+        eprint("ssa_lift_irlower_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)\n");
+        return 2;
+    }
+
+
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
     mod = parser.fill_default_args_module(mod);
     // Hoist inline lambdas to top-level `<fn>$clo(__env, params…)` functions

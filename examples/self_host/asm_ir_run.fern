@@ -74,7 +74,7 @@ function run(): i32 {
     var sig_paths: string[] = [];
     // `-target x86_64|arm64` selects the backend pair; default x86_64 keeps
     // every pre-fold caller byte-identical.
-    var target: string = "x86_64";
+    var target: string = "x86-64-linux";
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-ir") { use_ir = true; }
@@ -87,6 +87,16 @@ function run(): i32 {
         if (av[ai] == "-ir-extra-need" && ai + 1 < av.len()) { extra = extra.append(av[ai + 1]); ai = ai + 1; }
         if (av[ai] == "-ir-sigs" && ai + 1 < av.len()) { sig_paths = sig_paths.append(av[ai + 1]); ai = ai + 1; }
         ai = ai + 1;
+    }
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
+        eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
+        return 2;
     }
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
