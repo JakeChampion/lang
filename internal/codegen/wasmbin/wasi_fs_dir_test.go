@@ -173,7 +173,7 @@ func TestFsRemoveDirAllNested(t *testing.T) {
 // std/test failed to build for wasm with `unknown callee
 // "remove_dir_all"` — whether or not the suite touched a file. Build
 // success is the whole assertion; running the suite needs the
-// preview-2 halves (the `bin/fern -target wasm` path), which are the
+// preview-2 halves (the `bin/fern -target wasm32-wasi` path), which are the
 // follow-up.
 func TestFsStdTestBuildsForWasm(t *testing.T) {
 	src := `import "std/test";

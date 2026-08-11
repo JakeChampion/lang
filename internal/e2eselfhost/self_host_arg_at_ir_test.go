@@ -106,14 +106,14 @@ func runArgAtIR(t *testing.T, target, src string, argv ...string) int {
 	// headerless __fern_arg_at, so the _rc sibling's presence proves the routing
 	// on both register backends.
 	const wantSym = "__fern_arg_at_rc"
-	if target == "arm64" {
+	if target == "arm64-linux" {
 		var qemu string
 		_, runner, driverBin = buildModloadArm64DriverX86(t)
 		linkGcc, qemu = arm64Tooling(t)
 		if qemu != "" {
 			runPrefix = []string{qemu}
 		}
-		extra = []string{"-target", "arm64"}
+		extra = []string{"-target", "arm64-linux"}
 	} else {
 		linkGcc, runner, driverBin = buildModloadDriverX86(t)
 		runPrefix = runner
@@ -139,19 +139,19 @@ func runArgAtIR(t *testing.T, target, src string, argv ...string) int {
 }
 
 func TestSelfHostArgAtIRX86_64(t *testing.T) {
-	if got := runArgAtIR(t, "x86-64", argAtIRProg, "alpha", "beta"); got != 42 {
+	if got := runArgAtIR(t, "x86-64-linux", argAtIRProg, "alpha", "beta"); got != 42 {
 		t.Errorf("arg_at IR x86-64 = %d, want 42", got)
 	}
-	if got := runArgAtIR(t, "x86-64", argAtChurnProg, "alpha"); got != 7 {
+	if got := runArgAtIR(t, "x86-64-linux", argAtChurnProg, "alpha"); got != 7 {
 		t.Errorf("arg_at IR x86-64 churn = %d, want 7", got)
 	}
 }
 
 func TestSelfHostArgAtIRArm64(t *testing.T) {
-	if got := runArgAtIR(t, "arm64", argAtIRProg, "alpha", "beta"); got != 42 {
+	if got := runArgAtIR(t, "arm64-linux", argAtIRProg, "alpha", "beta"); got != 42 {
 		t.Errorf("arg_at IR arm64 = %d, want 42", got)
 	}
-	if got := runArgAtIR(t, "arm64", argAtChurnProg, "alpha"); got != 7 {
+	if got := runArgAtIR(t, "arm64-linux", argAtChurnProg, "alpha"); got != 7 {
 		t.Errorf("arg_at IR arm64 churn = %d, want 7", got)
 	}
 }

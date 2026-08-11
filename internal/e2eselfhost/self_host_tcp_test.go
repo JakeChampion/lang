@@ -78,7 +78,7 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 
 	port := freeTCPPort(t)
 	serverSrc := fmt.Sprintf(tcpServerProgram, port)
-	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(serverSrc), "-target", "arm64")
+	serverAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(serverSrc), "-target", "arm64-linux")
 	if len(serverAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the tcp server")
 	}

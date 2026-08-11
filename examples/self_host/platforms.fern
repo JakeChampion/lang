@@ -18,11 +18,11 @@
 // reformat of the tables below has to keep them extractable by that test —
 // it fails loudly rather than vacuously when its patterns stop matching.
 //
-// Target NAMES here are the self-host driver's own (`arm64`, `wasm`, and the
-// `-asm` / `-bin` output-form spellings), which cannot express an environment
-// — #6635 renames them to native's `<isa>-<environment>` pairs, at which point
-// the form spellings collapse into their base target and this table's keys
-// become native's. Nothing below reads a name for anything but the lookup.
+// Target NAMES are native's `<isa>-<environment>` pairs (#6635): the ISA half
+// picks the backend, the environment half says what the host provides, and
+// neither is implied. Output FORM is not in the name — `-emit asm` /
+// `-emit core-module` select it — because what a program may reach does not
+// depend on whether the driver stops at the emitter's text or links it.
 
 import "./parser";
 import "./astwalk";
@@ -93,31 +93,36 @@ function environment_profile(environment: string): string {
     return "";
 }
 
-// target_environment maps a driver target name to its environment, or "" when
-// the name is not a target. The `-asm`, `-bin` and `-component` spellings are
-// output FORMS of the target above them and share its environment: what the
-// artifact can reach does not depend on whether the driver stops at the
-// emitter's text or links it (#6635 moves the forms off the target name).
+// target_environment maps a target name to its environment, or "" when the
+// name is not a target.
 function target_environment(name: string): string {
-    if (name == "x86-64" || name == "x86-64-asm") { return "linux"; }
-    if (name == "arm64" || name == "arm64-asm") { return "linux"; }
+    if (name == "x86-64-linux" || name == "arm64-linux") { return "linux"; }
     if (name == "arm64-android") { return "android"; }
-    if (name == "arm64-darwin" || name == "arm64-darwin-asm") { return "darwin"; }
-    if (name == "wasm" || name == "wasm-bin" || name == "wasm-component") { return "wasi"; }
+    if (name == "arm64-darwin") { return "darwin"; }
+    if (name == "wasm32-wasi") { return "wasi"; }
+    if (name == "arm64-freestanding" || name == "x86-64-freestanding") { return "freestanding"; }
     return "";
 }
 
 function target_isa(name: string): string {
-    if (name == "x86-64" || name == "x86-64-asm") { return "x86-64"; }
-    if (name == "wasm" || name == "wasm-bin" || name == "wasm-component") { return "wasm32"; }
+    if (name == "x86-64-linux" || name == "x86-64-freestanding") { return "x86-64"; }
+    if (name == "wasm32-wasi") { return "wasm32"; }
     return "arm64";
 }
 
-// targets lists every target name the descriptor table answers for, in a
-// stable order.
+// targets lists every target name the descriptor table answers for, sorted —
+// the order `fern -targets` prints them in, and native's own order.
 pub function targets(): string[] {
-    return ["arm64", "arm64-android", "arm64-asm", "arm64-darwin", "arm64-darwin-asm",
-            "wasm", "wasm-bin", "wasm-component", "x86-64", "x86-64-asm"];
+    return ["arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-linux",
+            "wasm32-wasi", "x86-64-freestanding", "x86-64-linux"];
+}
+
+// emits_code is false for a target no backend lowers yet: the freestanding
+// pair type-checks against an empty capability set (docs/FREESTANDING-CORE.md)
+// and has nothing to emit with. The driver refuses codegen for one rather than
+// producing an artifact for the wrong machine.
+pub function emits_code(name: string): boolean {
+    return name != "arm64-freestanding" && name != "x86-64-freestanding";
 }
 
 // for_target resolves a target name to its descriptor. An unknown name comes

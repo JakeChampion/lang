@@ -222,7 +222,7 @@ func TestSelfHostTryDeferWasmIR(t *testing.T) {
 }
 
 // TestSelfHostTryDeferIRArm64 runs the core failure-path case plus the RC
-// interplay case under qemu via `asm_ir_run -target arm64`.
+// interplay case under qemu via `asm_ir_run -target arm64-linux`.
 func TestSelfHostTryDeferIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -240,7 +240,7 @@ func TestSelfHostTryDeferIRArm64(t *testing.T) {
 			// Ok(…)` rebind in any Result-returning defer function (E004, a
 			// pre-existing legacy-path gap noted on #4334) — defer+Result only
 			// compiles through the IR path on this driver.
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.main+"\n"), "-ir", "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.main+"\n"), "-ir", "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

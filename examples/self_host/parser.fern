@@ -15394,7 +15394,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
         // function …` / `pub async function …`): the WASI Preview-3
         // component-model-async export surface. It is STAMPED, not dropped —
         // `-fmt` reprints it, so losing the bit here would have the formatter
-        // silently delete a marker that changes what a `-target wasm-bin`
+        // silently delete a marker that changes what a `-target wasm32-wasi -emit core-module`
         // build exports. Probed before the fip/fbip shape below, which then
         // reads `function` and no-ops; native treats the two as alternatives
         // the same way.

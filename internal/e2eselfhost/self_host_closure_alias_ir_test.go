@@ -162,7 +162,7 @@ func TestSelfHostClosureAliasWasmIR(t *testing.T) {
 }
 
 // TestSelfHostClosureAliasIRArm64 runs the repro and the param-alias case
-// under qemu via `asm_ir_run -ir -target arm64`.
+// under qemu via `asm_ir_run -ir -target arm64-linux`.
 func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -175,7 +175,7 @@ func TestSelfHostClosureAliasIRArm64(t *testing.T) {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-ir", "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-ir", "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

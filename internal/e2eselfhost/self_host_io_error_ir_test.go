@@ -111,7 +111,7 @@ func TestSelfHostIoErrorIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostIoErrorIRArm64 runs the same cases through the arm64 IR path
-// (asm_ir_run -target arm64 -ir), whose runtime helpers live in
+// (asm_ir_run -target arm64-linux -ir), whose runtime helpers live in
 // asm_arm64.fern and carried the same NULL Err/Some payloads (#4624, the
 // arm64 leg of #4370). The read_file/write_file error paths now route through
 // the arm64 __fern_io_error. CI-gated arm64 (qemu).
@@ -138,9 +138,9 @@ func TestSelfHostIoErrorIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-target", "arm64", "-ir")
+				cmd = exec.Command(driverBin, "-target", "arm64-linux", "-ir")
 			} else {
-				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64", "-ir")...)
+				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux", "-ir")...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
 			asm, err := cmd.Output()

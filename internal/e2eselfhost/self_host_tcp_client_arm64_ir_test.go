@@ -25,7 +25,7 @@ func TestSelfHostTcpClientIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	src := []byte(tcpClientIRProgram(port) + "\n")
-	asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

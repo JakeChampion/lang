@@ -1,7 +1,7 @@
 // examples/self_host/ssa_emit_run.fern — driver for the SSA backends.
 // Reads a program on stdin, lowers each in-subset function to SSA
 // (build_func), optimises it, and prints the emitted assembly to stdout —
-// x86-64 by default, or arm64 with `-target arm64`. The companion Go tests
+// x86-64 by default, or arm64 with `-target arm64-linux`. The companion Go tests
 // assemble the output (`gcc -static -nostdlib [-no-pie]`) and run it,
 // asserting the process exit code matches the program's value — end-to-end
 // proof that AST → SSA → optimise → emit → execute preserves semantics.
@@ -15,7 +15,7 @@ import "./ssa_arm64";
 
 function main(): i32 {
     var av: string[] = args();
-    var target: string = "x86-64";
+    var target: string = "x86-64-linux";
     var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
@@ -23,6 +23,18 @@ function main(): i32 {
         else if (av[ai] == "-regalloc") { use_regalloc = true; }
         ai = ai + 1;
     }
+
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux") {
+        eprint("ssa_emit_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)\n");
+        return 2;
+    }
+
 
     var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
     mod = parser.fill_default_args_module(mod);
@@ -96,7 +108,7 @@ function main(): i32 {
         }
         hi = hi + 1;
     }
-    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    if (target == "arm64-linux") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

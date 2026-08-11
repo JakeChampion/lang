@@ -1,5 +1,5 @@
 // E2E tests for the experimental SSA-direct wasm backend
-// (`-target wasm -backend ssa`). Builds the lang CLI from this
+// (`-target wasm32-wasi -backend ssa`). Builds the lang CLI from this
 // checkout, compiles a small Lang program with the new target,
 // validates the emitted module via wasm-tools, then runs it
 // under wasmtime.
@@ -93,7 +93,7 @@ func TestWasmSSACliRoundtrip(t *testing.T) {
 	}
 }
 
-// TestWasmSSAComponentWrapCli — `-target wasm -backend ssa
+// TestWasmSSAComponentWrapCli — `-target wasm32-wasi -backend ssa
 // -component-wrap-cli` lifts the wasm-ssa core module as a
 // preview-2 component implementing wasi:cli/run@0.2.0. Such
 // a component runs under plain `wasmtime run prog.wasm` (no

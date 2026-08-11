@@ -333,7 +333,7 @@ func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
 				// never stack within this one build.
 				debug.FreeOSMemory()
 				// Assemble + link entirely in-process (the cmd/fern default
-				// pipeline for -target x86-64): no GNU `as` subprocess
+				// pipeline for -target x86-64-linux): no GNU `as` subprocess
 				// (~4.7 GB RSS / ~36 s on a driver `.s`), no external linker,
 				// and the ~470 MB `.s` never touches disk. Any assembler
 				// error (e.g. an instruction outside its covered surface)

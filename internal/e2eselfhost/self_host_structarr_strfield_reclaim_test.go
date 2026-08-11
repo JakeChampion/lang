@@ -64,7 +64,7 @@ func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	progBin := buildBin(t, gcc, dir, "structarr_strfield", asm)
 	stderr, exit := hevRun(t, runner, progBin)
 	// 400 % 7 = 1, confirmed against both oracles (bin/fern -interp and native
-	// -target x86-64), not read off the self-host run this test exists to check.
+	// -target x86-64-linux), not read off the self-host run this test exists to check.
 	if exit != 1 {
 		t.Fatalf("exited %d, want 1", exit)
 	}

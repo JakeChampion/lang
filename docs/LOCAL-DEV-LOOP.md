@@ -20,7 +20,7 @@ unsharded `internal/e2eselfhost`:
 
 ```
 make selfhost-cli
-bin/fern-selfhost -target wasm /ABS/prog.fern $PWD/internal/stdlib -o p.wat
+bin/fern-selfhost -target wasm32-wasi -emit asm /ABS/prog.fern $PWD/internal/stdlib -o p.wat
 wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
 ```
 

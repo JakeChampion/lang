@@ -216,7 +216,7 @@ function main(): i32 {
     // pre-fold caller byte-identical. Loading, treeshake, -decide, -ir-probe
     // and the immutability gate are target-agnostic; the per-module modes
     // remain x86-64-only (the mirror never had them).
-    var target: string = "x86_64";
+    var target: string = "x86-64-linux";
     var ag: i32 = 2;
     while (ag < av.len()) {
         if (av[ag] == "-ir-probe") { probe = true; }
@@ -240,6 +240,18 @@ function main(): i32 {
             probe_count = util.digits_to_i32(av[ag + 2]);
             ag = ag + 2;
         }
+
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
+        eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
+        return 2;
+    }
+
         else if (root == "") { root = av[ag]; }
         ag = ag + 1;
     }
@@ -444,7 +456,7 @@ function main(): i32 {
     // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
     merged = checker.annotate_module(merged);
 
-    if (target == "arm64") {
+    if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no AST fallback either.
         // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
         // .emit_module did and errors where the fallback used to be. Note the arm64

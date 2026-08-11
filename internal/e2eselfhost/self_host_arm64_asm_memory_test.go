@@ -15,7 +15,7 @@ import (
 // Arm64GasProg structs while patching it, so every fixup read `a.code` while
 // `a` still referenced it. A second reference sends `.with` down the
 // copy-on-write path, so each patched instruction word cloned the whole
-// buffer: O(code_len^2) arena traffic, and `bin/fern-selfhost -target arm64`
+// buffer: O(code_len^2) arena traffic, and `bin/fern-selfhost -target arm64-linux`
 // exhausted the 16 GiB arena (exit 137) compiling an empty `main` that
 // imports std/array.
 //

@@ -37,7 +37,7 @@ func TestSelfHostArrPushOwnedReclaimArm64(t *testing.T) {
 }
 function main(): i32 { return build() - 4943; }`
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

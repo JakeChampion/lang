@@ -43,7 +43,7 @@ func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 		t.Fatalf("write probe: %v", err)
 	}
 
-	out, err := exec.Command(mmc, srcFile, "-target", "arm64").Output()
+	out, err := exec.Command(mmc, srcFile, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("self-host arm64 emit failed: %v", err)
 	}

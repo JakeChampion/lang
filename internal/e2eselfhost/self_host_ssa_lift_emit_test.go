@@ -123,10 +123,10 @@ func TestSelfHostSSALiftEmit(t *testing.T) {
 		// arm64 (qemu): default + regalloc.
 		t.Run("arm64/"+tc.prog, func(t *testing.T) {
 			mk := func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }
-			if got := run(t, emit(t, tc.prog, "-target", "arm64"), armgcc, false, mk, "arm-"+tc.prog); got != tc.want {
+			if got := run(t, emit(t, tc.prog, "-target", "arm64-linux"), armgcc, false, mk, "arm-"+tc.prog); got != tc.want {
 				t.Errorf("arm64 lift->emit %s = %d, want %d", tc.prog, got, tc.want)
 			}
-			if got := run(t, emit(t, tc.prog, "-target", "arm64", "-regalloc"), armgcc, false, mk, "arm-ra-"+tc.prog); got != tc.want {
+			if got := run(t, emit(t, tc.prog, "-target", "arm64-linux", "-regalloc"), armgcc, false, mk, "arm-ra-"+tc.prog); got != tc.want {
 				t.Errorf("arm64 lift->emit -regalloc %s = %d, want %d", tc.prog, got, tc.want)
 			}
 		})

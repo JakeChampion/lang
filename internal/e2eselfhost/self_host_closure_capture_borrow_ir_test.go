@@ -126,7 +126,7 @@ function main(): i32 {
     if (q != 7) { return 90 + q; }
     return __rc_underflow();
 }`
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-ir", "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-ir", "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")
 	}

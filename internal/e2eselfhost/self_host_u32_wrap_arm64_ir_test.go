@@ -40,9 +40,9 @@ func TestSelfHostU32WrapArm64IR(t *testing.T) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(x86runner) == 0 {
-			cmd = exec.Command(driverBin, "-target", "arm64", "-ir")
+			cmd = exec.Command(driverBin, "-target", "arm64-linux", "-ir")
 		} else {
-			cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64", "-ir")...)
+			cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux", "-ir")...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		emitted, err := cmd.Output()

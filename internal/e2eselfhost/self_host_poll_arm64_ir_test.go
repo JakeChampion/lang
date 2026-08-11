@@ -39,7 +39,7 @@ func TestSelfHostPollIRArm64(t *testing.T) {
 }`
 	want := interpExit(t, interpBin, prog) // interp builtinPoll → -1 → 255
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

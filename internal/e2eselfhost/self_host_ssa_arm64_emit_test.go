@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostSSAEmitArm64 exercises the self-hosted SSA → arm64 backend
 // (examples/self_host/ssa_arm64.fern): the ssa_emit_run driver, given
-// `-target arm64`, lowers each function to SSA, optimises it, and prints
+// `-target arm64-linux`, lowers each function to SSA, optimises it, and prints
 // AArch64 assembly. This test assembles that output with `gcc -static
 // -nostdlib` and runs it (natively on arm64, else under qemu-aarch64),
 // asserting the process exit code equals the program's value — arm64
@@ -278,7 +278,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			run(t, tc.src, tc.want, runDriver(t, tc.src, "-target", "arm64"))
+			run(t, tc.src, tc.want, runDriver(t, tc.src, "-target", "arm64-linux"))
 		})
 	}
 
@@ -287,7 +287,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 	// liveness fixes) the same way the x86 suite does.
 	for _, tc := range cases {
 		t.Run("regalloc/"+tc.name, func(t *testing.T) {
-			run(t, tc.src, tc.want, runDriver(t, tc.src, "-regalloc", "-target", "arm64"))
+			run(t, tc.src, tc.want, runDriver(t, tc.src, "-regalloc", "-target", "arm64-linux"))
 		})
 	}
 
@@ -300,7 +300,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 			fmt.Fprintf(&b, "function h%d(x: i32): i32 { var s = x; s = s + %d; s = s * 3; s = s - %d; return s; }\n", i, i%9, i%5)
 		}
 		b.WriteString("function main(): i32 { return (h1(2) + h7(3)) % 256; }\n")
-		asm := runDriver(t, b.String(), "-target", "arm64")
+		asm := runDriver(t, b.String(), "-target", "arm64-linux")
 		if len(asm) == 0 {
 			t.Fatalf("emit produced empty output for 600-function module")
 		}
@@ -320,7 +320,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 			sum += j % 7
 		}
 		b.WriteString("  return s % 256;\n}\n")
-		asm := runDriver(t, b.String(), "-target", "arm64")
+		asm := runDriver(t, b.String(), "-target", "arm64-linux")
 		if len(asm) == 0 {
 			t.Fatalf("emit produced empty output for 400-statement function")
 		}
@@ -333,7 +333,7 @@ func TestSelfHostSSAEmitArm64(t *testing.T) {
 	for _, mode := range []struct {
 		name string
 		args []string
-	}{{"default", []string{"-target", "arm64"}}, {"regalloc", []string{"-regalloc", "-target", "arm64"}}} {
+	}{{"default", []string{"-target", "arm64-linux"}}, {"regalloc", []string{"-regalloc", "-target", "arm64-linux"}}} {
 		mode := mode
 		// Round-trip: write then read back and compare via streq, exercising the
 		// SSA [len, byte-per-word] string layout end-to-end; a Go-side read

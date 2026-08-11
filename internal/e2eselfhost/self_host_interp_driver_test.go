@@ -377,7 +377,7 @@ func TestSelfHostInterpDriverArm64(t *testing.T) {
 		}
 		files[m+".fern"] = string(src)
 	}
-	interpAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64")
+	interpAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64-linux")
 	interpBin := buildBin(t, arm64gcc, progDir, "interp", interpAsm)
 
 	for _, tc := range interpProgs {

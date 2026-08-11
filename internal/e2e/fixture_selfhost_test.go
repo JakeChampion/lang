@@ -58,7 +58,7 @@ import (
 //     and six of those crash here.
 //   - stdin. This leg feeds it, so the four stdin fixtures the wasm leg skips
 //     are covered.
-//   - The link step, which on wasm does not exist. `-target x86-64` emits GAS
+//   - The link step, which on wasm does not exist. `-target x86-64-linux` emits GAS
 //     text that gcc must accept, so the leg can catch the #5862/#6022 class (a
 //     Fern function named after a register/mnemonic emitting asm the assembler
 //     rejects).
@@ -110,17 +110,11 @@ import (
 // That is a harness artifact, not a compiler divergence: check a suspicious
 // compile failure against `bin/fern -check` on the unmodified fixture before
 // writing it down.
-// NOTE the two fields below name DIFFERENT vocabularies, and #6529's rename
-// had to leave both alone:
-//
-//	backend  a fixture SELECTOR, matched against the `backends` file each
-//	         conformance case carries on disk (interp / x86_64 / arm64 / wasm).
-//	target   a flag for the SELF-HOSTED compiler, which keeps its own -target
-//	         names (x86-64-asm, arm64-asm, wasm-component) and never learned
-//	         cmd/fern's <isa>-<environment> spelling.
-//
-// Neither is a cmd/fern target. Renaming `backend` silently ran zero fixtures;
-// renaming `target` made the self-host driver exit 2.
+// NOTE `backend` is a fixture SELECTOR, matched against the `backends` file each
+// conformance case carries on disk (interp / x86_64 / arm64 / wasm) — NOT a
+// target name. Renaming it silently ran zero fixtures. Since #6635 the
+// self-host driver's -target values are cmd/fern's own `<isa>-<environment>`
+// spellings, so only this selector keeps a vocabulary of its own.
 func TestFernFixturesSelfHostWasm(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -129,7 +123,6 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "wasm",
-		target:    "wasm",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-wasm-known-divergences.txt",
@@ -156,7 +149,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		//	wasm trap: wasm `unreachable` instruction executed  → a real failure
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			watPath := filepath.Join(t.TempDir(), "prog.wat")
-			cmd := exec.Command(fernBin, "-target", "wasm", f.mainPath, stdlibRoot, "-o", watPath)
+			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", f.mainPath, stdlibRoot, "-o", watPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
 				return
@@ -199,7 +192,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 	})
 }
 
-// TestFernFixturesSelfHostX86_64 runs the corpus through `fern -target x86-64`:
+// TestFernFixturesSelfHostX86_64 runs the corpus through `fern -target x86-64-linux`:
 // the self-host x86 emitter, assembled + linked IN-PROCESS by x86_native +
 // elf.fern (no `.s`, no gcc), executed natively.
 //
@@ -208,29 +201,28 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 // produce the finished binary by themselves and the corpus tests the
 // self-hosted toolchain end to end on each. The external link is gone rather
 // than kept alongside: it was the toolchain, and keeping a second path would
-// mean the leg no longer tests what `-target x86-64` actually does.
+// mean the leg no longer tests what `-target x86-64-linux` actually does.
 //
 // One thing went with it. A Fern function named after an x86 register or
 // directive (`and`, `not` — the #5862 / #6022 class) used to fail here as a
 // gcc link error; the in-process assembler has no such reserved-word clash, so
 // those names are now simply legal on this path. They still break
-// `-target x86-64-asm` piped to gcc, which is what that flag is for.
+// `-target x86-64-linux -emit asm` piped to gcc, which is what that flag is for.
 func TestFernFixturesSelfHostX86_64(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "x86_64",
-		target:    "x86-64",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "x86-64", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := exec.Command(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				// Includes the in-process assembler's own refusal ("could not
 				// encode: …"), which names the mnemonic or operand shape.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", nil, f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -245,7 +237,7 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 	})
 }
 
-// TestFernFixturesSelfHostArm64 runs the corpus through `fern -target arm64`:
+// TestFernFixturesSelfHostArm64 runs the corpus through `fern -target arm64-linux`:
 // the self-host arm64 emitter, assembled + linked IN-PROCESS by arm64_native +
 // elf.fern (no `.s`, no gcc — the production path since the ELF flip), executed
 // under qemu-aarch64.
@@ -258,7 +250,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	gcc, runner := x86_64Tooling(t)
 	// arm64Tooling is reused for its qemu discovery and its clean skip; the gcc
-	// it returns is deliberately unused, because `-target arm64` assembles and
+	// it returns is deliberately unused, because `-target arm64-linux` assembles and
 	// links in-process. On a native arm64 Linux host qemu comes back "" and
 	// runArm64Bin execs directly — though that host cannot run the x86-64
 	// driver binary anyway, which the runner check in runSelfHostFixtureLeg
@@ -266,19 +258,18 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "arm64",
-		target:    "arm64",
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-arm64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "arm64", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := exec.Command(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				// Includes the in-process assembler's own refusal ("hit an
 				// instruction it does not yet support: …"), which names the
 				// mnemonic — a different and more actionable failure than the
 				// x86 leg's link error.
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64", f.mainPath, stdlibRoot, out))
+				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", nil, f.mainPath, stdlibRoot, out))
 				return
 			}
 			// write_file does not set the exec bit (the Makefile chmods
@@ -302,7 +293,6 @@ type failFunc func(format string, args ...any)
 // cannot quietly grow its own idea of what counts as covered.
 type selfHostLeg struct {
 	backend   string   // the `backends` sidecar token this leg gates on; also its label
-	target    string   // -target value passed to the self-host CLI
 	gcc       string   // links the self-host DRIVER (always x86-64 asm), whatever the leg's target
 	runner    []string // non-empty when the host cannot exec x86-64 binaries directly
 	knownFile string   // testdata/<file> listing this leg's known divergences
@@ -401,11 +391,12 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 // means the CI log carries the answer instead of an instruction, which is the
 // difference between triaging from a log and having to reproduce first. Costs one
 // extra ~1.3s compile, and only on a fixture that already failed.
-func strictIRBailSite(fernBin, target, mainPath, stdlibRoot string, firstOut []byte) string {
+func strictIRBailSite(fernBin, target string, emit []string, mainPath, stdlibRoot string, firstOut []byte) string {
 	if !strings.Contains(string(firstOut), "not IR-eligible") {
 		return ""
 	}
-	cmd := exec.Command(fernBin, "-target", target, mainPath, stdlibRoot, "-o", os.DevNull)
+	args := append([]string{"-target", target}, emit...)
+	cmd := exec.Command(fernBin, append(args, mainPath, stdlibRoot, "-o", os.DevNull)...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	out, _ := cmd.CombinedOutput()
 	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)

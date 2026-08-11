@@ -90,7 +90,7 @@ func TestSelfHostSSAArgs(t *testing.T) {
 			}
 		})
 		t.Run("arm64/"+tc.name, func(t *testing.T) {
-			got := run(t, emit(t, tc.src, "-target", "arm64"), armgcc, false, func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }, tc.runArgs)
+			got := run(t, emit(t, tc.src, "-target", "arm64-linux"), armgcc, false, func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }, tc.runArgs)
 			if got != tc.want {
 				t.Errorf("arm64 args of %q = %d, want %d", tc.src, got, tc.want)
 			}

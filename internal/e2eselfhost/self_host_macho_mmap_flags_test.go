@@ -92,7 +92,7 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 		openPresent uint32
 	}{
 		{"arm64-darwin", darwinFlags, linuxFlags, true, darwinOTrunc},
-		{"arm64", linuxFlags, darwinFlags, false, darwinOTrunc},
+		{"arm64-linux", linuxFlags, darwinFlags, false, darwinOTrunc},
 	} {
 		tc := tc
 		t.Run(tc.target, func(t *testing.T) {

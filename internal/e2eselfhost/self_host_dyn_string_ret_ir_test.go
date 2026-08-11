@@ -14,7 +14,7 @@ import (
 // resolves the result type name-based off the qualified
 // "<Type>.<method>" return-registry entries, exactly how the backend
 // enumerates the dispatch arms. Exit codes are the oracle; every case
-// was validated native-first (`fern -interp` + `-target x86-64`).
+// was validated native-first (`fern -interp` + `-target x86-64-linux`).
 var dynStringRetIRCases = []struct {
 	name     string
 	src      string

@@ -98,7 +98,7 @@ func TestSelfHostStringX86_64(t *testing.T) {
 }
 
 // TestSelfHostStringArm64 — CI-gated arm64 counterpart. Like the x86 leg it goes
-// through the LOADER driver (asm_load_run -target arm64) rather than the
+// through the LOADER driver (asm_load_run -target arm64-linux) rather than the
 // single-module one, because std/string is not self-contained — see
 // stringImportSource. The compiler runs as an x86 host binary emitting aarch64
 // asm (the cross-compiler-on-host pattern), which the arm64 toolchain then
@@ -121,7 +121,7 @@ func TestSelfHostStringArm64(t *testing.T) {
 			if err := os.WriteFile(mainPath, stringImportSource(tc.main), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot, "-target", "arm64").Output()
+			asm, cerr := exec.Command(mmc, mainPath, stdlibRoot, "-target", "arm64-linux").Output()
 			if cerr != nil {
 				t.Fatalf("loader compile (arm64): %v", cerr)
 			}

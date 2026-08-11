@@ -11,7 +11,7 @@ import (
 
 // TestSelfHostIRPerModuleLinkArm64 is the arm64 counterpart of the x86
 // per-module link/driver tests (#3451 / #3457 step 0a): the arm64
-// asm_modload_run -target arm64 driver compiling a multi-module program by emitting
+// asm_modload_run -target arm64-linux driver compiling a multi-module program by emitting
 // each module as its OWN arm64 translation unit and linking them.
 //
 // The program is the cross-module ENUM case (mirroring
@@ -60,7 +60,7 @@ func TestSelfHostIRPerModuleLinkArm64(t *testing.T) {
 
 	drive := func(t *testing.T, args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entryPath, "-target", "arm64"}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entryPath, "-target", "arm64-linux"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver failed (args %v): %v", args, err)
 		}

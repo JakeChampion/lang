@@ -132,7 +132,7 @@ func TestSelfHostMapKeyedArm64IR(t *testing.T) {
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)
 			}
-			out, err := exec.Command(driver, entry, root, "-target", "arm64").Output()
+			out, err := exec.Command(driver, entry, root, "-target", "arm64-linux").Output()
 			if err != nil || len(out) == 0 {
 				t.Fatalf("%s: arm64 driver failed (%d bytes, err %v)", tc.name, len(out), err)
 			}

@@ -1465,7 +1465,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	//
 	// It exists because a compiler that emits a finished binary has
 	// to be able to produce a runnable one, and `write_file` cannot:
-	// `bin/fern-selfhost -target arm64 -o out.bin` wrote 0644, where
+	// `bin/fern-selfhost -target arm64-linux -o out.bin` wrote 0644, where
 	// the native CLI writes 0755 and chmods. A non-executable binary
 	// run under qemu exits 1 with no output, which is indistinguishable
 	// from a program that ran and returned 1 — that cost one

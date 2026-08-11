@@ -88,7 +88,7 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 		if err := os.WriteFile(prog, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 			t.Fatalf("write program: %v", err)
 		}
-		cmd := runArm64Bin(qemu, orch, prog, "-target", "arm64")
+		cmd := runArm64Bin(qemu, orch, prog, "-target", "arm64-linux")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		asm, err := cmd.Output()

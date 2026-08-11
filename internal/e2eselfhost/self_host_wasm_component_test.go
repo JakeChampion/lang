@@ -126,7 +126,7 @@ function main(): i32 {
 // `_lang_run`, it emits the core-instance / alias / type / canon-lift /
 // instance / `wasi:cli/run` sections around it. The framing is constant for
 // this fixed shape, so the test feeds the Go backend's own core module
-// (extracted from its `-target wasm` component output) to component_full and
+// (extracted from its `-target wasm32-wasi` component output) to component_full and
 // asserts the result is byte-identical to — and runs the same as — the Go
 // reference component.
 func TestSelfHostWasmComponentFull(t *testing.T) {
@@ -416,7 +416,7 @@ function main(): i32 {
 // the user core. Given a core that uses the preview2 stdout imports and
 // exports _lang_run, it must reproduce the native compiler's I/O component
 // byte-for-byte. The test feeds the Go backend's own I/O core (from its
-// `-target wasm` output for a printing program) to component_full_io and
+// `-target wasm32-wasi` output for a printing program) to component_full_io and
 // asserts byte-equality + that the component prints under wasmtime.
 func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")

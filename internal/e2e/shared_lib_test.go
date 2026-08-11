@@ -21,7 +21,7 @@ import (
 )
 
 // TestCLISharedX86Dlopen drives the user-facing `-shared` flag end to end:
-// `fern -target x86-64 -shared -export answer -o lib.so prog.fern` must
+// `fern -target x86-64-linux -shared -export answer -o lib.so prog.fern` must
 // produce a .so whose `answer` export dlopen+dlsym+calls to 42 (host amd64).
 func TestCLISharedX86Dlopen(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")

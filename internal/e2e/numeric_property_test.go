@@ -314,7 +314,7 @@ func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]st
 }
 
 // buildNumComponent builds a plain wasi:cli/run component the way
-// `fern -target wasm` does — no result-printer wrapper, so the
+// `fern -target wasm32-wasi` does — no result-printer wrapper, so the
 // program's own `print`s are the only stdout (the oracle's
 // buildComponent appends main's return value, which would show up
 // as a spurious trailing "0" line here).

@@ -20,7 +20,7 @@ import (
 // FERN_NATIVE_ASM. Each had a sound reason for being gated, recorded only in a
 // prose comment with no mechanism to ever re-check it, and at least one had
 // gone stale: FERN_NATIVE_ASM covers the pure-Go in-process assembler, which
-// is the DEFAULT assemble+link path for `cmd/fern -target x86-64` and falls
+// is the DEFAULT assemble+link path for `cmd/fern -target x86-64-linux` and falls
 // back to gcc automatically, so a gap in it degrades silently. It had a
 // missing `ud2` encoding that made FERN_RC_FREE_DEBUG=1 — the use-after-free
 // detector, and the tool that found #6021 — unbuildable on the production

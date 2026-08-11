@@ -172,7 +172,7 @@ func TestSelfHostPerModuleCounterBSSLinkArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "counterbssarm64")
 
 	entry := writePerModuleCounterProject(t)
-	objs := perModuleUnits(t, driverBin, entry, []string{"-target", "arm64"}, 2)
+	objs := perModuleUnits(t, driverBin, entry, []string{"-target", "arm64-linux"}, 2)
 
 	bin := filepath.Join(filepath.Dir(entry), "prog")
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)

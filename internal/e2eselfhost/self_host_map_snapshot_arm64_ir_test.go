@@ -20,7 +20,7 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
+		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 		if len(asm) == 0 {
 			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
 		}

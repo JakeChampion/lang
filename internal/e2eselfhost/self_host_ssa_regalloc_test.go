@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostSSARegallocArm64 exercises the linear-scan register allocator
 // (examples/self_host/ssa.fern's regalloc_linear) through the arm64 backend
-// (`-target arm64 -regalloc`). It checks two things:
+// (`-target arm64-linux -regalloc`). It checks two things:
 //
 //   - correctness: the register-allocated code, assembled and run, produces
 //     the same exit code as the program's value (allocation is a
@@ -73,7 +73,7 @@ func TestSelfHostSSARegallocArm64(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := emit(t, tc.src, "-target", "arm64", "-regalloc")
+			asm := emit(t, tc.src, "-target", "arm64-linux", "-regalloc")
 			asmPath := filepath.Join(dir, "prog.s")
 			binPath := filepath.Join(dir, "prog")
 			if err := os.WriteFile(asmPath, asm, 0o644); err != nil {
@@ -102,8 +102,8 @@ func TestSelfHostSSARegallocArm64(t *testing.T) {
 			"function main(): i32 { var i = 0; var t = 0; while (i < 3) { var j = 0; while (j < 3) { t = t + 1; j = j + 1; } i = i + 1; } return t; }",
 		}
 		for _, src := range loops {
-			spill := strings.Count(string(emit(t, src, "-target", "arm64")), "[sp")
-			ra := strings.Count(string(emit(t, src, "-target", "arm64", "-regalloc")), "[sp")
+			spill := strings.Count(string(emit(t, src, "-target", "arm64-linux")), "[sp")
+			ra := strings.Count(string(emit(t, src, "-target", "arm64-linux", "-regalloc")), "[sp")
 			if ra >= spill {
 				t.Errorf("regalloc did not reduce stack traffic for %q: spill=%d regalloc=%d", src, spill, ra)
 			}

@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostArm64LinuxBuilds is the arm64-Linux flagship: the self-host CLI
-// (examples/self_host/fern.fern, `-target arm64`) now emits a runnable static
+// (examples/self_host/fern.fern, `-target arm64-linux`) now emits a runnable static
 // ELF **in-process** — asm_arm64 / ssa_arm64 produce the GAS text and
 // arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step (the
 // flip, mirroring arm64-darwin). Unlike the darwin path (which can only be
@@ -123,7 +123,7 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 				t.Fatalf("write src: %v", err)
 			}
 			binPath := filepath.Join(dir, c.name+".bin")
-			if out, err := exec.Command(fernBin, "-target", "arm64", "-o", binPath, srcPath).CombinedOutput(); err != nil {
+			if out, err := exec.Command(fernBin, "-target", "arm64-linux", "-o", binPath, srcPath).CombinedOutput(); err != nil {
 				t.Fatalf("self-host emit (arm64 ELF) failed: %v\n%s", err, out)
 			}
 			raw, err := os.ReadFile(binPath)

@@ -36,7 +36,7 @@ func TestSelfHostArm64NativeLinuxElfRuns(t *testing.T) {
 		t.Skip("native x86-64 run required to build the self-host emitter + driver")
 	}
 
-	// Build the Linux arm64 asm emitter (asm_ir_run.fern (-target arm64), emit_module(false)).
+	// Build the Linux arm64 asm emitter (asm_ir_run.fern (-target arm64-linux), emit_module(false)).
 	dir := writeSelfHostAsmProject(t)
 	for _, name := range []string{"util.fern", "astwalk.fern", "asmcore.fern", "flatten.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern"} {
 		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
@@ -153,7 +153,7 @@ function main(): i32 {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rdir := t.TempDir()
-			asm := runCapture(t, gcc, runner, emitBin, []byte(c.src+"\n"), "-target", "arm64")
+			asm := runCapture(t, gcc, runner, emitBin, []byte(c.src+"\n"), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("emitter produced 0 bytes")
 			}

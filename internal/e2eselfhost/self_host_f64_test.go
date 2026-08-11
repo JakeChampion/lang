@@ -100,7 +100,7 @@ func TestSelfHostF64ToStringArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	asm, progDir := compileStdProgModload(t, x86runner, driverBin, f64ToStringMods, f64ToStringProgram, "-target", "arm64")
+	asm, progDir := compileStdProgModload(t, x86runner, driverBin, f64ToStringMods, f64ToStringProgram, "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the f64 program")
 	}

@@ -125,7 +125,7 @@ func TestSelfHostSSAPrint(t *testing.T) {
 			}
 		})
 		t.Run("arm64/"+tc.name, func(t *testing.T) {
-			got := run(t, emit(t, tc.src, "-target", "arm64"), armgcc, false, func(b string) *exec.Cmd { return runArm64Bin(qemu, b) })
+			got := run(t, emit(t, tc.src, "-target", "arm64-linux"), armgcc, false, func(b string) *exec.Cmd { return runArm64Bin(qemu, b) })
 			if got != tc.want {
 				t.Errorf("arm64 print of %q = %q, want %q", tc.src, got, tc.want)
 			}

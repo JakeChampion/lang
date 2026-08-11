@@ -178,7 +178,7 @@ impl Show for Circle { function show(self: Self): i32 { return self.r * self.r +
 function go(k: i32): i32 { var d: dyn Show = Circle { r: k, tags: [7, 8] }; return d.show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")
 	}

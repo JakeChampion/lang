@@ -117,14 +117,14 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	for _, rel := range cases {
 		t.Run(filepath.Base(rel), func(t *testing.T) {
 			testSrc := langSrcAbs(t, rel)
-			nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot, "-target", "arm64").Output()
+			nativeOut, err := runArm64Bin(qemu, mmcNative, testSrc, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
 				t.Fatalf("mmc_arm64_native: %v", err)
 			}
 			if len(nativeOut) == 0 {
 				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (strbuf return shape, ProcessResult rodata, arm64 heap size)")
 			}
-			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot, "-target", "arm64").Output()
+			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
 				t.Fatalf("mmc_x86_cross: %v", err)
 			}

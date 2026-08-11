@@ -6,9 +6,9 @@
 //
 // Before the fix (compiler @ main, June 2026):
 //   -interp          → 12   (correct: "fn main() {}".len())
-//   -target x86-64   → 255  (abort)
-//   -target arm64    → 137  (SIGKILL)
-//   -target wasm     → trap
+//   -target x86-64-linux   → 255  (abort)
+//   -target arm64-linux    → 137  (SIGKILL)
+//   -target wasm32-wasi     → trap
 // After the fix: 12 on every backend.
 //
 // Root cause: `def_body.append(body[k])` retains the inner BodyLine

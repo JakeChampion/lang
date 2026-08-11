@@ -111,7 +111,7 @@ func requireSelfHostDiffLeg(t *testing.T) {
 }
 
 // TestDifferential_SelfHostX86_64 compiles each generated program with the
-// self-host CLI (`fern.fern -target x86-64`), links the emitted GAS text with
+// self-host CLI (`fern.fern -target x86-64-linux`), links the emitted GAS text with
 // gcc, runs it, and asserts the exit byte matches the interpreter's.
 //
 // The CLI driver rather than asm_ir_run, for the reason the fixture legs give:
@@ -237,10 +237,10 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, failf failFu
 		t.Fatalf("write src: %v", err)
 	}
 	asmPath := filepath.Join(dir, "prog.s")
-	out, err := exec.Command(fernBin, "-target", "x86-64-asm", srcPath, stdlibRoot, "-o", asmPath).CombinedOutput()
+	out, err := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", srcPath, stdlibRoot, "-o", asmPath).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
-			strictIRBailSite(fernBin, "x86-64-asm", srcPath, stdlibRoot, out))
+			strictIRBailSite(fernBin, "x86-64-linux", []string{"-emit", "asm"}, srcPath, stdlibRoot, out))
 	}
 	binPath := filepath.Join(dir, "prog")
 	// The flags every other self-host x86 link uses (linkSelfHostAsm's small

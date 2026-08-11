@@ -72,7 +72,7 @@ func TestSelfHostCastX86_64(t *testing.T) {
 }
 
 // TestSelfHostCastArm64 mirrors TestSelfHostCastX86_64 for the ARM64
-// emitter (CI-gated under qemu-aarch64): the asm_ir_run (-target arm64) driver
+// emitter (CI-gated under qemu-aarch64): the asm_ir_run (-target arm64-linux) driver
 // (x86 host binary) compiles each cast / bitwise program to aarch64
 // asm, run under qemu, exit code must match.
 func TestSelfHostCastArm64(t *testing.T) {
@@ -99,7 +99,7 @@ func TestSelfHostCastArm64(t *testing.T) {
 
 	for _, tc := range castCases {
 		t.Run(tc.name, func(t *testing.T) {
-			progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64")
+			progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(progAsm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

@@ -23,7 +23,7 @@ import (
 // architecture, and it is a fixed point under self-recompilation — the
 // compiler the self-host built reproduces the self-host's own output.
 //
-// Why arm64 is the leg worth having it on: `-target arm64` is the only path
+// Why arm64 is the leg worth having it on: `-target arm64-linux` is the only path
 // where the self-host produces the finished binary itself, emit + assemble +
 // link in-process, so it is the only gate on `arm64_native.fern`. Generation 2
 // runs THROUGH the assembler's own output, which is what separates "the
@@ -33,7 +33,7 @@ import (
 //
 // #6327 predicted this needed a new `asm_arm64_ir_load_run.fern` driver. It
 // does not: #4398 part 1 folded the arm64 loader mirror into `asm_load_run.fern`
-// behind `-target arm64`, so the driver the deleted test wanted already exists.
+// behind `-target arm64-linux`, so the driver the deleted test wanted already exists.
 //
 // COST. Stage 1 is the expensive half and it runs NATIVELY (~3 min for 35 MB of
 // asm); the aarch64 link is ~5 s. Stage 2 is qemu, and the per-case cost is
@@ -56,7 +56,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	// stage 1: the driver emits aarch64 for its own source, and that asm
 	// becomes a real aarch64 compiler. Reading the STAGED copy rather than
 	// examples/self_host keeps the two generations on identical bytes.
-	stage1Asm, err := exec.Command(mmc, driverSrc, "-target", "arm64").Output()
+	stage1Asm, err := exec.Command(mmc, driverSrc, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("stage 1: mmc could not emit aarch64 for its own source: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 			if tc.stdlib {
 				args = append(args, stdlibRoot)
 			}
-			args = append(args, "-target", "arm64")
+			args = append(args, "-target", "arm64-linux")
 
 			gen1, err := exec.Command(mmc, args...).Output()
 			if err != nil {

@@ -475,7 +475,7 @@ self-bootstrap) stays green between slices.
 
 Mirror the native nets in the self-host's Go-side e2e harness
 (`internal/e2e/self_host_*_test.go`, driven through `asm_run.fern` /
-`asm_ir_run.fern -target arm64` / wasm):
+`asm_ir_run.fern -target arm64-linux` / wasm):
 
 - **Functional**: extend `TestSelfHostAsmRun{X86_64,Arm64,WASM}` with
   RC-exercising programs (alias + push loops, scope drops, reassign,
@@ -6456,7 +6456,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   route is different — the nested-struct arm of `__field_reclaim_S` is gated on
   `structfldok:S`, and the explicit `o.inner` read is itself what disqualifies the
   type, so the arm is absent from the emitted body entirely (visible in
-  `-target x86-64-asm`). Both routes are #6653; this change re-points that row at an
+  `-target x86-64-linux -emit asm`). Both routes are #6653; this change re-points that row at an
   exact pin of the residual so main is green and the number cannot drift.
 
   VERIFIED: `TestSelfHostNestedFieldAliasRebindX86_64` (2 new k-sweep rows + an

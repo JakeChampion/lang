@@ -215,7 +215,7 @@ func TestSelfHostErasedWideArrayGateBlindWasm(t *testing.T) {
 			}
 			outWat := filepath.Join(proj, "out.wat")
 			var stderr strings.Builder
-			cmd := exec.Command(fernBin, "-target", "wasm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
 			cmd.Stderr = &stderr
 			if cerr := cmd.Run(); cerr != nil {
 				t.Fatalf("compile: %v (%s) — a callee that never reads an element uses no stride, so the gate must not refuse it", cerr, stderr.String())
@@ -256,7 +256,7 @@ func TestSelfHostErasedWideArrayGateWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			cmd := exec.Command(fernBin, "-target", "wasm", mainPath, stdlibRoot, "-o", outWat)
+			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat)
 			var stderr strings.Builder
 			cmd.Stderr = &stderr
 			_ = cmd.Run()
@@ -292,7 +292,7 @@ func TestSelfHostErasedWideArrayFixedWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := exec.Command(fernBin, "-target", "wasm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)
@@ -332,7 +332,7 @@ func TestSelfHostErasedWideArrayGateNarrowWasm(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			outWat := filepath.Join(proj, "out.wat")
-			if out, cerr := exec.Command(fernBin, "-target", "wasm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
+			if out, cerr := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", mainPath, stdlibRoot, "-o", outWat).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
 			rcmd := exec.Command("wasmtime", "run", outWat)

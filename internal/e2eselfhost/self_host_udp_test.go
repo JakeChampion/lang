@@ -78,7 +78,7 @@ func TestSelfHostUdpSendArm64(t *testing.T) {
 
 	const payload = "hello-udp-fern" // 14 bytes
 	senderSrc := fmt.Sprintf(udpSenderProgram, port, payload)
-	senderAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(senderSrc), "-target", "arm64")
+	senderAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(senderSrc), "-target", "arm64-linux")
 	if len(senderAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the udp sender")
 	}

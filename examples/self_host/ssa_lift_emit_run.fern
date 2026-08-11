@@ -11,7 +11,7 @@
 //
 // A program is one or more functions (a multi-function program exercises
 // cross-function `call_direct`, including recursion). argv[1] selects the
-// program; `-target arm64` selects the backend; `-regalloc` exercises the
+// program; `-target arm64-linux` selects the backend; `-regalloc` exercises the
 // linear-scan allocator over the lifted SSA.
 
 import "./ir";
@@ -281,7 +281,7 @@ function fn_specs(name: string): FnSpec[] {
 function main(): i32 {
     var av: string[] = args();
     var prog: string = "loopsum";
-    var target: string = "x86-64";
+    var target: string = "x86-64-linux";
     var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
@@ -290,6 +290,18 @@ function main(): i32 {
         else { prog = av[ai]; }
         ai = ai + 1;
     }
+
+    // An unrecognised -target is refused rather than emitted for. This driver
+    // dispatches by naming the targets it knows and letting everything else
+    // reach the x86-64 branch, so a stale or misspelled name used to come back
+    // as a successful emit for the WRONG machine — the arm64 leg of #6710 was
+    // handed x86-64 text and surfaced as "unknown mnemonic `movq'" from the
+    // aarch64 assembler, which reads as a codegen bug rather than a typo.
+    if (target != "x86-64-linux" && target != "arm64-linux") {
+        eprint("ssa_lift_emit_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux)\n");
+        return 2;
+    }
+
 
     var specs: FnSpec[] = fn_specs(prog);
     if (specs.len() == 0) { return 2; }
@@ -312,7 +324,7 @@ function main(): i32 {
         i = i + 1;
     }
 
-    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    if (target == "arm64-linux") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

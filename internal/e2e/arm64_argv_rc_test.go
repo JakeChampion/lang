@@ -29,7 +29,7 @@ import (
 // past the read and mask the corruption, as would a borrow-only op mix.
 // The harness materialises a REAL file at every swept length and passes
 // trailing arguments mirroring the driver command lines that failed
-// (stdlib-root-shaped arg + -target arm64), covering the allocation-
+// (stdlib-root-shaped arg + -target arm64-linux), covering the allocation-
 // class-boundary bands (59..65, 79..81) the original failures landed in.
 func TestArm64ArgvStringsRcSafe(t *testing.T) {
 	bin, qemu := compileArm64Bin(t, `function main(): i32 {

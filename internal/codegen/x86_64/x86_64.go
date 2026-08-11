@@ -7518,7 +7518,7 @@ func (g *generator) emitAsciiRunRuntime() {
 // needs no vector register class, no regalloc and no ABI change — all true —
 // while silently assuming the assemblers could already ENCODE vector
 // instructions. They could not: `internal/native/x86_64`, the in-process
-// assembler `-target x86-64` uses unless `-cc` opts out, had no vector
+// assembler `-target x86-64-linux` uses unless `-cc` opts out, had no vector
 // surface at all, only the scalar float ops the code generator uses to
 // shuttle f64 through xmm. This kernel shipped scalar first for exactly that
 // reason. The encodings landed alongside it (see TestEncodeVectorSurface,

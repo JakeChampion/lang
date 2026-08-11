@@ -60,7 +60,7 @@ func TestSelfHostHttpHandlerRoutesIRX86_64(t *testing.T) {
 	buildBin(t, gcc, progDir, "http_handler", asm)
 }
 
-// TestSelfHostOverBudgetRoutesIRArm64 pins that `-target arm64` reaches the IR
+// TestSelfHostOverBudgetRoutesIRArm64 pins that `-target arm64-linux` reaches the IR
 // path for the same over-budget programs, so the arm64 half of #3457 does NOT
 // need the per-module concat.
 //
@@ -91,7 +91,7 @@ function main(): i32 {
 `},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, _ := compileSourceModload(t, runner, driverBin, tc.src, "-target", "arm64")
+			asm, _ := compileSourceModload(t, runner, driverBin, tc.src, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
 			}

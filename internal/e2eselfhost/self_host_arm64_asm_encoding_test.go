@@ -37,7 +37,7 @@ import (
 //
 // # Why the native assembler is a valid oracle
 //
-// internal/native/arm64 is what `bin/fern -target arm64` uses in production, and
+// internal/native/arm64 is what `bin/fern -target arm64-linux` uses in production, and
 // TestNativeLinkArm64MatchesGccLink gates it against gcc's own assembly of the
 // same text. So "self-host agrees with native" transitively means "self-host
 // agrees with gcc", without needing a cross-toolchain on this host.
@@ -174,7 +174,7 @@ _start:
     add x3, sp, x4
     sub x0, sp, x1
     // #6044: the FP conversion/rounding family. fcvt had no encoder at all (605
-    // uses in six fixtures), so -target arm64 refused 60 corpus fixtures --
+    // uses in six fixtures), so -target arm64-linux refused 60 corpus fixtures --
     // most of them, like fizzbuzz and map_keys, with no float in their source,
     // because the runtime helpers carry one. fneg/fabs/fsqrt/frint* had
     // encoders AND a dispatch branch but were missing from arm64_gas_known, so
@@ -208,7 +208,7 @@ _start:
     scvtf d0, x0
     // #6051: ucvtf had no encoder or dispatch at all, so "u64 as f64" — which
     // needs it, a signed convert reading a value >= 2^63 as negative — was
-    // refused outright by -target arm64. The w-source rows pin the sf bit:
+    // refused outright by -target arm64-linux. The w-source rows pin the sf bit:
     // scvtf was hardcoded to the X form, the same width class as fcvtzs above.
     // fcvtzu — the INVERSE conversion, which "f64 as u32" lowers to — was
     // missing for the same reason and is fixed in the same pass.

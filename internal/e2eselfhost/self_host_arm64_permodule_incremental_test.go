@@ -62,7 +62,7 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 	// The driver is an x86 host binary — run it directly.
 	drive := func(args ...string) (string, string) {
 		t.Helper()
-		cmd := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...)
+		cmd := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
 		out, err := cmd.Output()

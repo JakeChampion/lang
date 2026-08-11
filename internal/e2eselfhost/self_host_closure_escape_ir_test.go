@@ -133,7 +133,7 @@ func TestSelfHostClosureEscapeIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostClosureEscapeIRArm64 — CI-gated arm64 counterpart via the arm64
-// IR path (asm_ir_run `-target arm64 -ir`). Shares the fix in irlower.fern.
+// IR path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in irlower.fern.
 func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -143,7 +143,7 @@ func TestSelfHostClosureEscapeIRArm64(t *testing.T) {
 
 	for _, tc := range closureEscapeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

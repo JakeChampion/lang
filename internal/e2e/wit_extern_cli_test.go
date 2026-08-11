@@ -10,7 +10,7 @@ import (
 
 // TestExternImportViaCLI is the end-user gate for bring-your-own WIT
 // (docs/WIT-BRING-YOUR-OWN.md): a program that declares `@import` externs must
-// compile straight through the real `fern -target wasm` CLI — not just the
+// compile straight through the real `fern -target wasm32-wasi` CLI — not just the
 // test harness — and run under wasmtime. The CLI's legacy composer doesn't
 // know arbitrary WIT imports, so the presence of any extern routes the whole
 // module through the world-driven composer (ComposeFromWorldAuto).

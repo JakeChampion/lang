@@ -10590,7 +10590,7 @@ pub function returns_value(ret_type: string): boolean {
 //
 // These four are pure functions over parser.TypeRef / parser.Module with no
 // dependence on the AST emitter's state, and they outlived it: the three probe
-// drivers (wasm_option_payload_run) and the -target wasm-component CLI path in
+// drivers (wasm_option_payload_run) and the -target wasm32-wasi CLI path in
 // fern.fern are their only callers. Moved verbatim rather than rewritten, so
 // the component classification and the payload spellings cannot shift with the
 // deletion.
@@ -10715,7 +10715,7 @@ function module_calls(mod: parser.Module, fn: string): boolean {
     return false;
 }
 
-// component_shape classifies a program for the -target wasm-component CLI.
+// component_shape classifies a program for the -target wasm32-wasi CLI.
 // Beyond no-I/O (0) and stdout (1), each *single* non-stdout WASI category a
 // program uses maps to the matching component_full_io_* wrap. A program using
 // two or more categories (e.g. read_file + env) has no single wrap yet, so it

@@ -184,7 +184,7 @@ func TestSelfHostPerModuleConcatArm64(t *testing.T) {
 	dir, mmr := buildConcatDriver(t, hostGcc)
 	entryPath, _ := writeConcatFixture(t, dir)
 
-	asm, err := exec.Command(mmr, entryPath, "-target", "arm64").Output()
+	asm, err := exec.Command(mmr, entryPath, "-target", "arm64-linux").Output()
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("arm64 over-budget concat emit failed: %v (len=%d)", err, len(asm))
 	}

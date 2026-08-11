@@ -1640,7 +1640,7 @@ function emit_binary(mod: SExpr): i32[] {
 }
 
 // wat_to_binary is the public pipeline entry: WAT text -> wasm binary
-// bytes (an i32[] of 0..255). Used by the fern CLI's -target wasm-bin.
+// bytes (an i32[] of 0..255). Used by the fern CLI's -target wasm32-wasi -emit core-module.
 pub function wat_to_binary(wat: string): i32[] {
     return emit_binary(wat_parse(wat_tokenize(wat)));
 }

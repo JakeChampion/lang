@@ -200,7 +200,7 @@ func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) 
 // GAS source uses \n / \t escapes (interpreted by the Fern lexer). 184 =
 // 0xB8 (mov eax,imm), 185 = 0xB9 (mov ecx,imm).
 // TestSelfHostX86GasGroundTruth pins every encoding the in-process x86-64
-// assembler gained when `-target x86-64` stopped emitting `.s` for gcc: the
+// assembler gained when `-target x86-64-linux` stopped emitting `.s` for gcc: the
 // x87 group the transcendentals lower to, lzcnt/tzcnt/popcnt, the f32
 // conversions, movd, the byte ALU, sarq %cl and setp/setnp. Each is
 // asserted byte-for-byte against `as` + objdump.
@@ -217,7 +217,7 @@ func TestSelfHostX86GasGroundTruth(t *testing.T) {
 
 // x86GasGroundTruthMain assembles one instance of every mnemonic and
 // operand shape the in-process x86-64 assembler gained or corrected when
-// "-target x86-64" stopped emitting .s for gcc, and asserts the bytes
+// "-target x86-64-linux" stopped emitting .s for gcc, and asserts the bytes
 // against as + objdump ground truth.
 //
 // Taken FROM that ground truth, not from a manual reading of the manual:

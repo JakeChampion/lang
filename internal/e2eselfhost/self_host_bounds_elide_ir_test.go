@@ -229,7 +229,7 @@ func TestSelfHostBoundsElideIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
 			want := interpExit(t, interpBin, src)
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
 			}
