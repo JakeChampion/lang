@@ -1892,13 +1892,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // them per function is O(n^2) and OOMs the bump heap on a large module.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod)), mod.trait_reqs),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod), bparams), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
-        // Re-derived against the fixpoint registry, not fn_sigs_of's single
-        // pass — emit_module_ir seeds "strfldok:" from the same verdict, and
-        // the routing and the arm it gates must agree (#6703).
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
         struct_ret_fns: irlower.struct_ret_fns_of(mod.funcs, s.struct_decls),
@@ -1933,8 +1928,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(fns, all_structs, asm_ir.array_ret_fns_of(fns)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(fns, all_structs, asm_ir.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
@@ -6456,16 +6450,9 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // is O(n^2) and OOMs the bump heap (mirrors emit_body / x86
     // emit_module_funcs).
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
-    // #4355: the replaced-STRING-field admission, from the WHOLE-PROGRAM read
-    // scan (all_funcs — see asm_ir.emit_module_ir_unit's sibling seeding and
-    // irlower.strfld_reclaim_ok_types_of). Derived here so the LOWERING below
-    // and the "strfldok:" seeding further down are one verdict.
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs, bparams);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
-        strfld_ok_types: sfok,
         // These two stay scoped to THIS module rather than the whole program.
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
         fn_names: irlower.fn_names_of(mod.funcs),
@@ -6487,8 +6474,11 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         s = emit_function_via_ir(mod.funcs[fi], s, sg);
         fi = fi + 1;
     }
-    // #4355: admit the replaced-STRING-field arm per type, from the sfok the
-    // lowering above routed on.
+    // #4355: admit the replaced-STRING-field arm per type from the WHOLE-PROGRAM
+    // read scan — sg.strfld_ok_types IS that scan, and it is the one the lowering
+    // above routed on, which is what keeps the construction retain and this arm's
+    // free paired (see asm_ir.emit_module_ir_unit's sibling seeding).
+    var sfok: string[] = sg.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm, whole-program.

@@ -40904,28 +40904,19 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: stri
 // The __field_reclaim_<T> string arm frees a REPLACED string field at rc==1.
 // That is sound only if no read of the field can outlive the box chain: the
 // self-host has no read-side alias-inc discipline for strings, so a field
-// read that ESCAPES (a call arg, a return, a container/struct store, a
-// slice/trim view) is an UNCOUNTED alias the free would dangle — the
+// read that ESCAPES (a retaining call arg, a return, a container/struct store,
+// a slice/trim view) is an UNCOUNTED alias the free would dangle — the
 // per-module compiler self-run segfaulted on exactly this (its own
 // LowerState/EmitState string fields are passed to helpers everywhere).
 // strfld_reclaim_ok_types_of therefore admits a type's string arm only when
 // EVERY read of its string-field NAMES, across the WHOLE program, is a
 // provable transient borrow: a binary operand (concat/compare), a byte-index
-// base, the receiver of a read-only / fresh-copy string method, or a direct
-// `var t = x.f` init (retained by the #4768 read-side alias-inc). The walk is
-// field-NAME-keyed and obj-type-blind — a same-named field on another type
-// over-excludes (sound). Callers must pass the WHOLE-PROGRAM func list
-// (all_funcs on the per-module paths); a partial list would under-count the
-// reads and re-open the UAF.
-
-// strfld_is_fa: e is a DIRECT `<obj>.field` read (any obj shape).
-function strfld_is_fa(e: parser.Expr): boolean {
-    match (e) {
-        parser.ExprFieldAccess(_) => { return true; },
-        _ => {}
-    }
-    return false;
-}
+// base, the receiver of a read-only / fresh-copy string method, a BORROWABLE
+// call-argument position (#6703), or a direct `var t = x.f` init (retained by
+// the #4768 read-side alias-inc). The walk is field-NAME-keyed and
+// obj-type-blind — a same-named field on another type over-excludes (sound).
+// Callers must pass the WHOLE-PROGRAM func list (all_funcs on the per-module
+// paths); a partial list would under-count the reads and re-open the UAF.
 
 // strfld_mark: record e's field name as unsafely read (dedup'd), then keep
 // walking its receiver chain.
@@ -44686,14 +44677,21 @@ pub function array_ret_fn_names(funcs: parser.FuncDecl[]): string[] {
 // vs the module's own array-returning names), and `consume_safe_params` starts
 // empty — only the inter-procedural emit paths compute one.
 //
-// Callers on the Perceus emit paths override `borrowable_params` with the
-// precomputed fixpoint (borrowable_params_interproc), which is deliberately NOT
-// borrowable_params_of's single pass.
+// Callers on the Perceus emit paths pass the precomputed fixpoint
+// (borrowable_params_interproc) to fn_sigs_for_borrow below, which is
+// deliberately NOT borrowable_params_of's single pass.
 pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_ret_fns: string[]): FnSigs {
-    // One verdict for both fields: strfld_reclaim_ok_types_of reads the same
-    // borrowability this FnSigs publishes, so an override of one is an override
-    // of the other (see its contract note).
-    var bparams: string[] = borrowable_params_of(funcs);
+    return fn_sigs_for_borrow(funcs, structs, arr_ret_fns, borrowable_params_of(funcs));
+}
+
+// fn_sigs_for_borrow is fn_sigs_of with the borrowability verdict SUPPLIED. The
+// emit paths hold the interprocedural fixpoint and used to override the field
+// afterwards, which left fn_sigs_of's single pass — and the whole-program
+// strfld scan derived from it — computed and thrown away. Two registries in
+// FnSigs read that verdict, so both are built here from the one argument
+// (#6703): a strfld admission derived from a WEAKER registry than the one the
+// backend seeds "strfldok:" from would free fields nothing retained.
+pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_ret_fns: string[], bparams: string[]): FnSigs {
     return FnSigs {
         arr_ret_fns: arr_ret_fns,
         str_ret_fns: str_ret_fns_of(funcs),

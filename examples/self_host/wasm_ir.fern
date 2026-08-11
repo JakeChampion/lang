@@ -93,13 +93,8 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     // emission never produced (#5508).
     var bp: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs)), mod.trait_reqs),
-        borrowable_params: bp,
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs), bp), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bp),
-        // The same reason the two above are re-derived here: emit_ir_rc_bodies_from
-        // gates its string arm on this verdict, so the routing and the arm must
-        // come from ONE registry (#6703).
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs, bp),
         // Array-param moves stay scoped to THIS module.
         move_arr_params: irlower.move_arr_params_of(mod.funcs),
     };

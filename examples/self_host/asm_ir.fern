@@ -3557,8 +3557,7 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
     var arf: string[] = array_ret_fns_of(all_funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_of(all_funcs, all_structs, arf)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_for_borrow(all_funcs, all_structs, arf, bparams)),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.fn_names_of(mod.funcs),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
@@ -6317,8 +6316,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(fns, all_structs, array_ret_fns_of(fns)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(fns, all_structs, array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
@@ -6364,13 +6362,8 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
 pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): irlower.FnSigs {
     var bparams: string[] = irlower.borrowable_params_interproc(funcs);
     return irlower.FnSigs {
-        ...irlower.fn_sigs_of(funcs, structs, array_ret_fns_of(funcs)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
-        // Re-derived against the fixpoint registry, not fn_sigs_of's single
-        // pass: this verdict also seeds the backend's "strfldok:" needs, and
-        // the two sides must be one verdict (#6703).
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(funcs, structs, bparams),
     };
 }
 
@@ -6612,10 +6605,8 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var arf: string[] = array_ret_fns_of(im.funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(im.funcs, im.structs, arf), im.trait_reqs),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(im.funcs, im.structs, arf, bparams), im.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(im.funcs, bparams),
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(im.funcs, im.structs, bparams),
     };
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail (AST fallback) on the first function whose body doesn't lower or whose
