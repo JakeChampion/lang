@@ -6464,3 +6464,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   cross-backend exit agreement with `fern -interp` on x86-64 / arm64 (qemu) / wasm
   (wasmtime), `FERN_STRICT_IR=1` clean on both probes.
   Refs #6628 #6653 #6623 #6605 #6620.
+
+- 2026-08-11: **The self-rebind array alias stops retaining what nothing releases
+  (#6653, array route).** `o = S { …, ys: o.ys, … }` took an `__fern_rc_inc` on the
+  carried buffer from the struct-literal override path, and `__field_reclaim_`'s
+  array arm COW-SKIPS a field that is pointer-equal in old and new — so the inc had
+  no counterpart. One stranded `ys` buffer per CALL: 480 B for three i32 elements,
+  2640 B for thirty, flat in k either way.
+
+  | shape | before | after | `...o` control |
+  |---|---|---|---|
+  | `ys: o.ys` (i32[]) | 270 / 260 — 480 B | 270 / 270 — **0** | 270 / 270 — 0 |
+  | `es: o.es` (E[]) | 270 / 260 — 400 B | 270 / 270 — **0** | — |
+
+  The fix is the direction the `...o` spelling had already proven: its base-copy path
+  emits **no** inc for an array field, and it has always been exactly balanced. So
+  `LowerState.selfrebind` carries the reassigned local's name for the duration of a
+  direct `name = T { … }` RHS, and the override path drops the retain on a field read
+  off that name. It is not a general exemption — a fork to a different local
+  (`p = S { ys: o.ys }`) keeps the inc, because `p` and `o` then both hold the buffer.
+
+  **The flag is cleared before any field value is lowered**, so a nested literal
+  (`S { inner: I { data: o.ys } }`) keeps its own retain. **That clear is currently
+  unguarded and the PR says so**: mutating it away changes neither the exit code nor
+  the byte count on either probe built for it, because a nested struct field's box is
+  not deep-dropped at all for a `structfldok:`-refused type, so the missing dec has
+  nothing to pair with. Keeping the clear is the conservative direction — a retained
+  field leaks, it never dangles — but it is an argument, not a measurement.
+
+  **The nested-struct and enum routes of #6653 are NOT fixed here** and stay at
+  800 B / 720 B. Their imbalance has a different cause: the nested-struct arm of
+  `__field_reclaim_` is gated on `structfldok:<T>`, and the explicit `o.inner` read is
+  itself what disqualifies the type, so the arm is absent from the emitted body
+  entirely. Dropping the retain there would over-release for any type the gate DOES
+  admit, where #6620 made the arm release unconditionally — so that half needs the
+  admission question answered first.
+
+  Found on the way and filed, not fixed: #6665, where native reads an array field
+  aliased into a nested literal as one element LONGER than the interpreter and the
+  self-host both do — the in-place `.append` observed through the alias.
+
+  VERIFIED: `TestSelfHostNestedFieldAliasRebindX86_64` (the residual row becomes an
+  equality assertion against the carry), cross-backend exit agreement with
+  `fern -interp` on x86-64 / arm64 (qemu) / wasm (wasmtime).
+  Refs #6653 #6628 #6620 #6665.
