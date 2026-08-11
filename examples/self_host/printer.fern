@@ -224,6 +224,10 @@ function print_func_decl(fd: parser.FuncDecl): string {
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
+    // `async` selects the WASI Preview-3 `canon lift async` export surface, so
+    // dropping it changes what a `-target wasm-bin` build exports. Native
+    // rejects `async` combined with `fip`, so the two never both print.
+    if (fd.async) { out = out + "async "; }
     // `fip` selects the E053 no-allocation walk, so dropping it here would make
     // formatting a file stop verifying the guarantee the annotation exists to
     // state. The parser models `fip: boolean` only — it folds the graded
@@ -705,6 +709,32 @@ function main(): i32 {
     if (rtDrv.structs[0].derives.len() != 1) { return 197; }
     if (rtDrv.structs[0].derives[0] != "Eq") { return 198; }
     if (rtDrv.funcs.len() != modDrv.funcs.len()) { return 199; }
+
+    // `async` is the same class of modifier (#6631): it selects the Preview-3
+    // `canon lift async` export surface, so dropping it changes what a
+    // `-target wasm-bin` build exports. The bit has to survive BOTH the parse
+    // and the print — the AST-rewrite passes each rebuild a FuncDecl field by
+    // field, so a copy site that hardcodes `async: false` drops it downstream
+    // of a parse that reported it set, which only the round trip catches.
+    var srcJ: string = "async function work(): i32 { return 7; } function main(): i32 { return work(); }";
+    var modJ: parser.Module = parser.parse_module(lexer.tokenize(srcJ));
+    if (modJ.funcs.len() != 2) { return 200; }
+    if (!modJ.funcs[0].async) { return 201; }
+    if (modJ.funcs[1].async) { return 202; }
+    var rtJ: parser.Module = roundtrip_module(srcJ);
+    if (rtJ.funcs.len() != 2) { return 203; }
+    if (!rtJ.funcs[0].async) { return 204; }
+    if (rtJ.funcs[1].async) { return 205; }
+    // `pub async function` — `pub` is stripped by the parser and stays dropped
+    // (#6633); the `async` bit behind it must still survive.
+    var rtK: parser.Module = roundtrip_module("pub async function w(): i32 { return 1; }");
+    if (rtK.funcs.len() != 1) { return 206; }
+    if (!rtK.funcs[0].async) { return 207; }
+    // Contextual only: `async` followed by anything else stays an ordinary
+    // identifier, and no function is marked.
+    var rtL: parser.Module = roundtrip_module("function main(): i32 { var async: i32 = 3; return async + 4; }");
+    if (rtL.funcs.len() != 1) { return 208; }
+    if (rtL.funcs[0].async) { return 209; }
 
     return 0;
 }
