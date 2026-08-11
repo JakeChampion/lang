@@ -2145,7 +2145,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                             if (caps.len() == 0) {
                                 // No captures: lift verbatim. Called directly
                                 // (fast path) or via a 1-slot box (env ignored).
-                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true });
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: true });
                             } else {
                             // Capturing: the closure is boxed [fn_addr, cap…] at
                             // its binding; the lifted body reads captures back
@@ -2187,7 +2187,7 @@ pub function collect_lambdas(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
                                 }
                                 var bk: i32 = 0;
                                 while (bk < lam.body.len()) { ebody = ebody.append(lam.body[bk]); bk = bk + 1; }
-                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, ret_str: false, async: false, is_const: false, is_pub: true });
+                                out = out.append(parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: eparams, ret_type: lam.ret_type, body: ebody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: true });
                             }
                             }
                         },

@@ -222,3 +222,214 @@ func TestSelfHostIRVerifyCorpusClean(t *testing.T) {
 			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
 	}
 }
+
+// TestSelfHostIRVerifyFip exercises the `fip` / `fbip` allocation-budget
+// verifier (examples/self_host/irfipverify.fern, #6639 slice 3) — the port of
+// native's internal/ir/fip_verify.go.
+//
+// Same driver and the same both-directions discipline as the two passes above.
+// The direction that carries the weight here is the silent one for a
+// reuse-PAIRED site: charging it would report every `fbip` function whose
+// claim the reuse layer actually earns, which is the whole population the
+// annotation exists for.
+//
+// Exit 0 means every assertion held; a non-zero code is the failing case's id
+// in irverify_run.fern's fip_checks.
+func TestSelfHostIRVerifyFip(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+
+	cmd := exec.Command(bin)
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("irverify_run did not exit normally")
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("irverify_run exit code = %d, want 0 — that code is the failing assertion's id in irverify_run.fern", code)
+	}
+	if want := "irfipverify: all allocation-budget checks agree"; !strings.Contains(string(out), want) {
+		t.Errorf("irverify_run stdout = %q, want it to contain %q", out, want)
+	}
+}
+
+// TestSelfHostFipCensusOnNativesShapes runs the allocation-budget verifier over
+// the exact programs native's internal/ir/fip_verify_test.go uses, and pins the
+// self-host's per-function census against them.
+//
+// The point is not that the two agree — on two of these shapes they do not, and
+// that is the finding. Native pairs the R1 struct self-overwrite and the R4
+// consuming-match rebuild; the self-host's reuse layer pairs neither yet, so a
+// bare `fbip` that native accepts needs a grade here. The R3 general pairing
+// does match. Pinning the counts is what turns "the self-host is behind on two
+// reuse families" from a thing someone rediscovers into a number that moves
+// when the port lands — at which point this test fails and its expectations
+// are the thing to update.
+func TestSelfHostFipCensusOnNativesShapes(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irlower_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
+
+	cases := []struct {
+		name string
+		src  string
+		// want is the census line the named function must produce.
+		want string
+		// exit is the driver's exit code: 1 when a claim overruns its budget.
+		exit int
+	}{
+		{
+			// R4 consuming-match rebuild. Native pairs it, so bare `fbip`
+			// verifies there; the self-host emits two fresh constructor sites.
+			name: "r4-consuming-match",
+			src: `enum List { Cons(i32, List), Nil }
+fbip function map_inc(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, map_inc(t)); },
+        Nil => { return Nil; },
+    }
+}
+function main(): i32 { return 0; }`,
+			want: "map_inc claim=fbip(0) fresh=2 paired=0",
+			exit: 1,
+		},
+		{
+			// R1 struct self-overwrite on an `own` param. Native pairs it.
+			name: "r1-self-overwrite",
+			src: `struct P { x: i32, y: i32 }
+fbip function bump(own p: P): P {
+    p = P { x: p.x + 1, y: p.y };
+    return p;
+}
+function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`,
+			want: "bump claim=fbip(0) fresh=1 paired=0",
+			exit: 1,
+		},
+		{
+			// R3 general pairing: the second construction takes over the first
+			// one's dead box. Self-host and native agree — one fresh site, one
+			// paired — so `fbip(1)` verifies clean on both.
+			name: "r3-general-pairing",
+			src: `struct P { x: i32, y: i32 }
+fbip(1) function churn(a0: i32): i32 {
+    var a: P = P { x: a0, y: a0 + 1 };
+    var s: i32 = a.x + a.y;
+    var b: P = P { x: s + 1, y: a0 };
+    return b.x + b.y;
+}
+function main(): i32 { return churn(3); }`,
+			want: "churn claim=fbip(1) fresh=1 paired=1",
+			exit: 0,
+		},
+		{
+			// An un-paired construction under a bare claim: the shape native's
+			// TestFbipVerifyUnpairedConstructionRejected pins, and the one both
+			// compilers reject.
+			name: "unpaired-rejected",
+			src: `struct P { x: i32, y: i32 }
+fbip function mk(a: i32): P { return P { x: a, y: a + 1 }; }
+function main(): i32 { var p: P = mk(3); return p.x; }`,
+			want: "mk claim=fbip(0) fresh=1 paired=0",
+			exit: 1,
+		},
+		{
+			// A bare `fip` body that allocates nothing verifies clean, and its
+			// zeroed census is what says so.
+			name: "fip-clean",
+			src: `fip function add2(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { return add2(1, 2); }`,
+			want: "add2 claim=fip(0) fresh=0 paired=0",
+			exit: 0,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd := exec.Command(bin, "-verifyfip")
+			cmd.Stdin = strings.NewReader(c.src)
+			out, _ := cmd.Output()
+			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+				t.Fatalf("driver did not exit normally")
+			}
+			if got := cmd.ProcessState.ExitCode(); got != c.exit {
+				t.Errorf("exit code = %d, want %d\n%s", got, c.exit, out)
+			}
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("census missing %q, got:\n%s", c.want, out)
+			}
+		})
+	}
+}
+
+// TestSelfHostFipVerifyCorpusClean runs the allocation-budget verifier over
+// every conformance fixture and requires it to stay silent.
+//
+// This is the false-positive gate. Almost no fixture carries a fip/fbip
+// annotation, so the pass verifies each function vacuously — which is exactly
+// the property to pin: a claim-free function must never be charged, or the
+// pass would fire on the whole corpus the moment it is wired into a build.
+// conformance/cases/diag_e068 is the one fixture that is supposed to overrun,
+// and it is skipped by name rather than silently tolerated.
+func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
+	if testing.Short() {
+		t.Skip("corpus sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irlower_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
+
+	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
+	if err != nil {
+		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	if len(cases) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
+	}
+
+	// The fixtures whose whole purpose is to overrun a budget.
+	expectedDirty := map[string]bool{"diag_e068": true}
+
+	var dirty []string
+	seen := 0
+	for _, c := range cases {
+		name := filepath.Base(filepath.Dir(c))
+		src, err := os.ReadFile(c)
+		if err != nil {
+			t.Fatalf("reading %s: %v", c, err)
+		}
+		cmd := exec.Command(bin, "-verifyfip")
+		cmd.Stdin = strings.NewReader(string(src))
+		out, _ := cmd.Output()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Errorf("%s: driver did not exit normally", name)
+			continue
+		}
+		seen += strings.Count(string(out), " fresh=")
+		if cmd.ProcessState.ExitCode() != 0 && !expectedDirty[name] {
+			dirty = append(dirty, name+": "+strings.TrimSpace(string(out)))
+		}
+	}
+	if len(dirty) > 0 {
+		max := 15
+		if len(dirty) < max {
+			max = len(dirty)
+		}
+		t.Errorf("fip verifier reported problems on %d of %d conformance fixtures:\n  %s",
+			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
+	}
+	if seen < 700 {
+		t.Errorf("fip pass censused %d lowered functions across the corpus, expected the full set — a shrunken sweep proves nothing", seen)
+	}
+}

@@ -15,6 +15,7 @@
 import "./ir";
 import "./irverify";
 import "./irverifystack";
+import "./irfipverify";
 import "./util";
 
 function no_sigs(): irverify.FnSig[] { return []; }
@@ -155,6 +156,107 @@ function stack_checks(): i32 {
     if (!util.contains(irverifystack.coverage_str(cov), "modelled 1/3")) { return 112; }
     // Reasons are grouped by cause, so a systemic skip reads as one line.
     if (!util.contains(irverifystack.coverage_str(cov), "skipped 2: unmodelled op load")) { return 113; }
+    return 0;
+}
+
+// ---- allocation-budget pass helpers (#6639 slice 3) --------------------
+
+function fip_claim(kw: string, allowance: i32): irfipverify.FipClaim {
+    return irfipverify.FipClaim { fn_name: "f", is_fip: kw == "fip", is_fbip: kw == "fbip", allowance: allowance };
+}
+
+function fip_problems(kw: string, allowance: i32, ops: ir.Op[]): i32 {
+    return irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops).problems.len();
+}
+
+function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
+    var r: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops);
+    if (r.problems.len() == 0) { return ""; }
+    return irverify.problem_str(r.problems[0]);
+}
+
+// fip_checks runs the allocation-budget assertions and returns 0, or the
+// failing case's id. Both directions per shape, as with the two passes above:
+// the counted op must be reported past its allowance, and must be silent
+// within it — a pass that charges a reuse-paired site would report every real
+// `fbip` function, which is the failure mode that matters here.
+function fip_checks(): i32 {
+    var fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2)];
+    var paired_struct: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(3), ir.op_call_direct("__fern_alloc_reuse", 2)];
+
+    // ---- 1. the budget -------------------------------------------------
+    // One fresh constructor: over a bare claim's allowance of 0, within a
+    // graded one's.
+    if (fip_problems("fbip", 0, fresh_struct) != 1) { return 120; }
+    if (fip_problems("fbip", 1, fresh_struct) != 0) { return 121; }
+    if (fip_problems("fip", 0, fresh_struct) != 1) { return 122; }
+    if (fip_problems("fip", 1, fresh_struct) != 0) { return 123; }
+
+    // An unannotated function is verified vacuously, however it allocates —
+    // that is what lets a caller hand the whole module in unfiltered.
+    if (fip_problems("", 0, fresh_struct) != 0) { return 124; }
+
+    // ---- 2. a paired site is not charged -------------------------------
+    // The reuse-paired call is the whole reason `fbip` may write constructors,
+    // so charging it would make every earned claim fail.
+    if (fip_problems("fbip", 0, paired_struct) != 0) { return 125; }
+    var pr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), paired_struct);
+    if (pr.paired != 1 || pr.fresh != 0) { return 126; }
+    // A call to anything else is neither charged nor credited.
+    if (irfipverify.verify_fip_fn(fip_claim("fbip", 0), [ir.op_call_direct("__fern_rc_dec", 1)]).paired != 0) { return 127; }
+
+    // ---- 3. the counted ops --------------------------------------------
+    // Each constructor op the lowering emits for a fresh site, and the two
+    // E053 never admits under any grading.
+    if (fip_problems("fbip", 0, [ir.op_struct_make("P", 2)]) != 1) { return 130; }
+    if (fip_problems("fbip", 0, [ir.op_struct_copy(2)]) != 1) { return 131; }
+    if (fip_problems("fbip", 0, [ir.op_tuple_make(2)]) != 1) { return 132; }
+    if (fip_problems("fbip", 0, [ir.op_arr_make(3, 32)]) != 1) { return 133; }
+    if (fip_problems("fbip", 0, [ir.op_opt_make(1)]) != 1) { return 134; }
+    if (fip_problems("fbip", 0, [ir.op_str_concat()]) != 1) { return 135; }
+    if (fip_problems("fbip", 0, [ir.op_alloc()]) != 1) { return 136; }
+
+    // const_struct's box is STATIC DATA, so it allocates nothing — it is in
+    // ir.op_allocates (which answers "needs the heap runtime") and must not be
+    // in this list, or a function whose every aggregate is constant would be
+    // reported for allocating none of them.
+    if (fip_problems("fip", 0, [ir.op_const_struct("P", 2, "1,2")]) != 0) { return 137; }
+    // Reading the heap cursor is not allocating either, for the same reason.
+    if (fip_problems("fip", 0, [ir.op_heap_bump_bytes()]) != 0) { return 138; }
+    // Nor is a field read off a box, or a scalar push.
+    if (fip_problems("fip", 0, [ir.op_struct_get(0, 0), ir.op_const_i32(1)]) != 0) { return 139; }
+
+    // ---- 4. the census -------------------------------------------------
+    // Counts are reported whether or not the claim is exceeded, so a caller
+    // can tell "constructs nothing" from "pairs everything".
+    var mixed: ir.Op[] = [ir.op_struct_make("P", 2), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
+    var mr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
+    if (mr.fresh != 2 || mr.paired != 1) { return 140; }
+    if (mr.problems.len() != 0) { return 141; }
+
+    // ---- 5. the message ------------------------------------------------
+    // One problem per function naming every site, not one problem per site:
+    // the count IS the verdict, and a per-site list would bury it.
+    var over: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), mixed);
+    if (over.problems.len() != 1) { return 150; }
+    var m: string = irverify.problem_str(over.problems[0]);
+    if (!util.contains(m, "`fbip` function \"f\" allocates: 2 un-reused allocation site(s)")) { return 151; }
+    if (!util.contains(m, "allowance of 0")) { return 152; }
+    if (!util.contains(m, "struct/enum construction \"P\" at op 0")) { return 153; }
+    if (!util.contains(m, "tuple literal at op 2")) { return 154; }
+    // The keyword in the message is the one that was written.
+    if (!util.contains(fip_msg("fip", 0, mixed), "`fip` function")) { return 155; }
+
+    // A bare `fip` overrun is checker/IR drift — E053 rejected every allocating
+    // construct, so the remedy is a bug report, not a donor.
+    if (!util.contains(fip_msg("fip", 0, fresh_struct), "checker/IR drift")) { return 156; }
+    // A graded claim, and every `fbip`, gets the pairing remedy instead.
+    if (!util.contains(fip_msg("fip", 1, mixed), "grade the claim (`fip(n)`)")) { return 157; }
+    if (!util.contains(fip_msg("fbip", 0, fresh_struct), "grade the claim (`fbip(n)`)")) { return 158; }
+
+    // The problem is whole-function, so it renders without an op index.
+    if (over.problems[0].op >= 0) { return 159; }
+    if (!util.contains(m, "f: `fbip` function")) { return 160; }
     return 0;
 }
 
@@ -305,7 +407,11 @@ function main(): i32 {
     var sc: i32 = stack_checks();
     if (sc != 0) { return sc; }
 
+    var fc: i32 = fip_checks();
+    if (fc != 0) { return fc; }
+
     print("irverify: all structural checks agree");
     print("irverifystack: all stack checks agree");
+    print("irfipverify: all allocation-budget checks agree");
     return 0;
 }

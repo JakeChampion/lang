@@ -16,6 +16,7 @@
 
 import "./lexer";
 import "./parser";
+import "./util";
 
 // =================== EXPRESSIONS ====================
 
@@ -238,12 +239,15 @@ function print_func_decl(fd: parser.FuncDecl): string {
     // dropping it changes what a `-target wasm32-wasi -emit core-module` build exports. Native
     // rejects `async` combined with `fip`, so the two never both print.
     if (fd.async) { out = out + "async "; }
-    // `fip` selects the E053 no-allocation walk, so dropping it here would make
-    // formatting a file stop verifying the guarantee the annotation exists to
-    // state. The parser models `fip: boolean` only — it folds the graded
-    // `fip(n)` and `fbip` spellings into that one bit — so those normalise to a
-    // plain `fip` on the way out. That is a narrowing, not a drop.
-    if (fd.fip) { out = out + "fip "; }
+    // `fip` selects the E053 no-allocation walk and `fbip` its constructor-
+    // relaxed sibling, with the graded `(n)` naming the allocation budget E068
+    // enforces — so dropping any of the three here would make formatting a file
+    // stop verifying the guarantee the annotation exists to state.
+    if (fd.fip || fd.fbip) {
+        if (fd.fip) { out = out + "fip"; } else { out = out + "fbip"; }
+        if (fd.fip_allowance > 0) { out = out + "(" + util.i32_to_string(fd.fip_allowance) + ")"; }
+        out = out + " ";
+    }
     out = out + "function ";
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
@@ -825,8 +829,24 @@ function main(): i32 {
     if (rtM.funcs.len() != 2) { return 190; }
     if (rtM.funcs[0].name != "pure_add") { return 191; }
     if (!rtM.funcs[0].fip) { return 192; }
+    if (rtM.funcs[0].fbip || rtM.funcs[0].fip_allowance != 0) { return 164; }
     // The non-fip sibling must NOT pick the modifier up.
     if (rtM.funcs[1].fip) { return 193; }
+
+    // `fbip` and the graded `(n)` are separate bits, and each changes what the
+    // IR's E068 budget check permits — a printer that normalised either into a
+    // plain `fip` would turn a legal body into an E053 rejection on reparse.
+    var srcFB: string = "fbip function keep(a: i32): i32 { return a; } function main(): i32 { return keep(1); }";
+    var rtFB: parser.Module = roundtrip_module(srcFB);
+    if (rtFB.funcs.len() != 2) { return 165; }
+    if (!rtFB.funcs[0].fbip || rtFB.funcs[0].fip) { return 166; }
+    if (rtFB.funcs[0].fip_allowance != 0) { return 167; }
+
+    var srcFG: string = "fbip(2) function graded(a: i32): i32 { return a; } fip(1) function g1(a: i32): i32 { return a; } function main(): i32 { return graded(1) + g1(2); }";
+    var rtFG: parser.Module = roundtrip_module(srcFG);
+    if (rtFG.funcs.len() != 3) { return 168; }
+    if (!rtFG.funcs[0].fbip || rtFG.funcs[0].fip_allowance != 2) { return 169; }
+    if (!rtFG.funcs[1].fip || rtFG.funcs[1].fbip || rtFG.funcs[1].fip_allowance != 1) { return 170; }
 
     var srcMC: string = "@must_consume\nstruct Res { code: i32 } function main(): i32 { var r: Res = Res { code: 7 }; return r.code; }";
     var rtMC: parser.Module = roundtrip_module(srcMC);
