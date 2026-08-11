@@ -6843,3 +6843,27 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `StructArrStrFieldReclaim`, `StructArrStrFieldHazards`,
   `StructStrFieldReclaim`, `StrFldDropGate`, `OptStructStringField`) green.
   Refs #6703 #6704 #6698 #6707 #4451.
+
+- 2026-08-11: **The heap-bump FLATNESS probe reaches the self-host (#4365).**
+  Native pins ~50 reclaim shapes by running one program at two iteration counts
+  and requiring `__heap_bump_bytes()` to report the same high-water mark. The
+  self-host had one heap-bump test and it pins the BUILTIN, not any shape's
+  flatness — so the reclaim behaviours below were unasserted on the path where
+  the port actually happens, and the fixpoint cannot see them (a compiler that
+  over-allocates identically in both generations still reproduces itself).
+
+  Ten shapes, all measured flat at N=50 vs N=200 and all required to allocate:
+  nested-concat, len-receiver, stmt-temp, discarded-call (struct + array),
+  call-arg-temp, literal-alloc, replaced-field, tuple-temp, nested-array.
+  Native is asserted flat alongside each, as the oracle that the shape is
+  reclaimable at all rather than as a byte-count comparison — the two compilers
+  allocate different amounts for the same program.
+
+  **The gate was verified to bite**, which is the point of a flatness row: a
+  temporary eleventh row carrying the enum-scrutinee shape failed on both
+  assertions (self-host 160 → 128, native 64 → 0, both wrapping a growing count
+  through the exit-code byte). That shape is #6393 and is deliberately NOT a row
+  — it is an open leak on all three backends, so gating it would pin a bug
+  rather than a behaviour. A string-array-element row was dropped for the
+  opposite reason: it allocates nothing on the self-host, so its flatness holds
+  vacuously.
