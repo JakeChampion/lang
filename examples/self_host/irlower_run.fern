@@ -54,18 +54,33 @@ function verify_all(fns: irlower.LoweredFn[]): irverify.Problem[] {
     return out;
 }
 
+// slot_line renders one slot class, or nothing when the class is empty — so a
+// function with no strings has no `str` line rather than an empty one.
+function slot_line(kind: string, slots: i32[]): string {
+    if (slots.len() == 0) { return ""; }
+    var out: string = "  " + kind + ":";
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        out = out + " " + util.i32_to_string(slots[i]);
+        i = i + 1;
+    }
+    return out + "\n";
+}
+
 function main(): i32 {
     var av: string[] = args();
     var want_dump: boolean = false;
     var want_rc_plan: boolean = false;
     var want_str_own: boolean = false;
     var want_verify: boolean = false;
+    var want_slots: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-dump") { want_dump = true; }
         if (av[ai] == "-rc-plan") { want_rc_plan = true; }
         if (av[ai] == "-str-own") { want_str_own = true; }
         if (av[ai] == "-verify") { want_verify = true; }
+        if (av[ai] == "-slots") { want_slots = true; }
         ai = ai + 1;
     }
 
@@ -108,6 +123,31 @@ function main(): i32 {
         return 0;
     }
     var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+
+    // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
+    // kinds and declared return type — the facts LowerState knows and the op
+    // stream alone does not. One `<name> ret=<type> params=<n> locals=<n>`
+    // line, then one line per non-empty slot class. The Go-side gate reads it;
+    // nothing on the emit path does.
+    if (want_slots) {
+        var sl: string = "";
+        var si: i32 = 0;
+        while (si < fns.len()) {
+            var f: irlower.LoweredFn = fns[si];
+            if (f.ok) {
+                sl = sl + f.name + " ret=" + f.ret_type
+                    + " params=" + util.i32_to_string(f.n_params)
+                    + " locals=" + util.i32_to_string(f.n_locals) + "\n";
+                sl = sl + slot_line("i64", f.i64_slots);
+                sl = sl + slot_line("f64", f.f64_slots);
+                sl = sl + slot_line("str", f.str_slots);
+                sl = sl + slot_line("arr", f.arr_slots);
+            }
+            si = si + 1;
+        }
+        write(sl);
+        return 0;
+    }
 
     if (want_verify) {
         // Lower from a defaults-FILLED module. The production backends reach
