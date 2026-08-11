@@ -6614,3 +6614,45 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   evidence is the enum + reuse + reclaim suites on all three backends, which route
   through the same shared admission in `irlower`.
   Refs #6653 #6681 #6628 #6623 #6620 #4451.
+
+- 2026-08-11: **A field read at a BORROWABLE call-arg position stops reading as a
+  move (#6691).** `tagof(o.v)` — one call, after the loop — cost the struct local
+  `o` its ENTIRE reclaim credit: `fieldmove_expr` reads every non-scalar field
+  read in a direct call argument as a move, so the local was marked `NODEEP:`,
+  and `__field_reclaim_S` was not called at all (nor `__struct_drop_S`). Every
+  superseded box AND the `xs` buffer it owned stranded per ITERATION.
+
+  | k | before | after | native |
+  |---|---|---|---|
+  | 1 | 1840 B | **880** | 0 |
+  | 8 | 10240 B | **880** | 0 |
+  | 32 | **98560 B** | **880** | 0 |
+
+  Flat instead of growing, and the exits (60 / 2 / 50) never moved.
+
+  **The verdict this needs was already computed and already trusted for more.**
+  `borrowable_params_of` admits a param only when the callee provably never
+  returns, stores, slices or captures it, and `expr_unsafe_for` consults it for
+  this exact shape one level up — its Level-2 rule, where a bare-ident argument at
+  a borrowable position is a borrow rather than an escape. That rule licenses
+  caller-side FREES; keeping a deep drop is strictly weaker, so the same registry
+  settles it. Free calls only: method-param borrowability is not in the
+  free-function-keyed registry, so a method argument keeps marking.
+
+  **What identified it was the k CURVE, not the count.** `var vv: V = o.v;
+  tagof(vv)` — a `var` init, which the same scan already treats as a borrow —
+  restores the credit and lands on 480 B. Both numbers look like "a leak"; only
+  the curve says one is per-iteration and the other per-call.
+
+  The remaining flat 880 B is the enum payload's shallow-drop model (`k_enum`
+  frees the box, not the payload array), not this defect, and it is what the new
+  suite's k-sweep holds constant.
+
+  Unchanged and deliberately so: a callee that RETAINS its argument. `keep(v: V): V
+  { return v; }` is refused by `borrowable_params_of`, so `var kept = keep(o.v)`
+  keeps `o` marked — the probe reads `kept` back after the rebind loop, so an
+  over-release there is a wrong exit, and it is pinned as a negative row.
+
+  VERIFIED: new `TestSelfHostBorrowedFieldArgReclaimX86_64` (k-sweep + the
+  retaining-callee negative; the sweep FAILS on the parent, where the byte count
+  tracks k). Refs #6691 #6653 #4451.
