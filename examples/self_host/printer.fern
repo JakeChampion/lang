@@ -299,6 +299,27 @@ function print_struct_decl(sd: parser.StructDecl): string {
     return out + "}\n";
 }
 
+// print_const_decl re-spells a const from the zero-arg FuncDecl the parser
+// desugars it into: the body is a single `return EXPR;`, and EXPR is the
+// initialiser. Printing the desugar instead would emit `function NAME(): T {
+// return EXPR; }`, which the SELF-HOST accepts (a bare reference to a zero-arg
+// function is exactly what a const reference lowers to) but native rejects —
+// it has no such rule, so `NAME + 1` there is an operator applied to a
+// function value.
+function print_const_decl(fd: parser.FuncDecl): string {
+    var out: string = "const " + fd.name;
+    if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
+    var i: i32 = 0;
+    while (i < fd.body.len()) {
+        match (fd.body[i]) {
+            parser.StmtReturn(r) => { return out + " = " + print_expr(r.value) + ";\n"; },
+            _ => { }
+        }
+        i = i + 1;
+    }
+    return out + ";\n";
+}
+
 // enum_index returns the position of the enum named `name` in `enums`, or -1.
 function enum_index(enums: parser.EnumDecl[], name: string): i32 {
     var i: i32 = 0;
@@ -453,7 +474,10 @@ pub function print_module(mod: parser.Module): string {
     // `line == 0` cannot name anything the user wrote.
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        if (mod.funcs[fi].line > 0) { out = out + print_func_decl(mod.funcs[fi]); }
+        if (mod.funcs[fi].line > 0) {
+            if (mod.funcs[fi].is_const) { out = out + print_const_decl(mod.funcs[fi]); }
+            else { out = out + print_func_decl(mod.funcs[fi]); }
+        }
         fi = fi + 1;
     }
     var j: i32 = 0;
@@ -938,6 +962,34 @@ function main(): i32 {
         },
         _ => { return 249; }
     }
+    // A `const` desugars to a zero-arg FuncDecl. It was dropped outright,
+    // because the synthesised-decl filter keys on `line == 0` and the desugar
+    // left the position there — so the declaration vanished while every
+    // reference to it survived.
+    //
+    // The assertions read `is_const` back, not just the name: printing the
+    // desugar as `function LIMIT(): i32 { return 41; }` also makes the name
+    // resolve, and the self-host even compiles it, but NATIVE rejects that
+    // form — it has no rule making a bare zero-arg-function reference a call.
+    // Losing the marker is therefore a silent rewrite into something only one
+    // compiler accepts, which a name-and-arity check would not catch.
+    var srcConst: string = "const LIMIT: i32 = 41; function main(): i32 { return LIMIT + 1; }";
+    var rtConst: parser.Module = roundtrip_module(srcConst);
+    if (rtConst.funcs.len() != 2) { return 250; }
+    var limit_i: i32 = 0 - 1;
+    var ci: i32 = 0;
+    while (ci < rtConst.funcs.len()) {
+        if (rtConst.funcs[ci].name == "LIMIT") { limit_i = ci; }
+        ci = ci + 1;
+    }
+    if (limit_i < 0) { return 251; }
+    if (!rtConst.funcs[limit_i].is_const) { return 252; }
+    if (rtConst.funcs[limit_i].ret_type != "i32") { return 253; }
+    // …and an ordinary zero-arg function, whose AST shape is identical, must
+    // NOT come back marked — that is what stops the printer guessing by shape.
+    var rtFn: parser.Module = roundtrip_module("function LIMIT(): i32 { return 41; }");
+    if (rtFn.funcs.len() != 1) { return 254; }
+    if (rtFn.funcs[0].is_const) { return 255; }
 
     return 0;
 }

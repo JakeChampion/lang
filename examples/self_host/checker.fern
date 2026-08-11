@@ -9991,7 +9991,7 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
 
 function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
     var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods);
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const };
 }
 
 // annotate_module stamps every call, field-access and index expression — in a function
