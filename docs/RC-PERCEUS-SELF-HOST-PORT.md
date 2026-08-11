@@ -6656,3 +6656,72 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: new `TestSelfHostBorrowedFieldArgReclaimX86_64` (k-sweep + the
   retaining-callee negative; the sweep FAILS on the parent, where the byte count
   tracks k). Refs #6691 #6653 #4451.
+
+- 2026-08-11: **The `structfldok:` read scan stops counting a BORROWABLE call
+  argument as an escape (#6698).** The read-scan sibling of #6691, and the last
+  door left open on the #6653 imbalance. Two spellings of one program, differing
+  only in the final read:
+
+  | read | before | after | native |
+  |---|---|---|---|
+  | `o.inner.tag` — direct | 0 B | 0 B | 0 |
+  | `itag(o.inner)` — call arg | **800 B** | **0** | 0 |
+
+  A marked field NAME disqualifies its whole type from `structfldok:`, which gates
+  the nested-struct / enum arms of BOTH `__field_reclaim_<T>` and
+  `__struct_drop_<T>`. So one call argument refused `S` outright and the
+  struct-literal override's retain on `o.inner` had nothing to pair with. The scan
+  already models one borrow — a method call's receiver chain goes through
+  `structfld_safe_operand`, which walks beneath without marking — and a borrowable
+  free-function argument is the same thing with a stronger warrant.
+
+  It also recovered part of #6691's residual: the enum probe there goes 880 → 480,
+  the enum BOX now being released and only its payload array left. That remainder
+  is the shallow `k_enum` drop, filed as #6696 with the `__drop_enum_<E>` shape
+  native uses (`emitEnumDropViaGenFn`).
+
+  **`strfld_reclaim_ok_types_of`, the STRING sibling, is deliberately not moved.**
+  It has the identical call-arg coarseness and the identical argument would apply,
+  but it is the scan whose over-admission produced the #3425 whole-compiler
+  corruption, so it wants its own measurement rather than riding along.
+
+  **The cost mattered and the first cut paid it.** Recomputing
+  `borrowable_params_interproc` at the x86 unit-emit call site took the
+  per-module emit-all's gen0 from **129.3 s to 745.4 s** (total 585.8 s → 1663.9 s)
+  — an interproc fixpoint is ~9 passes over every function, and that site runs once
+  per emitted unit. The verdict was already in scope as `b.borrowable_params`, from
+  the `wp_fn_sigs` the modload driver builds ONCE outside its per-unit loop, so the
+  hot path now reads it instead. Only the two single-module driver paths (arm64
+  `emit_module_ir`, wasm `emit_ir_rc_bodies_from`) still compute their own, once per
+  compile.
+
+  That still left gen0 at 365.3 s, and the second half was the LOOKUP:
+  `param_is_borrowable` walks the registry with a char compare per entry, and this
+  scan visits every call argument in the whole program once per unit. A bare field
+  access is the only argument shape the arm marks directly, so the SHAPE is tested
+  first and the registry consulted only for those. Peak memory was never the issue
+  at any point (2.15 → 2.33 GB); time was.
+
+  | emit-all | gen0 | gen1 | total |
+  |---|---|---|---|
+  | parent | 129.3 s | 357.9 s | 585.8 s |
+  | recompute the verdict per unit | 745.4 s | 832.2 s | **1663.9 s** |
+  | reuse `b.borrowable_params` | 365.3 s | 447.8 s | 889.4 s |
+  | + shape before registry | 163.9 s | 320.7 s | **561.2 s** |
+
+  **Both cuts needed measuring; neither was visible from the diff.** The first is
+  the one §9 already warns about (per-unit whole-program analyses), the second is
+  not — a lookup that is O(registry) per call ARGUMENT reads as free until it runs
+  36 times over every call in the compiler.
+
+  Unchanged and deliberately so: a callee that RETAINS its argument.
+  `keepi(v: I): I { return v; }` is refused by `borrowable_params_of`, so
+  `var p = keepi(o.inner)` keeps the type marked; the probe reads `p`'s scalar AND
+  its array back after the rebind loop, and measures identically on the parent.
+
+  VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` PASS 561.24 s (gen0 ==
+  gen1 across 36 units, no OOM). `TestSelfHostBorrowedFieldArgReclaimX86_64` — two
+  new rows: a k-sweep comparing the call spelling against the direct read, and the
+  retaining-callee negative; the call-spelling row FAILS on the parent at 800 B.
+  Exits agree with `fern -interp` on every probe.
+  Refs #6698 #6691 #6653 #6604 #4451.
