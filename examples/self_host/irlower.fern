@@ -29308,17 +29308,38 @@ function enum_all_variants_same_field_count(structs: parser.StructDecl[], enum_n
     return seen;
 }
 
-// variant_ctor_enum_owner: the enum E a variant-constructor expr `V(args)` / bare `V`
-// belongs to, or "".
+// variant_ctor_qualified_name: the VARIANT a qualified construction `E.V(args)`
+// / bare `E.V` names, or "". The structs-only sibling of qualified_variant_enum
+// (which needs a LowerState for its shadowing check): the field must be a
+// variant and the object the bare name of the enum that owns it, so a method
+// call `o.v(…)` cannot pass by naming a receiver after its own enum.
+function variant_ctor_qualified_name(fa: parser.ExprFieldAccess, structs: parser.StructDecl[]): string {
+    var owner: string = variant_enum_owner(structs, fa.field);
+    if (owner == "") { return ""; }
+    match (fa.obj) {
+        parser.ExprIdent(eid) => { if (eid.name == owner) { return fa.field; } },
+        _ => {}
+    }
+    return "";
+}
+
+// variant_ctor_enum_owner: the enum E a variant-constructor expr `V(args)` /
+// bare `V` — or the qualified `E.V(args)` / `E.V` spelling of either — belongs
+// to, or "". Both spellings build the same fresh rc=1 box, so every gate that
+// asks "is this a fresh variant construction?" must read them the same way; the
+// qualified one going unrecognised left a struct literal's enum field retained
+// as if it aliased, leaking one box per construction (#6681).
 function variant_ctor_enum_owner(e: parser.Expr, structs: parser.StructDecl[]): string {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => { return variant_enum_owner(structs, id.name); },
+                parser.ExprFieldAccess(cfa) => { return variant_enum_owner(structs, variant_ctor_qualified_name(cfa, structs)); },
                 _ => { return ""; }
             }
         },
         parser.ExprIdent(id) => { return variant_enum_owner(structs, id.name); },
+        parser.ExprFieldAccess(fa) => { return variant_enum_owner(structs, variant_ctor_qualified_name(fa, structs)); },
         _ => { return ""; }
     }
 }
@@ -29328,25 +29349,28 @@ function variant_ctor_enum_owner(e: parser.Expr, structs: parser.StructDecl[]): 
 function variant_ctor_array_payloads_fresh(e: parser.Expr, structs: parser.StructDecl[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
+            var vname: string = "";
             match (c.callee) {
-                parser.ExprIdent(id) => {
-                    var n: i32 = decl_field_count(structs, id.name);
-                    var i: i32 = 0;
-                    while (i < n && i < c.args.len()) {
-                        var ft: string = decl_field_type_at(structs, id.name, i);
-                        if (is_leaksafe_array_field(ft)) {
-                            var fresh: boolean = false;
-                            match (c.args[i]) { parser.ExprArray(_) => { fresh = true; }, _ => {} }
-                            if (!fresh) { return false; }
-                        }
-                        i = i + 1;
-                    }
-                    return true;
-                },
-                _ => { return false; }
+                parser.ExprIdent(id) => { vname = id.name; },
+                parser.ExprFieldAccess(cfa) => { vname = variant_ctor_qualified_name(cfa, structs); },
+                _ => {}
             }
+            if (vname.len() == 0) { return false; }
+            var n: i32 = decl_field_count(structs, vname);
+            var i: i32 = 0;
+            while (i < n && i < c.args.len()) {
+                var ft: string = decl_field_type_at(structs, vname, i);
+                if (is_leaksafe_array_field(ft)) {
+                    var fresh: boolean = false;
+                    match (c.args[i]) { parser.ExprArray(_) => { fresh = true; }, _ => {} }
+                    if (!fresh) { return false; }
+                }
+                i = i + 1;
+            }
+            return true;
         },
         parser.ExprIdent(_) => { return true; },
+        parser.ExprFieldAccess(fa) => { return variant_ctor_qualified_name(fa, structs).len() > 0; },
         _ => { return false; }
     }
 }
@@ -41288,6 +41312,39 @@ function structfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
     return a;
 }
 
+// structfld_collect_unsafe_assign: an assignment's RHS, with the SELF-REBIND
+// field reads in `o = S { …, f: o.f, … }` left unmarked (#6653).
+//
+// The literal's successor box goes into the slot `o` names, so `o.f` gains no
+// owner the old box did not already have: the override path retains it and the
+// old box's __field_reclaim_ releases it in the same rebind. That is exactly the
+// balance the `...o` spelling of the same update has always had — and it has it
+// because it reads no field, which is the only reason its type stays admitted.
+//
+// Every other value in the literal still marks, and a fork to a DIFFERENT local
+// (`p = S { f: o.f }`) is not this shape: there the read genuinely creates a
+// second owner, and the read scan must keep refusing the type.
+function structfld_collect_unsafe_assign(target: string, v: parser.Expr, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (v) {
+        parser.ExprStructLit(sl) => {
+            var fi: i32 = 0;
+            while (fi < sl.field_values.len()) {
+                // Only a DIRECT `target.<f>`: a deeper chain reaches a box the
+                // successor does not supersede (selfrebind_field_alias).
+                if (!selfrebind_field_alias(sl.field_values[fi], target)) {
+                    a = structfld_collect_unsafe(sl.field_values[fi], a);
+                }
+                fi = fi + 1;
+            }
+            if (sl.has_base) { a = structfld_collect_unsafe(sl.base, a); }
+            return a;
+        },
+        _ => {}
+    }
+    return structfld_collect_unsafe(v, a);
+}
+
 // structfld_collect_unsafe_stmts: a direct `var t = x.f` init is SAFE — the
 // binding is a borrow the exit sweep does not double-free — while a REASSIGN
 // `t = x.f` is not, matching the string scan's split.
@@ -41298,7 +41355,7 @@ function structfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): st
         match (stmts[i]) {
             parser.StmtVar(v) => { a = structfld_safe_operand(v.init, a); },
             parser.StmtReturn(r) => { a = structfld_collect_unsafe(r.value, a); },
-            parser.StmtAssign(as2) => { a = structfld_collect_unsafe(as2.value, a); },
+            parser.StmtAssign(as2) => { a = structfld_collect_unsafe_assign(as2.target, as2.value, a); },
             parser.StmtExpr(ex) => { a = structfld_collect_unsafe(ex.value, a); },
             parser.StmtIf(iff) => {
                 a = structfld_collect_unsafe(iff.cond, a);

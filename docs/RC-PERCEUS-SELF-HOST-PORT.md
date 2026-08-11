@@ -6555,3 +6555,62 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   here. Then 162 targeted suites 0 skips, including
   `TestSelfHostLoopVarReclaimIR{X86_64,Arm64}` (the flipped pin, both backends) and
   `TestSelfHostRcEnumBorrowHelperX86_64`. Refs #6606 #6608 #4365 #4451.
+
+- 2026-08-11: **The self-rebind field alias stops disqualifying its own type
+  (#6653, nested-struct + enum routes), and the qualified variant ctor it exposed
+  (#6681).** `o = S { …, inner: o.inner, … }` stranded one `I` box and its `data`
+  buffer per CALL — 800 B over ten calls, flat in k — because the whole-program
+  `structfldok:` read scan marks a bare non-scalar field read in a struct-literal
+  field-value position as escaping, so `S` was refused, `__field_reclaim_S` was
+  emitted with no nested-struct arm at all, and the override path's retain had no
+  counterpart.
+
+  | shape | before | after | `...o` control |
+  |---|---|---|---|
+  | `inner: o.inner` (nested struct) | 800 B | **0** | 0 |
+  | `v: o.v` (direct enum), k = 1 / 2 / 8 / 32 | 400 B | **0** | 400 → **0** |
+  | `v: V.A(7)`, single bind, no loop | 40 B | **0** | — |
+
+  **The scan's contract is about OWNERS, and a self-rebind creates none.** The
+  successor box goes into the slot `o` names; `o.f` is re-homed from the box that
+  is dying into the box replacing it, so the owner count never leaves 1. That is
+  the third scan to need this exemption on the same shape — #6623 for the NODEEP
+  move scan, #6628 widening it to array fields — and here it is the admission that
+  moves, not the retain. **Not touching the retain is what makes it safe against
+  the duplicated spelling** `o = S { a: o.f, b: o.f }`: both reads keep their inc
+  against one release, which leaks, where dropping the retain (#6653's own
+  preferred direction, and the right one for the array route in #6666) would
+  release twice.
+
+  **Direction 1 was not available here for the reason the array route made it
+  obvious.** #6620 made the nested-struct / enum arm release UNCONDITIONALLY —
+  no cow compare — so for a type the gate DOES admit the retain is load-bearing;
+  dropping it over-releases. The array arm still cow-skips, which is why the
+  opposite fix was right there.
+
+  **The enum row needed both fixes and reads 400 B with either alone**, which is
+  what identified #6681: `variant_ctor_enum_owner` only matched the bare `A(7)`
+  callee, so the qualified `V.A(7)` read as a possible alias and took an
+  `__fern_rc_inc` on a box that is sole-owned at rc=1. Flat in k because the whole
+  shape allocates that box once — and present on the `...o` carry too, so it was
+  never a self-rebind defect. The predicate (and its `variant_ctor_array_payloads_fresh`
+  sibling) now resolves `E.V(args)` / bare `E.V`, with the object required to be
+  the bare name of the owning enum so a method call cannot pass by naming its
+  receiver after an enum. That verdict feeds a dozen freshness gates — ENUMRE
+  deep-drop, boxarr / cross-struct reuse, the enum-array element walks — all of
+  which were silently refusing the qualified spelling.
+
+  Unchanged and deliberately so: the fork negatives (`p = S { f: o.f }` keeps its
+  mark on all three field kinds — both locals show the box afterwards), and a
+  donor whose enum payload ESCAPES through a call argument, which the same scan
+  still refuses.
+
+  VERIFIED: `TestSelfHostNestedFieldAliasRebindX86_64` — the nested-struct row
+  becomes an equality assertion against the carry, plus an enum k-sweep, an enum
+  fork-negative and a qualified-vs-bare ctor row (all three new rows FAIL on the
+  parent at 400 / 400 / 40 B). Every probe's self-host x86-64 exit agrees with
+  `fern -interp`, `FERN_STRICT_IR=1` is clean on all of them, and neither
+  `FERN_RC_UNDERFLOW_TRAP` nor `FERN_RC_FREE_DEBUG` fires. The arm64 / wasm
+  evidence is the enum + reuse + reclaim suites on all three backends, which route
+  through the same shared admission in `irlower`.
+  Refs #6653 #6681 #6628 #6623 #6620 #4451.
