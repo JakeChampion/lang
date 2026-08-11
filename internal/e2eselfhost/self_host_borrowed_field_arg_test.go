@@ -150,6 +150,71 @@ function main(): i32 {
     return t & 63;
 }`
 
+// --- The STRING half of the same admission: `strfldok:` (#6703) -------------
+//
+// `strfld_collect_unsafe` marked every call argument too, and a marked field
+// NAME disqualifies its type from `strfldok:` — which gates the `k_str` arm of
+// `__struct_drop_<T>`, the `fr_str` arm of `__field_reclaim_<T>` AND the
+// construction-side retain that pairs with them. So the type kept its
+// arrays-only body and every superseded `name` stranded, once per ITERATION
+// rather than once per call: 2800 B against the direct read's 0.
+//
+// Only the final read differs between the two programs.
+func borrowedStringFieldArgSrc(k int, viaCall bool) string {
+	read := "o.name.len()"
+	if viaCall {
+		read = "slen(o.name)"
+	}
+	return fmt.Sprintf(`struct S { name: string, xs: i32[], n: i32 }
+
+function slen(v: string): i32 { return v.len(); }
+
+function work(k: i32): i32 {
+    var o: S = S { name: "seed", xs: [1, 2], n: 0 };
+    var i: i32 = 0;
+    while (i < k) {
+        o = S { name: "ab" + "cd", xs: o.xs.append(i), n: i };
+        i = i + 1;
+    }
+    return o.xs.len() + %s;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 10) { t = t + work(%d); r = r + 1; }
+    return t & 63;
+}`, read, k)
+}
+
+// The retaining callee, for the string scan. `keeps` returns its param, so
+// `borrowable_params_of` refuses it and `kept` is a second reference to the
+// buffer `o.name` holds — read back after the rebind loop, so admitting the
+// type here would free it early and answer wrongly. Measured identically on
+// the parent (12160 B), which is what makes it a negative rather than a
+// second copy of the row above.
+const borrowedStringFieldArgRetainedSrc = `struct S { name: string, xs: i32[], n: i32 }
+
+function keeps(v: string): string { return v; }
+
+function work(k: i32): i32 {
+    var o: S = S { name: "seed", xs: [1, 2], n: 0 };
+    var kept: string = keeps(o.name);
+    var i: i32 = 0;
+    while (i < k) {
+        o = S { name: "ab" + "cd", xs: o.xs.append(i), n: i };
+        i = i + 1;
+    }
+    return o.xs.len() + kept.len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 10) { t = t + work(8); r = r + 1; }
+    return t & 63;
+}`
+
 // TestSelfHostBorrowedFieldArgReclaimX86_64 — the k curve is the discriminator:
 // the defect was per-iteration, so a single absolute count could not tell it
 // from the flat residual the enum payload's shallow-drop model leaves behind.
@@ -213,6 +278,38 @@ func TestSelfHostBorrowedFieldArgReclaimX86_64(t *testing.T) {
 		if exit != 28 {
 			t.Errorf("exited %d, want 28 — `keepi` returns its param, so `p` aliases the inner box "+
 				"and reads it back after the loop; admitting the type would free it early", exit)
+		}
+	})
+
+	// #6703 — the string half. Per-ITERATION, so the k curve is what proves it:
+	// the call spelling tracked k (2800 B at k=8) where the direct read was 0.
+	t.Run("string-field-arg-matches-the-direct-read", func(t *testing.T) {
+		for _, k := range []int{1, 8, 32} {
+			viaCall, _, callExit := leakSummary(t, gcc, runner, driverBin, dir,
+				fmt.Sprintf("bstrfa_call_k%d", k), borrowedStringFieldArgSrc(k, true))
+			direct, _, directExit := leakSummary(t, gcc, runner, driverBin, dir,
+				fmt.Sprintf("bstrfa_direct_k%d", k), borrowedStringFieldArgSrc(k, false))
+			if want := (10 * (k + 6)) & 63; callExit != want || directExit != want {
+				t.Fatalf("k=%d exits: call=%d direct=%d, want %d for both", k, callExit, directExit, want)
+			}
+			if direct != 0 {
+				t.Errorf("k=%d: the direct `o.name.len()` read leaked %d bytes — it is the baseline "+
+					"the call spelling is compared against, and it has been an exact 0", k, direct)
+			}
+			if viaCall != direct {
+				t.Errorf("k=%d: `slen(o.name)` leaked %d bytes against the direct read's %d — a "+
+					"borrowable param cannot retain (and cannot SLICE, which is the string-specific "+
+					"hazard the registry already refuses), so the read scan must admit the type "+
+					"either way (#6703)", k, viaCall, direct)
+			}
+		}
+	})
+
+	t.Run("retaining-callee-still-marks-in-the-string-scan", func(t *testing.T) {
+		_, _, exit := leakSummary(t, gcc, runner, driverBin, dir, "bstrfa_retained", borrowedStringFieldArgRetainedSrc)
+		if exit != 12 {
+			t.Errorf("exited %d, want 12 — `keeps` returns its param, so `kept` is a second reference "+
+				"to `o.name`'s buffer and is read back after the loop", exit)
 		}
 	})
 }

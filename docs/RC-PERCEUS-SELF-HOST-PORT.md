@@ -6767,3 +6767,79 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   cost ~50%. Much of that cost was paid inside a scan that now runs less often
   in emit-all, so the re-measurement is worth doing before assuming the shape of
   the fix. Refs #6703 #6698 #4451.
+
+- 2026-08-11: **The `strfldok:` read scan stops counting a BORROWABLE call
+  argument as an escape (#6703).** The STRING half of #6698, deliberately left
+  for its own measurement because this is the scan whose over-admission produced
+  the #3425 whole-compiler corruption. Two spellings of one program, differing
+  only in the final read (ten calls of `work(8)`, x86-64, `FERN_LEAKCHECK=1`):
+
+  | read | before | after | native |
+  |---|---|---|---|
+  | `o.name.len()` — direct | 0 B | 0 B | 0 |
+  | `slen(o.name)` — call arg | **2800 B** | **0** | 0 |
+
+  Bigger than the struct one because the replaced string strands every ITERATION
+  rather than once per call. A marked field NAME disqualifies its type from
+  `strfldok:`, which gates the `k_str` arm of `__struct_drop_<T>`, the `fr_str`
+  arm of `__field_reclaim_<T>` and the construction-side retain that pairs with
+  them — so one call argument left the type on its arrays-only body.
+
+  Why it is sound for strings specifically: `borrowable_params_of` refuses a param
+  that is SLICED, and a slice/`trim` view into the buffer is exactly the uncounted
+  alias `__fern_str_free` would dangle. It also refuses returned, stored and
+  captured params, so the callee holds nothing after it returns.
+
+  **The verdict is now threaded, not recomputed — that is the load-bearing half of
+  the diff.** `strfld_reclaim_ok_types_of` takes the borrowability registry, and
+  the emit paths build BOTH registries from one verdict (`fn_sigs_for_borrow`)
+  rather than overriding `borrowable_params` afterwards. Without that, the
+  backend would seed `strfldok:` from the interprocedural fixpoint while the
+  LOWERING routed on `fn_sigs_of`'s single pass — the fixpoint admits strictly
+  more borrows, so the backend would free fields the construction side never
+  retained. The override shape also computed the single-pass verdict, and now a
+  whole-program scan derived from it, only to throw both away.
+
+  **#6704 is why the shape of the fix is what it is.** That attempt threaded the
+  registry through `strfld_collect_unsafe` itself and cost +50% emit-all, timing
+  out a CI shard. The control run isolated it: threading a `string[]` through
+  that recursive walk cost **172 s with the exemption disabled**, i.e. most of the
+  regression was the parameter, not the lookups or the extra emitted arms. So the
+  walk takes no new parameter here. A borrowable-position field read is PARKED in
+  the accumulator as a `?<callee>#<idx>:<field>` record — inert for every exact
+  field-name lookup — and `strfld_resolve_deferred` settles all of them once,
+  after the walk. Records are skipped for a field already marked (no verdict can
+  un-mark it) and deduped, so the registry walks are proportional to the fields
+  that can still change the answer rather than to call arguments.
+
+  **The cost is inside run-to-run variance, measured against the same tree on the
+  same box** — which is the only comparison worth making here, because the
+  entry above measures 86.4 s / 206.8 s for the deduped gen0 / gen1 and this
+  4-core container does not reproduce those figures for `main` at all:
+
+  | emit-all (batch=8) | gen0 | gen1 | wall | peak gen0 / gen1 |
+  |---|---|---|---|---|
+  | `main` @ 97dad1d | 163.6 s | 283.0 s | 533.5 s | 2.24 / 9.24 GB |
+  | with this change | 167.9 s | 299.5 s | 553.3 s | 2.16 / 9.22 GB |
+
+  +2.6% / +5.8%, against the ±16% spread two samples of the same tree showed in
+  #6704's session. **Quote a machine's own baseline, not the number in the entry
+  above** — the gap between 86.4 s and 163.6 s for the same commit is the size of
+  the hardware difference between two dev boxes, and #6704 was withdrawn partly
+  on a cross-box comparison.
+
+  Unchanged and deliberately so: a callee that RETAINS its argument.
+  `keeps(v: string): string { return v; }` is refused by `borrowable_params_of`,
+  so `var kept = keeps(o.name)` keeps the type marked — measured identically
+  before and after at 12160 B, with `kept` read back after the rebind loop so an
+  over-release would be a wrong exit, not a byte count.
+
+  VERIFIED: `TestSelfHostPerModuleEmitAllFixpointX86_64` PASS (gen0 == gen1
+  across 36 units, no OOM) on this change AND on its `main` baseline;
+  `TestSelfHostBorrowedFieldArgReclaimX86_64` — two new rows, a k-sweep of the
+  call spelling against the direct read and the retaining-callee negative, the
+  sweep FAILING on the parent where the byte count tracks k; and the eight other
+  `strfldok` suites (`FieldReclaimStr` x86-64 + wasm, `StrOnlyStructExitDrop`,
+  `StructArrStrFieldReclaim`, `StructArrStrFieldHazards`,
+  `StructStrFieldReclaim`, `StrFldDropGate`, `OptStructStringField`) green.
+  Refs #6703 #6704 #6698 #6707 #4451.
