@@ -62,6 +62,7 @@ import "./constfold";
 import "./platforms";
 import "./caps";
 import "./modloader";
+import "./visibility";
 import "./fern_toml";
 import "./treeshake";
 import "./arm64_native";
@@ -877,6 +878,22 @@ function run(): i32 {
     // settle against until the bundle exists; parse_module resolved the
     // same-module ones already, and the pass is idempotent.
     merged = parser.resolve_variant_fields_module(merged);
+
+    // Cross-module visibility (#6714): a reference to another module's
+    // non-`pub` function is an error, as it is in native's modload. Checked on
+    // the bundle, where flatten has already turned `lib.hidden` into the bare
+    // `lib__hidden`. Reported on the compile paths as well as `-check` — native
+    // REFUSES TO BUILD such a program, and accepting it here is the divergence.
+    var vis_diags: checker.Diag[] = visibility.export_diags(entry_mod, loaded);
+    if (vis_diags.len() > 0) {
+        var vi: i32 = 0;
+        while (vi < vis_diags.len()) {
+            var vd: checker.Diag = vis_diags[vi];
+            eprint(checker.itoa_nn(vd.line) + ":" + checker.itoa_nn(vd.col) + ": " + vd.message + "\n");
+            vi = vi + 1;
+        }
+        return 1;
+    }
 
     // `-capabilities`: print the per-package capability report and stop
     // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces

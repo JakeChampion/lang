@@ -480,3 +480,172 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
     return acc;
 }
+
+// --- qualified module references (#6714) ----------------------------------
+//
+// QualRef is one `<qual>.<name>` reference: a MODULE-qualified use, written as
+// such in source. It exists because the distinction is only available BEFORE
+// flatten — bundling rewrites `bigint.__bi_make` and a bare same-module
+// `__bi_make` into the identical ident `bigint____bi_make`, so a rule that
+// needs to tell a cross-module reference from an internal one cannot run on
+// the bundle. The visibility check learned that the expensive way.
+pub struct QualRef { qual: string, name: string, line: i32, col: i32 }
+
+// collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
+// is in `quals` (the module names in scope for the file being walked). The
+// qualifier ident itself is NOT recursed into — it names a module, not a value.
+pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
+    match (e) {
+        parser.ExprIdent(_) => { return acc; },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = collect_qualrefs_expr(b.left, quals, acc);
+            return collect_qualrefs_expr(b.right, quals, acc);
+        },
+        parser.ExprUnary(u) => { return collect_qualrefs_expr(u.operand, quals, acc); },
+        parser.ExprCall(c) => {
+            var handled: boolean = false;
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(id) => {
+                            if (util.has_str(quals, id.name)) {
+                                acc = acc.append(QualRef { qual: id.name, name: fa.field, line: c.line, col: c.col });
+                                handled = true;
+                            }
+                        },
+                        _ => {}
+                    }
+                    if (!handled) { acc = collect_qualrefs_expr(fa.obj, quals, acc); }
+                },
+                _ => { acc = collect_qualrefs_expr(c.callee, quals, acc); }
+            }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                acc = collect_qualrefs_expr(c.args[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                acc = collect_qualrefs_expr(a.elements[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                acc = collect_qualrefs_expr(t.elements[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = collect_qualrefs_expr(x.array, quals, acc);
+            return collect_qualrefs_expr(x.index, quals, acc);
+        },
+        parser.ExprSlice(sl) => {
+            acc = collect_qualrefs_expr(sl.array, quals, acc);
+            acc = collect_qualrefs_expr(sl.start, quals, acc);
+            return collect_qualrefs_expr(sl.end, quals, acc);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = collect_qualrefs_expr(sl.base, quals, acc); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                acc = collect_qualrefs_expr(sl.field_values[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        // A bare `mod.NAME` in value position — a const reference, or a
+        // function value. Same rule as the call form.
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(id) => {
+                    if (util.has_str(quals, id.name)) {
+                        return acc.append(QualRef { qual: id.name, name: fa.field, line: fa.line, col: fa.col });
+                    }
+                },
+                _ => {}
+            }
+            return collect_qualrefs_expr(fa.obj, quals, acc);
+        },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = collect_qualrefs_stmt(lm.body[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// collect_qualrefs_stmt is collect_qualrefs_expr's statement half.
+pub function collect_qualrefs_stmt(st: parser.Stmt, quals: string[], acc: QualRef[]): QualRef[] {
+    match (st) {
+        parser.StmtDefer(d) => { return collect_qualrefs_stmt(d.action, quals, acc); },
+        parser.StmtVar(v) => { return collect_qualrefs_expr(v.init, quals, acc); },
+        parser.StmtReturn(r) => { return collect_qualrefs_expr(r.value, quals, acc); },
+        parser.StmtExpr(e) => { return collect_qualrefs_expr(e.value, quals, acc); },
+        parser.StmtIf(i) => {
+            acc = collect_qualrefs_expr(i.cond, quals, acc);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                acc = collect_qualrefs_stmt(i.then_body[ti], quals, acc);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                acc = collect_qualrefs_stmt(i.else_body[ei], quals, acc);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = collect_qualrefs_expr(w.cond, quals, acc);
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                acc = collect_qualrefs_stmt(w.body[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return collect_qualrefs_expr(a.value, quals, acc); },
+        parser.StmtMatch(m) => {
+            acc = collect_qualrefs_expr(m.scrutinee, quals, acc);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) { acc = collect_qualrefs_expr(m.arms[ai].guard, quals, acc); }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    acc = collect_qualrefs_stmt(m.arms[ai].body[bi], quals, acc);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = collect_qualrefs_expr(f.iter, quals, acc);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                acc = collect_qualrefs_stmt(f.body[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
