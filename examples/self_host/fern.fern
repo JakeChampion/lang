@@ -884,7 +884,7 @@ function run(): i32 {
     // the bundle, where flatten has already turned `lib.hidden` into the bare
     // `lib__hidden`. Reported on the compile paths as well as `-check` — native
     // REFUSES TO BUILD such a program, and accepting it here is the divergence.
-    var vis_diags: checker.Diag[] = visibility.export_diags(merged, entry_mod, loaded);
+    var vis_diags: checker.Diag[] = visibility.export_diags(entry_mod, loaded);
     if (vis_diags.len() > 0) {
         var vi: i32 = 0;
         while (vi < vis_diags.len()) {
