@@ -6855,7 +6855,13 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // see irlower.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>"
     // needs so emit_ir_field_reclaim_one can gate its string arm; every
     // unit computes the same verdict, so the weak-deduped bodies agree.
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(all_funcs, all_structs);
+    //
+    // b.strfld_ok_types IS that verdict, over the same all_funcs/all_structs,
+    // computed once by the wp_fn_sigs the caller built outside its per-unit loop.
+    // Recomputing it here ran the scan — three whole-program passes — once per
+    // emitted unit, and it is already the most-repeated analysis in a compile
+    // (measured: 7 runs per compile against the nested-struct scan's 1).
+    var sfok: string[] = b.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) {
         s = s.need("strfldok:" + sfok[sfoi]);

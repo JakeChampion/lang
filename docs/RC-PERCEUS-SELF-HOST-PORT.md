@@ -6725,3 +6725,45 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   retaining-callee negative; the call-spelling row FAILS on the parent at 800 B.
   Exits agree with `fern -interp` on every probe.
   Refs #6698 #6691 #6653 #6604 #4451.
+
+- 2026-08-11: **The unit emit stops recomputing the string-field verdict — the
+  per-module emit-all fixpoint drops 36%.** Found while measuring why #6703's
+  parameter threading cost 172 s in `strfld_collect_unsafe` and nothing
+  measurable in the nested-struct walk #6698 threaded identically.
+
+  **The answer was an invocation count, and counting it directly is what worked
+  — two rounds of reasoning from the diff got it wrong.** Instrumented, on a
+  20-line program:
+
+  | scan | runs per compile |
+  |---|---|
+  | `strfld_reclaim_ok_types_of` | **7** |
+  | `structfld_reclaim_ok_types_of` | 1 |
+
+  Each `strfld` run is three whole-program passes internally (strfld /
+  strarrfld / clofld), so that is 21 walks over every function for a verdict
+  that never differs. Two of the seven are in the per-unit emit loop, where the
+  same verdict over the same `all_funcs` / `all_structs` was already computed by
+  the `wp_fn_sigs` the caller builds ONCE outside the loop. Both sites now read
+  it off the FnSigs, exactly as the borrowable-params verdict has been read
+  since #6698.
+
+  | emit-all | gen0 | gen1 | total |
+  |---|---|---|---|
+  | before | 163.9 s | 320.7 s | 561.2 s |
+  | after | **86.4 s** | **206.8 s** | **358.8 s** |
+
+  Peak unchanged (2.15 / 9.21 GB). This also recovers a drift: §9 entries from
+  earlier in the port record this gate at 354–421 s, and it had reached 561 s.
+
+  **The output is byte-identical, and the fixpoint is the proof** — `gen0 ==
+  gen1 across 36 units` is a whole-compiler equality claim, where the four
+  probes checked by hand are not. (Those probes first appeared to differ; the
+  comparison had `FERN_LEAKCHECK` set on one side only. An instrument that lies
+  about a null result is the same hazard as the `go test` cache returning a
+  stale timing to the digit, which happened once in this session too.)
+
+  Consequence for #6703: its exemption was measured against a 561 s baseline and
+  cost ~50%. Much of that cost was paid inside a scan that now runs less often
+  in emit-all, so the re-measurement is worth doing before assuming the shape of
+  the fix. Refs #6703 #6698 #4451.
