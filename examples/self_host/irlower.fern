@@ -26708,7 +26708,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // untyped local keeps its prior verdict exactly.
         var mvsty: string = mvty;
         if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
-        if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs)) { mv_moves = true; }
+        if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs, borrowable)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
         // struct type was resolvable. A BLOCK-SCOPED slot only earns the deep drop
@@ -30065,32 +30065,51 @@ function declared_struct_type_of(stmts: parser.Stmt[], name: string, structs: pa
 // the WHOLE value of a bind / assign / return, as a direct call ARGUMENT, or as a
 // container element. Every other position — a match scrutinee, a call callee, an
 // index base, a `.len()` receiver, an operand — reads through and is a borrow.
-function fieldmove_is_move_value(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function fieldmove_is_move_value(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     var lt: string = optstruct_chain_leaf_type(e, name, sty, structs);
     if (lt.len() == 0) { return false; }
     if (lt == "?") { return true; }              // unresolved chain — assume the worst
     return !is_scalar_type_name(lt);
 }
 
-// fieldmove_expr: the move positions reachable inside an expression — a direct
-// call argument, or an element of an array / tuple / struct literal (including a
-// functional-update base, which copies every field pointer into the new box).
-function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+// fieldmove_expr: the move positions reachable inside an expression — a call
+// argument the callee may retain, or an element of an array / tuple / struct
+// literal (including a functional-update base, which copies every field pointer
+// into the new box).
+//
+// A BORROWABLE param position is not a move: `borrowable_params_of` admits a
+// param only when the callee provably never returns, stores, slices or captures
+// it, so `f(o.inner)` there leaves the field owned by `o` alone and the deep
+// drop stays sound. Same registry and same Level-2 rule expr_unsafe_for already
+// applies to a bare-ident argument — which it trusts for caller-side FREES, a
+// strictly stronger action than keeping a deep drop. Without it a single
+// `tag(o.v)` cost the local its whole reclaim credit, so every superseded box
+// AND its array buffers leaked per iteration, where native is flat (#6691).
+function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
+            // Free calls only: method-param borrowability is not in the
+            // (free-function-keyed) registry, so a method arg keeps marking.
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
+                _ => {}
+            }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (fieldmove_is_move_value(c.args[ai], name, sty, structs)) { return true; }
-                if (fieldmove_expr(c.args[ai], name, sty, structs)) { return true; }
+                if (callee_name.len() == 0 || !param_is_borrowable(borrowable, callee_name, ai)) {
+                    if (fieldmove_is_move_value(c.args[ai], name, sty, structs, borrowable)) { return true; }
+                }
+                if (fieldmove_expr(c.args[ai], name, sty, structs, borrowable)) { return true; }
                 ai = ai + 1;
             }
-            return fieldmove_expr(c.callee, name, sty, structs);
+            return fieldmove_expr(c.callee, name, sty, structs, borrowable);
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                if (fieldmove_is_move_value(a.elements[i], name, sty, structs)) { return true; }
-                if (fieldmove_expr(a.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_is_move_value(a.elements[i], name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(a.elements[i], name, sty, structs, borrowable)) { return true; }
                 i = i + 1;
             }
             return false;
@@ -30098,30 +30117,30 @@ function fieldmove_expr(e: parser.Expr, name: string, sty: string, structs: pars
         parser.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                if (fieldmove_is_move_value(t.elements[i], name, sty, structs)) { return true; }
-                if (fieldmove_expr(t.elements[i], name, sty, structs)) { return true; }
+                if (fieldmove_is_move_value(t.elements[i], name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(t.elements[i], name, sty, structs, borrowable)) { return true; }
                 i = i + 1;
             }
             return false;
         },
         parser.ExprStructLit(sl) => {
             if (sl.has_base) {
-                if (fieldmove_is_move_value(sl.base, name, sty, structs)) { return true; }
-                if (fieldmove_expr(sl.base, name, sty, structs)) { return true; }
+                if (fieldmove_is_move_value(sl.base, name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(sl.base, name, sty, structs, borrowable)) { return true; }
             }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs)) { return true; }
-                if (fieldmove_expr(sl.field_values[i], name, sty, structs)) { return true; }
+                if (fieldmove_is_move_value(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
+                if (fieldmove_expr(sl.field_values[i], name, sty, structs, borrowable)) { return true; }
                 i = i + 1;
             }
             return false;
         },
-        parser.ExprBinary(b) => { return fieldmove_expr(b.left, name, sty, structs) || fieldmove_expr(b.right, name, sty, structs); },
-        parser.ExprUnary(u) => { return fieldmove_expr(u.operand, name, sty, structs); },
-        parser.ExprIndex(ix) => { return fieldmove_expr(ix.array, name, sty, structs) || fieldmove_expr(ix.index, name, sty, structs); },
-        parser.ExprSlice(sl2) => { return fieldmove_expr(sl2.array, name, sty, structs) || fieldmove_expr(sl2.start, name, sty, structs) || fieldmove_expr(sl2.end, name, sty, structs); },
-        parser.ExprFieldAccess(fa) => { return fieldmove_expr(fa.obj, name, sty, structs); },
+        parser.ExprBinary(b) => { return fieldmove_expr(b.left, name, sty, structs, borrowable) || fieldmove_expr(b.right, name, sty, structs, borrowable); },
+        parser.ExprUnary(u) => { return fieldmove_expr(u.operand, name, sty, structs, borrowable); },
+        parser.ExprIndex(ix) => { return fieldmove_expr(ix.array, name, sty, structs, borrowable) || fieldmove_expr(ix.index, name, sty, structs, borrowable); },
+        parser.ExprSlice(sl2) => { return fieldmove_expr(sl2.array, name, sty, structs, borrowable) || fieldmove_expr(sl2.start, name, sty, structs, borrowable) || fieldmove_expr(sl2.end, name, sty, structs, borrowable); },
+        parser.ExprFieldAccess(fa) => { return fieldmove_expr(fa.obj, name, sty, structs, borrowable); },
         _ => { return false; }
     }
     return false;
@@ -30166,7 +30185,7 @@ function fieldmove_selfrebind_alias(e: parser.Expr, name: string, sty: string, s
     return false;
 }
 
-function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     match (st) {
         // A direct `var t = x.f` init is a BORROW, not a move — the same split
         // structfld_collect_unsafe_stmts (#6274) already draws for the whole-program
@@ -30174,7 +30193,7 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
         // a REASSIGN `t = x.f` hands the field to a name that outlives it. That is
         // exactly the `s = lo.state` hazard, and dropping this case is what keeps
         // `var xs = r.hs; xs[1]()` deep-drop-worthy.
-        parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs); },
+        parser.StmtVar(v) => { return fieldmove_expr(v.init, name, sty, structs, borrowable); },
         parser.StmtAssign(a) => {
             // The self-rebind literal keeps its retained field aliases (see
             // fieldmove_selfrebind_alias); every other value in it still marks.
@@ -30182,14 +30201,14 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
                 match (a.value) {
                     parser.ExprStructLit(asl) => {
                         if (asl.has_base) {
-                            if (fieldmove_is_move_value(asl.base, name, sty, structs)) { return true; }
-                            if (fieldmove_expr(asl.base, name, sty, structs)) { return true; }
+                            if (fieldmove_is_move_value(asl.base, name, sty, structs, borrowable)) { return true; }
+                            if (fieldmove_expr(asl.base, name, sty, structs, borrowable)) { return true; }
                         }
                         var fi: i32 = 0;
                         while (fi < asl.field_values.len()) {
                             if (!fieldmove_selfrebind_alias(asl.field_values[fi], name, sty, structs)
-                                && fieldmove_is_move_value(asl.field_values[fi], name, sty, structs)) { return true; }
-                            if (fieldmove_expr(asl.field_values[fi], name, sty, structs)) { return true; }
+                                && fieldmove_is_move_value(asl.field_values[fi], name, sty, structs, borrowable)) { return true; }
+                            if (fieldmove_expr(asl.field_values[fi], name, sty, structs, borrowable)) { return true; }
                             fi = fi + 1;
                         }
                         return false;
@@ -30197,42 +30216,42 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
                     _ => {}
                 }
             }
-            return fieldmove_is_move_value(a.value, name, sty, structs) || fieldmove_expr(a.value, name, sty, structs);
+            return fieldmove_is_move_value(a.value, name, sty, structs, borrowable) || fieldmove_expr(a.value, name, sty, structs, borrowable);
         },
-        parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs) || fieldmove_expr(r.value, name, sty, structs); },
-        parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs); },
+        parser.StmtReturn(r) => { return fieldmove_is_move_value(r.value, name, sty, structs, borrowable) || fieldmove_expr(r.value, name, sty, structs, borrowable); },
+        parser.StmtExpr(e) => { return fieldmove_expr(e.value, name, sty, structs, borrowable); },
         parser.StmtIf(f) => {
-            if (fieldmove_expr(f.cond, name, sty, structs)) { return true; }
+            if (fieldmove_expr(f.cond, name, sty, structs, borrowable)) { return true; }
             var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (fieldmove_stmt(f.then_body[ti], name, sty, structs)) { return true; } ti = ti + 1; }
+            while (ti < f.then_body.len()) { if (fieldmove_stmt(f.then_body[ti], name, sty, structs, borrowable)) { return true; } ti = ti + 1; }
             var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (fieldmove_stmt(f.else_body[ei], name, sty, structs)) { return true; } ei = ei + 1; }
+            while (ei < f.else_body.len()) { if (fieldmove_stmt(f.else_body[ei], name, sty, structs, borrowable)) { return true; } ei = ei + 1; }
             return false;
         },
         parser.StmtWhile(w) => {
-            if (fieldmove_expr(w.cond, name, sty, structs)) { return true; }
+            if (fieldmove_expr(w.cond, name, sty, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < w.body.len()) { if (fieldmove_stmt(w.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < w.body.len()) { if (fieldmove_stmt(w.body[i], name, sty, structs, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtFor(fo) => {
-            if (fieldmove_expr(fo.iter, name, sty, structs)) { return true; }
+            if (fieldmove_expr(fo.iter, name, sty, structs, borrowable)) { return true; }
             var i: i32 = 0;
-            while (i < fo.body.len()) { if (fieldmove_stmt(fo.body[i], name, sty, structs)) { return true; } i = i + 1; }
+            while (i < fo.body.len()) { if (fieldmove_stmt(fo.body[i], name, sty, structs, borrowable)) { return true; } i = i + 1; }
             return false;
         },
         parser.StmtMatch(m) => {
-            if (fieldmove_expr(m.scrutinee, name, sty, structs)) { return true; }
+            if (fieldmove_expr(m.scrutinee, name, sty, structs, borrowable)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && fieldmove_expr(m.arms[ai].guard, name, sty, structs)) { return true; }
+                if (m.arms[ai].has_guard && fieldmove_expr(m.arms[ai].guard, name, sty, structs, borrowable)) { return true; }
                 var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { if (fieldmove_stmt(m.arms[ai].body[bi], name, sty, structs)) { return true; } bi = bi + 1; }
+                while (bi < m.arms[ai].body.len()) { if (fieldmove_stmt(m.arms[ai].body[bi], name, sty, structs, borrowable)) { return true; } bi = bi + 1; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return fieldmove_stmt(d.action, name, sty, structs); },
+        parser.StmtDefer(d) => { return fieldmove_stmt(d.action, name, sty, structs, borrowable); },
         _ => { return false; }
     }
     return false;
@@ -30240,10 +30259,10 @@ function fieldmove_stmt(st: parser.Stmt, name: string, sty: string, structs: par
 
 // optstruct_body_moves_field: any statement in `stmts` moves a NON-SCALAR field of
 // the struct local `name` (declared type `sty`) into something longer-lived.
-function optstruct_body_moves_field(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[]): boolean {
+function optstruct_body_moves_field(stmts: parser.Stmt[], name: string, sty: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
-        if (fieldmove_stmt(stmts[i], name, sty, structs)) { return true; }
+        if (fieldmove_stmt(stmts[i], name, sty, structs, borrowable)) { return true; }
         i = i + 1;
     }
     return false;
