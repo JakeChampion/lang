@@ -271,7 +271,7 @@ pub function elf_static_executable_bss_x86_at(text: i32[], data: i32[], bss: i32
 // further in than elf_text_vaddr(). An assembler resolving PC-relative
 // fixups for a W^X image uses this as its textVAddr.
 pub function elf_text_vaddr_wx(): i32 {
-    return elf_base_vaddr() + elf_eh_size() + 2 * elf_ph_size();
+    return elf_base_vaddr() + elf_wx_text_off();
 }
 
 // elf_page_up rounds `v` up to the next elf_page_align() (16 KiB)
@@ -616,9 +616,6 @@ pub function elf_text_off(): i32 { return elf_eh_size() + elf_ph_size(); }
 // past the ELF header and its two program headers. The symbol appender
 // needs it, and so does anything else locating .text in that layout.
 pub function elf_wx_text_off(): i32 { return elf_eh_size() + 2 * elf_ph_size(); }
-
-// elf_wx_text_vaddr is the address that offset loads at.
-pub function elf_wx_text_vaddr(): i32 { return elf_base_vaddr() + elf_wx_text_off(); }
 
 // elf_func_syms turns an assembler's parallel label tables into the symbol
 // arrays elf_append_symtab wants, applying native's FuncSyms rule:

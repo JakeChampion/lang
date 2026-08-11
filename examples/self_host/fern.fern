@@ -100,7 +100,7 @@ function arm64_refusals(target: string, stage: string, unknown: string[]): strin
 // string (written verbatim by write_file), or "" if the assembler hit an
 // instruction it doesn't yet support (the caller reports it and exits 2). The
 // arm64-darwin counterpart is the macho_executable path above.
-function arm64_elf_binary(asm: string): string {
+function arm64_elf_binary(asm: string, emit_syms: boolean): string {
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
         return arm64_refusals("arm64", "assembler", p.unknown);
@@ -125,6 +125,17 @@ function arm64_elf_binary(asm: string): string {
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
     var bin: i32[] = elf.elf_image_wx(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+    if (emit_syms) {
+        // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no
+        // section per label — every label it holds is a .text label — so the
+        // section filter is -1 rather than 0.
+        var aend: i32 = pa2.code.len();
+        var nosec: i32[] = [];
+        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr_wx(), elf.elf_wx_text_off(), pa2.code.len(),
+            elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+            elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
+            elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend));
+    }
     return string_from_bytes_unchecked(to_u8(bin));
 }
 
@@ -761,7 +772,7 @@ function run(): i32 {
                 ssa_out = x86_elf_binary(sr.asm, emit_syms);
                 if (ssa_out.len() == 0) { return 2; }
             } else if (target == "arm64") {
-                ssa_out = arm64_elf_binary(sr.asm);
+                ssa_out = arm64_elf_binary(sr.asm, emit_syms);
                 if (ssa_out.len() == 0) { return 2; }
             } else if (target == "arm64-android") {
                 ssa_out = arm64_elf_binary_pie(sr.asm);
@@ -790,7 +801,7 @@ function run(): i32 {
         // In-process ELF (arm64_native + elf.fern) — no `.s` + gcc/ld. This is
         // the production default (AST shell → IR path); -ssa opts into the SSA
         // pipeline above instead.
-        out_asm = arm64_elf_binary(asm_arm64_ir.emit_module_or_error(full, false));
+        out_asm = arm64_elf_binary(asm_arm64_ir.emit_module_or_error(full, false), emit_syms);
         if (out_asm.len() == 0) { return 2; }
     } else if (target == "arm64-asm") {
         // The arm64 emitter's GAS text, stopping short of the in-process
