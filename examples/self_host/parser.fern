@@ -14697,7 +14697,7 @@ pub function settle_module(mod: Module): Module {
             names = names.append(fd.receiver_name);
             types = types.append(fd.receiver_type);
         }
-        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: settle_block(fd.body, fd.ret_type, names, types, mod.funcs, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str });
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: settle_block(fd.body, fd.ret_type, names, types, mod.funcs, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async });
         i = i + 1;
     }
     var nonames: string[] = [];
@@ -14880,6 +14880,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
         // identifier everywhere else — the rule the native parser uses.
         // Probed before the fip/fbip shape below, which then reads `function`
         // and no-ops; native treats the two as alternatives the same way.
+        //
+        // The mark is PRESERVED, not dropped: codegen never reads it, but
+        // `-fmt` does, and a formatter that silently deletes a modifier from
+        // the source it rewrites is a wrong answer. Native keeps the same bit
+        // for the same reason.
         var decl_async: boolean = false;
         if (p.peek_ident() == "async") {
             var am_probe: Par = p.advance();
@@ -14911,16 +14916,6 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 decl_fip = fm_name == "fip" && !fm_graded;
             }
         }
-        // `async` is a contextual modifier on a function decl (`async
-        // function …` / `pub async function …`): the WASI Preview-3
-        // component-model-async export surface. The self-host emits no
-        // component-model async surface (#6636), so the mark is
-        // parse-TOLERATED and DROPPED — the declaration compiles as an
-        // ordinary function, and the native compile of the same program is
-        // what checks the async shape. The `@import(…) async function`
-        // stream form is a different shape and stays native-only.
-        var async_p: Par = skip_decl_modifier(p, "async", "function");
-        if (async_p.pos != p.pos) { p = async_p; kw = "function"; }
         // `opaque` is a contextual modifier on a struct decl (`pub opaque
         // struct …`): the type name is exported, its representation is
         // private outside the declaring module. Enforcing that (native's
