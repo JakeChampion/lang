@@ -25,18 +25,47 @@ import "./lexer";
 import "./parser";
 import "./ir";
 import "./irlower";
+import "./irverify";
 import "./util";
+
+// verify_all runs the IR structure verifier (#6639 slice 1) over every
+// successfully lowered function and returns the problems, so the driver can
+// be pointed at real modules — which is where a structural bug would
+// actually be, and the only way to know the pass does not fire on valid IR.
+function verify_all(fns: irlower.LoweredFn[]): irverify.Problem[] {
+    var sigs: irverify.FnSig[] = [];
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].ok) {
+            sigs = sigs.append(irverify.FnSig { name: fns[i].name, n_params: fns[i].n_params });
+        }
+        i = i + 1;
+    }
+    var out: irverify.Problem[] = [];
+    var j: i32 = 0;
+    while (j < fns.len()) {
+        if (fns[j].ok) {
+            var ps: irverify.Problem[] = irverify.verify_fn(fns[j].name, fns[j].ops, fns[j].n_params, fns[j].n_locals, sigs);
+            var k: i32 = 0;
+            while (k < ps.len()) { out = out.append(ps[k]); k = k + 1; }
+        }
+        j = j + 1;
+    }
+    return out;
+}
 
 function main(): i32 {
     var av: string[] = args();
     var want_dump: boolean = false;
     var want_rc_plan: boolean = false;
     var want_str_own: boolean = false;
+    var want_verify: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-dump") { want_dump = true; }
         if (av[ai] == "-rc-plan") { want_rc_plan = true; }
         if (av[ai] == "-str-own") { want_str_own = true; }
+        if (av[ai] == "-verify") { want_verify = true; }
         ai = ai + 1;
     }
 
@@ -79,6 +108,25 @@ function main(): i32 {
         return 0;
     }
     var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+
+    if (want_verify) {
+        // Lower from a defaults-FILLED module. The production backends reach
+        // the IR through lift_lambdas, which runs fill_default_args_module
+        // first, so `box(1)` against `box(w, h = 2, d = 3)` arrives as
+        // `box(1, 2, 3)`. Verifying the raw lower_module output instead would
+        // report a 1-arg call to a 3-param callee on every defaulted call in
+        // the corpus — a property of this driver's shortcut, not of the IR any
+        // backend is handed.
+        var vfns: irlower.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var probs: irverify.Problem[] = verify_all(vfns);
+        if (probs.len() == 0) {
+            write("irverify: clean\n");
+            return 0;
+        }
+        write("irverify: " + util.i32_to_string(probs.len()) + " problem(s)"
+            + irverify.format_problems(probs, 20) + "\n");
+        return 1;
+    }
 
     var mi: i32 = irlower.find_fn(fns, "main");
     if (mi < 0) { return 201; }
