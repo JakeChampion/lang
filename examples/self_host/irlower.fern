@@ -20227,9 +20227,67 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // ($tsx/$optst/...) never carry the marker, so the tuple-child / option-
     // payload / array-element walks are unaffected.
     if (slot_nodeep(s, slot)) { return s; }
-    var st: LowerState = s.emit(ir.op_load_local(slot));    // box (arg0)
+    // __struct_drop_<T>'s k_enum arm is a box-only dec, so a direct enum field's
+    // variant payload survives the sweep. Release it here first, while the box is
+    // still readable.
+    var st: LowerState = emit_struct_enum_field_payload_drops(s, slot, sty);
+    st = st.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
+}
+
+// emit_struct_enum_field_payload_drops releases the VARIANT PAYLOAD of every direct
+// enum field of struct `sty` whose enum type is array-payload-only, leaving the enum
+// BOX itself to the k_enum arm of the __struct_drop_<sty> call that follows (a dec
+// here too would over-release it). Without this the payload array leaks once per
+// construction — the residual #6691 left, and the gap between a struct's enum FIELD
+// and the same enum spelled as a LOCAL, which lowering already deep-drops via
+// emit_enum_variant_drops.
+//
+// ADMISSION, two halves:
+//   - the enum TYPE: enum_all_variants_array_payload — every rc payload is a leaf
+//     scalar ARRAY that a single rc_dec fully releases. String / nested-struct
+//     payloads are excluded because releasing one needs the per-construction
+//     freshness proof (variant_struct_payloads_fresh) the sweep cannot see, whereas
+//     an array payload rides the construction alias-inc, so a bare-ident payload is
+//     retained and the dec only releases the dup.
+//   - the box at RUNTIME: __fern_rc_is_unique, which doubles as the null guard. A
+//     non-fresh enum field (bound from a live enum local, copied from a struct-lit
+//     base) was alias-inc'd at construction, so the box is shared and its payload is
+//     still reachable through the other owner — deep-dropping it there would free a
+//     live value, and the other owner's own sweep would double-release. Shared boxes
+//     take today's shallow path: leaks, never dangles.
+//
+// The struct box is null-guarded because op_struct_get faults on a zeroed slot (an
+// unreached local), which __struct_drop_'s own low-address check would have absorbed.
+function emit_struct_enum_field_payload_drops(se: LowerState, slot: i32, sty: string): LowerState {
+    var st: LowerState = se;
+    var n: i32 = decl_field_count(st.structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(st.structs, sty, fi);
+        if (decl_is_enum(st.structs, ft) && enum_all_variants_array_payload(st.structs, ft)) {
+            var esc: string = "$sefp" + util.i32_to_string(st.locals.len());
+            st = st.add_local(esc);
+            var etmp: i32 = st.slot_of(esc);
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_bin("ne", 0, false));                                     // struct box != 0
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.structs, sty, fi)));  // enum box
+            st = st.emit(ir.op_store_local(etmp));
+            st = st.emit(ir.op_load_local(etmp));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));                    // sole owner (and null-safe)
+            st = st.emit(ir.op_if(0));
+            var no_moved: string[] = [];
+            st = emit_enum_variant_payload_drops(st, etmp, ft, no_moved);
+            st = st.emit(ir.op_end());
+            st = st.emit(ir.op_end());
+        }
+        fi = fi + 1;
+    }
+    return st;
 }
 
 // --- Perceus precise drops (drop-on-last-use) for arrays -----------------
@@ -29184,6 +29242,26 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
 // guarded_move gate), so a non-empty `moved` set implies every arm is
 // unguarded and exactly the escaping arm ran.
 function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
+    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name, moved);
+    // free the box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
+// emit_enum_variant_payload_drops is emit_enum_variant_drops MINUS the box free + slot
+// zero: it runtime-dispatches on the box's current variant and releases each variant's
+// rc payload fields, but LEAVES the box allocated and the slot pointing at it. Three
+// callers need exactly that split:
+//   - emit_enum_inplace_reassign / emit_enum_donor_reuse, which re-shape the SAME box
+//     to the new variant rather than freeing it;
+//   - emit_struct_enum_field_payload_drops, where __struct_drop_<T>'s k_enum arm frees
+//     the box afterwards and a second dec here would over-release it;
+//   - emit_enum_variant_drops_moved, which appends the free itself.
+function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;
     while (vi < st.structs.len()) {
@@ -29254,12 +29332,6 @@ function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: stri
         }
         vi = vi + 1;
     }
-    // free the box itself and zero the slot.
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_store_local(slot));
     return st;
 }
 
@@ -29548,43 +29620,6 @@ function emit_enum_reclaim_store(se: LowerState, slot: i32, enum_name: string): 
     return st.emit(ir.op_store_local(slot));     // slot = new
 }
 
-// emit_enum_variant_payload_drops is emit_enum_variant_drops MINUS the box free + slot
-// zero: it runtime-dispatches on the box's current variant and releases each array
-// payload (arr_dec), but LEAVES the box allocated and the slot pointing at it. It is the
-// old-payload release for IN-PLACE self-reassign reuse (emit_enum_inplace_reassign),
-// where the same box is re-shaped to the new variant rather than freed. Array-payload
-// only (the enum_all_variants_array_payload gate guarantees every rc field is a leaf
-// scalar array a single arr_dec fully releases — no nested struct/box to walk).
-function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
-    var st: LowerState = s;
-    var vi: i32 = 0;
-    while (vi < st.structs.len()) {
-        if (st.structs[vi].enum_owner == enum_name && enum_variant_has_rc_payload(st.structs, st.structs[vi].name)) {
-            var vname: string = st.structs[vi].name;
-            st = st.emit(ir.op_block(0));
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_variant_is(vname));
-            st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
-            st = st.emit(ir.op_brif(0));                // -> skip on mismatch / null
-            var n: i32 = decl_field_count(st.structs, vname);
-            var fk: i32 = 0;
-            while (fk < n) {
-                var eft: string = decl_field_type_at(st.structs, vname, fk);
-                if (is_leaksafe_array_field(eft)) {
-                    st = st.emit(ir.op_load_local(slot));
-                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                }
-                fk = fk + 1;
-            }
-            st = st.emit(ir.op_end());
-        }
-        vi = vi + 1;
-    }
-    return st;
-}
-
 // emit_enum_inplace_reassign lowers `b = V(args)` (b a reclaimable array-payload enum
 // local, credited ENUMRE) as an IN-PLACE reuse of b's existing box — the native-parity
 // optimisation over emit_enum_reclaim_store's free+alloc churn. It (1) releases b's OLD
@@ -29606,7 +29641,8 @@ function emit_enum_inplace_reassign(value: parser.Expr, slot: i32, enum_name: st
                     if (variant_enum_owner(s.structs, vname) != enum_name) { return s.fail(); }
                     if (decl_field_count(s.structs, vname) != c.args.len()) { return s.fail(); }
                     // 1. release b's old variant payload arrays (box kept).
-                    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name);
+                    var no_moved: string[] = [];
+                    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name, no_moved);
                     // 2. re-shape the box to V.
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_set_shape(vname));
@@ -37264,7 +37300,8 @@ function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: s
                     st = st.emit(ir.op_if(0));
                     st = st.emit(ir.op_load_local(dslot));
                     st = st.emit(ir.op_store_local(kslot));
-                    st = emit_enum_variant_payload_drops(st, dslot, enum_name);
+                    var dno_moved: string[] = [];
+                    st = emit_enum_variant_payload_drops(st, dslot, enum_name, dno_moved);
                     st = st.emit(ir.op_else());
                     st = st.emit(ir.op_const_i32(0));
                     st = st.emit(ir.op_store_local(kslot));
@@ -40938,28 +40975,19 @@ function collect_try_str_binding_names(stmts: parser.Stmt[], opt_fresh_ret: stri
 // The __field_reclaim_<T> string arm frees a REPLACED string field at rc==1.
 // That is sound only if no read of the field can outlive the box chain: the
 // self-host has no read-side alias-inc discipline for strings, so a field
-// read that ESCAPES (a call arg, a return, a container/struct store, a
-// slice/trim view) is an UNCOUNTED alias the free would dangle — the
+// read that ESCAPES (a retaining call arg, a return, a container/struct store,
+// a slice/trim view) is an UNCOUNTED alias the free would dangle — the
 // per-module compiler self-run segfaulted on exactly this (its own
 // LowerState/EmitState string fields are passed to helpers everywhere).
 // strfld_reclaim_ok_types_of therefore admits a type's string arm only when
 // EVERY read of its string-field NAMES, across the WHOLE program, is a
 // provable transient borrow: a binary operand (concat/compare), a byte-index
-// base, the receiver of a read-only / fresh-copy string method, or a direct
-// `var t = x.f` init (retained by the #4768 read-side alias-inc). The walk is
-// field-NAME-keyed and obj-type-blind — a same-named field on another type
-// over-excludes (sound). Callers must pass the WHOLE-PROGRAM func list
-// (all_funcs on the per-module paths); a partial list would under-count the
-// reads and re-open the UAF.
-
-// strfld_is_fa: e is a DIRECT `<obj>.field` read (any obj shape).
-function strfld_is_fa(e: parser.Expr): boolean {
-    match (e) {
-        parser.ExprFieldAccess(_) => { return true; },
-        _ => {}
-    }
-    return false;
-}
+// base, the receiver of a read-only / fresh-copy string method, a BORROWABLE
+// call-argument position (#6703), or a direct `var t = x.f` init (retained by
+// the #4768 read-side alias-inc). The walk is field-NAME-keyed and
+// obj-type-blind — a same-named field on another type over-excludes (sound).
+// Callers must pass the WHOLE-PROGRAM func list (all_funcs on the per-module
+// paths); a partial list would under-count the reads and re-open the UAF.
 
 // strfld_mark: record e's field name as unsafely read (dedup'd), then keep
 // walking its receiver chain.
@@ -40984,6 +41012,49 @@ function strfld_safe_operand(e: parser.Expr, acc: string[]): string[] {
         _ => {}
     }
     return strfld_collect_unsafe(e, acc);
+}
+
+// strfld_defer_arg parks the verdict on `callee(… <field> …)` at position
+// `idx` — a borrowable position is a transient borrow, any other retains — as
+// a "?<callee>#<idx>:<field>" record in the same accumulator. The record is
+// inert for every exact field-name lookup, so it does not admit anything on
+// its own; strfld_resolve_deferred turns the non-borrowable ones into marks.
+// A field already marked cannot be un-marked by any verdict, so it parks
+// nothing — which is what keeps the record count (and the resolve's registry
+// walks) proportional to the fields that can still change the answer.
+function strfld_defer_arg(acc: string[], callee: string, idx: i32, field: string): string[] {
+    if (util.index_of_str(acc, field) >= 0) { return acc; }
+    return push_str_unique(acc, "?" + callee + "#" + util.i32_to_string(idx) + ":" + field);
+}
+
+// strfld_resolve_deferred settles every parked call-argument record against
+// the borrowability registry: a field handed to a position the callee only
+// reads stays admissible, every other one marks. `borrowable_params_of` admits
+// a param only when the callee provably never returns, stores, SLICES or
+// captures it — the slice exclusion is what makes this sound for strings
+// specifically, a view into the buffer being the one alias a later
+// `__fern_str_free` would dangle.
+function strfld_resolve_deferred(names: string[], borrowable: string[]): string[] {
+    var a: string[] = names;
+    var n: i32 = names.len();
+    var i: i32 = 0;
+    while (i < n) {
+        var e: string = names[i];
+        if (e.len() > 0 && e[0] == 63) {                                  // 63 = '?'
+            var h: i32 = 1;
+            while (h < e.len() && e[h] != 35) { h = h + 1; }              // 35 = '#'
+            var c: i32 = h + 1;
+            var idx: i32 = 0;
+            while (c < e.len() && e[c] != 58) { idx = idx * 10 + ((e[c] as i32) - 48); c = c + 1; }   // 58 = ':', 48 = '0'
+            if (c < e.len() && h < e.len()) {
+                if (!param_is_borrowable(borrowable, e[1:h], idx)) {
+                    a = push_str_unique(a, e[c + 1:e.len()]);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // strfld_collect_unsafe walks one expression and accumulates every field
@@ -41014,6 +41085,9 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
             return strfld_collect_unsafe(sl.end, a);
         },
         parser.ExprCall(c) => {
+            // Free calls only: the borrowability registry is keyed by function
+            // name, and a method's params are not in it.
+            var callee_name: string = "";
             match (c.callee) {
                 parser.ExprFieldAccess(cfa) => {
                     // read-only / fresh-copy string methods borrow their
@@ -41028,13 +41102,31 @@ function strfld_collect_unsafe(e: parser.Expr, acc: string[]): string[] {
                         match (cfa.obj) { parser.ExprFieldAccess(_) => { a = strfld_mark(cfa.obj, a); }, _ => {} }
                     }
                 },
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
                 _ => { a = strfld_collect_unsafe(c.callee, a); }
             }
-            // ANY argument may retain the value (helpers, appends, map sets
-            // are all calls) — direct reads there are unsafe.
+            // An argument may retain the value (helpers, appends, map sets are
+            // all calls), so a direct read there is unsafe by default — unless
+            // the position is BORROWABLE, which is the same warrant the method
+            // receiver above gets. The verdict lives in a registry this walk
+            // does not carry: threading it through cost the per-module emit-all
+            // ~170 s of walk time on its own (#6703), so the site is PARKED as
+            // a "?callee#idx:field" record and strfld_resolve_deferred settles
+            // every one of them, once, after the walk.
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                a = strfld_collect_unsafe(c.args[ai], a);
+                var deferred: boolean = false;
+                if (callee_name.len() > 0) {
+                    match (c.args[ai]) {
+                        parser.ExprFieldAccess(fa2) => {
+                            a = strfld_defer_arg(a, callee_name, ai, fa2.field);
+                            a = strfld_collect_unsafe(fa2.obj, a);
+                            deferred = true;
+                        },
+                        _ => {}
+                    }
+                }
+                if (!deferred) { a = strfld_collect_unsafe(c.args[ai], a); }
                 ai = ai + 1;
             }
             return a;
@@ -41115,7 +41207,14 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
 // construction-retain decisions — the two must agree, so both come from this
 // one scan); partial-funcs emit paths must pass [] funcs (admitting nothing)
 // rather than a unit-local list.
-pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+//
+// `borrowable` is the SAME registry the caller's FnSigs carries. The two must
+// come from one verdict: the interprocedural fixpoint admits more borrows than
+// the single pass, so a backend seeding "strfldok:" from the fixpoint while the
+// lowering routed on the single pass would free fields nothing retained. Every
+// emit path therefore overrides FnSigs.strfld_ok_types wherever it overrides
+// FnSigs.borrowable_params.
+pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
     // Single pass: collect every unsafely-read field NAME across the whole
     // program, then admit each candidate type iff none of its string-field
     // names is in the set.
@@ -41125,6 +41224,7 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         unsafe_names = strfld_collect_unsafe_stmts(funcs[ki].body, unsafe_names);
         ki = ki + 1;
     }
+    unsafe_names = strfld_resolve_deferred(unsafe_names, borrowable);
     var out: string[] = [];
     var si: i32 = 0;
     while (si < structs.len()) {
@@ -44648,10 +44748,21 @@ pub function array_ret_fn_names(funcs: parser.FuncDecl[]): string[] {
 // vs the module's own array-returning names), and `consume_safe_params` starts
 // empty — only the inter-procedural emit paths compute one.
 //
-// Callers on the Perceus emit paths override `borrowable_params` with the
-// precomputed fixpoint (borrowable_params_interproc), which is deliberately NOT
-// borrowable_params_of's single pass.
+// Callers on the Perceus emit paths pass the precomputed fixpoint
+// (borrowable_params_interproc) to fn_sigs_for_borrow below, which is
+// deliberately NOT borrowable_params_of's single pass.
 pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_ret_fns: string[]): FnSigs {
+    return fn_sigs_for_borrow(funcs, structs, arr_ret_fns, borrowable_params_of(funcs));
+}
+
+// fn_sigs_for_borrow is fn_sigs_of with the borrowability verdict SUPPLIED. The
+// emit paths hold the interprocedural fixpoint and used to override the field
+// afterwards, which left fn_sigs_of's single pass — and the whole-program
+// strfld scan derived from it — computed and thrown away. Two registries in
+// FnSigs read that verdict, so both are built here from the one argument
+// (#6703): a strfld admission derived from a WEAKER registry than the one the
+// backend seeds "strfldok:" from would free fields nothing retained.
+pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_ret_fns: string[], bparams: string[]): FnSigs {
     return FnSigs {
         arr_ret_fns: arr_ret_fns,
         str_ret_fns: str_ret_fns_of(funcs),
@@ -44671,14 +44782,14 @@ pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], 
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
         const_fns: const_fns_of(funcs),
-        borrowable_params: borrowable_params_of(funcs),
+        borrowable_params: bparams,
         fn_names: fn_names_of(funcs),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: opt_fresh_ret_fns_of(funcs, structs),
-        strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs),
+        strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs, bparams),
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
     };

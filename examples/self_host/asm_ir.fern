@@ -3557,8 +3557,7 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
     var arf: string[] = array_ret_fns_of(all_funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_of(all_funcs, all_structs, arf)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_for_borrow(all_funcs, all_structs, arf, bparams)),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.fn_names_of(mod.funcs),
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
@@ -6317,12 +6316,11 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(fns, all_structs, array_ret_fns_of(fns)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(fns, all_structs, array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls),
+        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     // String literals the helper body interns (e.g. "\n" in str_lines's
     // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
@@ -6364,8 +6362,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
 pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): irlower.FnSigs {
     var bparams: string[] = irlower.borrowable_params_interproc(funcs);
     return irlower.FnSigs {
-        ...irlower.fn_sigs_of(funcs, structs, array_ret_fns_of(funcs)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
     };
 }
@@ -6608,8 +6605,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var arf: string[] = array_ret_fns_of(im.funcs);
     var bparams: string[] = irlower.borrowable_params_interproc(im.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(im.funcs, im.structs, arf), im.trait_reqs),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(im.funcs, im.structs, arf, bparams), im.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(im.funcs, bparams),
     };
     // Lower every function once into `cache`, checking eligibility on each result.
@@ -6850,17 +6846,19 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // that was just passed as an arg.
     s = emit_module_funcs(mod, all_funcs, all_structs, s, globl_defs, lo, hi, cache, b);
     // #4355: admit the replaced-STRING-field arm per type, from the
-    // WHOLE-PROGRAM read scan (all_funcs — a unit-local list would
-    // under-count the reads and re-open the UAF the scan exists to prevent;
-    // see irlower.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>"
-    // needs so emit_ir_field_reclaim_one can gate its string arm; every
-    // unit computes the same verdict, so the weak-deduped bodies agree.
+    // WHOLE-PROGRAM read scan (a unit-local func list would under-count the
+    // reads and re-open the UAF the scan exists to prevent; see
+    // irlower.strfld_reclaim_ok_types_of). Seeded as "strfldok:<T>" needs so
+    // emit_ir_field_reclaim_one can gate its string arm; every unit sees the
+    // same verdict, so the weak-deduped bodies agree.
     //
     // b.strfld_ok_types IS that verdict, over the same all_funcs/all_structs,
-    // computed once by the wp_fn_sigs the caller built outside its per-unit loop.
-    // Recomputing it here ran the scan — three whole-program passes — once per
-    // emitted unit, and it is already the most-repeated analysis in a compile
-    // (measured: 7 runs per compile against the nested-struct scan's 1).
+    // computed once by the wp_fn_sigs the caller built outside its per-unit loop
+    // — and it is the one the LOWERING routed on, which is what keeps the
+    // construction retain and this arm's free paired. Recomputing it here ran
+    // the scan (three whole-program passes) once per emitted unit, and it is
+    // already the most-repeated analysis in a compile: 7 runs per compile
+    // against the nested-struct scan's 1.
     var sfok: string[] = b.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) {

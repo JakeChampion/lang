@@ -1892,8 +1892,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // them per function is O(n^2) and OOMs the bump heap on a large module.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_of(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod)), mod.trait_reqs),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, mod.structs, asm_ir.array_ret_fns(mod), bparams), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
@@ -1929,12 +1928,11 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(fns, all_structs, asm_ir.array_ret_fns_of(fns)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(fns, all_structs, asm_ir.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
-        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls),
+        strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
@@ -6403,11 +6401,12 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     s = s.close_needs();
     // #4355: replaced-STRING-field admission — this driver route is
     // single-module whole-program, so mod.funcs IS the full read scope.
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs);
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, irlower.borrowable_params_interproc(mod.funcs));
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
@@ -6452,8 +6451,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // emit_module_funcs).
     var bparams: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_of(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs)),
-        borrowable_params: bparams,
+        ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, asm_ir.array_ret_fns_of(all_funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
         // These two stay scoped to THIS module rather than the whole program.
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
@@ -6480,9 +6478,10 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // WHOLE-PROGRAM read scan (all_funcs — see asm_ir.emit_module_ir_unit's
     // sibling seeding and irlower.strfld_reclaim_ok_types_of).
     // sg.strfld_ok_types is that verdict over the same lists, already computed by
-    // the fn_sigs_of above — the scan is three whole-program passes and the
-    // most-repeated analysis in a compile (7 runs against the nested-struct
-    // scan's 1), so it is not one to run twice in the same function.
+    // the fn_sigs_for_borrow above — so it is the scan the LOWERING routed on,
+    // keeping the construction retain and this arm's free paired, and the scan
+    // (three whole-program passes, the most-repeated analysis in a compile at 7
+    // runs against the nested-struct scan's 1) does not run twice here.
     var sfok: string[] = sg.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
