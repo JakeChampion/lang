@@ -170,7 +170,7 @@ env:
   # same regex as the two lists above, and each has a matching job below.
   # (Distinct from ISOLATED_DRIVER_TESTS, which is about *where fern.fern gets
   # cold-built*, not about run length.)
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only. EMPTY means nothing is
   # quarantined — the #4801 quarantine is fully retired.
@@ -534,6 +534,58 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
+
+  # WHOLE-COMPILER WASM SHARDED LINK — all 15 self-host modules compiled to wasm
+  # in function windows across separate processes, then linked.
+  #
+  # Its own job for the reason emitall-fixpoint has one, arrived at the hard way
+  # (#6667): inside an LPT shard it dominated, and the shard carrying it ran
+  # 12.8 min against the 18-minute per-test wall — 54% heavier than the next
+  # shard and 71% of its budget. The next push tipped it over, and a
+  # `panic: test timed out` with no `--- FAIL` anywhere read as "your PR broke
+  # the self-host suite" on a PR that had not touched the path. The weight is
+  # not a mistake in the partition: this test grows with the compiler, so a
+  # re-weight or a raised wall only moves the cliff.
+  #
+  # Needs a NATIVE x86_64 host (the driver is emitted as x86-64 asm), wasmtime
+  # AND wasm-tools (the test t.Skips without either), and the warm driver
+  # artifacts so wasm_modload_run is restored rather than rebuilt.
+  wholecompiler-wasm-link:
+    needs: [build, warm]
+    name: wholecompiler-wasm-link-x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+          gotestsum: "true"
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: warm-x86_64-*
+          path: ${{ runner.temp }}/warm
+      - name: whole-compiler wasm sharded link
+        run: |
+          set -euo pipefail
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          # Same cache wiring as the shards: a writable local dir first, then
+          # every downloaded warm-artifact dir as a read-only source.
+          CACHE="$RUNNER_TEMP/uc-local"
+          mkdir -p "$CACHE"
+          for d in "$RUNNER_TEMP"/warm/*/; do
+            if [ -d "$d" ]; then CACHE="$CACHE:${d%/}"; fi
+          done
+          export FERN_SELFHOST_BUILD_CACHE="$CACHE"
+          echo "FERN_SELFHOST_BUILD_CACHE=$FERN_SELFHOST_BUILD_CACHE"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWasmWholeCompilerShardedLink$' -test.v -test.timeout 23m
 
   # The fixture corpus, run through the SELF-HOST compiler, once per target it
   # emits. Nothing else does: all four of TestFernFixtures' backends are the
