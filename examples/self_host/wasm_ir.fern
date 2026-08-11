@@ -8446,10 +8446,23 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
                         // a struct-array element box (arr_dec frees struct boxes too).
                         // rc-guarded inside arr_dec; the construction alias-inc (shared
                         // irlower) balances it. Mirrors the x86 / arm64 shallow k_struct
-                        // case (Perceus slice 3c). Enum/tuple/Option fields (also kind
-                        // "S") stay leak-only — is_struct_type is false for them.
+                        // case (Perceus slice 3c). Tuple/Option fields (also kind "S")
+                        // stay leak-only — is_struct_type is false for them.
                         o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
                     }
+                } else if (irlower.decl_is_enum(structs, ft)) {
+                    // A DIRECT enum field (`e: MyEnum`): the slot holds an rc-headered
+                    // variant box, shallow-freed via the rc-guarded $__fern_arr_dec —
+                    // the wasm sibling of the register backends' k_enum arm, which wasm
+                    // never had, so the box leaked once per construction even after the
+                    // sweep started releasing its variant payload. Balanced by the same
+                    // shared-irlower construction alias-inc as k_struct / k_str: a fresh
+                    // variant ctor is handed over sole-owned and frees here, an aliased
+                    // one was inc'd and only decs. The variant PAYLOAD is released by
+                    // the caller (emit_struct_enum_field_payload_drops) before this
+                    // call, so one level is all this arm owes.
+                    var eload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
+                    o = o + "    (drop (call $__fern_arr_dec " + eload + "))\n";
                 } else if (ft == "fn" && clo_ok) {
                     // An fn-typed (closure) field: the slot holds an rc-headered
                     // `__mkclo$` env box, shallow-freed via the rc-guarded

@@ -20227,9 +20227,67 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // ($tsx/$optst/...) never carry the marker, so the tuple-child / option-
     // payload / array-element walks are unaffected.
     if (slot_nodeep(s, slot)) { return s; }
-    var st: LowerState = s.emit(ir.op_load_local(slot));    // box (arg0)
+    // __struct_drop_<T>'s k_enum arm is a box-only dec, so a direct enum field's
+    // variant payload survives the sweep. Release it here first, while the box is
+    // still readable.
+    var st: LowerState = emit_struct_enum_field_payload_drops(s, slot, sty);
+    st = st.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
+}
+
+// emit_struct_enum_field_payload_drops releases the VARIANT PAYLOAD of every direct
+// enum field of struct `sty` whose enum type is array-payload-only, leaving the enum
+// BOX itself to the k_enum arm of the __struct_drop_<sty> call that follows (a dec
+// here too would over-release it). Without this the payload array leaks once per
+// construction — the residual #6691 left, and the gap between a struct's enum FIELD
+// and the same enum spelled as a LOCAL, which lowering already deep-drops via
+// emit_enum_variant_drops.
+//
+// ADMISSION, two halves:
+//   - the enum TYPE: enum_all_variants_array_payload — every rc payload is a leaf
+//     scalar ARRAY that a single rc_dec fully releases. String / nested-struct
+//     payloads are excluded because releasing one needs the per-construction
+//     freshness proof (variant_struct_payloads_fresh) the sweep cannot see, whereas
+//     an array payload rides the construction alias-inc, so a bare-ident payload is
+//     retained and the dec only releases the dup.
+//   - the box at RUNTIME: __fern_rc_is_unique, which doubles as the null guard. A
+//     non-fresh enum field (bound from a live enum local, copied from a struct-lit
+//     base) was alias-inc'd at construction, so the box is shared and its payload is
+//     still reachable through the other owner — deep-dropping it there would free a
+//     live value, and the other owner's own sweep would double-release. Shared boxes
+//     take today's shallow path: leaks, never dangles.
+//
+// The struct box is null-guarded because op_struct_get faults on a zeroed slot (an
+// unreached local), which __struct_drop_'s own low-address check would have absorbed.
+function emit_struct_enum_field_payload_drops(se: LowerState, slot: i32, sty: string): LowerState {
+    var st: LowerState = se;
+    var n: i32 = decl_field_count(st.structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        var ft: string = decl_field_type_at(st.structs, sty, fi);
+        if (decl_is_enum(st.structs, ft) && enum_all_variants_array_payload(st.structs, ft)) {
+            var esc: string = "$sefp" + util.i32_to_string(st.locals.len());
+            st = st.add_local(esc);
+            var etmp: i32 = st.slot_of(esc);
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_bin("ne", 0, false));                                     // struct box != 0
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.structs, sty, fi)));  // enum box
+            st = st.emit(ir.op_store_local(etmp));
+            st = st.emit(ir.op_load_local(etmp));
+            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));                    // sole owner (and null-safe)
+            st = st.emit(ir.op_if(0));
+            var no_moved: string[] = [];
+            st = emit_enum_variant_payload_drops(st, etmp, ft, no_moved);
+            st = st.emit(ir.op_end());
+            st = st.emit(ir.op_end());
+        }
+        fi = fi + 1;
+    }
+    return st;
 }
 
 // --- Perceus precise drops (drop-on-last-use) for arrays -----------------
@@ -29184,6 +29242,26 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
 // guarded_move gate), so a non-empty `moved` set implies every arm is
 // unguarded and exactly the escaping arm ran.
 function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
+    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name, moved);
+    // free the box itself and zero the slot.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    return st;
+}
+
+// emit_enum_variant_payload_drops is emit_enum_variant_drops MINUS the box free + slot
+// zero: it runtime-dispatches on the box's current variant and releases each variant's
+// rc payload fields, but LEAVES the box allocated and the slot pointing at it. Three
+// callers need exactly that split:
+//   - emit_enum_inplace_reassign / emit_enum_donor_reuse, which re-shape the SAME box
+//     to the new variant rather than freeing it;
+//   - emit_struct_enum_field_payload_drops, where __struct_drop_<T>'s k_enum arm frees
+//     the box afterwards and a second dec here would over-release it;
+//   - emit_enum_variant_drops_moved, which appends the free itself.
+function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
     var vi: i32 = 0;
     while (vi < st.structs.len()) {
@@ -29254,12 +29332,6 @@ function emit_enum_variant_drops_moved(s: LowerState, slot: i32, enum_name: stri
         }
         vi = vi + 1;
     }
-    // free the box itself and zero the slot.
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_store_local(slot));
     return st;
 }
 
@@ -29548,43 +29620,6 @@ function emit_enum_reclaim_store(se: LowerState, slot: i32, enum_name: string): 
     return st.emit(ir.op_store_local(slot));     // slot = new
 }
 
-// emit_enum_variant_payload_drops is emit_enum_variant_drops MINUS the box free + slot
-// zero: it runtime-dispatches on the box's current variant and releases each array
-// payload (arr_dec), but LEAVES the box allocated and the slot pointing at it. It is the
-// old-payload release for IN-PLACE self-reassign reuse (emit_enum_inplace_reassign),
-// where the same box is re-shaped to the new variant rather than freed. Array-payload
-// only (the enum_all_variants_array_payload gate guarantees every rc field is a leaf
-// scalar array a single arr_dec fully releases — no nested struct/box to walk).
-function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string): LowerState {
-    var st: LowerState = s;
-    var vi: i32 = 0;
-    while (vi < st.structs.len()) {
-        if (st.structs[vi].enum_owner == enum_name && enum_variant_has_rc_payload(st.structs, st.structs[vi].name)) {
-            var vname: string = st.structs[vi].name;
-            st = st.emit(ir.op_block(0));
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_variant_is(vname));
-            st = st.emit(ir.op_bin("not", 0, false));   // 1 if NOT this variant
-            st = st.emit(ir.op_brif(0));                // -> skip on mismatch / null
-            var n: i32 = decl_field_count(st.structs, vname);
-            var fk: i32 = 0;
-            while (fk < n) {
-                var eft: string = decl_field_type_at(st.structs, vname, fk);
-                if (is_leaksafe_array_field(eft)) {
-                    st = st.emit(ir.op_load_local(slot));
-                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
-                    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                    st = st.emit(ir.op_drop());
-                }
-                fk = fk + 1;
-            }
-            st = st.emit(ir.op_end());
-        }
-        vi = vi + 1;
-    }
-    return st;
-}
-
 // emit_enum_inplace_reassign lowers `b = V(args)` (b a reclaimable array-payload enum
 // local, credited ENUMRE) as an IN-PLACE reuse of b's existing box — the native-parity
 // optimisation over emit_enum_reclaim_store's free+alloc churn. It (1) releases b's OLD
@@ -29606,7 +29641,8 @@ function emit_enum_inplace_reassign(value: parser.Expr, slot: i32, enum_name: st
                     if (variant_enum_owner(s.structs, vname) != enum_name) { return s.fail(); }
                     if (decl_field_count(s.structs, vname) != c.args.len()) { return s.fail(); }
                     // 1. release b's old variant payload arrays (box kept).
-                    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name);
+                    var no_moved: string[] = [];
+                    var st: LowerState = emit_enum_variant_payload_drops(s, slot, enum_name, no_moved);
                     // 2. re-shape the box to V.
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_set_shape(vname));
@@ -37264,7 +37300,8 @@ function emit_enum_cross_reuse(c_name: string, value: parser.Expr, donor_name: s
                     st = st.emit(ir.op_if(0));
                     st = st.emit(ir.op_load_local(dslot));
                     st = st.emit(ir.op_store_local(kslot));
-                    st = emit_enum_variant_payload_drops(st, dslot, enum_name);
+                    var dno_moved: string[] = [];
+                    st = emit_enum_variant_payload_drops(st, dslot, enum_name, dno_moved);
                     st = st.emit(ir.op_else());
                     st = st.emit(ir.op_const_i32(0));
                     st = st.emit(ir.op_store_local(kslot));
