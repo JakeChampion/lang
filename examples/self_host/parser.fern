@@ -170,12 +170,14 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // payload on an inner `match` (desugar_nested_arms), so the checker / codegen
 // only ever see flat arms; empty (the common case) means a plain binder.
 // `field_names`, when non-empty, marks a RECORD-form pattern — `Rect { h, w }`
-// binds by field name in any order — and holds the names as written. It is a
-// transient parse artefact: resolve_variant_fields_module rewrites the pattern
-// into the equivalent positional one (bindings in declaration order) and clears
-// it, so the checker and codegen only ever see positional patterns. A pattern
-// that still carries names after that pass named a field the variant does not
-// have (or missed one), which the checker reports as E015.
+// binds by field name in any order — and holds the FIELDS as written, with the
+// bindings holding the locals each was bound to (they differ only under the
+// `f: local` renaming form). It is a transient parse artefact:
+// resolve_variant_fields_module rewrites a settled pattern into the equivalent
+// positional one (bindings in declaration order) and clears it, so the checker
+// and codegen only ever see positional patterns. A pattern that still carries
+// names after that pass named a field the variant does not have, named one
+// twice, missed one, or renamed one — all E015 at the checker.
 pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
@@ -2719,11 +2721,6 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
     return s_if(e_bool(true), outer, []);
 }
 
-// parse_struct_match_arms parses the arm list of a struct match (cursor just
-// past the opening `{`), returning the arms + the first arm's return-type tag.
-// Shared by the statement and expression forms: expr_form=true parses each arm
-// body as a value branch (`parse_branch_body` / a bare tail expr, so the IIFE
-// wrapper yields it); expr_form=false parses a statement block (`parse_block`).
 // is_struct_pattern_arm reports whether the arm the cursor sits on destructures
 // a STRUCT (`Point { x, y }`, or `w @ Point { x, y }`) rather than a record-form
 // enum variant, which is spelled identically — see Par.structnames for how the
@@ -2736,6 +2733,11 @@ function is_struct_pattern_arm(p: Par): boolean {
     return util.has_str(p.structnames, head);
 }
 
+// parse_struct_match_arms parses the arm list of a struct match (cursor just
+// past the opening `{`), returning the arms + the first arm's return-type tag.
+// Shared by the statement and expression forms: expr_form=true parses each arm
+// body as a value branch (`parse_branch_body` / a bare tail expr, so the IIFE
+// wrapper yields it); expr_form=false parses a statement block (`parse_block`).
 function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], string, Par) {
     var arms: StructArm[] = [];
     var rt: string = "i32";
@@ -4421,7 +4423,12 @@ function parse_stmt(p: Par): (Stmt, Par) {
         }
         p = p.advance();
         // Struct destructure `var Point { x, y } = E;` / `let Point { … } = E;`
-        // — `name` is the struct type, the `{` opens the field pattern.
+        // — `name` is the struct type, the `{` opens the field pattern. A
+        // record-form variant is spelled the same way here, but native rejects
+        // `let Rect { w, h } = E else …` at parse time, so it stays a struct
+        // destructure (and the same rejection) rather than becoming self-host-
+        // only surface. `if let` accepts the record form on both, via
+        // parse_pattern.
         if (p.peek_punct() == "{") {
             return parse_struct_destructure(p, name, vline, vcol);
         }

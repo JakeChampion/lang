@@ -110,6 +110,8 @@ program.
 ## Follow-ups
 
 - `Rect { w: …, h: … }` **construction** syntax.
-- Named-field patterns in `if let` / `let … else` (match-only for now).
+- Named-field patterns in `let … else` — `match` and `if let` take them, but
+  `let Rect { w, h } = e else { … }` is a parse error on native, so the
+  self-host leaves it one too rather than growing surface native lacks.
 - Self-host `@derive(Display/Debug/Json)` renders a record variant's payloads
   positionally, where native renders the named shape.
