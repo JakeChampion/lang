@@ -1926,10 +1926,10 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
                 var a: Op = cur[i];
                 var b: Op = cur[i + 1];
                 var o: Op = cur[i + 2];
-                if (fold_is_const_i32(a) && fold_is_const_i32(b)
+                if (const_i32_readable(a) && const_i32_readable(b)
                     && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
-                    && !fold_would_divide_by_zero(o.kind_tag, fold_const_value(b))) {
-                    out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, fold_const_value(a), fold_const_value(b))));
+                    && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
+                    out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
                     i = i + 3;
                     changed = true;
                 } else {
@@ -1946,7 +1946,9 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
     return cur;
 }
 
-// fold_is_const_i32 reports whether `o` is an i32 constant this pass may read.
+// const_i32_readable reports whether `o` is an i32 constant a peephole may
+// read — shared by the fold and strength passes here and by the backends'
+// constant-shift-count selection.
 //
 // Two shapes qualify. op_const_i32 (tag 1) carries its value in i32_imm and is
 // unconditionally fine. op_const_i32_text (tag 2) is what a SOURCE LITERAL
@@ -1958,16 +1960,16 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
 // silently on anything too wide. Re-rendering and comparing rejects exactly the
 // cases where its answer is not the literal — hex, a suffix, a leading zero, an
 // overflow — without this pass having to know which forms exist.
-function fold_is_const_i32(o: Op): boolean {
+pub function const_i32_readable(o: Op): boolean {
     if (o.kind_tag == 1) { return o.str.len() == 0; }
     if (o.kind_tag != 2) { return false; }
     if (o.str.len() == 0) { return false; }
     return util.i32_to_string(util.digits_to_i32(o.str)) == o.str;
 }
 
-// fold_const_value reads the value out of whichever of the two shapes it is.
-// Only call it on an Op that fold_is_const_i32 accepted.
-function fold_const_value(o: Op): i32 {
+// const_i32_value reads the value out of whichever of the two shapes it is.
+// Only call it on an Op that const_i32_readable accepted.
+pub function const_i32_value(o: Op): i32 {
     if (o.kind_tag == 1) { return o.i32_imm; }
     return util.digits_to_i32(o.str);
 }
@@ -1999,6 +2001,165 @@ function fold_binary_i32(k: i32, a: i32, b: i32): i32 {
     if (k == kind_id("gt_s")) { if (a > b) { return 1; } return 0; }
     if (k == kind_id("ge_s")) { if (a >= b) { return 1; } return 0; }
     return 0;
+}
+
+// ---- strength reduction ------------------------------------------------
+//
+// reduce_strength rewrites the `<expr> ; const K ; <binop>` adjacency into a
+// cheaper equivalent — the op-list twin of native's internal/ir/strength.go.
+// No dataflow is needed: the constant sits immediately before the binary that
+// consumes it, so one linear walk finds every site.
+//
+//   x * 1, x + 0, x - 0, x | 0, x ^ 0, x << 0, x >> 0,
+//   x & -1, x / 1                     -> both ops vanish
+//   x * 0, x & 0, x % 1               -> drop ; const_i32 0
+//   x * 2^n                           -> const_i32 n ; shl
+//   x /u 2^n                          -> const_i32 n ; shr_u
+//   x %u 2^n                          -> const_i32 2^n-1 ; and
+//
+// Deleting `const K ; binop` is sound whatever precedes it: the binary pops
+// the constant and one value beneath it, so removing both leaves exactly that
+// value on the stack. The `drop` in the zero-result rewrites is what preserves
+// a side effect the discarded operand carried (a call in operand position).
+//
+// SIGNED division and remainder by 2^n are deliberately left alone. `div_s`
+// rounds toward zero (`-1 / 2 == 0`) where `shr_s` rounds toward negative
+// infinity (`-1 >> 1 == -1`), and `rem_s` keeps the dividend's sign where the
+// low-bit mask does not. Only the divisor-1 forms (exact for either sign) and
+// the unsigned variants are rewritten.
+//
+// Scope is i32 width, like fold_const_binaries: the replacement constants are
+// op_const_i32, and splicing one beside a 64-bit or pointer-width op would
+// hand the backend a mismatched-width operand.
+
+// StrengthResult is what reduce_strength_ex returns: the rewritten op list
+// plus whether any site fired, so optimize_ops can stop at a fixpoint without
+// diffing two op lists.
+pub struct StrengthResult {
+    ops: Op[],
+    changed: boolean,
+}
+
+// StrengthRewrite is one site's verdict. `ops` replaces the `const K ; binop`
+// pair and is empty for the identities, where both ops simply vanish.
+struct StrengthRewrite {
+    ok: boolean,
+    ops: Op[],
+}
+
+function strength_none(): StrengthRewrite { return StrengthRewrite { ok: false, ops: [] }; }
+function strength_del(): StrengthRewrite { return StrengthRewrite { ok: true, ops: [] }; }
+function strength_drop0(): StrengthRewrite {
+    var o: Op[] = [op_drop(), op_const_i32(0)];
+    return StrengthRewrite { ok: true, ops: o };
+}
+function strength_pair(a: Op, b: Op): StrengthRewrite {
+    var o: Op[] = [a, b];
+    return StrengthRewrite { ok: true, ops: o };
+}
+
+// log2_i32 gives the base-2 log of `n` when n is a positive power of two, and
+// -1 otherwise (zero, negative, or not a power of two).
+function log2_i32(n: i32): i32 {
+    if (n <= 0) { return 0 - 1; }
+    if ((n & (n - 1)) != 0) { return 0 - 1; }
+    var r: i32 = 0;
+    var v: i32 = n;
+    while (v > 1) { r = r + 1; v = v >> 1; }
+    return r;
+}
+
+// strength_rewrite decides what replaces `const k ; bop`.
+function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
+    var t: i32 = bop.kind_tag;
+    if (t == kind_id("mul")) {
+        if (k == 1) { return strength_del(); }
+        if (k == 0) { return strength_drop0(); }
+        var n: i32 = log2_i32(k);
+        if (n > 0) { return strength_pair(op_const_i32(n), op_bin("shl", 0, false)); }
+        return strength_none();
+    }
+    if (t == kind_id("add") || t == kind_id("sub") || t == kind_id("or")
+        || t == kind_id("xor") || t == kind_id("shl")
+        || t == kind_id("shr_s") || t == kind_id("shr_u")) {
+        if (k == 0) { return strength_del(); }
+        return strength_none();
+    }
+    if (t == kind_id("and")) {
+        if (k == 0) { return strength_drop0(); }
+        if (k == 0 - 1) { return strength_del(); }
+        return strength_none();
+    }
+    if (t == kind_id("div_s")) {
+        if (k == 1) { return strength_del(); }
+        return strength_none();
+    }
+    if (t == kind_id("div_u")) {
+        if (k == 1) { return strength_del(); }
+        var nd: i32 = log2_i32(k);
+        if (nd > 0) { return strength_pair(op_const_i32(nd), op_bin("shr_u", 0, false)); }
+        return strength_none();
+    }
+    if (t == kind_id("rem_s")) {
+        if (k == 1) { return strength_drop0(); }
+        return strength_none();
+    }
+    if (t == kind_id("rem_u")) {
+        if (k == 1) { return strength_drop0(); }
+        var nr: i32 = log2_i32(k);
+        if (nr > 0) { return strength_pair(op_const_i32(k - 1), op_bin("and", 0, false)); }
+        return strength_none();
+    }
+    return strength_none();
+}
+
+// reduce_strength_ex is reduce_strength plus the changed flag optimize_ops
+// needs. A single forward walk suffices even for a chain (`x * 4 * 2`): a
+// rewrite's output is appended, never rescanned, but the REMAINING input is,
+// so the second site is found in the same pass.
+pub function reduce_strength_ex(ops: Op[]): StrengthResult {
+    var out: Op[] = [];
+    var changed: boolean = false;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
+            var repl: StrengthRewrite = strength_rewrite(const_i32_value(ops[i]), ops[i + 1]);
+            if (repl.ok) {
+                var r: i32 = 0;
+                while (r < repl.ops.len()) { out = out.append(repl.ops[r]); r = r + 1; }
+                changed = true;
+                i = i + 2;
+                continue;
+            }
+        }
+        out = out.append(ops[i]);
+        i = i + 1;
+    }
+    return StrengthResult { ops: out, changed: changed };
+}
+
+// reduce_strength is the plain-op-list form, for callers that don't need the
+// fixpoint signal.
+pub function reduce_strength(ops: Op[]): Op[] {
+    return reduce_strength_ex(ops).ops;
+}
+
+// optimize_ops runs the op-list peepholes to a fixpoint. The two feed each
+// other: folding makes a constant adjacent to the op that consumes it, and a
+// strength rewrite's `drop ; const_i32 0` puts a fresh constant next to
+// whatever constant follows. fold_const_binaries already self-iterates, so a
+// strength pass that rewrote nothing is the fixpoint; the round cap is
+// defensive.
+pub function optimize_ops(ops: Op[]): Op[] {
+    var cur: Op[] = fold_const_binaries(ops);
+    var rounds: i32 = 0;
+    while (rounds < 8) {
+        var r: StrengthResult = reduce_strength_ex(cur);
+        if (!r.changed) { return cur; }
+        cur = fold_const_binaries(r.ops);
+        rounds = rounds + 1;
+    }
+    return cur;
 }
 
 // is_commutative_kind reports whether `id` is an integer binary op whose
