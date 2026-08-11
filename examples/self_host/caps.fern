@@ -1,0 +1,143 @@
+// examples/self_host/caps.fern — the PACKAGE capability inventory,
+// mirroring native's internal/caps (#6634).
+//
+// This is the second, independent capability system, and the distinction from
+// platforms.fern is the whole point of having two. `platforms` asks what the
+// TARGET provides — the OS boundary, enforced as E066. This asks what a
+// PACKAGE may reach: a dependency's authority, granted per-package in
+// fern.toml and enforced as E070 (docs/PACKAGE-CAPABILITIES-BRIEF.md).
+//
+// The vocabularies differ because the questions do. `print` is gated on `log`
+// there and UNGATED here: stdio is a channel the invoker already handed the
+// process, not ambient authority a dependency escalates through. `proc_fork`
+// is `proc` there and `subprocess` here — the target asks whether there are
+// processes at all, the package boundary asks whether this dependency may
+// start one.
+//
+// The completeness contract native states: every user-callable builtin is in
+// exactly one of `builtin_caps` or `ungated`, or carries the `__`
+// compiler-internal prefix. caps_run.fern asserts the "exactly one" half here,
+// and internal/caps/selfhost_parity_test.go pins both tables against native's
+// maps entry-for-entry — which is what makes a builtin classified on one side
+// and not the other a failing test rather than a silent divergence.
+//
+// What this file does NOT yet do: report mode and enforcement (#6634 slices 2
+// and 3). Those need per-package attribution of the bundled call graph, which
+// flatten's module mangling does not carry today. The inventory is the half
+// that can be kept honest now, and it is the half a new builtin trips over.
+
+import "./util";
+
+// capabilities is the v1 vocabulary, sorted. Deliberately coarse — path- or
+// host-level filtering is out of scope for v1 (see the brief).
+pub function capabilities(): string[] {
+    return ["env", "fs", "net", "random", "subprocess", "time"];
+}
+
+// Cap pairs a capability-relevant builtin with the capability a package must
+// be granted to call it.
+pub struct Cap { builtin: string, capability: string }
+
+// builtin_caps is the tagged half of the inventory.
+//
+// Boundary cases, each of which native decided for a reason worth keeping:
+//
+//   - `poll` is NOT tagged: it waits on pollables built by both sockets
+//     (tcp_pollable) and timers (timer_fd / wasm_timer_pollable), so the
+//     authority lives on the pollable CONSTRUCTORS. Tagging the wait as well
+//     would count one authority twice.
+//   - `time` covers observing clocks AND creating time-driven wakeups — the
+//     surface a "this package is sim-pure" property would have to gate.
+//   - stdio and argv have no v1 capability at all; they are the invoker's
+//     channels, not a dependency's reach.
+pub function builtin_caps(): Cap[] {
+    return [
+        Cap { builtin: "tcp_listen", capability: "net" },
+        Cap { builtin: "tcp_accept", capability: "net" },
+        Cap { builtin: "tcp_connect", capability: "net" },
+        Cap { builtin: "tcp_recv", capability: "net" },
+        Cap { builtin: "tcp_send", capability: "net" },
+        Cap { builtin: "tcp_close", capability: "net" },
+        Cap { builtin: "tcp_pollable", capability: "net" },
+        Cap { builtin: "udp_send", capability: "net" },
+
+        Cap { builtin: "read_file", capability: "fs" },
+        Cap { builtin: "write_file", capability: "fs" },
+        Cap { builtin: "write_file_exec", capability: "fs" },
+        Cap { builtin: "open_reader", capability: "fs" },
+        Cap { builtin: "open_writer", capability: "fs" },
+        Cap { builtin: "open_appender", capability: "fs" },
+        Cap { builtin: "stat", capability: "fs" },
+        Cap { builtin: "read_dir", capability: "fs" },
+        Cap { builtin: "remove_file", capability: "fs" },
+        Cap { builtin: "remove_dir_all", capability: "fs" },
+        Cap { builtin: "temp_dir", capability: "fs" },
+
+        Cap { builtin: "env", capability: "env" },
+
+        // Spawning and supervising a process are one authority at the package
+        // boundary, where platforms.fern splits them: a target either has a
+        // process model or it does not, but a dependency that may fork may as
+        // well have exec'd.
+        Cap { builtin: "subprocess", capability: "subprocess" },
+        Cap { builtin: "proc_fork", capability: "subprocess" },
+        Cap { builtin: "proc_waitpid", capability: "subprocess" },
+        Cap { builtin: "proc_exec", capability: "subprocess" },
+
+        Cap { builtin: "now_unix_ms", capability: "time" },
+        Cap { builtin: "now_ns", capability: "time" },
+        Cap { builtin: "monotonic_ns", capability: "time" },
+        Cap { builtin: "sleep_ms", capability: "time" },
+        Cap { builtin: "timer_fd", capability: "time" },
+        Cap { builtin: "wasm_timer_pollable", capability: "time" },
+
+        Cap { builtin: "random_bytes", capability: "random" },
+        Cap { builtin: "random_i32", capability: "random" }
+    ];
+}
+
+// ungated lists every user-callable builtin that needs NO capability: stdio,
+// argv, process exit, pure math and bit casts, the strbuf scratch surface,
+// the in-heap constructors, and the readiness helpers whose authority lives
+// on the pollable constructors instead.
+//
+// A builtin in neither this list nor builtin_caps is unclassified, which is
+// what the completeness gate exists to catch — an I/O-shaped addition must
+// not be able to dodge the table by being forgotten.
+pub function ungated(): string[] {
+    return ["putchar", "print", "write", "eprint",
+            "read_line", "stdin", "stdout", "stderr",
+            "args", "exit",
+            "strbuf_reset", "strbuf_append", "strbuf_take",
+            "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
+            "poll", "wasm_block", "wasm_poll", "wasm_pollable_drop",
+            "map_new", "cell_new", "string_from_bytes_unchecked",
+            "int_to_string"];
+}
+
+// capability_of returns the capability a builtin needs, or "" when it needs
+// none (or is not a user-callable builtin at all — the two are distinguished
+// by is_ungated).
+pub function capability_of(name: string): string {
+    var caps: Cap[] = builtin_caps();
+    var i: i32 = 0;
+    while (i < caps.len()) {
+        if (caps[i].builtin == name) { return caps[i].capability; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// is_ungated reports whether the builtin is explicitly classified as needing
+// no capability, as distinct from being absent from the inventory entirely.
+pub function is_ungated(name: string): boolean {
+    return util.has_str(ungated(), name);
+}
+
+// is_classified reports whether the builtin appears in the inventory at all.
+// A `__`-prefixed name is compiler-internal and exempt, matching native's
+// completeness contract.
+pub function is_classified(name: string): boolean {
+    if (name.len() >= 2 && name[0] == 95 && name[1] == 95) { return true; }
+    return capability_of(name).len() > 0 || is_ungated(name);
+}

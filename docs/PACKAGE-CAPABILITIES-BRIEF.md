@@ -98,7 +98,16 @@ Rules:
    -capabilities FILE.fern` prints one sorted line per package —
    `app  fs,net  (example: main → lib__save → write_file)` — with
    stdlib usage folded into the calling package's row (the
-   entry-point-altitude answer to the open question below). Phase 1
+   entry-point-altitude answer to the open question below). The
+   self-host mirrors the INVENTORY half in
+   `examples/self_host/caps.fern` (#6634 slice 1) — the vocabulary and
+   both classification halves, pinned entry-for-entry against the maps
+   here by `internal/caps/selfhost_parity_test.go`, so a builtin
+   classified in one compiler and not the other fails a test instead
+   of leaving the self-host side unclassified by construction. The
+   reachability walk and enforcement are not ported yet: both need
+   per-package attribution of the bundled call graph, which flatten's
+   module mangling does not carry. Phase 1
    reports *declared* reachability (every declared function is a
    root, uncalled or not), counts closures at their definition
    package, and follows calls into deeper packages, mirroring the

@@ -1,0 +1,99 @@
+// examples/self_host/caps_run.fern — driver for the package-capability
+// inventory (caps.fern, #6634 slice 1).
+//
+// The inventory's value is entirely in its completeness: a builtin that is in
+// neither half is not "permissive by default", it is invisible to a boundary
+// that is supposed to be exhaustive. So the assertions here are mostly about
+// the SHAPE of the table rather than about individual entries, which is what
+// a new builtin trips over.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies the one
+// that failed.
+
+import "./caps";
+import "./util";
+
+function main(): i32 {
+    // ---- 1. the vocabulary ---------------------------------------------
+    var vocab: string[] = caps.capabilities();
+    if (vocab.len() != 6) { return 1; }
+    if (!util.has_str(vocab, "net")) { return 2; }
+    if (!util.has_str(vocab, "subprocess")) { return 3; }
+
+    // Every tagged builtin names a capability IN the vocabulary. A tag
+    // outside it is a typo that silently exempts the builtin from every
+    // grant check, since no manifest can ever list the misspelled name.
+    var tagged: caps.Cap[] = caps.builtin_caps();
+    var i: i32 = 0;
+    while (i < tagged.len()) {
+        if (!util.has_str(vocab, tagged[i].capability)) { return 4; }
+        if (tagged[i].builtin.len() == 0) { return 5; }
+        i = i + 1;
+    }
+
+    // Every capability in the vocabulary is reachable — one no builtin names
+    // is either a dead word or a missing tag, and both are worth failing on.
+    var vi: i32 = 0;
+    while (vi < vocab.len()) {
+        var seen: boolean = false;
+        var ti: i32 = 0;
+        while (ti < tagged.len()) {
+            if (tagged[ti].capability == vocab[vi]) { seen = true; }
+            ti = ti + 1;
+        }
+        if (!seen) { return 6; }
+        vi = vi + 1;
+    }
+
+    // ---- 2. the two halves never overlap -------------------------------
+    // A builtin that is both tagged and ungated makes the boundary's answer
+    // depend on which list a caller consulted.
+    var ung: string[] = caps.ungated();
+    var ui: i32 = 0;
+    while (ui < ung.len()) {
+        if (caps.capability_of(ung[ui]).len() != 0) { return 10; }
+        ui = ui + 1;
+    }
+    var di: i32 = 0;
+    while (di < tagged.len()) {
+        if (caps.is_ungated(tagged[di].builtin)) { return 11; }
+        di = di + 1;
+    }
+
+    // ---- 3. the classification itself ----------------------------------
+    if (caps.capability_of("tcp_connect") != "net") { return 20; }
+    if (caps.capability_of("read_file") != "fs") { return 21; }
+    if (caps.capability_of("now_ns") != "time") { return 22; }
+    // Spawning and supervising are one authority here, where platforms.fern
+    // splits `subprocess` from `proc`: a dependency that may fork may as well
+    // have exec'd.
+    if (caps.capability_of("proc_fork") != "subprocess") { return 23; }
+
+    // The two boundaries disagree about stdio ON PURPOSE. `print` needs a
+    // target that has somewhere to put a line (platforms: `log`) and no
+    // package grant at all, because stdout is the invoker's channel rather
+    // than authority a dependency escalates through. If this ever starts
+    // returning a capability, the two systems have been conflated.
+    if (caps.capability_of("print").len() != 0) { return 24; }
+    if (!caps.is_ungated("print")) { return 25; }
+
+    // `poll` waits on a pollable someone else constructed, and every
+    // constructor is tagged, so tagging the wait would count one authority
+    // twice.
+    if (caps.capability_of("poll").len() != 0) { return 26; }
+    if (!caps.is_ungated("poll")) { return 27; }
+
+    // ---- 4. completeness ------------------------------------------------
+    // Classified means "in the inventory", which is what the completeness
+    // contract is about — not "gated".
+    if (!caps.is_classified("read_file")) { return 30; }
+    if (!caps.is_classified("print")) { return 31; }
+    // A compiler-internal name is exempt by its prefix, not by being listed.
+    if (!caps.is_classified("__fern_rc_inc")) { return 32; }
+    // Anything else is unclassified, and that is the state the Go-side
+    // completeness gate turns into a failure when a builtin lands.
+    if (caps.is_classified("brand_new_builtin")) { return 33; }
+
+    write("caps: the package-capability inventory is consistent\n");
+    return 0;
+}
