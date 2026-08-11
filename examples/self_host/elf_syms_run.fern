@@ -80,7 +80,7 @@ function main(): i32 {
     // contract so a later rewrite that rebuilds rather than returns has to
     // prove it still matches byte for byte.
     var plain: i32[] = elf.elf_static_executable_bss_x86_wx_at(text, [], 0, 0);
-    var plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), no_names, no_offs);
+    var plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), no_names, no_offs, no_offs);
     if (!bytes_equal(plain, plain_syms)) { return 1; }
 
     // A plain image really does carry no section table.
@@ -90,7 +90,8 @@ function main(): i32 {
     // ---- 2. the symbol-bearing image ----------------------------------
     var names: string[] = ["_start", "helper"];
     var offs: i32[] = [0, 5];
-    var img: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), names, offs);
+    var sizes: i32[] = [5, 7];
+    var img: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), names, offs, sizes);
 
     // e_shoff (8 bytes at 0x28) is non-zero, and the section-table
     // description is the five-section layout.
@@ -142,6 +143,38 @@ function main(): i32 {
     // Its name sits later in .strtab than `_start`'s, which is the check
     // that the two symbols are not sharing one name offset.
     if (le32_at(img, e2) <= le32_at(img, e1)) { return 36; }
+
+    // st_size is emitted, not left at zero: a profiler needs the extent to
+    // attribute an address, and a table of zero-sized symbols resolves exact
+    // entry points and nothing else.
+    if (le32_at(img, e1 + 16) != 5) { return 37; }
+    if (le32_at(img, e2 + 16) != 7) { return 38; }
+
+    // ---- 5. the selection rule (native's FuncSyms) ---------------------
+    // `.`-prefixed labels are branch targets, not functions, and an empty
+    // name is not a symbol at all. Section 1 (.rodata) is filtered out when
+    // a section filter is given.
+    var ln: string[] = ["main", ".Lloop", "", "helper", "msg"];
+    var lo: i32[] = [16, 20, 24, 4, 0];
+    var ls: i32[] = [0, 0, 0, 0, 1];
+    var got: string[] = elf.elf_func_sym_names(ln, lo, ls, 0, 32);
+    if (got.len() != 2) { return 40; }
+    // Sorted by OFFSET, so `helper` (4) precedes `main` (16) despite the
+    // order they were recorded in.
+    if (got[0] != "helper") { return 41; }
+    if (got[1] != "main") { return 42; }
+
+    var go2: i32[] = elf.elf_func_sym_offs(ln, lo, ls, 0, 32);
+    if (go2[0] != 4 || go2[1] != 16) { return 43; }
+
+    // Sizes span to the next symbol, and the last runs to text_end.
+    var gs: i32[] = elf.elf_func_sym_sizes(ln, lo, ls, 0, 32);
+    if (gs[0] != 12) { return 44; }   // 16 - 4
+    if (gs[1] != 16) { return 45; }   // 32 - 16
+
+    // Without a section filter (-1) the .rodata label is kept, which is how
+    // an assembler that records no sections is handled.
+    if (elf.elf_func_sym_names(ln, lo, ls, 0 - 1, 32).len() != 3) { return 46; }
 
     print(to_hex(img));
     return 0;

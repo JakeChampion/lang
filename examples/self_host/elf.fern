@@ -521,11 +521,16 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
 // is the address it loads at — all three differ between the single-segment
 // and W^X writers, so the caller supplies them rather than this guessing.
 //
+// `sym_sizes` is each symbol's extent in bytes, parallel to the other two.
+// A profiler or backtrace needs it to decide which function an address falls
+// in; a table of zero-sized symbols resolves exact entry points and nothing
+// else. elf_func_syms computes it the way native's FuncSyms does.
+//
 // An EMPTY `sym_names` returns the image UNCHANGED. That is what makes the
 // section layer safe to land ahead of the `-g` flag: every existing caller
 // keeps a byte-identical image, and not by re-deriving one that ought to
 // match — by not touching it.
-pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[]): i32[] {
+pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[]): i32[] {
     if (sym_names.len() == 0) { return img; }
 
     var nsym: i32 = sym_names.len();
@@ -569,7 +574,7 @@ pub function elf_append_symtab(img: i32[], text_vaddr: i32, text_off: i32, text_
         out = out.append(0);                                      // st_other
         out = elf_le16(out, 1);                                   // st_shndx = .text
         out = elf_le64(out, (text_vaddr + sym_offs[k]) as i64);   // st_value
-        out = elf_le64(out, zero64);                              // st_size (not tracked)
+        out = elf_le64(out, sym_sizes[k] as i64);                 // st_size
         k = k + 1;
     }
 
@@ -609,3 +614,105 @@ pub function elf_wx_text_off(): i32 { return elf_eh_size() + 2 * elf_ph_size(); 
 
 // elf_wx_text_vaddr is the address that offset loads at.
 pub function elf_wx_text_vaddr(): i32 { return elf_base_vaddr() + elf_wx_text_off(); }
+
+// elf_func_syms turns an assembler's parallel label tables into the symbol
+// arrays elf_append_symtab wants, applying native's FuncSyms rule:
+//
+//   - a label with an empty name, or one starting with `.`, is INTERNAL —
+//     a branch target, not a function — and is left out;
+//   - `sec_filter` keeps only labels in one section (.text is 0 for the x86
+//     tables; pass -1 when the assembler records no section, as arm64's does
+//     not);
+//   - the result is sorted by offset, then by name, because a symbol table
+//     is read by address and an unsorted one makes `nm` output arbitrary;
+//   - each symbol's SIZE is the distance to the next symbol, and the last
+//     one runs to `text_end`. Sizes cannot be computed before the sort, so
+//     this is the only place that can produce them.
+//
+// Returns the three arrays interleaved through out-params is not a thing
+// Fern has, so the three accessors below each run the same selection. The
+// duplication is deliberate: a struct-of-arrays return type would have to be
+// declared in a module elf.fern is not allowed to import.
+pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {
+    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < idx.len()) { out = out.append(lab_names[idx[i]]); i = i + 1; }
+    return out;
+}
+
+pub function elf_func_sym_offs(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
+    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < idx.len()) { out = out.append(lab_offs[idx[i]]); i = i + 1; }
+    return out;
+}
+
+// elf_func_sym_sizes is the reason the order matters: each entry spans to the
+// next symbol's offset, and the last to `text_end`.
+pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
+    var idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < idx.len()) {
+        var here: i32 = lab_offs[idx[i]];
+        var end: i32 = text_end;
+        if (i + 1 < idx.len()) { end = lab_offs[idx[i + 1]]; }
+        var sz: i32 = end - here;
+        if (sz < 0) { sz = 0; }
+        out = out.append(sz);
+        i = i + 1;
+    }
+    return out;
+}
+
+// elf_func_sym_order returns the indices of the labels that become symbols,
+// sorted by offset then name. Insertion sort: a label table is small and
+// already close to offset-ordered, since labels are recorded as code is
+// emitted.
+function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
+    var idx: i32[] = [];
+    var i: i32 = 0;
+    while (i < lab_names.len()) {
+        var keep: boolean = lab_names[i].len() > 0;
+        if (keep && lab_names[i][0:1] == ".") { keep = false; }
+        if (keep && sec_filter >= 0) {
+            if (i >= lab_secs.len() || lab_secs[i] != sec_filter) { keep = false; }
+        }
+        if (keep) { idx = idx.append(i); }
+        i = i + 1;
+    }
+    var a: i32 = 1;
+    while (a < idx.len()) {
+        var cur: i32 = idx[a];
+        var b: i32 = a - 1;
+        while (b >= 0) {
+            var prev: i32 = idx[b];
+            var after: boolean = lab_offs[prev] > lab_offs[cur];
+            if (!after && lab_offs[prev] == lab_offs[cur]) {
+                after = elf_str_gt(lab_names[prev], lab_names[cur]);
+            }
+            if (!after) { b = 0 - 1; }
+            else {
+                idx = idx.with(b + 1, prev);
+                idx = idx.with(b, cur);
+                b = b - 1;
+            }
+        }
+        a = a + 1;
+    }
+    return idx;
+}
+
+// elf_str_gt is `x > y` byte-wise, for the name tiebreak.
+function elf_str_gt(x: string, y: string): boolean {
+    var i: i32 = 0;
+    while (i < x.len() && i < y.len()) {
+        var cx: i32 = x[i] as i32;
+        var cy: i32 = y[i] as i32;
+        if (cx != cy) { return cx > cy; }
+        i = i + 1;
+    }
+    return x.len() > y.len();
+}
