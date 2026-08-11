@@ -55,6 +55,12 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 		}
 		b.WriteString(")\n")
 	}
+	// Without this the formatter disarms E067: the attribute is what the
+	// must-consume obligation walk keys on, so a formatted file type-checks
+	// clean where the original was rejected.
+	if sd.MustConsume {
+		b.WriteString("@must_consume\n")
+	}
 	if sd.PackageScoped {
 		b.WriteString("pub(package) ")
 	} else if sd.Public {
