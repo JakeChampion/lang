@@ -7196,7 +7196,18 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
                         // annotation (`var x: i64 = if (c) { 5 } else { 9 }`, all small
                         // literals). lower_iife widens each branch value into the i64
                         // temp; a non-if/match body still fails through to s.fail().
-                        if (lam.params.len() == 0 && lam.body.len() == 1) {
+                        //
+                        // A MULTI-statement body belongs here too (#6267). lower_iife
+                        // routes it to lower_value_block, which lowers the leading
+                        // statements and hands the tail to the same lower_value_stmt
+                        // the single-statement form uses. Restricting this arm to one
+                        // statement did not refuse the program — it fell through to
+                        // the caller's i32 path plus an op_int_extend, which TRUNCATES
+                        // the value to 32 bits first: `return { var t: i64 = p + 1i64;
+                        // if (t > 4i64) { t * 3i64 } else { 7i64 } }` answered wrongly
+                        // above 2^31 on x86-64 and emitted wasm the validator rejects
+                        // ("expected i32, found i64").
+                        if (lam.params.len() == 0) {
                             return lower_iife(c, lam, s, true);
                         }
                     },
@@ -12645,32 +12656,13 @@ function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolea
         // it arrive here is that something PRECEDES it (#6268), which the lift
         // routinely arranges by prepending a capture rebinding.
         _ => {
-            // A 64-BIT tail is held back. Measured on wasm, an `i64[]`-returning
-            // `var v: i64 = if (p > 4i64) { p * 3i64 } else { 7i64 }` reached
-            // this way emits WAT wasmtime rejects ("expected i32, found i64"):
-            // the array literal's ops land ahead of the branch that computes the
-            // value, so the store reads a slot nothing wrote. The register
-            // backends get the same shape right, but a bail is a refusal and a
-            // wrong answer is not, so the deferral is unconditional. #6267.
-            //
-            // The reason this is NOT target-split is not the one previously
-            // recorded here. That read "the wasm eligibility gate lowers with
-            // for_wasm=false and would not see a for_wasm-only bail", which is
-            // false: wasm_eligible goes through wasm_ir_deferrals_ok(
-            // lower_all_for(mod)), whose cache lower_all_for_view builds with
-            // lower_func(…, true), and all_lowered_ok fails the module on any
-            // LowerResult.ok == false. A for_wasm-only bail IS seen by the gate,
-            // so the split is mechanically safe.
-            //
-            // It stays unconditional because splitting it buys nothing
-            // measurable: on the 512-seed fernsmith corpus this guard never
-            // fires at all — lowering with it removed is BYTE-IDENTICAL across
-            // all 380 compiling seeds — and no hand-written repro that reaches
-            // it has been produced since. Splitting an unreachable guard is an
-            // untestable behaviour change. If someone lands a program that hits
-            // it on a register backend, the split is a one-word edit and this
-            // note is the argument for it.
-            if (force_i64 || iife_any_return_i64(last, s)) { return s.fail(); }
+            // A 64-bit tail lowers here like any other (#6267). It used to be
+            // refused, on the reading that wasm miscompiled it — and wasm did,
+            // but the refusal never protected anything: the shape that actually
+            // miscompiled never reached this arm, because lower_i64 declined a
+            // multi-statement IIFE and the caller fell back to the i32 path with
+            // a widening extend. That is fixed at the lower_i64 arm, and this
+            // arm is where the corrected width now lands.
             var bs: LowerState = s;
             var bi: i32 = 0;
             while (bi < n - 1) {
