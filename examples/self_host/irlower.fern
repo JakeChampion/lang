@@ -530,6 +530,22 @@ pub struct LowerState {
     // tags, and lands on the innermost node because the inner frame unwinds first
     // and later frames only fill an EMPTY slot.
     fail_why: string,
+    // selfrebind: the local being reassigned from a struct literal, while that
+    // literal's own lowering is in flight — `o` during `o = S { …, ys: o.ys, … }`
+    // — and empty everywhere else. It lets the struct-literal override path see
+    // that a field value aliasing `o` is going into the box THIS slot is about
+    // to hold, which is what makes the retain unnecessary (#6653).
+    //
+    // Set for one expression only. The ExprStructLit arm clears it before
+    // lowering any field value, so a nested literal inside one (`S { inner: T {
+    // ys: o.ys } }`) sees "" and keeps its retain.
+    selfrebind: string,
+}
+
+// with_selfrebind marks (or clears, with "") the local whose self-rebind literal
+// is being lowered. See the field's comment on LowerState.
+pub function (s: LowerState) with_selfrebind(name: string): LowerState {
+    return LowerState { ...s, selfrebind: name };
 }
 
 pub function (s: LowerState) emit(op: ir.Op): LowerState {
@@ -2818,6 +2834,25 @@ pub function field_access_arr_field_type(e: parser.Expr, s: LowerState): string 
         _ => { return ""; }
     }
     return "";
+}
+
+// selfrebind_field_alias reports whether `e` is exactly `srb.<f>` — a field read
+// off the local whose own self-rebind literal is being lowered (#6653). `srb` is
+// "" everywhere else, so this is false unless LowerState.selfrebind was set for
+// this expression. Only a DIRECT `srb.<f>`: a deeper chain `srb.a.b` reaches a
+// box the successor does not supersede, so that one keeps its retain.
+pub function selfrebind_field_alias(e: parser.Expr, srb: string): boolean {
+    if (srb.len() == 0) { return false; }
+    match (e) {
+        parser.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                parser.ExprIdent(oid) => { return oid.name == srb; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
@@ -10519,7 +10554,16 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // its non-fresh string fields exactly like an array-carrying
             // one, balancing the __field_reclaim / __struct_drop k_str decs.
             var slit_reclaim: boolean = s.struct_routes_field_reclaim(slit.type_name);
-            var sm: LowerState = s;
+            // #6653: `o = S { …, ys: o.ys, … }`. The successor box is going into
+            // the slot `o` names, and __field_reclaim_'s ARRAY arm cow-SKIPS a
+            // field that is pointer-equal in old and new — so nothing ever decs
+            // a retain taken here, and one buffer per call is stranded. The
+            // `...o` spelling has always been exactly balanced for the same
+            // reason read the other way: its base-copy path emits no inc for an
+            // array field either. Consumed below, then cleared off `sm` at once
+            // so a NESTED literal in a field value keeps its own retain.
+            var slit_selfrebind: string = s.selfrebind;
+            var sm: LowerState = s.with_selfrebind("");
             // COMPACT functional-update lowering (#4650): when the struct's fields all
             // copy with no per-field rc-inc (struct_copy_eligible), the N unchanged
             // fields are copied by ONE op_struct_copy(base) instead of N inline
@@ -10623,7 +10667,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             parser.ExprFieldAccess(_) => {
                                 if (field_access_arr_field_type(fav, s) != "") {
                                     fav_ok = true;
-                                    fav_alias_inc = true;
+                                    fav_alias_inc = !selfrebind_field_alias(fav, slit_selfrebind);
                                 }
                             },
                             // The immutable-update idiom `State { xs: s.xs.with(i, v), … }`
@@ -17697,7 +17741,16 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var aaal: i32 = append_alias_recv_slot(a.value, s);
     var aas: LowerState = s;
     if (aaal >= 0 && aaal != slot) { aas = emit_arr_share(aas, aaal, "__fern_arr_share_inc"); }
+    // Mark a struct-literal self-rebind (`o = S { … }`) for the duration of the
+    // RHS, so its override path can drop the retain on a field aliased off `o`
+    // (#6653). Only a DIRECT literal — anything else (a call, an if-expression)
+    // does not hand this slot the box it built.
+    match (a.value) {
+        parser.ExprStructLit(_) => { aas = aas.with_selfrebind(a.target); },
+        _ => {}
+    }
     var se: LowerState = lower_expr(a.value, aas);
+    se = se.with_selfrebind("");
     if (!se.ok) { return se; }
     if (aaal >= 0 && aaal != slot) { se = emit_arr_share(se, aaal, "__fern_arr_share_dec"); }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
@@ -38897,7 +38950,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "" };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "" };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -46579,7 +46632,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "" };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "" };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {

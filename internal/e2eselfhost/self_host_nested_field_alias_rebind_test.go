@@ -267,18 +267,20 @@ func TestSelfHostNestedFieldAliasRebindX86_64(t *testing.T) {
 	// spelling reaches an exact 0 because its base-copy path emits no inc for an
 	// array field. Same unbalanced retain as the nested-struct row above, by a
 	// different route — #6653.
-	t.Run("array-field-alias-residual-is-the-unbalanced-inc", func(t *testing.T) {
+	t.Run("array-field-alias-matches-the-carry", func(t *testing.T) {
 		explicit, _, _ := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfield_x", nestedFieldAliasArrayFieldSrc(8, false))
 		carried, _, _ := leakSummary(t, gcc, runner, driverBin, dir, "nfa_arrfield_c", nestedFieldAliasArrayFieldSrc(8, true))
 		if carried != 0 {
-			t.Errorf("the `...o` array carry leaked %d bytes — it reached an exact 0 before this "+
-				"change and nothing here touches its path", carried)
+			t.Errorf("the `...o` array carry leaked %d bytes — it has always been an exact 0", carried)
 		}
-		if explicit != 480 {
-			t.Errorf("explicit array alias leaked %d bytes, want exactly 480 (one 3-element `ys` "+
-				"buffer per call, 10 calls). Lower means the cow-skipped inc got balanced — "+
-				"delete this row and assert equality with the carry instead; higher means a "+
-				"second buffer joined it", explicit)
+		// The residual this row used to pin at 480 was the override's retain on a
+		// field __field_reclaim_ then cow-skipped. #6653 drops that retain for a
+		// self-rebind, which is what the `...o` base-copy path had always done, so
+		// the two spellings now agree at zero.
+		if explicit != carried {
+			t.Errorf("explicit `ys: o.ys` leaked %d bytes against the `...o` carry's %d — the "+
+				"successor box goes into the slot `o` names either way, so neither spelling "+
+				"should retain the carried buffer (#6653)", explicit, carried)
 		}
 	})
 
