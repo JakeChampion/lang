@@ -6685,11 +6685,15 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   but it is the scan whose over-admission produced the #3425 whole-compiler
   corruption, so it wants its own measurement rather than riding along.
 
-  **Cost note:** three of the four call sites had no `borrowable_params_interproc`
-  verdict in scope and now compute one (the arm64 flat path already had `bparams`
-  and reuses it). That is a whole-program fixpoint per emitted unit, which is the
-  kind of per-unit addition §9 records as OOM-killing the per-module emit before —
-  so the emit-all numbers are part of the evidence below, not just the pass/fail.
+  **The cost mattered and the first cut paid it.** Recomputing
+  `borrowable_params_interproc` at the x86 unit-emit call site took the
+  per-module emit-all's gen0 from **129.3 s to 745.4 s** (total 585.8 s → 1663.9 s)
+  — an interproc fixpoint is ~9 passes over every function, and that site runs once
+  per emitted unit. The verdict was already in scope as `b.borrowable_params`, from
+  the `wp_fn_sigs` the modload driver builds ONCE outside its per-unit loop, so the
+  hot path now reads it instead. Only the two single-module driver paths (arm64
+  `emit_module_ir`, wasm `emit_ir_rc_bodies_from`) still compute their own, once per
+  compile. Peak memory was never the issue (2.15 → 2.32 GB); time was.
 
   Unchanged and deliberately so: a callee that RETAINS its argument.
   `keepi(v: I): I { return v; }` is refused by `borrowable_params_of`, so

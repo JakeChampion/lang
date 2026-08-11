@@ -6864,7 +6864,11 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // #6127: the DIRECT nested-struct / nested-enum field arm, from the same
     // WHOLE-PROGRAM scan discipline — a unit-local func list would under-count
     // the reads and re-open the use-after-free #6148 was reverted for.
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, irlower.borrowable_params_interproc(all_funcs));
+    // b.borrowable_params is the SAME whole-program verdict the caller already
+    // ran borrowable_params_interproc for. Recomputing it here cost 5.8x on the
+    // per-module emit-all's gen0 (129 s -> 745 s): an interproc fixpoint is ~9
+    // passes over every function, and this runs once per emitted unit.
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(all_funcs, all_structs, b.borrowable_params);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) {
         s = s.need("structfldok:" + nfok[nfoi]);
