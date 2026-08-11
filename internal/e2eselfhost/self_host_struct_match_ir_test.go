@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// Struct-pattern match arms on the self-host IR path (#5354). The self-host
-// has no named-field ENUM variant patterns, so an `Ident {` at an arm is
-// unambiguously a struct pattern: the parser desugars `match (p) { Point { x,
+// Struct-pattern match arms on the self-host IR path (#5354). An `Ident {` at an
+// arm is also how a record-form ENUM variant is destructured, so the parser
+// takes the struct path only when the head names a struct declared in the same
+// file (is_struct_pattern_arm, #6676): it desugars `match (p) { Point { x,
 // y } => … }` at parse time (build_struct_match) into the `done`-flag chain
 // with per-field `var bind = tmp.field;` binds — the field reads + ifs lower
 // through the ordinary IR paths, no checker/irlower changes. These build the

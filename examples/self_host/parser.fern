@@ -169,7 +169,16 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // parser desugars a nested arm into a flat outer arm whose body re-matches the
 // payload on an inner `match` (desugar_nested_arms), so the checker / codegen
 // only ever see flat arms; empty (the common case) means a plain binder.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string }
+// `field_names`, when non-empty, marks a RECORD-form pattern — `Rect { h, w }`
+// binds by field name in any order — and holds the FIELDS as written, with the
+// bindings holding the locals each was bound to (they differ only under the
+// `f: local` renaming form). It is a transient parse artefact:
+// resolve_variant_fields_module rewrites a settled pattern into the equivalent
+// positional one (bindings in declaration order) and clears it, so the checker
+// and codegen only ever see positional patterns. A pattern that still carries
+// names after that pass named a field the variant does not have, named one
+// twice, missed one, or renamed one — all E015 at the checker.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -280,7 +289,12 @@ pub struct StructFieldDecl { name: string, type_name: string, fn_ret: string }
 // synthesis itself happens at parse time (synth_derives), but the
 // checker's E021 derive-field conformance pre-check (#5392) needs to
 // know which traits were derived.
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean }
+// variant_field_names holds a RECORD-form enum variant's field names
+// (`Rect { w: f64, h: f64 }` → ["w", "h"]), parallel to `fields`, whose
+// entries stay the positional `__ev` / `__ev1` / … payload markers so the
+// layout and every downstream `__ev` test are unchanged. Empty for a plain
+// struct and for a positional (`Pair(A, B)`) or payloadless variant.
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[] }
 
 // Top-level union type alias: `type Name = V1 | V2 | V3;`.
 // Variants are captured as bare type-name strings — they
@@ -767,7 +781,7 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "" };
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [] };
 }
 // p_variant_n builds a variant pattern binding N payloads as `<prefix>0` …
 // `<prefix>N-1`. p_variant's single `binding` covers only the first, which is
@@ -780,7 +794,7 @@ function p_variant_n(type_name: string, prefix: string, n: i32): Pattern {
     var i: i32 = 1;
     while (i < n) { extra = extra.append(prefix + dl_itoa(i)); i = i + 1; }
     var no_nested: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "" };
+    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [] };
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
@@ -896,7 +910,33 @@ pub function resolve_labels_module(mod: Module): Module {
 // hand-written `map_new(8).insert(1, 10)` chain keeps the constructor the
 // author wrote, so the E038 gate on it (asmcore.check_map_new_chain, which
 // mirrors a native rejection) still fires.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32 }
+// structnames lists every struct DECLARED in this token stream. A match arm
+// `Rect { w, h }` is spelled exactly like the struct pattern `Point { x, y }`,
+// and which one it is depends on the scrutinee's type, which the parser does not
+// know — so it decides on the name: a locally-declared struct takes the
+// struct-pattern desugar, anything else (a record-form enum variant, or a name
+// from an import) takes the variant path. The tie goes to the variant because a
+// record variant destructured by name is otherwise unparseable — the `{` ends
+// the arm and the rest of the file is reinterpreted (#6676) — while a struct
+// pattern on an imported struct has never been written here. Pre-scanned once
+// per stream rather than accumulated as decls are parsed, so a match written
+// ahead of the struct it destructures still resolves.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[] }
+
+// scan_struct_names walks the token stream for `struct N` / `pub struct N`
+// declarations and returns the names. A shape scan, not a parse: `struct` is a
+// keyword, so the ident that follows one is always a declared struct name.
+function scan_struct_names(toks: lexer.Token[]): string[] {
+    var out: string[] = [];
+    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out };
+    while (!q.at_end()) {
+        if (q.peek_keyword() != "struct") { q = q.advance(); continue; }
+        q = q.advance();
+        var nm: string = q.peek_ident();
+        if (nm.len() > 0) { out = out.append(nm); q = q.advance(); }
+    }
+    return out;
+}
 
 function (p: Par) at_end(): boolean {
     if (p.pos >= p.toks.len()) { return true; }
@@ -946,15 +986,15 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames };
 }
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 function (p: Par) with_no_struct(v: boolean): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind };
+    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames };
 }
 function (p: Par) with_map_kind(v: i32): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v };
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -1765,7 +1805,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
 // parser's parseExprFromText.
 function parse_expr_from_text(text: string): Expr {
     var toks: lexer.Token[] = lexer.tokenize(text);
-    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
 }
@@ -2681,6 +2721,18 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
     return s_if(e_bool(true), outer, []);
 }
 
+// is_struct_pattern_arm reports whether the arm the cursor sits on destructures
+// a STRUCT (`Point { x, y }`, or `w @ Point { x, y }`) rather than a record-form
+// enum variant, which is spelled identically — see Par.structnames for how the
+// two are told apart. Only the arm's head name is inspected: the struct-pattern
+// desugar is chosen once, off the first arm, so this decides for the match.
+function is_struct_pattern_arm(p: Par): boolean {
+    var head: string = p.peek_ident();
+    if (head.len() > 0 && p.peek_punct_at(1) == "@") { head = p.peek_ident_at(2); }
+    if (head.len() == 0) { return false; }
+    return util.has_str(p.structnames, head);
+}
+
 // parse_struct_match_arms parses the arm list of a struct match (cursor just
 // past the opening `{`), returning the arms + the first arm's return-type tag.
 // Shared by the statement and expression forms: expr_form=true parses each arm
@@ -3005,10 +3057,11 @@ function parse_match_expr(p: Par): IfChain {
         }
         return IfChain { par: p, stmt: build_tuple_match(sr_expr, etvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: etval };
     }
-    // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (the
-    // self-host has no named-field enum patterns, so it's unambiguous):
-    // desugar to the field-bind flag chain (build_struct_match).
-    if ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
+    // A declared struct's `Ident {` at the FIRST arm marks a STRUCT-pattern match
+    // (is_struct_pattern_arm; a record-form enum variant is spelled the same way
+    // but needs the variant path's tag test): desugar to the field-bind flag
+    // chain (build_struct_match).
+    if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
         var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
         p = smp;
         // Same value-local routing as the tuple desugar above: build_struct_match
@@ -3427,7 +3480,34 @@ function parse_pattern(p: Par): (Pattern, Par) {
     var binding: string = "";
     var extra_bindings: string[] = [];
     var nested: Pattern[] = [];
-    if (p.peek_punct() == "(") {
+    var field_names: string[] = [];
+    if (p.peek_punct() == "{") {
+        // Record-form pattern `Rect { h, w }`: each entry names a FIELD, bound to
+        // a local of the same name, and the order is free. The names are recorded
+        // as written and both bindings and order are settled later, against the
+        // variant's declaration, by resolve_variant_fields_module.
+        //
+        // field_names holds the FIELDS and the bindings the LOCALS they were bound
+        // to — the same pair native carries. They differ only under the `f: local`
+        // renaming form, which parses here (native accepts it syntactically too)
+        // and is rejected by the checker.
+        p = p.advance();
+        while (p.peek_punct() != "}" && !p.at_end()) {
+            var fnm: string = p.peek_ident();
+            if (fnm.len() == 0) { p = p.advance(); continue; }
+            p = p.advance();
+            var local: string = fnm;
+            if (p.peek_punct() == ":") {
+                p = p.advance();
+                var ren: string = p.peek_ident();
+                if (ren.len() > 0) { local = ren; p = p.advance(); }
+            }
+            field_names = field_names.append(fnm);
+            if (field_names.len() == 1) { binding = local; } else { extra_bindings = extra_bindings.append(local); }
+            if (p.peek_punct() == ",") { p = p.advance(); }
+        }
+        if (p.peek_punct() == "}") { p = p.advance(); }
+    } else if (p.peek_punct() == "(") {
         p = p.advance();
         // Parse comma-separated payload bindings: `Variant(a, b, …)`. The
         // first is `binding`; the rest go to `extra_bindings` so the checker
@@ -3461,7 +3541,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names }, p);
 }
 
 // prepend_stmt returns a fresh statement list with `s` in front of `body`.
@@ -3590,7 +3670,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "" };
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [] };
     var body: Stmt[] = [inner_match];
     return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
@@ -3700,7 +3780,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
     }
     // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
     // parse_match_expr) — desugar to the field-bind flag chain.
-    if ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
+    if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
         var (smarms, smrt, smp) = parse_struct_match_arms(p, false);
         p = smp;
         return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
@@ -4343,7 +4423,12 @@ function parse_stmt(p: Par): (Stmt, Par) {
         }
         p = p.advance();
         // Struct destructure `var Point { x, y } = E;` / `let Point { … } = E;`
-        // — `name` is the struct type, the `{` opens the field pattern.
+        // — `name` is the struct type, the `{` opens the field pattern. A
+        // record-form variant is spelled the same way here, but native rejects
+        // `let Rect { w, h } = E else …` at parse time, so it stays a struct
+        // destructure (and the same rejection) rather than becoming self-host-
+        // only surface. `if let` accepts the record form on both, via
+        // parse_pattern.
         if (p.peek_punct() == "{") {
             return parse_struct_destructure(p, name, vline, vcol);
         }
@@ -4432,7 +4517,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
                 rest = rest.append(rr_stmt);
             }
             var le_no_nested: Pattern[] = [];
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "" };
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [] };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -4630,7 +4715,7 @@ function parse_stmt(p: Par): (Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
     var out: Stmt[] = [];
     while (!p.at_end()) {
         var (r_stmt, r_p) = parse_stmt(p);
@@ -5750,7 +5835,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] }, p);
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -5774,7 +5859,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] }, p);
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -5794,7 +5879,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false }, p);
+    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] }, p);
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -5838,11 +5923,13 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     return (TypeAlias { name: name, variants: variants, line: taline, col: tacol }, p);
 }
 
-// parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), … }`
+// parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), V3 { f: U }, … }`
 // starting from the `enum` keyword. Each variant is lowered to a
 // StructDecl: a payload-bearing variant `V2(T)` becomes a struct with
 // a single marker field `__ev` of the payload type; a no-payload
-// variant `V1` becomes a zero-field struct. The marker field is how
+// variant `V1` becomes a zero-field struct; a record-form variant
+// `V3 { f: U }` uses the same positional `__ev` markers and records the
+// written names in variant_field_names. The marker field is how
 // the emitter tells an enum variant (bind the payload at offset 8)
 // from a `type X = A|B` union member (bind the whole struct). Only the
 // first payload of a multi-payload variant is bound; extras are
@@ -5881,7 +5968,32 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
         if (vname.len() == 0) { break; }
         p = p.advance();
         var fields: StructFieldDecl[] = [];
-        if (p.peek_punct() == "(") {
+        var vfnames: string[] = [];
+        if (p.peek_punct() == "{") {
+            // Record-form variant `V { f: T, g: U }`. The payload fields keep the
+            // positional `__ev` / `__ev<k>` marker names, so the layout and every
+            // downstream `__ev` test match the positional form exactly; the written
+            // names ride alongside in variant_field_names for the checker, the
+            // printer, and the named-pattern resolution.
+            p = p.advance();
+            var rnum: i32 = 0;
+            while (p.peek_punct() != "}" && !p.at_end()) {
+                var rfname: string = p.peek_ident();
+                if (rfname.len() == 0) { break; }
+                p = p.advance();
+                if (p.peek_punct() == ":") { p = p.advance(); }
+                var (rf_name, rf_ret_arr, rf_fn_ret, rf_p) = parse_type_name(p);
+                p = rf_p;
+                var mark: string = "__ev";
+                if (rnum > 0) { mark = "__ev" + dl_itoa(rnum); }
+                fields = fields.append(StructFieldDecl { name: mark, type_name: rf_name, fn_ret: rf_fn_ret });
+                vfnames = vfnames.append(rfname);
+                rnum = rnum + 1;
+                if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                break;
+            }
+            if (p.peek_punct() == "}") { p = p.advance(); }
+        } else if (p.peek_punct() == "(") {
             p = p.advance();
             var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
             p = tr_p;
@@ -5900,7 +6012,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             }
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
-        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false });
+        out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false, variant_field_names: vfnames });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -6017,7 +6129,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
     if (payload_type.len() > 0) {
         fields = fields.append(StructFieldDecl { name: "__ev", type_name: payload_type, fn_ret: "" });
     }
-    return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false });
+    return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [] });
 }
 
 // builtin_function_names is the set of compiler builtins callable without a
@@ -6101,7 +6213,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var otf: StructFieldDecl[] = [];
         otf = otf.append(StructFieldDecl { name: "__ev", type_name: "string", fn_ret: "" });
         otf = otf.append(StructFieldDecl { name: "__ev1", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false });
+        structs = structs.append(StructDecl { name: "Other", fields: otf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "IoError", must_consume: false, variant_field_names: [] });
     }
     // FileStat: the builtin struct returned by stat(path). Injected so
     // the emitter knows its field layout ([shape, is_file@8, is_dir@16,
@@ -6113,7 +6225,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         fsf = fsf.append(StructFieldDecl { name: "is_file", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "is_dir", type_name: "boolean", fn_ret: "" });
         fsf = fsf.append(StructFieldDecl { name: "size", type_name: "i64", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
     // Same injection pattern as FileStat: the __fern_subprocess
@@ -6126,7 +6238,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         prf = prf.append(StructFieldDecl { name: "stdout", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "stderr", type_name: "string", fn_ret: "" });
         prf = prf.append(StructFieldDecl { name: "exit_code", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // std/headers' HeaderMap + std/http's HttpRequest / HttpResponse
     // are constructed via record literals (e.g. `HeaderMap { names: …,
@@ -6142,7 +6254,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         var hmf: StructFieldDecl[] = [];
         hmf = hmf.append(StructFieldDecl { name: "names", type_name: "string[]", fn_ret: "" });
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
@@ -6150,14 +6262,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     if (!struct_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // Platform — the capability bag threaded as every handler's second
     // parameter, and so a component of every `(HttpRequest, Platform) =>
@@ -6170,7 +6282,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!struct_declared(structs, "Platform")) {
         var pltf: StructFieldDecl[] = [];
         pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // std/time's seven date/time types are compiler built-ins (registered in
     // the Go checker, not `struct`-declared in std/time), so the self-host's
@@ -6189,7 +6301,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         df = df.append(StructFieldDecl { name: "year", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "month", type_name: "i32", fn_ret: "" });
         df = df.append(StructFieldDecl { name: "day", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     if (!struct_declared(structs, "Time")) {
         var tf: StructFieldDecl[] = [];
@@ -6197,7 +6309,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         tf = tf.append(StructFieldDecl { name: "minute", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "second", type_name: "i32", fn_ret: "" });
         tf = tf.append(StructFieldDecl { name: "nsec", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     if (!struct_declared(structs, "Span")) {
         var spf: StructFieldDecl[] = [];
@@ -6209,7 +6321,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         spf = spf.append(StructFieldDecl { name: "minutes", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "seconds", type_name: "i32", fn_ret: "" });
         spf = spf.append(StructFieldDecl { name: "nanos", type_name: "i32", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // std/io_buffered + std/stream + std/mock_platform built-ins (registered
     // in the Go checker, not `struct`-declared in source) — same injection
@@ -6227,12 +6339,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!struct_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     if (!struct_declared(structs, "MockPlatform")) {
         var mpf: StructFieldDecl[] = [];
         mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     // std/url's Url is a compiler built-in (registered in the Go checker, not
     // `struct`-declared in std/url), so the IR path needs its layout to lower
@@ -6248,7 +6360,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         urlf = urlf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "query", type_name: "string", fn_ret: "" });
         urlf = urlf.append(StructFieldDecl { name: "fragment", type_name: "string", fn_ret: "" });
-        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+        structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
     }
     return structs;
 }
@@ -6260,7 +6372,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
     var fields: StructFieldDecl[] = [];
     fields = fields.append(StructFieldDecl { name: f0, type_name: t0, fn_ret: "" });
     fields = fields.append(StructFieldDecl { name: f1, type_name: t1, fn_ret: "" });
-    return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false });
+    return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] });
 }
 
 // module_with_builtins returns `mod` with the auto-injected builtin
@@ -8886,7 +8998,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 nf = nf.append(StructFieldDecl { name: sd.fields[fj].name, type_name: ft.ty, fn_ret: sd.fields[fj].fn_ret });
                 fj = fj + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names });
         }
         si = si + 1;
     }
@@ -8939,7 +9051,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts) });
                 cfi = cfi + 1;
             }
-            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume });
+            nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names });
             var mi: i32 = 0;
             while (mi < mod.funcs.len()) {
                 var mm: FuncDecl = mod.funcs[mi];
@@ -9532,7 +9644,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var j: i32 = 0;
             while (j < vn.len()) {
                 if (vn[j] == simple) {
-                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested, at_binding: pv.at_binding };
+                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested, at_binding: pv.at_binding, field_names: pv.field_names };
                 }
                 j = j + 1;
             }
@@ -10034,7 +10146,7 @@ pub function monomorphize_enums(mod: Module): Module {
                         nf = nf.append(StructFieldDecl { name: vs.fields[fj2].name, type_name: f_ty, fn_ret: f_ret });
                         fj2 = fj2 + 1;
                     }
-                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume });
+                    cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, variant_field_names: vs.variant_field_names });
                 }
                 vi2 = vi2 + 1;
             }
@@ -10068,7 +10180,7 @@ pub function monomorphize_enums(mod: Module): Module {
                 rf = rf.append(StructFieldDecl { name: sd.fields[rfj].name, type_name: me_rewrite_ty(sd.fields[rfj].type_name, mod.enums, mod.funcs), fn_ret: me_rewrite_ty(sd.fields[rfj].fn_ret, mod.enums, mod.funcs) });
                 rfj = rfj + 1;
             }
-            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+            out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names });
         }
         osi = osi + 1;
     }
@@ -11062,6 +11174,206 @@ pub function desugar_ranges_module(mod: Module): Module {
 //
 // The fill-default-args guard (module_has_default_params / module_has_named_args)
 // is likewise unaffected by resolve_labels (which adds/removes no default params
+// ---------------------------------------------------------------------------
+// Record-form variant patterns.
+//
+// `Rect { h, w }` binds each of the variant's fields to a local of the same
+// name, in any order. The layout is the positional one (`__ev`, `__ev1`, …), so
+// the pattern is equivalent to the positional pattern that lists the variant's
+// fields in DECLARATION order — which is what this pass rewrites it to, before
+// the checker or any backend sees it. See docs/NAMED-FIELD-VARIANTS.md.
+
+// variant_field_names_of returns the record-form field names declared for the
+// variant struct `name`, or [] when the name is unknown, is a plain struct, or
+// is a positional / payloadless variant. A qualified spelling (`mod.Rect`) is
+// matched on its last segment too, so a pre-bundle pattern resolves.
+function variant_field_names_of(structs: StructDecl[], name: string): string[] {
+    var bare: string = name;
+    var c: i32 = 0;
+    while (c < name.len()) {
+        if (name[c] == 46) { bare = name[c + 1 : name.len()] + ""; }
+        c = c + 1;
+    }
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name || structs[i].name == bare) {
+            if (structs[i].variant_field_names.len() > 0) { return structs[i].variant_field_names; }
+        }
+        i = i + 1;
+    }
+    var empty: string[] = [];
+    return empty;
+}
+
+// record_fields_cover reports whether a record pattern names each of the
+// variant's declared fields exactly once — the condition for reordering it into
+// declaration order.
+pub function record_fields_cover(decl_names: string[], pat_names: string[]): boolean {
+    if (pat_names.len() == 0 || decl_names.len() != pat_names.len()) { return false; }
+    var d: i32 = 0;
+    while (d < decl_names.len()) {
+        var hits: i32 = 0;
+        var q: i32 = 0;
+        while (q < pat_names.len()) {
+            if (pat_names[q] == decl_names[d]) { hits = hits + 1; }
+            q = q + 1;
+        }
+        if (hits != 1) { return false; }
+        d = d + 1;
+    }
+    return true;
+}
+
+// record_pattern_renames reports whether a record pattern binds any field to a
+// local of a different name (`Rect { w: a }`) — the form native rejects.
+pub function record_pattern_renames(pv: PatVariant): boolean {
+    if (pv.field_names.len() == 0) { return false; }
+    if (pv.binding != pv.field_names[0]) { return true; }
+    var r: i32 = 1;
+    while (r < pv.field_names.len()) {
+        if (r - 1 >= pv.extra_bindings.len()) { return true; }
+        if (pv.extra_bindings[r - 1] != pv.field_names[r]) { return true; }
+        r = r + 1;
+    }
+    return false;
+}
+
+// rebind_record_positional rewrites a record-form PatVariant into its positional
+// equivalent unconditionally: the bindings become the variant's fields in
+// declaration order and field_names is cleared. Only valid once the pattern is
+// known to cover `decl_names` (record_fields_cover).
+pub function rebind_record_positional(pv: PatVariant, decl_names: string[]): PatVariant {
+    var extra: string[] = [];
+    var k: i32 = 1;
+    while (k < decl_names.len()) { extra = extra.append(decl_names[k]); k = k + 1; }
+    var no_names: string[] = [];
+    return PatVariant { type_name: pv.type_name, binding: decl_names[0], extra_bindings: extra, nested: pv.nested, at_binding: pv.at_binding, field_names: no_names };
+}
+
+// resolve_record_pattern settles one record-form PatVariant against the
+// variant's declared fields. The pattern is returned UNCHANGED — keeping the
+// field names for the checker to report (E015) — when it names a field the
+// variant does not have, names one twice, leaves one unbound, or renames one;
+// a resolved pattern carries no field names, so re-running is a no-op.
+pub function resolve_record_pattern(pv: PatVariant, decl_names: string[]): PatVariant {
+    if (pv.field_names.len() == 0 || decl_names.len() == 0) { return pv; }
+    if (!record_fields_cover(decl_names, pv.field_names)) { return pv; }
+    if (record_pattern_renames(pv)) { return pv; }
+    return rebind_record_positional(pv, decl_names);
+}
+
+function rvf_pattern(pat: Pattern, structs: StructDecl[]): Pattern {
+    match (pat) {
+        PatVariant(pv) => {
+            var np: PatVariant = resolve_record_pattern(pv, variant_field_names_of(structs, pv.type_name));
+            var nested: Pattern[] = [];
+            var i: i32 = 0;
+            while (i < np.nested.len()) { nested = nested.append(rvf_pattern(np.nested[i], structs)); i = i + 1; }
+            return PatVariant { type_name: np.type_name, binding: np.binding, extra_bindings: np.extra_bindings, nested: nested, at_binding: np.at_binding, field_names: np.field_names };
+        },
+        _ => { return pat; }
+    }
+    return pat;
+}
+
+// rvf_expr recurses only to reach ExprLambda bodies — a value-position `match`
+// is desugared into an immediately-invoked closure, so a record pattern can sit
+// arbitrarily deep inside an expression.
+function rvf_expr(e: Expr, structs: StructDecl[]): Expr {
+    match (e) {
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: rvf_expr(b.left, structs), right: rvf_expr(b.right, structs), line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: rvf_expr(u.operand, structs), line: u.line, col: u.col }; },
+        ExprCall(c) => {
+            var args: Expr[] = [];
+            var i: i32 = 0;
+            while (i < c.args.len()) { args = args.append(rvf_expr(c.args[i], structs)); i = i + 1; }
+            return ExprCall { callee: rvf_expr(c.callee, structs), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+        },
+        ExprArray(a) => {
+            var els: Expr[] = [];
+            var j: i32 = 0;
+            while (j < a.elements.len()) { els = els.append(rvf_expr(a.elements[j], structs)); j = j + 1; }
+            return ExprArray { elements: els };
+        },
+        ExprTuple(t) => {
+            var tels: Expr[] = [];
+            var k: i32 = 0;
+            while (k < t.elements.len()) { tels = tels.append(rvf_expr(t.elements[k], structs)); k = k + 1; }
+            return ExprTuple { elements: tels, line: t.line, col: t.col };
+        },
+        ExprIndex(x) => { return ExprIndex { array: rvf_expr(x.array, structs), index: rvf_expr(x.index, structs), unchecked: x.unchecked, ty: x.ty }; },
+        ExprSlice(sl) => { return ExprSlice { array: rvf_expr(sl.array, structs), start: rvf_expr(sl.start, structs), end: rvf_expr(sl.end, structs), ty: sl.ty }; },
+        ExprStructLit(st) => {
+            var vals: Expr[] = [];
+            var v: i32 = 0;
+            while (v < st.field_values.len()) { vals = vals.append(rvf_expr(st.field_values[v], structs)); v = v + 1; }
+            var nbase: Expr = st.base;
+            if (st.has_base) { nbase = rvf_expr(st.base, structs); }
+            return ExprStructLit { type_name: st.type_name, field_names: st.field_names, field_values: vals, has_base: st.has_base, base: nbase, line: st.line, col: st.col };
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: rvf_expr(fa.obj, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
+        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: rvf_block(lm.body, structs), use_infer: lm.use_infer }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
+function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
+    match (st) {
+        StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str }; },
+        StmtReturn(r) => { return StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
+        StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs) }; },
+        StmtIf(f) => { return StmtIf { cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs) }; },
+        StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label }; },
+        StmtAssign(a) => { return StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label }; },
+        StmtDefer(d) => { return StmtDefer { action: rvf_stmt(d.action, structs), on_error: d.on_error }; },
+        StmtMatch(m) => {
+            var arms: MatchArm[] = [];
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                arms = arms.append(MatchArm { pattern: rvf_pattern(m.arms[a].pattern, structs), body: rvf_block(m.arms[a].body, structs), line: m.arms[a].line, col: m.arms[a].col, guard: rvf_expr(m.arms[a].guard, structs), has_guard: m.arms[a].has_guard });
+                a = a + 1;
+            }
+            return StmtMatch { scrutinee: rvf_expr(m.scrutinee, structs), arms: arms, line: m.line, col: m.col, origin: m.origin };
+        },
+        _ => { return st; }
+    }
+    return st;
+}
+
+function rvf_block(stmts: Stmt[], structs: StructDecl[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) { out = out.append(rvf_stmt(stmts[i], structs)); i = i + 1; }
+    return out;
+}
+
+// resolve_variant_fields_module rewrites every record-form variant pattern in
+// the module into its positional equivalent. A module declaring no record-form
+// variant cannot contain a resolvable one, so the whole traversal is skipped —
+// which is every module the compiler bootstraps itself from, leaving their trees
+// (and the fixpoint) untouched. Idempotent: a resolved pattern carries no field
+// names, so running it again is a no-op — the driver runs it once per parsed
+// module and once more on the bundle, where a cross-module variant resolves.
+pub function resolve_variant_fields_module(mod: Module): Module {
+    var any: boolean = false;
+    var s: i32 = 0;
+    while (s < mod.structs.len()) {
+        if (mod.structs[s].variant_field_names.len() > 0) { any = true; }
+        s = s + 1;
+    }
+    if (!any) { return mod; }
+    var funcs: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: FuncDecl = mod.funcs[i];
+        funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rvf_block(fd.body, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async });
+        i = i + 1;
+    }
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: rvf_block(mod.top_stmts, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+}
+
 // or named args), so it is evaluated once on the incoming module and gates the
 // per-body fda step — reproducing fill_default_args_module's early-return.
 pub function desugar_prepass_module(mod: Module): Module {
@@ -14705,7 +15017,7 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1 };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
     var trait_reqs: TraitReq[] = [];
@@ -15049,7 +15361,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return settle_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }));
+    return settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs })));
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -15122,7 +15434,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var si: i32 = 0;
     while (si < from.structs.len()) {
         var sd: StructDecl = from.structs[si];
-        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume });
+        nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names });
         si = si + 1;
     }
     var naliases: TypeAlias[] = into.aliases;
