@@ -14732,10 +14732,17 @@ function is_unsettled_int_literal(e: Expr): boolean {
 }
 
 // settle_float_expr stamps `is_float` across an unsettled integer literal
-// standing in a float destination. Every other expression — including a mixed
-// `1 + 2.5` and an i32 local — comes back untouched, so it still draws the
-// error native gives it. Mirrors native's settleFloat.
+// standing in a float destination, and fans the same settle into the branches of
+// a value-position if / match (#6679) — native's settleFloat has `*ast.IfExpr` /
+// `*ast.MatchExpr` / `*ast.BlockExpr` arms doing exactly that.
+//
+// Every other expression — including a mixed `1 + 2.5` and an i32 local — comes
+// back untouched, so it still draws the error native gives it.
 function settle_float_expr(e: Expr): Expr {
+    match (e) {
+        ExprCall(_) => { return settle_float_value_branches(e); },
+        _ => { }
+    }
     if (!is_unsettled_int_literal(e)) { return e; }
     match (e) {
         ExprNumber(n) => {
@@ -14748,6 +14755,183 @@ function settle_float_expr(e: Expr): Expr {
             return ExprBinary { op: b.op, left: settle_float_expr(b.left), right: settle_float_expr(b.right), line: b.line, col: b.col };
         },
         _ => { return e; }
+    }
+    return e;
+}
+
+// A value-position if / match is desugared by the parser into an immediately-
+// invoked closure — `(function(): RT { … })()` — with RT read off the arms, so
+// the literal in `var x: f64 = if (c) { 1 } else { 2 }` sits one level below the
+// destination with nothing to settle against. Settling the BRANCHES is enough
+// for both readers: the checker types the arms, and irlower's expr_is_f64 reads
+// the IIFE's float-ness off its first branch's returned value.
+//
+// The closure's own `ret_type` is deliberately left alone. Stamping it f64
+// makes the lambda an f64-signature function, which lower_func bails on — the
+// whole module then falls off the IR path, trading an over-reject for a refusal
+// to compile.
+//
+// The settle is all-or-nothing across the branches. For a branch whose type this
+// pass cannot see (an i32 local, a call) the untouched tree is returned, because
+// settling only SOME arms is worse than settling none: expr_is_f64 classifies
+// the whole IIFE by the first branch, so a float first arm beside an i32 second
+// arm reads that arm's integer bits as a double. Left alone, the checker's
+// E003 / E031 names the problem instead.
+
+// settled_branch_value returns a value branch's result — its body's trailing
+// `return E`, which is where parse_branch_body puts a branch's value (native's
+// BlockExpr tail) — with a flag for a body that yields none.
+function settled_branch_value(body: Stmt[]): (Expr, boolean) {
+    if (body.len() > 0) {
+        match (body[body.len() - 1]) {
+            StmtReturn(r) => { return (r.value, true); },
+            _ => { }
+        }
+    }
+    return (ExprUnknown { kind: "no-branch-value" }, false);
+}
+
+// float_settleable reports whether a branch result can stand in a float slot
+// without a type the parser cannot see: an unsettled integer literal (which
+// this pass stamps), a literal that is already float, or a nested value-position
+// if/match whose own branches are settleable — `if (c) { if (d) { 1 } else { 2 } }
+// else { 3 }`, which native reaches by recursing settleFloat through the arms.
+function float_settleable(e: Expr): boolean {
+    if (is_unsettled_int_literal(e)) { return true; }
+    match (e) {
+        ExprNumber(n) => { return n.is_float; },
+        ExprUnary(u) => {
+            if (u.op != "-" && u.op != "+") { return false; }
+            return float_settleable(u.operand);
+        },
+        ExprBinary(b) => {
+            if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/") { return false; }
+            return float_settleable(b.left) && float_settleable(b.right);
+        },
+        ExprCall(_) => { return value_branches_float_settleable(e); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// value_branches_float_settleable reports whether `e` is the desugared value
+// if/match AND every one of its branches is settleable.
+function value_branches_float_settleable(e: Expr): boolean {
+    match (e) {
+        ExprCall(c) => {
+            if (c.args.len() != 0) { return false; }
+            match (c.callee) {
+                ExprLambda(lm) => {
+                    if (lm.params.len() != 0 || lm.body.len() != 1) { return false; }
+                    match (lm.body[0]) {
+                        StmtIf(f) => { return if_branches_float_settleable(f); },
+                        StmtMatch(m) => { return match_arms_float_settleable(m); },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// settle_branch_body rebuilds a branch body with its trailing return value
+// settled, leaving any leading statements alone.
+function settle_branch_body(body: Stmt[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        var keep: Stmt = body[i];
+        if (i == body.len() - 1) {
+            match (body[i]) {
+                StmtReturn(r) => { keep = s_return_at(settle_float_expr(r.value), r.line, r.col); },
+                _ => { }
+            }
+        }
+        out = out.append(keep);
+        i = i + 1;
+    }
+    return out;
+}
+
+// if_branches_float_settleable / settle_if_branches walk an if (and its
+// `else if` chain, which is an else body holding one StmtIf). An if with no
+// else yields no value and is left alone.
+function if_branches_float_settleable(f: StmtIf): boolean {
+    var (tv, t_ok) = settled_branch_value(f.then_body);
+    if (!t_ok || !float_settleable(tv)) { return false; }
+    if (f.else_body.len() == 1) {
+        match (f.else_body[0]) {
+            StmtIf(nf) => { return if_branches_float_settleable(nf); },
+            _ => { }
+        }
+    }
+    var (ev, e_ok) = settled_branch_value(f.else_body);
+    return e_ok && float_settleable(ev);
+}
+
+function settle_if_branches(f: StmtIf): Stmt {
+    var nelse: Stmt[] = [];
+    var chained: boolean = false;
+    if (f.else_body.len() == 1) {
+        match (f.else_body[0]) {
+            StmtIf(nf) => { nelse = nelse.append(settle_if_branches(nf)); chained = true; },
+            _ => { }
+        }
+    }
+    if (!chained) { nelse = settle_branch_body(f.else_body); }
+    return s_if(f.cond, settle_branch_body(f.then_body), nelse);
+}
+
+function match_arms_float_settleable(m: StmtMatch): boolean {
+    if (m.arms.len() == 0) { return false; }
+    var a: i32 = 0;
+    while (a < m.arms.len()) {
+        var (av, a_ok) = settled_branch_value(m.arms[a].body);
+        if (!a_ok || !float_settleable(av)) { return false; }
+        a = a + 1;
+    }
+    return true;
+}
+
+function settle_match_arms(m: StmtMatch): Stmt {
+    var arms: MatchArm[] = [];
+    var a: i32 = 0;
+    while (a < m.arms.len()) {
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: settle_branch_body(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        a = a + 1;
+    }
+    return s_match_origin(m.scrutinee, arms, m.line, m.col, m.origin);
+}
+
+// settle_float_value_branches settles the desugared value if/match — a 0-arg
+// call of a 0-param lambda whose body is a single StmtIf / StmtMatch, the shape
+// the E031 pass and irlower's expr_is_f64 both key on. Anything else, and any
+// branch set that is not wholly settleable, comes back untouched.
+function settle_float_value_branches(e: Expr): Expr {
+    match (e) {
+        ExprCall(c) => {
+            if (c.args.len() != 0) { return e; }
+            match (c.callee) {
+                ExprLambda(lm) => {
+                    if (lm.params.len() != 0 || lm.body.len() != 1) { return e; }
+                    if (!value_branches_float_settleable(e)) { return e; }
+                    var nbody: Stmt[] = [];
+                    match (lm.body[0]) {
+                        StmtIf(f) => { nbody = nbody.append(settle_if_branches(f)); },
+                        StmtMatch(m) => { nbody = nbody.append(settle_match_arms(m)); },
+                        _ => { return e; }
+                    }
+                    if (nbody.len() == 0) { return e; }
+                    var nlam: Expr = ExprLambda { params: lm.params, ret_type: lm.ret_type, body: nbody, use_infer: lm.use_infer };
+                    return ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+                },
+                _ => { return e; }
+            }
+        },
+        _ => { }
     }
     return e;
 }

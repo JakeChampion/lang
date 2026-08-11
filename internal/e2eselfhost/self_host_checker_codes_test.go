@@ -806,6 +806,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// settleFloat descends.
 		{"settle-unary-minus-ok", "function main(): i32 { var x: f64 = -5; return 0; }\n", nil},
 		{"settle-arithmetic-ok", "function main(): i32 { var x: f64 = 2 * 3 + 1; return 0; }\n", nil},
+		// A value-position if / match desugars into an immediately-invoked
+		// closure typed from its arms, putting the literal one level below the
+		// destination (#6679). The settle fans into the branches — every arm, an
+		// `else if` chain, a branch with leading statements, and a nested one —
+		// mirroring native's settleFloat IfExpr / MatchExpr / BlockExpr arms.
+		{"settle-value-if-ok", "function main(): i32 { var x: f64 = if (1 < 2) { 1 } else { 2 }; return 0; }\n", nil},
+		{"settle-value-match-ok", "enum E { A, B }\nfunction main(): i32 { var e: E = A; var x: f64 = match (e) { A => 1, B => 2 }; return 0; }\n", nil},
+		{"settle-value-if-return-ok", "function g(): f64 { return if (1 < 2) { 1 } else { 2 }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"settle-value-else-if-ok", "function main(): i32 { var x: f64 = if (1 < 2) { 1 } else if (2 < 3) { 2 } else { 3 }; return 0; }\n", nil},
+		{"settle-value-if-block-tail-ok", "function main(): i32 { var x: f64 = if (1 < 2) { var q: i32 = 1; 1 } else { 2 }; return 0; }\n", nil},
+		{"settle-value-if-nested-ok", "function main(): i32 { var x: f64 = if (1 < 2) { if (2 < 3) { 1 } else { 2 } } else { 3 }; return 0; }\n", nil},
+		// Not settled: a branch whose type the pass cannot see keeps the whole
+		// if unsettled, so the destination compare still reports it.
+		{"settle-value-if-i32-arm", "function main(): i32 { var n: i32 = 1; var x: f64 = if (1 < 2) { n } else { 2 }; return 0; }\n", []string{"E003"}},
+		{"settle-value-if-string-arm", "function main(): i32 { var x: f64 = if (1 < 2) { 1 } else { \"s\" }; return 0; }\n", []string{"E031"}},
 		// Settling is literal-only, not an i32 -> f64 widening: native rejects
 		// each of these too, and they are what stops the rule going too far. A
 		// typed suffix has already picked its width, and an identifier is not a
