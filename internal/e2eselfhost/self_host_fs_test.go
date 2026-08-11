@@ -117,7 +117,7 @@ func TestSelfHostFsBuiltinsArm64(t *testing.T) {
 	}
 	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
 
-	fsAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(fsBuiltinsProgram), "-target", "arm64")
+	fsAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(fsBuiltinsProgram), "-target", "arm64-linux")
 	if len(fsAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the fs program")
 	}

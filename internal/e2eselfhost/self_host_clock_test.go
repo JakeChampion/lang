@@ -59,7 +59,7 @@ func TestSelfHostClockX86_64(t *testing.T) {
 }
 
 // TestSelfHostClockArm64 is the ARM64 counterpart: the self-hosted
-// ARM64 emitter's now_unix_ms / monotonic_ns. The asm_ir_run (-target arm64) driver
+// ARM64 emitter's now_unix_ms / monotonic_ns. The asm_ir_run (-target arm64-linux) driver
 // (an x86 host binary) compiles the same clock program to aarch64 asm;
 // the assembled binary runs under qemu-aarch64 (which passes
 // clock_gettime through to the host) and must exit 7.
@@ -92,7 +92,7 @@ func TestSelfHostClockArm64(t *testing.T) {
     if (b < a) { return 2; }
     return 7;
 }`
-	clockAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(clockSrc), "-target", "arm64")
+	clockAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(clockSrc), "-target", "arm64-linux")
 	if len(clockAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the clock program")
 	}

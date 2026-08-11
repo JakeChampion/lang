@@ -43,14 +43,14 @@ func TestSelfHostMathX86_64(t *testing.T) {
 }
 
 // TestSelfHostMathArm64 is the ARM64 counterpart (CI-gated, qemu),
-// compiled via the file-based driver (asm_modload_run -target arm64).
+// compiled via the file-based driver (asm_modload_run -target arm64-linux).
 func TestSelfHostMathArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
 	for _, tc := range mathCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"math"}, tc.main, "-target", "arm64")
+			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{"math"}, tc.main, "-target", "arm64-linux")
 			progBin := buildBin(t, arm64gcc, progDir, tc.name, asm)
 			cmd := runArm64Bin(qemu, progBin)
 			_ = cmd.Run()

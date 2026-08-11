@@ -75,7 +75,7 @@ func TestSelfHostF64ExactBitsIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(src))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

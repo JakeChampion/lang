@@ -90,7 +90,7 @@ func runReadAllStdinIR(t *testing.T, target, src string, in []byte) int {
 		if qemu != "" {
 			runPrefix = []string{qemu}
 		}
-		extra = []string{"-target", "arm64"}
+		extra = []string{"-target", "arm64-linux"}
 		wantSym = "__fern_read_all_stdin_rc:"
 	} else {
 		linkGcc, runner, driverBin = buildModloadDriverX86(t)

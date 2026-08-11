@@ -37,7 +37,7 @@ func arm64QemuOrEmpty(t *testing.T) string {
 }
 
 // The CLI defaults to the in-process pure-Go assembler+linker for
-// -target arm64 (no external toolchain). This exercises the full default
+// -target arm64-linux (no external toolchain). This exercises the full default
 // path end to end, the --run temp-binary path (which must be chmod'd
 // executable), and the -cc opt-out to an external linker.
 func TestArm64NativeIsCLIDefault(t *testing.T) {

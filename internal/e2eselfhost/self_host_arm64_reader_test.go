@@ -19,7 +19,7 @@ import (
 // Reader.close, Some/None construction, match on an Option binding
 // the Some payload).
 //
-// The asm_ir_run (-target arm64) driver is built as an x86 host binary (it runs
+// The asm_ir_run (-target arm64-linux) driver is built as an x86 host binary (it runs
 // on the test host; only its OUTPUT is aarch64 asm). It compiles a
 // read-all-of-stdin echo program to aarch64 asm, which is assembled
 // with the aarch64 cross-gcc and run under qemu-aarch64 against
@@ -34,7 +34,7 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 
-	// Build the asm_ir_run (-target arm64) driver as an x86 host binary.
+	// Build the asm_ir_run (-target arm64-linux) driver as an x86 host binary.
 	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
 	if err != nil {
 		t.Fatalf("modload: %v", err)
@@ -65,7 +65,7 @@ func TestSelfHostReaderArm64(t *testing.T) {
 		"}\n"
 
 	// The driver runs on the x86 host; its output is aarch64 asm.
-	echoAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(echoSrc), "-target", "arm64")
+	echoAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(echoSrc), "-target", "arm64-linux")
 	if len(echoAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the echo program")
 	}
@@ -104,7 +104,7 @@ func TestSelfHostReaderArm64(t *testing.T) {
 // TestSelfHostReadFileArm64 is the ARM64 counterpart of
 // TestSelfHostReadFileX86_64: the self-hosted ARM64 emitter's
 // read_file(path) → Result[string, IoError] + Ok/Err match. The
-// asm_ir_run (-target arm64) driver (x86 host binary) compiles a "cat" program to
+// asm_ir_run (-target arm64-linux) driver (x86 host binary) compiles a "cat" program to
 // aarch64 asm; the assembled binary runs under qemu-aarch64 (which
 // passes filesystem syscalls through to the host) against an existing
 // file (expect its contents, exit 0) and a missing file (exit 7).
@@ -138,7 +138,7 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 		"    }\n" +
 		"    return 2;\n" +
 		"}\n"
-	catAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(catSrc), "-target", "arm64")
+	catAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(catSrc), "-target", "arm64-linux")
 	if len(catAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the cat program")
 	}
@@ -196,7 +196,7 @@ func TestSelfHostArgsArm64(t *testing.T) {
 	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
 
 	argcSrc := "function main(): i32 { return args().len(); }\n"
-	progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(argcSrc), "-target", "arm64")
+	progAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(argcSrc), "-target", "arm64-linux")
 	if len(progAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the args program")
 	}

@@ -194,7 +194,7 @@ function main(): i32 {
     return t % 97;
 }`
 		// 9: confirmed against BOTH oracles (bin/fern -interp and native
-		// -target x86-64) rather than read off the self-host run.
+		// -target x86-64-linux) rather than read off the self-host run.
 		allocs, frees, live := counts(t, "scalar_enum_condrebind", src, 9)
 		if allocs != frees {
 			t.Errorf("allocs=%d frees=%d", allocs, frees)

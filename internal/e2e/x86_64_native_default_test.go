@@ -32,7 +32,7 @@ func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {
 }
 
 // The CLI defaults to the in-process pure-Go assembler+linker for
-// -target x86-64 (no external toolchain), mirroring arm64. Exercises the
+// -target x86-64-linux (no external toolchain), mirroring arm64. Exercises the
 // full default path, the --run temp-binary path, and the -cc opt-out.
 func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)

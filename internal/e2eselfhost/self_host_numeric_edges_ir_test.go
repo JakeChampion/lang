@@ -102,7 +102,7 @@ func TestSelfHostNumericEdgesIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostNumericEdgesIRArm64 runs the same cases through the arm64 IR
-// backend (asm_ir_run -target arm64 → asm_arm64.emit_module's use_ir branch →
+// backend (asm_ir_run -target arm64-linux → asm_arm64.emit_module's use_ir branch →
 // asm_arm64_ir.emit_body). The arm64-specific regression here is #4330: the
 // i32 shifts emitted the bare x-form (`lsl/asr/lsr x0, x0, x1`), whose count
 // masks mod 64 — a count >= 32 wrapped wrongly instead of masking mod 32 like
@@ -135,9 +135,9 @@ func TestSelfHostNumericEdgesIRArm64(t *testing.T) {
 			src := []byte(numericEdgeIRSrc(tc.main))
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-target", "arm64")
+				cmd = exec.Command(driverBin, "-target", "arm64-linux")
 			} else {
-				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64")...)
+				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux")...)
 			}
 			cmd.Stdin = bytes.NewReader(src)
 			asm, err := cmd.Output()

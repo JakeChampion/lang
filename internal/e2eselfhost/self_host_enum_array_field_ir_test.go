@@ -96,7 +96,7 @@ func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostEnumArrayFieldIRArm64 runs the same cases through the arm64 IR
-// backend (asm_ir_run -target arm64 → asm_arm64.emit_module's use_ir branch →
+// backend (asm_ir_run -target arm64-linux → asm_arm64.emit_module's use_ir branch →
 // asm_arm64_ir.emit_body, sharing irlower's enum-array-field lowering). This is
 // the load-bearing arm64 check: an enum-array struct field's deep-drop rides
 // arm64's heap-element reclamation, so an over-release here surfaces as a wrong
@@ -126,7 +126,7 @@ func TestSelfHostEnumArrayFieldIRArm64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 	for _, tc := range enumArrayFieldIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(driverBin, "-target", "arm64")
+			cmd := exec.Command(driverBin, "-target", "arm64-linux")
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()
 			if err != nil || len(asm) == 0 {

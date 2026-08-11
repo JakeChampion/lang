@@ -91,7 +91,7 @@ func runNativeWasmCli(t *testing.T, src string) int {
 // ~1024), so `var ys = xs` never bumped xs's refcount and `ys.with(...)`
 // took the rc==1 mutate-in-place fast path, corrupting xs. The
 // preview-1 adapter's higher heap base masked this; the native
-// `-target wasm` path (and now the e2e suite) exercises it directly.
+// `-target wasm32-wasi` path (and now the e2e suite) exercises it directly.
 func TestWASMNativeAliasedArraySetCoW(t *testing.T) {
 	cases := []struct {
 		name string

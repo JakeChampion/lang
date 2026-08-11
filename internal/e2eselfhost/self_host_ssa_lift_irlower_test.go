@@ -286,7 +286,7 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 		t.Run("arm64/"+tc.name, func(t *testing.T) {
 			armgcc, qemu := arm64Tooling(t)
 			mk := func(b string, a ...string) *exec.Cmd { return runArm64Bin(qemu, b, a...) }
-			if got := run(t, emit(t, tc.src, "-target", "arm64"), armgcc, false, mk, "arm-"+tc.name); got != ref {
+			if got := run(t, emit(t, tc.src, "-target", "arm64-linux"), armgcc, false, mk, "arm-"+tc.name); got != ref {
 				t.Errorf("arm64 irlower->lift %s = %d, interp = %d", tc.name, got, ref)
 			}
 		})

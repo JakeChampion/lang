@@ -28,7 +28,7 @@ import (
 )
 
 // BuildOptions tweaks the module-level structure produced by
-// Build. Defaults match what the raw `fern -target wasm-bin`
+// Build. Defaults match what the raw `fern -target wasm32-wasi -emit core-module`
 // CLI flow emits.
 type BuildOptions struct {
 	// ForceMemorySection makes Emit unconditionally include a

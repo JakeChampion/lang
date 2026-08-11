@@ -148,7 +148,7 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 }
 
 // TestCmdFernNativeArm64 drives the user-facing `-native` flag through
-// the actual fern CLI: `fern -target arm64 -native -o out src.fern`
+// the actual fern CLI: `fern -target arm64-linux -native -o out src.fern`
 // must produce a static ELF with no external toolchain, which then
 // exits with main()'s return value (run natively on arm64, else under qemu).
 func TestCmdFernNativeArm64(t *testing.T) {

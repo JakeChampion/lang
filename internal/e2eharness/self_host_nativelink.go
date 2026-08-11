@@ -28,7 +28,7 @@ const nativeLinkMinAsmBytes = 8 << 20
 // nativeLinkX86 assembles GAS-Intel-syntax asm text and wraps it in a
 // static ELF executable entirely in-process — the same
 // AssembleProgramWX + StaticExecutableDataX86WX pipeline `cmd/fern`
-// uses by default for `-target x86-64` (linkNativeX86 in main.go). No
+// uses by default for `-target x86-64-linux` (linkNativeX86 in main.go). No
 // external assembler or linker runs, so the multi-GB GNU `as` peak and
 // the on-disk `.s` scratch both disappear. An unsupported instruction
 // surfaces as a clear error (never a miscompile); callers fall back to
@@ -48,7 +48,7 @@ func nativeLinkX86(asm, binPath string) error {
 // nativeLinkArm64 is the arm64 sibling of nativeLinkX86: assemble
 // GAS-flavoured arm64 asm and wrap it in a static ELF executable
 // entirely in-process — the same pipeline `cmd/fern` uses by default for
-// `-target arm64` (linkNative in main.go), but entry-aware: the
+// `-target arm64-linux` (linkNative in main.go), but entry-aware: the
 // SELF-HOST arm64 emitter defines `_start` after other functions, so the
 // entry point must be resolved from the label rather than assumed to be
 // .text's first instruction. Callers fall back to the aarch64 gcc path

@@ -156,7 +156,7 @@ func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 function f(s: i32[]): i32 { var t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")
 	}

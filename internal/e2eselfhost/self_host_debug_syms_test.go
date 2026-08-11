@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestSelfHostDebugSymsFlag covers `fern-selfhost -target x86-64 -g` end to
+// TestSelfHostDebugSymsFlag covers `fern-selfhost -target x86-64-linux -g` end to
 // end (#6637): a binary the self-host built, whose function names `nm` can
 // resolve. Before this, every self-host-built binary was anonymous — which
 // bit the project itself hardest, since the self-hosted compiler is the
@@ -50,7 +50,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	build := func(out string, extra ...string) string {
 		args := extra
 		if !slices.Contains(args, "-target") {
-			args = append([]string{"-target", "x86-64"}, args...)
+			args = append([]string{"-target", "x86-64-linux"}, args...)
 		}
 		args = append(args, "-o", out, src, stdlib)
 		cmd := exec.Command(cli, args...)
@@ -108,7 +108,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 	//
 	// nm reads a foreign architecture happily, so the symbols are checked
 	// without needing qemu; execution stays x86-only above.
-	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64", "-g")
+	a64 := build(filepath.Join(dir, "a64.bin"), "-target", "arm64-linux", "-g")
 	a64Out, err := exec.Command("nm", a64).Output()
 	if err != nil {
 		t.Fatalf("nm on the arm64 build: %v", err)

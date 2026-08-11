@@ -13,7 +13,7 @@ import (
 // prune and the IR-eligibility decision are target-agnostic (they run on the
 // merged module before backend selection), so arm64 routes exactly as x86-64;
 // this gate confirms the aarch64 emitter then produces correct code. The arm64
-// driver (asm_load_run -target arm64) is built as a native x86 host binary that EMITS
+// driver (asm_load_run -target arm64-linux) is built as a native x86 host binary that EMITS
 // aarch64 asm; aarch64 gcc assembles + links; qemu-aarch64 runs it. Each case
 // is pinned to the "ir" route (observed on the x86 host, no qemu) and
 // oracle-checked against the native interpreter. Reuses deriveStdlibCases.
@@ -40,13 +40,13 @@ func TestSelfHostDeriveStdlibIRArm64(t *testing.T) {
 			// Oracle: the native interpreter's exit code.
 			_, want := runFixtureInterp(t, entry, "")
 			// Routing is target-agnostic; observe it on the x86 host (no qemu).
-			out, _ := exec.Command(mmc, entry, root, "-target", "arm64", "-decide").Output()
+			out, _ := exec.Command(mmc, entry, root, "-target", "arm64-linux", "-decide").Output()
 			if strings.TrimSpace(string(out)) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(string(out)))
 			}
 			// Emit aarch64 asm (treeshake auto-applies with the root), assemble +
 			// link with aarch64 gcc, run under qemu — must match the oracle.
-			asm, err := exec.Command(mmc, entry, root, "-target", "arm64").Output()
+			asm, err := exec.Command(mmc, entry, root, "-target", "arm64-linux").Output()
 			if err != nil {
 				t.Fatalf("%s: self-host compile failed: %v", tc.name, err)
 			}

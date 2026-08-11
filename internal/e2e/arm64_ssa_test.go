@@ -1,5 +1,5 @@
 // E2E tests for the experimental SSA-direct arm64 backend
-// (`-target arm64 -backend ssa`). Builds the fern CLI from this checkout,
+// (`-target arm64-linux -backend ssa`). Builds the fern CLI from this checkout,
 // compiles small Fern programs with the new target, and runs the
 // resulting static AArch64 ELF, asserting the process exit code
 // (main's return value, low byte).
@@ -1378,7 +1378,7 @@ function main(): i32 {
 // `subprocess` now fails EARLIER than it used to. Under the old `-target
 // arm64-ssa` spelling the target had no descriptor, so capability enforcement
 // was skipped and the failure came from the backend as an unknown-callee
-// message with no source position; as `-target arm64 -backend ssa` the target
+// message with no source position; as `-target arm64-linux -backend ssa` the target
 // keeps its descriptor and E066 rejects it at check time (#6536). The contract
 // this test guards — no miscompile — is unchanged; which layer refuses is not.
 func TestArm64SSACoverageGapErrors(t *testing.T) {

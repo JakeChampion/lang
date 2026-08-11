@@ -89,7 +89,7 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	}
 	files["main.fern"] = string(runSrc)
 
-	checkerAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64")
+	checkerAsm, progDir := compileFilesModload(t, x86runner, driverBin, files, "-target", "arm64-linux")
 	if len(checkerAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the checker driver")
 	}

@@ -14,7 +14,7 @@
 // Every file-I/O helper in wasmbin carries a preview-1 body and a
 // preview-2 sibling (`…BodyP2`), because `wasmbin.Build` emits a
 // preview-1 core module — what the e2e harness runs under `wasmtime
-// --invoke main` — while `bin/fern -target wasm` builds with
+// --invoke main` — while `bin/fern -target wasm32-wasi` builds with
 // Preview2WASI and composes a component.
 //
 // Two of these five have both halves: `remove_file` (unlink-file-at)
@@ -1119,7 +1119,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 // ---- preview-2 ------------------------------------------------------
 //
 // The preview-2 halves of the path-MUTATING helpers (#6208 part 2 step
-// 1). `bin/fern -target wasm` builds with Preview2WASI and composes a
+// 1). `bin/fern -target wasm32-wasi` builds with Preview2WASI and composes a
 // component, so these are what a real `fern` build runs; the preview-1
 // bodies above are what the e2e harness runs under `wasmtime --invoke
 // main`.

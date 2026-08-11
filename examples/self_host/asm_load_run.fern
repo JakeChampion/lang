@@ -444,7 +444,7 @@ function main(): i32 {
     // reads c.ty. A no-op on drivers that skip it (asm_ir_run leaves ty "").
     merged = checker.annotate_module(merged);
 
-    if (target == "arm64") {
+    if (target == "arm64-linux") {
         // IR-or-error (#3457 slice 5): the arm64 leg has no AST fallback either.
         // asm_arm64_ir.emit_module_or_error runs the same prologue asm_arm64
         // .emit_module did and errors where the fallback used to be. Note the arm64

@@ -4163,7 +4163,7 @@ func TestWASMIndirectCallApply(t *testing.T) {
 // two-slot (data, len) ABI on wasm32, and the indirect-call signature
 // seam (addClosureSigType) must not type each param via valtypeFor,
 // which rejects `string` outright and fails any `(string, …) => …`
-// comparator/callback for -target wasm. The seam fans string params
+// comparator/callback for -target wasm32-wasi. The seam fans string params
 // through slotValtypes, matching the callee
 // definition (paramValtypes). Exercises the motivating `sort_by`-style
 // string comparator shape end-to-end.
@@ -11379,12 +11379,12 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 }
 
 // TestCmdLangTargetWasmNoAdapter exercises the new default-path
-// wiring: `-target wasm` without `-wasi-adapter` routes through
+// wiring: `-target wasm32-wasi` without `-wasi-adapter` routes through
 // the Go-side preview-2 encoder (cli-run shape) and produces a
 // component runnable via plain `wasmtime run prog.wasm`. No
 // `wasm-tools` shell-out involved. Closes the loop on the
 // preview-2 import migrations — for programs whose imports are
-// all migrated, the default `-target wasm` now Just Works
+// all migrated, the default `-target wasm32-wasi` now Just Works
 // without an adapter.
 func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

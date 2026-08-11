@@ -57,7 +57,7 @@ func TestSelfHostStrbufBufferArm64(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-	asm := runCapture(t, gcc, runner, driverBin, []byte(`function main(): i32 { strbuf_reset(); strbuf_append("ab"); var s = strbuf_take(); return s.len(); }`), "-target", "arm64")
+	asm := runCapture(t, gcc, runner, driverBin, []byte(`function main(): i32 { strbuf_reset(); strbuf_append("ab"); var s = strbuf_take(); return s.len(); }`), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

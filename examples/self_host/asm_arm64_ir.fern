@@ -18,7 +18,7 @@
 // codegen for the op stream.
 //
 // Like asm_ir, this is a SEPARATE module imported only by its differential
-// driver (asm_ir_run -target arm64) — asm_arm64.fern and the arm64 bootstrap stay
+// driver (asm_ir_run -target arm64-linux) — asm_arm64.fern and the arm64 bootstrap stay
 // untouched until a later fold/flip slice.
 
 import "./parser";
@@ -2459,7 +2459,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // reached through the __raw_scratch op. It moved out of emit_rt_fs for the
     // same heap-independence reason: gating it on the fs runtime left a scalar
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
-    var ctgt: string = "arm64";
+    var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
     if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
@@ -4160,7 +4160,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // The target key the migrated Fern helpers below are built for — same
     // derivation as emit_rt_clock_and_print's ctgt.
-    var tgt: string = "arm64";
+    var tgt: string = "arm64-linux";
     if (darwin) { tgt = "arm64-darwin"; }
     s = s.write("__fern_reader_read_chunk:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
@@ -6102,7 +6102,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // bodies. darwinize cannot remap a number the emitter only has at runtime
     // (its rule needs a literal `mov x8, #N`), which is why the target's number
     // is baked into the source here instead.
-    var tgt: string = "arm64";
+    var tgt: string = "arm64-linux";
     if (darwin) { tgt = "arm64-darwin"; }
     // random_bytes: fill the buffer through __syscall3, box it with __raw_string.
     if (s.has_need("random_bytes")) {
@@ -6342,7 +6342,7 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 
 // emit_module_ir is the FORCED-IR whole-program emit — the use_ir branch of
 // emit_module without the eligibility fallback or the pre-codegen check, the
-// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64 -ir`
+// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64-linux -ir`
 // differential driver calls this (with an already lambda-lifted module) so the
 // IR orchestration lives in ONE place: the driver's old hand-copy of this
 // sequence drifted when emit_arm64_reclaim_drop_bodies was added to
@@ -6684,7 +6684,7 @@ pub function darwinize(asm: string): string {
                 out_line = "    .section __TEXT,__const";
             } else if (body == ".data" || body == ".section .data") {
                 // The static-aggregate-constant blocks (#6149). Left
-                // untranslated, `-target arm64-darwin-asm` emitted a Linux
+                // untranslated, `-target arm64-darwin -emit asm` emitted a Linux
                 // section directive that clang refuses ("unexpected token in
                 // '.section' directive") — so the one tool for splitting an
                 // emitter bug from an assembler bug did not work on any

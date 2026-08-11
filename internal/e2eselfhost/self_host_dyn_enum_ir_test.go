@@ -16,7 +16,7 @@ import (
 // compare arms — the struct/prim shape arms can never identify it. Before the
 // fix the dispatch chain had no enum arm at all and fell through to the 0
 // fallback (wrong values, native-valid program). Exit codes are the oracle;
-// every case was validated native-first (`fern -interp` + `-target x86-64`).
+// every case was validated native-first (`fern -interp` + `-target x86-64-linux`).
 var dynEnumIRCases = []struct {
 	name     string
 	src      string
@@ -141,7 +141,7 @@ func TestSelfHostDynEnumIRWasm(t *testing.T) {
 }
 
 // TestSelfHostDynEnumIRArm64: the arm64 sibling under qemu — the same cases
-// through asm_ir_run -target arm64 (the per-variant adrp/cmp arm chain).
+// through asm_ir_run -target arm64-linux (the per-variant adrp/cmp arm chain).
 func TestSelfHostDynEnumIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -151,7 +151,7 @@ func TestSelfHostDynEnumIRArm64(t *testing.T) {
 
 	for _, tc := range dynEnumIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatalf("self-host arm64 compiler emitted 0 bytes")
 			}

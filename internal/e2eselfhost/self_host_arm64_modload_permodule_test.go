@@ -44,7 +44,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 	drive := func(t *testing.T, args ...string) (string, error) {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
 		return string(out), err
 	}
 
@@ -163,7 +163,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	if err := os.WriteFile(trivArg, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
 		t.Fatalf("write triv.fern: %v", err)
 	}
-	out, err := exec.Command(qemu, binPath, trivArg, "-target", "arm64").Output()
+	out, err := exec.Command(qemu, binPath, trivArg, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler crashed on a zero-need program (the close_needs UAF): %v", err)
 	}
@@ -178,7 +178,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 		[]byte("function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(40, 2); }\n"), 0o644); err != nil {
 		t.Fatalf("write add.fern: %v", err)
 	}
-	addAsm, err := exec.Command(qemu, binPath, addArg, "-target", "arm64").Output()
+	addAsm, err := exec.Command(qemu, binPath, addArg, "-target", "arm64-linux").Output()
 	if err != nil || len(addAsm) == 0 {
 		t.Fatalf("per-module-built arm64 compiler failed to compile add.fern: %v (%d bytes)", err, len(addAsm))
 	}
@@ -225,7 +225,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// compiler drives its own whole-program runtime-need query without OOM, now that it
 	// returns the static all_runtime_need_roots over-approximation instead of re-emitting
 	// every module (see the x86 twin for the mechanism).
-	selfNeeds, err := exec.Command(qemu, binPath, entry, "-target", "arm64", "-per-module-needs").Output()
+	selfNeeds, err := exec.Command(qemu, binPath, entry, "-target", "arm64-linux", "-per-module-needs").Output()
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler OOM/crash on its own -per-module-needs (#3456): %v", err)
 	}

@@ -48,7 +48,7 @@ func loadAndCheckModule(t *testing.T, src string) (*ast.Program, *checker.Info) 
 }
 
 // buildFromSource is a test helper that mirrors what the
-// `fern -target wasm-bin` CLI path does: parse + check the
+// `fern -target wasm32-wasi -emit core-module` CLI path does: parse + check the
 // source, then call Build to produce module bytes. Returns
 // an error string instead of *bytes for tests that expect
 // failure ("unsupported op X").

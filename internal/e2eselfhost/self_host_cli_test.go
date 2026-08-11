@@ -40,13 +40,13 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 
 	// runDriver runs the CLI with args and returns (stdout, exitcode).
 	//
-	// Selects `x86-64-asm` when the caller names no target, because these
-	// cases assert on GAS TEXT and then hand it to gcc. The default target,
-	// `x86-64`, assembles and links in-process and would hand them an ELF.
+	// Selects `-emit asm` when the caller names no target, because these
+	// cases assert on GAS TEXT and then hand it to gcc. The default output
+	// form assembles and links in-process and would hand them an ELF.
 	runDriver := func(t *testing.T, args ...string) ([]byte, int) {
 		t.Helper()
 		if !slices.Contains(args, "-target") {
-			args = append([]string{"-target", "x86-64-asm"}, args...)
+			args = append([]string{"-target", "x86-64-linux", "-emit", "asm"}, args...)
 		}
 		cmd := exec.Command(fernBin, args...)
 		out, _ := cmd.Output()
@@ -138,7 +138,7 @@ function main(): i32 {
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		wat, code := runDriver(t, "-target", "wasm", srcPath, stdlibRoot)
+		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
@@ -356,11 +356,11 @@ function main(): i32 {
 		if err := os.WriteFile(corePath, []byte(coreSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		ssaWat, code := runDriver(t, "-ssa", "-target", "wasm", corePath)
+		ssaWat, code := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", corePath)
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
-		astWat, _ := runDriver(t, "-no-ssa", "-target", "wasm", corePath)
+		astWat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", corePath)
 		if string(ssaWat) == string(astWat) {
 			t.Error("-ssa -target wasm fell back to AST for a core program (expected the SSA wasm backend)")
 		}
@@ -376,8 +376,8 @@ function main(): i32 {
 		if err := os.WriteFile(arrPath, []byte(arrSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defArr, _ := runDriver(t, "-ssa", "-target", "wasm", arrPath)
-		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm", arrPath)
+		defArr, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", arrPath)
+		astArr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", arrPath)
 		if string(defArr) == string(astArr) {
 			t.Error("-ssa -target wasm fell back to AST for an array program (expected the SSA heap backend)")
 		}
@@ -392,8 +392,8 @@ function main(): i32 {
 		if err := os.WriteFile(catPath, []byte(catSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defCat, _ := runDriver(t, "-ssa", "-target", "wasm", catPath)
-		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm", catPath)
+		defCat, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", catPath)
+		astCat, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", catPath)
 		if string(defCat) == string(astCat) {
 			t.Error("-ssa -target wasm fell back to AST for a string-concat program (expected the SSA concat helper)")
 		}
@@ -409,8 +409,8 @@ function main(): i32 {
 		if err := os.WriteFile(prPath, []byte(prSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defPr, _ := runDriver(t, "-ssa", "-target", "wasm", prPath)
-		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm", prPath)
+		defPr, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", prPath)
+		astPr, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", prPath)
 		if string(defPr) == string(astPr) {
 			t.Error("-ssa -target wasm fell back to AST for a print program (expected the SSA print helper)")
 		}
@@ -434,8 +434,8 @@ function main(): i32 {
 		if err := os.WriteFile(capPath, []byte(capSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defCap, _ := runDriver(t, "-ssa", "-target", "wasm", capPath)
-		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm", capPath)
+		defCap, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", capPath)
+		astCap, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", capPath)
 		if string(defCap) == string(astCap) {
 			t.Error("-ssa -target wasm fell back to AST for a capturing-lambda program (expected the SSA closure path)")
 		}
@@ -456,8 +456,8 @@ function main(): i32 {
 		if err := os.WriteFile(fbPath, []byte(fbSrc), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		defFb, _ := runDriver(t, "-ssa", "-target", "wasm", fbPath)
-		astFb, _ := runDriver(t, "-no-ssa", "-target", "wasm", fbPath)
+		defFb, _ := runDriver(t, "-ssa", "-target", "wasm32-wasi", "-emit", "asm", fbPath)
+		astFb, _ := runDriver(t, "-no-ssa", "-target", "wasm32-wasi", "-emit", "asm", fbPath)
 		if string(defFb) != string(astFb) {
 			t.Error("-ssa -target wasm corrupted the AST for a fallback program (try_ssa has a side effect)")
 		}
@@ -1473,7 +1473,7 @@ function main(): i32 {
 
 	t.Run("emit-target-arm64", func(t *testing.T) {
 		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
-		// directly under -target arm64 (in-process via arm64_native + elf.fern,
+		// directly under -target arm64-linux (in-process via arm64_native + elf.fern,
 		// no `.s` + gcc/ld); run it under qemu and check the exit code.
 		_, qemu := arm64Tooling(t) // skips if qemu absent
 		srcPath := filepath.Join(dir, "arm_prog.fern")
@@ -1481,7 +1481,7 @@ function main(): i32 {
 			t.Fatalf("write src: %v", err)
 		}
 		progBin := filepath.Join(dir, "arm_prog.bin")
-		_, code := runDriver(t, "-target", "arm64", "-o", progBin, srcPath)
+		_, code := runDriver(t, "-target", "arm64-linux", "-o", progBin, srcPath)
 		if code != 0 {
 			t.Fatalf("-target arm64 emit exited %d, want 0", code)
 		}
@@ -1543,7 +1543,7 @@ function main(): i32 {
 	})
 
 	t.Run("emit-target-wasm", func(t *testing.T) {
-		// The driver emits a WASI WAT module under -target wasm; run it
+		// The driver emits a WASI WAT module under -target wasm32-wasi; run it
 		// directly with wasmtime and check exit code + stdout.
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Skip("wasmtime not on PATH; skipping -target wasm")
@@ -1552,7 +1552,7 @@ function main(): i32 {
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		wat, code := runDriver(t, "-target", "wasm", srcPath)
+		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
@@ -1573,36 +1573,36 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("emit-target-wasm-bin", func(t *testing.T) {
-		// The driver emits a wasm *binary* module under -target wasm-bin
+	t.Run("emit-wasm-core-module", func(t *testing.T) {
+		// The driver emits a wasm *binary* module under -target wasm32-wasi -emit core-module
 		// (WAT -> watbin assembler -> .wasm). Validate with wasm-tools and
 		// run it directly with wasmtime; check exit code + stdout.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm-bin")
+			t.Skip("wasmtime not on PATH; skipping -emit core-module")
 		}
 		srcPath := filepath.Join(dir, "wasmbin_prog.fern")
-		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from wasm-bin\"); return 6 * 7; }\n"), 0o644); err != nil {
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from a core module\"); return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
 		// Binary bytes go to a file (-o), not stdout, so they survive
 		// verbatim (incl. 0x00 / high bytes) without text mangling.
 		outPath := filepath.Join(dir, "wasmbin_prog.wasm")
-		// Still `-target wasm-bin`: this drives the SELF-HOSTED compiler,
-		// which carries its own -target vocabulary (x86-64-asm, arm64-asm,
-		// wasm-component, …) and its own `-ssa` flag. cmd/fern's move to
+		// Still `-target wasm32-wasi -emit core-module`: this drives the SELF-HOSTED compiler,
+		// which since #6635 shares cmd/fern's <isa>-<environment> target
+		// vocabulary and `-emit` axis, and keeps its own `-ssa` flag. cmd/fern's move to
 		// `-emit core-module` (#6536) does not reach it; converging the two
 		// vocabularies is separate work.
-		stdout, code := runDriver(t, "-target", "wasm-bin", "-o", outPath, srcPath)
+		stdout, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "core-module", "-o", outPath, srcPath)
 		if code != 0 {
-			t.Fatalf("-target wasm-bin emit exited %d, want 0", code)
+			t.Fatalf("-emit core-module emit exited %d, want 0", code)
 		}
 		if len(stdout) != 0 {
-			t.Errorf("-target wasm-bin with -o wrote %d bytes to stdout, want 0", len(stdout))
+			t.Errorf("-emit core-module with -o wrote %d bytes to stdout, want 0", len(stdout))
 		}
 		bin, err := os.ReadFile(outPath)
 		if err != nil {
-			t.Fatalf("read wasm-bin output: %v", err)
+			t.Fatalf("read core-module output: %v", err)
 		}
 		if len(bin) < 8 || bin[0] != 0x00 || bin[1] != 0x61 || bin[2] != 0x73 || bin[3] != 0x6d {
 			t.Fatalf("output is not a wasm binary (magic missing): % x", bin[:min(8, len(bin))])
@@ -1615,10 +1615,10 @@ function main(): i32 {
 		cmd := exec.Command(wasmtime, "run", outPath)
 		out, _ := cmd.Output()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
-			t.Errorf("wasm-bin program exited %d, want 42", c)
+			t.Errorf("core-module program exited %d, want 42", c)
 		}
-		if string(out) != "hi from wasm-bin\n" {
-			t.Errorf("wasm-bin program stdout = %q, want %q", string(out), "hi from wasm-bin\n")
+		if string(out) != "hi from a core module\n" {
+			t.Errorf("core-module program stdout = %q, want %q", string(out), "hi from a core module\n")
 		}
 	})
 
@@ -1626,14 +1626,14 @@ function main(): i32 {
 	// runnable `.wasm`, and a mnemonic missing from it takes down every program
 	// that reaches the instruction — `f64.reinterpret_i64` blocked anything
 	// calling `.to_string()` (#6607). These rows drive one program per opcode
-	// family through `-target wasm-bin`, so a table gap fails here rather than
+	// family through `-emit core-module`, so a table gap fails here rather than
 	// in whichever probe happens to need the instruction. The exit code is the
 	// assertion: it comes from the program, so a wrong encoding that still
 	// validates is caught too.
-	t.Run("wasm-bin-opcode-families", func(t *testing.T) {
+	t.Run("core-module-opcode-families", func(t *testing.T) {
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping wasm-bin opcode families")
+			t.Skip("wasmtime not on PATH; skipping core-module opcode families")
 		}
 		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 		if err != nil {
@@ -1706,8 +1706,8 @@ function main(): i32 {
 					t.Fatalf("write src: %v", err)
 				}
 				outPath := filepath.Join(dir, "wasmbin_"+tc.name+".wasm")
-				if _, code := runDriver(t, "-target", "wasm-bin", "-o", outPath, srcPath, stdlibRoot); code != 0 {
-					t.Fatalf("-target wasm-bin emit exited %d, want 0", code)
+				if _, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "core-module", "-o", outPath, srcPath, stdlibRoot); code != 0 {
+					t.Fatalf("-emit core-module emit exited %d, want 0", code)
 				}
 				cmd := exec.Command(wasmtime, "run", outPath)
 				out, _ := cmd.Output()
@@ -1721,14 +1721,14 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("emit-target-wasm-component", func(t *testing.T) {
+	t.Run("emit-wasm-component", func(t *testing.T) {
 		// The driver emits a Component-Model wasi:cli/run component under
-		// -target wasm-component, picking the no-I/O or stdout framing from
+		// -target wasm32-wasi, picking the no-I/O or stdout framing from
 		// the program's WASI usage. Validate with wasm-tools and run under
 		// wasmtime.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm-component")
+			t.Skip("wasmtime not on PATH; skipping the wasm component")
 		}
 		wasmtools, _ := exec.LookPath("wasm-tools")
 		for _, c := range []struct {
@@ -1744,12 +1744,12 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "comp_"+c.name+".wasm")
-			stdout, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			stdout, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
 			if code != 0 {
-				t.Fatalf("%s: -target wasm-component exited %d, want 0", c.name, code)
+				t.Fatalf("%s: the wasm component exited %d, want 0", c.name, code)
 			}
 			if len(stdout) != 0 {
-				t.Errorf("%s: wasm-component with -o wrote %d bytes to stdout, want 0", c.name, len(stdout))
+				t.Errorf("%s: the component with -o wrote %d bytes to stdout, want 0", c.name, len(stdout))
 			}
 			bin, err := os.ReadFile(outPath)
 			if err != nil {
@@ -1775,13 +1775,13 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("emit-target-wasm-component-fs", func(t *testing.T) {
+	t.Run("emit-wasm-component-fs", func(t *testing.T) {
 		// Filesystem wasi:cli/run components: read (component_full_io_fs),
 		// write (component_full_io_fs_write), and read+write
 		// (component_full_io_fs_rw). Run under wasmtime with a preopened dir.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm-component fs")
+			t.Skip("wasmtime not on PATH; skipping the wasm component fs")
 		}
 		wasmtools, _ := exec.LookPath("wasm-tools")
 		build := func(t *testing.T, name, src string) string {
@@ -1791,9 +1791,9 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compfs_"+name+".wasm")
-			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
 			if code != 0 {
-				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+				t.Fatalf("%s: the wasm component exited %d, want 0", name, code)
 			}
 			if wasmtools != "" {
 				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
@@ -1838,12 +1838,12 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("emit-target-wasm-component-wasi", func(t *testing.T) {
+	t.Run("emit-wasm-component-wasi", func(t *testing.T) {
 		// Single-category WASI wasi:cli/run shapes: env / args / clock /
 		// random / stderr / exit. Each maps to its component_full_io_* wrap.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm-component wasi")
+			t.Skip("wasmtime not on PATH; skipping the wasm component wasi")
 		}
 		wasmtools, _ := exec.LookPath("wasm-tools")
 		build := func(t *testing.T, name, src string) string {
@@ -1853,9 +1853,9 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compw_"+name+".wasm")
-			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
 			if code != 0 {
-				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+				t.Fatalf("%s: the wasm component exited %d, want 0", name, code)
 			}
 			if wasmtools != "" {
 				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
@@ -1914,12 +1914,12 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("emit-target-wasm-component-combos", func(t *testing.T) {
+	t.Run("emit-wasm-component-combos", func(t *testing.T) {
 		// Two-category fs-paired wasi:cli/run shapes: fs-read+env,
 		// fs-rw+env, random+fs-write, fs-read+args, fs-rw+args.
 		wasmtime, err := exec.LookPath("wasmtime")
 		if err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm-component combos")
+			t.Skip("wasmtime not on PATH; skipping the wasm component combos")
 		}
 		wasmtools, _ := exec.LookPath("wasm-tools")
 		build := func(t *testing.T, name, src string) string {
@@ -1929,9 +1929,9 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compc_"+name+".wasm")
-			_, code := runDriver(t, "-target", "wasm-component", "-o", outPath, srcPath)
+			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
 			if code != 0 {
-				t.Fatalf("%s: -target wasm-component exited %d, want 0", name, code)
+				t.Fatalf("%s: the wasm component exited %d, want 0", name, code)
 			}
 			if wasmtools != "" {
 				if out, err := exec.Command(wasmtools, "validate", "--features", "component-model", outPath).CombinedOutput(); err != nil {
@@ -2002,7 +2002,7 @@ function main(): i32 {
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
-		_, code := runDriver(t, "-target", "wasm-component", "-o", filepath.Join(dir, "comp_multi.wasm"), srcPath)
+		_, code := runDriver(t, "-target", "wasm32-wasi", "-o", filepath.Join(dir, "comp_multi.wasm"), srcPath)
 		if code != 2 {
 			t.Errorf("wasm-component on a multi-WASI program exited %d, want 2 (rejected)", code)
 		}

@@ -1,7 +1,7 @@
 // examples/self_host/ssa_emit_run.fern — driver for the SSA backends.
 // Reads a program on stdin, lowers each in-subset function to SSA
 // (build_func), optimises it, and prints the emitted assembly to stdout —
-// x86-64 by default, or arm64 with `-target arm64`. The companion Go tests
+// x86-64 by default, or arm64 with `-target arm64-linux`. The companion Go tests
 // assemble the output (`gcc -static -nostdlib [-no-pie]`) and run it,
 // asserting the process exit code matches the program's value — end-to-end
 // proof that AST → SSA → optimise → emit → execute preserves semantics.
@@ -15,7 +15,7 @@ import "./ssa_arm64";
 
 function main(): i32 {
     var av: string[] = args();
-    var target: string = "x86-64";
+    var target: string = "x86-64-linux";
     var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
@@ -96,7 +96,7 @@ function main(): i32 {
         }
         hi = hi + 1;
     }
-    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    if (target == "arm64-linux") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

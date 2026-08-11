@@ -6,7 +6,7 @@
 // on it. wasmbin shares the lowering and IR optimisation pipeline
 // with every other backend, so a feature added to ir.Lower lights up
 // here automatically once the corresponding op handler is wired. The
-// package is exercised via `fern -target wasm-bin -o prog.wasm
+// package is exercised via `fern -target wasm32-wasi -emit core-module -o prog.wasm
 // prog.fern` end-to-end.
 //
 // Current op coverage:

@@ -94,7 +94,7 @@ func runAsciiRunIR(t *testing.T, target string) int {
 		if qemu != "" {
 			runPrefix = []string{qemu}
 		}
-		extra = []string{"-target", "arm64"}
+		extra = []string{"-target", "arm64-linux"}
 	} else {
 		linkGcc, runner, driverBin = buildModloadDriverX86(t)
 		runPrefix = runner

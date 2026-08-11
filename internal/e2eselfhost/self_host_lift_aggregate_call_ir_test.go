@@ -111,7 +111,7 @@ func TestSelfHostLiftAggregateCallIRArm64(t *testing.T) {
 
 	for _, tc := range liftAggregateCallIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

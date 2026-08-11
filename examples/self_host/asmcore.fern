@@ -351,7 +351,7 @@ pub function rt_src_chr(): string {
 
 // sysno is the ONE table of syscall numbers the Fern runtime leaves are
 // generated against (#2649). `t` is the emitting backend's target — "x86_64",
-// "arm64" (Linux) or "arm64-darwin" — and the returned decimal string is spliced
+// "arm64-linux" or "arm64-darwin" — and the returned decimal string is spliced
 // straight into the helper source, so a single rt_src_* body serves all three.
 //
 // Why the number is baked in rather than translated later: on the Mach-O path

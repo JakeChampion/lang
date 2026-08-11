@@ -103,7 +103,7 @@ func TestSelfHostStructDestructureArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64", "-ir")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux", "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

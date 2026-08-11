@@ -127,7 +127,7 @@ func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 }
 
 // TestSelfHostParityCorpusArm64IR is the arm64 leg: asm_ir_run with
-// `-target arm64` (built with the Go x86-64 backend, running on the host)
+// `-target arm64-linux` (built with the Go x86-64 backend, running on the host)
 // emits each fixture via the IR path; the aarch64-assembled binary runs
 // under qemu and must match the native-interp oracle.
 func TestSelfHostParityCorpusArm64IR(t *testing.T) {
@@ -137,7 +137,7 @@ func TestSelfHostParityCorpusArm64IR(t *testing.T) {
 	driver := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "parity_driver_arm64")
 	for _, tc := range parityCases(t) {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runParityDriver(t, x86runner, driver, tc.src, "-target", "arm64", "-ir")
+			asm := runParityDriver(t, x86runner, driver, tc.src, "-target", "arm64-linux", "-ir")
 			bin := buildBinArm64(t, arm64gcc, dir, tc.name+"_arm64", asm)
 			gotOut, gotExit := runBin(runArm64Bin(qemu, bin), "")
 			if gotExit != tc.wantExit {

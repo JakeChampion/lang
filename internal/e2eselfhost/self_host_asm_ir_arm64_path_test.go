@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostAsmIRArm64Path is the arm64 sibling of TestSelfHostAsmIRPath:
 // the differential gate for the arm64 stack-IR emitter (asm_arm64_ir.fern).
-// The asm_ir_run driver's `-target arm64 -ir` mode, when the module is fully
+// The asm_ir_run driver's `-target arm64-linux -ir` mode, when the module is fully
 // i32-eligible, emits via the IR path (asm_arm64_ir.emit_body: AST ->
 // stack IR -> arm64); otherwise it uses the unchanged AST backend
 // (asm_arm64.emit_module). Each program is compiled BOTH ways, assembled with
@@ -18,7 +18,7 @@ import (
 // match — proving the arm64 IR path is behaviour-equivalent to the production
 // arm64 AST path on the shared i32 + arrays subset (the rollout prerequisite
 // before the arm64 default can flip to the IR). asm_arm64.fern and the
-// asm_ir_run (-target arm64) bootstrap are UNCHANGED.
+// asm_ir_run (-target arm64-linux) bootstrap are UNCHANGED.
 //
 // The driver itself runs on the test host (built via the x86-64 backend);
 // only the emitted program asm is arm64. CI-gated arm64 (qemu).
@@ -46,7 +46,7 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 	// emitted arm64 asm, runs it under qemu, returns the inner exit code.
 	emitAndRun := func(t *testing.T, src string, ir bool) int {
 		t.Helper()
-		driverArgs := []string{"-target", "arm64"}
+		driverArgs := []string{"-target", "arm64-linux"}
 		if ir {
 			driverArgs = append(driverArgs, "-ir")
 		}

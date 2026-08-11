@@ -170,7 +170,7 @@ func TestSelfHostFloatIntrinsicsX86_64(t *testing.T) {
 // TestSelfHostFloatTranscendentalsArm64 — CI-gated arm64 counterpart of the
 // transcendental IR test. asm_arm64.emit_module routes IR-eligible modules
 // through emit_function_via_ir, so once irlower makes the transcendentals
-// eligible, asm_ir_run (-target arm64) emits them via asm_arm64_ir's fsin/fcos/fexp/flog/fpow
+// eligible, asm_ir_run (-target arm64-linux) emits them via asm_arm64_ir's fsin/fcos/fexp/flog/fpow
 // branches — `bl __fern_<op>_f64` into the polynomial-approx runtime helpers that
 // emit_runtime always defines. Same fixed oracle exits as the x86 test.
 func TestSelfHostFloatTranscendentalsArm64(t *testing.T) {
@@ -182,7 +182,7 @@ func TestSelfHostFloatTranscendentalsArm64(t *testing.T) {
 
 	for _, tc := range floatTranscendentalCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
@@ -206,7 +206,7 @@ func TestSelfHostFloatIntrinsicsArm64(t *testing.T) {
 
 	for _, tc := range floatIntrinsicCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

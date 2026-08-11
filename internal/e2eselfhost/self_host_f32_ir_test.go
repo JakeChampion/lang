@@ -168,7 +168,7 @@ func TestSelfHostF32IRWasm(t *testing.T) {
 }
 
 // TestSelfHostF32IRArm64 runs the same cases through the self-hosted arm64
-// auto-decide driver (asm_ir_run.fern (-target arm64)), oracle-checked under qemu. The arm64
+// auto-decide driver (asm_ir_run.fern (-target arm64-linux)), oracle-checked under qemu. The arm64
 // IR path shares eligibility with x86 (the asmcore frontend is common), so these
 // route IR there too; correctness is the gate. Mirrors TestSelfHostFloatArm64.
 func TestSelfHostF32IRArm64(t *testing.T) {
@@ -183,7 +183,7 @@ func TestSelfHostF32IRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

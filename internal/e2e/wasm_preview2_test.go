@@ -265,7 +265,7 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 // TestWasmPreview2FileReadWriteAdapterFree exercises read+write of files
 // in one program (read one file, write another) — the combined-direction
 // wasi:filesystem/types instance type. It composed only via the adapter
-// before; now `-target wasm` (no adapter) handles it. Runs under
+// before; now `-target wasm32-wasi` (no adapter) handles it. Runs under
 // `wasmtime run --dir` and checks the copied content lands on disk.
 func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -330,7 +330,7 @@ func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 }
 
 // TestWasmPreview2FileCloseAdapterFree exercises file close on the
-// adapter-free path (`-target wasm`, no -wasi-adapter): Writer.close()
+// adapter-free path (`-target wasm32-wasi`, no -wasi-adapter): Writer.close()
 // and Reader.close() now drop the own<output-stream> / own<input-stream>
 // handle via canon resource.drop instead of preview-1 fd_close (the last
 // preview-1 holdout for file I/O). Two phases — a write-only program
@@ -644,7 +644,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 // TCP echo server that also print()s — TCP + CLI-stream stdout mixing.
 // ComposeTcpServerCliRun surfaces wasi:cli/stdout.get-stdout and reuses
 // tcp_send's output-stream.blocking-write-and-flush lowering for the log
-// write. Built with `-target wasm` (no adapter); a Go client round-trips
+// write. Built with `-target wasm32-wasi` (no adapter); a Go client round-trips
 // a payload, and the print output is verified in wasmtime's stdout.
 func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -757,7 +757,7 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 }
 
 // TestWasmPreview2UdpSendAdapterFree drives the send-only UDP path:
-// `udp_send(host, port, data)` composed adapter-free (`-target wasm`,
+// `udp_send(host, port, data)` composed adapter-free (`-target wasm32-wasi`,
 // no -wasi-adapter) through ComposeUdpClientCliRun. A Go net.ListenPacket
 // UDP socket stands in for the agent; the guest creates a socket, binds
 // an ephemeral port, connects to the listener, sends one datagram, and
@@ -918,7 +918,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 // TestWasmPreview2TcpFileServerAdapterFree is the motivating
 // composer-unification case: a static file server — a TCP server that
 // reads a file off disk and serves it, while logging to stdout —
-// composes adapter-free (`-target wasm`, no -wasi-adapter). It mixes
+// composes adapter-free (`-target wasm32-wasi`, no -wasi-adapter). It mixes
 // wasi:sockets/tcp + wasi:io/streams + wasi:cli/stdout +
 // wasi:filesystem (the read open-chain), which only compose together
 // once the TCP composer folds in the filesystem read open-chain. Runs
@@ -1035,7 +1035,7 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 // writes access logs / uploads to disk). write and append are separate
 // programs — the filesystem/types instance type is single-direction, so
 // one program can't do both (nor read+write). Each composes adapter-free
-// (`-target wasm`) and runs under `wasmtime run --dir`; the on-disk file
+// (`-target wasm32-wasi`) and runs under `wasmtime run --dir`; the on-disk file
 // content is checked.
 func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {

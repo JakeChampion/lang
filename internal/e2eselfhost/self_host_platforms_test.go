@@ -85,7 +85,7 @@ func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 	var diffs []string
 	for _, c := range cases {
 		nativeOut, _ := exec.Command(nativeBin, "-check", "-target", "wasm32-wasi", c).CombinedOutput()
-		shOut, _ := exec.Command(driverBin, "-check", "-target", "wasm", c, stdlib).CombinedOutput()
+		shOut, _ := exec.Command(driverBin, "-check", "-target", "wasm32-wasi", c, stdlib).CombinedOutput()
 		want := strings.Join(e066Sites(string(nativeOut)), " ")
 		got := strings.Join(e066Sites(string(shOut)), " ")
 		if want != got {
@@ -106,10 +106,10 @@ func TestSelfHostCapabilityCorpusAgreesWithNative(t *testing.T) {
 // `line:col` (or a bare marker when the diagnostic carries no position, which
 // is how both compilers report a violation inside an imported module).
 //
-// The MESSAGE is deliberately not compared. It names the target, and the two
-// compilers spell targets differently until #6635 lands (`wasm` vs
-// `wasm32-wasi`), so the code and the position are what parity means here —
-// the same rule firing at the same place.
+// The MESSAGE is not compared, only the code and the position — the same rule
+// firing at the same place. The two render a violation differently (native
+// carries a source excerpt and a caret), which is a diagnostic-format
+// difference rather than a capability one.
 func e066Sites(out string) []string {
 	var sites []string
 	re := regexp.MustCompile(`(?:^|[: ])(\d+):(\d+): error\[E066\]`)
@@ -152,42 +152,42 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 
 	for _, c := range []struct {
 		name string
-		// selfHostTarget / nativeTarget name the same machine; the spellings
-		// differ until #6635 renames the self-host's.
-		selfHostTarget string
-		nativeTarget   string
-		src            string
+		// One target name for both compilers: #6635 gave the self-host driver
+		// cmd/fern's `<isa>-<environment>` spellings, so the command that
+		// reaches one reaches the other unchanged.
+		target string
+		src    string
 	}{
 		// The wasi CLI world has no process model, so fork/waitpid/exec are
 		// refused there and granted on the hosted natives.
-		{"proc-fork-wasm", "wasm", "wasm32-wasi", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
-		{"proc-fork-native-ok", "x86-64", "x86-64-linux", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
+		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    var pid: i32 = proc_fork();\n    return pid;\n}\n"},
 		// The bump-arena checkpoint rewinds a heap pointer only the natives
 		// keep. Reading the cursor (`__heap_bump_bytes`) is ungated, which is
 		// what keeps this from being "anything heap-shaped is native-only".
-		{"heap-mark-wasm", "wasm", "wasm32-wasi", "function main(): i32 {\n    var m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
-		{"heap-bump-bytes-wasm-ok", "wasm", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
+		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    var m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
+		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
 		// The wasm worlds have no process model, so spawning is refused there
 		// by both. On the NATIVE targets the two tables disagree on purpose —
 		// native gates `subprocess` everywhere because no Go backend lowers
 		// it, while the self-host's emitters do — so that pairing is asserted
 		// in internal/platforms (profileExceptions) rather than here, where a
 		// row would read as an unexplained divergence.
-		{"subprocess-wasm", "wasm", "wasm32-wasi", "function main(): i32 {\n    var argv: string[] = [];\n    var r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
+		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    var argv: string[] = [];\n    var r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		// The capabilities a wasm program legitimately has: a filesystem, a
 		// clock, entropy, stdout. If the gate fired on these it would refuse
 		// most real programs.
-		{"fs-wasm-ok", "wasm", "wasm32-wasi", "function main(): i32 {\n    match (read_file(\"x\")) {\n        Ok(s) => { return s.len(); },\n        Err(e) => { return 1; },\n    }\n    return 0;\n}\n"},
-		{"print-wasm-ok", "wasm", "wasm32-wasi", "function main(): i32 {\n    print(\"hi\");\n    return 0;\n}\n"},
-		{"clock-wasm-ok", "wasm", "wasm32-wasi", "function main(): i32 {\n    return (now_unix_ms() as i32);\n}\n"},
+		{"fs-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    match (read_file(\"x\")) {\n        Ok(s) => { return s.len(); },\n        Err(e) => { return 1; },\n    }\n    return 0;\n}\n"},
+		{"print-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    print(\"hi\");\n    return 0;\n}\n"},
+		{"clock-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return (now_unix_ms() as i32);\n}\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			nativeOut, _ := exec.Command(nativeBin, "-check", "-target", c.nativeTarget, src).CombinedOutput()
-			shOut, _ := exec.Command(driverBin, "-check", "-target", c.selfHostTarget, src, stdlib).CombinedOutput()
+			nativeOut, _ := exec.Command(nativeBin, "-check", "-target", c.target, src).CombinedOutput()
+			shOut, _ := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib).CombinedOutput()
 
 			want := e066Sites(string(nativeOut))
 			got := e066Sites(string(shOut))

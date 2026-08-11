@@ -85,7 +85,7 @@ func TestSelfHostJsonX86_64(t *testing.T) {
 }
 
 // TestSelfHostJsonArm64 — CI-gated arm64 counterpart: same loader
-// driver (an x86 host binary) with `-target arm64`, output assembled
+// driver (an x86 host binary) with `-target arm64-linux`, output assembled
 // with the arm64 toolchain and run under qemu.
 func TestSelfHostJsonArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -102,7 +102,7 @@ func TestSelfHostJsonArm64(t *testing.T) {
 			if err := os.WriteFile(mainPath, []byte(jsonProgram(tc.main)), 0o644); err != nil {
 				t.Fatalf("write main.fern: %v", err)
 			}
-			asm, err := exec.Command(mmc, mainPath, stdlibRoot, "-target", "arm64").Output()
+			asm, err := exec.Command(mmc, mainPath, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("loader compile: %v (%d bytes)", err, len(asm))
 			}

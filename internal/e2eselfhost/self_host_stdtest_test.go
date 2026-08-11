@@ -118,7 +118,7 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 
 // TestSelfHostStdTestE2EArm64 is the arm64 mirror of the gate above.
 // Gates the arm64 self-host emitter (`asm_arm64.fern`): mmc is built
-// from `asm_load_run.fern -target arm64` as a native x86 host binary (the
+// from `asm_load_run.fern -target arm64-linux` as a native x86 host binary (the
 // same cross-compiler-on-host pattern the existing arm64 reader /
 // alloc-trap tests use), then for each case the host mmc emits
 // aarch64 assembly, the aarch64 cross-gcc assembles + links, and
@@ -175,7 +175,7 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 			// Self-host: native x86 mmc emits aarch64 asm; gcc-
 			// aarch64 assembles + links; qemu-aarch64 runs (or
 			// native, when qemu == "").
-			asm, err := exec.Command(mmc, tc.src, stdlibRoot, "-target", "arm64").Output()
+			asm, err := exec.Command(mmc, tc.src, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
 				t.Fatalf("self-host compile failed: %v", err)
 			}

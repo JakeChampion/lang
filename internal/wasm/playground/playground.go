@@ -49,7 +49,7 @@ func CompileComponent(src, world string) ([]byte, error) {
 }
 
 // CompileCoreWasm compiles src to a raw preview-1 core WebAssembly
-// command module — the same shape `fern -target wasm-bin` emits,
+// command module — the same shape `fern -target wasm32-wasi -emit core-module` emits,
 // with a synthesised `_start` entry that calls `main` and an
 // exported linear `memory`. Unlike CompileComponent it produces a
 // plain core module (Component Model layer 0x0000), which a browser
@@ -126,7 +126,7 @@ func frontEnd(src string) (*ast.Program, *checker.Info, error) {
 	return prog, info, nil
 }
 
-// cliRunComponent mirrors cmd/fern's `-target wasm` path: build a
+// cliRunComponent mirrors cmd/fern's `-target wasm32-wasi` path: build a
 // preview-2 core module, classify its imports, and compose the
 // wasi:cli/run component. Import families that allocate through
 // cabi_realloc (stdin / files / args / env) or write through caller

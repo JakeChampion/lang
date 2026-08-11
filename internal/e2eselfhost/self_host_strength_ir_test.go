@@ -119,7 +119,7 @@ func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 			target:  "arm64",
 			want:    "lsl x0, x0, #3",
 			unwant:  []string{"mul x0, x0, x1", "and x1, x1, #31"},
-			extra:   []string{"-target", "arm64"},
+			extra:   []string{"-target", "arm64-linux"},
 			backend: "asm_arm64_ir.fern",
 		},
 	} {

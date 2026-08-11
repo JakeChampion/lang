@@ -375,7 +375,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 			// covers the same wasm surface, and the dedicated
 			// wasm_e2e_test.go suite still exercises the WAT path
 			// on hand-picked programs for the other CLI consumers
-			// (`-target wasm` / `-target wasi-http`). Dropping
+			// (`-target wasm32-wasi` / `-target wasi-http`). Dropping
 			// WAT here unblocks the bigger seed-count bump and
 			// stops false-positive WAT codegen bugs from gating
 			// fernsmith-corpus expansion.

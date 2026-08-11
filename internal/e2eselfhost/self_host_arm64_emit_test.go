@@ -16,7 +16,7 @@ import (
 
 // Sibling to TestSelfHostAsmRunX86_64 — exercises the
 // asm_arm64.fern ARM64 codegen layer. The driver
-// (asm_ir_run.fern (-target arm64)) is compiled on the host (x86_64),
+// (asm_ir_run.fern (-target arm64-linux)) is compiled on the host (x86_64),
 // reads lang source from stdin, and prints aarch64 assembly
 // to stdout. The Go test pipes each source in, gcc-assembles
 // the output with aarch64-linux-gnu-gcc, then runs the
@@ -2087,12 +2087,12 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Run the driver (x86_64 binary) with -target arm64 to get the arm64 asm.
+			// Run the driver (x86_64 binary) with -target arm64-linux to get the arm64 asm.
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-target", "arm64")
+				cmd = exec.Command(driverBin, "-target", "arm64-linux")
 			} else {
-				cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64")...)
+				cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64-linux")...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.source))
 			emittedAsm, err := cmd.Output()
@@ -2127,9 +2127,9 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
 		var cmd *exec.Cmd
 		if len(x86runner) == 0 {
-			cmd = exec.Command(driverBin, "-target", "arm64")
+			cmd = exec.Command(driverBin, "-target", "arm64-linux")
 		} else {
-			cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64")...)
+			cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64-linux")...)
 		}
 		bad := "function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.max(); }"
 		cmd.Stdin = bytes.NewReader([]byte(bad))

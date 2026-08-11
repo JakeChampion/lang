@@ -51,7 +51,7 @@ func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 
 	drive := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64"}, args...)...).Output()
+		out, err := exec.Command(driverBin, append([]string{entry, "-target", "arm64-linux"}, args...)...).Output()
 		if err != nil {
 			t.Fatalf("driver %v: %v", args, err)
 		}

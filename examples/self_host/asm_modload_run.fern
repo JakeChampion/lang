@@ -275,7 +275,7 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        if (target == "arm64") {
+        if (target == "arm64-linux") {
             out = out + asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1);
         } else {
             out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
@@ -305,7 +305,7 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
     var shard_ns: string = parts[midx].ns;
     if (wlo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(wlo); }
     var unit: string = "";
-    if (target == "arm64") {
+    if (target == "arm64-linux") {
         unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi);
     } else {
         unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi, [], wpb);
@@ -607,7 +607,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // orchestrator drives BATCHES of units, each a fresh process that releases
         // the accumulation on exit while still sharing the base derivation across
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
-        // x86 shares the bases; -target arm64 uses the arm64 emitter unchanged.
+        // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
         var needs: string[] = asm_ir.all_runtime_need_roots();
         var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
@@ -755,12 +755,12 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     var shard_ns: string = parts[pm_index].ns;
     if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
     var unit: string = "";
-    // `-target arm64` routes the per-unit emit through the arm64 emitter
+    // `-target arm64-linux` routes the per-unit emit through the arm64 emitter
     // (#4398 part 1: the asm_arm64_modload_run fold), incl. the same
     // -func-range [lo,hi) window sharding (#3425) the x86 emit uses — the
     // fold doubled the whole-compiler per-module program (both backends in
     // one closure), pushing its biggest modules past the one-process ceiling.
-    if (target == "arm64") {
+    if (target == "arm64-linux") {
         unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
     } else {
         unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi, []);
@@ -908,7 +908,7 @@ function main(): i32 {
             // route below for why 1500 and why function count is only a
             // cheap pre-emit proxy for the real (arena) limit.
             var single_process_max: i32 = 1500;
-            if (target == "arm64") {
+            if (target == "arm64-linux") {
                 // Same single-process over-budget rescue the x86 leg below has:
                 // a merged bundle past the 512-function IR budget but small
                 // enough for one process routes per-module (each module is under
@@ -928,7 +928,7 @@ function main(): i32 {
                         var areach: string[] = [];
                         var ari: i32 = 0;
                         while (ari < ashaken.funcs.len()) { areach = areach.append(ashaken.funcs[ari].name); ari = ari + 1; }
-                        var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64");
+                        var apmc: string = emit_per_module_concat(dir, entry, loaded, areach, "arm64-linux");
                         if (apmc.len() > 0) { write(apmc); return 0; }
                     } else {
                         // ABOVE the single-process ceiling — the whole-compiler
@@ -990,7 +990,7 @@ function main(): i32 {
                     var reach: string[] = [];
                     var ri: i32 = 0;
                     while (ri < shaken.funcs.len()) { reach = reach.append(shaken.funcs[ri].name); ri = ri + 1; }
-                    var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64");
+                    var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64-linux");
                     if (pmc.len() > 0) { write(pmc); return 0; }
                 } else {
                     var src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0]);

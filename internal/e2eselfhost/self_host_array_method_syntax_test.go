@@ -60,7 +60,7 @@ func TestSelfHostArrayMethodSyntaxArm64(t *testing.T) {
 
 	for _, tc := range arrayMethodSyntaxCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, progDir := compileSourceModload(t, x86runner, driverBin, tc.src, "-target", "arm64")
+			asm, progDir := compileSourceModload(t, x86runner, driverBin, tc.src, "-target", "arm64-linux")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}

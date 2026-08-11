@@ -67,7 +67,7 @@ func TestSelfHostArm64LitPoolRange(t *testing.T) {
 	const nFuncs, nVars = 400, 120
 	src, wantExit := litPoolFixture(nFuncs, nVars)
 	asm, progDir := compileFilesModload(t, x86runner, driverBin,
-		map[string]string{"main.fern": src}, "-target", "arm64")
+		map[string]string{"main.fern": src}, "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the literal-pool fixture")
 	}

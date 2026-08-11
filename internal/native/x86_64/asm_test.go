@@ -28,7 +28,7 @@ func TestEncodeIntegerSurface(t *testing.T) {
 		{"syscall", "0f05"},
 		// The RcFreeDebug (FERN_RC_FREE_DEBUG=1) use-after-free detector traps
 		// through `ud2`. Without this encoding the in-process assembler — the
-		// DEFAULT for -target x86-64 — refused the whole build, so the detector
+		// DEFAULT for -target x86-64-linux — refused the whole build, so the detector
 		// could not be used at all on the production path (it is what pinned
 		// down #6021).
 		{"ud2", "0f0b"},
@@ -269,7 +269,7 @@ sym:
 // NO vector instructions at all — only the scalar float ops the code generator
 // uses to shuttle f64 through xmm — which is why __memchr shipped scalar: its
 // SSE2 body assembles under GNU `as` but the in-process assembler, the default
-// for -target x86-64, could not encode a single instruction of it.
+// for -target x86-64-linux, could not encode a single instruction of it.
 //
 // Every expectation below is the byte sequence GNU `as` produces for the same
 // mnemonic, captured from `objdump -d -M intel` rather than derived from the

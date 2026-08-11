@@ -16,7 +16,7 @@ import (
 // Why this is a separate gate from the wasmbin-side tests: those run
 // `wasmtime --dir=. --invoke main` against a preview-1 CORE module,
 // which never touches the component composer at all. `bin/fern
-// -target wasm` builds with Preview2WASI and composes a component, so
+// -target wasm32-wasi` builds with Preview2WASI and composes a component, so
 // it exercises four layers the preview-1 tests cannot — the p2 helper
 // bodies, ClassifyCore's method detection, the instance type the
 // composer builds for that method set, and the canonical lowerings.

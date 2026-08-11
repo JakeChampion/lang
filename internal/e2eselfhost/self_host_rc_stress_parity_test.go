@@ -86,7 +86,7 @@ func TestSelfHostRcStressParity(t *testing.T) {
 
 	for _, tc := range rcStressProgs {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "x86-64")
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "x86-64-linux")
 			if len(asm) == 0 {
 				t.Fatalf("self-host emitted 0 bytes")
 			}

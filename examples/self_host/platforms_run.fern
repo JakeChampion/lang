@@ -36,11 +36,11 @@ function main(): i32 {
     // Each target resolves to an environment, and the environment decides
     // the capability set — the ISA has nothing to say about whether there is
     // a filesystem.
-    var wasm: platforms.Descriptor = platforms.for_target("wasm");
+    var wasm: platforms.Descriptor = platforms.for_target("wasm32-wasi");
     if (!wasm.known) { return 1; }
     if (wasm.isa != "wasm32" || wasm.environment != "wasi") { return 2; }
 
-    var x86: platforms.Descriptor = platforms.for_target("x86-64");
+    var x86: platforms.Descriptor = platforms.for_target("x86-64-linux");
     if (x86.isa != "x86-64" || x86.environment != "linux") { return 3; }
 
     // An unknown target is `known: false`, which enforcement skips — the
@@ -48,29 +48,31 @@ function main(): i32 {
     if (platforms.for_target("vax-11").known) { return 4; }
     if (platforms.forbidden_gates("vax-11").len() != 0) { return 5; }
 
-    // The output-form spellings share the target's capabilities: stopping at
-    // the emitter's text does not change what the program reaches.
-    if (platforms.for_target("arm64-asm").environment != "linux") { return 6; }
-    if (platforms.for_target("wasm-bin").environment != "wasi") { return 7; }
+    // A freestanding target is known and grants nothing: it type-checks
+    // against an empty capability set and no backend emits for it.
+    if (!platforms.for_target("arm64-freestanding").known) { return 6; }
+    if (platforms.for_target("arm64-freestanding").capabilities.len() != 0) { return 7; }
+    if (platforms.emits_code("arm64-freestanding")) { return 8; }
+    if (!platforms.emits_code("arm64-linux")) { return 9; }
 
     // ---- 2. capability membership --------------------------------------
     // The wasi CLI world has a filesystem and sockets but no process model
     // and no bump-arena rewind; the hosted natives have all four.
-    if (!platforms.has_capability("wasm", "fs")) { return 10; }
-    if (!platforms.has_capability("wasm", "tcp")) { return 11; }
-    if (platforms.has_capability("wasm", "proc")) { return 12; }
-    if (platforms.has_capability("wasm", "arena")) { return 13; }
-    if (!platforms.has_capability("x86-64", "proc")) { return 14; }
+    if (!platforms.has_capability("wasm32-wasi", "fs")) { return 10; }
+    if (!platforms.has_capability("wasm32-wasi", "tcp")) { return 11; }
+    if (platforms.has_capability("wasm32-wasi", "proc")) { return 12; }
+    if (platforms.has_capability("wasm32-wasi", "arena")) { return 13; }
+    if (!platforms.has_capability("x86-64-linux", "proc")) { return 14; }
     if (!platforms.has_capability("arm64-darwin", "arena")) { return 15; }
     // `subprocess` is the one entry that differs from native's table: the
     // self-host's native emitters lower it, so the hosted profile grants it
     // and the wasi ones do not. Both halves are asserted — dropping either
     // would let the divergence widen unnoticed.
-    if (!platforms.has_capability("x86-64", "subprocess")) { return 16; }
-    if (platforms.has_capability("wasm", "subprocess")) { return 19; }
+    if (!platforms.has_capability("x86-64-linux", "subprocess")) { return 16; }
+    if (platforms.has_capability("wasm32-wasi", "subprocess")) { return 19; }
     // Unknown target, unknown capability: both false, neither an error.
     if (platforms.has_capability("vax-11", "fs")) { return 17; }
-    if (platforms.has_capability("wasm", "telepathy")) { return 18; }
+    if (platforms.has_capability("wasm32-wasi", "telepathy")) { return 18; }
 
     // ---- 3. builtin classification -------------------------------------
     if (platforms.gated_capability("read_file") != "fs") { return 20; }
@@ -104,69 +106,72 @@ function main(): i32 {
 
     // ---- 4. enforcement over a program ---------------------------------
     var forks: string = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
-    if (count(forks, "wasm") != 1) { return 30; }
-    if (count(forks, "x86-64") != 0) { return 31; }
-    // The same program under the wasm output-form spellings, which share the
-    // descriptor.
-    if (count(forks, "wasm-bin") != 1) { return 32; }
-    if (count(forks, "wasm-component") != 1) { return 33; }
+    if (count(forks, "wasm32-wasi") != 1) { return 30; }
+    if (count(forks, "x86-64-linux") != 0) { return 31; }
+    // A freestanding target has no host at all, so the same call is refused
+    // there too — and `print` is refused with it, which every hosted target
+    // grants.
+    var prints: string = "function main(): i32 { print(\"hi\"); return 0; }\n";
+    if (count(forks, "arm64-freestanding") != 1) { return 32; }
+    if (count(prints, "arm64-freestanding") != 1) { return 33; }
+    if (count(prints, "x86-64-linux") != 0) { return 39; }
     // An unknown target enforces nothing.
     if (count(forks, "vax-11") != 0) { return 34; }
 
     // `subprocess` is refused on the wasm worlds and allowed on the natives,
     // which is the emitter support (#4320) the profile records.
     var spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
-    if (count(spawns, "wasm") != 1) { return 35; }
-    if (count(spawns, "x86-64") != 0) { return 36; }
+    if (count(spawns, "wasm32-wasi") != 1) { return 35; }
+    if (count(spawns, "x86-64-linux") != 0) { return 36; }
 
     // Dedup is per (function, builtin): a builtin called twice in one body
     // reports once, and a second function calling it reports again.
     var twice: string = "function f(): i32 { var a: i32 = proc_fork(); return a + proc_fork(); }\n";
-    if (count(twice, "wasm") != 1) { return 37; }
+    if (count(twice, "wasm32-wasi") != 1) { return 37; }
     var two_fns: string = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
-    if (count(two_fns, "wasm") != 2) { return 38; }
+    if (count(two_fns, "wasm32-wasi") != 2) { return 38; }
 
     // ---- 5. what must NOT be reported ----------------------------------
     // A local whose NAME matches a gated builtin is not a call to it. `env`
     // is the live case: it is both a capability-gated builtin and the most
     // natural name for a variable holding one.
     var shadow: string = "function main(): i32 { var env: i32 = 3; return env; }\n";
-    if (count(shadow, "wasm") != 0) { return 40; }
+    if (count(shadow, "wasm32-wasi") != 0) { return 40; }
 
     // Builtins are free functions, so a method whose name matches one is not
     // a violation either.
     var method: string = "struct S { n: i32 }\nfunction (s: S) stat(): i32 { return s.n; }\nfunction main(): i32 { var s: S = S { n: 1 }; return s.stat(); }\n";
-    if (count(method, "wasm") != 0) { return 41; }
+    if (count(method, "wasm32-wasi") != 0) { return 41; }
 
     // An UNGATED builtin is never reported, on any target.
     var ungated: string = "function main(): i32 { return __heap_bump_bytes(); }\n";
-    if (count(ungated, "wasm") != 0) { return 42; }
+    if (count(ungated, "wasm32-wasi") != 0) { return 42; }
 
     // ---- 6. where the scan has to reach --------------------------------
     // A lambda body is part of what the artifact executes, so a gated call
     // inside one counts. Free-variable analysis subtracts a lambda's
     // bindings; this walk descends into it instead.
     var in_lambda: string = "function main(): i32 { var f: fn(): i32 = function(): i32 { return proc_fork(); }; return f(); }\n";
-    if (count(in_lambda, "wasm") != 1) { return 50; }
+    if (count(in_lambda, "wasm32-wasi") != 1) { return 50; }
 
     // A call nested in an argument, a condition, or a match arm is still a
     // call — the walk is not top-level-statement shaped.
     var nested: string = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
-    if (count(nested, "wasm") != 1) { return 51; }
+    if (count(nested, "wasm32-wasi") != 1) { return 51; }
 
     // ---- 7. the message ------------------------------------------------
-    var m: string = first_msg(forks, "wasm");
+    var m: string = first_msg(forks, "wasm32-wasi");
     // The text tracks native's wording (internal/platforms.Violation.Message)
     // so the two are diffable by eye; the CODE is what a differential pins.
-    if (!util.contains(m, "target \"wasm\" does not provide `proc`")) { return 60; }
+    if (!util.contains(m, "target \"wasm32-wasi\" does not provide `proc`")) { return 60; }
     if (!util.contains(m, "required by `proc_fork`")) { return 61; }
     // The hint names the targets that DO provide it, which is the actionable
     // half — an error that only says no leaves the user guessing.
     if (!util.contains(m, "targets providing it: [")) { return 62; }
-    if (!util.contains(m, "x86-64")) { return 63; }
+    if (!util.contains(m, "x86-64-linux")) { return 63; }
 
     // The wasm refusal names the natives as the way out.
-    var ms: string = first_msg(spawns, "wasm");
+    var ms: string = first_msg(spawns, "wasm32-wasi");
     if (!util.contains(ms, "does not provide `subprocess`")) { return 64; }
     if (!util.contains(ms, "arm64-darwin")) { return 65; }
 

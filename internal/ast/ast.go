@@ -2971,7 +2971,7 @@ type FuncDecl struct {
 	FipAllowance int
 	// Async marks a function the source annotated `async function …` —
 	// the WASI Preview-3 component-model-async export surface. On
-	// `-target wasm-bin` the driver lifts the async-marked function with
+	// `-target wasm32-wasi -emit core-module` the driver lifts the async-marked function with
 	// the `async` canonical option (result via `canon task.return`), so
 	// the produced component exports it as `<name>: async func() ->
 	// <result>`, runnable under

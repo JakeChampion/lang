@@ -235,7 +235,7 @@ function print_func_decl(fd: parser.FuncDecl): string {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
     // `async` selects the WASI Preview-3 `canon lift async` export surface, so
-    // dropping it changes what a `-target wasm-bin` build exports. Native
+    // dropping it changes what a `-target wasm32-wasi -emit core-module` build exports. Native
     // rejects `async` combined with `fip`, so the two never both print.
     if (fd.async) { out = out + "async "; }
     // `fip` selects the E053 no-allocation walk, so dropping it here would make
@@ -847,7 +847,7 @@ function main(): i32 {
 
     // `async` is the same class of modifier (#6631): it selects the Preview-3
     // `canon lift async` export surface, so dropping it changes what a
-    // `-target wasm-bin` build exports. The bit has to survive BOTH the parse
+    // `-target wasm32-wasi -emit core-module` build exports. The bit has to survive BOTH the parse
     // and the print — the AST-rewrite passes each rebuild a FuncDecl field by
     // field, so a copy site that hardcodes `async: false` drops it downstream
     // of a parse that reported it set, which only the round trip catches.

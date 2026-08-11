@@ -72,7 +72,7 @@ func TestSelfHostAllocTrapArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
-	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(allocTrapSrc), "-target", "arm64")
+	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(allocTrapSrc), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

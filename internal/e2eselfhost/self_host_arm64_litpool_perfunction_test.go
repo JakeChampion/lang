@@ -45,7 +45,7 @@ function masked(n: i32): i32 { return n & 0xff; }
 function main(): i32 { return twice(big() - 999999) + masked(0x7f); }
 `
 	asm, _ := compileFilesModload(t, x86runner, driverBin,
-		map[string]string{"main.fern": src}, "-target", "arm64")
+		map[string]string{"main.fern": src}, "-target", "arm64-linux")
 	if asm == "" {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes")
 	}

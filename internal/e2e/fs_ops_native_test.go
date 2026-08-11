@@ -123,7 +123,7 @@ func TestX86_64StatMissingIsErr(t *testing.T) {
 // examples/tests suite that exercises temp_dir / read_dir /
 // remove_file / remove_dir_all — must compile through the full
 // CLI pipeline (modload + the in-process assembler) with
-// -target x86-64 and pass. Before the fix this failed at link
+// -target x86-64-linux and pass. Before the fix this failed at link
 // with `undefined label "temp_dir"`. The -interp leg lives in
 // TestRunnerFilesystemOpsExample and stays authoritative for
 // the TAP text contract.

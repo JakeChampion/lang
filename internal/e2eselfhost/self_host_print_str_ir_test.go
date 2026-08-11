@@ -78,9 +78,9 @@ func TestSelfHostPrintStrIRArm64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-target", "arm64", "-ir")
+				cmd = exec.Command(driverBin, "-target", "arm64-linux", "-ir")
 			} else {
-				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64", "-ir")...)
+				cmd = exec.Command(x86runner[0], append(append(append([]string{}, x86runner[1:]...), driverBin), "-target", "arm64-linux", "-ir")...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			asm, err := cmd.Output()

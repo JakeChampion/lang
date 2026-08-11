@@ -97,7 +97,7 @@ func TestSelfHostBytesArm64(t *testing.T) {
 				"    write(" + fmt.Sprintf(tc.decodeFmt, tc.mod+"."+tc.mod+"_decode(e)") + ");\n" +
 				"    return 0;\n" +
 				"}\n"
-			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{tc.mod}, mainSrc, "-target", "arm64")
+			asm, progDir := compileStdProgModload(t, x86runner, driverBin, []string{tc.mod}, mainSrc, "-target", "arm64-linux")
 			progBin := buildBin(t, arm64gcc, progDir, tc.mod, asm)
 			out, err := runArm64Bin(qemu, progBin).Output()
 			if err != nil {

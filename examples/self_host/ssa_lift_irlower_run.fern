@@ -13,7 +13,7 @@
 // ok=false; the driver exits non-zero so the Go gate only asserts in-subset
 // programs (its differential oracle is the interpreter).
 //
-// `-target arm64` selects the backend; `-regalloc` the linear-scan allocator.
+// `-target arm64-linux` selects the backend; `-regalloc` the linear-scan allocator.
 
 import "std/io";
 import "./lexer";
@@ -26,7 +26,7 @@ import "./ssa_lift";
 
 function main(): i32 {
     var av: string[] = args();
-    var target: string = "x86-64";
+    var target: string = "x86-64-linux";
     var use_regalloc: boolean = false;
     var ai: i32 = 1;
     while (ai < av.len()) {
@@ -89,7 +89,7 @@ function main(): i32 {
         }
     }
 
-    if (target == "arm64") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
+    if (target == "arm64-linux") { write(ssa_arm64.emit_program(funcs, use_regalloc)); }
     else { write(ssa_x86.emit_program(funcs, use_regalloc)); }
     return 0;
 }

@@ -124,11 +124,11 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    Fern binary at all: the interpreter cannot practically compile the
    compiler.
 2. **Every target self-contained on the self-host side.** ~~As of this
-   writing `-target x86-64` stops at GAS text and needs an external
-   assembler + linker, where `-target arm64` links in-process.~~ **Closed:**
-   `-target x86-64` now assembles and links in-process via `x86_native.fern`
+   writing `-target x86-64-linux` stops at GAS text and needs an external
+   assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
+   `-target x86-64-linux` now assembles and links in-process via `x86_native.fern`
    + `elf.fern`, so both Linux targets produce a finished binary with
-   nothing on `$PATH`. `-target x86-64-asm` is the escape hatch that still
+   nothing on `$PATH`. `-target x86-64-linux -emit asm` is the escape hatch that still
    emits text.
 3. **A decision on the oracle.** `BOOTSTRAP-RESEARCH.md §1` recommends
    *two-implementations-forever* precisely so the fuzz-diff oracle keeps two

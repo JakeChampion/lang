@@ -153,7 +153,7 @@ func TestX86_64ArithmeticTapLinksNatively(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	fern := buildFernCLI(t)
 	out := filepath.Join(t.TempDir(), "arith_tap")
-	// Default -target x86-64 path = the in-process pure-Go
+	// Default -target x86-64-linux path = the in-process pure-Go
 	// assembler+linker, exactly the pipeline the issue reports.
 	if o, err := exec.Command(fern, "-target", "x86-64-linux", "-o", out,
 		"../../examples/tests/arithmetic_test.fern").CombinedOutput(); err != nil {

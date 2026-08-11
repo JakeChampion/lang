@@ -79,7 +79,7 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 }
 
 // TestSelfHostEnvArm64 is the ARM64 counterpart: the self-hosted ARM64
-// emitter's env(name). The asm_ir_run (-target arm64) driver (an x86 host binary)
+// emitter's env(name). The asm_ir_run (-target arm64-linux) driver (an x86 host binary)
 // compiles the same lookup program to aarch64 asm; the assembled binary
 // runs under qemu-aarch64 (which forwards the environment to the guest),
 // expecting exit 7 when the variable is set and 1 (None) when it isn't.
@@ -114,7 +114,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
         None => { return 1; }
     }
 }`
-	envAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(envSrc), "-target", "arm64")
+	envAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(envSrc), "-target", "arm64-linux")
 	if len(envAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the env program")
 	}

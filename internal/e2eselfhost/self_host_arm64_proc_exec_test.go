@@ -43,8 +43,8 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"permodule", []string{"-target", "arm64"}},
-		{"wholeprogram", []string{"-target", "arm64", "-per-module-emit", "0"}},
+		{"permodule", []string{"-target", "arm64-linux"}},
+		{"wholeprogram", []string{"-target", "arm64-linux", "-per-module-emit", "0"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			args := c.args
@@ -52,7 +52,7 @@ func TestSelfHostArm64ProcExecRuns(t *testing.T) {
 				// The per-module emit only plants the runtime helpers this
 				// unit declares a need for; the whole-program union is the
 				// driver's own -per-module-needs answer.
-				needs := runDriverFile(t, x86runner, driverBin, src, "-target", "arm64", "-per-module-needs")
+				needs := runDriverFile(t, x86runner, driverBin, src, "-target", "arm64-linux", "-per-module-needs")
 				for _, n := range strings.Split(string(needs), "\n") {
 					if n = strings.TrimSpace(n); n != "" {
 						args = append(args, "-extra-need", n)
