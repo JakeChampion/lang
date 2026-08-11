@@ -25,6 +25,9 @@ import (
 // dangling funcref fails it — and the linked compiler is then RUN (see
 // runShardedCompiler): validating proves well-formedness, not that the windows
 // compute the right thing.
+//
+// Runs in its own CI job (wasm-wholecompiler-link-x86_64), not in an LPT shard:
+// at ~13 min it was 71% of the shards' 18-minute wall on its own (#6667).
 func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-compiler sharded link is heavy; skipped in -short")
@@ -114,9 +117,9 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	// 2 workers, not 3: each per-module wasm emit's peak RSS is ~2x the asm
 	// sibling's pmEmitWorkers=3 (heavier whole-program view + wasm emit), so 3
 	// concurrent window emits peaked at ~14.5 GB — over a 16 GB CI runner's
-	// headroom — OOMing the selfhost shard that hosts the capstone (exit 143, no
-	// assertion failure) reproducibly at the irlower windows. 2 keeps the peak
-	// ~10 GB at ~1.5x wall-clock, still well under the 18m test budget.
+	// headroom — OOM-killing the job (exit 143, no assertion failure)
+	// reproducibly at the irlower windows. 2 keeps the peak ~10 GB at ~1.5x
+	// wall-clock, still well under the job's 28m test budget.
 	const workers = 2
 	// Both memory-exhaustion causes mean the same thing HERE — the window is too
 	// big, halve it and retry — so both are accepted. They are not the same event:
