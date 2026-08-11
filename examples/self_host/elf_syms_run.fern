@@ -1,0 +1,148 @@
+// examples/self_host/elf_syms_run.fern — driver for the ELF section-header
+// and .symtab writer (elf.fern, #6637).
+//
+// It builds a REAL x86-64 static binary — `exit(7)`, twelve bytes of text —
+// once without symbols and once with, and prints the symbol-bearing image
+// as hex on stdout. The Go-side gate runs `nm` on it (the symbols must
+// resolve to the right addresses) and then EXECUTES it (exit 7), because
+// the risk in adding a section-header table is not that `nm` fails but
+// that the loader stops accepting the image.
+//
+// The in-Fern assertions below cover what is cheaper to check here than to
+// re-derive in Go: asking for no symbols returns the image untouched, and
+// the header fields describing the section table are right. Exit 0 means
+// every assertion held; a non-zero code names the failing one.
+
+import "./elf";
+import "./util";
+
+// x86_exit7 is `mov eax,60 / mov edi,7 / syscall` — SYS_exit(7).
+function x86_exit7(): i32[] {
+    return [184, 60, 0, 0, 0, 191, 7, 0, 0, 0, 15, 5];
+}
+
+function hex_nibble(v: i32): string {
+    if (v == 0) { return "0"; }
+    if (v == 1) { return "1"; }
+    if (v == 2) { return "2"; }
+    if (v == 3) { return "3"; }
+    if (v == 4) { return "4"; }
+    if (v == 5) { return "5"; }
+    if (v == 6) { return "6"; }
+    if (v == 7) { return "7"; }
+    if (v == 8) { return "8"; }
+    if (v == 9) { return "9"; }
+    if (v == 10) { return "a"; }
+    if (v == 11) { return "b"; }
+    if (v == 12) { return "c"; }
+    if (v == 13) { return "d"; }
+    if (v == 14) { return "e"; }
+    return "f";
+}
+
+function to_hex(b: i32[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < b.len()) {
+        out = out + hex_nibble((b[i] >> 4) & 15) + hex_nibble(b[i] & 15);
+        i = i + 1;
+    }
+    return out;
+}
+
+// le16_at / le32_at read back a little-endian field, so the assertions
+// test the emitted BYTES rather than the values that produced them.
+function le16_at(b: i32[], off: i32): i32 {
+    return b[off] | (b[off + 1] << 8);
+}
+
+function le32_at(b: i32[], off: i32): i32 {
+    return b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24);
+}
+
+function bytes_equal(a: i32[], b: i32[]): boolean {
+    if (a.len() != b.len()) { return false; }
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function main(): i32 {
+    var text: i32[] = x86_exit7();
+    var no_names: string[] = [];
+    var no_offs: i32[] = [];
+
+    // ---- 1. no symbols requested returns the image untouched -----------
+    // The early return makes this structurally true; the assertion pins the
+    // contract so a later rewrite that rebuilds rather than returns has to
+    // prove it still matches byte for byte.
+    var plain: i32[] = elf.elf_static_executable_bss_x86_wx_at(text, [], 0, 0);
+    var plain_syms: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), no_names, no_offs);
+    if (!bytes_equal(plain, plain_syms)) { return 1; }
+
+    // A plain image really does carry no section table.
+    if (le16_at(plain, 60) != 0) { return 2; }   // e_shnum
+    if (le16_at(plain, 58) != 0) { return 3; }   // e_shentsize
+
+    // ---- 2. the symbol-bearing image ----------------------------------
+    var names: string[] = ["_start", "helper"];
+    var offs: i32[] = [0, 5];
+    var img: i32[] = elf.elf_append_symtab(plain, elf.elf_wx_text_vaddr(), elf.elf_wx_text_off(), text.len(), names, offs);
+
+    // e_shoff (8 bytes at 0x28) is non-zero, and the section-table
+    // description is the five-section layout.
+    if (le32_at(img, 40) == 0) { return 10; }        // e_shoff low word
+    if (le16_at(img, 58) != elf.elf_sh_size()) { return 11; }  // e_shentsize
+    if (le16_at(img, 60) != 5) { return 12; }        // e_shnum
+    if (le16_at(img, 62) != 4) { return 13; }        // e_shstrndx
+
+    // The two program headers and their offset are untouched: adding
+    // sections must not disturb the loadable side.
+    if (le16_at(img, 56) != 2) { return 14; }
+    if (le32_at(img, 32) != 64) { return 15; }
+
+    // The image grew — section data and headers are appended past the body.
+    if (img.len() <= plain.len()) { return 16; }
+
+    // ---- 3. the section header table ----------------------------------
+    var sh_off: i32 = le32_at(img, 40);
+    // Section 1 is .text: SHT_PROGBITS(1), SHF_ALLOC|SHF_EXECINSTR(6).
+    var s1: i32 = sh_off + elf.elf_sh_size();
+    if (le32_at(img, s1 + 4) != 1) { return 20; }    // sh_type
+    if (le32_at(img, s1 + 8) != 6) { return 21; }    // sh_flags low word
+    if (le32_at(img, s1 + 32) != text.len()) { return 22; }  // sh_size
+
+    // Section 2 is .symtab: SHT_SYMTAB(2), entsize 24, link -> section 3.
+    var s2: i32 = sh_off + 2 * elf.elf_sh_size();
+    if (le32_at(img, s2 + 4) != 2) { return 23; }
+    if (le32_at(img, s2 + 40) != 3) { return 24; }   // sh_link
+    if (le32_at(img, s2 + 44) != 1) { return 25; }   // sh_info (first non-local)
+    if (le32_at(img, s2 + 56) != elf.elf_sym_size()) { return 26; }
+    // Three entries: the reserved null symbol plus the two requested.
+    if (le32_at(img, s2 + 32) != 3 * elf.elf_sym_size()) { return 27; }
+
+    // ---- 4. the symbols themselves ------------------------------------
+    var symtab_off: i32 = le32_at(img, s2 + 24);
+    // Entry 0 is the reserved null symbol: st_name and st_value both zero.
+    if (le32_at(img, symtab_off) != 0) { return 30; }
+    if (le32_at(img, symtab_off + 8) != 0) { return 31; }
+
+    // Entry 1 is `_start` at text_vaddr + 0, STT_FUNC | STB_GLOBAL.
+    var e1: i32 = symtab_off + elf.elf_sym_size();
+    if (img[e1 + 4] != 18) { return 32; }            // st_info
+    if (le16_at(img, e1 + 6) != 1) { return 33; }    // st_shndx = .text
+    if (le32_at(img, e1 + 8) != elf.elf_wx_text_vaddr()) { return 34; }
+
+    // Entry 2 is `helper` at text_vaddr + 5.
+    var e2: i32 = symtab_off + 2 * elf.elf_sym_size();
+    if (le32_at(img, e2 + 8) != elf.elf_wx_text_vaddr() + 5) { return 35; }
+    // Its name sits later in .strtab than `_start`'s, which is the check
+    // that the two symbols are not sharing one name offset.
+    if (le32_at(img, e2) <= le32_at(img, e1)) { return 36; }
+
+    print(to_hex(img));
+    return 0;
+}
