@@ -100,10 +100,19 @@ pub function uses_own_private(): i32 { return hidden() + 1; }
 		t.Fatalf("write: %v", err)
 	}
 	out := filepath.Join(dir, "private_build.bin")
-	cmd := exec.Command(fernBin, "-target", "x86-64", "-o", out, path)
+	cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-o", out, path)
+	var buildErr strings.Builder
+	cmd.Stderr = &buildErr
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("compile of a private cross-module reference exited 0, want non-zero (native refuses to build it)")
+	}
+	// The exit code alone would pass on ANY refusal — an unknown target name
+	// among them, which is how a stale `-target x86-64` would keep this case
+	// green while proving nothing (#6635 renamed the targets under it). Assert
+	// the reason, not just the failure.
+	if !strings.Contains(buildErr.String(), "is not exported") {
+		t.Errorf("compile failed for the wrong reason — want the visibility diagnostic, got: %s", buildErr.String())
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Errorf("compile emitted %s for a program native refuses to build", out)
