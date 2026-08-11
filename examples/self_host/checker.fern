@@ -1477,9 +1477,19 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     // variant name (`enum E { Ok(i32), … }`) types `Ok(1)` as `E`, not
     // `Result`. Arity / payload-type errors belong to variant_ctor_diags;
     // here we only supply the value type.
-    var ctor_user: string = union_of_variant(name, s.unions);
+    //
+    // A BINDING of the variant's name shadows the constructor, so the call is a
+    // call of that value — `var Wrap = 3; Wrap(1)` is native E038 (calling a
+    // non-function), not a `W`. Without this the call typed to the enum and the
+    // error surfaced somewhere else entirely, as an E002 return mismatch (a
+    // TypeFunc binding is already dispatched as a closure call above; this is
+    // every other bound type). #6658.
+    var ctor_shadowed: boolean = !is_unknown(s.lookup(name));
+    var ctor_user: string = "";
+    if (!ctor_shadowed) { ctor_user = union_of_variant(name, s.unions); }
     if (ctor_user.len() > 0) { return t_union(ctor_user); }
-    var ctor_enum: string = mx_builtin_enum_of(name);
+    var ctor_enum: string = "";
+    if (!ctor_shadowed) { ctor_enum = mx_builtin_enum_of(name); }
     if (ctor_enum.len() > 0) { return t_union(ctor_enum); }
     var sig: FuncSig = s.lookup_sig(name);
     if (sig.name.len() == 0) {
@@ -5449,7 +5459,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // the Go checker ("variant X expects a payload; call it as X(...)").
             // Checked before E001 — these names DO resolve (as variants), so
             // is_resolvable_value would otherwise let them pass silently.
-            if (variant_in_unions(id.name, s.unions) && s.lookup_struct(id.name).field_names.len() > 0) {
+            //
+            // A BINDING of the same name shadows the variant, and then the read
+            // is of the local — `var Wrap = 3; return Wrap;` is native-clean.
+            // check_expr's ExprIdent arm gets that right by returning the
+            // binding before it ever consults the variant tables; this arm does
+            // no lookup at all, so it needs the shadowing test spelled out. The
+            // sibling rules already gate on exactly this (the qualified-ref
+            // detection and vref_expr's ambiguity rule). #6658.
+            if (is_unknown(s.lookup(id.name))
+                && variant_in_unions(id.name, s.unions) && s.lookup_struct(id.name).field_names.len() > 0) {
                 out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
             } else if (!is_resolvable_value(id.name, s)) {
                 // E001: a bare identifier in VALUE position that resolves to

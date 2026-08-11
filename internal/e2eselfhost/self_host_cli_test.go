@@ -1389,6 +1389,48 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("fmt-enum", func(t *testing.T) {
+		// An enum is desugared to one struct per variant before the printer
+		// sees it, so a printer with no enum arm emits those structs and the
+		// TYPE disappears — output that no longer compiles, since the
+		// annotations naming it survive. -fmt rewrites source, so that is data
+		// loss rather than a style difference (#6670).
+		srcPath := filepath.Join(dir, "enum_fmt.fern")
+		src := "@must_consume\nenum Shape[T] { Circle(i32), Blank }\n" +
+			"function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Blank => { return 0; } } return 0; }\n" +
+			"function main(): i32 { return area(Circle(3)); }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out1, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Fatalf("-fmt exited %d, want 0", code)
+		}
+		got := string(out1)
+		// The payload types, the generic parameter and the attribute all have
+		// to come back, and no variant may surface as a free-standing struct.
+		if !strings.Contains(got, "@must_consume\nenum Shape[T] { Circle(i32), Blank }") {
+			t.Errorf("-fmt did not reconstruct the enum:\n%s", got)
+		}
+		if strings.Contains(got, "struct Circle") || strings.Contains(got, "struct Blank") {
+			t.Errorf("-fmt emitted a variant as a bare struct:\n%s", got)
+		}
+		fmtPath := filepath.Join(dir, "enum_fmt_out.fern")
+		if err := os.WriteFile(fmtPath, out1, 0o644); err != nil {
+			t.Fatalf("write formatted: %v", err)
+		}
+		out2, code2 := runDriver(t, "-fmt", fmtPath)
+		if code2 != 0 {
+			t.Fatalf("second -fmt exited %d, want 0", code2)
+		}
+		if string(out1) != string(out2) {
+			t.Errorf("-fmt is not idempotent on an enum:\n--- first ---\n%s\n--- second ---\n%s", out1, out2)
+		}
+		if _, checkCode := runDriver(t, "-check", fmtPath); checkCode != 0 {
+			t.Errorf("formatted output failed -check (exit %d)", checkCode)
+		}
+	})
+
 	t.Run("emit-target-arm64", func(t *testing.T) {
 		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
 		// directly under -target arm64 (in-process via arm64_native + elf.fern,

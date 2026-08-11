@@ -665,6 +665,21 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"qualified-variant-enum-bad", "enum Color { Red, Green }\nfunction main(): i32 { return Color.Blue; }\n", []string{"E036"}},
 		{"qualified-variant-union-bad", "struct A { x: i32 }\nstruct B { y: i32 }\ntype U = A | B;\nfunction main(): i32 { var u: U = U.Nope; return 0; }\n", []string{"E036"}},
 		{"qualified-variant-builtin-bad", "function main(): i32 { var o: Option[i32] = Option.Foo; return 0; }\n", []string{"E036"}},
+		// A local BINDING of a payload variant's name SHADOWS the variant, so
+		// the read is of the local (#6658). The self-host asked only whether the
+		// NAME was a payload-bearing variant, never whether it was bound, and
+		// over-rejected the read with E036; the call typed to the enum, which
+		// surfaced as an E002 return mismatch somewhere else entirely rather
+		// than as native's E038.
+		//
+		// The last two rows are what stops the fix from simply disabling the
+		// rule: unshadowed, the bare read is still E036 and the constructor call
+		// still types as its enum.
+		{"variant-shadowed-by-local-read-ok", "enum W { Wrap(i32), Empty }\nfunction main(): i32 { var Wrap = 3; return Wrap; }\n", nil},
+		{"variant-shadowed-by-local-call", "enum W { Wrap(i32), Empty }\nfunction main(): i32 { var Wrap = 3; return Wrap(1); }\n", []string{"E038"}},
+		{"variant-shadowed-builtin-read-ok", "function main(): i32 { var Some = 4; return Some; }\n", nil},
+		{"variant-unshadowed-bare-read", "enum W { Wrap(i32), Empty }\nfunction main(): i32 { var x: W = Wrap; return 0; }\n", []string{"E036"}},
+		{"variant-unshadowed-ctor-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"match-wildcard-not-last", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { _ => { return 0; }, Has(n) => { return n; } } }\n", []string{"E026"}},
 		{"match-variant-twice", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Has(m) => { return m; }, Nil => { return 0; } } }\n", []string{"E028"}},
 		{"match-clean-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
