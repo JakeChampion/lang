@@ -227,6 +227,43 @@ pub function base_type_name(t: string): string {
     return t;
 }
 
+// mangled_module returns the bundle prefix of a mangled name
+// (`io__read_all` -> `io`), or "" for an unmangled entry-module name. A
+// leading `__` (a lifted lambda, `__lam_0`) is not a module prefix.
+pub function mangled_module(name: string): string {
+    var i: i32 = 1;
+    while (i + 1 < name.len()) {
+        if (name[i] == 95 && name[i + 1] == 95) { return name[0:i] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// mangled_name returns a mangled name's own half (`io__read_all` ->
+// `read_all`), or the name unchanged when it carries no module prefix.
+pub function mangled_name(name: string): string {
+    var i: i32 = 1;
+    while (i + 1 < name.len()) {
+        if (name[i] == 95 && name[i + 1] == 95) { return name[i + 2 : name.len()] + ""; }
+        i = i + 1;
+    }
+    return name;
+}
+
+// str_less is byte-wise `<` on strings, for the deterministic orders the
+// capability report and its diagnostics are compared on. A prefix sorts
+// before what extends it.
+pub function str_less(a: string, b: string): boolean {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i: i32 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return a[i] < b[i]; }
+        i = i + 1;
+    }
+    return a.len() < b.len();
+}
+
 // index_of_str returns the index of `s` in `xs`, or -1 if absent.
 // Canonical -1-on-miss (ssa_wasm previously returned 0, which silently
 // resolved a missing funcaddr to table slot 0 — SH-007).

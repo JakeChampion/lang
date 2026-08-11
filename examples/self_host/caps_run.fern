@@ -1,0 +1,213 @@
+// examples/self_host/caps_run.fern — driver for the package-capability
+// boundary (caps.fern, #6634).
+//
+// Two halves. The TABLE half is the completeness contract: every builtin the
+// front end knows is classified, and nothing is classified twice or under a
+// capability outside the vocabulary — the check that stops an I/O-shaped
+// addition from silently reaching past a grant because nobody tagged it.
+//
+// The ANALYSIS half asserts each rule in both directions: a package that must
+// be reported and one that must not, a grant that must hold and one that must
+// not. The permissive side carries the weight, as with the target boundary —
+// a capability system that refuses valid programs is worse than one that
+// misses, because the user cannot work around it.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies the one
+// that failed, so a regression names its own case without a stdout diff.
+
+import "./lexer";
+import "./parser";
+import "./caps";
+import "./util";
+
+function parse(src: string): parser.Module {
+    return parser.parse_module(lexer.tokenize(src));
+}
+
+// app_pkgs is the two-package layout the analysis cases run in: an entry
+// module belonging to root package "app", and bundle module `helper` belonging
+// to dependency package "helper" with the given grant.
+function app_pkgs(governed: boolean, grants: string[]): caps.Pkg[] {
+    var none: string[] = [];
+    return [
+        caps.Pkg { module: "", name: "app", root: true, governed: false, grants: none },
+        caps.Pkg { module: "helper", name: "helper", root: false, governed: governed, grants: grants }
+    ];
+}
+
+// row_caps renders one package's capabilities as `fs,net`, or "" when the
+// package has no row at all — which is a different answer from `-`.
+function row_caps(rows: caps.Row[], pkg: string): string {
+    var i: i32 = 0;
+    while (i < rows.len()) {
+        if (rows[i].pkg == pkg) {
+            var out: string = "";
+            var u: i32 = 0;
+            while (u < rows[i].uses.len()) {
+                if (u > 0) { out = out + ","; }
+                out = out + rows[i].uses[u].capability;
+                u = u + 1;
+            }
+            if (out.len() == 0) { return "-"; }
+            return out;
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+function main(): i32 {
+    // ---- 1. the vocabulary + classification ----------------------------
+    // Every tagged builtin's capability is in the v1 vocabulary. A typo here
+    // would make the capability unreportable (analyze emits in vocabulary
+    // order) AND ungrantable, so the package could never be fixed by editing
+    // its manifest.
+    var bs: caps.BuiltinCap[] = caps.builtin_caps();
+    var vocab: string[] = caps.capabilities();
+    var i: i32 = 0;
+    while (i < bs.len()) {
+        if (!util.has_str(vocab, bs[i].capability)) { return 1; }
+        i = i + 1;
+    }
+    // The vocabulary is sorted, which analyze relies on for its row order.
+    var v: i32 = 1;
+    while (v < vocab.len()) {
+        if (!util.str_less(vocab[v - 1], vocab[v])) { return 2; }
+        v = v + 1;
+    }
+    // Nothing is both tagged and ungated: the two lists are a partition, and
+    // an overlap would mean the answer depended on which was consulted first.
+    var ung: string[] = caps.ungated();
+    var u2: i32 = 0;
+    while (u2 < ung.len()) {
+        if (caps.capability_of(ung[u2]).len() > 0) { return 3; }
+        u2 = u2 + 1;
+    }
+    var fu: i32 = 0;
+    var fung: string[] = caps.frontend_ungated();
+    while (fu < fung.len()) {
+        if (caps.capability_of(fung[fu]).len() > 0) { return 4; }
+        if (util.has_str(ung, fung[fu])) { return 5; }
+        fu = fu + 1;
+    }
+    // No builtin is tagged twice.
+    var d1: i32 = 0;
+    while (d1 < bs.len()) {
+        var d2: i32 = d1 + 1;
+        while (d2 < bs.len()) {
+            if (bs[d1].builtin == bs[d2].builtin) { return 6; }
+            d2 = d2 + 1;
+        }
+        d1 = d1 + 1;
+    }
+
+    // ---- 2. completeness ------------------------------------------------
+    // Every user-callable builtin the front end registers is classified. This
+    // is the gate CLAUDE.md asks for: a new builtin has to be classified in
+    // BOTH capability systems, and the way that goes wrong is one being
+    // updated and not the other.
+    var reg: string[] = parser.builtin_function_names();
+    var r: i32 = 0;
+    while (r < reg.len()) {
+        if (!caps.classified(reg[r])) {
+            eprint("caps: unclassified builtin: " + reg[r] + "\n");
+            return 7;
+        }
+        r = r + 1;
+    }
+    // …and the classification claims nothing the front end does not have: a
+    // stale frontend_ungated() entry is a name nobody can call.
+    var fe: i32 = 0;
+    while (fe < fung.len()) {
+        if (!util.has_str(reg, fung[fe])) { return 8; }
+        fe = fe + 1;
+    }
+
+    // ---- 3. reachability ------------------------------------------------
+    // A dependency's usage is its own row AND the caller's: `app` reaches
+    // `fs` because helper does, which is the whole point of a transitive
+    // grant. The chain is an example, from a root of the package down to the
+    // builtin.
+    var two: parser.Module = parse("function main(): i32 { helper__save(\"x\"); return 0; }\n"
+        + "function helper__save(s: string): void { write_file(\"/tmp/x\", s); }\n");
+    var granted: caps.Row[] = caps.analyze(two, app_pkgs(true, ["fs"]));
+    if (granted.len() != 2) { return 10; }
+    if (row_caps(granted, "app") != "fs") { return 11; }
+    if (row_caps(granted, "helper") != "fs") { return 12; }
+    if (caps.format_rows(granted) != "app  fs  (example: main → helper__save → write_file)\n"
+        + "helper  fs  (example: helper__save → write_file)\n") { return 13; }
+
+    // Declared reachability, not live paths: a function nothing calls still
+    // counts for the package that declares it. The report says what the
+    // package's code COULD do.
+    var dead: parser.Module = parse("function main(): i32 { return 0; }\n"
+        + "function helper__unused(): void { tcp_connect(0, 80); }\n");
+    if (row_caps(caps.analyze(dead, app_pkgs(true, ["net"])), "helper") != "net") { return 14; }
+    // …and the root package does not inherit it: nothing in `app` calls it.
+    if (row_caps(caps.analyze(dead, app_pkgs(true, ["net"])), "app") != "-") { return 15; }
+
+    // A module with no package entry folds through: stdlib usage lands on the
+    // row of whichever package calls into it, and the stdlib gets no row.
+    var thru: parser.Module = parse("function main(): i32 { helper__get(); return 0; }\n"
+        + "function helper__get(): void { fetch__send(); }\n"
+        + "function fetch__send(): void { tcp_connect(0, 80); }\n");
+    var trows: caps.Row[] = caps.analyze(thru, app_pkgs(true, ["net"]));
+    if (trows.len() != 2) { return 16; }
+    if (row_caps(trows, "helper") != "net") { return 17; }
+    if (row_caps(trows, "fetch") != "") { return 18; }
+
+    // A method call is an edge too. The self-host resolves method dispatch
+    // during emit rather than rewriting the call in the AST, so the walk has
+    // to follow the receiver itself — without this the capability is invisible
+    // behind any package that exposes its API as methods.
+    var meth: parser.Module = parse("struct Client { id: i32 }\n"
+        + "function main(): i32 { var c: Client = Client { id: 1 }; helper__use(c); return 0; }\n"
+        + "function helper__use(c: Client): void { c.save(); }\n"
+        + "function (c: Client) save(): void { write_file(\"/tmp/x\", \"y\"); }\n");
+    if (row_caps(caps.analyze(meth, app_pkgs(true, ["fs"])), "helper") != "fs") { return 19; }
+    // A METHOD named like a gated builtin is not that builtin: builtins are
+    // free functions, so `sb.stat()` reaches nothing.
+    var shadow: parser.Module = parse("struct Sb { n: i32 }\n"
+        + "function main(): i32 { return 0; }\n"
+        + "function helper__probe(s: Sb): void { s.stat(); }\n"
+        + "function (s: Sb) stat(): void { }\n");
+    if (row_caps(caps.analyze(shadow, app_pkgs(true, ["fs"])), "helper") != "-") { return 20; }
+
+    // ---- 4. enforcement --------------------------------------------------
+    // Granted exactly what it uses: clean, no error and no warning.
+    if (caps.enforce(granted, app_pkgs(true, ["fs"])).len() != 0) { return 30; }
+
+    // Reaching outside the grant is an error, with the chain in the message.
+    var over: caps.Row[] = caps.analyze(two, app_pkgs(true, ["net"]));
+    var errs: caps.Violation[] = caps.enforce(over, app_pkgs(true, ["net"]));
+    if (errs.len() != 1) { return 31; }
+    if (!errs[0].governed) { return 32; }
+    if (errs[0].pkg != "helper" || errs[0].capability != "fs") { return 33; }
+    if (caps.violation_message(errs[0]) != "package \"helper\" reaches 'fs' (write_file) without a capability grant: helper__save → write_file; add \"fs\" to its capabilities in fern.toml or remove the call") { return 34; }
+
+    // No `capabilities` key at all is warn-and-allow — the migration default
+    // for manifests that predate the key.
+    var warns: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(false, [])), app_pkgs(false, []));
+    if (warns.len() != 1) { return 35; }
+    if (warns[0].governed) { return 36; }
+    if (caps.violation_message(warns[0]) != "package \"helper\" reaches 'fs' (write_file) but no capabilities key governs it: helper__save → write_file; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)") { return 37; }
+
+    // An EMPTY grant is not the same as no key: `capabilities = []` denies
+    // everything, and denial is an error rather than a warning.
+    var denied: caps.Violation[] = caps.enforce(caps.analyze(two, app_pkgs(true, [])), app_pkgs(true, []));
+    if (denied.len() != 1 || !denied[0].governed) { return 38; }
+
+    // The ROOT package is never enforced or warned, however much it reaches:
+    // grants restrict dependencies, and the program's author is trusting
+    // themselves.
+    var rootonly: parser.Module = parse("function main(): i32 { write_file(\"/tmp/x\", \"y\"); tcp_connect(0, 80); return 0; }\n");
+    var rp: caps.Pkg[] = app_pkgs(true, []);
+    if (caps.enforce(caps.analyze(rootonly, rp), rp).len() != 0) { return 39; }
+    // …and with no dependency in the bundle there is nothing to walk at all,
+    // which is what keeps the single-package compile free of this pass.
+    if (caps.enforceable(rootonly, rp)) { return 40; }
+    if (!caps.enforceable(two, rp)) { return 41; }
+
+    print("caps: every package-capability rule agrees\n");
+    return 0;
+}

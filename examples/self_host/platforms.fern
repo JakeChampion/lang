@@ -319,29 +319,6 @@ pub struct Violation {
     fn_module: string,
 }
 
-// split_mangled_module returns the bundle prefix of a mangled name
-// (`io__read_all` -> `io`), or "" for an unmangled entry-module name. A
-// leading `__` (a lifted lambda, `__lam_0`) is not a module prefix.
-function split_mangled_module(name: string): string {
-    var i: i32 = 1;
-    while (i + 1 < name.len()) {
-        if (name[i] == 95 && name[i + 1] == 95) { return name[0:i] + ""; }
-        i = i + 1;
-    }
-    return "";
-}
-
-// split_mangled_name returns a mangled name's own half (`io__read_all` ->
-// `read_all`), or the name unchanged when it carries no module prefix.
-function split_mangled_name(name: string): string {
-    var i: i32 = 1;
-    while (i + 1 < name.len()) {
-        if (name[i] == 95 && name[i + 1] == 95) { return name[i + 2 : name.len()] + ""; }
-        i = i + 1;
-    }
-    return name;
-}
-
 // enforce scans an ALREADY TREE-SHAKEN module for calls to gated builtins the
 // target does not grant. Every surviving function is part of the artifact, so
 // a flat scan of every body is exactly "what this program can reach" — the
@@ -371,7 +348,10 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
         while (ci < calls.len()) {
             var gi: i32 = 0;
             while (gi < forbidden.len()) {
-                if (calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
+                // `!method`: a gated builtin is a free function, so a
+                // same-named METHOD on a user type (`sb.write(x)`) is a
+                // different callee and not a violation.
+                if (!calls[ci].method && calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
                     seen = seen.append(calls[ci].name);
                     out = out.append(Violation {
                         builtin: forbidden[gi].builtin,
@@ -379,8 +359,8 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
                         target: target,
                         line: calls[ci].line,
                         col: calls[ci].col,
-                        fn_name: split_mangled_name(fd.name),
-                        fn_module: split_mangled_module(fd.name),
+                        fn_name: util.mangled_name(fd.name),
+                        fn_module: util.mangled_module(fd.name),
                     });
                 }
                 gi = gi + 1;
