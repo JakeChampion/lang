@@ -6408,8 +6408,72 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return false;
 }
 
-function collect_decl_diags(mod: parser.Module): Diag[] {
+// const_expr_ok reports whether `e` is inside native's constant grammar
+// (internal/constfold evalConst): a literal, a reference to an EARLIER const,
+// or a unary / binary operation over those. Everything else — a struct or
+// array literal, a call, a field access, an index — is not a constant.
+// `earlier` is the names of the consts declared before this one, so a forward
+// reference is rejected the way native's sequential fold rejects it.
+// Returns "" when `e` is constant, else the message tail native reports.
+// A non-earlier IDENT gets its own wording there, so it is reproduced rather
+// than folded into the generic one.
+function const_expr_err(e: parser.Expr, earlier: string[]): string {
+    match (e) {
+        parser.ExprNumber(_) => { return ""; },
+        parser.ExprString(_) => { return ""; },
+        parser.ExprBool(_) => { return ""; },
+        parser.ExprIdent(id) => {
+            if (util.has_str(earlier, id.name)) { return ""; }
+            return "\"" + id.name + "\" is not a constant (must reference an earlier `const` declaration)";
+        },
+        parser.ExprUnary(u) => { return const_expr_err(u.operand, earlier); },
+        parser.ExprBinary(b) => {
+            var le: string = const_expr_err(b.left, earlier);
+            if (le.len() > 0) { return le; }
+            return const_expr_err(b.right, earlier);
+        },
+        _ => { }
+    }
+    return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
+}
+
+// const_grammar_diags: native rejects a const whose initialiser is outside its
+// deliberately narrow constant grammar, at the const's own position. The
+// self-host had no such rule, so it admitted a strictly LARGER const language —
+// `const C: Cfg = Cfg { n: 41 };` built here and not under native, which is the
+// divergence that blocks the self-host becoming the only compiler (#6618).
+//
+// The diagnostic is UNCODED, matching native: an empty `code` renders as
+// `<line>:<col>: <message>` with no `error[…]` segment.
+function const_grammar_diags(mod: parser.Module): Diag[] {
     var out: Diag[] = [];
+    var earlier: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        if (fd.is_const) {
+            var bi: i32 = 0;
+            while (bi < fd.body.len()) {
+                match (fd.body[bi]) {
+                    parser.StmtReturn(r) => {
+                        var msg: string = const_expr_err(r.value, earlier);
+                        if (msg.len() > 0) {
+                            out = out.append(dg_at("", "const " + fd.name + ": " + msg, fd.line, fd.col));
+                        }
+                    },
+                    _ => { }
+                }
+                bi = bi + 1;
+            }
+            earlier = earlier.append(fd.name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+function collect_decl_diags(mod: parser.Module): Diag[] {
+    var out: Diag[] = append_diags([], const_grammar_diags(mod));
     // E007: duplicate field within a struct (enum-variant structs carry at
     // most one `__ev` field, so they never trip this).
     var si: i32 = 0;

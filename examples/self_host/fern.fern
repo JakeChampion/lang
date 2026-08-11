@@ -624,10 +624,15 @@ function run(): i32 {
         var di: i32 = 0;
         while (di < mt.diags.len()) {
             var d: checker.Diag = mt.diags[di];
+            // An empty code renders with no `error[…]` segment — some native
+            // diagnostics are uncoded (the const-grammar rule is one), and
+            // parity is on the text native actually prints.
+            var tag: string = "";
+            if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
             if (d.line > 0) {
-                eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+                eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": " + tag + d.message + "\n");
             } else {
-                eprint("error[" + d.code + "]: " + d.message + "\n");
+                eprint(tag + d.message + "\n");
             }
             di = di + 1;
         }
