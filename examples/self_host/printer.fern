@@ -263,26 +263,17 @@ function print_struct_decl(sd: parser.StructDecl): string {
     // Attributes, on their own lines above the decl. Both change what the
     // program MEANS: `@derive` names methods the next parse synthesises, and
     // `@must_consume` arms the E067 obligation walk.
-    //
-    // An enum VARIANT record carries its enum's derives (stamped per variant by
-    // the parser) and prints here only because the printer has no enum
-    // reconstruction at all — it renders each variant as a bare `struct`. Until
-    // that is fixed, emitting the attribute per variant would multiply one
-    // source `@derive` into N. Attributes are therefore printed for a real
-    // struct only.
-    if (sd.enum_owner.len() == 0) {
-        if (sd.derives.len() > 0) {
-            out = out + "@derive(";
-            var di: i32 = 0;
-            while (di < sd.derives.len()) {
-                if (di > 0) { out = out + ", "; }
-                out = out + sd.derives[di];
-                di = di + 1;
-            }
-            out = out + ")\n";
+    if (sd.derives.len() > 0) {
+        out = out + "@derive(";
+        var di: i32 = 0;
+        while (di < sd.derives.len()) {
+            if (di > 0) { out = out + ", "; }
+            out = out + sd.derives[di];
+            di = di + 1;
         }
-        if (sd.must_consume) { out = out + "@must_consume\n"; }
+        out = out + ")\n";
     }
+    if (sd.must_consume) { out = out + "@must_consume\n"; }
     out = out + "struct " + sd.name + " {";
     var i: i32 = 0;
     while (i < sd.fields.len()) {
@@ -291,6 +282,81 @@ function print_struct_decl(sd: parser.StructDecl): string {
         i = i + 1;
     }
     if (sd.fields.len() > 0) { out = out + " "; }
+    return out + "}\n";
+}
+
+// enum_index returns the position of the enum named `name` in `enums`, or -1.
+function enum_index(enums: parser.EnumDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if (enums[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// variant_decl_index returns the position of an enum variant's desugared struct
+// record in `structs`, or -1. Both names are matched: a variant record is keyed
+// by (enum_owner, name), and a plain struct may share a variant's name.
+function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].enum_owner == owner && structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// print_enum_decl reconstructs `enum Name[T] { V, W(A, B) }` from the EnumDecl
+// and the variant structs the parser desugared it into. The payload types are
+// the variant record's `__ev`, `__ev1`, … fields in declaration order, and the
+// enum's `@derive` is read back from a variant record because that is where the
+// parser stamps it — EnumDecl carries only `@must_consume`.
+function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): string {
+    var out: string = "";
+    var d0: i32 = 0 - 1;
+    if (ed.variant_names.len() > 0) { d0 = variant_decl_index(structs, ed.name, ed.variant_names[0]); }
+    if (d0 >= 0 && structs[d0].derives.len() > 0) {
+        out = out + "@derive(";
+        var di: i32 = 0;
+        while (di < structs[d0].derives.len()) {
+            if (di > 0) { out = out + ", "; }
+            out = out + structs[d0].derives[di];
+            di = di + 1;
+        }
+        out = out + ")\n";
+    }
+    if (ed.must_consume) { out = out + "@must_consume\n"; }
+    out = out + "enum " + ed.name;
+    if (ed.type_params.len() > 0) {
+        out = out + "[";
+        var ti: i32 = 0;
+        while (ti < ed.type_params.len()) {
+            if (ti > 0) { out = out + ", "; }
+            out = out + ed.type_params[ti];
+            ti = ti + 1;
+        }
+        out = out + "]";
+    }
+    out = out + " {";
+    var vi: i32 = 0;
+    while (vi < ed.variant_names.len()) {
+        if (vi > 0) { out = out + ","; }
+        out = out + " " + ed.variant_names[vi];
+        var si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
+        if (si >= 0 && structs[si].fields.len() > 0) {
+            out = out + "(";
+            var fi: i32 = 0;
+            while (fi < structs[si].fields.len()) {
+                if (fi > 0) { out = out + ", "; }
+                out = out + structs[si].fields[fi].type_name;
+                fi = fi + 1;
+            }
+            out = out + ")";
+        }
+        vi = vi + 1;
+    }
+    if (ed.variant_names.len() > 0) { out = out + " "; }
     return out + "}\n";
 }
 
@@ -320,10 +386,34 @@ pub function print_module(mod: parser.Module): string {
     }
     // Struct decls — the parser uses them to resolve struct-
     // typed param / field names referenced later.
+    //
+    // An enum is desugared into one variant struct per variant, so it is
+    // reconstructed at the position its FIRST variant occupies and its remaining
+    // variants are skipped. Rendering the variants as bare structs instead drops
+    // the enum type from the output entirely, leaving annotations that name it
+    // dangling.
+    //
+    // A variant whose owner is not declared in this module keeps the struct
+    // rendering: `module_with_builtins` synthesises Option / Result variant
+    // records with an `enum_owner` and no matching EnumDecl.
     var i: i32 = 0;
     while (i < mod.structs.len()) {
-        out = out + print_struct_decl(mod.structs[i]);
+        var owner: string = mod.structs[i].enum_owner;
+        var ei: i32 = 0 - 1;
+        if (owner.len() > 0) { ei = enum_index(mod.enums, owner); }
+        if (ei < 0) {
+            out = out + print_struct_decl(mod.structs[i]);
+        } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
+            out = out + print_enum_decl(mod.enums[ei], mod.structs);
+        }
         i = i + 1;
+    }
+    // A variant-less `enum E {}` has no struct record to be positioned by, so
+    // nothing above emits it.
+    var vi: i32 = 0;
+    while (vi < mod.enums.len()) {
+        if (mod.enums[vi].variant_names.len() == 0) { out = out + print_enum_decl(mod.enums[vi], mod.structs); }
+        vi = vi + 1;
     }
     var ai: i32 = 0;
     while (ai < mod.aliases.len()) {
@@ -705,6 +795,61 @@ function main(): i32 {
     if (rtDrv.structs[0].derives.len() != 1) { return 197; }
     if (rtDrv.structs[0].derives[0] != "Eq") { return 198; }
     if (rtDrv.funcs.len() != modDrv.funcs.len()) { return 199; }
+
+    // An enum must survive as an ENUM. The parser desugars it into one struct
+    // per variant, so a printer with no enum arm renders those structs and the
+    // type itself disappears — output that no longer compiles, because the
+    // annotations naming it are still there. Every assertion below reads back
+    // through `enum_owner` rather than the variant names, since the variants
+    // come back under their own names either way.
+    var srcEnum: string = "@derive(Eq)\nenum Color { Red, Green(i32) } function main(): i32 { var c: Color = Red; return 0; }";
+    var modEnum: parser.Module = parser.parse_module(lexer.tokenize(srcEnum));
+    var rtEnum: parser.Module = roundtrip_module(srcEnum);
+    if (rtEnum.enums.len() != 1) { return 200; }
+    if (rtEnum.enums[0].name != "Color") { return 201; }
+    if (rtEnum.enums[0].variant_names.len() != 2) { return 202; }
+    if (rtEnum.enums[0].variant_names[0] != "Red") { return 203; }
+    if (rtEnum.enums[0].variant_names[1] != "Green") { return 204; }
+    var rgi: i32 = variant_decl_index(rtEnum.structs, "Color", "Green");
+    if (rgi < 0) { return 205; }
+    if (rtEnum.structs[rgi].fields.len() != 1) { return 206; }
+    if (rtEnum.structs[rgi].fields[0].type_name != "i32") { return 207; }
+    // …and the payload-less variant must not acquire one.
+    var rri: i32 = variant_decl_index(rtEnum.structs, "Color", "Red");
+    if (rri < 0) { return 208; }
+    if (rtEnum.structs[rri].fields.len() != 0) { return 209; }
+    // No variant may come back as a free-standing struct.
+    var esi: i32 = 0;
+    while (esi < rtEnum.structs.len()) {
+        if (rtEnum.structs[esi].enum_owner.len() == 0) { return 210; }
+        esi = esi + 1;
+    }
+    // `@derive` once on the enum, not once per variant: the re-parse
+    // synthesises the same method set the first parse did.
+    if (rtEnum.structs[rgi].derives.len() != 1) { return 211; }
+    if (rtEnum.structs[rgi].derives[0] != "Eq") { return 212; }
+    if (rtEnum.funcs.len() != modEnum.funcs.len()) { return 213; }
+
+    // Generic parameters and `@must_consume` live on the EnumDecl, not on the
+    // variant records, so they travel a different route out of the printer.
+    var srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
+    var rtEG: parser.Module = roundtrip_module(srcEG);
+    if (rtEG.enums.len() != 1) { return 214; }
+    if (!rtEG.enums[0].must_consume) { return 215; }
+    if (rtEG.enums[0].type_params.len() != 1) { return 216; }
+    if (rtEG.enums[0].type_params[0] != "T") { return 217; }
+    var fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
+    if (fgi < 0) { return 218; }
+    if (rtEG.structs[fgi].fields[0].type_name != "T") { return 219; }
+
+    // A multi-payload variant keeps every payload, in order.
+    var srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";
+    var rtEM: parser.Module = roundtrip_module(srcEM);
+    var tpi: i32 = variant_decl_index(rtEM.structs, "Pair", "Two");
+    if (tpi < 0) { return 220; }
+    if (rtEM.structs[tpi].fields.len() != 2) { return 221; }
+    if (rtEM.structs[tpi].fields[0].type_name != "i32") { return 222; }
+    if (rtEM.structs[tpi].fields[1].type_name != "string") { return 223; }
 
     return 0;
 }
