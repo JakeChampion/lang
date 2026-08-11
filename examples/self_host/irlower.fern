@@ -337,6 +337,9 @@ pub struct FnSigs {
     // i64arr_ret_fns: functions returning i64[]; like f64arr_ret_fns, but x[i]
     // reads an 8-byte i64 and types as i64.
     i64arr_ret_fns: string[],
+    // erased_elem_ret_fns: functions returning an array of a bare typevar (`U[]`),
+    // whose element width the callee never fixes — see erased_elem_ret_fns_of.
+    erased_elem_ret_fns: string[],
     // fn_param_sigs[k] = "callee|<flags>", flag i '1' when the callee's param i
     // is a function type. Drives type-directed function-VALUE detection: a bare
     // function-name ARGUMENT at a "fn" param lowers to const_func, not a call.
@@ -42806,6 +42809,35 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     }
     return out;
 }
+// erased_elem_ret_fns_of collects the functions whose RETURN is an array of a
+// bare typevar (`map[T, U](…): U[]`, `flat_map`), keyed like f64arr_ret_fns_of.
+//
+// Such a return's element width is not fixed by the callee at all — the fold
+// comment on register_array_method_generics states the rule: an unbounded extra
+// type variable is erased, and "its result-element width is driven by the CALL
+// SITE's annotation, not by cloning the body". The callee is emitted once and
+// strides that array at the i32 element width, which on wasm32 is a 4-byte
+// stride through what an `i64[]` / `f64[]` destination then reads at 8 (#6287).
+// The register backends are unaffected: their slots are 8 bytes either way.
+//
+// This is the RESULT-side sibling of the flag-'7' erased `T[]` PARAM registry.
+// That one refuses a wide-element array going IN; a wide element can equally
+// arrive by coming back OUT, which nothing looked at — and unlike the param
+// case it was not a refusal but a silently wrong value.
+pub function erased_elem_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (is_erased_typevar_array(funcs[k].ret_type, structs)) {
+            var key: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append(key);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
 // i64arr_ret_fns_of collects the names of a module's i64[]-returning functions,
 // so a call-site `var x = f()` element-types x as i64[]. Methods are keyed by the
 // qualified "<BaseType>.<method>" (see f64arr_ret_fns_of).
@@ -44512,7 +44544,7 @@ pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     return FnSigs { arr_ret_fns: e, str_ret_fns: e, strarr_ret_fns: e, arr_method_fns: e,
         opt_ret_fns: e, i64_ret_fns: e, tuple_ret_fns: e, arrtup_ret_fns: e, struct_ret_fns: e, map_ret_fns: e,
-        f64_ret_fns: e, f64arr_ret_fns: e, i64arr_ret_fns: e, fn_param_sigs: e, closure_fns: e,
+        f64_ret_fns: e, f64arr_ret_fns: e, i64arr_ret_fns: e, erased_elem_ret_fns: e, fn_param_sigs: e, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e,
@@ -44555,6 +44587,7 @@ pub function fn_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], 
         f64_ret_fns: f64_ret_fns_of(funcs),
         f64arr_ret_fns: f64arr_ret_fns_of(funcs),
         i64arr_ret_fns: i64arr_ret_fns_of(funcs),
+        erased_elem_ret_fns: erased_elem_ret_fns_of(funcs, structs),
         fn_param_sigs: fn_param_sigs_of(funcs, structs),
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
@@ -46918,6 +46951,16 @@ pub function (s: LowerState) is_i64arr_ret_fn(name: string): boolean {
     }
     return false;
 }
+// is_erased_elem_ret_fn reports whether a call to `name` yields an array whose
+// ELEMENT width the callee never fixed (`map` / `flat_map` returning `U[]`).
+pub function (s: LowerState) is_erased_elem_ret_fn(name: string): boolean {
+    var i: i32 = 0;
+    while (i < s.sigs.erased_elem_ret_fns.len()) {
+        if (s.sigs.erased_elem_ret_fns[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
 // param_is_i64 reports whether arg index `idx` of a call to `name` targets an
 // i64 param (so the argument must be lowered as an i64 value).
 pub function (s: LowerState) param_is_i64(name: string, idx: i32): boolean {
@@ -46966,10 +47009,24 @@ pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { if (erased_wide_expr(v.init, s)) { return true; } },
-            parser.StmtAssign(a) => { if (erased_wide_expr(a.value, s)) { return true; } },
+            parser.StmtVar(v) => {
+                if (erased_wide_expr(v.init, s)) { return true; }
+                if (erased_elem_dest_wide(v.type_name, v.init, s)) { return true; }
+            },
+            parser.StmtAssign(a) => {
+                if (erased_wide_expr(a.value, s)) { return true; }
+                // The assigned slot's element width is already recorded, so the
+                // same erased-element result question is answerable here.
+                if (s.for_wasm() && calls_erased_elem_ret_fn(a.value, s)) {
+                    var asl: i32 = s.slot_of(a.target);
+                    if (asl >= 0 && (s.is_i64arr_slot(asl) || s.is_f64arr_slot(asl))) { return true; }
+                }
+            },
             parser.StmtExpr(ex) => { if (erased_wide_expr(ex.value, s)) { return true; } },
-            parser.StmtReturn(r) => { if (erased_wide_expr(r.value, s)) { return true; } },
+            parser.StmtReturn(r) => {
+                if (erased_wide_expr(r.value, s)) { return true; }
+                if (erased_elem_dest_wide(s.cur_ret, r.value, s)) { return true; }
+            },
             parser.StmtIf(iff) => {
                 if (erased_wide_expr(iff.cond, s)) { return true; }
                 if (erased_wide_stmts(iff.then_body, s)) { return true; }
@@ -46999,6 +47056,83 @@ pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
     }
     return false;
 }
+// erased_elem_dest_wide: does `init` call a function whose result array has an
+// ERASED element width (map / flat_map returning `U[]`), at a destination that
+// reads that array's elements 8 bytes wide? On wasm32 the callee strides the
+// array it built at 4 (the erased element's i32 width) while the destination
+// indexes at 8, so the length is right and every value is wrong (#6287).
+//
+// Refusing mirrors what the flag-'7' erased `T[]` PARAM check already does for
+// the same hazard arriving from the other direction. wasm only: the register
+// backends give the erased element a full 8-byte slot, and both measured shapes
+// (`flat_map` and `map` into `i64[]` / `f64[]`) answer correctly there.
+function erased_elem_dest_wide(type_name: string, init: parser.Expr, s: LowerState): boolean {
+    if (!s.for_wasm()) { return false; }
+    if (!(type_name == "i64[]" || type_name == "u64[]" || is_float_array_type_name(type_name))) { return false; }
+    return calls_erased_elem_ret_fn(init, s);
+}
+
+// calls_erased_elem_ret_fn reports whether `e` is a direct call to a function
+// registered in erased_elem_ret_fns.
+function calls_erased_elem_ret_fn(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => { return s.is_erased_elem_ret_fn(s.mod_fn_name(cid.name)); },
+                parser.ExprFieldAccess(cfa) => {
+                    var crty: string = expr_struct_type(cfa.obj, s);
+                    if (crty == "") { return false; }
+                    return s.is_erased_elem_ret_fn(crty + "." + cfa.field);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { }
+    }
+    return false;
+}
+
+// erased_result_wide_from_callback: the erased element `U` of a `map` /
+// `flat_map` result is fixed by the CALLBACK, not by any parameter's type — so
+// the call site can be asked directly, whatever the destination does with the
+// result. A callback returning a 64-bit or float value (map's `U`) or an array
+// of one (flat_map's `U[]`) means the callee built its result array at the
+// erased i32 stride while every reader indexes it at 8 (#6287).
+//
+// Asked of a lambda written at the call site and of an already-lifted `__lam_`
+// passed by name, since closure lifting may have run first.
+function erased_result_wide_from_callback(arg: parser.Expr, s: LowerState): boolean {
+    match (arg) {
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                match (lm.body[i]) {
+                    parser.StmtReturn(r) => {
+                        if (expr_is_f64(r.value, s) || infer_expr_width(r.value, s) == 64) { return true; }
+                        if (expr_is_f64arr(r.value, s) || expr_is_i64arr(r.value, s)) { return true; }
+                        match (r.value) {
+                            parser.ExprArray(al) => {
+                                if (al.elements.len() > 0
+                                    && (expr_is_f64(al.elements[0], s) || infer_expr_width(al.elements[0], s) == 64)) { return true; }
+                            },
+                            _ => { }
+                        }
+                    },
+                    _ => { }
+                }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.ExprIdent(id) => {
+            var nm: string = s.mod_fn_name(id.name);
+            return s.is_i64_ret_fn(nm) || s.is_f64_ret_fn(nm) || s.is_i64arr_ret_fn(nm) || s.is_f64arr_ret_fn(nm);
+        },
+        _ => { }
+    }
+    return false;
+}
+
 function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprCall(c) => {
@@ -47026,6 +47160,13 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
                             // wrong values, not a trap. Refuse the module instead.
                             if (s.callee_param_is_erased_array(cid.name, ai)
                                 && (expr_is_f64arr(c.args[ai], s) || expr_is_i64arr(c.args[ai], s))) { return true; }
+                            // A wide element coming back OUT: the callee returns an
+                            // erased-element array (`map`/`flat_map`'s `U[]`) and this
+                            // site's callback fixes that element wide. Same 4-vs-8
+                            // stride hazard as the param case above, in the direction
+                            // nothing looked at (#6287).
+                            if (s.is_erased_elem_ret_fn(s.mod_fn_name(cid.name))
+                                && erased_result_wide_from_callback(c.args[ai], s)) { return true; }
                             ai = ai + 1;
                         }
                     } else {

@@ -69,6 +69,51 @@ function main(): i32 {
     var ys: f64[] = array.map(xs, dbl);
     return (ys[1] * 10.0) as i32;
 }`},
+	// The same two-typevar erasure reached through the array-METHOD spelling
+	// (#6287). `xs.map(f)` is folded to `__arrm_map__<elem>`, whose `T` the
+	// receiver fixes but whose `U` stays erased — so the wide element arrives on
+	// the RESULT side, which the param-direction gate above cannot see. These
+	// answered wrong (`flat_map` into `i64[]` returned the right length and the
+	// wrong values) or trapped, with the compiler exiting 0.
+	{"map_method_i64", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i64[] = xs.map((x: i32) => (x as i64) * 2i64);
+    if (w[2] != 6i64) { return 2; }
+    return 11;
+}`},
+	{"flat_map_method_i64", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i64[] = xs.flat_map((x: i32) => [(x as i64) * 2i64]);
+    if (w[2] != 6i64) { return 2; }
+    return 11;
+}`},
+	{"flat_map_method_f64", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: f64[] = xs.flat_map((x: i32) => [(x as f64) * 1.5]);
+    if (w[2] < 4.4) { return 2; }
+    return 11;
+}`},
+	// The result reaches its wide destination by `return` and by assignment, not
+	// only by an annotated `var` — each is a separate reader of the mis-strided
+	// array, so each is its own row.
+	{"map_method_i64_return", `import "std/array";
+function g(xs: i32[]): i64[] { return xs.map((x: i32) => (x as i64) * 2i64); }
+function main(): i32 {
+    var w: i64[] = g([1, 2, 3]);
+    if (w[2] != 6i64) { return 2; }
+    return 11;
+}`},
+	{"map_method_i64_assign", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i64[] = [0i64];
+    w = xs.map((x: i32) => (x as i64) * 2i64);
+    if (w[2] != 6i64) { return 2; }
+    return 11;
+}`},
 }
 
 // erasedWideArrayAllowCases must STILL lower: the gate keys on a wide ELEMENT,
@@ -90,6 +135,27 @@ function main(): i32 {
     var ys: string[] = array.reverse(xs);
     return ys[0].len() + 38;
 }`}, // 42
+	// The array-METHOD refusals above key on the RESULT element being wide, so
+	// the narrow instantiations of the very same methods must keep lowering —
+	// including the pointer-element `string[]`, whose stride is 4 on wasm32.
+	{"map_method_i32", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i32[] = xs.map((x: i32) => x * 2);
+    return w[2] * 7 + 3;
+}`}, // 45
+	{"map_method_string", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: string[] = xs.map((x: i32) => "abcde");
+    return w[2].len() + 40;
+}`}, // 45
+	{"flat_map_method_i32", `import "std/array";
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    var w: i32[] = xs.flat_map((x: i32) => [x * 2]);
+    return w[2] * 7 + 3;
+}`}, // 45
 }
 
 // erasedWideArrayBlindCases are callees that take an erased `T[]` but never read
