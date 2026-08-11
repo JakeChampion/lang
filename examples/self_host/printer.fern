@@ -161,8 +161,18 @@ function print_pattern(pat: parser.Pattern): string {
     match (pat) {
         parser.PatWildcard(_) => { return "_"; },
         parser.PatVariant(pv) => {
-            if (pv.binding.len() == 0) { return pv.type_name; }
-            return pv.type_name + "(" + pv.binding + ")";
+            var head: string = pv.type_name;
+            if (pv.at_binding.len() > 0) { head = pv.at_binding + " @ " + pv.type_name; }
+            if (pv.binding.len() == 0) { return head; }
+            // Every payload binding, not just the first — a `Pair(a, b)` printed
+            // as `Pair(a)` re-parses as a different (E015) program.
+            var out: string = head + "(" + pv.binding;
+            var i: i32 = 0;
+            while (i < pv.extra_bindings.len()) {
+                out = out + ", " + pv.extra_bindings[i];
+                i = i + 1;
+            }
+            return out + ")";
         }
     }
     return "_";
@@ -348,7 +358,18 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
         if (vi > 0) { out = out + ","; }
         out = out + " " + ed.variant_names[vi];
         var si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
-        if (si >= 0 && structs[si].fields.len() > 0) {
+        if (si >= 0 && structs[si].variant_field_names.len() > 0) {
+            // Record form — the payload fields carry positional `__ev` markers, so
+            // the written names come from variant_field_names, parallel to them.
+            out = out + " {";
+            var ri: i32 = 0;
+            while (ri < structs[si].fields.len()) {
+                if (ri > 0) { out = out + ","; }
+                out = out + " " + structs[si].variant_field_names[ri] + ": " + structs[si].fields[ri].type_name;
+                ri = ri + 1;
+            }
+            out = out + " }";
+        } else if (si >= 0 && structs[si].fields.len() > 0) {
             out = out + "(";
             var fi: i32 = 0;
             while (fi < structs[si].fields.len()) {
@@ -880,6 +901,43 @@ function main(): i32 {
     if (rtEM.structs[tpi].fields.len() != 2) { return 231; }
     if (rtEM.structs[tpi].fields[0].type_name != "i32") { return 232; }
     if (rtEM.structs[tpi].fields[1].type_name != "string") { return 233; }
+
+    // A record-form variant round-trips with its field NAMES — printed
+    // positionally the re-parse would lose them and the `{ w, h }` patterns
+    // that destructure it would stop resolving.
+    var srcER: string = "enum Shape { Rect { w: i32, h: string }, Unit } function main(): i32 { return 0; }";
+    var rtER: parser.Module = roundtrip_module(srcER);
+    var rcvi: i32 = variant_decl_index(rtER.structs, "Shape", "Rect");
+    if (rcvi < 0) { return 234; }
+    if (rtER.structs[rcvi].variant_field_names.len() != 2) { return 235; }
+    if (rtER.structs[rcvi].variant_field_names[0] != "w") { return 236; }
+    if (rtER.structs[rcvi].variant_field_names[1] != "h") { return 237; }
+    if (rtER.structs[rcvi].fields.len() != 2) { return 238; }
+    if (rtER.structs[rcvi].fields[0].name != "__ev") { return 239; }
+    if (rtER.structs[rcvi].fields[1].name != "__ev1") { return 240; }
+    if (rtER.structs[rcvi].fields[1].type_name != "string") { return 241; }
+    var uri: i32 = variant_decl_index(rtER.structs, "Shape", "Unit");
+    if (uri < 0) { return 242; }
+    if (rtER.structs[uri].variant_field_names.len() != 0) { return 243; }
+
+    // Every payload binding of a match arm survives the round-trip: printing
+    // only the first turns `Pair(a, b)` into an E015 one-binding pattern.
+    var srcPB: string = "enum Pair { Two(i32, i32) } function f(p: Pair): i32 { match (p) { Two(a, b) => { return a + b; }, } return 0; } function main(): i32 { return 0; }";
+    var rtPB: parser.Module = roundtrip_module(srcPB);
+    if (rtPB.funcs.len() < 1) { return 244; }
+    match (rtPB.funcs[0].body[0]) {
+        parser.StmtMatch(m) => {
+            match (m.arms[0].pattern) {
+                parser.PatVariant(pv) => {
+                    if (pv.binding != "a") { return 245; }
+                    if (pv.extra_bindings.len() != 1) { return 246; }
+                    if (pv.extra_bindings[0] != "b") { return 247; }
+                },
+                _ => { return 248; }
+            }
+        },
+        _ => { return 249; }
+    }
 
     return 0;
 }

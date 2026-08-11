@@ -528,7 +528,7 @@ pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_par
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
 // index i holds (field_names[i], field_types[i]).
-pub struct StructSig { name: string, field_names: string[], field_types: Type[], type_params: string[], field_type_names: string[] }
+pub struct StructSig { name: string, field_names: string[], field_types: Type[], type_params: string[], field_type_names: string[], variant_field_names: string[] }
 
 // MethodSig: nominal handle for a declared receiver method
 // `function (recv: RecvType) name(p1, p2): RT`. The receiver
@@ -989,7 +989,7 @@ function (s: Scope) lookup_struct(name: string): StructSig {
     var empty_t: Type[] = [];
     var empty_tp: string[] = [];
     var empty_ftn: string[] = [];
-    return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn };
+    return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n };
 }
 
 // field_index returns the index of `name` in a struct sig's field list,
@@ -1060,7 +1060,17 @@ function variant_payload_type_at(s: Scope, type_name: string, idx: i32): Type {
 // scope, each position independently (so `Rect(_, h)` binds only `h`). Before
 // this only pv.binding was bound, so a multi-binding payload pattern
 // (`Rect(w, h)`) rejected the 2nd+ name as an undefined E001 (#4345).
-function bind_variant_payloads(arm: Scope, look: Scope, pv: parser.PatVariant): Scope {
+function bind_variant_payloads(arm: Scope, look: Scope, pvin: parser.PatVariant): Scope {
+    var pv: parser.PatVariant = pvin;
+    // A record pattern that named every field but renamed one binds the DECLARED
+    // names, as native does after rejecting the rename — so the body's reference
+    // to the renamed local is the undefined-name error native also reports.
+    if (pv.field_names.len() > 0) {
+        var rss: StructSig = look.lookup_struct(pv.type_name);
+        if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
+            pv = parser.rebind_record_positional(pv, rss.variant_field_names);
+        }
+    }
     var sc: Scope = arm;
     if (pv.binding.len() > 0 && pv.binding != "_") {
         sc = sc.bind(pv.binding, variant_binding_type(look, pv.type_name));
@@ -2303,7 +2313,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
             ftnames = ftnames.append(sd.fields[j].type_name);
             j = j + 1;
         }
-        out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames });
+        out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names });
         k = k + 1;
     }
     return out;
@@ -4030,7 +4040,7 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
     var nonet: Type[] = [];
     var none_tp: string[] = [];
     var none_ftn: string[] = [];
-    return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn };
+    return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none };
 }
 
 // slit_diags recurses through an expression and emits E005 for every
@@ -4380,6 +4390,50 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
     return 0 - 1;
 }
 
+// record_pattern_diags explains a record-form pattern (`Rect { h, x }`) that
+// resolve_variant_fields_module left unresolved: it named a field the variant
+// does not declare, named one twice, or missed one — or the variant carries
+// positional payloads and cannot be matched by name at all. Mirrors native's
+// resolveVariantBindings (checker.go:9363-9397).
+function record_pattern_diags(pv: parser.PatVariant, structs: StructSig[], line: i32, col: i32): Diag[] {
+    var out: Diag[] = [];
+    var ss: StructSig = find_struct_sig(structs, pv.type_name);
+    if (ss.name.len() == 0) { return out; }
+    var decl: string[] = ss.variant_field_names;
+    if (decl.len() == 0) {
+        return out.append(dg_at("E015", "variant " + pv.type_name + " has positional payloads; match it as " + pv.type_name + "(...), not " + pv.type_name + " { ... }", line, col));
+    }
+    // A pattern that survived with a covering field set renamed one of them —
+    // resolve_record_pattern rebound it to the declared names, as native does.
+    if (parser.record_fields_cover(decl, pv.field_names)) {
+        return out.append(dg_at("E015", "enum named-field pattern for " + pv.type_name + " does not support renaming (`field: local`) — bind the field by name (`" + pv.type_name + " { " + pv.field_names[0] + " }`)", line, col));
+    }
+    var bound: string[] = [];
+    var i: i32 = 0;
+    while (i < pv.field_names.len()) {
+        var nm: string = pv.field_names[i];
+        if (!util.has_str(decl, nm)) {
+            out = out.append(dg_at("E015", "variant " + pv.type_name + " has no field \"" + nm + "\"", line, col));
+        } else if (util.has_str(bound, nm)) {
+            out = out.append(dg_at("E015", "field \"" + nm + "\" bound more than once in pattern for " + pv.type_name, line, col));
+        } else {
+            bound = bound.append(nm);
+        }
+        i = i + 1;
+    }
+    if (bound.len() != decl.len()) {
+        var listed: string = "";
+        var d: i32 = 0;
+        while (d < decl.len()) {
+            if (d > 0) { listed = listed + ", "; }
+            listed = listed + decl[d];
+            d = d + 1;
+        }
+        out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + itoa_nn(decl.len()) + " field(s) (" + listed + ")", line, col));
+    }
+    return out;
+}
+
 function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
     var out: Diag[] = [];
     var i: i32 = 0;
@@ -4408,14 +4462,20 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
                                     // arm. Mirrors native checker.go:8318-8331 (#4344).
                                     seen = seen.append(pv.type_name);
                                 }
-                                // E015: payload-binding arity. A known variant's
-                                // binding count must equal its payload count.
-                                var pc: i32 = variant_payload_count(pv.type_name, structs);
-                                if (pc >= 0) {
-                                    var nb: i32 = pv.extra_bindings.len();
-                                    if (pv.binding.len() > 0) { nb = nb + 1; }
-                                    if (nb != pc) {
-                                        out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                                if (pv.field_names.len() > 0) {
+                                    // A record-form pattern that resolve_variant_fields_module
+                                    // could not settle against the variant's declared fields.
+                                    out = append_diags(out, record_pattern_diags(pv, structs, m.arms[a].line, m.arms[a].col));
+                                } else {
+                                    // E015: payload-binding arity. A known variant's
+                                    // binding count must equal its payload count.
+                                    var pc: i32 = variant_payload_count(pv.type_name, structs);
+                                    if (pc >= 0) {
+                                        var nb: i32 = pv.extra_bindings.len();
+                                        if (pv.binding.len() > 0) { nb = nb + 1; }
+                                        if (nb != pc) {
+                                            out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + itoa_nn(pc) + " payload(s), got " + itoa_nn(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                                        }
                                     }
                                 }
                             }

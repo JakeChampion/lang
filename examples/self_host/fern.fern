@@ -608,6 +608,10 @@ function run(): i32 {
     // Fill omitted trailing args from default parameter values up front, so the
     // checker, SSA, interpreter, and AST fallback all see complete calls.
     merged = parser.fill_default_args_module(merged);
+    // A record-form variant pattern on an IMPORTED enum has no declaration to
+    // settle against until the bundle exists; parse_module resolved the
+    // same-module ones already, and the pass is idempotent.
+    merged = parser.resolve_variant_fields_module(merged);
 
     if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 

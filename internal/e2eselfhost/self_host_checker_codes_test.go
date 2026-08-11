@@ -916,6 +916,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-too-many-bindings", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(a, b) => { return a; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
+		// E015 continued: a RECORD-form variant (#6676) is destructured by field
+		// name in any order, and every field must be bound exactly once. A
+		// resolved pattern is rewritten to the positional one in declaration
+		// order (resolve_variant_fields_module); anything that does not resolve
+		// lands here. The rename row also draws E001 because both checkers bind
+		// the DECLARED names, leaving the renamed local undefined.
+		{"record-variant-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect { h, w } => { return w * h; }, Unit => { return 0; } } }\n", nil},
+		{"record-variant-missing-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect { w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-unknown-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect { w, z } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-dup-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect { w, w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-rename", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect { w: a, h: b } => { return a; }, Unit => { return 0; } } }\n", []string{"E001", "E015"}},
+		{"record-pattern-on-positional", "enum S { Pair(i32, i32), Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Pair { a, b } => { return a; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"positional-pattern-on-record-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { var s: S = Unit; match (s) { Rect(w, h) => { return w * h; }, Unit => { return 0; } } }\n", nil},
 		// E054: an `@export(...)` world-export function cannot be generic
 		// (a world export has one concrete ABI) and cannot be a method.
 		{"export-generic", "@export(\"example:app/run\", \"run\") function run[T](x: T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E054"}},
