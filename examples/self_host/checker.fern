@@ -1318,6 +1318,18 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
                 },
                 _ => { }
             }
+            // A qualified variant constructor `W.Wrap(1)` types to its enum,
+            // exactly as the bare `Wrap(1)` does below (#6657). Without this it
+            // fell through to method dispatch, typed to unknown, and the
+            // destination check silently under-reported.
+            if (!qhandled) {
+                var cqe: string = qual_enum_name(fa.obj, s);
+                if (cqe.len() > 0 && qual_variant_exists(cqe, fa.field, s)) {
+                    var cqu: string = union_of_variant(fa.field, s.unions);
+                    if (cqu.len() > 0) { return t_union(cqu); }
+                    return t_union(cqe);
+                }
+            }
             if (!qhandled) {
                 name = fa.field;
                 is_method = true;
@@ -4637,25 +4649,55 @@ function settles_or_assignable(e: parser.Expr, want: Type, s: Scope): boolean {
 // without `__ev` is either payload-less (`Nil`) or a struct-union member
 // (`type U = A | B`) — indistinguishable here, which is why
 // variant_payload_count returns -1 for both and this skips them.
-function variant_ctor_diags(id: parser.ExprIdent, c: parser.ExprCall, s: Scope): Diag[] {
+// It takes the variant NAME rather than the callee node because both spellings
+// reach it: the bare `Wrap(1)` and the qualified `W.Wrap(1)` (#6657), whose
+// callee is an ExprFieldAccess.
+function variant_ctor_diags(vname: string, c: parser.ExprCall, s: Scope): Diag[] {
     var out: Diag[] = [];
-    if (s.lookup_sig(id.name).name.len() > 0) { return out; }
-    if (union_of_variant(id.name, s.unions).len() == 0) { return out; }
-    var want: i32 = variant_payload_count(id.name, s.structs);
+    if (union_of_variant(vname, s.unions).len() == 0) { return out; }
+    var want: i32 = variant_payload_count(vname, s.structs);
     if (want < 0) { return out; }
     if (c.args.len() != want) {
-        out = out.append(dg_at("E036", "variant " + id.name + " expects " + itoa_nn(want) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
+        out = out.append(dg_at("E036", "variant " + vname + " expects " + itoa_nn(want) + " argument(s), got " + itoa_nn(c.args.len()), c.line, c.col));
     }
     var i: i32 = 0;
     while (i < c.args.len() && i < want) {
         var at: Type = check_expr(c.args[i], s);
-        var pt: Type = variant_payload_type_at(s, id.name, i);
+        var pt: Type = variant_payload_type_at(s, vname, i);
         if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !type_assignable(at, pt, s.unions)) {
-            out = out.append(dg_at("E036", "variant " + id.name + " payload " + itoa_nn(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
+            out = out.append(dg_at("E036", "variant " + vname + " payload " + itoa_nn(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
         }
         i = i + 1;
     }
     return out;
+}
+
+// qual_enum_name: `obj` is the qualifier of an `Enum.Variant` reference — a bare
+// name resolving to a declared enum/union or to a builtin (Option / Result / …)
+// — and returns that enum's name, or "" when it is an ordinary value. A local
+// binding of the same name shadows the enum, so the reference is then a genuine
+// field access. Module-qualified names never reach here: modload mangles them to
+// bare names before checking.
+function qual_enum_name(obj: parser.Expr, s: Scope): string {
+    match (obj) {
+        parser.ExprIdent(oid) => {
+            if (!is_unknown(s.lookup(oid.name))) { return ""; }
+            if (s.lookup_union(oid.name).name.len() > 0) { return oid.name; }
+            if (is_reserved_enum_name(oid.name)) { return oid.name; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// qual_variant_exists: does `en` declare a variant named `field`? Separate from
+// qual_enum_name so a caller can tell "not a qualified reference at all" from
+// "qualified, but that enum has no such variant" — the latter is E036.
+function qual_variant_exists(en: string, field: string, s: Scope): boolean {
+    var ou: UnionSig = s.lookup_union(en);
+    if (ou.name.len() > 0) { return util.has_str(ou.variants, field); }
+    return mx_builtin_enum_of(field) == en;
 }
 
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
@@ -4667,6 +4709,29 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // the object so it isn't mis-flagged as an unknown field (E043).
             match (c.callee) {
                 parser.ExprFieldAccess(mfa) => {
+                    // A QUALIFIED variant constructor `W.Wrap(1)` is not a
+                    // method call: the object is a type QUALIFIER, not a value
+                    // (#6657). Recursing into it walks `W` as a bare identifier
+                    // and reports E001 "undefined name" — on the VALID call as
+                    // much as the ill-typed one, which is why this has to come
+                    // before the recursion rather than beside the method checks
+                    // further down.
+                    //
+                    // Detected with the same qual_enum_name the bare
+                    // `Enum.Variant` reference uses, then routed to the same
+                    // argument checks as the bare constructor call, so the two
+                    // spellings cannot drift apart.
+                    var cqen: string = qual_enum_name(mfa.obj, s);
+                    if (cqen.len() > 0) {
+                        if (!qual_variant_exists(cqen, mfa.field, s)) {
+                            out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
+                        } else {
+                            out = append_diags(out, variant_ctor_diags(mfa.field, c, s));
+                        }
+                        var qai: i32 = 0;
+                        while (qai < c.args.len()) { out = append_diags(out, call_diags(c.args[qai], s)); qai = qai + 1; }
+                        return out;
+                    }
                     out = call_diags(mfa.obj, s);
                     // E045: a map literal `Map { k: v, … }` desugars to
                     // `map_new[_i32](n).insert(k0, v0).insert(…)…`. The FIRST
@@ -4825,7 +4890,9 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                                 }
                             }
                         }
-                        out = append_diags(out, variant_ctor_diags(id, c, s));
+                        if (s.lookup_sig(id.name).name.len() == 0) {
+                            out = append_diags(out, variant_ctor_diags(id.name, c, s));
+                        }
                     }
                 },
                 parser.ExprFieldAccess(mfa) => {
@@ -5325,27 +5392,13 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             // local shadows the enum, so it's a genuine field access — left to
             // the normal path. (Module-qualified names like `parser.Foo` never
             // reach here — modload mangles them to bare names before checking.)
-            var is_qual_ref: boolean = false;
-            match (fa.obj) {
-                parser.ExprIdent(oid) => {
-                    if (is_unknown(s.lookup(oid.name))) {
-                        var ou: UnionSig = s.lookup_union(oid.name);
-                        if (ou.name.len() > 0) {
-                            is_qual_ref = true;
-                            if (!util.has_str(ou.variants, fa.field)) {
-                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
-                            }
-                        } else if (is_reserved_enum_name(oid.name)) {
-                            is_qual_ref = true;
-                            if (mx_builtin_enum_of(fa.field) != oid.name) {
-                                out = out.append(dg_at("E036", "enum " + oid.name + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
-                            }
-                        }
-                    }
-                },
-                _ => { }
+            var qen: string = qual_enum_name(fa.obj, s);
+            if (qen.len() > 0) {
+                if (!qual_variant_exists(qen, fa.field, s)) {
+                    out = out.append(dg_at("E036", "enum " + qen + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+                }
+                return out;
             }
-            if (is_qual_ref) { return out; }
             out = call_diags(fa.obj, s);
             // E043: a field READ on a struct that has no such field (and no
             // method of that name). Method-call callees never reach here

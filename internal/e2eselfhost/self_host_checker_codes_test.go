@@ -799,6 +799,25 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"payload-variant-bare", "enum E { A(i32), B }\nfunction f(): E { return A; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"union-member-bare", "struct P { x: i32 }\nstruct Q { y: i32 }\ntype U = P | Q;\nfunction f(): U { return P; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
 		{"payload-variant-call-ok", "enum E { A(i32), B }\nfunction f(): E { return A(5); }\nfunction main(): i32 { return 0; }\n", nil},
+		// The QUALIFIED constructor call (#6657). Its callee is a field access,
+		// so it used to reach method dispatch, resolve `W` as a receiver, find
+		// nothing, and report E001 — on the valid call as much as the ill-typed
+		// ones. It now goes through the same argument checks as the bare form,
+		// which is what these rows pin: same codes as `Wrap(...)` on every shape.
+		{"qualified-ctor-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return W.Wrap(1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-ctor-builtin-ok", "function f(): Option[i32] { return Option.Some(3); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-ctor-payload-type", "enum W { Wrap(i32), Empty }\nfunction f(): W { return W.Wrap(\"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"qualified-ctor-arity", "enum W { Wrap(i32), Empty }\nfunction f(): W { return W.Wrap(1, 2); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"qualified-ctor-no-such-variant", "enum W { Wrap(i32), Empty }\nfunction f(): W { return W.Nope(1); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		// The call now types to its enum, so the destination check sees a real
+		// type instead of unknown and stops under-reporting.
+		{"qualified-ctor-destination", "enum W { Wrap(i32), Empty }\nfunction main(): i32 { var x: i32 = W.Wrap(1); return 0; }\n", []string{"E003"}},
+		// Neighbours the routing must not swallow: the nullary qualified
+		// reference (not a call), a bad qualified reference, and an ordinary
+		// method call whose receiver really is a value.
+		{"qualified-nullary-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return W.Empty; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"qualified-bad-ref", "enum W { Wrap(i32), Empty }\nfunction f(): i32 { var x = W.Nope; return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"qualified-not-a-method-call", "struct S { v: i32 }\nfunction (s: S) take(x: i32): i32 { return x; }\nfunction main(): i32 { var s = S { v: 1 }; return s.take(1); }\n", nil},
 		// A constructor call's ARGUMENTS against the declared payloads (#6650):
 		// wrong type, wrong type in a later slot, and either arity direction.
 		// A builtin variant has no backing struct, so its payload type is
