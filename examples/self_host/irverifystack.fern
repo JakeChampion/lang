@@ -1,0 +1,455 @@
+// examples/self_host/irverifystack.fern — the operand-stack half of the
+// self-host IR verifier, mirroring native's internal/ir/verifystack.go
+// (#6639 slice 2).
+//
+// irverify.fern checks the invariants a backend needs to emit anything at
+// all. This file checks the one it needs to emit anything CORRECT: that the
+// operand stack is discipline-obeying — every op finds its operands, every
+// scope leaves the stack exactly where it found it, both arms of an `if`
+// agree, and the function ends holding exactly its result.
+//
+// It is the same algorithm wasm validation runs, including the polymorphic
+// treatment of unreachable code after a `br` or a `return`. That is not a
+// coincidence: the IR is a wasm-shaped stack machine, so a stack-discipline
+// break here is a module wasm_ir.fern cannot emit and one the register
+// backends will silently paper over — a `pushq` nobody pops is a frame that
+// grows every loop iteration, not a crash at the op that caused it.
+//
+// # The self-host's model is exact, where native's has to be type-directed
+//
+// Native's verifyStack consults `ast.Type` for every value, because a string
+// is one operand slot on the register backends and TWO on wasm32
+// (ir.UseTwoWordStrings). The self-host has no such split: `wasm_ir.fern`
+// carries a string as a single i32 block pointer exactly as the register
+// backends carry a single box pointer, so EVERY value is one slot on every
+// self-host target. Two more uniformities fall out of the lowering:
+//
+//   - Every scope is void. irlower emits `op_block(0)` / `op_loop(0)` /
+//     `op_if(0)` and nothing else — a value-producing `if` routes its result
+//     through a local — so a scope must leave the stack at the height it
+//     started, and a branch carries nothing.
+//   - Every function has exactly one result, void ones included: wasm_ir's
+//     signature emit falls through to `(result i32)` for every return type
+//     that is not i64 / f64, so a `void` function still returns a word.
+//
+// So this pass counts slots and is not approximating when it does. What it
+// deliberately does NOT check is the operand's KIND. Whether a slot holds an
+// integer or a float is a property of the op that produced it, and the ops
+// that read composite memory (`struct_get`, `tuple_get`, `arr_get`,
+// `opt_payload`) carry a width but not a class — width 64 is `i64` or `f64`
+// depending on a flag two of them do not carry at all. Asserting a class from
+// the outside would report the IR's deliberate looseness as a defect, which
+// is the reasoning native's own header gives for leaving widths alone.
+//
+// # Fail-soft, and why
+//
+// A verifier that reports a false problem gets switched off. Every op this
+// pass does not model abandons the enclosing function and is COUNTED, never
+// reported as a problem. Coverage is then a number the corpus gate can hold a
+// floor under, so an unmodelled op shows up as a coverage regression rather
+// than as a spurious failure, and the table can grow monotonically.
+
+import "./ir";
+import "./irverify";
+import "./util";
+
+// ---- results -----------------------------------------------------------
+
+// StackResult is one function's verdict. `bail` is empty when the function
+// was fully modelled; when it is set the problems are DISCARDED, because a
+// pass that stopped modelling halfway has nothing trustworthy to say about
+// the ops after the one it could not read.
+pub struct StackResult {
+    problems: irverify.Problem[],
+    bail: string,
+}
+
+// Coverage records how much of a program the pass could model. modelled +
+// skipped.len() == funcs. Per function rather than a count because the useful
+// question is WHICH function went unchecked, not how many did.
+pub struct Coverage {
+    funcs: i32,
+    modelled: i32,
+    skipped_fns: string[],
+    skipped_why: string[],
+}
+
+pub function coverage_new(): Coverage {
+    var none: string[] = [];
+    return Coverage { funcs: 0, modelled: 0, skipped_fns: none, skipped_why: none };
+}
+
+pub function coverage_add(c: Coverage, fn_name: string, bail: string): Coverage {
+    if (bail.len() == 0) {
+        return Coverage { ...c, funcs: c.funcs + 1, modelled: c.modelled + 1 };
+    }
+    return Coverage {
+        ...c,
+        funcs: c.funcs + 1,
+        skipped_fns: c.skipped_fns.append(fn_name),
+        skipped_why: c.skipped_why.append(bail)
+    };
+}
+
+// coverage_str renders the tally, with the skip reasons grouped by cause. An
+// empty problem list means nothing without knowing how much was looked at, so
+// this is printed next to the problems rather than behind a flag.
+pub function coverage_str(c: Coverage): string {
+    var out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
+    var seen: string[] = [];
+    var count: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.skipped_why.len()) {
+        var at: i32 = util.index_of_str(seen, c.skipped_why[i]);
+        if (at < 0) {
+            seen = seen.append(c.skipped_why[i]);
+            count = count.append(1);
+        } else {
+            count = count.with(at, count[at] + 1);
+        }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < seen.len()) {
+        out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
+        j = j + 1;
+    }
+    return out;
+}
+
+// ---- the stack effect of one op ----------------------------------------
+//
+// The tables below are keyed on ir.kind_id's integer tags. They are the
+// arities ir.fern's own constructor comments state — "`arr_get` pops
+// [base, idx]", "the stores push v back … so the operand stack stays balanced
+// with the 'every expr pushes one value' invariant" — and the corpus gate is
+// what keeps them honest: an arity that is one too small leaves a slot behind
+// at the enclosing `end`, which is reported, not swallowed.
+
+// pops0 lists the ops that consume nothing: the constants, the nullary
+// value-producing builtins (clocks, argv, the runtime counters), and the
+// scope-opening / scope-closing control ops. `dyn_dispatch` is here because
+// its receiver and arguments were spilled into consecutive LOCALS by the
+// lowering — the operand stack carries none of them.
+function pops0(t: i32): boolean {
+    return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6      // const_*
+        || t == 18                                                       // load_local
+        || t == 79 || t == 80                                            // ptr_width, heap_bump_bytes
+        || t == 117 || t == 119                                          // strbuf_reset, strbuf_take
+        || t == 121                                                      // opt_none
+        || t == 147                                                      // dyn_dispatch (args in locals)
+        || t == 152 || t == 153 || t == 155 || t == 156 || t == 157      // block, loop, else, end, br
+        || t == 167 || t == 168                                          // read_int, read_line
+        || t == 180                                                      // args
+        || t == 182 || t == 183 || t == 184                              // monotonic_ns, now_ns, now_unix_ms
+        || t == 186                                                      // random_i32
+        || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
+        || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
+        || t == 222;                                                     // map_hash_seed
+}
+
+function pops1_conv(t: i32): boolean {
+    // Width / representation conversions and the bit-pattern reinterprets.
+    return t == 7 || t == 8 || t == 9 || t == 10 || t == 11 || t == 12 || t == 13
+        || t == 14 || t == 15 || t == 16 || t == 17
+        || t == 19 || t == 20                                            // store_local, tee_local
+        || t == 34                                                       // not
+        || (t >= 55 && t <= 65)                                          // fneg … fcos (fpow is binary)
+        || t == 219 || t == 220 || t == 221;                             // clz, ctz, popcount
+}
+
+function pops1_mem(t: i32): boolean {
+    // Single-address reads and the allocation primitives.
+    return t == 69 || t == 70 || t == 71                                 // load_i32, load_i64, load_ptr
+        || t == 76 || t == 77                                            // alloc, alloc_u8
+        || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
+        || t == 90 || t == 91 || t == 214                                // arr_len, arr_rc, arr_reverse
+        || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
+        || t == 112 || t == 113                                          // str_chars, str_lines
+        || t == 118                                                      // strbuf_append
+        || t == 120 || t == 122 || t == 123                              // opt_make, opt_tag, opt_payload
+        || t == 124                                                      // map_new (pops the size hint)
+        || t == 126 || t == 131 || t == 132 || t == 133                  // map_len, map_keys, map_values, map_iter
+        || t == 134 || t == 135 || t == 136 || t == 137                  // mapiter_*
+        || t == 139 || t == 141 || t == 143 || t == 145                  // struct_get, struct_set_shape, tuple_get, variant_is
+        || t == 146 || t == 148 || t == 198;                             // dyn_box, dyn_downcast, struct_copy
+}
+
+function pops1_io(t: i32): boolean {
+    // The one-argument process / IO builtins, plus the control ops that
+    // consume a single value (`if` and `brif` their condition, `drop` its
+    // operand, `return` the function's result).
+    return t == 154 || t == 158 || t == 159 || t == 160                  // if, brif, drop, return
+        || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
+        || t == 169 || t == 171 || t == 172 || t == 173                  // read_file, read_dir, remove_dir_all, remove_file
+        || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
+        || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
+        || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
+        || t == 196 || t == 197 || t == 200 || t == 201 || t == 203;     // tcp_close/pollable/listen/accept, open_file
+}
+
+function pops2_arith(t: i32): boolean {
+    // Integer arithmetic + comparison (21..33, 35..44), float arithmetic +
+    // comparison (45..54), and fpow — the one float intrinsic that is binary.
+    return (t >= 21 && t <= 33) || (t >= 35 && t <= 54) || t == 66;
+}
+
+function pops2_mem(t: i32): boolean {
+    return t == 72 || t == 73 || t == 199                                // store_i32, store_ptr, store_i64
+        || t == 78                                                       // free (ptr, size)
+        || t == 83 || t == 85 || t == 86 || t == 223                     // raw_load8, raw_load_ptr, raw_string, raw_addr
+        || t == 88                                                       // arr_get
+        || t == 92 || t == 93 || t == 94 || t == 95 || t == 215          // arr_push*, arr_concat
+        || t == 98 || t == 99 || t == 100 || t == 101                    // str_concat, str_eq, str_cmp, str_index
+        || t == 105 || t == 108                                          // str_split, str_repeat
+        || t == 114 || t == 115 || t == 116 || t == 227                  // str_starts_with/ends_with/index_of, ascii_run
+        || t == 127 || t == 128 || t == 130                              // map_get, map_has, map_delete
+        || t == 140 || t == 144;                                         // struct_set, tuple_set
+}
+
+function pops2_io(t: i32): boolean {
+    return t == 170 || t == 226                                          // write_file, write_file_exec
+        || t == 178 || t == 187                                          // read_chunk, poll
+        || t == 193 || t == 194 || t == 195                              // tcp_connect, tcp_send, tcp_recv
+        || t == 202 || t == 213;                                         // writer_write, proc_exec
+}
+
+function pops3(t: i32): boolean {
+    return t == 74 || t == 75                                            // memcpy, memset
+        || t == 82 || t == 84                                            // raw_store8, raw_store_ptr
+        || t == 89 || t == 96 || t == 102 || t == 111                    // arr_set, arr_slice, str_slice, str_replace
+        || t == 125 || t == 129                                          // map_set, map_get_or
+        || t == 177 || t == 208 || t == 225;                             // subprocess, udp_send, memchr
+}
+
+// pops_of is how many operand slots `o` consumes, or -1 when this pass does
+// not model the op at all.
+//
+// `load` (67) and `store` (68) are deliberately unmodelled rather than given
+// native's arities: no self-host backend emits them and irlower never
+// constructs one, so an occurrence is already a bug, and bailing says so
+// where a guessed arity would quietly proceed.
+function pops_of(o: ir.Op): i32 {
+    var t: i32 = o.kind_tag;
+    if (pops0(t)) { return 0; }
+    if (pops1_conv(t) || pops1_mem(t) || pops1_io(t)) { return 1; }
+    if (pops2_arith(t) || pops2_mem(t) || pops2_io(t)) { return 2; }
+    if (pops3(t)) { return 3; }
+    if (t == 204) { return 4; }                       // syscall3: nr + 3 args
+    if (t == 206) { return 5; }                       // syscall4
+    if (t == 228) { return 6; }                       // syscall5
+    // Variadic: the immediate is the count. arr_make / struct_make /
+    // tuple_make pop their elements; call_direct pops its arguments.
+    if (t == 87 || t == 138 || t == 142 || t == 149) { return o.i32_imm; }
+    // call_indirect pops its arguments AND the funcref, which the lowering
+    // pushes last — `op_call_indirect(args.len() + 1)` at a closure call site
+    // already counts the environment among the arguments.
+    if (t == 150) { return o.i32_imm + 1; }
+    return 0 - 1;
+}
+
+// pushes_of is how many slots `o` leaves behind. Everything the self-host
+// lowers pushes exactly one value — including the statement-position ops,
+// which push a dummy the caller drops, so the "every expression is one slot"
+// invariant holds op for op. The exceptions are the ops that are not
+// expressions: the two that consume a value outright, and structured control
+// flow, whose scopes are all void.
+function pushes_of(t: i32): i32 {
+    if (t == 19 || t == 159) { return 0; }                               // store_local, drop
+    // The three composite-element writes consume their value outright —
+    // unlike the raw `__store_*` intrinsics next to them, which re-push it so
+    // a statement-position drop balances. `struct_set_shape` is not among
+    // them: it writes the shape word and leaves the box.
+    if (t == 89 || t == 140 || t == 144) { return 0; }                   // arr_set, struct_set, tuple_set
+    if (t == 152 || t == 153 || t == 154 || t == 155 || t == 156) { return 0; }  // block, loop, if, else, end
+    if (t == 157 || t == 158 || t == 160) { return 0; }                  // br, brif, return
+    return 1;
+}
+
+// fn_result_slots is what one function result occupies. Always one slot:
+// wasm_ir.fern's signature emit gives an i64 result to an i64 / u64 return, an
+// f64 result to a float one, and `(result i32)` to everything else INCLUDING
+// `void`, so there is no zero-result function to model.
+function fn_result_slots(): i32 { return 1; }
+
+// ---- the pass ----------------------------------------------------------
+
+// verify_stack_fn walks one lowered function's op stream and reports every
+// operand-stack violation, in op order.
+//
+// The walk carries a stack HEIGHT rather than a stack: with one slot per
+// value and no operand kinds to check, the height is the whole state. Scopes
+// are tracked in parallel arrays with an explicit depth, so a push/pop is
+// O(1) — an array-slice pop would make the walk quadratic on the compiler's
+// own long functions.
+pub function verify_stack_fn(fn_name: string, ops: ir.Op[]): StackResult {
+    var out: irverify.Problem[] = [];
+    var none: irverify.Problem[] = [];
+
+    // The open-scope stack. Frame 0 is the implicit function-body scope: it
+    // is never closed by an `end`, and what it must hold when the function
+    // ends is the function's result.
+    var fr_kind: i32[] = [0];
+    var fr_at: i32[] = [0 - 1];
+    var fr_height: i32[] = [0];
+    // 0 / 1 rather than boolean[], matching irverify.fern's parallel-array
+    // scope stack.
+    var fr_unreach: i32[] = [0];
+    var fr_else: i32[] = [0];
+    var depth: i32 = 1;
+
+    var height: i32 = 0;
+
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var o: ir.Op = ops[i];
+        var t: i32 = o.kind_tag;
+        var base: i32 = fr_height[depth - 1];
+        var unreach: boolean = fr_unreach[depth - 1] != 0;
+
+        if (t == 152 || t == 153 || t == 154) {          // block, loop, if
+            if (t == 154) {
+                // The condition is consumed before the scope opens, so it
+                // belongs to the ENCLOSING frame's height.
+                if (height > base) { height = height - 1; }
+                else if (!unreach) {
+                    out = out.append(irverify.Problem {
+                        fn_name: fn_name, op: i, kind: "if",
+                        msg: "operand stack underflow - the if needs a condition, but the enclosing scope holds none"
+                    });
+                }
+            }
+            if (o.i32_imm != 0) {
+                // Every scope irlower opens is void. A typed one would carry
+                // a value out of its end, which nothing here models.
+                return StackResult { problems: none, bail: "non-void block type " + util.i32_to_string(o.i32_imm) };
+            }
+            if (depth < fr_kind.len()) {
+                fr_kind = fr_kind.with(depth, t);
+                fr_at = fr_at.with(depth, i);
+                fr_height = fr_height.with(depth, height);
+                fr_unreach = fr_unreach.with(depth, 0);
+                fr_else = fr_else.with(depth, 0);
+            } else {
+                fr_kind = fr_kind.append(t);
+                fr_at = fr_at.append(i);
+                fr_height = fr_height.append(height);
+                fr_unreach = fr_unreach.append(0);
+                fr_else = fr_else.append(0);
+            }
+            depth = depth + 1;
+        } else if (t == 155) {                            // else
+            if (depth == 1 || fr_kind[depth - 1] != 154 || fr_else[depth - 1] != 0) {
+                // irverify.fern reports both shapes; a second report of one
+                // defect is noise, and the frame is no longer trustworthy.
+                return StackResult { problems: none, bail: "malformed else" };
+            }
+            if (!unreach && height != base) {
+                out = out.append(irverify.Problem {
+                    fn_name: fn_name, op: i, kind: "else",
+                    msg: "the then-arm leaves " + util.i32_to_string(height - base)
+                        + " operand slot(s), but the if opened at op "
+                        + util.i32_to_string(fr_at[depth - 1]) + " is void"
+                });
+            }
+            fr_else = fr_else.with(depth - 1, 1);
+            fr_unreach = fr_unreach.with(depth - 1, 0);
+            height = base;
+        } else if (t == 156) {                            // end
+            if (depth == 1) {
+                return StackResult { problems: none, bail: "end with no open scope" };
+            }
+            if (!unreach && height != base) {
+                out = out.append(irverify.Problem {
+                    fn_name: fn_name, op: i, kind: "end",
+                    msg: "the " + ir.kind_name(fr_kind[depth - 1]) + " opened at op "
+                        + util.i32_to_string(fr_at[depth - 1]) + " leaves "
+                        + util.i32_to_string(height - base) + " operand slot(s), but it is void"
+                });
+            }
+            height = base;
+            depth = depth - 1;
+        } else if (t == 157 || t == 158) {                // br, brif
+            if (t == 158) {
+                if (height > base) { height = height - 1; }
+                else if (!unreach) {
+                    out = out.append(irverify.Problem {
+                        fn_name: fn_name, op: i, kind: "brif",
+                        msg: "operand stack underflow - the brif needs a condition, but the enclosing scope holds none"
+                    });
+                }
+            }
+            var d: i32 = o.i32_imm;
+            if (d < 0 || d >= depth) {
+                // irverify.fern reports the depth; with no target there is
+                // nothing further to say about what the branch carries.
+                return StackResult { problems: none, bail: "branch depth has no target" };
+            }
+            // Every scope is void and a branch to the function body is the
+            // `return`-shaped exit, which carries the result. A branch out of
+            // a scope discards whatever that scope had accumulated, so only
+            // the function-body case constrains the height.
+            if (!unreach && depth - 1 - d == 0 && height - base < fn_result_slots()) {
+                out = out.append(irverify.Problem {
+                    fn_name: fn_name, op: i, kind: ir.kind_name(t),
+                    msg: "branch to the function body needs " + util.i32_to_string(fn_result_slots())
+                        + " operand slot(s) for the result, but "
+                        + util.i32_to_string(height - base) + " are available"
+                });
+            }
+            if (t == 157) {
+                fr_unreach = fr_unreach.with(depth - 1, 1);
+                height = base;
+            }
+        } else {
+            var np: i32 = pops_of(o);
+            if (np < 0) {
+                return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
+            }
+            if (np > height - base) {
+                if (!unreach) {
+                    out = out.append(irverify.Problem {
+                        fn_name: fn_name, op: i, kind: ir.kind_name(t),
+                        msg: "operand stack underflow - needs " + util.i32_to_string(np)
+                            + " operand slot(s), but the enclosing scope holds "
+                            + util.i32_to_string(height - base)
+                    });
+                }
+                // Continue from the frame's floor with the result pushed, so
+                // one underflow does not cascade into a report per later op.
+                height = base;
+            } else {
+                height = height - np;
+            }
+            height = height + pushes_of(t);
+            if (t == 160) {                               // return
+                fr_unreach = fr_unreach.with(depth - 1, 1);
+                height = fr_height[depth - 1];
+            }
+        }
+        i = i + 1;
+    }
+
+    // An unclosed scope is irverify.fern's report; the height consequences of
+    // one would be a second report of the same defect.
+    if (depth != 1) { return StackResult { problems: out, bail: "" }; }
+    // What the function must leave is decided by the BACKENDS, and both of
+    // them append a zero result of the declared type past the last op — x86's
+    // `movq $0, %rax` epilogue, wasm's `i32.const 0)` fallthrough. A
+    // well-formed stream ends in `return`, so that filler lands in the
+    // unreachable continuation; a stream that instead falls off the end hands
+    // it a reachable continuation, where the filler IS the result and the
+    // stack must be empty for it to be the only one. Anything still held
+    // there is a value the filler is pushed on top of: a second operand at
+    // wasm's implicit end (a module that will not validate), and a `pushq`
+    // nobody pops on the register backends.
+    if (fr_unreach[0] == 0 && height != 0) {
+        out = out.append(irverify.Problem {
+            fn_name: fn_name, op: ops.len() - 1, kind: ir.kind_name(ops[ops.len() - 1].kind_tag),
+            msg: "the function falls off its end holding " + util.i32_to_string(height)
+                + " operand slot(s), which the backend's fallthrough result is then pushed on top of"
+        });
+    }
+    return StackResult { problems: out, bail: "" };
+}

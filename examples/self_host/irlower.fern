@@ -39680,10 +39680,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
 //
 // The slot lists and `ret_type` are what a pass ANALYSING the ops needs and
 // the emit path does not: the backends reach the same facts through
-// LowerState, which does not survive lowering. Without them a verifier can
-// only count operands, and counting is wrong for exactly the values the
-// compiler's own sources are full of — a string is one operand slot on the
-// register backends and two on wasm32 (#6639 slice 2).
+// LowerState, which does not survive lowering, and the op stream says
+// `load_local 1` rather than what slot 1 holds.
+//
+// Counting operands does NOT need them, contrary to what landing them
+// assumed: native's verifyStack is type-directed because a string is one
+// operand slot there on the register backends and two on wasm32, and the
+// self-host has no such split — wasm_ir.fern carries a string as a single
+// block pointer, so every value is one slot on every target and
+// irverifystack.fern reads none of these lists (#6639 slice 2). What does
+// need them is any pass asking what a value IS: the fip / fbip
+// allocation-budget check (slice 3), and the wasm signature emit, which
+// already reads i64_slots / f64_slots to type its params and locals.
 pub struct LoweredFn {
     name: string,
     ok: boolean,

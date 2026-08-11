@@ -4,8 +4,14 @@
 // interpreter (which dispatches direct calls across the module), and returns
 // the result as the process exit code — end-to-end proof that AST -> IR ->
 // eval preserves the program's value, now including multi-function programs
-// and recursion. With `-dump`, prints `main`'s lowered op stream instead.
-// A `main` outside the lowered subset makes lowering bail -> exit 200.
+// and recursion. With `-dump`, prints `main`'s lowered op stream instead
+// (`-dump-fn <name>` for any other function). A `main` outside the lowered
+// subset makes lowering bail -> exit 200.
+//
+// `-verify` / `-verifystack` (#6639): run the IR verifiers over every lowered
+// function and report, exiting 1 when anything is found. `-verifystack` also
+// prints how much of the module it could model, since an empty problem list
+// means nothing without it.
 //
 // `-rc-plan` (#4482): print each function's Perceus decision-table dump
 // (irlower.rc_plan_dump — the self-host half of the rcPlan differential
@@ -26,6 +32,7 @@ import "./parser";
 import "./ir";
 import "./irlower";
 import "./irverify";
+import "./irverifystack";
 import "./util";
 
 // verify_all runs the IR structure verifier (#6639 slice 1) over every
@@ -54,6 +61,31 @@ function verify_all(fns: irlower.LoweredFn[]): irverify.Problem[] {
     return out;
 }
 
+// StackSweep is one module's operand-stack verdict: the problems found, and
+// how much of the module the pass could model. The coverage half travels with
+// the problems because an empty problem list means nothing without it.
+struct StackSweep { problems: irverify.Problem[], cov: irverifystack.Coverage }
+
+// verify_stack_all runs the operand-stack verifier (#6639 slice 2) over every
+// successfully lowered function. A function the pass cannot model contributes
+// a skip reason rather than a problem, so a widening op vocabulary shows up as
+// a coverage drop instead of a false failure.
+function verify_stack_all(fns: irlower.LoweredFn[]): StackSweep {
+    var out: irverify.Problem[] = [];
+    var cov: irverifystack.Coverage = irverifystack.coverage_new();
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].ok) {
+            var r: irverifystack.StackResult = irverifystack.verify_stack_fn(fns[i].name, fns[i].ops);
+            cov = irverifystack.coverage_add(cov, fns[i].name, r.bail);
+            var k: i32 = 0;
+            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
+        }
+        i = i + 1;
+    }
+    return StackSweep { problems: out, cov: cov };
+}
+
 // slot_line renders one slot class, or nothing when the class is empty — so a
 // function with no strings has no `str` line rather than an empty one.
 function slot_line(kind: string, slots: i32[]): string {
@@ -73,13 +105,23 @@ function main(): i32 {
     var want_rc_plan: boolean = false;
     var want_str_own: boolean = false;
     var want_verify: boolean = false;
+    var want_vstack: boolean = false;
     var want_slots: boolean = false;
+    // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
+    // The verifiers report per function, so the follow-up question is always
+    // "show me the ops of the one it named".
+    var dump_fn: string = "main";
     var ai: i32 = 1;
     while (ai < av.len()) {
         if (av[ai] == "-dump") { want_dump = true; }
+        if (av[ai] == "-dump-fn" && ai + 1 < av.len()) {
+            want_dump = true;
+            dump_fn = av[ai + 1];
+        }
         if (av[ai] == "-rc-plan") { want_rc_plan = true; }
         if (av[ai] == "-str-own") { want_str_own = true; }
         if (av[ai] == "-verify") { want_verify = true; }
+        if (av[ai] == "-verifystack") { want_vstack = true; }
         if (av[ai] == "-slots") { want_slots = true; }
         ai = ai + 1;
     }
@@ -168,7 +210,26 @@ function main(): i32 {
         return 1;
     }
 
-    var mi: i32 = irlower.find_fn(fns, "main");
+    if (want_vstack) {
+        // Same defaults-FILLED module as `-verify`, for the same reason: the
+        // production backends reach the IR through lift_lambdas, which runs
+        // fill_default_args_module first, so a defaulted call arrives with its
+        // arguments already pushed.
+        var sfns: irlower.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var sw: StackSweep = verify_stack_all(sfns);
+        if (sw.problems.len() == 0) {
+            write("irverifystack: clean (" + irverifystack.coverage_str(sw.cov) + ")\n");
+            return 0;
+        }
+        write("irverifystack: " + util.i32_to_string(sw.problems.len()) + " problem(s) ("
+            + irverifystack.coverage_str(sw.cov) + ")"
+            + irverify.format_problems(sw.problems, 20) + "\n");
+        return 1;
+    }
+
+    var wanted: string = "main";
+    if (want_dump) { wanted = dump_fn; }
+    var mi: i32 = irlower.find_fn(fns, wanted);
     if (mi < 0) { return 201; }
     var mainfn: irlower.LoweredFn = fns[mi];
     if (!mainfn.ok) { return 200; }
