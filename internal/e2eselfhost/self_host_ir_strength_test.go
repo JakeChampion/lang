@@ -59,7 +59,16 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"chain: load_local 0 ; const_i32 2 ; shl ; const_i32 1 ; shl\n" +
 		"fold_then_strength: load_local 0 ; const_i32 2 ; shl\n" +
 		"strength_then_fold: load_local 0 ; drop ; const_i32 5\n" +
-		"idempotent=1\n"
+		"idempotent=1\n" +
+		"dce_arm: block ; const_i32 1 ; return ; end\n" +
+		"dce_after_br: block ; br 0 ; end ; const_i32 2 ; drop\n" +
+		"dce_after_brif: block ; brif 0 ; const_i32 1 ; drop ; end\n" +
+		"dce_else_revives: if ; return ; else ; const_i32 2 ; drop ; end\n" +
+		"dce_nested_dead: const_i32 1 ; return\n" +
+		"dce_exit_kept: const_i32 3 ; exit ; drop ; const_i32 0 ; return\n" +
+		"dce_live: load_local 0 ; const_i32 1 ; add ; return\n" +
+		"dce_idempotent=1\n" +
+		"dce_in_optimize: const_i32 4 ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
