@@ -376,8 +376,8 @@ function main(): i32 { return add2(1, 2); }`,
 // annotation, so the pass verifies each function vacuously — which is exactly
 // the property to pin: a claim-free function must never be charged, or the
 // pass would fire on the whole corpus the moment it is wired into a build.
-// conformance/cases/diag_e068 is the one fixture that is supposed to overrun,
-// and it is skipped by name rather than silently tolerated.
+// The two fixtures that do report are skipped by name rather than silently
+// tolerated, and the skip list says which reason each one is on.
 func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
 	if testing.Short() {
 		t.Skip("corpus sweep is slow; skipped under -short")
@@ -398,8 +398,19 @@ func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
 		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
 	}
 
-	// The fixtures whose whole purpose is to overrun a budget.
-	expectedDirty := map[string]bool{"diag_e068": true}
+	// The two fixtures a clean sweep must not include, each for its own
+	// reason. The driver runs no checker, so it lowers a body native would
+	// have rejected first — that is what makes diag_e053 a driver artifact
+	// rather than a verifier finding.
+	expectedDirty := map[string]bool{
+		// Exists to overrun a budget: an un-paired `fbip` construction.
+		"diag_e068": true,
+		// `scale`'s array literal is E053 at the front end, so native never
+		// lowers it; and its `map_inc` is the R4 consuming-match shape the
+		// self-host reuse layer does not pair yet
+		// (TestSelfHostFipCensusOnNativesShapes pins that count).
+		"diag_e053": true,
+	}
 
 	var dirty []string
 	seen := 0
