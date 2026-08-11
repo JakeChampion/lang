@@ -1,0 +1,143 @@
+// examples/self_host/visibility.fern — cross-module `pub` enforcement (#6714).
+//
+// Kept out of modloader.fern deliberately. The rule needs astwalk + checker,
+// and modloader is imported by every minimal driver (checker_modload_run,
+// asm_modload_run, ssa_lift_scan_run, …) whose project dir carries a fixed,
+// small source list. Putting the rule there widened modloader's import closure
+// and broke those drivers; a separate module keeps the loader's dependencies
+// as narrow as they were and costs the full driver one import.
+
+import "./parser";
+import "./flatten";
+import "./util";
+import "./astwalk";
+import "./checker";
+
+// --- cross-module visibility (#6714) --------------------------------------
+//
+// Native enforces `pub` in modload's rewriter: a `mod.X` naming a declaration
+// `mod` did not export is an error, not a resolvable reference. The self-host
+// swallowed the modifier entirely, so a private member was callable from any
+// module — a program native REFUSES TO BUILD produced a working binary here,
+// the permissive direction that actually blocks "the self-host is the only
+// compiler".
+//
+// The check runs AFTER flatten rather than at the qualified-reference site,
+// which is what makes it cheap: bundling has already rewritten `lib.hidden`
+// into the bare mangled ident `lib__hidden`, so a private reference is an
+// ordinary call to a known name and astwalk's existing collector finds it with
+// a position. No new AST walk, and flatten's rewrite stays pure.
+
+// private_module_names returns the mangled `<mod>__<name>` of every top-level
+// function an imported module declares WITHOUT `pub`. Receiver-bearing methods
+// are excluded: they are reached through a value (`x.m()`), never
+// module-qualified, so `pub` does not gate them.
+pub function private_module_names(loaded: flatten.LoadedModule[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < loaded.len()) {
+        var lm: flatten.LoadedModule = loaded[i];
+        var fi: i32 = 0;
+        while (fi < lm.mod.funcs.len()) {
+            var f: parser.FuncDecl = lm.mod.funcs[fi];
+            if (!f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+                out = out.append(lm.name + "__" + f.name);
+            }
+            fi = fi + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// owning_module returns the loaded module whose mangle prefix `fname` carries,
+// or "" for a function of the ENTRY module (flatten leaves those unmangled).
+// Matched against the real module list rather than by splitting on the first
+// `__`, so a synthesized name like `__lam_0` is not read as module "".
+function owning_module(fname: string, loaded: flatten.LoadedModule[]): string {
+    var i: i32 = 0;
+    while (i < loaded.len()) {
+        var pfx: string = loaded[i].name + "__";
+        if (fname.len() > pfx.len() && fname[0:pfx.len()] == pfx) { return loaded[i].name; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// name_module returns the module half of a mangled `<mod>__<name>`.
+function name_module(mangled: string, loaded: flatten.LoadedModule[]): string {
+    return owning_module(mangled, loaded);
+}
+
+// bare_name returns the `<name>` half of a mangled `<mod>__<name>`.
+function bare_name(mangled: string, modname: string): string {
+    var pfx: i32 = modname.len() + 2;
+    if (mangled.len() <= pfx) { return mangled; }
+    return mangled[pfx:mangled.len()] + "";
+}
+
+// export_diags reports every reference to another module's private function.
+// A module's own calls to its own private functions are legal, so a candidate
+// is skipped when the referencing function belongs to the module that owns it.
+// The message mirrors native's (uncoded, so it renders without an `error[E…]`
+// tag — the same shape the const-grammar rule already uses).
+pub function export_diags(merged: parser.Module, entry: parser.Module, loaded: flatten.LoadedModule[]): checker.Diag[] {
+    var out: checker.Diag[] = [];
+    var priv: string[] = private_module_names(loaded);
+    if (priv.len() == 0) { return out; }
+    // The ENTRY module's own function names. Flatten leaves entry decls
+    // unmangled, so a bare name is either an entry function or a decl whose
+    // origin the bundle no longer records — a METHOD (mangled by receiver type,
+    // not by module) or a synthesized helper. Only the first is attributable,
+    // and guessing "entry" for the rest reads a module's calls to its OWN
+    // private functions as cross-module: checker.fern's internal `t_unknown`
+    // calls, reached from its methods, are exactly that false positive.
+    var entry_fns: string[] = [];
+    var ei: i32 = 0;
+    while (ei < entry.funcs.len()) {
+        if (entry.funcs[ei].receiver_name.len() == 0) { entry_fns = entry_fns.append(entry.funcs[ei].name); }
+        ei = ei + 1;
+    }
+    var i: i32 = 0;
+    while (i < merged.funcs.len()) {
+        var f: parser.FuncDecl = merged.funcs[i];
+        var owner: string = owning_module(f.name, loaded);
+        // Unattributable: bare-named but not an entry function. Skipped rather
+        // than assumed — under-covering a method body is sound, over-rejecting
+        // a legal same-module call is not.
+        if (owner.len() == 0 && !util.has_str(entry_fns, f.name)) { i = i + 1; continue; }
+        // Candidates are the private names this function may NOT reach: every
+        // private name except its own module's.
+        var want: string[] = [];
+        var pi: i32 = 0;
+        while (pi < priv.len()) {
+            if (name_module(priv[pi], loaded) != owner) { want = want.append(priv[pi]); }
+            pi = pi + 1;
+        }
+        if (want.len() > 0) {
+            var sites: astwalk.CallSite[] = [];
+            var si: i32 = 0;
+            while (si < f.body.len()) {
+                sites = astwalk.collect_calls_stmt(f.body[si], want, sites);
+                si = si + 1;
+            }
+            var ci: i32 = 0;
+            while (ci < sites.len()) {
+                var cs: astwalk.CallSite = sites[ci];
+                if (!cs.method) {
+                    var m: string = name_module(cs.name, loaded);
+                    var b: string = bare_name(cs.name, m);
+                    out = out.append(checker.Diag {
+                        code: "",
+                        message: m + "." + b + " is not exported (declare it as `pub function " + b + " …` to make it accessible from other modules)",
+                        line: cs.line,
+                        col: cs.col
+                    });
+                }
+                ci = ci + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
