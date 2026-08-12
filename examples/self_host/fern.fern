@@ -1155,7 +1155,10 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
             eprint("fern: -tangle -o: " + rel + " needs a subdirectory, which this driver cannot create yet (#6749)");
             return 1;
         }
-        var code: i32 = tangle_emit(end_with_newline(files[i].code), dir + "/" + rel);
+        // Written verbatim, NOT newline-terminated: native's per-module
+        // files end where the chunk does, even though its stdout form
+        // terminates the last line. Parity is on what native writes.
+        var code: i32 = tangle_emit(files[i].code, dir + "/" + rel);
         if (code != 0) { return code; }
         i = i + 1;
     }
