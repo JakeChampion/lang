@@ -73,6 +73,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "read_dir", capability: "fs" },
         BuiltinCap { builtin: "remove_file", capability: "fs" },
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },
+        BuiltinCap { builtin: "create_dir_all", capability: "fs" },
         BuiltinCap { builtin: "temp_dir", capability: "fs" },
 
         BuiltinCap { builtin: "env", capability: "env" },

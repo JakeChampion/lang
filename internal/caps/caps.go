@@ -62,6 +62,7 @@ var BuiltinCaps = map[string]string{
 	"read_dir":        "fs",
 	"remove_file":     "fs",
 	"remove_dir_all":  "fs",
+	"create_dir_all":  "fs",
 	"temp_dir":        "fs",
 
 	"env": "env",

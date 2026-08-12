@@ -8424,6 +8424,15 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         if (!rfs.ok) { return rfs; }
         return rfs.emit(ir.op_remove_file());
     }
+    // Built-in `create_dir_all(path)` — create the directory and every
+    // missing parent, push a fresh Result[(), IoError] box. An
+    // already-present path is Ok, so a caller creates unconditionally
+    // rather than stat-ing first (#6749).
+    if (cid.name == "create_dir_all" && c.args.len() == 1) {
+        var cdas: LowerState = lower_expr(c.args[0], s);
+        if (!cdas.ok) { return cdas; }
+        return cdas.emit(ir.op_create_dir_all());
+    }
     // Built-in `temp_dir(prefix)` — make a uniquely-named /tmp
     // directory, push a fresh Result[string, IoError] box
     // (Ok(path) / Err(_)). The Result type is resolved by
@@ -48152,6 +48161,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "write_file_exec") { return "Result[void, IoError]"; }
     if (name == "remove_dir_all") { return "Result[void, IoError]"; }
     if (name == "remove_file") { return "Result[void, IoError]"; }
+    if (name == "create_dir_all") { return "Result[void, IoError]"; }
     if (name == "temp_dir") { return "Result[string, IoError]"; }
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }

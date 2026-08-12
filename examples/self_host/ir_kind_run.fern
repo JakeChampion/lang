@@ -44,7 +44,7 @@ function main(): i32 {
     }
 
     // 1b. Extension-tag sweep — the registered ids BEYOND kind_count()
-    //     (struct_copy=198 … ascii_run=227). Each must sit past
+    //     (struct_copy=198 … create_dir_all=231). Each must sit past
     //     the dense table and round-trip through kind_name, so a tag reachable
     //     from kind_id but unrendered by kind_name (the #5452 skew, which made
     //     ssa_lift's struct_copy bail read "invalid") fails here.
@@ -60,7 +60,8 @@ function main(): i32 {
         "proc_exec", "arr_reverse", "arr_concat", "arr_push_shared_count",
         "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
         "map_hash_seed", "raw_addr", "raw_arr_box", "memchr",
-        "write_file_exec", "ascii_run", "syscall5"
+        "write_file_exec", "ascii_run", "syscall5", "heap_mark",
+        "heap_release_to", "create_dir_all"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -129,7 +130,7 @@ function main(): i32 {
         ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32),
         ir.op_map_hash_seed(), ir.op_raw_addr(), ir.op_raw_arr_box(),
         ir.op_memchr(), ir.op_write_file_exec(), ir.op_ascii_run(),
-        ir.op_syscall5()
+        ir.op_syscall5(), ir.op_create_dir_all()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -141,7 +142,8 @@ function main(): i32 {
         "br", "drop", "return",
         "clz", "ctz", "popcount",
         "map_hash_seed", "raw_addr", "raw_arr_box",
-        "memchr", "write_file_exec", "ascii_run", "syscall5"
+        "memchr", "write_file_exec", "ascii_run", "syscall5",
+        "create_dir_all"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

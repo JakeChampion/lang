@@ -89,6 +89,84 @@ function test_remove_file_on_missing_target_is_an_error(): test.TestOutcome {
     return test.pass();
 }
 
+function test_create_dir_all_builds_a_missing_chain(): test.TestOutcome {
+    match (temp_dir("mkdirp-fixture")) {
+        Ok(dir) => {
+            var leaf: string = dir + "/one/two/three";
+            match (create_dir_all(leaf)) { Ok(_) => {}, Err(_) => {
+                match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                return test.fail("create_dir_all returned Err");
+            } }
+            // A write into the leaf is the proof the whole chain
+            // exists: a walk that created only the last component
+            // leaves a path write_file cannot reach.
+            match (write_file(leaf + "/deep.txt", "deep")) { Ok(_) => {}, Err(_) => {
+                match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                return test.fail("write into the created chain failed");
+            } }
+            match (read_dir(dir + "/one/two")) {
+                Ok(names) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.assert_eq_array(names, ["three"]);
+                },
+                Err(_) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.fail("read_dir of the created parent failed");
+                }
+            }
+        },
+        Err(_) => { return test.fail("temp_dir setup failed"); }
+    }
+    return test.pass();
+}
+
+function test_create_dir_all_on_existing_path_is_ok(): test.TestOutcome {
+    // `mkdir -p` semantics: an existing directory is not an error,
+    // so a caller can create unconditionally rather than stat first.
+    match (temp_dir("mkdirp-exists")) {
+        Ok(dir) => {
+            match (create_dir_all(dir)) {
+                Ok(_) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.pass();
+                },
+                Err(_) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.fail("create_dir_all over an existing directory returned Err");
+                }
+            }
+        },
+        Err(_) => { return test.fail("temp_dir setup failed"); }
+    }
+    return test.pass();
+}
+
+function test_create_dir_all_under_a_file_is_an_error(): test.TestOutcome {
+    // The failure that is still a failure: a component of the path
+    // exists as a regular file, so the chain cannot be built.
+    match (temp_dir("mkdirp-notdir")) {
+        Ok(dir) => {
+            var blocker: string = dir + "/blocker";
+            match (write_file(blocker, "x")) { Ok(_) => {}, Err(_) => {
+                match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                return test.fail("write blocker failed");
+            } }
+            match (create_dir_all(blocker + "/inner")) {
+                Ok(_) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.fail("expected Err under a regular file, got Ok");
+                },
+                Err(_) => {
+                    match (remove_dir_all(dir)) { Ok(_) => {}, Err(_) => {} }
+                    return test.pass();
+                }
+            }
+        },
+        Err(_) => { return test.fail("temp_dir setup failed"); }
+    }
+    return test.pass();
+}
+
 function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
     // Mirrors Go's `os.RemoveAll`: missing target is fine —
     // the postcondition (path does not exist) is already
@@ -107,5 +185,8 @@ function main(): i32 {
     r = r.it("remove_file removes a single file",       test_remove_file_removes_a_single_file);
     r = r.it("remove_file on missing target errors",    test_remove_file_on_missing_target_is_an_error);
     r = r.it("remove_dir_all on missing target is ok",  test_remove_dir_all_silently_ok_on_missing_target);
+    r = r.it("create_dir_all builds a missing chain",   test_create_dir_all_builds_a_missing_chain);
+    r = r.it("create_dir_all on an existing path is ok", test_create_dir_all_on_existing_path_is_ok);
+    r = r.it("create_dir_all under a file errors",      test_create_dir_all_under_a_file_is_an_error);
     return r.finish();
 }

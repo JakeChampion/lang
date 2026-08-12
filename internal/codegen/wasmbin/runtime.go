@@ -532,6 +532,16 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_remove_file")
+				case "__fern_create_dir_all":
+					// (path) → Result[void, IoError]. Same
+					// path-normalize chain as remove_file; the
+					// per-component mkdir walk is arithmetic over
+					// the normalized buffer, so it adds nothing.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_create_dir_all")
 				case "__fern_stat":
 					// (path) → Result[FileStat, IoError]. Same
 					// path-normalize chain as remove_file, plus the
@@ -908,6 +918,7 @@ var helperAllocBoxCallers = []string{
 	"__fern_reader_read_chunk",
 	"__fern_remove_file", "__fern_stat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
+	"__fern_create_dir_all",
 }
 
 // closeUnconditionalHelperCalls adds every transitively-reachable
@@ -1795,6 +1806,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildRemoveFileBody,
+	},
+	"__fern_create_dir_all": {
+		// (path_data, path_len) → i32 — heap-form
+		// Result[void, IoError]. path_create_directory per missing
+		// component under the fd-3 preopen; see wasi_fs_dir.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCreateDirAllBody,
 	},
 	"__fern_stat": {
 		// (path_data, path_len) → i32 — heap-form

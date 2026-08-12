@@ -866,6 +866,12 @@ pub function op_remove_file(): Op { return op0("remove_file"); }
 // calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
 // wasm-ineligible (wasm_eligible) and stays on the AST path there.
 pub function op_temp_dir(): Op { return op0("temp_dir"); }
+// `create_dir_all` pops a path string value and creates that directory and
+// every missing parent (POSIX `mkdir -p`), pushing a fresh Result[(), IoError]:
+// Ok(()) on success — including when the path was already there — and Err(_)
+// otherwise (a VALUE op — one arg consumed, the box left on the stack). Lowers
+// to each backend's __fern_create_dir_all helper.
+pub function op_create_dir_all(): Op { return op0("create_dir_all"); }
 // `read_dir` pops a path string value and lists the directory's base-name
 // children (excluding `.`/`..`, via openat+getdents64), pushing a fresh
 // Result[string[], IoError]: Ok(names) on success, Err(_) on an open error (a
@@ -1418,6 +1424,7 @@ function kind_id_1(name: string): i32 {
     if (name == "heap_bump_bytes") { return 80; }
     if (name == "heap_mark") { return 229; }
     if (name == "heap_release_to") { return 230; }
+    if (name == "create_dir_all") { return 231; }
     return 0;
 }
 function kind_id_2(name: string): i32 {
@@ -1585,6 +1592,8 @@ function kind_id_4(name: string): i32 {
     if (name == "write_file_exec") { return 226; }
     if (name == "ascii_run") { return 227; }
     if (name == "syscall5") { return 228; }
+    // NEXT FREE EXTENSION ID: 232 (heap_mark=229, heap_release_to=230 and
+    // create_dir_all=231 are taken below / above).
     // ADDING AN EXTENSION TAG: take the next id here AND register it in
     // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
     // for the number you took. Two branches that each claim "the next free
@@ -1696,8 +1705,6 @@ function kind_name_1(id: i32): string {
     if (id == 78) { return "free"; }
     if (id == 79) { return "ptr_width"; }
     if (id == 80) { return "heap_bump_bytes"; }
-    if (id == 229) { return "heap_mark"; }
-    if (id == 230) { return "heap_release_to"; }
     return "invalid";
 }
 function kind_name_2(id: i32): string {
@@ -1855,13 +1862,16 @@ function kind_name_4(id: i32): string {
     if (id == 226) { return "write_file_exec"; }
     if (id == 227) { return "ascii_run"; }
     if (id == 228) { return "syscall5"; }
+    if (id == 229) { return "heap_mark"; }
+    if (id == 230) { return "heap_release_to"; }
+    if (id == 231) { return "create_dir_all"; }
     return "invalid";
 }
 
 // kind_name maps an integer id back to its op-kind tag ("invalid" for an
 // out-of-range / KIND_INVALID id). The inverse of kind_id. A cheap range
 // check routes to the owning chunk; everything past 160 — including the
-// extension tags beyond kind_count() (struct_copy=198 … syscall5=228)
+// extension tags beyond kind_count() (struct_copy=198 … create_dir_all=231)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
     if (id <= 40) { return kind_name_0(id); }
@@ -2588,6 +2598,9 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 173) { return true; }
     // temp_dir boxes the path string + a Result wrapper, so it needs the heap.
     if (tag == 174) { return true; }
+    // create_dir_all boxes its Result[(), IoError] result and heap-builds the
+    // NUL-terminated path it walks, so it needs the heap runtime.
+    if (tag == 231) { return true; }
     // read_dir boxes a fresh string[] (the arr box + a string block per entry),
     // so it needs the heap runtime.
     if (tag == 171) { return true; }

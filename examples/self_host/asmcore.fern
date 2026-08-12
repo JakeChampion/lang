@@ -839,6 +839,20 @@ pub function rt_src_remove_file(t: string): string {
     return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } return Ok(()); }";
 }
 
+// rt_src_create_dir_all backs `create_dir_all(path)` (#2649, syscall-leaf) →
+// Result[void, IoError]. NUL-terminate the path, then mkdirat(AT_FDCWD, prefix,
+// 0777) at every '/' — the separator is overwritten with a NUL for the call and
+// put back after — and finally for the whole path. The intermediate results are
+// discarded: a parent that could not be created makes the final mkdirat fail
+// with the same errno, so one error path reports for the whole walk. EEXIST (17)
+// on the leaf is success, which is what makes an already-present path Ok. Same
+// body on every native target; only the mkdirat number and AT_FDCWD come from
+// `t`.
+pub function rt_src_create_dir_all(t: string): string {
+    var mk: string = "__syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz, 511)";
+    return "function __fern_create_dir_all(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = 0; var j: i32 = 1; while (j < plen) { if (path[j] == 47) { if (path[j - 1] != 47) { __raw_store8(pathz, j, 0); rc = " + mk + "; __raw_store8(pathz, j, 47); } } j = j + 1; } rc = " + mk + "; if (rc < 0) { if (rc != 0 - 17) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } } return Ok(()); }";
+}
+
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
 // Result[void, IoError]. NUL-terminate the path, openat(AT_FDCWD, path,
 // O_WRONLY|O_CREAT|O_TRUNC, mode=420=0644) — the mode arg is meaningful, so this
@@ -2682,6 +2696,7 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // is nothing left to return to. Matches native's FuncSigs.
                     if (id.name == "proc_exec") { return ty_i32(); }
                     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
+                    if (id.name == "create_dir_all") { return ty_option(ty_unknown()); }
                     // subprocess(cmd, args, stdin) → ProcessResult struct.
                     // See asm.fern: returns "unknown" because the struct's
                     // fields resolve through the shape-pointer dispatch path

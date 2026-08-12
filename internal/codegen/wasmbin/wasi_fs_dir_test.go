@@ -201,3 +201,28 @@ function main(): i32 {
 		t.Fatalf("Build: %v — a std/test program must build for wasm", err)
 	}
 }
+
+// TestFsCreateDirAll — `create_dir_all` builds a whole missing chain
+// under the preopen, is idempotent over one that already exists, folds
+// doubled separators and a trailing slash into the same directory, and
+// still reports a genuine failure (a component that is a regular file)
+// as Err. WASI takes an explicit path length, so the per-component
+// walk is length arithmetic rather than the natives' NUL rewriting —
+// this is where that divergence gets pinned.
+func TestFsCreateDirAll(t *testing.T) {
+	src := `function main(): i32 {
+    match (create_dir_all("a/b/c")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (stat("a/b/c")) { Err(e) => { return 2; }, Ok(fs) => { if (!fs.is_dir) { return 3; } } }
+    match (stat("a")) { Err(e) => { return 4; }, Ok(fs) => { if (!fs.is_dir) { return 5; } } }
+    match (create_dir_all("a/b/c")) { Err(e) => { return 6; }, Ok(_) => {} }
+    match (create_dir_all("x//y/")) { Err(e) => { return 7; }, Ok(_) => {} }
+    match (stat("x/y")) { Err(e) => { return 8; }, Ok(fs) => { if (!fs.is_dir) { return 9; } } }
+    match (write_file("f.txt", "hi")) { Err(e) => { return 10; }, Ok(_) => {} }
+    match (create_dir_all("f.txt/inner")) { Ok(_) => { return 11; }, Err(e) => {} }
+    match (write_file("a/b/c/deep.txt", "ok")) { Err(e) => { return 12; }, Ok(_) => {} }
+    return 42;
+}`
+	if got := runFsDirProgram(t, src); got != "42" {
+		t.Fatalf("got %q, want 42", got)
+	}
+}

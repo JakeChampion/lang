@@ -184,6 +184,7 @@ function pops1_io(t: i32): boolean {
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
         || t == 169 || t == 171 || t == 172 || t == 173                  // read_file, read_dir, remove_dir_all, remove_file
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
+        || t == 231                                                      // create_dir_all
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 196 || t == 197 || t == 200 || t == 201 || t == 203;     // tcp_close/pollable/listen/accept, open_file

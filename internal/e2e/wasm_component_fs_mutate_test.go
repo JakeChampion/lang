@@ -390,3 +390,62 @@ function main(): i32 {
 		t.Errorf("suite did not report 2 passing tests:\n%s", got)
 	}
 }
+
+// TestCmdLangComponentCreateDirAll runs `create_dir_all` (#6749)
+// through a composed component: build a chain nobody preopened, write
+// into its leaf, and re-create it to prove "already there" is Ok.
+//
+// The write into the leaf is what makes this more than a syscall
+// smoke test — a walk that created only the last component, or that
+// mis-sliced a prefix, leaves a path write_file cannot reach. The
+// instance-type assertion pins the other half of the preview-2 story:
+// create-directory-at must be declared for a program that only ever
+// creates directories, without dragging unlink-file-at along.
+func TestCmdLangComponentCreateDirAll(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "mkdirp.fern")
+	src := []byte(`function main(): i32 {
+    match (create_dir_all("vendor/pkg/src")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (write_file("vendor/pkg/src/lib.fern", "hello")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (read_file("vendor/pkg/src/lib.fern")) {
+        Err(e) => { return 1; },
+        Ok(s) => { if (s != "hello") { return 1; } }
+    }
+    match (create_dir_all("vendor/pkg/src")) { Err(e) => { return 1; }, Ok(_) => {} }
+    return 0;
+}`)
+	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	compPath := filepath.Join(dir, "mkdirp.wasm")
+	build := exec.Command("go", "run", "./cmd/fern", "-target", "wasm32-wasi", "-o", compPath, srcPath)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (create_dir_all) failed: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
+	}
+	printOut, err := exec.Command("wasm-tools", "print", compPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print failed: %v\n%s", err, printOut)
+	}
+	if !strings.Contains(string(printOut), "[method]descriptor.create-directory-at") {
+		t.Errorf("expected create-directory-at in the composed component")
+	}
+	if strings.Contains(string(printOut), "[method]descriptor.unlink-file-at") {
+		t.Errorf("composed component declares unlink-file-at, which this program never imports")
+	}
+	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
+		t.Errorf("create_dir_all lifecycle: wasmtime run failed (want exit 0): %v", err)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "vendor", "pkg", "src")); err != nil || !fi.IsDir() {
+		t.Errorf("vendor/pkg/src is not a directory under the preopen (err = %v)", err)
+	}
+}

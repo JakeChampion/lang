@@ -2581,6 +2581,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// program merely importing the test runner failed to compile for
 	// wasm. See wasi_fs_dir.go.
 	"remove_file":    "__fern_remove_file",
+	"create_dir_all": "__fern_create_dir_all",
 	"stat":           "__fern_stat",
 	"read_dir":       "__fern_read_dir",
 	"temp_dir":       "__fern_temp_dir",

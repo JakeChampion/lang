@@ -252,6 +252,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "read_dir", capability: "fs" },
         Gate { builtin: "remove_file", capability: "fs" },
         Gate { builtin: "remove_dir_all", capability: "fs" },
+        Gate { builtin: "create_dir_all", capability: "fs" },
         Gate { builtin: "temp_dir", capability: "fs" }
     ];
 }
