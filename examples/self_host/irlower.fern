@@ -386,6 +386,14 @@ pub struct FnSigs {
     // move_arr_params: "fn|param" entries whose array argument is MOVED into the
     // callee rather than borrowed.
     move_arr_params: string[],
+    // trmc_consume_fns: "fn|param" entries for TRMC functions whose loop CONSUMES
+    // its scrutinee, freeing each cell as it walks past (#5333). Both halves of
+    // that bargain read this one registry — the loop's release and the call
+    // site's retain — because they are only sound together: the loop's
+    // uniqueness check is a guard only if an aliased argument arrives already
+    // retained. Recomputing either half locally lets a path that has the verdict
+    // free a cell a path that lacks it never retained.
+    trmc_consume_fns: string[],
 }
 
 pub struct LowerState {
@@ -750,6 +758,18 @@ pub function (s: LowerState) is_borrowed_name(name: string): boolean {
 // Seeded once per function by lower_func as "SAREUSE:<name>".
 pub function (s: LowerState) is_self_assign_reuse_name(name: string): boolean {
     return util.index_of_str(s.reclaimable_names, "SAREUSE:" + name) >= 0;
+}
+
+// trmc_consume_param returns the parameter index a consume-safe TRMC callee
+// frees cell-by-cell, or -1 when `name` is not one (#5333). Read by BOTH the
+// loop's release and the call site's retain, so the two can never disagree
+// about which functions consume.
+pub function (s: LowerState) is_trmc_consume_arg(name: string, idx: i32): boolean {
+    // The empty-registry early-out keeps the key concat off every call-argument
+    // of every module that has no consuming TRMC function at all, which is most
+    // of them (the move_arr_params scan takes the same shape for the same reason).
+    if (s.sigs.trmc_consume_fns.len() == 0) { return false; }
+    return util.index_of_str(s.sigs.trmc_consume_fns, name + "|" + util.i32_to_string(idx)) >= 0;
 }
 
 // is_view_frame_name reports whether `name` is a local whose string-slice VIEW
@@ -8879,6 +8899,31 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     while (gbi < gbr_slots.len()) {
         sc = emit_arr_share(sc, gbr_slots[gbi], "__fern_arr_share_inc");
         gbi = gbi + 1;
+    }
+    // #5333: a consume-safe TRMC callee frees its scrutinee cell by cell. Retain
+    // the argument when the caller still holds it — a bare IDENT is exactly that
+    // case — so the callee's uniqueness check sees rc >= 2 on the first cell,
+    // decs once and stops, leaving the caller's list intact. There is no matching
+    // dec after the call: the callee CONSUMES this reference, which is the whole
+    // borrowed-to-owned flip. A non-ident argument (`inc_all(build(n))`) is a
+    // fresh temp nobody else holds, so it is handed over uncounted and the loop
+    // reclaims all of it. Stack-neutral, like the may-grow bracket above.
+    var tca: i32 = 0;
+    while (tca < c.args.len()) {
+        if (sc.is_trmc_consume_arg(cid.name, tca)) {
+            match (c.args[tca]) {
+                parser.ExprIdent(tcid) => {
+                    var tcs: i32 = sc.slot_of(tcid.name);
+                    if (tcs >= 0) {
+                        sc = sc.emit(ir.op_load_local(tcs));
+                        sc = sc.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        sc = sc.emit(ir.op_drop());
+                    }
+                },
+                _ => {}
+            }
+        }
+        tca = tca + 1;
     }
     var scr: LowerState = sc.emit(ir.op_call_direct(cid.name, c.args.len()));
     // #4873: restore the bracketed args' rc — the callee's copy
@@ -38504,6 +38549,118 @@ function trmc_eligible(fn: parser.FuncDecl, structs: parser.StructDecl[]): strin
     return ctor;
 }
 
+// trmc_consume_safe reports whether an eligible TRMC function may CONSUME its
+// scrutinee — free each cell as the loop walks past it — the self-host port of
+// native's trmcShapeConsumeSafe (internal/ir/trmc.go). Without it a consuming
+// recursive build holds the whole input list live until the caller drops it;
+// with it the walked cells recycle through the freelist into the nodes the loop
+// is allocating, so peak heap is the OUTPUT rather than input + output.
+//
+// The loop STEALS the tail out of the cell it is about to free, so the cell can
+// only be freed SHALLOWLY, and that is sound exactly when nothing else in the
+// cell needs a drop. Hence: every recursive arm advances the matched param to
+// one of its OWN bindings, that binding is a same-class cell of the scrutinee
+// enum (the stolen tail), and every OTHER payload field is a flat scalar —
+// copied, never rc-tracked, so a shallow free cannot strand it. A string or
+// container payload fails the scan and the function keeps the borrow model.
+// trmc_matched_param returns the parameter index the TRMC body matches on, or
+// -1. The scrutinee is the cell the loop walks and frees, so both the consume
+// scan and the call-site retain are keyed on it.
+pub function trmc_matched_param(fn: parser.FuncDecl): i32 {
+    if (fn.body.len() != 1) { return 0 - 1; }
+    var m_scrut: string = "";
+    match (fn.body[0]) {
+        parser.StmtMatch(m0) => {
+            match (m0.scrutinee) {
+                parser.ExprIdent(sid) => { m_scrut = sid.name; },
+                _ => { return 0 - 1; }
+            }
+        },
+        _ => { return 0 - 1; }
+    }
+    var mp: i32 = 0 - 1;
+    var pi: i32 = 0;
+    while (pi < fn.params.len()) {
+        if (fn.params[pi].name == m_scrut) { mp = pi; }
+        pi = pi + 1;
+    }
+    return mp;
+}
+
+function trmc_consume_safe(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    var mp: i32 = trmc_matched_param(fn);
+    if (mp < 0) { return false; }
+    var scrut_ty: string = fn.params[mp].type_name;
+    if (!trmc_is_enum_type(structs, scrut_ty)) { return false; }
+    match (fn.body[0]) {
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                var arm: parser.MatchArm = m.arms[ai];
+                var vname: string = "";
+                var binds: string[] = [];
+                match (arm.pattern) {
+                    parser.PatVariant(pv) => {
+                        vname = trmc_variant_name(structs, pv.type_name);
+                        binds = binds.append(pv.binding);
+                        var eb: i32 = 0;
+                        while (eb < pv.extra_bindings.len()) { binds = binds.append(pv.extra_bindings[eb]); eb = eb + 1; }
+                    },
+                    _ => { return false; }
+                }
+                match (arm.body[0]) {
+                    parser.StmtReturn(r) => {
+                        if (trmc_count_self_calls(r.value, fn.name) == 1) {
+                            // The self-call's matched-param argument names the cell the
+                            // loop advances to; it must be a bare binding of THIS arm,
+                            // not a computed value that would leave the tail unreachable.
+                            var adv: string = "";
+                            match (r.value) {
+                                parser.ExprCall(c) => {
+                                    match (c.args[c.args.len() - 1]) {
+                                        parser.ExprCall(sc) => {
+                                            if (mp >= sc.args.len()) { return false; }
+                                            match (sc.args[mp]) {
+                                                parser.ExprIdent(aid) => { adv = aid.name; },
+                                                _ => { return false; }
+                                            }
+                                        },
+                                        _ => { return false; }
+                                    }
+                                },
+                                _ => { return false; }
+                            }
+                            if (adv.len() == 0 || adv == "_") { return false; }
+                            var tail_bi: i32 = util.index_of_str(binds, adv);
+                            if (tail_bi < 0) { return false; }
+                            // Field types are checked for EVERY payload position, not
+                            // only the named ones: a `_`-bound container is just as
+                            // stranded by a shallow free as a named one.
+                            var nf: i32 = decl_field_count(structs, vname);
+                            var fi: i32 = 0;
+                            while (fi < nf) {
+                                var fname: string = "__ev";
+                                if (fi > 0) { fname = "__ev" + util.i32_to_string(fi); }
+                                var fty: string = decl_field_type(structs, vname, fname);
+                                if (fi == tail_bi) {
+                                    if (fty != scrut_ty) { return false; }
+                                } else {
+                                    if (!is_scalar_type_name(fty)) { return false; }
+                                }
+                                fi = fi + 1;
+                            }
+                        }
+                    },
+                    _ => { return false; }
+                }
+                ai = ai + 1;
+            }
+        },
+        _ => { return false; }
+    }
+    return true;
+}
+
 // emit_trmc lowers an eligible fn (trmc_eligible returned `ctor`) as the
 // hole-passing loop. Emits the COMPLETE body (including the final return); the
 // caller skips the normal statement loop and the exit machinery — a TRMC body
@@ -38536,6 +38693,21 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
     s = s.emit(ir.op_store_local(hole));
     s = s.emit(ir.op_const_i32(0));
     s = s.emit(ir.op_store_local(res));
+    // Consuming traversal (#5333): `$trmc_still` stays 1 until the walk reaches a
+    // SHARED cell. Up to that point each cell the loop leaves behind is released
+    // and recycles through the freelist into the node the next iteration
+    // allocates; from it on, the rest of the list belongs to the sharer and is
+    // left alone. Declared even when unused so the slot numbering below does not
+    // fork on the verdict.
+    // Read the VERDICT, never re-derive it: the loop's release is only sound
+    // paired with the call-site retain, and both read this registry.
+    var consuming: boolean = s.is_trmc_consume_arg(fn.name, trmc_matched_param(fn));
+    s = s.add_local("$trmc_still");
+    var still: i32 = s.slot_of("$trmc_still");
+    if (consuming) {
+        s = s.emit(ir.op_const_i32(1));
+        s = s.emit(ir.op_store_local(still));
+    }
     var mslot: i32 = 0 - 1;
     match (fn.body[0]) {
         parser.StmtMatch(m0) => {
@@ -38647,6 +38819,32 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
                                                 s = s.emit(ir.op_store_local(aslot));
                                                 aslots = aslots.append(aslot);
                                                 sai = sai + 1;
+                                            }
+                                            // Release the just-walked cell HERE: after every
+                                            // read of it (the payload binds, the head temps
+                                            // and the self-call argument temps above) and
+                                            // before the param store overwrites the slot with
+                                            // the tail. `__fern_rc_dec` is the shallow release
+                                            // — payload drops are emitted by the compiler, not
+                                            // by the dec — which is what lets the stolen tail
+                                            // survive its parent. A cell that is not uniquely
+                                            // owned ends the freeing instead: the dec balances
+                                            // the caller's reference and the remaining list is
+                                            // left to whoever else holds it.
+                                            if (consuming) {
+                                                s = s.emit(ir.op_load_local(still));
+                                                s = s.emit(ir.op_if(0));
+                                                s = s.emit(ir.op_load_local(mslot));
+                                                s = s.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+                                                s = s.emit(ir.op_bin("not", 0, false));
+                                                s = s.emit(ir.op_if(0));
+                                                s = s.emit(ir.op_const_i32(0));
+                                                s = s.emit(ir.op_store_local(still));
+                                                s = s.emit(ir.op_end());
+                                                s = s.emit(ir.op_load_local(mslot));
+                                                s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
+                                                s = s.emit(ir.op_drop());
+                                                s = s.emit(ir.op_end());
                                             }
                                             var pj: i32 = 0;
                                             while (pj < aslots.len()) {
@@ -44987,7 +45185,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e,
-        move_arr_params: e };
+        move_arr_params: e, trmc_consume_fns: e };
 }
 
 // array_ret_fn_names is the plain "return type is an array" scan — the default
@@ -45052,7 +45250,121 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs, bparams),
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
+        trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
     };
+}
+
+// trmc_consume_fns_of scans for TRMC functions whose loop may consume its
+// scrutinee, as "<fn>|<matched param index>" (#5333). The index rides along
+// because the call site needs it to know WHICH argument to retain, and
+// recovering it there would mean re-deriving the match shape per call.
+pub function trmc_consume_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var fn: parser.FuncDecl = funcs[i];
+        if (trmc_eligible(fn, structs).len() > 0 && trmc_consume_safe(fn, structs)
+                && !trmc_name_taken_as_value(funcs, fn.name)) {
+            var mp: i32 = trmc_matched_param(fn);
+            if (mp >= 0) { out = out.append(fn.name + "|" + util.i32_to_string(mp)); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// trmc_name_taken_as_value reports whether `name` is used as a VALUE anywhere —
+// a bare ident in any position other than the callee of a direct call.
+//
+// The retain lives at the DIRECT call site, so a function reached through a
+// function value (`var f = inc_all; f(keep)`) would consume without anyone
+// retaining — the same use-after-free the retain exists to prevent, arriving by
+// a route the call site cannot see. A function whose address is taken anywhere
+// is therefore refused the verdict outright rather than trusted not to be called
+// that way.
+function trmc_name_taken_as_value(funcs: parser.FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (tv_stmts(funcs[i].body, name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function tv_expr(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == name; },
+        parser.ExprCall(c) => {
+            // The callee of a direct call is a CALL, not a value — that is the one
+            // position the retain covers.
+            var direct: boolean = false;
+            match (c.callee) {
+                parser.ExprIdent(cid) => { if (cid.name == name) { direct = true; } },
+                _ => {}
+            }
+            if (!direct && tv_expr(c.callee, name)) { return true; }
+            var ci: i32 = 0;
+            while (ci < c.args.len()) { if (tv_expr(c.args[ci], name)) { return true; } ci = ci + 1; }
+            return false;
+        },
+        parser.ExprBinary(b) => { return tv_expr(b.left, name) || tv_expr(b.right, name); },
+        parser.ExprUnary(u) => { return tv_expr(u.operand, name); },
+        parser.ExprIndex(ix) => { return tv_expr(ix.array, name) || tv_expr(ix.index, name); },
+        parser.ExprSlice(sl) => { return tv_expr(sl.array, name) || tv_expr(sl.start, name) || tv_expr(sl.end, name); },
+        parser.ExprFieldAccess(fa) => { return tv_expr(fa.obj, name); },
+        parser.ExprArray(a) => {
+            var ai: i32 = 0;
+            while (ai < a.elements.len()) { if (tv_expr(a.elements[ai], name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.ExprTuple(tu) => {
+            var ti: i32 = 0;
+            while (ti < tu.elements.len()) { if (tv_expr(tu.elements[ti], name)) { return true; } ti = ti + 1; }
+            return false;
+        },
+        parser.ExprStructLit(slit) => {
+            if (slit.has_base && tv_expr(slit.base, name)) { return true; }
+            var fi: i32 = 0;
+            while (fi < slit.field_values.len()) { if (tv_expr(slit.field_values[fi], name)) { return true; } fi = fi + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return tv_stmts(lm.body, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function tv_stmts(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (tv_stmt(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+
+function tv_stmt(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return tv_expr(v.init, name); },
+        parser.StmtReturn(r) => { return tv_expr(r.value, name); },
+        parser.StmtExpr(ex) => { return tv_expr(ex.value, name); },
+        parser.StmtAssign(a) => { return tv_expr(a.value, name); },
+        parser.StmtIf(iff) => {
+            return tv_expr(iff.cond, name) || tv_stmts(iff.then_body, name) || tv_stmts(iff.else_body, name);
+        },
+        parser.StmtWhile(w) => { return tv_expr(w.cond, name) || tv_stmts(w.body, name); },
+        parser.StmtFor(f) => { return tv_expr(f.iter, name) || tv_stmts(f.body, name); },
+        parser.StmtMatch(m) => {
+            if (tv_expr(m.scrutinee, name)) { return true; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (m.arms[i].has_guard && tv_expr(m.arms[i].guard, name)) { return true; }
+                if (tv_stmts(m.arms[i].body, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return tv_stmt(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // fn_sigs_with_dyn folds the module's `dyn Trait` method requirements into the
