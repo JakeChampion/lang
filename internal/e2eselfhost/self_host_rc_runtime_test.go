@@ -552,12 +552,31 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 			}
 		})
 	}
-	// Emission: a struct field from an array alias retains.
+	// Emission: a struct field from an array ALIAS retains — `xs` is read after
+	// the construction, so the box genuinely gains a second owner and the retain
+	// is what keeps the two drops balanced.
+	//
+	// The probe reads `xs[1]` back for that reason. Without it the local is at
+	// its LAST USE, which is a MOVE rather than an alias: #6726 hands the
+	// reference to the box and elides both the retain and the sweep dec that
+	// used to cancel it, so this assertion would be pinning the redundant pair
+	// it was written before anyone noticed.
 	t.Run("emits-retain-at-field-init", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
-			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
+			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0] + xs[1]; }")))
 		if !strings.Contains(asm, "call __fn___fern_rc_inc") {
-			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init")
+			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init of an aliased local")
+		}
+	})
+
+	// The other half of that rule, pinned here because this is where the
+	// always-retain assumption lived: the same construction over a local at its
+	// LAST use is a move, and emits no retain at all.
+	t.Run("no-retain-when-the-field-init-moves", func(t *testing.T) {
+		asm := string(runCapture(t, gcc, runner, driverBin,
+			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
+		if strings.Contains(asm, "call __fn___fern_rc_inc") {
+			t.Errorf("a moved local needs no retain at the field init — the box takes over its reference (#6726)")
 		}
 	})
 }
