@@ -1012,6 +1012,40 @@ function x86_incl_rip_label(a: X86Asm, name: string): X86Asm {
     return a;
 }
 
+// x86_store_imm_rip_label emits `mov $imm, sym(%rip)` at one of the three
+// widths: `opcode` is 0xC7 (movq / movl) or 0xC6 (movb), `w` sets REX.W, and
+// `imm_bytes` is the immediate's width — 4 for movq / movl, 1 for movb.
+//
+// This is the one rip-relative shape whose instruction continues past its
+// disp32, so the displacement is registered with the immediate's width as a
+// tail: x86_resolve measures from the end of the instruction, not the end of
+// the displacement, and without that the store lands `imm_bytes` too far on.
+function x86_store_imm_rip_label(a: X86Asm, opcode: i32, w: i32, name: string, imm: i32, imm_bytes: i32): X86Asm {
+    if (w != 0) { a = X86Asm { ...a, code: a.code.append(x86_rex(1, 0, 0, 0)) }; }
+    a = X86Asm { ...a, code: a.code.append(opcode) };
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5) ) };   // RIP-relative, /0
+    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+    var patch_off: i32 = a.code.len() - 4;
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_names: a.fix_names.append(name + "") };
+    a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
+    if (imm_bytes == 1) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+    return X86Asm { ...a, code: x86_le32(a.code, imm) };
+}
+
+// x86_fix_tail returns the instruction bytes following the disp32 patched at
+// `patch_off` — 0 for every fixup but an immediate store to a rip-relative
+// global.
+function x86_fix_tail(a: X86Asm, patch_off: i32): i32 {
+    var i: i32 = 0;
+    while (i < a.fix_tail_offs.len()) {
+        if (a.fix_tail_offs[i] == patch_off) { return a.fix_tail_bytes[i]; }
+        i = i + 1;
+    }
+    return 0;
+}
+
 // x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup.
 function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
@@ -1358,6 +1392,13 @@ pub struct X86Asm {
     lab_offs: i32[],
     fix_offs: i32[],
     fix_names: string[],
+    // Patch offsets whose instruction continues PAST the disp32 — an
+    // immediate store to a rip-relative global (`movq $0, sym(%rip)`) is the
+    // only shape that does. A rip displacement is measured from the end of
+    // the whole instruction, so those need the trailing immediate's width
+    // subtracted; every other fixup ends at its disp32 and is absent here.
+    fix_tail_offs: i32[],
+    fix_tail_bytes: i32[],
     // Mnemonics (or mnemonic+operand shapes) the GAS front-end did not
     // recognise. A non-empty list means the byte stream is INCOMPLETE —
     // instructions were dropped — so drivers must fail instead of writing
@@ -1368,7 +1409,7 @@ pub struct X86Asm {
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], unknown: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -1612,7 +1653,7 @@ function x86_resolve(a: X86Asm): X86Asm {
         if (target < 0) {
             a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
         } else {
-            a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off)) };
+            a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off)) };
         }
         i = i + 1;
     }
@@ -1862,7 +1903,7 @@ function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
         if (x86_str_contains(dst, "(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
             var mi: GasMem = x86_gas_parse_mem(dst);
             if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-            if (mi.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+            if (mi.is_rip) { return x86_store_imm_rip_label(a, 199, 0, mi.label, x86_gas_atoi(src), 4); }   // C7 /0, no REX.W
             a = X86Asm { ...a, code: x86_movl_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
             return a;
         }
@@ -2310,7 +2351,7 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
         if (x86_str_contains(dst, "(")) { // $imm -> mem (e.g. `movq $1, 8(%rax)`)
             var mi: GasMem = x86_gas_parse_mem(dst);
             if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-            if (mi.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+            if (mi.is_rip) { return x86_store_imm_rip_label(a, 199, 1, mi.label, x86_gas_atoi(src), 4); }   // REX.W C7 /0
             a = X86Asm { ...a, code: x86_mov_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
             return a;
         }
@@ -2448,7 +2489,7 @@ function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> mem
         var m: GasMem = x86_gas_parse_mem(dst);
         if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
+        if (m.is_rip) { return x86_store_imm_rip_label(a, 198, 0, m.label, x86_gas_atoi(src), 1); }   // C6 /0
         a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
         return a;
     }
