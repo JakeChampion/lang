@@ -11,6 +11,8 @@
 //     fern -emit core-module -target …      a raw wasm core module
 //     fern -ssa <entry.fern>                opt into the SSA pipeline
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
+//     fern -check <DIR>                     check a package, or every
+//                                           member of the workspace it roots
 //     fern -interp <entry.fern>             evaluate; exit = program result
 //     fern -fmt <entry.fern>                format the entry file to stdout
 //     fern -targets                         list the targets + capabilities
@@ -732,6 +734,261 @@ function run_resolve(start: string): i32 {
     return 0;
 }
 
+// Bundle is a loaded program: the entry module, the modules its imports
+// pulled in, the flattened whole, and the packages the capability layers
+// attribute to. `ok` is false when a module could not be read — the
+// diagnostic is already printed.
+struct Bundle {
+    entry: parser.Module,
+    loaded: flatten.LoadedModule[],
+    merged: parser.Module,
+    pkgs: caps.Pkg[],
+    ok: boolean,
+}
+
+// load_bundle loads `entry_mod`'s transitive imports off disk and flattens
+// them into one module (the import-driven scheme from asm_load_run). The
+// entry is parsed by the caller, which needs it for `-fmt` before any import
+// is resolved.
+function load_bundle(entry_path: string, entry_mod: parser.Module, root: string): Bundle {
+    var dir: string = dir_of(entry_path);
+    // The entry's own manifest, when it has one: it names the dependency
+    // packages, which are both a way to RESOLVE an import the sibling-file and
+    // stdlib-root rules cannot name, and the identity every capability grant
+    // is attached to (caps.fern / #6634).
+    var dir_slash: string = "";
+    if (dir.len() > 0) { dir_slash = dir + "/"; }
+    var man: fern_toml.Manifest = read_manifest(dir_slash);
+    var deps: string[] = fern_toml.dep_names(man);
+    var pkgs: caps.Pkg[] = [root_pkg(man)];
+    var no_mods: flatten.LoadedModule[] = [];
+
+    var paths: string[] = add_imports([], entry_mod, root, deps);
+    var loaded: flatten.LoadedModule[] = [];
+    var done: string[] = [];
+    var j: i32 = 0;
+    while (j < paths.len()) {
+        var ipath: string = paths[j];
+        j = j + 1;
+        if (!util.has_str(done, ipath)) {
+            done = done.append(ipath);
+            var mpath: string = resolve_path(ipath, dir, root);
+            var msrc: string = "";
+            var mok: boolean = false;
+            match (read_file(mpath)) {
+                Ok(s2) => { msrc = s2; mok = true; },
+                Err(e) => { mok = false; },
+            }
+            if (!mok) {
+                // Manifest fallback: a DECLARED dependency resolves through
+                // fern.toml across the disk-resolvable forms (path, workspace
+                // member, lock, vendor tree, content-addressed store). It is
+                // the only way to reach a package that carries its own
+                // manifest — the rules above can only name a sibling file or
+                // something under the stdlib root.
+                match (modloader.resolve_module_src(dir_slash, ipath, module_name(ipath))) {
+                    Some(s3) => { msrc = s3; mok = true; },
+                    None => { },
+                }
+            }
+            if (!mok) {
+                eprint("fern: cannot read module: ");
+                eprint(mpath);
+                eprint("\n");
+                return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
+            }
+            var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
+            loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
+            pkgs = add_pkg(pkgs, man, dir_slash, ipath);
+            paths = add_imports(paths, m, root, deps);
+        }
+    }
+    var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    // Fill omitted trailing args from default parameter values up front, so the
+    // checker, SSA, interpreter, and AST fallback all see complete calls.
+    merged = parser.fill_default_args_module(merged);
+    // A record-form variant pattern on an IMPORTED enum has no declaration to
+    // settle against until the bundle exists; parse_module resolved the
+    // same-module ones already, and the pass is idempotent.
+    merged = parser.resolve_variant_fields_module(merged);
+    return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, ok: true };
+}
+
+// bundle_visibility_diags reports cross-module visibility errors (#6714): a
+// reference to another module's non-`pub` function is an error, as it is in
+// native's modload. Checked on the bundle, where flatten has already turned
+// `lib.hidden` into the bare `lib__hidden`. Reported on the compile paths as
+// well as `-check` — native REFUSES TO BUILD such a program, and accepting it
+// here is the divergence. True means the program is refused.
+function bundle_visibility_diags(b: Bundle): boolean {
+    var vis_diags: checker.Diag[] = visibility.export_diags(b.entry, b.loaded);
+    var vi: i32 = 0;
+    while (vi < vis_diags.len()) {
+        var vd: checker.Diag = vis_diags[vi];
+        eprint(checker.itoa_nn(vd.line) + ":" + checker.itoa_nn(vd.col) + ": " + vd.message + "\n");
+        vi = vi + 1;
+    }
+    return vis_diags.len() > 0;
+}
+
+// check_bundle type-checks a loaded program and reports its diagnostics,
+// returning the exit code `-check` answers with: 0 well-typed and within
+// every capability grant, 1 otherwise.
+function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
+    var merged: parser.Module = b.merged;
+    var pkgs: caps.Pkg[] = b.pkgs;
+    var mt: checker.ModuleTypes = checker.check_module(merged);
+    // Surface the coded diagnostics (the same E0XX codes the Go
+    // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
+    // Positions aren't threaded through the AST yet, so a diagnostic
+    // is `error[E0XX]: message` without a line:col prefix for now.
+    var di: i32 = 0;
+    while (di < mt.diags.len()) {
+        var d: checker.Diag = mt.diags[di];
+        // An empty code renders with no `error[…]` segment — some native
+        // diagnostics are uncoded (the const-grammar rule is one), and
+        // parity is on the text native actually prints.
+        var tag: string = "";
+        if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
+        if (d.line > 0) {
+            eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": " + tag + d.message + "\n");
+        } else {
+            eprint(tag + d.message + "\n");
+        }
+        di = di + 1;
+    }
+    // The capability boundary, when a target was asked for. It runs
+    // whatever the checker concluded: the scan is syntactic — a call to a
+    // named builtin — so it holds where the partial checker collapses an
+    // expression to TypeUnknown (#4346), and that is exactly where a
+    // violation would otherwise go unreported while native names it.
+    var caps_violated: boolean = false;
+    if (target_given) { caps_violated = capability_violations(merged, target); }
+    // The package boundary (E070) runs whether or not a target was named:
+    // what a dependency may reach is a property of the manifests, not of
+    // what the program is being built for.
+    if (package_violations(merged, pkgs)) { caps_violated = true; }
+    if (mt.all_well_typed) {
+        if (caps_violated) { return 1; }
+        return 0;
+    }
+    // The module is ill-typed but produced no coded diagnostic — an
+    // expression collapsed to TypeUnknown on a type the partial checker
+    // can't model yet (#4346). Surface a best-effort hint so `-check`
+    // never exits 1 silently; the native `fern` remains the full oracle.
+    if (mt.diags.len() == 0) {
+        var hints: checker.Diag[] = checker.ill_typed_hint(merged);
+        var hi: i32 = 0;
+        while (hi < hints.len()) {
+            var h: checker.Diag = hints[hi];
+            if (h.line > 0) {
+                eprint(checker.itoa_nn(h.line) + ":" + checker.itoa_nn(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+            } else {
+                eprint("error[" + h.code + "]: " + h.message + "\n");
+            }
+            hi = hi + 1;
+        }
+    }
+    return 1;
+}
+
+// package_entry returns the entry module to type-check for the package rooted
+// at `dir`: its manifest's `lib` module when that file exists, else
+// `main.fern` (an application member), else "" — the caller reports it naming
+// both spellings, as native does.
+function package_entry(dir: string): string {
+    var lib: string = read_manifest(dir + "/").lib;
+    if (file_readable(dir + "/" + lib)) { return dir + "/" + lib; }
+    if (file_readable(dir + "/main.fern")) { return dir + "/main.fern"; }
+    return "";
+}
+
+function file_readable(path: string): boolean {
+    match (read_file(path)) {
+        Ok(s) => { return true; },
+        Err(e) => { return false; },
+    }
+    return false;
+}
+
+// is_dir reports whether `path` names a directory. `read_dir` is the probe: a
+// file answers ENOTDIR, so a mistyped entry path stays a file error rather
+// than being read as a package directory.
+function is_dir(path: string): boolean {
+    match (read_dir(path)) {
+        Ok(names) => { return true; },
+        Err(e) => { return false; },
+    }
+    return false;
+}
+
+// check_dir implements `-check <DIR>`: type-check the package governing DIR,
+// or — when that manifest declares a `[workspace]` — every member of it,
+// aggregating rather than stopping at the first failure, so one broken package
+// does not hide the rest. This is the workspace-wide check a multi-package
+// program wants: one command validates every member.
+function check_dir(dir: string, root: string, target: string, target_given: boolean): i32 {
+    var mdir: string = find_manifest_dir(dir);
+    if (mdir.len() == 0) {
+        eprint("check: " + dir + " is a directory with no fern.toml — pass a .fern file, or run inside a package");
+        return 1;
+    }
+    var man: fern_toml.Manifest = read_manifest(mdir + "/");
+    if (man.members.len() == 0) {
+        var entry: string = package_entry(mdir);
+        if (entry.len() == 0) {
+            eprint("no entry module in " + mdir + " (looked for " + man.lib + " and main.fern)");
+            return 1;
+        }
+        return check_file(entry, root, target, target_given);
+    }
+    var failed: i32 = 0;
+    var i: i32 = 0;
+    while (i < man.members.len()) {
+        var rel: string = man.members[i];
+        i = i + 1;
+        var mem: string = rel;
+        if (!mvs.is_abs(rel)) { mem = mvs.join_path(mdir, rel); }
+        var mentry: string = package_entry(mem);
+        if (mentry.len() == 0) {
+            eprint("FAIL " + rel + ": no entry module in " + mem + " (looked for " + read_manifest(mem + "/").lib + " and main.fern)");
+            failed = failed + 1;
+            continue;
+        }
+        if (check_file(mentry, root, target, target_given) != 0) {
+            eprint("FAIL " + rel);
+            failed = failed + 1;
+            continue;
+        }
+        eprint("ok   " + rel);
+    }
+    if (failed > 0) {
+        eprint("check: " + util.i32_to_string(failed) + " of " + util.i32_to_string(man.members.len()) + " workspace member(s) failed");
+        return 1;
+    }
+    eprint("check: " + util.i32_to_string(man.members.len()) + " workspace member(s) ok");
+    return 0;
+}
+
+// check_file loads one entry module and type-checks it — the single-package
+// half of `-check`, and the per-member step of the workspace half.
+function check_file(entry_path: string, root: string, target: string, target_given: boolean): i32 {
+    var src: string = "";
+    var ok: boolean = false;
+    match (read_file(entry_path)) {
+        Ok(s) => { src = s; ok = true; },
+        Err(e) => { },
+    }
+    if (!ok) {
+        eprint("fern: cannot read entry file: " + entry_path);
+        return 1;
+    }
+    var b: Bundle = load_bundle(entry_path, parser.parse_module(lexer.tokenize(src)), root);
+    if (!b.ok) { return 1; }
+    if (bundle_visibility_diags(b)) { return 1; }
+    return check_bundle(b, target, target_given);
+}
+
 // root_pkg is the entry's own package: its manifest's [package] name, or
 // `(root)` when nothing governs the program. It is never enforced or warned —
 // grants restrict DEPENDENCIES, and the program's author is trusting
@@ -925,6 +1182,11 @@ function run(): i32 {
 
     if (!have_entry) { return usage(); }
 
+    // `-check <DIR>` checks the package governing DIR, or every member of the
+    // workspace it roots. A file argument takes the single-entry path below,
+    // and so does a bad one — `is_dir` answers false for both.
+    if (mode_check && is_dir(entry_path)) { return check_dir(entry_path, root, target, target_given); }
+
     if (!platforms.for_target(target).known) {
         // One eprint, not one per name: eprint appends its own newline, so a
         // loop of them prints the target list down the left margin.
@@ -981,80 +1243,12 @@ function run(): i32 {
         return 0;
     }
 
-    // The entry's own manifest, when it has one: it names the dependency
-    // packages, which are both a way to RESOLVE an import the sibling-file and
-    // stdlib-root rules cannot name, and the identity every capability grant
-    // is attached to (caps.fern / #6634).
-    var dir_slash: string = "";
-    if (dir.len() > 0) { dir_slash = dir + "/"; }
-    var man: fern_toml.Manifest = read_manifest(dir_slash);
-    var deps: string[] = fern_toml.dep_names(man);
-    var pkgs: caps.Pkg[] = [root_pkg(man)];
+    var b: Bundle = load_bundle(entry_path, entry_mod, root);
+    if (!b.ok) { return 1; }
+    var merged: parser.Module = b.merged;
+    var pkgs: caps.Pkg[] = b.pkgs;
 
-    var paths: string[] = add_imports([], entry_mod, root, deps);
-    var loaded: flatten.LoadedModule[] = [];
-    var done: string[] = [];
-    var j: i32 = 0;
-    while (j < paths.len()) {
-        var ipath: string = paths[j];
-        j = j + 1;
-        if (!util.has_str(done, ipath)) {
-            done = done.append(ipath);
-            var mpath: string = resolve_path(ipath, dir, root);
-            var msrc: string = "";
-            var mok: boolean = false;
-            match (read_file(mpath)) {
-                Ok(s2) => { msrc = s2; mok = true; },
-                Err(e) => { mok = false; },
-            }
-            if (!mok) {
-                // Manifest fallback: a DECLARED dependency resolves through
-                // fern.toml across the disk-resolvable forms (path, workspace
-                // member, lock, vendor tree, content-addressed store). It is
-                // the only way to reach a package that carries its own
-                // manifest — the rules above can only name a sibling file or
-                // something under the stdlib root.
-                match (modloader.resolve_module_src(dir_slash, ipath, module_name(ipath))) {
-                    Some(s3) => { msrc = s3; mok = true; },
-                    None => { },
-                }
-            }
-            if (!mok) {
-                eprint("fern: cannot read module: ");
-                eprint(mpath);
-                eprint("\n");
-                return 1;
-            }
-            var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
-            loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
-            pkgs = add_pkg(pkgs, man, dir_slash, ipath);
-            paths = add_imports(paths, m, root, deps);
-        }
-    }
-    var merged: parser.Module = flatten.bundle(entry_mod, loaded);
-    // Fill omitted trailing args from default parameter values up front, so the
-    // checker, SSA, interpreter, and AST fallback all see complete calls.
-    merged = parser.fill_default_args_module(merged);
-    // A record-form variant pattern on an IMPORTED enum has no declaration to
-    // settle against until the bundle exists; parse_module resolved the
-    // same-module ones already, and the pass is idempotent.
-    merged = parser.resolve_variant_fields_module(merged);
-
-    // Cross-module visibility (#6714): a reference to another module's
-    // non-`pub` function is an error, as it is in native's modload. Checked on
-    // the bundle, where flatten has already turned `lib.hidden` into the bare
-    // `lib__hidden`. Reported on the compile paths as well as `-check` — native
-    // REFUSES TO BUILD such a program, and accepting it here is the divergence.
-    var vis_diags: checker.Diag[] = visibility.export_diags(entry_mod, loaded);
-    if (vis_diags.len() > 0) {
-        var vi: i32 = 0;
-        while (vi < vis_diags.len()) {
-            var vd: checker.Diag = vis_diags[vi];
-            eprint(checker.itoa_nn(vd.line) + ":" + checker.itoa_nn(vd.col) + ": " + vd.message + "\n");
-            vi = vi + 1;
-        }
-        return 1;
-    }
+    if (bundle_visibility_diags(b)) { return 1; }
 
     // `-capabilities`: print the per-package capability report and stop
     // (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 1). Report mode enforces
@@ -1067,61 +1261,7 @@ function run(): i32 {
 
     if (mode_scan) { return ssa_scan(merged.funcs, merged.structs); }
 
-    if (mode_check) {
-        var mt: checker.ModuleTypes = checker.check_module(merged);
-        // Surface the coded diagnostics (the same E0XX codes the Go
-        // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
-        // Positions aren't threaded through the AST yet, so a diagnostic
-        // is `error[E0XX]: message` without a line:col prefix for now.
-        var di: i32 = 0;
-        while (di < mt.diags.len()) {
-            var d: checker.Diag = mt.diags[di];
-            // An empty code renders with no `error[…]` segment — some native
-            // diagnostics are uncoded (the const-grammar rule is one), and
-            // parity is on the text native actually prints.
-            var tag: string = "";
-            if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
-            if (d.line > 0) {
-                eprint(checker.itoa_nn(d.line) + ":" + checker.itoa_nn(d.col) + ": " + tag + d.message + "\n");
-            } else {
-                eprint(tag + d.message + "\n");
-            }
-            di = di + 1;
-        }
-        // The capability boundary, when a target was asked for. It runs
-        // whatever the checker concluded: the scan is syntactic — a call to a
-        // named builtin — so it holds where the partial checker collapses an
-        // expression to TypeUnknown (#4346), and that is exactly where a
-        // violation would otherwise go unreported while native names it.
-        var caps_violated: boolean = false;
-        if (target_given) { caps_violated = capability_violations(merged, target); }
-        // The package boundary (E070) runs whether or not a target was named:
-        // what a dependency may reach is a property of the manifests, not of
-        // what the program is being built for.
-        if (package_violations(merged, pkgs)) { caps_violated = true; }
-        if (mt.all_well_typed) {
-            if (caps_violated) { return 1; }
-            return 0;
-        }
-        // The module is ill-typed but produced no coded diagnostic — an
-        // expression collapsed to TypeUnknown on a type the partial checker
-        // can't model yet (#4346). Surface a best-effort hint so `-check`
-        // never exits 1 silently; the native `fern` remains the full oracle.
-        if (mt.diags.len() == 0) {
-            var hints: checker.Diag[] = checker.ill_typed_hint(merged);
-            var hi: i32 = 0;
-            while (hi < hints.len()) {
-                var h: checker.Diag = hints[hi];
-                if (h.line > 0) {
-                    eprint(checker.itoa_nn(h.line) + ":" + checker.itoa_nn(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
-                } else {
-                    eprint("error[" + h.code + "]: " + h.message + "\n");
-                }
-                hi = hi + 1;
-            }
-        }
-        return 1;
-    }
+    if (mode_check) { return check_bundle(b, target, target_given); }
 
     if (mode_interp) {
         // Package-capability gate (E070 — caps.fern): a dependency reaching
