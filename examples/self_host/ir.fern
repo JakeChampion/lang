@@ -2247,11 +2247,11 @@ pub function optimize_ops(ops: Op[]): Op[] {
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return fold_const_binaries(propagate_copies(fuse_tee(eliminate_dead_code(cur)))); }
+        if (!r.changed) { return fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return fold_const_binaries(propagate_copies(fuse_tee(eliminate_dead_code(cur))));
+    return fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur)))));
 }
 
 // ---- tee fusion --------------------------------------------------------
@@ -2300,6 +2300,90 @@ pub function optimize_ops(ops: Op[]): Op[] {
 // drop out for a wasm32 string slot (slotIsTwoWord) because its string is a
 // (data, len) pair there. The self-host's string representation differs per
 // backend, so that rewrite wants its own measurement rather than a transcription.
+// const_propagate replaces a `load_local X` with the constant last stored to X —
+// the straight-line core of native's internal/ir/constprop.go (#6638). It catches
+// what fuse_tee and propagate_copies structurally cannot: a store and load that
+// are NOT adjacent.
+//
+//	const 7 ; store 0 ; <other ops> ; load 0 ; const 3 ; add
+//
+// fuse_tee needs the pair adjacent, so the load survives; this rewrites it to
+// `const 7` and the fold then collapses the triple to `const 10`.
+//
+// TWO deliberate restrictions, both narrowing this well inside native's version.
+//
+// 1. CONTROL FLOW IS A BARRIER. Every tracked binding is dropped at any block /
+//    loop / if / else / end / br / brif / return. Native instead merges scope
+//    states — intersecting an if's then-end with its else-end, merging a block's
+//    linear end with the state at every br that targeted it, invalidating a
+//    loop's writes at its end. That merge lattice is where a constant-propagation
+//    pass miscompiles: inline a constant that is only live on one path and the
+//    other path reads a value that was never written. Straight-line only needs no
+//    merge reasoning at all, so it is sound by construction; the merges are worth
+//    porting on their own, with their own tests.
+//
+// 2. SCALARS ONLY, via the SHARED `const_i32_readable` predicate — so this pass
+//    admits exactly what the fold and strength peepholes admit, by construction
+//    rather than by coincidence. That covers both constant shapes (`const_i32`
+//    and the source-text `const_i32_text`, the one a literal actually lowers to)
+//    and inherits the guard that a text constant must round-trip as decimal.
+//    Strings and function values are excluded on purpose: a `const_str` is not a
+//    pure constant in this compiler, since it allocates a fresh box on every
+//    evaluation (#2649 Option A), so duplicating one where a load used to be
+//    changes both the allocation count and the RC identity the reclaim analyses
+//    reason about. An i32 is copied, so replacing a load with it changes nothing
+//    but the instruction.
+pub function const_propagate(ops: Op[]): Op[] {
+    var k_load: i32 = kind_id("load_local");
+    var k_store: i32 = kind_id("store_local");
+    var k_tee: i32 = kind_id("tee_local");
+    var out: Op[] = [];
+    // known[slot] holds the tracked constant OP, re-emitted verbatim at a load;
+    // has[slot] says whether it is live. Both clear wholesale at a control-flow
+    // boundary. Carrying the op rather than a value keeps both constant shapes on
+    // one path and cannot invent a spelling the backends have not seen.
+    var known: Op[] = [];
+    var has: boolean[] = [];
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var o: Op = ops[i];
+        var kt: i32 = o.kind_tag;
+        if (op_is_control_flow(kt)) {
+            known = [];
+            has = [];
+            out = out.append(o);
+        } else if (kt == k_store || kt == k_tee) {
+            // A store binds the slot to the constant that produced it — but only
+            // when the PRECEDING op is that constant, which is the only shape this
+            // straight-line tracker can see.
+            var sl: i32 = o.i32_imm;
+            if (sl >= 0) {
+                while (has.len() <= sl) { known = known.append(op_const_i32(0)); has = has.append(false); }
+                if (i > 0 && const_i32_readable(ops[i - 1])) {
+                    known = known.with(sl, ops[i - 1]);
+                    has = has.with(sl, true);
+                } else {
+                    has = has.with(sl, false);
+                }
+            }
+            out = out.append(o);
+        } else if (kt == k_load && o.i32_imm >= 0 && o.i32_imm < has.len() && has[o.i32_imm]) {
+            out = out.append(known[o.i32_imm]);
+        } else {
+            out = out.append(o);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// op_is_control_flow reports whether `tag` ends a straight-line run, so a
+// constant tracked before it cannot be assumed after it (see const_propagate).
+pub function op_is_control_flow(tag: i32): boolean {
+    return tag == 152 || tag == 153 || tag == 154 || tag == 155
+        || tag == 156 || tag == 157 || tag == 158 || tag == 160;
+}
+
 pub function propagate_copies(ops: Op[]): Op[] {
     var k_load: i32 = kind_id("load_local");
     var k_store: i32 = kind_id("store_local");

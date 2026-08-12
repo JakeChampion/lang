@@ -242,6 +242,38 @@ function main(): i32 {
                                 ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return()];
     out = out + "cp_pipeline: " + render(ir.optimize_ops(cp_pipeline)) + "\n";
 
+    // 14. const_propagate (#6638): a store and load that are NOT adjacent, which
+    //     fuse_tee structurally cannot reach.
+    var kp_far: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_call_direct("side", 0), ir.op_drop(),
+                           ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false)];
+    out = out + "kp_far: " + render(ir.const_propagate(kp_far)) + "\n";
+
+    // 14a. CONTROL FLOW IS A BARRIER: the load after the `if` is not rewritten,
+    //      because this pass does no scope merging and will not assume a binding
+    //      survives a branch. Native merges here; that is a separate port.
+    var kp_cf: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_if(0), ir.op_end(),
+                          ir.op_load_local(0)];
+    out = out + "kp_control_flow: " + render(ir.const_propagate(kp_cf)) + "\n";
+
+    // 14b. A store of a NON-constant kills the binding — the slot now holds
+    //      whatever the call returned.
+    var kp_kill: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_call_direct("side", 0),
+                            ir.op_store_local(0), ir.op_load_local(0)];
+    out = out + "kp_killed: " + render(ir.const_propagate(kp_kill)) + "\n";
+
+    // 14c. The SOURCE-TEXT constant shape is tracked too — that is the one a
+    //      literal actually lowers to — via the same const_i32_readable predicate
+    //      the fold and strength peepholes use.
+    var kp_text: ir.Op[] = [ir.op_const_i32_text("7"), ir.op_store_local(0), ir.op_call_direct("side", 0),
+                            ir.op_drop(), ir.op_load_local(0)];
+    out = out + "kp_text: " + render(ir.const_propagate(kp_text)) + "\n";
+
+    // 14d. A non-decimal text constant is REFUSED by that same predicate, so it
+    //      is never propagated as though it were its own digits.
+    var kp_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_store_local(0), ir.op_call_direct("side", 0),
+                           ir.op_drop(), ir.op_load_local(0)];
+    out = out + "kp_hex_refused: " + render(ir.const_propagate(kp_hex)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.

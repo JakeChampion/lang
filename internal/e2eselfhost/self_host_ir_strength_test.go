@@ -92,7 +92,17 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"cp_live_store: const_i32 7 ; tee_local 0 ; const_i32 1 ; store_local 0\n" +
 		"cp_two_tees: const_i32 7 ; tee_local 0 ; const_i32 8 ; tee_local 0\n" +
 		"cp_store_kept: const_i32 7 ; store_local 3\n" +
-		"cp_pipeline: const_i32 14 ; return\n"
+		"cp_pipeline: const_i32 14 ; return\n" +
+		// #6638 constant propagation, straight-line only. kp_control_flow is the
+		// restriction made visible: this pass does no scope merging, so a binding is
+		// never assumed to survive a branch. kp_hex_refused inherits the shared
+		// const_i32_readable guard — a non-decimal text constant is not propagated as
+		// though it were its own digits.
+		"kp_far: const_i32 7 ; store_local 0 ; call_direct side/0 ; drop ; const_i32 7 ; const_i32 3 ; add\n" +
+		"kp_control_flow: const_i32 7 ; store_local 0 ; if ; end ; load_local 0\n" +
+		"kp_killed: const_i32 7 ; store_local 0 ; call_direct side/0 ; store_local 0 ; load_local 0\n" +
+		"kp_text: const_i32_text 7 ; store_local 0 ; call_direct side/0 ; drop ; const_i32_text 7\n" +
+		"kp_hex_refused: const_i32_text 0x10 ; store_local 0 ; call_direct side/0 ; drop ; load_local 0\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
