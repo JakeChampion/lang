@@ -599,6 +599,16 @@ pub function op_open_file(flags: i32): Op {
 // arena and records the end); wasm reads `$heap − heap_base` and zero-extends
 // it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
 pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+// `__heap_mark` takes no operands -> an i64 arena checkpoint; `__heap_release_to`
+// pops that i64 and rewinds the cursor to it (#6728). A one-level checkpoint on a
+// bump arena that otherwise never gives memory back — the pair exists for the
+// per-module emit, whose per-unit accumulation walks off the end of the arena.
+// Both are INLINE on the register backends for heap_bump_bytes's reason: they read
+// and write the arena globals directly, so a call would only add an ABI. wasm
+// lowers neither — its linear-memory allocator has no room for the freelist
+// shadow, and the capability layer refuses `arena` there (E066) before lowering.
+pub function op_heap_mark(): Op { return op0("heap_mark"); }
+pub function op_heap_release_to(): Op { return op0("heap_release_to"); }
 // Bit counting (#6197): one integer operand of `width` (32 or 64) → an i32
 // count. clz/ctz of ZERO are defined as the width, matching wasm's semantics
 // and the SWAR sequences these replace — that definition is why the x86-64
@@ -1406,6 +1416,8 @@ function kind_id_1(name: string): i32 {
     if (name == "free") { return 78; }
     if (name == "ptr_width") { return 79; }
     if (name == "heap_bump_bytes") { return 80; }
+    if (name == "heap_mark") { return 229; }
+    if (name == "heap_release_to") { return 230; }
     return 0;
 }
 function kind_id_2(name: string): i32 {
@@ -1684,6 +1696,8 @@ function kind_name_1(id: i32): string {
     if (id == 78) { return "free"; }
     if (id == 79) { return "ptr_width"; }
     if (id == 80) { return "heap_bump_bytes"; }
+    if (id == 229) { return "heap_mark"; }
+    if (id == 230) { return "heap_release_to"; }
     return "invalid";
 }
 function kind_name_2(id: i32): string {
@@ -2396,6 +2410,9 @@ pub function op_allocates(tag: i32): boolean {
     // + base, so it needs that runtime emitted — fold it into the same gate
     // (the predicate's contract per the doc above is "needs the heap runtime").
     if (tag == 80) { return true; }
+    // heap_mark / heap_release_to read and REWRITE that same cursor (plus the
+    // freelist heads), so they need the heap runtime for the same reason (#6728).
+    if (tag == 229 || tag == 230) { return true; }
     // arr_push_shared_count does not allocate either, but it reads the counter
     // __fern_arr_push bumps, which only exists when the heap runtime is emitted.
     // Same gate, same reason as heap_bump_bytes above — and the same for its

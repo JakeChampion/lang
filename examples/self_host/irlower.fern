@@ -8046,6 +8046,19 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     if (cid.name == "__heap_bump_bytes" && c.args.len() == 0) {
         return s.emit(ir.op_heap_bump_bytes());
     }
+    // __heap_mark() / __heap_release_to(mark): the one-level arena checkpoint
+    // (#6728). Inline on the register backends like the bump read above — they
+    // touch the same globals. The pair was built FOR the per-module emit, so the
+    // self-host not lowering it left the compiler that motivated the feature
+    // unable to compile a program using it.
+    if (cid.name == "__heap_mark" && c.args.len() == 0) {
+        return s.emit(ir.op_heap_mark());
+    }
+    if (cid.name == "__heap_release_to" && c.args.len() == 1) {
+        var hrl: LowerState = lower_i64(c.args[0], s);
+        if (!hrl.ok) { return hrl; }
+        return hrl.emit(ir.op_heap_release_to());
+    }
     // Bit-counting intrinsics (#6197). Unlike the probes around them these are
     // NOT runtime-helper calls: they lower to one IR op, which is the point --
     // the SWAR sequences they replace measured ~19.5 ns per call against

@@ -50,6 +50,24 @@ function fr_sub_imm(s: asmcore.EmitState, dst: string, base: string, imm: i32): 
     s = s.write("    sub " + dst + ", " + base + ", x17\n"); return s;
 }
 
+// arm64_copy_words emits a straight-line word copy of `n` 8-byte words from
+// `src` to `dst` (#6728). x9/x10/x11 are AAPCS scratch and dead at both call
+// sites; the loop is emitted rather than unrolled because n is 65536 here.
+function arm64_copy_words(s: asmcore.EmitState, src: string, dst: string, n: i32): asmcore.EmitState {
+    var lo: asmcore.LabelOut = asmcore.fresh_label(s);
+    var lbl: string = lo.name;
+    s = lo.state;
+    s = s.write("    adrp x9, " + src + "\n    add x9, x9, :lo12:" + src + "\n");
+    s = s.write("    adrp x10, " + dst + "\n    add x10, x10, :lo12:" + dst + "\n");
+    s = s.write("    mov x11, #" + util.i32_to_string(n) + "\n");
+    s = s.write(lbl + ":\n");
+    s = s.write("    ldr x12, [x9], #8\n");
+    s = s.write("    str x12, [x10], #8\n");
+    s = s.write("    sub x11, x11, #1\n");
+    s = s.write("    cbnz x11, " + lbl + "\n");
+    return s;
+}
+
 function fr_ldr(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
     if (off >= 0 - 256) {
         s = s.write("    ldr " + reg + ", [x29, #" + util.i32_to_string(off) + "]\n"); return s;
@@ -836,6 +854,39 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    cmp x0, #0\n");
             s = s.write("    csel x2, x2, xzr, ne\n");            // 0 if uninit, else ptr−base
             s = s.write("    str x2, [sp, #-16]!\n");
+        } else if (o.kind_tag == 229) {  // heap_mark
+            // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
+            // head tables into their .bss shadows. Snapshotted rather than
+            // cleared — a block allocated AND freed inside the window leaves a
+            // head above the mark, which a later pop and a later bump would both
+            // hand out; restoring the pre-mark heads drops exactly those and
+            // keeps the older entries reusable. One live mark at a time (the
+            // shadow is a single buffer, so marks do not nest). x9-x12 are AAPCS
+            // scratch and dead here — the operand stack lives on sp.
+            s = s.mark_heap();
+            s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
+            s = arm64_copy_words(s, "__fern_freelist", "__fern_freelist_shadow", 65536);
+            s = arm64_copy_words(s, "__fern_large_freelist", "__fern_large_freelist_shadow", 2560);
+            s = s.write("    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 230) {  // heap_release_to
+            // Rewind to the mark and restore both head tables. mark == 0 means
+            // the mark predates the first allocation, i.e. no checkpoint — leave
+            // the cursor alone rather than zero it and hand out the arena base.
+            // Sound only when nothing allocated after the mark is still
+            // reachable; the caller owns that, as it owns malloc/free pairing.
+            var hro: asmcore.LabelOut = asmcore.fresh_label(s);
+            var hr_done: string = hro.name;
+            s = hro.state;
+            s = s.mark_heap();
+            s = s.write("    ldr x0, [sp], #16\n");
+            s = s.write("    cbz x0, " + hr_done + "\n");
+            s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    str x0, [x1]\n");
+            s = arm64_copy_words(s, "__fern_freelist_shadow", "__fern_freelist", 65536);
+            s = arm64_copy_words(s, "__fern_large_freelist_shadow", "__fern_large_freelist", 2560);
+            s = s.write(hr_done + ":\n");
+            // Push the mark back — the one-value-per-expression invariant, as on
+            // x86-64. x0 survives both paths (arm64_copy_words uses x9-x12).
+            s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
             // The cliff WEIGHT: bytes copied at the crossings the counter
             // counts. Same inline .bss read + heap gate as its sibling.
@@ -2998,6 +3049,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // tier (bsr/variable-shift-free — built from 1<<19 to avoid arm64's tight
     // immediate/wide-literal encoding, like the existing round-to-8 lsr/lsl).
     s = s.write("__fern_large_freelist: .skip 20480\n");
+    // Shadows for the arena checkpoint (#6728) — the arm64 twin of asm_ir's.
+    // .bss, so they cost image size nothing and are zero-filled.
+    s = s.write("    .align 3\n");
+    s = s.write("__fern_freelist_shadow: .skip 524288\n");
+    s = s.write("    .align 3\n");
+    s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
     s = s.write("    .text\n");
     s = s.write(".globl __fern_alloc\n");
     s = s.write(".type __fern_alloc, %function\n");
