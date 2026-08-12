@@ -209,3 +209,48 @@ func TestArm64ArithmeticTapLinksNatively(t *testing.T) {
 		t.Errorf("TAP output missing \"# fail 0\":\n%s", s)
 	}
 }
+
+// ---- create_dir_all (#6749) ----
+
+// createDirAllSrc pins the whole `mkdir -p` contract in one
+// program, relative to the process working directory: a missing
+// chain is created top to bottom, the result is a DIRECTORY, a
+// second call over the same path is Ok (EEXIST folded into
+// success), doubled separators and a trailing slash name the same
+// directory rather than an empty component, and a component that
+// is a regular file is a genuine Err. Each failure arm returns a
+// distinct exit code.
+const createDirAllSrc = `function main(): i32 {
+    match (create_dir_all("a/b/c")) { Err(e) => { return 10; }, Ok(_) => { } }
+    match (stat("a/b/c")) {
+        Ok(fs) => { if (fs.is_dir) { } else { return 11; } },
+        Err(e) => { return 12; }
+    }
+    match (stat("a")) {
+        Ok(fs) => { if (fs.is_dir) { } else { return 13; } },
+        Err(e) => { return 14; }
+    }
+    match (create_dir_all("a/b/c")) { Err(e) => { return 15; }, Ok(_) => { } }
+    match (create_dir_all("x//y/")) { Err(e) => { return 16; }, Ok(_) => { } }
+    match (stat("x/y")) {
+        Ok(fs) => { if (fs.is_dir) { } else { return 17; } },
+        Err(e) => { return 18; }
+    }
+    match (write_file("f.txt", "hi")) { Err(e) => { return 19; }, Ok(_) => { } }
+    match (create_dir_all("f.txt/inner")) { Ok(_) => { return 20; }, Err(e) => { } }
+    return 0;
+}`
+
+func TestX86_64CreateDirAll(t *testing.T) {
+	code, _ := compileRunX86_64WithSetup(t, createDirAllSrc, nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (see createDirAllSrc arm codes)", code)
+	}
+}
+
+func TestArm64CreateDirAll(t *testing.T) {
+	out, code := compileAndRunArm64(t, createDirAllSrc)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (see createDirAllSrc arm codes)\n%s", code, out)
+	}
+}

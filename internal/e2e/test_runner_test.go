@@ -1560,7 +1560,10 @@ func TestRunnerFilesystemOpsExample(t *testing.T) {
 		"ok 2 - read_dir lists what we wrote",
 		"ok 4 - remove_file on missing target errors",
 		"ok 5 - remove_dir_all on missing target is ok",
-		"# pass 5",
+		"ok 6 - create_dir_all builds a missing chain",
+		"ok 7 - create_dir_all on an existing path is ok",
+		"ok 8 - create_dir_all under a file errors",
+		"# pass 8",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

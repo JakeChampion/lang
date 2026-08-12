@@ -59,7 +59,18 @@ function main(): i32 {
 }
 ```
 
-`remove_file` and `remove_dir_all` have the same shape.
+`remove_file`, `remove_dir_all` and `create_dir_all` have the same shape.
+`create_dir_all` is `mkdir -p`: it builds every missing parent, and a
+path that is already there is `Ok`, so writing into a layout you do not
+have yet is two calls rather than a walk.
+
+```fern
+function save_into(dir: string, name: string, body: string): Result[(), IoError] {
+    create_dir_all(dir)?;
+    write_file(dir + "/" + name, body)?;
+    return Ok(());
+}
+```
 
 ## Read an environment variable
 

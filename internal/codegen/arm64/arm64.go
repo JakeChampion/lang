@@ -438,7 +438,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
 	if g.usesReadFile || g.usesWriteFile || g.usesWriteFileExec || g.usesRemoveFile ||
-		g.usesTempDir || g.usesReadDir || g.usesStat || g.usesRemoveDirAll {
+		g.usesTempDir || g.usesReadDir || g.usesStat || g.usesRemoveDirAll ||
+		g.usesCreateDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
 		g.usesIoError = true
@@ -703,6 +704,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesRemoveFile {
 		g.emitRemoveFileRuntime()
+	}
+	if g.usesCreateDirAll {
+		g.emitCreateDirAllRuntime()
 	}
 	if g.usesTempDir {
 		g.emitTempDirRuntime()
@@ -7886,6 +7890,105 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.line(".ltorg")
 }
 
+// emitCreateDirAllRuntime emits `__fern_create_dir_all(path_data,
+// path_len)` in (x0, x1) → Result[void, IoError] — mkdirat(AT_FDCWD,
+// path, 0777) for every missing component of `path`, POSIX `mkdir -p`.
+//
+// The chain is walked over the NUL-terminated copy: at each '/' the
+// separator is overwritten with a NUL, mkdirat is issued for the
+// prefix, and the '/' is put back. Those intermediate results are
+// discarded — a parent that could not be created makes the final
+// mkdirat fail with the same errno, so one error path reports for the
+// whole walk. A '/' whose predecessor is also '/' names the same
+// directory the previous step already handled and is skipped.
+//
+// EEXIST on the final component is success, matching the checker's
+// contract. Box shapes match remove_file: Ok = 16-byte box tag=0 with
+// the unit payload @+8; Err = 16-byte box tag=1 with the IoError box
+// @+8.
+func (g *generator) emitCreateDirAllRuntime() {
+	g.line("")
+	g.line(".global __fern_create_dir_all")
+	g.typeDirective("__fern_create_dir_all")
+	g.label("__fern_create_dir_all")
+	// Frame: fp/lr (16) + x19..x22 (32) + x23 (16, half unused) +
+	// 16-byte inline-spill scratch at [x29+64] = 80.
+	g.emit("stp x29, x30, [sp, #-80]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	g.emit("str x23, [sp, #48]")
+	g.emit("mov x19, x0") // path_data (original, for io_error)
+	g.emit("mov x20, x1") // path_len (original, for io_error)
+	g.emitStrDataPtr2W("x21", "x19", "x20", 64)
+	g.emit("mov x22, x20")
+	g.emitStrLen2W("w22", "x22") // w22 = byte length
+	g.emitNulTermPath2W("x21", "x21", "x22")
+	// Parents: every '/' at index 1..len-1 that is not itself
+	// preceded by one. Index 0 is skipped so a leading '/' does not
+	// ask for the empty path.
+	g.emit("mov x23, #1")
+	g.label(".Lcda2w_lp")
+	g.emit("cmp x23, x22")
+	g.emit("b.hs .Lcda2w_lpd")
+	g.emit("ldrb w9, [x21, x23]")
+	g.emit("cmp w9, #47") // '/'
+	g.emit("b.ne .Lcda2w_nx")
+	g.emit("sub x10, x23, #1")
+	g.emit("ldrb w9, [x21, x10]")
+	g.emit("cmp w9, #47")
+	g.emit("b.eq .Lcda2w_nx")
+	g.emit("strb wzr, [x21, x23]")
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, #511") // 0777
+	g.syscall("mkdirat")
+	g.emit("mov w9, #47")
+	g.emit("strb w9, [x21, x23]")
+	g.label(".Lcda2w_nx")
+	g.emit("add x23, x23, #1")
+	g.emit("b .Lcda2w_lp")
+	g.label(".Lcda2w_lpd")
+	// The leaf decides the result.
+	g.atFdcwd("x0")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, #511")
+	g.syscall("mkdirat")
+	g.emit("cmp x0, #0")
+	g.emit("b.eq .Lcda2w_ok")
+	g.emit("cmn x0, #17") // errno == -EEXIST
+	g.emit("b.ne .Lcda2w_err")
+
+	g.label(".Lcda2w_ok")
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")     // tag = 0 (Ok)
+	g.emit("str xzr, [x0, #8]") // unit payload
+	g.emit("b .Lcda2w_return")
+
+	g.label(".Lcda2w_err")
+	g.emit("neg x22, x0") // errno
+	g.emit("mov x0, x22")
+	g.emit("mov x1, x19")
+	g.emit("mov x2, x20")
+	g.emit("bl __fern_io_error")
+	g.emit("mov x19, x0") // stash IoError box across the alloc
+	g.emit("mov x0, #16")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]") // tag = 1 (Err)
+	g.emit("str x19, [x0, #8]")
+
+	g.label(".Lcda2w_return")
+	g.emit("ldr x23, [sp, #48]")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #80")
+	g.emit("ret")
+	g.sizeDirective("__fern_create_dir_all")
+	g.line(".ltorg")
+}
+
 // emitTempDirRuntime emits `__fern_temp_dir(prefix_data,
 // prefix_len)` in (x0, x1) → Result[string, IoError] — creates
 // "/tmp/<prefix>-<ns>" (ns = __fern_monotonic_ns, decimal
@@ -9638,6 +9741,9 @@ type generator struct {
 	usesReadDir      bool
 	usesStat         bool
 	usesRemoveDirAll bool
+	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
+	// builtin that can BUILD a directory tree (#6749).
+	usesCreateDirAll bool
 	// usesIoError pulls in `__fern_io_error(errno, path)` —
 	// constructs an `IoError` enum box from a Linux errno.
 	// Shared by read_file + write_file + the Reader / Writer
@@ -12808,6 +12914,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// remove_file(path): Option[IoError] — unlinkat.
 			target = "__fern_remove_file"
 			g.usesRemoveFile = true
+		case "create_dir_all":
+			// create_dir_all(path): Result[void, IoError] —
+			// mkdirat per missing component.
+			target = "__fern_create_dir_all"
+			g.usesCreateDirAll = true
 		case "temp_dir":
 			// temp_dir(prefix): Result[string, IoError] —
 			// mkdirat("/tmp/<prefix>-<monotonic_ns>").

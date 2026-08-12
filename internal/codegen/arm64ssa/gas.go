@@ -527,6 +527,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"write_file":                    emitWriteFileHelper,
 	"read_file":                     emitReadFileHelper,
 	"remove_file":                   emitRemoveFileHelper,
+	"create_dir_all":                emitCreateDirAllHelper,
 	"remove_dir_all":                emitRemoveDirAllHelper,
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
@@ -1804,6 +1805,7 @@ var runtimeHelperDeps = map[string][]string{
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error"},
 	"remove_file":                   {"__fern_io_error"},
+	"create_dir_all":                {"__fern_io_error"},
 	"remove_dir_all":                {"__fern_io_error"},
 	"temp_dir":                      {"__fern_io_error"},
 	"read_dir":                      {"__fern_io_error"},
@@ -1845,6 +1847,7 @@ var helperReturns64 = map[string]bool{
 	"write_file":                    true,
 	"read_file":                     true,
 	"remove_file":                   true,
+	"create_dir_all":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
@@ -1905,6 +1908,7 @@ var heapUsingHelpers = map[string]bool{
 	"write_file":                    true,
 	"read_file":                     true,
 	"remove_file":                   true,
+	"create_dir_all":                true,
 	"remove_dir_all":                true,
 	"temp_dir":                      true,
 	"read_dir":                      true,
@@ -3039,6 +3043,121 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w(".Lssa_rmf_ret:")
 	w("\tldp x19, x20, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+}
+
+// emitCreateDirAllHelper writes create_dir_all(path) -> Result[void, IoError]:
+// mkdirat(AT_FDCWD, prefix, 0777) for every missing component of `path`, POSIX
+// `mkdir -p`. The path is NUL-terminated into a fresh heap buffer, then walked:
+// at each '/' the separator becomes a NUL, mkdirat runs for the prefix, and the
+// '/' goes back. Intermediate results are discarded — a parent that could not be
+// created makes the final mkdirat fail with the same errno — and EEXIST on the
+// leaf is success, so an existing path is Ok. Non-leaf (calls __fern_io_error),
+// keeping callee-saved x19=path / x20=path_nul / x21=len / x22=cursor across the
+// syscalls and the call. x0=path.
+func emitCreateDirAllHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("create_dir_all"))
+	w("\tstp x29, x30, [sp, #-48]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstp x21, x22, [sp, #32]")
+	w("\tmov x19, x0") // path
+	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tldur w21, [x19, #-4]") // path len
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8") // base
+	w("\tadd x5, x21, #1")
+	w("\tadd x6, x4, x5")
+	w("\tstr x6, [x3]") // bump
+	w("\tmov w7, #0")
+	w(".Lssa_cda_cp:")
+	w("\tcmp w7, w21")
+	w("\tb.hs .Lssa_cda_cpd")
+	w("\tldrb w8, [x19, x7]")
+	w("\tstrb w8, [x4, x7]")
+	w("\tadd w7, w7, #1")
+	w("\tb .Lssa_cda_cp")
+	w(".Lssa_cda_cpd:")
+	w("\tstrb wzr, [x4, x21]") // NUL
+	w("\tmov x20, x4")         // path_nul
+	// Parents: every '/' at index 1..len-1 not itself preceded by one. Index 0
+	// is skipped so a leading '/' does not ask for the empty path.
+	w("\tmov x22, #1")
+	w(".Lssa_cda_lp:")
+	w("\tcmp x22, x21")
+	w("\tb.hs .Lssa_cda_lpd")
+	w("\tldrb w9, [x20, x22]")
+	w("\tcmp w9, #47") // '/'
+	w("\tb.ne .Lssa_cda_nx")
+	w("\tsub x10, x22, #1")
+	w("\tldrb w9, [x20, x10]")
+	w("\tcmp w9, #47")
+	w("\tb.eq .Lssa_cda_nx")
+	w("\tstrb wzr, [x20, x22]")
+	w("\tmov x0, #100")
+	w("\tneg x0, x0") // AT_FDCWD = -100
+	w("\tmov x1, x20")
+	w("\tmov x2, #511") // 0777
+	w("\tmov x8, #34")  // mkdirat
+	w("\tsvc #0")
+	w("\tmov w9, #47")
+	w("\tstrb w9, [x20, x22]")
+	w(".Lssa_cda_nx:")
+	w("\tadd x22, x22, #1")
+	w("\tb .Lssa_cda_lp")
+	w(".Lssa_cda_lpd:")
+	// The leaf decides the result.
+	w("\tmov x0, #100")
+	w("\tneg x0, x0")
+	w("\tmov x1, x20")
+	w("\tmov x2, #511")
+	w("\tmov x8, #34")
+	w("\tsvc #0")
+	w("\tcmp x0, #0")
+	w("\tb.eq .Lssa_cda_ok")
+	w("\tcmn x0, #17") // -EEXIST is success
+	w("\tb.ne .Lssa_cda_err")
+	w(".Lssa_cda_ok:")
+	// return Ok(()) box {rc=1, tag=0, unit@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")      // rc = 1
+	w("\tadd x0, x4, #8")    // box data
+	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
+	w("\tstr xzr, [x0, #8]") // unit payload
+	w("\tb .Lssa_cda_ret")
+	w(".Lssa_cda_err:")
+	w("\tneg x0, x0") // errno = -ret
+	w("\tmov x1, x19")
+	w("\tbl %s", fnLabel("__fern_io_error"))
+	w("\tmov x20, x0") // IoError box
+	// return Err(IoError) box {rc=1, tag=1, ioerr@8}.
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	w("\tldr x4, [x3]")
+	w("\tadd x4, x4, #7")
+	w("\tand x4, x4, #-8")
+	w("\tadd x5, x4, #24")
+	w("\tstr x5, [x3]")
+	w("\tmov w6, #1")
+	w("\tstr w6, [x4]")   // rc = 1
+	w("\tadd x0, x4, #8") // box data
+	w("\tstr w6, [x0]")   // tag = 1 (Err) — w6 still holds 1 from rc
+	w("\tstr x20, [x0, #8]")
+	w(".Lssa_cda_ret:")
+	w("\tldp x21, x22, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #48")
 	w("\tret")
 }
 

@@ -269,6 +269,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "reader_close")) { out = out.append("reader_close"); }
     if (module_emits_op_cached(cache, "remove_dir_all")) { out = out.append("remove_dir_all"); }
     if (module_emits_op_cached(cache, "remove_file")) { out = out.append("remove_file"); }
+    if (module_emits_op_cached(cache, "create_dir_all")) { out = out.append("create_dir_all"); }
     if (module_emits_op_cached(cache, "sleep_ms")) { out = out.append("sleep_ms"); }
     if (module_emits_op_cached(cache, "stat")) { out = out.append("stat"); }
     if (module_emits_op_cached(cache, "str_bytes")) { out = out.append("str_bytes"); }
@@ -3853,6 +3854,13 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             // path_unlink_file import + heap) when the module removes a file. No
             // struct payload, so unlike stat it needs no type-id.
             out = out + "    call $__fern_remove_file\n";
+        } else if (o.kind_tag == 231) {  // create_dir_all
+            // stack: path strblock ptr -> create the directory and every missing
+            // parent, push a Result[(), IoError] box. $__fern_create_dir_all
+            // (param i32 path, result i32) walks the path over the preview1
+            // path_create_directory import; emitted caller-side in wasm_ir_run
+            // (with that import + heap). No struct payload, so no type-id.
+            out = out + "    call $__fern_create_dir_all\n";
         } else if (o.kind_tag == 171) {  // read_dir
             // stack: path strblock ptr -> list the directory's base-name children,
             // push a Result[string[], IoError] box. $__fern_read_dir (param i32
@@ -4851,6 +4859,41 @@ pub function remove_file_func(): string {
     o = o + "    (local.set $err (call $path_unlink_file (i32.const 3) (i32.add (local.get $path) (i32.const 4)) (i32.load (local.get $path))))\n";
     o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (if (i32.eq (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+    o = o + "    (local.get $res))\n";
+    return o;
+}
+// create_dir_all_func emits $__fern_create_dir_all(path) -> Result[(), IoError]
+// box. path_create_directory(preopen fd 3, ...) is issued for every '/' in the
+// path and then for the whole path — WASI takes an explicit length, so a parent
+// prefix is the same buffer with a shorter length and nothing has to be
+// rewritten. The intermediate results are dropped: a parent that could not be
+// created makes the final call fail with the same errno. EEXIST (20) on the leaf
+// is success, which is what makes an already-present path Ok. Boxes via
+// $__fern_str_box, Ok=0 / Err=1 like its fs siblings.
+pub function create_dir_all_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_create_dir_all (param $path i32) (result i32)\n";
+    o = o + "    (local $err i32) (local $res i32) (local $len i32) (local $base i32) (local $j i32)\n";
+    o = o + "    (local.set $len (i32.load (local.get $path)))\n";
+    o = o + "    (local.set $base (i32.add (local.get $path) (i32.const 4)))\n";
+    // Parents: every '/' at index 1..len-1 not itself preceded by one. Index 0
+    // is skipped so a leading '/' does not ask for the empty path.
+    o = o + "    (local.set $j (i32.const 1))\n";
+    o = o + "    (block $cdone (loop $cloop\n";
+    o = o + "      (br_if $cdone (i32.ge_u (local.get $j) (local.get $len)))\n";
+    o = o + "      (if (i32.and (i32.eq (i32.load8_u (i32.add (local.get $base) (local.get $j))) (i32.const 47))\n";
+    o = o + "                   (i32.ne (i32.load8_u (i32.sub (i32.add (local.get $base) (local.get $j)) (i32.const 1))) (i32.const 47))) (then\n";
+    o = o + "        (drop (call $path_create_directory (i32.const 3) (local.get $base) (local.get $j)))))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "      (br $cloop)))\n";
+    o = o + "    (local.set $err (call $path_create_directory (i32.const 3) (local.get $base) (local.get $len)))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.or (i32.eq (local.get $err) (i32.const 0)) (i32.eq (local.get $err) (i32.const 20))) (then\n";
     o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
     o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.const 0))\n";
     o = o + "      (return (local.get $res))))\n";
@@ -7746,8 +7789,10 @@ function preview1_imports(needs: string[]): string {
     // remove_dir_all also rmdirs each emptied directory via path_remove_directory.
     if (need(needs, "remove_dir_all")) { out = out + remove_dir_import(); }
     // temp_dir(prefix) mkdirs a unique dir under the preopen via
-    // path_create_directory (must precede the function section).
-    if (need(needs, "temp_dir")) { out = out + temp_dir_import(); }
+    // path_create_directory, and create_dir_all issues the same import per
+    // component — one gate across both, since a duplicate import is an invalid
+    // module (must precede the function section).
+    if (need(needs, "temp_dir") || need(needs, "create_dir_all")) { out = out + temp_dir_import(); }
     // sleep_ms blocks on a monotonic-clock timeout via poll_oneoff.
     if (need(needs, "sleep_ms")) { out = out + sleep_ms_import(); }
     // Preview-2 timer-pollable ops (#4317): direct component-model imports.
@@ -7931,7 +7976,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         out = out + heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells());
         out = out + rc_runtime_helpers(heap_base_for_strs(sv, cv));
     }
@@ -8009,7 +8054,7 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // sibling of native wasmbin's __build_io_error / asm_ir's
     // __fern_io_error). Emit it once whenever any fs op is present so the
     // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
-    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { out = out + build_io_error_func(8); }
+    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "write_file")) { out = out + build_io_error_func(8); }
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.
@@ -8017,6 +8062,10 @@ pub function emit_ir_module_units_mode(nss: string[], unit_texts: string[], all_
     // $__fern_remove_file(path): path_unlink_file -> Result[(), IoError] box.
     // Heap-backed (allocates the box), so folded into the heap gate above.
     if (need(needs, "remove_file")) { out = out + remove_file_func(); }
+    // $__fern_create_dir_all(path): path_create_directory per missing component
+    // -> Result[(), IoError] box. Heap-backed (allocates the box), so folded
+    // into the heap gate above.
+    if (need(needs, "create_dir_all")) { out = out + create_dir_all_func(); }
     // $__fern_read_dir(path): path_open + fd_readdir loop -> Result[string[],
     // IoError] box. Heap-backed (allocates names + array + box) and uses
     // $__fern_arr_push (emitted by the arr_push gate below, which folds

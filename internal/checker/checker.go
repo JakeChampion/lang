@@ -1650,6 +1650,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// create_dir_all(path): Result[void, IoError] — create `path`
+	// and every missing parent (POSIX `mkdir -p`). Named for the
+	// symmetry with `remove_dir_all`: the `_all` suffix is what
+	// says the whole chain is in scope.
+	//
+	// A path that already exists is NOT an error — the EEXIST is
+	// folded into `Ok(())` on every backend, including when the
+	// existing entry is a regular file rather than a directory.
+	// Callers that need "and it is a directory" ask `stat`; the
+	// write that follows reports ENOTDIR on its own.
+	c.info.FuncSigs["create_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// remove_dir_all(path): Result[void, IoError] — recursively
 	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
 	// to scrub `temp_dir` output. Same return shape as

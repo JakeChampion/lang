@@ -6198,7 +6198,7 @@ pub function builtin_function_names(): string[] {
         "open_reader", "open_writer", "open_appender",
         // filesystem
         "read_file", "write_file", "write_file_exec", "read_dir", "remove_dir_all", "remove_file",
-        "stat", "temp_dir",
+        "create_dir_all", "stat", "temp_dir",
         // clocks + randomness + sleep + reactor readiness
         "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "random_bytes",
         "random_i32", "poll", "timer_fd", "wasm_timer_pollable",

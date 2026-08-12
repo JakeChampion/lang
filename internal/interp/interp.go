@@ -750,6 +750,7 @@ func New() *Interp {
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
+	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
 	i.Builtins["subprocess"] = &Builtin{Fn: builtinSubprocess}
 	// `int_to_string` is the one Lang-defined stdlib function with
@@ -1866,6 +1867,29 @@ func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("remove_file: expected string path, got %T", args[0])
 	}
 	if err := os.Remove(string(path)); err != nil {
+		return resultErr(classifyIoError(string(path), err)), nil
+	}
+	return resultOk(unitValue()), nil
+}
+
+// builtinCreateDirAll creates `path` and every missing parent.
+// `os.MkdirAll` reports an error when a component already exists as
+// a non-directory; the compiled backends fold every EEXIST into
+// success, so an existing `path` is Ok here too and only a genuine
+// failure (a missing parent that could not be created, permission,
+// ENOTDIR partway down) surfaces as `Err`.
+func builtinCreateDirAll(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("create_dir_all: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("create_dir_all: expected string path, got %T", args[0])
+	}
+	if err := os.MkdirAll(string(path), 0o777); err != nil {
+		if _, serr := os.Lstat(string(path)); serr == nil {
+			return resultOk(unitValue()), nil
+		}
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(unitValue()), nil

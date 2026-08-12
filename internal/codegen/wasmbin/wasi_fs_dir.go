@@ -99,6 +99,21 @@ const readdirBufBytes = 4096
 // appendErrnoFromErrorCode maps from.
 const errorCodeExistDisc int32 = 7
 
+// emptyOkErrorCodeOff is where the error-code sits in the return area
+// of a `result<_, error-code>` — the shape every path MUTATOR returns
+// (create-directory-at, unlink-file-at, remove-directory-at). The ok
+// arm is empty, so nothing raises the payload's alignment above the
+// error-code enum's own 1, and it lands immediately after the
+// discriminant byte. It is 4 only when the ok arm is a word (open-at's
+// descriptor, read-directory's stream) and 8 when the ok arm is
+// 8-aligned (stat-at's descriptor-stat, hence statAtTypeOff).
+//
+// Reading a mutator's code at 4 lands on a zeroed byte, which
+// appendErrnoFromErrorCodeAt's default turns into ENOENT — so every
+// failure reported itself as NotFound, and the one code a caller acts
+// on rather than prints (`exist`) was never seen.
+const emptyOkErrorCodeOff uint32 = 1
+
 // emitCopyBytes appends a byte-at-a-time copy of `lenLocal` bytes from
 // srcLocal to dstLocal, clobbering iLocal as the induction variable.
 func emitCopyBytes(body []byte, dstLocal, srcLocal, lenLocal, iLocal uint32) []byte {
@@ -271,6 +286,113 @@ func buildRemoveFileBody(idxs map[string]uint32) []byte {
 	body = emitResultOkPtr(body, allocBox, 6, 7)
 
 	locals := inst.PutLocalsOneGroup(nil, 6, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildCreateDirAllBody assembles __fern_create_dir_all.
+//
+// Signature: (path_data, path_len) → i32 — heap-form
+// Result[void, IoError].
+//
+// path_create_directory under the fd-3 preopen for every missing
+// component of the path, POSIX `mkdir -p`. WASI takes an explicit
+// length rather than a NUL-terminated path, so a parent prefix is
+// just the same buffer with a shorter length — no separator
+// rewriting, unlike the native helpers.
+//
+// Intermediate results are dropped: a parent that could not be
+// created makes the final call fail with the same errno, so one
+// error path reports for the whole walk. EEXIST on the final
+// component is success, matching the checker's contract.
+//
+// Locals after the two params:
+//
+//	2: $path_buf  3: $path_byte_len  4: $i (normalize scratch)
+//	5: $errno     6: $err_ptr        7: $box
+//	8: $cursor    9: $addr
+func buildCreateDirAllBody(idxs map[string]uint32) []byte {
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	mkdir := idxs["wasi_path_create_directory"]
+
+	var body []byte
+	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
+
+	// Parents: every '/' at index 1..len-1 not itself preceded by
+	// one. Index 0 is skipped so a leading '/' does not ask for the
+	// empty path.
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalSet(body, 8)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstLocalGet(body, 3)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 8)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalTee(body, 9)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstI32Const(body, '/')
+		body = numeric.InstI32Eq(body)
+		body = inst.InstLocalGet(body, 9)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstI32Const(body, '/')
+		body = numeric.InstI32Ne(body)
+		body = numeric.InstI32And(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, preopenDirfd)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstLocalGet(body, 8)
+			body = inst.InstCall(body, mkdir)
+			body = inst.InstDrop(body)
+		}
+		body = inst.InstEnd(body)
+
+		body = inst.InstLocalGet(body, 8)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 8)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+
+	// The leaf decides the result.
+	body = inst.InstI32Const(body, preopenDirfd)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstCall(body, mkdir)
+	body = inst.InstLocalSet(body, 5)
+
+	// errno != 0 && errno != EEXIST. Both operands normalised to
+	// 0/1 first — i32.and is bitwise, so raw errnos would fold
+	// wrongly (ENOENT 2 & 1 == 0).
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, errnoExist)
+	body = numeric.InstI32Ne(body)
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = emitResultErr(body, buildIoErr, allocBox, 5, 6, 7)
+	}
+	body = inst.InstEnd(body)
+
+	// Ok(()) — payload 0 via a zeroed local.
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 6)
+	body = emitResultOkPtr(body, allocBox, 6, 7)
+
+	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -1132,9 +1254,10 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 //     with the same three-instruction preamble.
 //   - There is no errno. A method returns `result<_, error-code>`
 //     through a return area: the discriminant byte at +0 (0 = ok) and,
-//     on the error arm, the error-code at +4. appendErrnoFromErrorCode
-//     maps that back to the errno `__build_io_error` speaks, so the
-//     IoError a program sees is identical on both paths.
+//     on the error arm, the error-code at `emptyOkErrorCodeOff`.
+//     appendErrnoFromErrorCodeAt maps that back to the errno
+//     `__build_io_error` speaks, so the IoError a program sees is
+//     identical on both paths.
 
 // emitPreopenP2 appends "rb = alloc(16); get-directories(rb); preopen =
 // mem[mem[rb+0]]" — the descriptor every path method needs as its self
@@ -1183,7 +1306,7 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 2, 6)
+		body = appendErrnoFromErrorCodeAt(body, 2, 6, emptyOkErrorCodeOff)
 		body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
 	}
 	body = inst.InstEnd(body)
@@ -1193,6 +1316,103 @@ func buildRemoveFileBodyP2(idxs map[string]uint32) []byte {
 	body = emitResultOkPtr(body, allocBox, 7, 8)
 
 	locals := inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildCreateDirAllBodyP2 is the preview-2 buildCreateDirAllBody:
+// get-directories → create-directory-at per missing component. Only
+// the create call and its error test differ from the preview-1 body —
+// the walk itself is the same length arithmetic — and "already
+// exists" is read off the error-code discriminant rather than EEXIST.
+//
+// Locals after the two params:
+//
+//	2: $rb       3: $path_buf  4: $path_byte_len  5: $preopen
+//	6: $errno    7: $err_ptr   8: $box            9: $i
+//	10: $cursor  11: $addr
+func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	allocBox := idxs["__fern_alloc_box"]
+	buildIoErr := idxs["__build_io_error"]
+	getDirs := idxs["wasi_get_directories_p2"]
+	mkdir := idxs["wasi_descriptor_create_directory_at_p2"]
+
+	var body []byte
+	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 9)
+	body = emitPreopenP2(body, alloc, getDirs, 2, 5)
+
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstLocalSet(body, 10)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstLocalGet(body, 4)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 10)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalTee(body, 11)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstI32Const(body, '/')
+		body = numeric.InstI32Eq(body)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstI32Const(body, '/')
+		body = numeric.InstI32Ne(body)
+		body = numeric.InstI32And(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 5)
+			body = inst.InstLocalGet(body, 3)
+			body = inst.InstLocalGet(body, 10)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstCall(body, mkdir)
+		}
+		body = inst.InstEnd(body)
+
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 10)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+
+	// The leaf decides the result.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, mkdir)
+
+	body = inst.InstLocalGet(body, 2)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = memory.InstI32Load8U(body, 0, emptyOkErrorCodeOff)
+		body = inst.InstI32Const(body, errorCodeExistDisc)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = appendErrnoFromErrorCodeAt(body, 2, 6, emptyOkErrorCodeOff)
+			body = emitResultErr(body, buildIoErr, allocBox, 6, 7, 8)
+		}
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 7)
+	body = emitResultOkPtr(body, allocBox, 7, 8)
+
+	locals := inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -1271,12 +1491,12 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 
 		// Only "already exists" is worth another name.
 		body = inst.InstLocalGet(body, 14)
-		body = memory.InstI32Load8U(body, 0, 4)
+		body = memory.InstI32Load8U(body, 0, emptyOkErrorCodeOff)
 		body = inst.InstI32Const(body, errorCodeExistDisc)
 		body = numeric.InstI32Ne(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
-			body = appendErrnoFromErrorCode(body, 14, 9)
+			body = appendErrnoFromErrorCodeAt(body, 14, 9, emptyOkErrorCodeOff)
 			body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
 		}
 		body = inst.InstEnd(body)
@@ -1294,7 +1514,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 16)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
-		body = appendErrnoFromErrorCode(body, 14, 9)
+		body = appendErrnoFromErrorCodeAt(body, 14, 9, emptyOkErrorCodeOff)
 		body = emitResultErr(body, buildIoErr, allocBox, 9, 10, 11)
 	}
 	body = inst.InstEnd(body)
@@ -1867,7 +2087,8 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 	self := idxs["__fern_rmdir_rec"]
 
 	// Both mutators fail the same way: a non-zero discriminant, with
-	// the error-code at +4, returned to the caller as an errno.
+	// the error-code at emptyOkErrorCodeOff, returned to the caller as
+	// an errno.
 	mutateOrReturn := func(b []byte, fn, ptrLocal, lenLocal uint32) []byte {
 		b = inst.InstLocalGet(b, 13)
 		b = inst.InstLocalGet(b, ptrLocal)
@@ -1878,7 +2099,7 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 		b = memory.InstI32Load8U(b, 0, 0)
 		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
 		{
-			b = appendErrnoFromErrorCode(b, 12, 14)
+			b = appendErrnoFromErrorCodeAt(b, 12, 14, emptyOkErrorCodeOff)
 			b = inst.InstLocalGet(b, 14)
 			b = inst.InstReturn(b)
 		}

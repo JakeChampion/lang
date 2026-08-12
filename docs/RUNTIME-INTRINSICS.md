@@ -204,6 +204,18 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > parses independently); the record fields are read via `__raw_load8(buf, pos+k)`,
 > which offsets in the emitter.
 >
+> **`create_dir_all`** (`rt_src_create_dir_all` → `Result[void, IoError]`, #6749)
+> is the fs family's only *constructive* leaf — every other directory builtin
+> lists, deletes, or names one. It NUL-terminates the path once, then walks it:
+> at each `/` the separator is overwritten with a NUL, `mkdirat(AT_FDCWD, prefix,
+> 0777)` runs for the prefix, and the `/` goes back. The intermediate results are
+> discarded — a parent that could not be created makes the final `mkdirat` fail
+> with the same errno, so one error path reports for the whole walk — and EEXIST
+> on the leaf is folded into `Ok`, which is what makes an already-present path
+> succeed. The wasm helper shares the algorithm but not the mechanism: WASI takes
+> an explicit path length, so a prefix is the same buffer with a shorter length
+> and nothing is rewritten.
+>
 > **`remove_dir_all`** (`rt_src_remove_dir_all` → `Option[IoError]`) closed out the
 > fs leaves — a best-effort recursive `rm -rf`. It classifies the target with
 > `openat(O_DIRECTORY)` (ENOENT → `None`, ENOTDIR → `unlinkat` the file, else
@@ -378,8 +390,9 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
 5. **The syscall leaves** via the `__syscall3` / `__syscall4` sub-floor.
    **Done on x86-64 IR:** `random_bytes`, the three clocks (which also needed
    `__raw_scratch` + `__load_i64`), and the whole fs family — `stat`,
-   `read_file`, `write_file`, `remove_file`, `read_dir`, `remove_dir_all`,
-   `temp_dir`, `env` — over a shared Fern `__fern_io_error` classifier.
+   `read_file`, `write_file`, `remove_file`, `create_dir_all`, `read_dir`,
+   `remove_dir_all`, `temp_dir`, `env` — over a shared Fern `__fern_io_error`
+   classifier.
    **On arm64: `random_bytes` only, so far.** The blocker this doc used to name
    here — "the syscall number is arch-specific and the `rt_src_*` sources are
    shared, so parity needs an arch-parameterised source" — is now solved:
