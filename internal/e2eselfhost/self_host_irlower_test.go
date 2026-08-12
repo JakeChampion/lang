@@ -132,10 +132,11 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		{"reuse-same-block", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 1},
 		{"reuse-values-ok", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; return b[0] + b[1] + b[2]; }", 15},
 		{"no-reuse-when-live", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var d = a - b; if (d == 0) { return 1; } return 0; }", 0},
-		// Reclamation bounds peak memory: __heap_used() = bytes bumped; freed
-		// blocks are reused, not re-bumped.
-		{"heap-reuse-bounded", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; __rc_dec(b); var c = [7, 8, 9]; return __heap_used(); }", 20},
-		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_used(); }", 60},
+		// Reclamation bounds peak memory: __heap_bump_bytes() = bytes bumped;
+		// freed blocks are reused, not re-bumped. The `as i32` is the shape
+		// every caller writes — the builtin is i64-wide.
+		{"heap-reuse-bounded", "function main(): i32 { var a = [1, 2, 3]; __rc_dec(a); var b = [4, 5, 6]; __rc_dec(b); var c = [7, 8, 9]; return __heap_bump_bytes() as i32; }", 20},
+		{"heap-live-grows", "function main(): i32 { var a = [1, 2, 3]; var b = [4, 5, 6]; var c = [7, 8, 9]; return __heap_bump_bytes() as i32; }", 60},
 		// f64 LOCALS / arithmetic / comparison / i32<->f64 casts now lower; f64
 		// modulo has no float form, so it's still out of subset -> lower bails
 		// (200). (f64 lower+run coverage lives in the production IR-path
