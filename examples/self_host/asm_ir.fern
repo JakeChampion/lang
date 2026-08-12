@@ -4645,6 +4645,12 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    pushq " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind_tag == 19) {  // store_local
             s = s.write("    popq %rax\n    movq %rax, " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
+        } else if (o.kind_tag == 20) {  // tee_local
+            // store_local + load_local fused (#6638): keep the value on the
+            // operand stack instead of popping and re-pushing it. The register
+            // backends were generating the same work either way — the fused form
+            // just skips the round trip through the slot.
+            s = s.write("    movq (%rsp), %rax\n    movq %rax, " + util.i32_to_string(0 - 8 * (o.i32_imm + 1)) + "(%rbp)\n");
         } else if (o.kind_tag == 34) {  // not
             s = s.write("    popq %rax\n    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 160) {  // return

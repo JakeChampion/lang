@@ -68,7 +68,18 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"dce_exit_kept: const_i32 3 ; exit ; drop ; const_i32 0 ; return\n" +
 		"dce_live: load_local 0 ; const_i32 1 ; add ; return\n" +
 		"dce_idempotent=1\n" +
-		"dce_in_optimize: const_i32 4 ; return\n"
+		"dce_in_optimize: const_i32 4 ; return\n" +
+		// #6638 tee fusion. The three refusals matter as much as the hit: a
+		// different slot is an unrelated value, a gap is copy propagation's job,
+		// and the reversed order is a plain read-then-write. `tee_two` guards the
+		// walk's index bump — consuming the load must not skip the next store.
+		"tee_fused: const_i32 5 ; tee_local 0 ; return\n" +
+		"tee_other_slot: const_i32 5 ; store_local 0 ; load_local 1\n" +
+		"tee_gap: const_i32 5 ; store_local 0 ; const_i32 1 ; drop ; load_local 0\n" +
+		"tee_reversed: load_local 0 ; store_local 0\n" +
+		"tee_two: tee_local 0 ; tee_local 1\n" +
+		"tee_idempotent=1\n" +
+		"tee_in_optimize: const_i32 4 ; tee_local 0 ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

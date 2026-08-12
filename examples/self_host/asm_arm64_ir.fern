@@ -596,6 +596,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 19) {  // store_local
             s = s.write("    ldr x0, [sp], #16\n");
             s = fr_str(s, "x0", 0 - 8 * (o.i32_imm + 1));
+        } else if (o.kind_tag == 20) {  // tee_local
+            // store_local + load_local fused (#6638): read the operand-stack top
+            // in place and write it to the slot, leaving the value where it is.
+            s = s.write("    ldr x0, [sp]\n");
+            s = fr_str(s, "x0", 0 - 8 * (o.i32_imm + 1));
         } else if (o.kind_tag == 34) {  // not
             s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 160) {  // return
