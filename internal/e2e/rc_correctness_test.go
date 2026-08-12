@@ -4127,6 +4127,82 @@ function main(): i32 {
     return (keep.len() + a[0].len() - 34) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A consuming (`own`) walk over a list whose spine the CALLER still
+		// holds (#6720). `Cons(7, shared)` is a fresh construction — so E051
+		// admits it as an owned argument — but its tail is borrowed, and the
+		// construction retains it, so the walk meets a cell at rc 2 one level
+		// in.
+		//
+		// The walk decides reuse per level from that cell's own refcount, and
+		// a cell reached only through a surviving box's tail field counts 1.
+		// So declining at the shared cell was not enough: the level below saw
+		// 1, called itself unique, and reused a cell `shared` still reaches.
+		// `sum(shared)` then read the rebuilt list — 8 rather than 6, off a
+		// block the allocator had already handed back out.
+		//
+		// The stop has to propagate down the spine, which is what the decline
+		// branch's retain of the moved-out payloads buys.
+		name: "own_consume_over_borrowed_tail_keeps_caller_list",
+		src: `
+import "core/int";
+enum List { Cons(i32, List), Nil }
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+function inc_all(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+function sum(l: List): i32 {
+    match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
+}
+function main(): i32 {
+    var shared: List = build(3);
+    var ys: List = inc_all(Cons(7, shared));
+    var a: i32 = sum(ys);
+    var b: i32 = sum(shared);
+    return (a - 17) + (b - 6) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same shape run in a loop, so the cells the walk frees are
+		// recycled before the caller reads them. The single-shot case above
+		// catches the reuse of a still-reachable cell; this one catches it
+		// having been handed to a later allocation, which is the form the
+		// defect takes in a real traversal.
+		name: "own_consume_over_borrowed_tail_recycles",
+		src: `
+import "core/int";
+enum List { Cons(i32, List), Nil }
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+function inc_all(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+function sum(l: List): i32 {
+    match (l) { Cons(h, t) => { return h + sum(t); }, Nil => { return 0; } }
+}
+function main(): i32 {
+    var shared: List = build(4);
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 20) {
+        var ys: List = inc_all(Cons(9, shared));
+        t = t + sum(ys) + sum(shared);
+        r = r + 1;
+    }
+    return (t - 680) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

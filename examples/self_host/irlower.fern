@@ -8192,6 +8192,22 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                     _ => {}
                 }
             }
+            // An ENUM payload (`Cons(n, xs)`, decl_is_enum) is a second owner of
+            // whatever box it stores, so it takes the same Perceus dup — the
+            // struct-lit path's direct-enum-field rule (see fav_alias_inc), with
+            // the same exemption: a FRESH variant ctor is sole-owned at rc 1 and
+            // needs none. Without it a bare enum local stored into a variant box
+            // is an UNCOUNTED alias, and the count that says so is the one every
+            // consume path reads to decide whether it may free (#6720): a
+            // consuming walk over `Cons(x, borrowed)` was told each cell was
+            // uniquely owned and reclaimed the caller's list from under it.
+            // A non-fresh payload that is genuinely sole-owned then LEAKS rather
+            // than double-frees — the safe-leak invariant the rest of this
+            // construction path holds to.
+            if (decl_is_enum(vctor.structs, decl_field_type_at(vctor.structs, cid.name, vi))
+                && variant_ctor_enum_owner(c.args[vi], vctor.structs).len() == 0) {
+                vctor = vctor.emit(ir.op_call_direct("__fern_rc_inc", 1));
+            }
             vi = vi + 1;
         }
         return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));

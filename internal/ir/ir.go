@@ -4562,6 +4562,13 @@ type builder struct {
 	// the old buffer and its own dec-on-overwrite must be skipped.
 	selfStrAppendBin  ast.Expr
 	selfStrAppendDone bool
+	// ownMatchDupSlots maps a consuming (`own`-param) match scrutinee's name
+	// to the arm bindings that inherited the box's pointer payloads, for the
+	// arm currently being lowered. The C2 reuse hook (emitReuseToken, reached
+	// from emitEnumNew far below the arm) needs them to retain those payloads
+	// on its DECLINE branch — see emitOwnMatchSharedPayloadDups. Set per arm
+	// and cleared after it.
+	ownMatchDupSlots map[string][]int32
 	// appendOrder caches the ident-occurrence order of the current
 	// function's body (lazily, per fn) so emitArrayPush can ask whether an
 	// ident append operand is its LAST use without rebuilding the order at
@@ -5610,16 +5617,19 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	var reuseSrcTypes []ast.Type
 	if dName, paired := b.rc.reuseSources[callNode]; paired && callNode != nil {
 		var dSize int32
+		var declineDups []int32
 		reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
 		if b.rc.consumingMatchReuse[callNode] {
 			// Consuming-match reuse (C2): the scrutinee's pointer payloads were
 			// MOVED into the arm bindings and are reclaimed downstream, so the
 			// reused box's OLD fields must not be dropped — only its shell is
 			// taken. Keep dSize (for the reuse token's class accounting) but drop
-			// nothing.
+			// nothing. The DECLINE branch keeps the box, so those same payloads
+			// are retained into the bindings there (#6720).
 			reuseSrcOffs, reuseSrcTypes = nil, nil
+			declineDups = b.ownMatchDupSlots[dName]
 		}
-		reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
+		reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes, declineDups)
 	} else {
 		b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 		b.emit(Op{Kind: OpAlloc})
@@ -7674,6 +7684,24 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// doesn't deep-drop it too. Guarded arms free only on the matched
 			// path; a guard-false fall-through leaves the box for the next arm.
 			if consumeScrut && !pairFormScrutinee && arm.Guard == nil {
+				// Both release paths below branch on the box's uniqueness, and on
+				// the SHARED side the box survives holding the very payloads these
+				// bindings moved out — so it must retain them there (#6720). A `_`
+				// discard is excluded: nothing consumes it, so it can neither be
+				// used after free nor need a count.
+				var dupSlots []int32
+				for i, bname := range arm.Bindings {
+					var bt ast.Type
+					if i < len(arm.BindingTypes) {
+						bt = arm.BindingTypes[i]
+					}
+					if bname == "_" || !ownMatchDupPayload(bt, b.ptrW) {
+						continue
+					}
+					if slot, ok := b.locals[bname]; ok {
+						dupSlots = append(dupSlots, slot)
+					}
+				}
 				// C2: when this arm's body is `return Ctor(..)` constructing a
 				// (payloadful) variant of the SAME enum, the scrutinee box and the
 				// constructed box share the enum's uniform box size — so instead of
@@ -7682,8 +7710,24 @@ func (b *builder) stmt(s ast.Stmt) error {
 				// zero-alloc FBIP). The pairing is DECIDED at analysis time now
 				// (computeConsumingMatchReuse fills rc.reuseSources +
 				// rc.consumingMatchReuse); an unregistered arm frees the box (C1).
-				if reuseCtor := b.consumingReuseCtor(arm, consumeEnum); reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
-					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum)
+				reuseCtor := b.consumingReuseCtor(arm, consumeEnum)
+				if reuseCtor == nil || !b.rc.consumingMatchReuse[reuseCtor] {
+					b.emitConsumingMatchBoxFree(ptrSlot, consumeEnum, dupSlots)
+				} else if id, isIdent := n.Tag.(*ast.Ident); isIdent && len(dupSlots) > 0 {
+					// The reuse token is emitted deep inside the arm body's
+					// constructor, so hand the bindings down by scrutinee name.
+					if b.ownMatchDupSlots == nil {
+						b.ownMatchDupSlots = map[string][]int32{}
+					}
+					prev, had := b.ownMatchDupSlots[id.Name]
+					b.ownMatchDupSlots[id.Name] = dupSlots
+					armRestores = append(armRestores, func() {
+						if had {
+							b.ownMatchDupSlots[id.Name] = prev
+						} else {
+							delete(b.ownMatchDupSlots, id.Name)
+						}
+					})
 				}
 			}
 			// Consuming owned match (#4400): with the bindings copied into
@@ -9125,7 +9169,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if dName, paired := b.rc.reuseSources[n]; paired {
 			var dSize int32
 			reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
-			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
+			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes, nil)
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 			b.emit(Op{Kind: OpAlloc})
@@ -9223,7 +9267,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if dName, paired := b.rc.reuseSources[n]; paired && updBaseSlot < 0 {
 			var dSize int32
 			reuseSrcOffs, reuseSrcTypes, dSize = b.reuseSourceLayout(dName)
-			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes)
+			reuseSrcUniqSlot = b.emitReuseToken(dName, dSize+rcHeaderBytes, size+rcHeaderBytes, nil)
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 			b.emit(Op{Kind: OpAlloc})
@@ -13354,7 +13398,11 @@ func (b *builder) enumReuseLoads(ed *ast.EnumDecl) (loads []enumDropLoad, size i
 // C's allocation sizes (data + rc header); tokenSize is D's real size so a
 // runtime class mismatch frees D's block to ITS class. Returns the slot holding
 // the i32 is_unique result so the caller can gate the old-field release.
-func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
+//
+// declineDups are the consuming-match arm bindings that moved D's pointer
+// payloads out (empty for every other reuse pairing); the decline branch keeps
+// D's box alive, so they are retained there — emitOwnMatchSharedPayloadDups.
+func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32, declineDups []int32) int32 {
 	const rcHeaderBytes = 8
 	dSlot := b.locals[dName]
 	reusedSlot := b.allocSlot()
@@ -13371,6 +13419,7 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32) int32 {
 	b.emit(Op{Kind: OpSub})
 	b.emit(Op{Kind: OpStoreLocal, I32: tokenSlot})
 	b.emit(Op{Kind: OpElse})
+	b.emitOwnMatchSharedPayloadDups(declineDups)
 	b.emit(Op{Kind: OpLoadLocal, I32: dSlot})
 	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
@@ -14351,20 +14400,29 @@ func (b *builder) consumingReuseCtor(arm *ast.MatchArm, et ast.EnumType) *ast.Ca
 // its payloads — the pointer payloads were moved into the arm bindings and are
 // reclaimed downstream (the recursive `map(t)` owns + frees the tail), so
 // dropping them here would double-free. is_unique-gated: a payloadless sentinel
-// (Nil) or a shared box (shouldn't occur for a uniquely-owned `own` param) is
-// only dec'd, never freed. Uniform-droppable enums only (a statically sizable
-// box); others keep their box (a safe leak). This is the heart of Fern's
-// consuming match — the Perceus FBIP traversal.
-func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
-	ed, ok := b.info.Enums[et.Name]
-	if !ok {
-		return
+// (Nil) or a shared box (an `own` argument whose payloads are borrowed — see
+// dupSlots) is only dec'd, never freed. Uniform-droppable enums only (a
+// statically sizable box); others keep their box (a safe leak). This is the
+// heart of Fern's consuming match — the Perceus FBIP traversal.
+//
+// dupSlots holds this arm's rc-tracked payload bindings, retained on whichever
+// branch leaves the box holding its own references to them (#6720).
+func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType, dupSlots []int32) {
+	var (
+		size   int32
+		sizeOK bool
+	)
+	if ed, ok := b.info.Enums[et.Name]; ok {
+		if len(et.Args) > 0 {
+			ed = substituteEnumDecl(ed, et.Args)
+		}
+		size, sizeOK = uniformEnumBoxSize(ed, b.ptrW)
 	}
-	if len(et.Args) > 0 {
-		ed = substituteEnumDecl(ed, et.Args)
-	}
-	size, ok := uniformEnumBoxSize(ed, b.ptrW)
-	if !ok {
+	if !sizeOK {
+		// No box release at all on this path, so the box outlives the arm with
+		// its payload references intact — every binding then needs its own
+		// count, unconditionally rather than on a branch (#6720).
+		b.emitOwnMatchSharedPayloadDups(dupSlots)
 		return
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
@@ -14379,11 +14437,61 @@ func (b *builder) emitConsumingMatchBoxFree(slot int32, et ast.EnumType) {
 	b.emit(Op{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpElse})
-	// Shared / sentinel: just dec (an alias keeps it; a sentinel dec no-ops).
+	// Shared / sentinel: the box SURVIVES, so it keeps its own references to
+	// the payloads the bindings moved out — retain them so each binding is a
+	// counted owner, then dec (an alias keeps the box; a sentinel dec no-ops).
+	b.emitOwnMatchSharedPayloadDups(dupSlots)
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
+}
+
+// emitOwnMatchSharedPayloadDups retains the pointer payloads a consuming
+// (`own`-param) match arm moved out of its scrutinee box, on the branch where
+// that box turned out NOT to be uniquely owned (#6720).
+//
+// The consuming match moves each pointer payload into its binding with no rc
+// traffic: on the unique branch the box is freed shallow, so its reference to
+// the payload is what the binding inherits. On the shared branch the box lives
+// on and keeps that reference, leaving the binding an UNCOUNTED alias — the
+// arm then hands it to a consumer (a construction, or another `own` call) that
+// believes it owns it. One level down the walk that shows up as an `is_unique`
+// answering yes for a cell the caller still reaches through the surviving box,
+// and the consume frees memory that is still live.
+//
+// Retaining here supplies the reference the unique branch transfers, so the two
+// branches agree on the model — each binding owns exactly one. It also makes
+// the stop propagate: the next level sees rc 2, declines in turn, and retains
+// its own payloads, at one conditional inc per level and only along the shared
+// spine. A fully-owned value never reaches this branch at all.
+//
+// This is the `own`-path sibling of emitOwnedConsumingArmDrop's shared-branch
+// dup, which is why the flat one-level `__fern_rc_inc` is the right retain: it
+// mirrors the single box-field reference being transferred.
+func (b *builder) emitOwnMatchSharedPayloadDups(dupSlots []int32) {
+	for _, slot := range dupSlots {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+}
+
+// ownMatchDupPayload reports whether a consuming-match binding of type `bt`
+// holds a payload reference that emitOwnMatchSharedPayloadDups must retain: a
+// single-word box pointer (array / struct / enum / closure / tuple) or a
+// single-word native string. A two-word string occupies two stack words, so a
+// bare OpLoadLocal + __fern_rc_inc would retain its LENGTH; those keep today's
+// behaviour.
+func ownMatchDupPayload(bt ast.Type, ptrW int) bool {
+	if bt == nil {
+		return false
+	}
+	if arrElemIsRcTracked(bt) {
+		return true
+	}
+	_, isStr := bt.(ast.StringType)
+	return isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW)
 }
 
 // emitTryBoxFreeVariant frees the `?`-consumed source box at a consume edge
