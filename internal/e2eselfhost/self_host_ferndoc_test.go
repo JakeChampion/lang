@@ -10,22 +10,20 @@ import (
 	"testing"
 )
 
-// #6642 slice 1: doc-comment association, the join between the lexer's comment
-// stream (#6739) and the parser's declarations (#6718, #6731).
+// #6642: the self-hosted doc generator — doc-comment association (the join
+// between the lexer's comment stream, #6739, and the parser's declarations,
+// #6718 / #6731) and the Markdown rendering over it.
 //
-// The rendering half of ferndoc is not here yet. The association is, and it is
-// the half with semantics — a run of comments documents the declaration
-// directly below it, a blank line breaks the binding, and a stateful cursor
-// stops any comment reaching two declarations.
+// Three gates, in ascending order of what they prove:
 //
-// Two gates, and the second is the one that matters:
-//
-//   - `-self` runs the pass's own case set (both directions, hand-built
+//   - `-self` runs the association's own case set (both directions, hand-built
 //     positions), so a break names the case that broke.
-//   - the differential below runs the pass over the REAL stdlib and compares
-//     what it bound against what `cmd/ferndoc` bound to the same declaration.
-//     Hand-built cases pin the semantics I intended; only the differential
+//   - the association differential runs the pass over the REAL stdlib and
+//     compares what it bound against what `cmd/ferndoc` bound to the same
+//     declaration. Hand-built cases pin the semantics I intended; only this
 //     pins the semantics native actually has.
+//   - the page differential compares the whole rendered page BYTE FOR BYTE,
+//     which is the contract a doc generator actually has.
 
 // TestSelfHostFerndocSelfChecks runs the driver's own assertions. A non-zero
 // exit is the failing case's id.
