@@ -305,9 +305,11 @@ function add_imports(paths: string[], mod: parser.Module, root: string, deps: st
     return paths;
 }
 
-// is_flag is true for an argument that begins with '-'.
+// is_flag is true for an argument that begins with '-'. A bare `-` is not a
+// flag: it is the conventional name for stdin, and reading it as one made
+// `fern -interp -` an unknown-flag error.
 function is_flag(a: string): boolean {
-    if (a.len() == 0) { return false; }
+    if (a.len() < 2) { return false; }
     return a[0] == 45;   // '-'
 }
 
@@ -1041,6 +1043,22 @@ function file_readable(path: string): boolean {
     return false;
 }
 
+// read_stdin reads the whole of stdin, which is how `-` names a program with
+// no file behind it: a pipeline stage, an editor buffer, or a host with no
+// filesystem to open (#6643). `read_line` keeps its newline, so the lines
+// concatenate back into the source verbatim.
+function read_stdin(): string {
+    var src: string = "";
+    var more: boolean = true;
+    while (more) {
+        match (read_line()) {
+            Some(line) => { src = src + line; },
+            None => { more = false; },
+        }
+    }
+    return src;
+}
+
 // is_dir reports whether `path` names a directory. `read_dir` is the probe: a
 // file answers ENOTDIR, so a mistyped entry path stays a file error rather
 // than being read as a package directory.
@@ -1322,6 +1340,13 @@ function run(): i32 {
     // `-add` edits a manifest and compiles nothing.
     if (mode_add) { return run_add(pos); }
 
+    // `-check` and `-interp` with no path read the program from stdin, as
+    // native's do. Every other mode wants a file: `-fmt` writes back over one,
+    // and a compile names its output after one.
+    if (!have_entry && (mode_check || mode_interp)) {
+        entry_path = "-";
+        have_entry = true;
+    }
     if (!have_entry) { return usage(); }
 
     // `-check <DIR>` checks the package governing DIR, or every member of the
@@ -1353,9 +1378,18 @@ function run(): i32 {
     var dir: string = dir_of(entry_path);
     var esrc: string = "";
     var eok: boolean = false;
-    match (read_file(entry_path)) {
-        Ok(s) => { esrc = s; eok = true; },
-        Err(e) => { eok = false; },
+    // `-` names stdin for the two modes native reads it in, and only those:
+    // `-fmt -` and a compile from `-` are file errors under native, and the
+    // self-host accepting them would be a divergence in the permissive
+    // direction — the one that lets a program build under one compiler only.
+    if (entry_path == "-" && (mode_check || mode_interp)) {
+        esrc = read_stdin();
+        eok = true;
+    } else {
+        match (read_file(entry_path)) {
+            Ok(s) => { esrc = s; eok = true; },
+            Err(e) => { eok = false; },
+        }
     }
     if (!eok) {
         eprint("fern: cannot read entry file: ");
