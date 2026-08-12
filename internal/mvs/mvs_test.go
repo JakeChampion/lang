@@ -26,6 +26,14 @@ func TestVersionCompare(t *testing.T) {
 	if _, err := ParseVersion("1.2"); err == nil {
 		t.Error("two-part version should error")
 	}
+	// A part must be plain digits. strconv.Atoi accepts these; a version
+	// whose String() spells it differently can never be looked up in the
+	// index it keys, and manifest.isVersion rejects them already.
+	for _, s := range []string{"1.+2.3", "1.-0.3", "1..3", "1.2.x"} {
+		if _, err := ParseVersion(s); err == nil {
+			t.Errorf("ParseVersion(%q) should error", s)
+		}
+	}
 }
 
 func TestParseIndex(t *testing.T) {

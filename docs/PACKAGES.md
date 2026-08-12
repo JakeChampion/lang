@@ -275,7 +275,8 @@ subset.
 | versioned deps via `fern.lock` (`path` source) | ✅ | ✅ |
 | `url`+hash deps + content-addressed store | ✅ | ✅ read-only (see below) |
 | versioned deps whose lock source is a `url` | ✅ | ✅ read-only (see below) |
-| CLI commands `-fetch` / `-vendor` / `-add` / `-check` / `-resolve` | ✅ | n/a — the self-host build is a *compiler driver*, not the `fern` CLI |
+| `-resolve` (Minimum Version Selection → `fern.lock`) | ✅ | ✅ `path`-sourced index entries; absolute DIR only (see below) |
+| CLI commands `-fetch` / `-vendor` / `-add` / `-checkws` | ✅ | ❌ (#6640) |
 
 The self-hosted loader (`examples/self_host/modloader.fern` +
 `fern_toml.fern`) resolves every **disk-resolvable** form: `path` deps,
@@ -294,6 +295,18 @@ via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
 `fern -fetch` responsibility (the no-build-time-network constraint), so
 the self-host loader trusts an already-populated store exactly as the
 native loader does at build time.
+
+Version RESOLUTION is the self-host's since #6640: `examples/self_host/mvs.fern`
+ports native's `internal/mvs` — version precedence, the index format, the
+max-of-the-minimums fixpoint, top-level `[exclude]` round-up, and the
+`fern.lock` text — and `fern -resolve <ABS-DIR>` drives it. The two
+compilers are pinned against each other by
+`TestSelfHostResolveDifferentialX86_64`, which compares the emitted lock
+byte for byte, refusals and their wording included. Two departures, both
+of them the absence of a builtin rather than a resolution difference: the
+directory must be absolute (there is no working-directory builtin), and an
+index entry MVS selects by `url` is refused rather than fetched, since
+populating the store stays native's `-fetch`.
 
 The self-host wiring is **additive** throughout — consulted only when a
 `fern.toml` is actually present — so the compiler's own manifest-less

@@ -20,7 +20,11 @@ import (
 // pre-release — the deterministic subset MVS operates on).
 type Version struct{ Major, Minor, Patch int }
 
-// ParseVersion parses "MAJOR.MINOR.PATCH".
+// ParseVersion parses "MAJOR.MINOR.PATCH". Each part must be a plain run of
+// decimal digits: the signed spellings strconv.Atoi also accepts ("1.+2.3",
+// "1.-0.3") are rejected here, matching manifest.isVersion. Admitting them
+// let an index key parse as a version whose String() spelled it differently,
+// so the entry could never be looked up again.
 func ParseVersion(s string) (Version, error) {
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
@@ -28,13 +32,29 @@ func ParseVersion(s string) (Version, error) {
 	}
 	var v Version
 	for i, dst := range []*int{&v.Major, &v.Minor, &v.Patch} {
+		if !isDigits(parts[i]) {
+			return Version{}, fmt.Errorf("invalid version %q", s)
+		}
 		n, err := strconv.Atoi(parts[i])
-		if err != nil || n < 0 {
+		if err != nil {
 			return Version{}, fmt.Errorf("invalid version %q", s)
 		}
 		*dst = n
 	}
 	return v, nil
+}
+
+// isDigits reports whether s is a non-empty run of ASCII decimal digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (v Version) String() string { return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch) }
