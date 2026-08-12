@@ -174,7 +174,7 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 		{"url-from-store", map[string]string{
 			"fern.toml": "[package]\nname = \"app\"\n[dependencies]\n" +
 				"remote = { url = \"https://example.invalid/remote.tar.gz\", hash = \"sha256:" + storeHex + "\" }\n",
-			"main.fern": "function main(): i32 { return 0; }\n",
+			"main.fern":                             "function main(): i32 { return 0; }\n",
 			"cache/pkgs/" + storeHex + "/fern.toml": "[package]\nname = \"remote\"\n",
 			"cache/pkgs/" + storeHex + "/lib.fern":  lib,
 		}, ".", "cache", true, true},
