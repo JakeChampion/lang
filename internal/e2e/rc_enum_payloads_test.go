@@ -14,8 +14,29 @@ import (
 // program. Same corpus + helpers as the free/reuse gates; only EnumRcPayloads
 // flips (free stays on for both runs).
 
+// enumRcPayloadsKnownDivergent lists fixtures whose SHAPE the move model cannot
+// express, so the on==off premise does not apply to them. They still run under
+// the production model (EnumRcPayloads is on by default) via TestFernFixtures on
+// all four backends — only this differential skips them.
+//
+// The divergence is in the model, not in a backend, so one list covers all three
+// legs.
+var enumRcPayloadsKnownDivergent = map[string]bool{
+	// #6720: a consuming walk decides per level, from the cell's own refcount,
+	// whether it may take the box. Under the move model an ALIASED payload is
+	// not counted at all — `Cons(7, shared)` leaves the caller's head at 1 —
+	// so the walk calls a shared cell unique and reclaims a list `shared` is
+	// still using. Counting that payload is the whole content of the fix, and
+	// it is exactly what this model turns off; there is no lowering that makes
+	// the case hold with it off. Crashes on the natives, traps on wasm.
+	"own_consume_borrowed_tail": true,
+}
+
 func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {
+		if enumRcPayloadsKnownDivergent[f.name] {
+			t.Skip("shape the move model cannot express — #6720")
+		}
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
@@ -30,6 +51,9 @@ func TestX86_64EnumRcPayloadsMatchesMove(t *testing.T) {
 
 func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "arm64", func(t *testing.T, f *fixtureSpec) {
+		if enumRcPayloadsKnownDivergent[f.name] {
+			t.Skip("shape the move model cannot express — #6720")
+		}
 		prev := ast.EnumRcPayloads
 		defer func() { ast.EnumRcPayloads = prev }()
 		ast.EnumRcPayloads = false
@@ -44,6 +68,9 @@ func TestArm64EnumRcPayloadsMatchesMove(t *testing.T) {
 
 func TestWASMEnumRcPayloadsMatchesMove(t *testing.T) {
 	forEachRunnableFixture(t, "wasm", func(t *testing.T, f *fixtureSpec) {
+		if enumRcPayloadsKnownDivergent[f.name] {
+			t.Skip("shape the move model cannot express — #6720")
+		}
 		prev := ast.RcFreeEnabled
 		defer func() { ast.RcFreeEnabled = prev }()
 		ast.RcFreeEnabled = true
