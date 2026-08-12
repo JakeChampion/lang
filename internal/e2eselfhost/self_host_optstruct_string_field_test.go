@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -50,19 +49,7 @@ func TestSelfHostOptStructStringFieldX86_64(t *testing.T) {
 			t.Fatalf("%s: self-host exited %d, fern -interp exited %d — the payload drop "+
 				"reached a live string", name, exit, want)
 		}
-		summary := ""
-		for _, line := range strings.Split(stderr, "\n") {
-			if strings.HasPrefix(line, "leakcheck: ") {
-				summary = line
-			}
-		}
-		if summary == "" {
-			t.Fatalf("%s: no leakcheck summary — FERN_LEAKCHECK did not take effect", name)
-		}
-		var allocs, frees, live int64
-		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-			t.Fatalf("%s: parse %q: %v", name, summary, err)
-		}
+		allocs, frees, live := parseLeakcheck(t, name, stderr)
 		if allocs == 0 {
 			t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
 		}
