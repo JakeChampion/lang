@@ -2762,6 +2762,10 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
                     // negative. Matches native's FuncSigs; the wasm backend
                     // zero-extends its i32 cursor difference to suit.
                     if (id.name == "__heap_bump_bytes") { return ty_i64(); }
+                    // __heap_mark(): the arena checkpoint, an absolute cursor
+                    // value — i64 for the bump mark's reason and then some, since
+                    // this is the pointer itself rather than a difference (#6728).
+                    if (id.name == "__heap_mark") { return ty_i64(); }
                     // Bit-counting intrinsics (#6197): all six return an i32
                     // COUNT regardless of operand width, so a 64-bit form does
                     // not widen its result.

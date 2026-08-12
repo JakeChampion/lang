@@ -1104,6 +1104,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // logical size via the same round-up and pushes the block (successor pointer in its
     // first 8 bytes; 0 = empty). >1 GiB is never freelisted (bump/leak only).
     s = s.write("__fern_large_freelist: .skip 20480\n");
+    // Shadows for the arena checkpoint (#6728): __heap_mark copies both head
+    // tables here, __heap_release_to copies them back. .bss, so they cost image
+    // size nothing and are zero-filled — a release with no preceding mark
+    // restores all-empty heads, which is a bounded leak rather than corruption.
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_freelist_shadow: .skip 524288\n");
+    s = s.write("    .align 8\n");
+    s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
     s = s.write("    .section .text\n");
     // __fern_alloc(%rdi = bytes) -> %rax = block. Size-classed freelist reuse
     // (class = bytes/8 < 65536) then bump; OOM traps with exit 137.
@@ -4961,6 +4969,59 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    testq %rax, %rax\n");                   // ptr == 0 ?
             s = s.write("    cmovneq %rdx, %rcx\n");                 // 0 if uninit, else ptr−base
             s = s.write("    pushq %rcx\n");
+            s = s.need("heap");
+        } else if (o.kind_tag == 229) {  // heap_mark
+            // The arena checkpoint: the cursor, plus a snapshot of BOTH freelist
+            // head tables into their .bss shadows. The heads are snapshotted
+            // rather than cleared because a block allocated AND freed inside the
+            // window leaves a head pointing above the mark — after the rewind, a
+            // pop and a bump would both hand out that address. Restoring the
+            // pre-mark heads drops exactly those entries and keeps the older ones
+            // reusable. One live mark at a time: the shadow is a single buffer,
+            // so marks do not nest. rep movsq clobbers rcx/rsi/rdi, and the
+            // operand stack around an inline op may hold live values in them, so
+            // save and restore rather than lean on a caller-saved rule this
+            // backend does not otherwise rely on.
+            s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+            s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    leaq __fern_freelist(%rip), %rsi\n");
+            s = s.write("    leaq __fern_freelist_shadow(%rip), %rdi\n");
+            s = s.write("    movl $65536, %ecx\n    rep movsq\n");
+            s = s.write("    leaq __fern_large_freelist(%rip), %rsi\n");
+            s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rdi\n");
+            s = s.write("    movl $2560, %ecx\n    rep movsq\n");
+            s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
+            s = s.write("    pushq %rax\n");
+            s = s.need("heap");
+        } else if (o.kind_tag == 230) {  // heap_release_to
+            // Rewind to the mark and restore both head tables. mark == 0 means
+            // "taken before the first allocation seeded the cursor", i.e. no
+            // checkpoint — leave the cursor alone rather than zero it and hand
+            // out the arena base. Releasing is sound only when nothing allocated
+            // after the mark is still reachable; the caller owns that invariant,
+            // exactly as it owns malloc/free pairing.
+            var hrlo: asmcore.LabelOut = asmcore.fresh_label(s);
+            var hrl_done: string = hrlo.name;
+            s = hrlo.state;
+            s = s.write("    popq %rax\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    jz " + hrl_done + "\n");
+            s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+            s = s.write("    pushq %rcx\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    leaq __fern_freelist_shadow(%rip), %rsi\n");
+            s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
+            s = s.write("    movl $65536, %ecx\n    rep movsq\n");
+            s = s.write("    leaq __fern_large_freelist_shadow(%rip), %rsi\n");
+            s = s.write("    leaq __fern_large_freelist(%rip), %rdi\n");
+            s = s.write("    movl $2560, %ecx\n    rep movsq\n");
+            s = s.write("    popq %rdi\n    popq %rsi\n    popq %rcx\n");
+            s = s.write(hrl_done + ":\n");
+            // Push the mark back — the one-value-per-expression invariant the
+            // whole op stream keeps (raw_store8 does the same); statement
+            // position drops it. Without this the statement's drop pops a value
+            // nothing pushed, and the next allocation runs on a corrupt frame.
+            // %rax survives both paths: rep movsq clobbers only rcx/rsi/rdi.
+            s = s.write("    pushq %rax\n");
             s = s.need("heap");
         } else if (o.kind_tag == 217) {  // arr_push_shared_bytes
             // The cliff WEIGHT: bytes copied at the crossings the counter

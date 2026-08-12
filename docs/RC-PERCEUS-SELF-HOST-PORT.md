@@ -6963,3 +6963,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   gate at 140 KiB (93 with, 187 without), value guards, the shared-input and
   shared-twice negatives, the string-head and fn-value refusals, and the 300k
   deep-stack case; `TestSelfHostTrmcIR*` green. Refs #5333 #4352 #4578 #6703 #4451.
+
+- 2026-08-12: **`__heap_mark` / `__heap_release_to` reach the self-host backends
+  (#6728).** The arena checkpoint had no lowering anywhere in `examples/self_host`,
+  so `bin/fern-selfhost` refused a program `bin/fern` builds and runs — and the
+  pair exists FOR the self-host, whose per-module emit is the workload it was
+  built to keep inside the arena. Both register backends now lower it INLINE, for
+  the reason `heap_bump_bytes` is inline: they read and write the arena globals
+  directly, so a call would only add an ABI.
+
+  Release restores the cursor AND both freelist head tables from a `.bss` shadow.
+  Snapshotted, not cleared: a block allocated and freed inside the window leaves
+  a head above the mark, which a later pop and a later bump would both hand out.
+  The self-host needs two shadows where native needs one — it carries a 65536-word
+  small-class table plus the #3425 large tier.
+
+  **The bug worth recording is the stack discipline, not the arena.** A first cut
+  popped the mark and pushed nothing, which is right for a void builtin and wrong
+  for this IR: every op keeps one value per expression, and statement position
+  drops it (`raw_store8` pushes its operand back for exactly this reason). The
+  missing push made the statement's drop pop a value nothing pushed, so the frame
+  was corrupt and the NEXT allocation segfaulted — the release itself was fine,
+  and a probe that released and returned immediately passed. It took a second
+  allocation after the release to show it.
+
+  Measured, x86-64: 2000 `__raw_alloc(64)` grow the bump 125 KiB, and the release
+  returns it to under 1 KiB of the mark. wasm stays refused and refuses UP FRONT
+  with E066 naming the targets that do provide `arena` (#6705), rather than
+  bailing late on an unknown symbol.
+
+  VERIFIED: new `TestSelfHostHeapMarkIR{X86_64,Arm64}` — roundtrip, reclaim,
+  reuse-after-release and the zero-mark no-op. The arm64 leg carries extra weight
+  here: `-target arm64-linux` assembles and links in process, so it is the only
+  path putting the emitted checkpoint through the self-host's own assembler.
+  Refs #6728 #6705 #5330 #3425.
