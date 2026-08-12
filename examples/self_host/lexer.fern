@@ -29,10 +29,6 @@
 // `lexer.TokFString` arm in parser.fern's parse_primary), so an
 // f-string lowers end-to-end through both self-host backends.
 //
-// Still out of scope (the Go lexer covers it; deferred to a
-// follow-up port): the separate comment list (skip_trivia drops
-// comments here rather than accumulating them).
-//
 // Goal: validate that the language can express the lexer's logic
 // end-to-end without resorting to Go-side workarounds. The Go
 // build still owns the production code path; this file is run
@@ -167,6 +163,21 @@ function is_single_punct(b: i32): boolean {
 // diagnostics. The Go lexer carries the same trio on a *lexer
 // receiver — porting it as a struct lets the same shape work
 // without generic methods on the lexer state.
+pub struct Comment { line: i32, col: i32, text: string }
+
+// Takes the body as a `string` parameter so the slice is copied at the call —
+// a `str` coerces into a string param but not into a struct field, and the
+// Comment outlives the scan.
+function comment_tok(line: i32, col: i32, text: string): Comment {
+    return Comment { line: line, col: col, text: text };
+}
+
+// Comments ride beside the tokens rather than becoming a token kind, so the
+// parser stays grammar-only — same split as the Go lexer's Tokenize.
+pub struct LexResult { tokens: Token[], comments: Comment[] }
+
+struct TrivResult { lex: Lex, comments: Comment[] }
+
 struct Lex { src: string, i: i32, n: i32, line: i32, col: i32 }
 
 function (l: Lex) at_end(): boolean { return l.i >= l.n; }
@@ -215,10 +226,12 @@ function (l: Lex) advance_to(end: i32): Lex {
     return Lex { src: l.src, i: end, n: l.n, line: new_line, col: new_col };
 }
 
-// skip_trivia drops whitespace + `//` line comments. Mirrors the
-// Go lexer's `skipTrivia` but doesn't accumulate the comment list
-// — production self-host would; this validation port skips them.
-function skip_trivia(l: Lex): Lex {
+// skip_trivia drops whitespace and, when `keep` is set, collects `//` line
+// comments onto `acc`. Mirrors the Go lexer's `skipTrivia`, except that the Go
+// lexer always accumulates: there, comments cost an append into a GC'd slice,
+// whereas here each one copies its text into an owned string, and the compile
+// path has no consumer for them.
+function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
     while (!l.at_end()) {
         var b: i32 = l.peek_byte();
         if (is_space(b)) {
@@ -233,16 +246,20 @@ function skip_trivia(l: Lex): Lex {
             // `//` line comment — consume to newline (newline
             // itself is left for the next iteration's whitespace
             // path so line tracking stays simple).
-            var ce: i32 = l.i + 2;
+            var c_line: i32 = l.line;
+            var c_col: i32 = l.col;
+            var body: i32 = l.i + 2;
+            var ce: i32 = body;
             while (ce < l.n && l.src[ce] != 10) {
                 ce = ce + 1;
             }
+            if (keep) { acc = acc.append(comment_tok(c_line, c_col, l.src[body:ce])); }
             l = l.advance_to(ce);
             continue;
         }
-        return l;
+        return TrivResult { lex: l, comments: acc };
     }
-    return l;
+    return TrivResult { lex: l, comments: acc };
 }
 
 // scan_number reads the digit run + optional fractional digits +
@@ -626,20 +643,35 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
     return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
 }
 
-// tokenize is the top-level entrypoint. Mirrors the Go lexer's
-// `Tokenize` — produces a Token[] slice terminated by TokEof.
+// tokenize returns just the tokens, for the compile path, which has no use
+// for comments. Callers that want them (doc extraction, formatting) call
+// tokenize_full.
 pub function tokenize(src: string): Token[] {
+    return tokenize_impl(src, false).tokens;
+}
+
+// tokenize_full is the top-level entrypoint. Mirrors the Go lexer's
+// `Tokenize` — a Token[] terminated by TokEof, plus the `//` comments
+// seen along the way, in source order.
+pub function tokenize_full(src: string): LexResult {
+    return tokenize_impl(src, true);
+}
+
+function tokenize_impl(src: string, keep: boolean): LexResult {
     var l: Lex = Lex { src: src, i: 0, n: src.len(), line: 1, col: 1 };
     var out: Token[] = [];
+    var comments: Comment[] = [];
     // Tracks whether the previously-emitted token was a `.` punct,
     // so the number scanner can suppress the chained-tuple float
     // upgrade (`t.1.0`). Mirrors the Go lexer's `l.afterDot`.
     var after_dot: boolean = false;
     while (true) {
-        l = skip_trivia(l);
+        var tr: TrivResult = skip_trivia(l, comments, keep);
+        l = tr.lex;
+        comments = tr.comments;
         if (l.at_end()) {
             out = out.append(TokEof { line: l.line, col: l.col });
-            return out;
+            return LexResult { tokens: out, comments: comments };
         }
         var start_line: i32 = l.line;
         var start_col: i32 = l.col;
@@ -652,7 +684,7 @@ pub function tokenize(src: string): Token[] {
             var rf = scan_fstring(l, start_line, start_col);
             l = rf.lex;
             out = out.append(rf.tok);
-            if (is_error_tok(rf.tok)) { return out; }
+            if (is_error_tok(rf.tok)) { return LexResult { tokens: out, comments: comments }; }
             after_dot = false;
             continue;
         }
@@ -660,7 +692,7 @@ pub function tokenize(src: string): Token[] {
             var rn = scan_number(l, after_dot, start_line, start_col);
             l = rn.lex;
             out = out.append(rn.tok);
-            if (is_error_tok(rn.tok)) { return out; }
+            if (is_error_tok(rn.tok)) { return LexResult { tokens: out, comments: comments }; }
             after_dot = false;
             continue;
         }
@@ -675,7 +707,7 @@ pub function tokenize(src: string): Token[] {
             var rs = scan_string(l, start_line, start_col);
             l = rs.lex;
             out = out.append(rs.tok);
-            if (is_error_tok(rs.tok)) { return out; }
+            if (is_error_tok(rs.tok)) { return LexResult { tokens: out, comments: comments }; }
             after_dot = false;
             continue;
         }
@@ -708,9 +740,9 @@ pub function tokenize(src: string): Token[] {
         // Unknown byte — surface a TokError and stop, matching the
         // Go lexer's `unexpected character` error.
         out = out.append(error_tok("unexpected character", start_line, start_col));
-        return out;
+        return LexResult { tokens: out, comments: comments };
     }
-    return out;
+    return LexResult { tokens: out, comments: comments };
 }
 
 // test_mixed feeds a mixed-token input through tokenize, walks the
@@ -1102,6 +1134,33 @@ function test_fstring(): i32 {
 // Go lexer across mixed tokens, hex / scientific literals, the
 // afterDot chained-tuple guard, suffix validation, and the error
 // paths.
+// test_comments — the `//` comment list. The fixture pins the three
+// properties a doc/format consumer depends on: the text excludes the
+// leading `//` and the trailing newline, the position points at the
+// `//` itself (so a consumer can tell leading from trailing), and a
+// `//` INSIDE a string literal is not a comment. That last one is why
+// comments are collected in the lexer rather than by a separate scan.
+function check_comment(c: Comment, line: i32, col: i32, text: string): boolean {
+    return c.line == line && c.col == col && c.text == text;
+}
+
+function test_comments(): i32 {
+    var src: string = "// leading\nvar u: string = \"http://x//y\"; // trailing\nvar n: i32 = 1;\n//: last\n";
+    var r: LexResult = tokenize_full(src);
+    if (r.comments.len() != 3) { return 2100; }
+    if (!check_comment(r.comments[0], 1, 1, " leading")) { return 2101; }
+    if (!check_comment(r.comments[1], 2, 32, " trailing")) { return 2102; }
+    if (!check_comment(r.comments[2], 4, 1, ": last")) { return 2103; }
+    // The token stream is unaffected by collecting comments.
+    if (r.tokens.len() != tokenize(src).len()) { return 2104; }
+    // A source with no comments yields an empty list, not a stray entry.
+    if (tokenize_full("var x: i32 = 1;\n").comments.len() != 0) { return 2105; }
+    // An unterminated string bails out of the loop early; the comments
+    // seen before the failure still come back with the tokens.
+    if (tokenize_full("// kept\nvar s: string = \"oops\n").comments.len() != 1) { return 2106; }
+    return 0;
+}
+
 function main(): i32 {
     var c: i32 = 0;
     c = test_mixed();              if (c != 0) { return c; }
@@ -1115,5 +1174,6 @@ function main(): i32 {
     c = test_string_errors();      if (c != 0) { return c; }
     c = test_unknown_char();       if (c != 0) { return c; }
     c = test_fstring();            if (c != 0) { return c; }
+    c = test_comments();           if (c != 0) { return c; }
     return 0;
 }
