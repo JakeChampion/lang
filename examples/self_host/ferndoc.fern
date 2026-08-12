@@ -1,0 +1,289 @@
+// examples/self_host/ferndoc.fern — doc-comment association for the
+// self-hosted doc generator (#6642), the port of cmd/ferndoc's
+// commentWalker + moduleIntro.
+//
+// The lexer hands back a flat comment list in source order (#6739) and the
+// parser hands back declarations carrying `line` / `col` / `is_pub` (#6718,
+// #6731). Neither knows about the other. This file is the join: which comment
+// block is which declaration's documentation.
+//
+// That join is where the semantics live, and they are not obvious:
+//
+//   - A comment block is a RUN — comments on consecutive lines. A blank line
+//     between two comments starts a new run, which is how a file-header
+//     comment stays out of the first declaration's doc.
+//   - A run documents a declaration only when it ends on the line DIRECTLY
+//     above it. A run with a blank line before the declaration documents
+//     nothing.
+//   - The walk is stateful and single-pass. A cursor advances past each run it
+//     consumes or skips, so a comment can never be handed to two declarations,
+//     and the declarations must be visited in source order for it to be right.
+//
+// # Why it mirrors native rather than improving on it
+//
+// The gate for this port is a byte-for-byte differential against `cmd/ferndoc`
+// over `internal/stdlib/std/`, so a divergence is a failure even when it is an
+// improvement. Two places where that matters:
+//
+//   - Association is by LINE alone. A trailing comment on the line above a
+//     declaration is therefore absorbed as that declaration's doc, even though
+//     it visibly belongs to the code it trails. Native does this; so does this.
+//   - Only PUBLIC declarations take. A private declaration between a comment
+//     run and a public one does not consume the run — but the cursor's
+//     run-skipping does, because the run no longer ends directly above the
+//     declaration that asks.
+//
+// # What is not here yet
+//
+// Rendering, and two declaration shapes the self-host front end does not carry
+// the way native does: `const` (desugared to a zero-arg function, recoverable
+// through `FuncDecl.is_const`) and `trait` (present only as `TraitReq`, with no
+// visibility at all). Both are decl-shape work rather than association work.
+
+import "./lexer";
+import "./parser";
+
+// ---- results -----------------------------------------------------------
+
+// DocDecl is one documented declaration. `kind` is the source keyword
+// ("function", "struct", "enum"), which is what a renderer dispatches on;
+// `doc` is the associated comment run, its lines joined by newline, or empty
+// when nothing documents it.
+pub struct DocDecl {
+    kind: string,
+    name: string,
+    line: i32,
+    col: i32,
+    doc: string,
+}
+
+// TakeResult is `take_doc`'s pair: the run it consumed and where the cursor
+// ended up. Returned rather than mutated because the walker's state is the
+// cursor and nothing else — native carries it on a struct receiver.
+pub struct TakeResult { doc: string, cursor: i32 }
+
+// ---- text --------------------------------------------------------------
+
+// is_space matches Go's unicode.IsSpace for the ASCII range, which is all
+// TrimSpace can see here: comment text is raw source bytes.
+function is_space(b: i32): boolean {
+    return b == 32 || b == 9 || b == 10 || b == 11 || b == 12 || b == 13;
+}
+
+// own copies a `str` view into an owned string. A `str` coerces into a string
+// PARAMETER but not into a return type or a struct field, so the round trip
+// through a parameter is how the self-host front end already materialises a
+// slice — lexer.fern's comment_tok does the same for the same reason.
+function own(v: string): string { return v; }
+
+// trim_space is strings.TrimSpace over a comment's text. Comment bodies keep
+// the space after `//`, so trimming is what makes two comment lines join into
+// readable prose.
+pub function trim_space(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && is_space(s[a] as i32)) { a = a + 1; }
+    while (b > a && is_space(s[b - 1] as i32)) { b = b - 1; }
+    return own(s[a:b]);
+}
+
+// ---- the walk ----------------------------------------------------------
+
+// run_end is the index of the last comment in the run starting at `start` — a
+// run being comments on consecutive lines.
+function run_end(cs: lexer.Comment[], start: i32): i32 {
+    var e: i32 = start;
+    while (e + 1 < cs.len() && cs[e + 1].line == cs[e].line + 1) { e = e + 1; }
+    return e;
+}
+
+// join_run renders comments [start, end] as a doc string: each line trimmed,
+// joined by newline.
+function join_run(cs: lexer.Comment[], start: i32, end: i32): string {
+    var out: string = "";
+    var i: i32 = start;
+    while (i <= end) {
+        if (i > start) { out = out + "\n"; }
+        out = out + trim_space(cs[i].text);
+        i = i + 1;
+    }
+    return out;
+}
+
+// take_doc is cmd/ferndoc's commentWalker.take: the run that ends on the line
+// directly above `decl_line`, with the cursor advanced past it.
+//
+// The skip loop is the subtle half. It walks past runs that end before
+// `decl_line - 1` — those document nothing that is being asked about — but it
+// stops the moment it finds a run that DOES reach `decl_line - 1`, because
+// that is the answer. Without the stop, a file whose header comment is
+// followed by a documented declaration would consume both.
+pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeResult {
+    var cur: i32 = cursor;
+    while (cur < cs.len() && cs[cur].line < decl_line - 1) {
+        var e0: i32 = run_end(cs, cur);
+        if (cs[e0].line == decl_line - 1) { return TakeResult { doc: join_run(cs, cur, e0), cursor: e0 + 1 }; }
+        cur = e0 + 1;
+    }
+    if (cur >= cs.len()) { return TakeResult { doc: "", cursor: cur }; }
+    var e: i32 = run_end(cs, cur);
+    if (cs[e].line != decl_line - 1) { return TakeResult { doc: "", cursor: cur }; }
+    return TakeResult { doc: join_run(cs, cur, e), cursor: e + 1 };
+}
+
+// module_intro is the file-header block: the run of comments starting on line
+// 1, joined by SPACE rather than newline (it renders as a paragraph, where a
+// declaration's doc renders under its signature).
+//
+// It is not an intro when it runs straight into the first declaration — then
+// it is that declaration's doc and take_doc will claim it. `first_decl_line`
+// of 0 means the module declares nothing, so there is nothing to run into.
+pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
+    if (cs.len() == 0) { return ""; }
+    if (cs[0].line != 1) { return ""; }
+    var end: i32 = 0;
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (cs[i].line != i + 1) { break; }
+        end = i + 1;
+        i = i + 1;
+    }
+    if (end == 0) { return ""; }
+    if (first_decl_line > 0 && first_decl_line == end + 1) { return ""; }
+    var out: string = "";
+    var j: i32 = 0;
+    while (j < end) {
+        if (j > 0) { out = out + " "; }
+        out = out + trim_space(cs[j].text);
+        j = j + 1;
+    }
+    return out;
+}
+
+// ---- declarations ------------------------------------------------------
+
+// public_decls collects the declarations a doc page covers, in source order.
+//
+// Public only, and functions additionally drop the `__`-prefixed internals —
+// both filters are native's, and both matter to the WALK as well as the
+// output: a declaration that is not collected never calls take_doc, so the
+// run above it is left for the cursor's skip logic rather than consumed.
+//
+// Sorted by (line, col) because the parser hands back separate lists per decl
+// kind and the walk is only correct in source order.
+pub function public_decls(mod: parser.Module): DocDecl[] {
+    var out: DocDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        if (fd.is_pub && !starts_with_dunder(fd.name)) {
+            out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, doc: "" });
+        }
+        i = i + 1;
+    }
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        var sd: parser.StructDecl = mod.structs[si];
+        // A desugared enum variant is a struct decl carrying its enum's name
+        // in enum_owner. It is not a declaration anyone wrote, so it is not
+        // one anyone documents.
+        if (sd.is_pub && sd.enum_owner.len() == 0) {
+            out = insert_sorted(out, DocDecl { kind: "struct", name: sd.name, line: sd.line, col: sd.col, doc: "" });
+        }
+        si = si + 1;
+    }
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) {
+        var ed: parser.EnumDecl = mod.enums[ei];
+        if (ed.is_pub) {
+            out = insert_sorted(out, DocDecl { kind: "enum", name: ed.name, line: ed.line, col: ed.col, doc: "" });
+        }
+        ei = ei + 1;
+    }
+    // Type aliases are deliberately absent: cmd/ferndoc's renderModule unions
+    // funcs, structs, enums, consts and traits, and never touches TypeAlias.
+    // Collecting them here would not just add pages native does not have — it
+    // would advance the WALK, so an alias sitting above a documented
+    // declaration would eat the run that declaration is owed.
+    return out;
+}
+
+function starts_with_dunder(name: string): boolean {
+    return name.len() >= 2 && (name[0] as i32) == 95 && (name[1] as i32) == 95;
+}
+
+// insert_sorted places `d` at its (line, col) position. Insertion rather than a
+// sort pass because the lists are short and the walk needs a total order, not
+// a fast one.
+function insert_sorted(xs: DocDecl[], d: DocDecl): DocDecl[] {
+    var out: DocDecl[] = [];
+    var placed: boolean = false;
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (!placed && before(d, xs[i])) { out = out.append(d); placed = true; }
+        out = out.append(xs[i]);
+        i = i + 1;
+    }
+    if (!placed) { out = out.append(d); }
+    return out;
+}
+
+function before(a: DocDecl, b: DocDecl): boolean {
+    if (a.line != b.line) { return a.line < b.line; }
+    return a.col < b.col;
+}
+
+// first_decl_line is the earliest line any declaration starts on, or 0 when
+// the module declares nothing. It reads EVERY declaration, public or not:
+// module_intro asks whether the header comment runs into the code below it,
+// and a private declaration ends the header just as a public one does.
+pub function first_decl_line(mod: parser.Module): i32 {
+    var min: i32 = 0;
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) { min = min_line(min, mod.funcs[i].line); i = i + 1; }
+    var si: i32 = 0;
+    while (si < mod.structs.len()) { min = min_line(min, mod.structs[si].line); si = si + 1; }
+    var ei: i32 = 0;
+    while (ei < mod.enums.len()) { min = min_line(min, mod.enums[ei].line); ei = ei + 1; }
+    var ti: i32 = 0;
+    while (ti < mod.aliases.len()) { min = min_line(min, mod.aliases[ti].line); ti = ti + 1; }
+    return min;
+}
+
+function min_line(min: i32, line: i32): i32 {
+    if (line == 0) { return min; }
+    if (min == 0 || line < min) { return line; }
+    return min;
+}
+
+// ---- the pass ----------------------------------------------------------
+
+// associate walks the declarations in source order, handing each the comment
+// run directly above it.
+pub function associate(cs: lexer.Comment[], decls: DocDecl[]): DocDecl[] {
+    var out: DocDecl[] = [];
+    var cursor: i32 = 0;
+    var i: i32 = 0;
+    while (i < decls.len()) {
+        var t: TakeResult = take_doc(cs, cursor, decls[i].line);
+        cursor = t.cursor;
+        out = out.append(DocDecl { ...decls[i], doc: t.doc });
+        i = i + 1;
+    }
+    return out;
+}
+
+// DocModule is one source file's documentation inputs, extracted.
+pub struct DocModule { intro: string, decls: DocDecl[] }
+
+// docs_of is the whole extraction for one source: lex with comments, parse,
+// collect the public declarations, and bind the comment runs to them.
+pub function docs_of(src: string): DocModule {
+    var lr: lexer.LexResult = lexer.tokenize_full(src);
+    var mod: parser.Module = parser.parse_module(lr.tokens);
+    var decls: DocDecl[] = public_decls(mod);
+    return DocModule {
+        intro: module_intro(lr.comments, first_decl_line(mod)),
+        decls: associate(lr.comments, decls)
+    };
+}
