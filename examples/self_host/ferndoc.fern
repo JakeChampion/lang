@@ -35,13 +35,26 @@
 //
 // # What is not here yet
 //
-// Rendering, and two declaration shapes the self-host front end does not carry
-// the way native does: `const` (desugared to a zero-arg function, recoverable
-// through `FuncDecl.is_const`) and `trait` (present only as `TraitReq`, with no
-// visibility at all). Both are decl-shape work rather than association work.
+// Four things the self-host FRONT END does not carry, each of which stops a
+// page matching native's bytes and none of which can be fixed here:
+//
+//   - `trait` reaches the parser only as `TraitReq`, which has no visibility,
+//     so `pub trait` cannot be rendered;
+//   - `const` desugars to a zero-arg function (`FuncDecl.is_const`) rather than
+//     surviving as its own declaration;
+//   - `parse_func_decl` keeps `type_params: bounded_tps`, so an unbounded `[T]`
+//     survives only as a COUNT and `map[T, U]` cannot be spelled back;
+//   - there is no `str` type distinct from `string` (the gap #6604 landed on),
+//     so a `str` return renders as `string`;
+//   - `ImplInfo.trait_name` drops a module qualifier, so `impl async.Driver for
+//     Sim` tabulates its trait as `Driver`.
+//
+// The page differential lists exactly which stdlib module each of these costs,
+// and fails if one is fixed without the list being updated.
 
 import "./lexer";
 import "./parser";
+import "./util";
 
 // ---- results -----------------------------------------------------------
 
@@ -286,4 +299,247 @@ pub function docs_of(src: string): DocModule {
         intro: module_intro(lr.comments, first_decl_line(mod)),
         decls: associate(lr.comments, decls)
     };
+}
+
+// ---- rendering ---------------------------------------------------------
+//
+// The Markdown half, mirroring cmd/ferndoc's renderModule and its
+// per-declaration renderers. Gated byte-for-byte against the native pages, so
+// every literal below — the front matter, the fence language, the blank line
+// after a signature, the trailing comma inside an enum body — is load-bearing
+// rather than styling.
+//
+// The one structural difference is where the type strings come from. Native
+// renders `ast.Type.String()`; the self-host parser stores the source spelling
+// on the declaration (`ParamDecl.type_name`, `FuncDecl.ret_type`), so the
+// renderer prints what was written. Where the two disagree the differential
+// says so, and the answer is to normalise here rather than to loosen the gate.
+
+// type_str renders a declared type. `?` matches native's typeStr for a missing
+// type, which is what an unannotated position renders as rather than an empty
+// string.
+function type_str(t: string): string {
+    if (t.len() == 0) { return "?"; }
+    return t;
+}
+
+// param_type_str renders a parameter's declared type.
+//
+// A function-typed parameter needs the two sidecars: the parser collapses it to
+// the flat tag `fn` and keeps the spellings it threw away in `fn_param_types`
+// (comma-separated, no spaces) and `fn_ret`. Their own header says they exist to
+// "reconstruct the declared signature the flat `fn` tag threw away" — this is
+// the reconstruction, and without it every higher-order function in the stdlib
+// documents its callback as `fn`.
+function param_type_str(p: parser.ParamDecl): string {
+    if (p.type_name != "fn") { return type_str(p.type_name); }
+    var out: string = "(";
+    if (p.fn_param_types.len() > 0) {
+        var parts: string[] = split_commas(p.fn_param_types);
+        var i: i32 = 0;
+        while (i < parts.len()) {
+            if (i > 0) { out = out + ", "; }
+            out = out + parts[i];
+            i = i + 1;
+        }
+    }
+    // An empty return spelling on a fn type is `void`, not the `?` an absent
+    // type renders as: the parser records no return for `() => void`, and the
+    // two are different facts.
+    if (p.fn_ret.len() == 0) { return out + ") => void"; }
+    return out + ") => " + p.fn_ret;
+}
+
+// split_commas splits on `,`. Written out rather than reached for as a method:
+// these modules import no stdlib, so a string here carries only the builtin
+// operations.
+function split_commas(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if ((s[i] as i32) == 44) {
+            out = out.append(own(s[start:i]));
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(own(s[start:s.len()]));
+}
+
+// join_type_params renders `[A, B]`, or nothing when the declaration is not
+// generic.
+function join_type_params(tps: string[]): string {
+    if (tps.len() == 0) { return ""; }
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < tps.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + tps[i];
+        i = i + 1;
+    }
+    return out + "]";
+}
+
+// doc_block is a declaration's doc under its signature, or nothing. Native
+// emits the doc followed by a blank line and omits both when there is no doc,
+// so an undocumented declaration is not followed by a stray blank.
+function doc_block(doc: string): string {
+    if (doc.len() == 0) { return ""; }
+    return doc + "\n\n";
+}
+
+function render_func(fd: parser.FuncDecl, doc: string): string {
+    var out: string = "## `" + fd.name + "`\n\n```fern\npub function ";
+    if (fd.receiver_type.len() > 0) {
+        out = out + "(" + fd.receiver_name + ": " + type_str(fd.receiver_type) + ") ";
+    }
+    out = out + fd.name + join_type_params(fd.type_params) + "(";
+    var i: i32 = 0;
+    while (i < fd.params.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + fd.params[i].name + ": " + param_type_str(fd.params[i]);
+        i = i + 1;
+    }
+    out = out + "): " + type_str(fd.ret_type) + "\n```\n\n";
+    return out + doc_block(doc);
+}
+
+function render_struct(sd: parser.StructDecl, doc: string): string {
+    var out: string = "## `struct " + sd.name + "`\n\n```fern\npub struct "
+        + sd.name + join_type_params(sd.type_params) + " { ";
+    var i: i32 = 0;
+    while (i < sd.fields.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + sd.fields[i].name + ": " + type_str(sd.fields[i].type_name);
+        i = i + 1;
+    }
+    return out + " }\n```\n\n" + doc_block(doc);
+}
+
+// variant_payloads renders `(T, U)` for a variant that carries a payload, or
+// nothing for a unit variant.
+//
+// The types are not on the EnumDecl: the parser DESUGARS each variant into a
+// StructDecl tagged with `enum_owner`, so the payload lives there.
+function variant_payloads(enum_name: string, variant: string, structs: parser.StructDecl[]): string {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        var sd: parser.StructDecl = structs[i];
+        if (sd.enum_owner == enum_name && sd.name == variant) {
+            if (sd.fields.len() == 0) { return ""; }
+            var out: string = "(";
+            var f: i32 = 0;
+            while (f < sd.fields.len()) {
+                if (f > 0) { out = out + ", "; }
+                out = out + type_str(sd.fields[f].type_name);
+                f = f + 1;
+            }
+            return out + ")";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: string): string {
+    var out: string = "## `enum " + ed.name + "`\n\n```fern\npub enum "
+        + ed.name + join_type_params(ed.type_params) + " {\n";
+    var v: i32 = 0;
+    while (v < ed.variant_names.len()) {
+        out = out + "    " + ed.variant_names[v]
+            + variant_payloads(ed.name, ed.variant_names[v], structs) + ",\n";
+        v = v + 1;
+    }
+    return out + "}\n```\n\n" + doc_block(doc);
+}
+
+// render_impls is the trait to implementing-types table. Grouped by trait in
+// FIRST-SEEN order, not sorted: core/cmp alone carries ~30 primitive impls and
+// a section each would be unreadable, but the order still has to match native's
+// insertion order exactly for the bytes to agree.
+//
+// `cells` accumulates each trait's row already rendered — the types joined by
+// the backtick-comma-backtick that separates them in the table — because the
+// self-host has no array-of-arrays to group into.
+function render_impls(impls: parser.ImplInfo[]): string {
+    var order: string[] = [];
+    var cells: string[] = [];
+    var i: i32 = 0;
+    while (i < impls.len()) {
+        var at: i32 = util.index_of_str(order, impls[i].trait_name);
+        if (at < 0) {
+            order = order.append(impls[i].trait_name);
+            cells = cells.append(impls[i].impl_type);
+        } else {
+            cells = cells.with(at, cells[at] + "`, `" + impls[i].impl_type);
+        }
+        i = i + 1;
+    }
+    if (order.len() == 0) { return ""; }
+    var out: string = "## Implementations\n\n| Trait | Implementing types |\n| ----- | ------------------ |\n";
+    var t: i32 = 0;
+    while (t < order.len()) {
+        out = out + "| `" + order[t] + "` | `" + cells[t] + "` |\n";
+        t = t + 1;
+    }
+    return out + "\n";
+}
+
+// The three lookups below re-find the declaration a DocDecl came from. Keyed on
+// LINE as well as name, since a module may declare a struct and a function with
+// the same name.
+function func_named(mod: parser.Module, name: string, line: i32): parser.FuncDecl {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == name && mod.funcs[i].line == line) { return mod.funcs[i]; }
+        i = i + 1;
+    }
+    return mod.funcs[0];
+}
+
+function struct_named(mod: parser.Module, name: string, line: i32): parser.StructDecl {
+    var i: i32 = 0;
+    while (i < mod.structs.len()) {
+        if (mod.structs[i].name == name && mod.structs[i].line == line) { return mod.structs[i]; }
+        i = i + 1;
+    }
+    return mod.structs[0];
+}
+
+function enum_named(mod: parser.Module, name: string, line: i32): parser.EnumDecl {
+    var i: i32 = 0;
+    while (i < mod.enums.len()) {
+        if (mod.enums[i].name == name && mod.enums[i].line == line) { return mod.enums[i]; }
+        i = i + 1;
+    }
+    return mod.enums[0];
+}
+
+// render_page is cmd/ferndoc's renderModule: front matter, title, the module
+// intro, every public declaration in source order, then the impl table.
+//
+// An empty page is the empty string, matching native's skip-empty-modules rule
+// — a page with nothing on it would clutter the sidebar with a heading and no
+// content.
+pub function render_page(src: string, mod_path: string): string {
+    var lr: lexer.LexResult = lexer.tokenize_full(src);
+    var mod: parser.Module = parser.parse_module(lr.tokens);
+    var decls: DocDecl[] = associate(lr.comments, public_decls(mod));
+    if (decls.len() == 0 && mod.impls.len() == 0) { return ""; }
+
+    var out: string = "---\ntitle: " + mod_path + "\ndescription: Standard library reference for "
+        + mod_path + ".\n---\n\n# `" + mod_path + "`\n\n";
+    var intro: string = module_intro(lr.comments, first_decl_line(mod));
+    if (intro.len() > 0) { out = out + intro + "\n\n"; }
+
+    var i: i32 = 0;
+    while (i < decls.len()) {
+        var d: DocDecl = decls[i];
+        if (d.kind == "function") { out = out + render_func(func_named(mod, d.name, d.line), d.doc); }
+        else if (d.kind == "struct") { out = out + render_struct(struct_named(mod, d.name, d.line), d.doc); }
+        else if (d.kind == "enum") { out = out + render_enum(enum_named(mod, d.name, d.line), mod.structs, d.doc); }
+        i = i + 1;
+    }
+    return out + render_impls(mod.impls);
 }

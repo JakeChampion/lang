@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -265,4 +266,147 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 		t.Errorf("only %d declarations carried a doc on both sides — the differential is agreeing about emptiness", withDoc)
 	}
 	t.Logf("ferndoc differential: %d modules compared (%d documented decls matched), %d skipped for unported decl shapes", compared, withDoc, skipped)
+}
+
+// ferndocPageDivergences is every std module whose rendered page cannot match
+// cmd/ferndoc's byte-for-byte, and the front-end fact that stops it. All four
+// causes are data the self-host parser does not keep — none is a rendering
+// choice, and none can be fixed inside ferndoc.fern.
+//
+// The map is a TWO-WAY gate. A module absent from it must match exactly, so a
+// rendering regression fails. A module present in it must still diverge, so
+// closing one of these gaps also fails — and the fix is to delete the entry,
+// which is the point: the list can only shrink deliberately.
+var ferndocPageDivergences = map[string]string{
+	// `trait` reaches the self-host only as TraitReq, which carries no
+	// visibility, so `pub trait` has no representation to render.
+	"async":   "no TraitDecl",
+	"convert": "no TraitDecl",
+	"error":   "no TraitDecl",
+	"json":    "no TraitDecl",
+	"num":     "no TraitDecl",
+	// `const` desugars to a zero-arg function, recoverable through
+	// FuncDecl.is_const but not as native's ConstDecl.
+	"time": "const desugars to a function",
+	// parse_func_decl stores `type_params: bounded_tps` — only the type
+	// parameters carrying a trait bound. An unbounded `[T]` survives as a
+	// COUNT (type_param_count) with its name discarded, so `map[T, U]`
+	// cannot be rendered back.
+	"array":  "unbounded type-param names discarded",
+	"option": "unbounded type-param names discarded",
+	"result": "unbounded type-param names discarded",
+	"sort":   "unbounded type-param names discarded",
+	// No `str` type: the self-host has no borrowed-view type distinct from
+	// `string`, which is the same gap #6604 landed on, so a `str` return
+	// renders as `string`.
+	"fetch":   "no str type",
+	"http":    "no str type",
+	"path":    "no str type",
+	"string":  "no str type",
+	"unicode": "no str type",
+	"utf8":    "no str type",
+	// ImplInfo.trait_name drops a module qualifier, so `impl async.Driver
+	// for Sim` renders its trait as `Driver` in the implementations table.
+	"sim": "impl trait name loses its module qualifier",
+}
+
+// TestSelfHostFerndocPagesMatchNative renders every std module through the
+// self-hosted generator and compares the page with cmd/ferndoc's byte for byte.
+//
+// Byte-for-byte is the gate #6642 asked for, and it is worth the strictness: a
+// doc generator's whole output is its contract, so front matter, fence
+// language, the blank line after a signature and the trailing comma inside an
+// enum body all have to agree. Nothing weaker would notice most of what can go
+// wrong here.
+func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stdlib sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("ferndoc_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ferndoc_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "ferndoc_run.fern", "ferndoc_run")
+
+	docDir := t.TempDir()
+	gen := exec.Command("go", "run", "./../../cmd/ferndoc", "-out", docDir)
+	gen.Dir = "."
+	var genErr bytes.Buffer
+	gen.Stderr = &genErr
+	if err := gen.Run(); err != nil {
+		t.Fatalf("running cmd/ferndoc: %v\n%s", err, genErr.String())
+	}
+
+	stdDir := filepath.Join(langSrcAbs(t, "internal"), "stdlib", "std")
+	srcs, err := filepath.Glob(filepath.Join(stdDir, "*.fern"))
+	if err != nil {
+		t.Fatalf("globbing std: %v", err)
+	}
+	if len(srcs) < 40 {
+		t.Fatalf("found %d std modules, expected the full set — a shrunken sweep proves nothing", len(srcs))
+	}
+
+	var matched int
+	for _, s := range srcs {
+		base := strings.TrimSuffix(filepath.Base(s), ".fern")
+		if strings.HasPrefix(base, "_test_") {
+			continue
+		}
+		src, err := os.ReadFile(s)
+		if err != nil {
+			t.Fatalf("reading %s: %v", s, err)
+		}
+		want, err := os.ReadFile(filepath.Join(docDir, base+".md"))
+		if err != nil {
+			continue // ferndoc emits no page for a module with no public decls
+		}
+
+		cmd := exec.Command(bin, "-page", "std/"+base)
+		cmd.Stdin = bytes.NewReader(src)
+		got, rerr := cmd.Output()
+		if rerr != nil {
+			t.Errorf("%s: self-host ferndoc failed: %v", base, rerr)
+			continue
+		}
+
+		if why, expected := ferndocPageDivergences[base]; expected {
+			if bytes.Equal(got, want) {
+				t.Errorf("%s now matches native byte-for-byte, but is listed as diverging (%q) — delete its ferndocPageDivergences entry", base, why)
+			}
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s: rendered page differs from cmd/ferndoc\n%s", base, firstPageDiff(string(want), string(got)))
+			continue
+		}
+		matched++
+	}
+
+	if matched < 30 {
+		t.Errorf("only %d modules rendered byte-identically (of %d, %d listed as diverging) — the gate has gone hollow",
+			matched, len(srcs), len(ferndocPageDivergences))
+	}
+	t.Logf("ferndoc page differential: %d modules byte-identical, %d listed as diverging", matched, len(ferndocPageDivergences))
+}
+
+// firstPageDiff reports the first differing line with a little context. A whole
+// page is thousands of bytes and a full dump buries the one line that moved.
+func firstPageDiff(want, got string) string {
+	w := strings.Split(want, "\n")
+	g := strings.Split(got, "\n")
+	for i := 0; i < len(w) || i < len(g); i++ {
+		var wl, gl string
+		if i < len(w) {
+			wl = w[i]
+		}
+		if i < len(g) {
+			gl = g[i]
+		}
+		if wl != gl {
+			return fmt.Sprintf("  line %d\n  --- native   --- %q\n  --- self-host --- %q", i+1, wl, gl)
+		}
+	}
+	return "  (identical line-wise; trailing bytes differ)"
 }
