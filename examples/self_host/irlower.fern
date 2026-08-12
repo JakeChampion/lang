@@ -48605,6 +48605,10 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
         else if (o.kind_tag == 2) { stack = stack.with(sp, util.lit_to_i32(o.str)); sp = sp + 1; pc = pc + 1; }  // const_i32_text
         else if (o.kind_tag == 18) { stack = stack.with(sp, locals[o.i32_imm]); sp = sp + 1; pc = pc + 1; }  // load_local
         else if (o.kind_tag == 19) { sp = sp - 1; locals = locals.with(o.i32_imm, stack[sp]); pc = pc + 1; }  // store_local
+        // tee_local: store WITHOUT popping — the fused `store_local X ; load_local X`
+        // (#6638). The evaluator is a consumer of the op stream like any backend,
+        // so it has to learn the op the optimiser now produces.
+        else if (o.kind_tag == 20) { locals = locals.with(o.i32_imm, stack[sp - 1]); pc = pc + 1; }  // tee_local
         else if (o.kind_tag == 34) { stack = stack.with(sp - 1, bool_not(stack[sp - 1])); pc = pc + 1; }  // not
         else if (o.kind_tag == 160) { sp = sp - 1; return EvalOut { value: stack[sp], heap: heap, freehead: freehead, bailed: false }; }  // return
         else if (o.kind_tag == 154) {  // if
