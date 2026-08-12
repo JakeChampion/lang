@@ -24,6 +24,12 @@ function violations(src: string, target: string): platforms.Violation[] {
 
 function count(src: string, target: string): i32 { return violations(src, target).len(); }
 
+// reach_of is the target-independent half: which host capabilities `src`
+// touches, whoever might run it.
+function reach_of(src: string): string[] {
+    return platforms.reach(parser.parse_module(lexer.tokenize(src)));
+}
+
 // first_msg renders the first violation, or "" when there is none.
 function first_msg(src: string, target: string): string {
     var vs: platforms.Violation[] = violations(src, target);
@@ -174,6 +180,40 @@ function main(): i32 {
     var ms: string = first_msg(spawns, "wasm32-wasi");
     if (!util.contains(ms, "does not provide `subprocess`")) { return 64; }
     if (!util.contains(ms, "arm64-darwin")) { return 65; }
+
+    // ---- 8. reach, the target-independent view --------------------------
+    // Enforcement asks "may this target build it?"; reach asks "what does
+    // this code touch at all?", and is what classifies a module core-safe or
+    // hosted. Both directions matter equally here: a capability wrongly
+    // reported marks a core module hosted and takes it away from a
+    // freestanding target, and one wrongly omitted promises the opposite.
+    if (reach_of("function main(): i32 { return 1 + 2; }\n").len() != 0) { return 70; }
+
+    var r1: string[] = reach_of(forks);
+    if (r1.len() != 1 || r1[0] != "proc") { return 71; }
+
+    // Sorted, and one entry per capability however many builtins reached it.
+    var many: string = "function main(): i32 {\n"
+        + "    var t: i64 = now_unix_ms();\n"
+        + "    var p: i32 = proc_fork();\n"
+        + "    var q: i32 = proc_fork();\n"
+        + "    print(\"x\");\n"
+        + "    return q + p;\n"
+        + "}\n";
+    var r2: string[] = reach_of(many);
+    if (r2.len() != 3) { return 72; }
+    if (r2[0] != "log" || r2[1] != "now" || r2[2] != "proc") { return 73; }
+
+    // Reach is target-INDEPENDENT: the same source touches `proc` whether or
+    // not the target grants it, which is what lets one scan classify a module
+    // rather than answer for one build.
+    if (count(forks, "x86-64-linux") != 0) { return 74; }
+    if (reach_of(forks).len() != 1) { return 75; }
+
+    // An ungated builtin is not reach — `__heap_bump_bytes` reads the arena
+    // cursor and every target provides it, so a module using it stays
+    // core-safe.
+    if (reach_of("function main(): i32 { return __heap_bump_bytes(); }\n").len() != 0) { return 76; }
 
     write("platforms: every capability rule agrees\n");
     return 0;
