@@ -16,13 +16,13 @@ import (
 // the new struct owns it outright and the field-drop reclaims the inner box,
 // instead of leaking the rc-2 alias-inc'd box that the conservative retain left.
 //
-// SCOPE: in the current IR subset, a function returning a struct with an rc-array
-// field is not leaf-safe and bails to the AST path, so return_fresh_struct_ret_fns
-// only ever holds LEAF-SAFE-struct factories (scalar fields only). The reclaim win
-// is therefore the inner BOX itself (a leaf-safe inner has no rc fields to deep-
-// drop). SOUNDNESS is trivial here: the leaf-safe inner owns no buffers, so the
-// box free can never double-free a field; the only requirement — that the box is
-// the sole owner — is exactly what the strict-fresh classifier guarantees.
+// SCOPE: this case's inner struct is leaf-safe (scalar fields only), so the
+// reclaim win is the inner BOX itself and soundness is trivial — a leaf-safe
+// inner owns no buffers, so the box free can never double-free a field, and the
+// only requirement, that the box is the sole owner, is exactly what the
+// strict-fresh classifier guarantees. The registry itself is not limited to that
+// shape: it also admits a scalar-array field whose value is a direct literal, or
+// (#6758) a local this frame built and never escaped elsewhere.
 //
 // The leak/reclaim signal is heap exhaustion: a long churn allocating Outer+Inner
 // each iteration leaks the Inner box per iteration under the old alias-inc (rc 2,
