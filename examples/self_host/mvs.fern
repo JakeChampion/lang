@@ -1,0 +1,658 @@
+// examples/self_host/mvs.fern — Minimum Version Selection for the
+// self-hosted compiler, the port of native's internal/mvs (#6640).
+//
+// MVS's defining property: the constraint language is minimum-version-only,
+// so a satisfying configuration always exists, the result is the unique
+// lattice minimum, and resolution is deterministic graph reachability. A
+// dependency declares `dep = "1.2.0"` (its LOWEST acceptable version); MVS
+// keeps, per package, the maximum of the declared minimums across the whole
+// transitive graph.
+//
+// Native takes a `DepsOf` callback to read each selected version's own
+// requirements. Here resolution is a STEP function instead: `begin` raises
+// the root demands and parks on the first package whose deps are needed,
+// `supply` feeds them back and parks on the next. The caller drives the
+// loop, so the module needs no closure and stays inside the self-host IR
+// subset — and resolution stays as lazy as native's, materialising only the
+// versions actually selected.
+//
+// Error text is native's, word for word: a resolution that fails must fail
+// the same way under either compiler, or a project builds under one and not
+// the other.
+
+import "./util";
+
+// Version is a MAJOR.MINOR.PATCH release version (no ranges, no
+// pre-release — the deterministic subset MVS operates on). `ok` is false
+// for a spelling that is not three runs of decimal digits.
+pub struct Version {
+    major: i32,
+    minor: i32,
+    patch: i32,
+    ok: boolean,
+}
+
+// Source locates a specific package version: a local directory (`path`), or
+// a hash-addressed remote archive (`url` + `hash`).
+pub struct Source {
+    path: string,
+    url: string,
+    hash: string,
+}
+
+// Entry is one `package version → source` row of the index.
+pub struct Entry {
+    pkg: string,
+    ver: string,
+    src: Source,
+}
+
+// Index is the version authority MVS resolves against — a plain file, so no
+// registry service is required. `dir` is the directory the index file lives
+// in, which relative entry paths resolve against. `err` is the parse
+// diagnostic, empty when the index parsed.
+pub struct Index {
+    dir: string,
+    entries: Entry[],
+    err: string,
+}
+
+// Req is one demand: package `pkg` at minimum version `min`.
+pub struct Req {
+    pkg: string,
+    min: string,
+}
+
+// Ban is one `[exclude]` entry: a version of `pkg` no resolution may select.
+pub struct Ban {
+    pkg: string,
+    ver: string,
+}
+
+// Sel is one resolved package: the exact version MVS chose and its source.
+// The full set is what gets written to fern.lock.
+pub struct Sel {
+    name: string,
+    ver: string,
+    src: Source,
+}
+
+// State is a resolution in progress. `need_pkg` / `need_ver` name the
+// package version whose own dependencies the caller must supply next;
+// `need_pkg` empty means resolution is finished (or failed — check `err`).
+//
+// The selected set is two parallel arrays rather than a Sel[] because the
+// source is re-read from the index at the end: a selection is (name,
+// version) and nothing else while the fixpoint is running.
+pub struct State {
+    ix: Index,
+    bans: Ban[],
+    names: string[],
+    vers: string[],
+    qpkg: string[],
+    qver: string[],
+    qhead: i32,
+    need_pkg: string,
+    need_ver: string,
+    err: string,
+}
+
+// ---- versions ---------------------------------------------------------
+
+// parse_version parses "MAJOR.MINOR.PATCH", returning ok=false otherwise.
+pub function parse_version(s: string): Version {
+    var parts: string[] = split_char(s, 46);   // '.'
+    if (parts.len() != 3) { return Version { major: 0, minor: 0, patch: 0, ok: false }; }
+    var i: i32 = 0;
+    while (i < 3) {
+        if (!util.is_all_digits(parts[i])) { return Version { major: 0, minor: 0, patch: 0, ok: false }; }
+        i = i + 1;
+    }
+    return Version {
+        major: util.digits_to_i32(parts[0]),
+        minor: util.digits_to_i32(parts[1]),
+        patch: util.digits_to_i32(parts[2]),
+        ok: true,
+    };
+}
+
+// version_error is the diagnostic for a spelling parse_version rejects. The
+// part-count and the digit failures word differently, as native's do.
+pub function version_error(s: string): string {
+    if (split_char(s, 46).len() != 3) {
+        return "invalid version " + quoted(s) + " (want MAJOR.MINOR.PATCH)";
+    }
+    return "invalid version " + quoted(s);
+}
+
+pub function version_string(v: Version): string {
+    return util.i32_to_string(v.major) + "." + util.i32_to_string(v.minor) + "." + util.i32_to_string(v.patch);
+}
+
+// version_cmp returns -1, 0, +1 by precedence.
+pub function version_cmp(a: Version, b: Version): i32 {
+    if (a.major != b.major) { if (a.major < b.major) { return 0 - 1; } return 1; }
+    if (a.minor != b.minor) { if (a.minor < b.minor) { return 0 - 1; } return 1; }
+    if (a.patch != b.patch) { if (a.patch < b.patch) { return 0 - 1; } return 1; }
+    return 0;
+}
+
+// ver_cmp_s compares two canonical version strings.
+function ver_cmp_s(a: string, b: string): i32 {
+    return version_cmp(parse_version(a), parse_version(b));
+}
+
+// ---- index ------------------------------------------------------------
+
+// parse_index parses the index format: a `[package]` section per package,
+// each line `"VERSION" = { path = "…" }` or
+// `"VERSION" = { url = "…", hash = "sha256:…" }`. A malformed index parses
+// to an Index carrying `err`; entries before the bad line are discarded by
+// the caller, which reports `err` and stops.
+pub function parse_index(src: string): Index {
+    var entries: Entry[] = [];
+    var pkg: string = "";
+    var lines: string[] = split_char(src, 10);   // '\n'
+    var ln: i32 = 0;
+    while (ln < lines.len()) {
+        var line: string = trim(lines[ln]);
+        ln = ln + 1;
+        if (line.len() == 0) { continue; }
+        if (line[0] == 35) { continue; }         // '#'
+        if (line[0] == 91) {                     // '['
+            if (line[line.len() - 1] != 93) {    // ']'
+                return index_err(entries, "line " + util.i32_to_string(ln) + ": malformed section header " + quoted(line));
+            }
+            pkg = trim(line[1:line.len() - 1] + "");
+            if (pkg.len() == 0) {
+                return index_err(entries, "line " + util.i32_to_string(ln) + ": empty package name");
+            }
+            continue;
+        }
+        if (pkg.len() == 0) {
+            return index_err(entries, "line " + util.i32_to_string(ln) + ": version entry outside a [package] section");
+        }
+        var eq: i32 = index_of_char(line, 61, 0);   // '='
+        if (eq < 0) {
+            return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
+        }
+        var key: string = trim(line[0:eq] + "");
+        if (!is_quoted(key)) {
+            return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + unquote_error(key));
+        }
+        var ver: string = key[1:key.len() - 1] + "";
+        if (!parse_version(ver).ok) {
+            return index_err(entries, "line " + util.i32_to_string(ln) + ": " + version_error(ver));
+        }
+        var val: string = trim(line[eq + 1:line.len()] + "");
+        var src_res: SourceResult = parse_source(val);
+        if (src_res.err.len() > 0) {
+            return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + src_res.err);
+        }
+        entries = entries.append(Entry { pkg: pkg, ver: ver, src: src_res.src });
+    }
+    return Index { dir: "", entries: entries, err: "" };
+}
+
+// SourceResult is parse_source's outcome: the source, or a diagnostic.
+struct SourceResult {
+    src: Source,
+    err: string,
+}
+
+function parse_source(val: string): SourceResult {
+    var none: Source = Source { path: "", url: "", hash: "" };
+    if (val.len() < 2 || val[0] != 123 || val[val.len() - 1] != 125) {   // '{' '}'
+        return SourceResult { src: none, err: "expected an inline table { path = … } or { url = …, hash = … }" };
+    }
+    var path: string = "";
+    var url: string = "";
+    var hash: string = "";
+    var parts: string[] = split_char(trim(val[1:val.len() - 1] + ""), 44);   // ','
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var part: string = trim(parts[i]);
+        i = i + 1;
+        if (part.len() == 0) { continue; }
+        var eq: i32 = index_of_char(part, 61, 0);   // '='
+        if (eq < 0) {
+            return SourceResult { src: none, err: "expected `key = value`, got " + quoted(part) };
+        }
+        var k: string = trim(part[0:eq] + "");
+        var raw: string = trim(part[eq + 1:part.len()] + "");
+        if (!is_quoted(raw)) {
+            return SourceResult { src: none, err: k + ": " + unquote_error(raw) };
+        }
+        var v: string = raw[1:raw.len() - 1] + "";
+        if (k == "path") { path = v; }
+        else if (k == "url") { url = v; }
+        else if (k == "hash") { hash = v; }
+        else {
+            return SourceResult { src: none, err: "unknown key " + quoted(k) + " (supported: path, url, hash)" };
+        }
+    }
+    if (path.len() > 0 && (url.len() > 0 || hash.len() > 0)) {
+        return SourceResult { src: none, err: "a version is either `path` or `url`+`hash`" };
+    }
+    if (path.len() > 0) { return SourceResult { src: Source { path: path, url: "", hash: "" }, err: "" }; }
+    if (url.len() > 0 && hash.len() > 0) { return SourceResult { src: Source { path: "", url: url, hash: hash }, err: "" }; }
+    return SourceResult { src: none, err: "a version needs `path` or `url`+`hash`" };
+}
+
+function index_err(entries: Entry[], msg: string): Index {
+    return Index { dir: "", entries: entries, err: msg };
+}
+
+// with_dir returns `ix` anchored at the directory its file lives in, so
+// relative entry paths resolve against it.
+pub function with_dir(ix: Index, dir: string): Index {
+    return Index { dir: dir, entries: ix.entries, err: ix.err };
+}
+
+// index_versions returns pkg's available versions, ascending.
+pub function index_versions(ix: Index, pkg: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < ix.entries.len()) {
+        if (ix.entries[i].pkg == pkg) { out = out.append(ix.entries[i].ver + ""); }
+        i = i + 1;
+    }
+    // Sorted by precedence: the index file's order is the author's, and
+    // "the next higher version" must not depend on it.
+    var taken: i32[] = [];
+    var t: i32 = 0;
+    while (t < out.len()) { taken = taken.append(0); t = t + 1; }
+    var sorted: string[] = [];
+    var k: i32 = 0;
+    while (k < out.len()) {
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < out.len()) {
+            if (taken[j] == 0) {
+                if (best < 0 || ver_cmp_s(out[j], out[best]) < 0) { best = j; }
+            }
+            j = j + 1;
+        }
+        taken = taken.with(best, 1);
+        sorted = sorted.append(out[best] + "");
+        k = k + 1;
+    }
+    return sorted;
+}
+
+// index_has reports whether the index carries (pkg, ver).
+pub function index_has(ix: Index, pkg: string, ver: string): boolean {
+    var i: i32 = 0;
+    while (i < ix.entries.len()) {
+        if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// index_source returns the source for (pkg, ver), with a relative `path`
+// resolved against the index's own directory. An absent entry yields the
+// empty source; callers check index_has first.
+pub function index_source(ix: Index, pkg: string, ver: string): Source {
+    var i: i32 = 0;
+    while (i < ix.entries.len()) {
+        if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
+            var s: Source = ix.entries[i].src;
+            if (s.path.len() > 0 && !is_abs(s.path)) {
+                return Source { path: join_path(ix.dir, s.path), url: s.url, hash: s.hash };
+            }
+            return Source { path: s.path + "", url: s.url + "", hash: s.hash + "" };
+        }
+        i = i + 1;
+    }
+    return Source { path: "", url: "", hash: "" };
+}
+
+// vers_list renders an available-version list for a diagnostic.
+function vers_list(vs: string[]): string {
+    if (vs.len() == 0) { return "none"; }
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        if (i > 0) { s = s + ", "; }
+        s = s + vs[i];
+        i = i + 1;
+    }
+    return s;
+}
+
+// ---- resolution -------------------------------------------------------
+
+// begin starts a resolution from `roots` (the top-level manifest's version
+// deps) under `bans` (its [exclude] table — only the root's excludes reach
+// MVS, preserving determinism). The returned state either carries an `err`,
+// or names the first package whose dependencies the caller must supply.
+pub function begin(roots: Req[], bans: Ban[], ix: Index): State {
+    var st: State = State {
+        ix: ix, bans: bans,
+        names: [], vers: [], qpkg: [], qver: [], qhead: 0,
+        need_pkg: "", need_ver: "", err: "",
+    };
+    var sorted: Req[] = sort_reqs(roots);
+    var i: i32 = 0;
+    while (i < sorted.len()) {
+        st = raise(st, sorted[i].pkg, sorted[i].min, "");
+        if (st.err.len() > 0) { return st; }
+        i = i + 1;
+    }
+    return advance(st);
+}
+
+// supply feeds back the dependencies of the package version `st` last asked
+// for, raising each and parking on the next demand.
+pub function supply(st: State, deps: Req[]): State {
+    if (st.err.len() > 0 || st.need_pkg.len() == 0) { return st; }
+    var pkg: string = st.need_pkg;
+    var ver: string = st.need_ver;
+    var via: string = "via " + pkg + "@" + ver + ": ";
+    var sorted: Req[] = sort_reqs(deps);
+    var i: i32 = 0;
+    while (i < sorted.len()) {
+        // A version raised above `ver` since this entry was enqueued
+        // supersedes this pass; the higher version is (or will be) its own
+        // queue entry.
+        if (selected_version(st, pkg) != ver) { i = sorted.len(); continue; }
+        st = raise(st, sorted[i].pkg, sorted[i].min, via);
+        if (st.err.len() > 0) { return st; }
+        i = i + 1;
+    }
+    return advance(st);
+}
+
+// fail records that the caller could not read the dependencies of the
+// package version `st` asked for — native's `reading deps of pkg@ver: …`.
+pub function fail(st: State, why: string): State {
+    return with_err(st, "reading deps of " + st.need_pkg + "@" + st.need_ver + ": " + why);
+}
+
+// done reports whether resolution has finished or failed.
+pub function done(st: State): boolean {
+    return st.err.len() == 0 && st.need_pkg.len() == 0;
+}
+
+// selected returns the resolved set, sorted by package name — the order
+// fern.lock is written in.
+pub function selected(st: State): Sel[] {
+    var taken: i32[] = [];
+    var t: i32 = 0;
+    while (t < st.names.len()) { taken = taken.append(0); t = t + 1; }
+    var names: string[] = [];
+    var n: i32 = 0;
+    while (n < st.names.len()) {
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < st.names.len()) {
+            if (taken[j] == 0) {
+                if (best < 0 || util.str_less(st.names[j], st.names[best])) { best = j; }
+            }
+            j = j + 1;
+        }
+        taken = taken.with(best, 1);
+        names = names.append(st.names[best] + "");
+        n = n + 1;
+    }
+    var out: Sel[] = [];
+    var k: i32 = 0;
+    while (k < names.len()) {
+        var v: string = selected_version(st, names[k]);
+        out = out.append(Sel { name: names[k], ver: v, src: index_source(st.ix, names[k], v) });
+        k = k + 1;
+    }
+    return out;
+}
+
+// raise records a demand for `pkg` at `min`, keeping the maximum of the
+// minimums seen so far and enqueueing the package when its selection moves.
+function raise(st: State, pkg: string, min: string, via: string): State {
+    var v: Version = parse_version(min);
+    if (!v.ok) {
+        return with_err(st, via + "dependency " + quoted(pkg) + ": " + version_error(min));
+    }
+    var ver: string = version_string(v);
+    if (banned(st, pkg, ver)) {
+        // Round up to the next higher non-excluded indexed version (Go's
+        // exclude semantics) — the minimum-only constraint language cannot
+        // express an upper bound, so [exclude] is how "1.9 is broken" is said.
+        var avail: string[] = index_versions(st.ix, pkg);
+        var up: string = "";
+        var i: i32 = 0;
+        while (i < avail.len()) {
+            if (ver_cmp_s(avail[i], ver) > 0 && !banned(st, pkg, avail[i])) { up = avail[i]; i = avail.len(); }
+            else { i = i + 1; }
+        }
+        if (up.len() == 0) {
+            return with_err(st, via + "dependency " + quoted(pkg) + ": version " + ver
+                + " is excluded by the top-level manifest and the index has no higher non-excluded version (available: "
+                + vers_list(avail) + ")");
+        }
+        ver = up;
+    }
+    if (!index_has(st.ix, pkg, ver)) {
+        return with_err(st, via + "dependency " + quoted(pkg) + " has no version " + ver
+            + " in the index (available: " + vers_list(index_versions(st.ix, pkg)) + ")");
+    }
+    var cur: string = selected_version(st, pkg);
+    if (cur.len() > 0 && ver_cmp_s(ver, cur) <= 0) { return st; }
+    var names: string[] = st.names;
+    var vers: string[] = st.vers;
+    if (cur.len() == 0) {
+        names = names.append(pkg + "");
+        vers = vers.append(ver + "");
+    } else {
+        vers = vers.with(util.index_of_str(names, pkg), ver + "");
+    }
+    return State {
+        ix: st.ix, bans: st.bans,
+        names: names, vers: vers,
+        qpkg: st.qpkg.append(pkg + ""), qver: st.qver.append(ver + ""),
+        qhead: st.qhead,
+        need_pkg: st.need_pkg, need_ver: st.need_ver, err: st.err,
+    };
+}
+
+// advance pops queue entries until one is still current — an entry whose
+// package has since been raised higher is dead — and parks on it.
+function advance(st: State): State {
+    var head: i32 = st.qhead;
+    while (head < st.qpkg.len()) {
+        var pkg: string = st.qpkg[head];
+        var ver: string = st.qver[head];
+        head = head + 1;
+        if (selected_version(st, pkg) == ver) {
+            return State {
+                ix: st.ix, bans: st.bans, names: st.names, vers: st.vers,
+                qpkg: st.qpkg, qver: st.qver, qhead: head,
+                need_pkg: pkg + "", need_ver: ver + "", err: st.err,
+            };
+        }
+    }
+    return State {
+        ix: st.ix, bans: st.bans, names: st.names, vers: st.vers,
+        qpkg: st.qpkg, qver: st.qver, qhead: head,
+        need_pkg: "", need_ver: "", err: st.err,
+    };
+}
+
+function with_err(st: State, msg: string): State {
+    return State {
+        ix: st.ix, bans: st.bans, names: st.names, vers: st.vers,
+        qpkg: st.qpkg, qver: st.qver, qhead: st.qhead,
+        need_pkg: "", need_ver: "", err: msg,
+    };
+}
+
+// selected_version is the version currently selected for `pkg`, or "".
+function selected_version(st: State, pkg: string): string {
+    var i: i32 = util.index_of_str(st.names, pkg);
+    if (i < 0) { return ""; }
+    return st.vers[i] + "";
+}
+
+function banned(st: State, pkg: string, ver: string): boolean {
+    var i: i32 = 0;
+    while (i < st.bans.len()) {
+        if (st.bans[i].pkg == pkg) {
+            var b: Version = parse_version(st.bans[i].ver);
+            if (b.ok && version_string(b) == ver) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// sort_reqs orders demands by package name, so a resolution failure names
+// the same dependency whichever order the manifest listed them in.
+function sort_reqs(rs: Req[]): Req[] {
+    var taken: i32[] = [];
+    var t: i32 = 0;
+    while (t < rs.len()) { taken = taken.append(0); t = t + 1; }
+    var out: Req[] = [];
+    var k: i32 = 0;
+    while (k < rs.len()) {
+        var best: i32 = 0 - 1;
+        var j: i32 = 0;
+        while (j < rs.len()) {
+            if (taken[j] == 0) {
+                if (best < 0 || util.str_less(rs[j].pkg, rs[best].pkg)) { best = j; }
+            }
+            j = j + 1;
+        }
+        taken = taken.with(best, 1);
+        out = out.append(rs[best]);
+        k = k + 1;
+    }
+    return out;
+}
+
+// ---- fern.lock --------------------------------------------------------
+
+// lock_text renders the selected set as a fern.lock. Under MVS the versions
+// are fully determined by the manifests + index, so the lock is not a
+// resolution SNAPSHOT that can drift — it records the chosen (name, version,
+// source) so builds are reproducible and offline without re-resolving.
+pub function lock_text(sel: Sel[]): string {
+    var out: string = "# generated by `fern -resolve`; do not edit by hand\n";
+    var i: i32 = 0;
+    while (i < sel.len()) {
+        out = out + "\n[[package]]\n";
+        out = out + "name = " + quoted(sel[i].name) + "\n";
+        out = out + "version = " + quoted(sel[i].ver) + "\n";
+        if (sel[i].src.path.len() > 0) {
+            out = out + "path = " + quoted(sel[i].src.path) + "\n";
+        } else {
+            out = out + "url = " + quoted(sel[i].src.url) + "\n";
+            out = out + "hash = " + quoted(sel[i].src.hash) + "\n";
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- small string helpers ---------------------------------------------
+
+pub function trim(s: string): string {
+    var a: i32 = 0;
+    var b: i32 = s.len();
+    while (a < b && (s[a] == 32 || s[a] == 9 || s[a] == 13)) { a = a + 1; }
+    while (b > a && (s[b - 1] == 32 || s[b - 1] == 9 || s[b - 1] == 13)) { b = b - 1; }
+    return s[a:b] + "";
+}
+
+// split_char splits `s` on the byte `c`, keeping empty fields.
+pub function split_char(s: string, c: i32): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if ((s[i] as i32) == c) {
+            out = out.append(s[start:i] + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    out = out.append(s[start:s.len()] + "");
+    return out;
+}
+
+function index_of_char(s: string, c: i32, from: i32): i32 {
+    var i: i32 = from;
+    while (i < s.len()) {
+        if ((s[i] as i32) == c) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// quoted renders `s` as a double-quoted string. Every value that reaches it
+// is a package name, a version, a path or a url — none of which may contain
+// a quote or a backslash, which is what unquote_error refuses on the way in.
+pub function quoted(s: string): string {
+    return "\"" + s + "\"";
+}
+
+function is_quoted(s: string): boolean {
+    if (s.len() < 2 || s[0] != 34 || s[s.len() - 1] != 34) { return false; }   // '"'
+    var inner: string = s[1:s.len() - 1] + "";
+    var i: i32 = 0;
+    while (i < inner.len()) {
+        if (inner[i] == 34 || inner[i] == 92) { return false; }   // '"' '\'
+        i = i + 1;
+    }
+    return true;
+}
+
+function unquote_error(s: string): string {
+    if (s.len() < 2 || s[0] != 34 || s[s.len() - 1] != 34) {
+        return "expected a quoted string, got " + quoted(s);
+    }
+    return "escapes unsupported in " + quoted(s);
+}
+
+pub function is_abs(p: string): boolean {
+    return p.len() > 0 && p[0] == 47;   // '/'
+}
+
+// join_path joins `dir` and the relative `rel`, resolving `.` and `..` as
+// native's filepath.Join does — a lock file records the resolved directory,
+// so `../foo-1.0.0` must come out the same under either compiler.
+pub function join_path(dir: string, rel: string): string {
+    var abs: boolean = is_abs(dir);
+    var segs: string[] = [];
+    var parts: string[] = split_char(dir + "/" + rel, 47);   // '/'
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var p: string = parts[i];
+        i = i + 1;
+        if (p.len() == 0 || p == ".") { continue; }
+        if (p == "..") {
+            if (segs.len() > 0 && segs[segs.len() - 1] != "..") {
+                segs = drop_last(segs);
+                continue;
+            }
+            if (abs) { continue; }
+        }
+        segs = segs.append(p + "");
+    }
+    var out: string = "";
+    var k: i32 = 0;
+    while (k < segs.len()) {
+        if (k > 0) { out = out + "/"; }
+        out = out + segs[k];
+        k = k + 1;
+    }
+    if (abs) { return "/" + out; }
+    if (out.len() == 0) { return "."; }
+    return out;
+}
+
+function drop_last(xs: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i + 1 < xs.len()) { out = out.append(xs[i] + ""); i = i + 1; }
+    return out;
+}

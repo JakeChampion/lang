@@ -14,6 +14,7 @@
 //     fern -interp <entry.fern>             evaluate; exit = program result
 //     fern -fmt <entry.fern>                format the entry file to stdout
 //     fern -targets                         list the targets + capabilities
+//     fern -resolve <ABS-DIR>               run MVS; write fern.lock
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
 // backend, the environment half says what the host provides, and neither is
@@ -64,6 +65,7 @@ import "./caps";
 import "./modloader";
 import "./visibility";
 import "./fern_toml";
+import "./mvs";
 import "./treeshake";
 import "./arm64_native";
 import "./x86_native";
@@ -309,6 +311,7 @@ function is_flag(a: string): boolean {
 function usage(): i32 {
     eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
+    eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
     return 2;
 }
 
@@ -578,7 +581,155 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
     }
     var no_deps: fern_toml.Dep[] = [];
     var no_members: string[] = [];
-    return fern_toml.Manifest { name: "", lib: "lib.fern", deps: no_deps, members: no_members };
+    var no_excl: string[] = [];
+    return fern_toml.Manifest {
+        name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
+        excl_pkg: no_excl, excl_ver: no_excl,
+    };
+}
+
+// manifest_reqs is a manifest's versioned ([package] index) dependencies as
+// MVS demands: name → its declared LOWEST acceptable version.
+function manifest_reqs(man: fern_toml.Manifest): mvs.Req[] {
+    var out: mvs.Req[] = [];
+    var i: i32 = 0;
+    while (i < man.deps.len()) {
+        if (man.deps[i].kind == "version" && man.deps[i].version.len() > 0) {
+            out = out.append(mvs.Req { pkg: man.deps[i].name + "", min: man.deps[i].version + "" });
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// find_manifest_dir walks up from `dir` to the first directory holding a
+// fern.toml, or "" when nothing governs it.
+function find_manifest_dir(dir: string): string {
+    var d: string = dir;
+    while (d.len() > 0) {
+        var found: boolean = false;
+        match (read_file(d + "/fern.toml")) {
+            Ok(s) => { found = true; },
+            Err(e) => { },
+        }
+        if (found) { return d; }
+        if (d.len() <= 1) { return ""; }
+        var up: string = dir_of(d);
+        if (up.len() == 0) { up = "/"; }
+        d = up;
+    }
+    return "";
+}
+
+// run_resolve implements `-resolve [DIR]`: read the manifest governing DIR,
+// run Minimum Version Selection over its [package] index for every versioned
+// dependency, and write the chosen versions to fern.lock. The compiler reads
+// the lock, never the index (the no-build-time-network constraint), so this
+// is the step that makes the following build offline.
+//
+// Two deliberate departures from native's `fern -resolve`. DIR must be
+// absolute: there is no working-directory builtin, and a lock recording a
+// path resolved against the wrong root is worse than a refusal. And a url
+// source cannot be materialised — fetching is native-only — so an index
+// entry MVS actually selects by url is a diagnostic rather than a download.
+function run_resolve(start: string): i32 {
+    if (start.len() == 0 || start[0] != 47) {   // '/'
+        eprint("resolve: pass an absolute path (this driver has no working-directory builtin)");
+        return 2;
+    }
+    var dir: string = start;
+    match (read_file(start)) {
+        Ok(s) => { dir = dir_of(start); },
+        Err(e) => { },
+    }
+    var mdir: string = find_manifest_dir(dir);
+    if (mdir.len() == 0) {
+        eprint("resolve: no fern.toml governs " + dir);
+        return 1;
+    }
+    var mpath: string = mdir + "/fern.toml";
+    var man: fern_toml.Manifest = read_manifest(mdir + "/");
+    var roots: mvs.Req[] = manifest_reqs(man);
+    if (roots.len() == 0) {
+        eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
+        return 1;
+    }
+    if (man.index.len() == 0) {
+        eprint("resolve: " + mpath + " has versioned dependencies but no `index = \"…\"` under [package]");
+        return 1;
+    }
+    var ipath: string = man.index;
+    if (!mvs.is_abs(ipath)) { ipath = mvs.join_path(mdir, ipath); }
+    var isrc: string = "";
+    var iok: boolean = false;
+    match (read_file(ipath)) {
+        Ok(s) => { isrc = s; iok = true; },
+        Err(e) => { },
+    }
+    if (!iok) {
+        eprint("index " + ipath + ": cannot read");
+        return 1;
+    }
+    var ix: mvs.Index = mvs.parse_index(isrc);
+    if (ix.err.len() > 0) {
+        eprint("index " + ipath + ": " + ix.err);
+        return 1;
+    }
+    ix = mvs.with_dir(ix, mvs.join_path(dir_of(ipath), "."));
+
+    var bans: mvs.Ban[] = [];
+    var bi: i32 = 0;
+    while (bi < man.excl_pkg.len()) {
+        bans = bans.append(mvs.Ban { pkg: man.excl_pkg[bi] + "", ver: man.excl_ver[bi] + "" });
+        bi = bi + 1;
+    }
+
+    // The step loop native spells as a `DepsOf` closure: materialise the
+    // package version MVS is asking about and hand back ITS versioned deps.
+    // That is what makes the resolution transitive, and it reads only the
+    // versions actually selected.
+    var st: mvs.State = mvs.begin(roots, bans, ix);
+    while (st.err.len() == 0 && !mvs.done(st)) {
+        var src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
+        if (src.path.len() == 0) {
+            st = mvs.fail(st, "url sources need `fern -fetch`, which this driver does not have");
+        } else {
+            var dsrc: string = "";
+            var dok: boolean = false;
+            match (read_file(src.path + "/fern.toml")) {
+                Ok(s) => { dsrc = s; dok = true; },
+                Err(e) => { },
+            }
+            if (!dok) {
+                st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + " has no fern.toml");
+            } else {
+                st = mvs.supply(st, manifest_reqs(fern_toml.parse(dsrc)));
+            }
+        }
+    }
+    if (st.err.len() > 0) {
+        eprint(st.err);
+        return 1;
+    }
+
+    var sel: mvs.Sel[] = mvs.selected(st);
+    var lock: string = mdir + "/fern.lock";
+    var wrote: boolean = false;
+    match (write_file(lock, mvs.lock_text(sel))) {
+        Ok(u) => { wrote = true; },
+        Err(e) => { },
+    }
+    if (!wrote) {
+        eprint("resolve: cannot write " + lock);
+        return 1;
+    }
+    eprint("resolve: " + util.i32_to_string(sel.len()) + " package(s) pinned in " + lock);
+    var i: i32 = 0;
+    while (i < sel.len()) {
+        eprint("  " + sel[i].name + " " + sel[i].ver);
+        i = i + 1;
+    }
+    return 0;
 }
 
 // root_pkg is the entry's own package: its manifest's [package] name, or
@@ -683,6 +834,7 @@ function run(): i32 {
     var mode_fmt: boolean = false;
     var mode_caps: boolean = false;
     var mode_targets: boolean = false;
+    var mode_resolve: boolean = false;
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
     var optimize: boolean = false;
@@ -726,6 +878,11 @@ function run(): i32 {
             emit_syms = true;
         } else if (a == "-capabilities") {
             mode_caps = true;
+        } else if (a == "-resolve") {
+            // Version resolution (MVS) over the manifest's [package] index,
+            // writing fern.lock. It reads manifests, not sources, so it takes
+            // a directory rather than an entry file.
+            mode_resolve = true;
         } else if (a == "-targets") {
             mode_targets = true;
         } else if (a == "-emit") {
@@ -761,6 +918,10 @@ function run(): i32 {
 
     // `-targets` answers from the table alone; it needs no entry file.
     if (mode_targets) { return list_targets(); }
+
+    // `-resolve` takes a directory (or any file inside the package), not an
+    // entry module — it reads manifests and never compiles anything.
+    if (mode_resolve) { return run_resolve(entry_path); }
 
     if (!have_entry) { return usage(); }
 

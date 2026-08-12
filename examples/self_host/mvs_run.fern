@@ -1,0 +1,200 @@
+// examples/self_host/mvs_run.fern — driver for the self-host's Minimum
+// Version Selection (mvs.fern, #6640).
+//
+// Every case here is one native `internal/mvs` test restated: the same
+// index, the same demands, the same expected selection or the same error
+// text. MVS is pure computation, so the two implementations have no excuse
+// to differ, and the resolution a project gets must not depend on which
+// compiler ran it.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies the one
+// that failed, so a regression names its own case without a stdout diff.
+
+import "./mvs";
+import "./util";
+
+// Outcome is one resolution: the selection rendered as `name version`
+// pairs, or the error text.
+struct Outcome {
+    text: string,
+    err: string,
+}
+
+// resolve_with drives mvs's step loop over a fixed dependency table: four
+// parallel arrays spelling `dpkg@dver depends on ddep >= dmin`. This is the
+// caller half native passes as a `DepsOf` closure.
+function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index,
+                      dpkg: string[], dver: string[], ddep: string[], dmin: string[]): Outcome {
+    var st: mvs.State = mvs.begin(roots, bans, ix);
+    while (st.err.len() == 0 && !mvs.done(st)) {
+        var deps: mvs.Req[] = [];
+        var i: i32 = 0;
+        while (i < dpkg.len()) {
+            if (dpkg[i] == st.need_pkg && dver[i] == st.need_ver) {
+                deps = deps.append(mvs.Req { pkg: ddep[i], min: dmin[i] });
+            }
+            i = i + 1;
+        }
+        st = mvs.supply(st, deps);
+    }
+    if (st.err.len() > 0) { return Outcome { text: "", err: st.err }; }
+    var out: string = "";
+    var sel: mvs.Sel[] = mvs.selected(st);
+    var k: i32 = 0;
+    while (k < sel.len()) {
+        if (k > 0) { out = out + "; "; }
+        out = out + sel[k].name + " " + sel[k].ver;
+        k = k + 1;
+    }
+    return Outcome { text: out, err: "" };
+}
+
+function no_edges(): string[] {
+    var e: string[] = [];
+    return e;
+}
+
+function no_bans(): mvs.Ban[] {
+    var e: mvs.Ban[] = [];
+    return e;
+}
+
+function req(pkg: string, min: string): mvs.Req {
+    return mvs.Req { pkg: pkg, min: min };
+}
+
+// check reports a failed assertion and returns the case's exit code. The
+// report goes to stdout: the exit code is the signal, and stderr is one of
+// the WASI imports the self-host's component wrapper does not carry.
+function check(code: i32, what: string, got: string, want: string): i32 {
+    if (got == want) { return 0; }
+    write("mvs_run: " + what + "\n  got:  " + got + "\n  want: " + want + "\n");
+    return code;
+}
+
+function main(): i32 {
+    // ---- 1. version parsing + precedence -------------------------------
+    var rc: i32 = check(1, "1.2.0 vs 1.10.0",
+        util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.2.0"), mvs.parse_version("1.10.0"))), "-1");
+    if (rc != 0) { return rc; }
+    rc = check(2, "2.0.0 vs 1.9.9",
+        util.i32_to_string(mvs.version_cmp(mvs.parse_version("2.0.0"), mvs.parse_version("1.9.9"))), "1");
+    if (rc != 0) { return rc; }
+    rc = check(3, "1.0.0 vs 1.0.0",
+        util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.0.0"), mvs.parse_version("1.0.0"))), "0");
+    if (rc != 0) { return rc; }
+    // A two-part spelling is rejected, and the part-count failure words
+    // differently from a non-numeric one.
+    if (mvs.parse_version("1.2").ok) { return 4; }
+    rc = check(5, "two-part version error", mvs.version_error("1.2"),
+        "invalid version \"1.2\" (want MAJOR.MINOR.PATCH)");
+    if (rc != 0) { return rc; }
+    rc = check(6, "non-numeric version error", mvs.version_error("1.x.0"), "invalid version \"1.x.0\"");
+    if (rc != 0) { return rc; }
+
+    // ---- 2. the index --------------------------------------------------
+    var ix1: mvs.Index = mvs.parse_index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:abc\" }\n[bar]\n\"2.1.0\" = { path = \"bar\" }\n");
+    rc = check(7, "index parse", ix1.err, "");
+    if (rc != 0) { return rc; }
+    var foovers: string[] = mvs.index_versions(ix1, "foo");
+    rc = check(8, "foo versions", util.i32_to_string(foovers.len()) + " " + foovers[0] + " " + foovers[1], "2 1.0.0 1.2.0");
+    if (rc != 0) { return rc; }
+    ix1 = mvs.with_dir(ix1, "/pkgs/reg");
+    var s120: mvs.Source = mvs.index_source(ix1, "foo", "1.2.0");
+    rc = check(9, "foo 1.2.0 source", s120.url + " " + s120.hash, "https://x/foo.tar.gz sha256:abc");
+    if (rc != 0) { return rc; }
+    // A relative path entry resolves against the index's own directory, `..`
+    // and all — the lock records the resolved directory.
+    rc = check(10, "foo 1.0.0 path", mvs.index_source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
+    if (rc != 0) { return rc; }
+    rc = check(11, "bar 2.1.0 path", mvs.index_source(ix1, "bar", "2.1.0").path, "/pkgs/reg/bar");
+    if (rc != 0) { return rc; }
+    // A malformed entry is a diagnostic, not a silently dropped row.
+    rc = check(12, "malformed source", mvs.parse_index("[foo]\n\"1.0.0\" = { }\n").err,
+        "line 2: 1.0.0: a version needs `path` or `url`+`hash`");
+    if (rc != 0) { return rc; }
+    rc = check(13, "entry outside a section", mvs.parse_index("\"1.0.0\" = { path = \"x\" }\n").err,
+        "line 1: version entry outside a [package] section");
+    if (rc != 0) { return rc; }
+
+    // ---- 3. max of the minimums ----------------------------------------
+    // root wants foo>=1.1.0 and bar>=1.0.0; foo@1.1.0 requires bar>=2.0.0,
+    // so bar is raised to 2.0.0.
+    var ix2: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n[bar]\n\"1.0.0\" = { path = \"bar1\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
+    var roots2: mvs.Req[] = [req("foo", "1.1.0"), req("bar", "1.0.0")];
+    var o2: Outcome = resolve_with(roots2, no_bans(), ix2, ["foo"], ["1.1.0"], ["bar"], ["2.0.0"]);
+    rc = check(14, "max of mins", o2.err + o2.text, "bar 2.0.0; foo 1.1.0");
+    if (rc != 0) { return rc; }
+
+    // ---- 4. the diamond -------------------------------------------------
+    // Two deps demand different minimums of a shared dep; MVS takes the higher.
+    var ix3: mvs.Index = mvs.parse_index("[a]\n\"1.0.0\" = { path = \"a\" }\n[b]\n\"1.0.0\" = { path = \"b\" }\n[c]\n\"1.0.0\" = { path = \"c1\" }\n\"1.5.0\" = { path = \"c15\" }\n\"2.0.0\" = { path = \"c2\" }\n");
+    var roots3: mvs.Req[] = [req("a", "1.0.0"), req("b", "1.0.0")];
+    var o3: Outcome = resolve_with(roots3, no_bans(), ix3, ["a", "b"], ["1.0.0", "1.0.0"], ["c", "c"], ["1.5.0", "2.0.0"]);
+    rc = check(15, "diamond", o3.err + o3.text, "a 1.0.0; b 1.0.0; c 2.0.0");
+    if (rc != 0) { return rc; }
+
+    // ---- 5. an absent version is a precise error ------------------------
+    var ix4: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
+    var roots4: mvs.Req[] = [req("foo", "1.2.0")];
+    var o4: Outcome = resolve_with(roots4, no_bans(), ix4, no_edges(), no_edges(), no_edges(), no_edges());
+    rc = check(16, "absent version", o4.err,
+        "dependency \"foo\" has no version 1.2.0 in the index (available: 1.0.0)");
+    if (rc != 0) { return rc; }
+    // A package with no rows at all reports `available: none`, and a demand
+    // reached through a dependency carries the `via` frame that located it.
+    var ix5: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
+    var roots5: mvs.Req[] = [req("foo", "1.0.0")];
+    var o5: Outcome = resolve_with(roots5, no_bans(), ix5, ["foo"], ["1.0.0"], ["ghost"], ["1.0.0"]);
+    rc = check(17, "unknown transitive dep", o5.err,
+        "via foo@1.0.0: dependency \"ghost\" has no version 1.0.0 in the index (available: none)");
+    if (rc != 0) { return rc; }
+
+    // ---- 6. excludes ----------------------------------------------------
+    // A top-level exclude on the demanded version rounds up to the next
+    // higher non-excluded indexed version, whether the demand comes from the
+    // root or a transitive dep.
+    var ix6: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n[bar]\n\"1.9.0\" = { path = \"bar19\" }\n\"1.9.1\" = { path = \"bar191\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
+    var bans6: mvs.Ban[] = [mvs.Ban { pkg: "bar", ver: "1.9.0" }, mvs.Ban { pkg: "bar", ver: "1.9.1" }];
+    var roots6: mvs.Req[] = [req("foo", "1.0.0")];
+    var o6: Outcome = resolve_with(roots6, bans6, ix6, ["foo"], ["1.0.0"], ["bar"], ["1.9.0"]);
+    rc = check(18, "exclude rounds up", o6.err + o6.text, "bar 2.0.0; foo 1.0.0");
+    if (rc != 0) { return rc; }
+    // Excluding every version at or above the demand is a precise error.
+    var bans7: mvs.Ban[] = [mvs.Ban { pkg: "foo", ver: "1.0.0" }];
+    var o7: Outcome = resolve_with(roots5, bans7, ix5, no_edges(), no_edges(), no_edges(), no_edges());
+    rc = check(19, "exclude with no higher version", o7.err,
+        "dependency \"foo\": version 1.0.0 is excluded by the top-level manifest and the index has no higher non-excluded version (available: 1.0.0)");
+    if (rc != 0) { return rc; }
+    // An exclude on a version nothing demands is a no-op.
+    var ix8: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n");
+    var bans8: mvs.Ban[] = [mvs.Ban { pkg: "foo", ver: "1.0.0" }];
+    var roots8: mvs.Req[] = [req("foo", "1.1.0")];
+    var o8: Outcome = resolve_with(roots8, bans8, ix8, no_edges(), no_edges(), no_edges(), no_edges());
+    rc = check(20, "unrelated exclude", o8.err + o8.text, "foo 1.1.0");
+    if (rc != 0) { return rc; }
+
+    // ---- 7. the lock ----------------------------------------------------
+    var lsel: mvs.Sel[] = [
+        mvs.Sel { name: "bar", ver: "2.0.0", src: mvs.Source { path: "/pkgs/bar", url: "", hash: "" } },
+        mvs.Sel { name: "foo", ver: "1.2.0", src: mvs.Source { path: "", url: "https://x/foo.tar.gz", hash: "sha256:abc" } }
+    ];
+    rc = check(21, "lock text", mvs.lock_text(lsel),
+        "# generated by `fern -resolve`; do not edit by hand\n"
+        + "\n[[package]]\nname = \"bar\"\nversion = \"2.0.0\"\npath = \"/pkgs/bar\"\n"
+        + "\n[[package]]\nname = \"foo\"\nversion = \"1.2.0\"\nurl = \"https://x/foo.tar.gz\"\nhash = \"sha256:abc\"\n");
+    if (rc != 0) { return rc; }
+
+    // ---- 8. path joining ------------------------------------------------
+    rc = check(22, "join ..", mvs.join_path("/a/b/c", "../d"), "/a/b/d");
+    if (rc != 0) { return rc; }
+    rc = check(23, "join .", mvs.join_path("/a/b", "./d/./e"), "/a/b/d/e");
+    if (rc != 0) { return rc; }
+    rc = check(24, "join above root", mvs.join_path("/", "../x"), "/x");
+    if (rc != 0) { return rc; }
+    rc = check(25, "join relative", mvs.join_path("a/b", "../../c"), "c");
+    if (rc != 0) { return rc; }
+
+    write("mvs: every resolution rule agrees with native\n");
+    return 0;
+}
