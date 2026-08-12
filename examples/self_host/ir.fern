@@ -2295,11 +2295,22 @@ pub function optimize_ops(ops: Op[]): Op[] {
 // included, which is what makes the whole-function count trustworthy.
 //
 // DELIBERATELY NOT PORTED: native's other half, rewriting a dead `store_local`
-// to a `drop`. That one changes an op's stack EFFECT rather than removing an
-// identity, and it needs the two-word question answered first — native fans the
-// drop out for a wasm32 string slot (slotIsTwoWord) because its string is a
-// (data, len) pair there. The self-host's string representation differs per
-// backend, so that rewrite wants its own measurement rather than a transcription.
+// to a `drop`. It needs SLOT TYPES, which this pass does not have — native's
+// version takes the whole `*Func` for exactly that reason (slotIsTwoWord).
+//
+// Tried and reverted, so the reason is measured rather than assumed. The STRING
+// representation is a red herring: the self-host's wasm string really is a single
+// pointer to a `[len@0][bytes@4]` block, so strings alone would make one `drop`
+// exact. `dyn Trait` is the shape that breaks it — an inline [data, vtable] pair,
+// TWO operand-stack values, which is the second arm of native's slotIsTwoWord.
+// Rewriting that store to a single drop strands one value: wasmtime rejects the
+// module ("values remaining on stack at end of block") and the register backends
+// SEGFAULT, because the imbalance shifts everything the frame reads afterwards.
+//
+// So this wants a slot-type source at the op-list layer first. Note also that the
+// naive carrier — threading `fn` through the walk the way native does — is the
+// shape #6704 withdrew for costing +50% emit-all, so it needs something cheaper
+// than a parameter on a recursive walk.
 // const_propagate replaces a `load_local X` with the constant last stored to X —
 // the straight-line core of native's internal/ir/constprop.go (#6638). It catches
 // what fuse_tee and propagate_copies structurally cannot: a store and load that
