@@ -6916,3 +6916,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   frame-reusing `churn()` call between the escape and the read — a dangling frame
   read is usually still intact, so a value guard alone does not discriminate.
   Refs #6713 #6604 #4294 #4451.
+
+- 2026-08-11: **TRMC consume-safety — the loop frees the cells it walks past
+  (#5333).** #4578 landed the TRMC rewrite; its deliberately-deferred half was
+  native's borrowed→owned flip, and the flip is the whole issue. `inc_all` over
+  `build(2000)`, self-host x86-64, `__heap_bump_bytes()` delta across the call:
+
+  | | bump delta |
+  |---|---|
+  | before | 187 KiB |
+  | after | **93 KiB** |
+
+  A halving — peak becomes the OUTPUT rather than input + output, which is the
+  FBIP result. At 50 cells the census goes `allocs=102 frees=0 live=4864` →
+  `allocs=102 frees=50 live=2464`; at 300k it frees 300k cells and still returns
+  the right sum.
+
+  **`__fern_rc_dec` is the right primitive on this side.** Native reaches for
+  `__fern_box_free` because it needs a SHALLOW release — the loop steals the tail
+  out of the cell it is about to free. The self-host's dec is already shallow:
+  payload drops are emitted by the compiler around it, not by the dec, so the
+  stolen tail survives its parent without a new runtime helper.
+
+  **The callee half alone is a use-after-free, and it measures like a win.** The
+  loop's uniqueness check is a guard only if an aliased argument arrives already
+  retained; without the call-site retain, `is_unique` calls every cell unique and
+  the traversal frees a list its caller is still holding. Measured: `frees=30`
+  and exit 95 on a `keep`-still-live probe, while the census, `__rc_underflow()`
+  and every value read through the RESULT stayed clean. Only reading the ORIGINAL
+  back after the call sees it.
+
+  So both halves read ONE registry (`FnSigs.trmc_consume_fns`, "fn|param") rather
+  than re-deriving the verdict — the #6703 lesson applied to a second pair: a
+  path holding the verdict must never free what a path lacking it never retained.
+  `emit_trmc` consults it too instead of calling the scan, so an emit path whose
+  sigs lack the registry declines to consume rather than consuming uncovered.
+
+  Two refusals, both because the retain is anchored at the direct call site:
+  a payload that is not a flat scalar (a shallow free would strand it — the
+  `SCons(string, SList)` sibling, byte-identical before and after), and a
+  function whose **address is taken anywhere**. `var f = inc_all; f(keep)` would
+  consume with nobody retaining, by a route the call site cannot see, so taking
+  the address costs the verdict outright.
+
+  VERIFIED: new `TestSelfHostTrmcConsumeIR{X86_64,Arm64}` — 7 cases each, peak
+  gate at 140 KiB (93 with, 187 without), value guards, the shared-input and
+  shared-twice negatives, the string-head and fn-value refusals, and the 300k
+  deep-stack case; `TestSelfHostTrmcIR*` green. Refs #5333 #4352 #4578 #6703 #4451.
