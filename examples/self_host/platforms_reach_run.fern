@@ -1,0 +1,61 @@
+// examples/self_host/platforms_reach_run.fern — import-driven driver for the
+// DERIVED host-capability reach of a program (platforms.reach, #6633 item 3).
+//
+//     $ platforms_reach_run path/to/main.fern
+//     fs
+//     stdin
+//
+// One capability per line, sorted; no output at all for a program that
+// touches no host. Exit 0 unless the entry file cannot be read.
+//
+// Same modload shape as checker_modload_run: resolve the entry's imports off
+// disk, merge with flatten.bundle, scan the merged module. Two differences,
+// both deliberate:
+//
+//   - **No tree-shake.** Enforcement asks "may this target build this
+//     artifact?", so it runs on the shaken module. Reach asks "what can this
+//     CODE touch?", which is a property of the module rather than of one
+//     program that imports it — shaking first would answer for the entry's
+//     call graph and classify every unused module as core-safe.
+//   - **No target.** A capability is either reached or not; which targets
+//     grant it is the enforcement half's question.
+//
+// The Go-side gate (internal/e2eselfhost/self_host_std_partition_test.go)
+// runs this over every `std/` module and requires the same answer as native's
+// platforms.Reach over the same module — the partition in
+// internal/platforms/std_partition_test.go, derived twice.
+
+import "./lexer";
+import "./parser";
+import "./flatten";
+import "./modloader";
+import "./platforms";
+
+function main(): i32 {
+    var a: string[] = args();
+    if (a.len() < 2) {
+        eprint("usage: platforms_reach_run <entry.fern>\n");
+        return 2;
+    }
+    var entry_path: string = a[1];
+    var dir: string = modloader.dirname(entry_path);
+    match (read_file(entry_path)) {
+        Ok(src) => {
+            var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var merged: parser.Module = flatten.bundle(entry, loaded);
+            var caps: string[] = platforms.reach(merged);
+            var i: i32 = 0;
+            while (i < caps.len()) {
+                print(caps[i]);
+                i = i + 1;
+            }
+            return 0;
+        },
+        Err(e) => {
+            eprint("platforms_reach_run: could not read entry file\n");
+            return 1;
+        },
+    }
+    return 3;
+}

@@ -201,6 +201,14 @@ Today: **41 of 54 modules are core-safe.** Two results worth knowing:
   the in-language test runner, and its output sink is only one of four things in the way.
   Worth knowing before treating "core-safe" and "testable in-language" as the same set.
 
+The self-host derives the same partition from its own scan (`platforms.reach`, driven by
+`examples/self_host/platforms_reach_run.fern`), and
+`TestSelfHostStdPartitionAgreesWithNative` requires the two derivations to match module
+for module. That is the differential the partition most needs: the two compilers
+disagreeing here means they disagree about what runs on a machine with no host, and
+fifty-odd real stdlib modules exercise the capability scan far harder than the
+hand-written cases do.
+
 Note what is deliberately *not* here: importing a hosted module is not an error. E066 is
 enforced post-tree-shake, so a program may import `std/io` and use only its core-safe
 parts. The partition answers a question; it does not add a gate.
@@ -222,7 +230,8 @@ builtin has to be classified there too. `TestSelfHostGatedBuiltinsMatch` /
 `TestSelfHostCoreBuiltinsMatch` in `internal/platforms` read that file as data and fail
 on any entry the two tables disagree about, which is the only way the drift shows up:
 neither compiler can see the other's table, and the symptom is a program one builds and
-the other refuses.
+the other refuses. The `std/` partition differential above is the second line — it
+catches a classification the two tables agree on but the two *scans* apply differently.
 
 The two tables differ in exactly one place, and it is a useful illustration of what a
 capability is: **`subprocess` is granted by the self-host's hosted profile and by no

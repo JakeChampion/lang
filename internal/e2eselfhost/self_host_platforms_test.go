@@ -198,3 +198,95 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostFreestandingTargets is the end-to-end form of #6633 item 4: the
+// two freestanding targets are reachable from the self-host driver, and behave
+// as native's do — a core-safe program type-checks against an empty capability
+// set, a program touching a host draws E066, and codegen is refused because no
+// backend emits for them.
+//
+// That third case is the one worth a test rather than a reading of the table.
+// A target with no backend is the only kind whose correct behaviour is to
+// REFUSE, so a driver that silently fell through to a backend would produce an
+// artifact for a machine the user did not ask for — and the freestanding pair
+// is the shape every later bare-metal target takes
+// (docs/BARE-METAL-PLAN.md, #6510).
+func TestSelfHostFreestandingTargets(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("freestanding target checks run only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	nativeBin := buildFernCLIBin(t)
+	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	// `-targets` must list both, or nothing tells a user they exist.
+	listing, _ := exec.Command(driverBin, "-targets").CombinedOutput()
+	for _, want := range []string{"arm64-freestanding", "x86-64-freestanding"} {
+		if !strings.Contains(string(listing), want) {
+			t.Errorf("self-host -targets does not list %s:\n%s", want, listing)
+		}
+	}
+
+	for _, c := range []struct {
+		name   string
+		target string
+		src    string
+	}{
+		// Arithmetic needs no host, so it type-checks with nothing granted.
+		{"core-ok-arm64", "arm64-freestanding", "function main(): i32 { return 7; }\n"},
+		{"core-ok-x86", "x86-64-freestanding", "function main(): i32 { return 7; }\n"},
+		// `print` needs `log`, which no freestanding host provides.
+		{"log-refused-arm64", "arm64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
+		{"log-refused-x86", "x86-64-freestanding", "function main(): i32 {\n    print(\"x\");\n    return 0;\n}\n"},
+		// `exit` is core with a target-specific lowering, not a capability, so
+		// a freestanding program may still stop.
+		{"exit-ok", "arm64-freestanding", "function main(): i32 {\n    exit(0);\n    return 0;\n}\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := filepath.Join(dir, "fs_"+c.name+".fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			nativeOut, _ := exec.Command(nativeBin, "-check", "-target", c.target, src).CombinedOutput()
+			shOut, _ := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib).CombinedOutput()
+			want := strings.Join(e066Sites(string(nativeOut)), " ")
+			got := strings.Join(e066Sites(string(shOut)), " ")
+			if want != got {
+				t.Errorf("E066 sites differ: native [%s], self-host [%s]\n--- native ---\n%s\n--- self-host ---\n%s",
+					want, got, nativeOut, shOut)
+			}
+		})
+	}
+
+	// Codegen: both compilers must refuse, and say why rather than failing
+	// somewhere further down with a missing-backend symptom.
+	src := filepath.Join(dir, "fs_codegen.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 7; }\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, target := range []string{"arm64-freestanding", "x86-64-freestanding"} {
+		t.Run("codegen-refused-"+target, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out")
+			nativeCmd := exec.Command(nativeBin, "-target", target, "-o", out, src)
+			nativeOut, _ := nativeCmd.CombinedOutput()
+			shCmd := exec.Command(driverBin, "-target", target, "-o", out, src, stdlib)
+			shOut, _ := shCmd.CombinedOutput()
+
+			if nativeCmd.ProcessState.ExitCode() == 0 {
+				t.Fatalf("native emitted for %s, which has no backend:\n%s", target, nativeOut)
+			}
+			if shCmd.ProcessState.ExitCode() == 0 {
+				t.Errorf("self-host emitted for %s, which has no backend:\n%s", target, shOut)
+			}
+			if !strings.Contains(string(shOut), "no backend emits for this target") {
+				t.Errorf("self-host refusal for %s does not say why:\n%s", target, shOut)
+			}
+		})
+	}
+}

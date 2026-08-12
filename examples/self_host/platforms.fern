@@ -377,6 +377,69 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
     return out;
 }
 
+// reach is the other question the same scan answers: not "may this target
+// build it?" but "which host capabilities does this code touch AT ALL?".
+// Mirrors native's platforms.Reach.
+//
+// It takes a target-independent view, so it is the derivation behind the
+// `std/` core-vs-hosted partition — a module whose reach is empty runs
+// anywhere, including freestanding, and one that acquires a host dependency
+// shows up here as a capability it did not have before. That makes it a
+// classification tool rather than a diagnostic: it runs over an UN-shaken
+// module, because the question is what the module's own code can reach, not
+// what one program that imports it happens to call.
+//
+// Capabilities come back sorted and deduplicated.
+pub function reach(mod: parser.Module): string[] {
+    var gates: Gate[] = gated_builtins();
+    var wanted: string[] = [];
+    var wi: i32 = 0;
+    while (wi < gates.len()) { wanted = wanted.append(gates[wi].builtin); wi = wi + 1; }
+
+    var found: string[] = [];
+    var fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+        var calls: astwalk.CallSite[] = [];
+        var bi: i32 = 0;
+        while (bi < mod.funcs[fi].body.len()) {
+            calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], wanted, calls);
+            bi = bi + 1;
+        }
+        var ci: i32 = 0;
+        while (ci < calls.len()) {
+            // `!method` for the same reason enforce checks it: a gated
+            // builtin is a free function, so `sb.write(x)` is a different
+            // callee.
+            if (!calls[ci].method) {
+                var cap: string = gated_capability(calls[ci].name);
+                if (cap.len() > 0 && !util.has_str(found, cap)) { found = found.append(cap); }
+            }
+            ci = ci + 1;
+        }
+        fi = fi + 1;
+    }
+    return sorted(found);
+}
+
+// sorted returns `xs` in ascending order. Insertion sort: the list is one
+// capability per gate at worst, so the simple shape is the right one.
+function sorted(xs: string[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        var pos: i32 = 0;
+        while (pos < out.len() && util.str_less(out[pos], xs[i])) { pos = pos + 1; }
+        var next: string[] = [];
+        var j: i32 = 0;
+        while (j < pos) { next = next.append(out[j]); j = j + 1; }
+        next = next.append(xs[i]);
+        while (j < out.len()) { next = next.append(out[j]); j = j + 1; }
+        out = next;
+        i = i + 1;
+    }
+    return out;
+}
+
 // violation_message renders E066's text. It names the capability rather than
 // the builtin first, because the capability is what the user has to change
 // target for; the builtin is the evidence.
