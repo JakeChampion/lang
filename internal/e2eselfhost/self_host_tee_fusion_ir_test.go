@@ -9,80 +9,89 @@ import (
 	"testing"
 )
 
-// teeFusionCases pin #6638's tee-fusion slice: `store_local X ; load_local X`
-// collapses to one `tee_local X`.
+// teeFusionCases pin #6638's tee fusion and the copy propagation that follows it.
 //
-// The pass itself is twenty lines; the work was that NO backend lowered
+// The pass itself is twenty lines; the work was that NO consumer lowered
 // `tee_local`. The op constructor and its kind tag had existed since the IR was
 // written, but the only callers were unit drivers that build op lists and never
-// emit them — so fusing without adding the three emitter arms would have rewritten
-// real code into an op every backend drops on the floor, and the fixpoint could
-// not have seen it (a stable miscompile reproduces itself perfectly).
+// emit them — so fusing without adding the emitter arms would have rewritten real
+// code into an op every consumer drops on the floor, and the fixpoint could not
+// have seen it (a stable miscompile reproduces itself perfectly).
 //
-// Hence these are VALUE tests on all three backends rather than a golden: the
-// structural half lives in TestSelfHostIRStrengthPeephole, and this is the half
-// that would have caught the missing lowering.
+// # Why most cases now expect NO local.tee
 //
-// wasm is what the fusion is for — `local.tee` is a byte and a load cheaper than
-// `local.set $X ; local.get $X`. The register backends peek the operand-stack top
-// instead of popping and re-pushing, which native's own header calls a wash.
+// A fused tee is an intermediate form, not an end state. `fuse_tee` creates it,
+// and then `propagate_copies` drops it whenever the slot has no other reader —
+// which is most scalar code. A case that emits no `local.tee` is therefore the
+// pipeline working correctly, not the fusion failing, and `wantTee` records which
+// shapes measurably retain one: only the pointer-valued case, where the slots are
+// read again. The instruction assertion is kept exactly where it is meaningful.
+//
+// The VALUE assertions carry the weight on every case and every backend. They are
+// what would have caught the missing lowering, and `tee-reread-slot` is the sharp
+// one: a tee that wrote the operand stack but not the frame passes the others and
+// fails that.
+//
+// # Every case takes an opaque input
+//
+// These programs used to bind literals (`var a: i32 = 7; ...`). Constant
+// propagation then folded them whole — correct, faster, and no longer a test of
+// codegen, since nothing survived to the backend but a constant. Parameters keep
+// the values opaque so the emitted code is what is actually under test.
 var teeFusionCases = []struct {
 	name     string
 	src      string
 	expected int
-	// wantTee: does this shape actually fuse on the WASM lowering? Four of the
-	// five do; `tee-loop` does not, because the loop body's binding does not
-	// leave a bare store/load adjacency on that path. Measured, not assumed —
-	// asserting the instruction on a case that never fuses would have pinned a
-	// wrong expectation rather than the pass.
+	// wantTee: measured, not assumed. Only the pointer-valued shape retains a
+	// `local.tee` after copy propagation; asserting it on a shape whose tee is
+	// correctly dropped would pin the absence of an optimisation.
 	wantTee bool
 }{
-	// The plain shape: every `var` bound then immediately read is a fused pair.
+	// A chain of bindings, each read once: every tee is created and then dropped.
 	// 7*3 = 21, +7 = 28.
-	{"tee-chain", `function main(): i32 {
-    var a: i32 = 7;
+	{"tee-chain", `function chain(a: i32): i32 {
     var b: i32 = a * 3;
     var c: i32 = b + a;
     return c;
-}`, 28, true},
-	// The slot must still hold the value AFTER the tee — a tee that wrote the
-	// operand stack but not the frame would pass the case above and fail here,
-	// because `a` is read twice more after its binding. c = 5 + 5 = 10, then
-	// 10 + 5 - 5 = 10.
-	{"tee-reread-slot", `function main(): i32 {
-    var a: i32 = 5;
+}
+function main(): i32 { return chain(7); }`, 28, false},
+	// The slot must still hold the value AFTER the tee — `a` is read three more
+	// times. c = 5 + 5 = 10, then 10 + 5 - 5 = 10.
+	{"tee-reread-slot", `function reread(a: i32): i32 {
     var b: i32 = a;
     var c: i32 = a + b;
     return c + a - 5;
-}`, 10, true},
+}
+function main(): i32 { return reread(5); }`, 10, false},
 	// Fusion inside a loop body, where the slot is rewritten every iteration and
 	// read across the back edge. sum 0..9 = 45.
-	{"tee-loop", `function main(): i32 {
+	{"tee-loop", `function loopy(k: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
-    while (i < 10) {
+    while (i < k) {
         var step: i32 = i;
         acc = acc + step;
         i = i + 1;
     }
     return acc;
-}`, 45, false},
+}
+function main(): i32 { return loopy(10); }`, 45, false},
 	// A fused pair feeding a call argument, and one inside the callee.
 	{"tee-call-arg", `function twice(n: i32): i32 { var d: i32 = n * 2; return d; }
-function main(): i32 {
-    var x: i32 = 6;
+function callarg(x: i32): i32 {
     var y: i32 = twice(x);
     return y + x;
-}`, 18, true},
-	// Pointer-width values ride the same slots: a string bound then read, and an
-	// array bound then indexed.
-	{"tee-ptr-values", `function main(): i32 {
-    var s: string = "hello";
+}
+function main(): i32 { return callarg(6); }`, 18, false},
+	// Pointer-width values ride the same slots, and this is the shape whose tees
+	// SURVIVE copy propagation — so it is the one that pins `local.tee` reaching
+	// the wasm backend, and the peek forms reaching the register backends.
+	{"tee-ptr-values", `function ptrs(s: string, xs: i32[]): i32 {
     var n: i32 = s.len();
-    var xs: i32[] = [3, 4, 5];
     var m: i32 = xs[2];
     return n + m;
-}`, 10, true},
+}
+function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, true},
 }
 
 // TestSelfHostTeeFusionIRX86_64 runs the cases through the self-hosted x86-64
