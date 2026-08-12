@@ -276,7 +276,8 @@ subset.
 | `url`+hash deps + content-addressed store | ✅ | ✅ read-only (see below) |
 | versioned deps whose lock source is a `url` | ✅ | ✅ read-only (see below) |
 | `-resolve` (Minimum Version Selection → `fern.lock`) | ✅ | ✅ `path`-sourced index entries; absolute DIR only (see below) |
-| CLI commands `-fetch` / `-vendor` / `-add` / `-checkws` | ✅ | ❌ (#6640) |
+| `-check <DIR>` (package, or every `[workspace]` member) | ✅ | ✅ |
+| CLI commands `-fetch` / `-vendor` / `-add` | ✅ | ❌ (#6640) |
 
 The self-hosted loader (`examples/self_host/modloader.fern` +
 `fern_toml.fern`) resolves every **disk-resolvable** form: `path` deps,
@@ -295,6 +296,13 @@ via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
 `fern -fetch` responsibility (the no-build-time-network constraint), so
 the self-host loader trusts an already-populated store exactly as the
 native loader does at build time.
+
+Workspace CHECKING is the self-host's too: `fern -check <DIR>` type-checks the
+package governing DIR, or every member of the workspace it roots, aggregating
+rather than stopping at the first failure.
+`TestSelfHostCheckWorkspaceDifferentialX86_64` pins the per-member verdicts and
+the summary against native's. Only the verdicts: the *explanations* are not
+comparable while the self-host checker is partial (#4346).
 
 Version RESOLUTION is the self-host's since #6640: `examples/self_host/mvs.fern`
 ports native's `internal/mvs` — version precedence, the index format, the
