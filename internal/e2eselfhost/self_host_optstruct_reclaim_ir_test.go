@@ -187,6 +187,57 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
+	// STRING[] payload (#6495) — the per-ELEMENT release, here on all three
+	// backends. `is_leaksafe_array_field` refuses string[] (a flat dec strands the
+	// element boxes) and nothing else claimed the shape, so the payload, its
+	// elements and both boxes leaked per iteration. The bump bound is what a
+	// backend without FERN_LEAKCHECK can assert; the exact alloc/free balance —
+	// which is what separates freeing the buffer from freeing the elements — is
+	// pinned on x86-64 by TestSelfHostOptStrArrPayloadX86_64.
+	{"optstrarr-churn", `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var o: Option[string[]] = Some(["a" + "b", "c"]); match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var o2: Option[string[]] = Some(["a" + "b", "c"]); match (o2) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// The Result spelling, and an element READ through the payload so the borrow
+	// is exercised rather than only the length.
+	{"optstrarr-result-read", `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var o: Result[string[], string] = Ok(["ab", "cde"]); match (o) { Ok(xs) => { acc = (acc + xs[0].len() + xs[1].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var o2: Result[string[], string] = Ok(["ab", "cde"]); match (o2) { Ok(xs) => { acc = (acc + xs[0].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// ALIASED-payload negative: the array is a live local read after the match, so
+	// the credit must be declined. Leak-safe, never over-released, value exact.
+	{"optstrarr-alias-safe", `function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var xs: string[] = ["a" + "b", "c"];
+        var o: Option[string[]] = Some(xs);
+        match (o) { Some(ys) => { acc = acc + ys.len(); }, None => {} }
+        acc = acc + xs[0].len();
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc != 200) { return 97; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostOptStructReclaimIRX86_64 drives the cases through the self-hosted x86-64

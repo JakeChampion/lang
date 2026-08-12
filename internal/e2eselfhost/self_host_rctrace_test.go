@@ -370,6 +370,29 @@ func TestSelfHostHeapEventFlagOffX86_64(t *testing.T) {
 	}
 }
 
+// parseLeakcheck finds the leakcheck summary in a run's stderr and returns its
+// three counts. The LAST matching line wins — a probe that prints its own
+// diagnostics is still readable — and a missing summary is fatal rather than
+// three zeroes, because "FERN_LEAKCHECK did not take effect" and "nothing
+// leaked" are the same numbers otherwise.
+func parseLeakcheck(t *testing.T, name, stderr string) (int64, int64, int64) {
+	t.Helper()
+	summary := ""
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "leakcheck: ") {
+			summary = line
+		}
+	}
+	if summary == "" {
+		t.Fatalf("%s: no leakcheck summary — FERN_LEAKCHECK did not take effect", name)
+	}
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("%s: parse %q: %v", name, summary, err)
+	}
+	return allocs, frees, live
+}
+
 // fmtSscan pulls the three numbers out of a leakcheck summary line without
 // depending on its exact spacing.
 func fmtSscan(summary string, allocs, frees, live *int64) (int, error) {

@@ -403,6 +403,23 @@ pub function tangle(src: string): TangleResult {
     }
 }
 
+// tangle_chunk expands ONE named chunk instead of the root — what
+// `-chunk NAME` prints, for inspecting or extracting a single definition
+// out of a document. Same expansion as `tangle`, so a chunk that
+// references others pulls them in.
+pub function tangle_chunk(src: string, name: string): TangleResult {
+    var pieces: Piece[] = parse_pieces(src);
+    if (!chunk_defined(pieces, name)) {
+        return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1 };
+    }
+    var empty: string[] = [];
+    var r: ExpandResult = expand(pieces, name, "", empty);
+    match (r) {
+        ExpandOk(o) => { return TangleOk { code: join_lines(o.lines) }; },
+        ExpandErr(e) => { return TangleErr { msg: e.msg, line: e.line }; }
+    }
+}
+
 // ─── multi-file tangle ─────────────────────────────────────────────
 // A `file=PATH` fence is a *file-root*: its body becomes the module
 // PATH (expanding `<<ref>>` chunks like the `<<*>>` root). One document

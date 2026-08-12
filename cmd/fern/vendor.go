@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/manifest"
+	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/pkgcache"
 )
 
@@ -117,8 +118,16 @@ func runVendor(start string) error {
 }
 
 // depSourceDir resolves a dependency to its on-disk source directory: a
-// path dep's directory, or an already-fetched url dep's store directory.
+// path dep's directory, a versioned dep's fern.lock-pinned source, or an
+// already-fetched url dep's store directory.
 func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, error) {
+	if d.Version != "" {
+		// A versioned dep names no directory of its own, so DepDir below
+		// would answer the manifest's own directory — vendoring the package
+		// into its own vendor/ and dropping the dependency. The lock is
+		// where its source lives, exactly as at load time.
+		return modload.LockedDepDir(m.Dir, name)
+	}
 	if d.URL != "" {
 		store, present, err := pkgcache.Dir(d.Hash)
 		if err != nil {

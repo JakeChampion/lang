@@ -19017,7 +19017,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // (the lift wrapped the payload into a `__mkclo$`
                         // box, elem_type_tag tags it "clo") — same box,
                         // same env-first dispatch.
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn) { return s.fail(); }
+                        // A VOID payload (`Ok(u)` on a `Result[void, E]` — every
+                        // fallible filesystem builtin: write_file, remove_file,
+                        // create_dir_all, remove_dir_all). There is nothing at
+                        // offset 8 to read, so it is accepted here and bound
+                        // below without a payload load.
+                        var ptag_is_void: boolean = ptag == "void";
+                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -19027,7 +19033,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     ms = ms.emit(ir.op_const_i32(want));
                     ms = ms.emit(ir.op_bin("ne", 0, false));   // 1 if tag != want
                     ms = ms.emit(ir.op_brif(0));               // -> skip arm on mismatch
-                    if (hb) {
+                    // A void payload has no value at offset 8 — `Ok(u)` on a
+                    // `Result[void, E]` binds the unit. Give the name a slot
+                    // holding 0 so a body reference resolves, and read nothing.
+                    if (hb && ptag == "void") {
+                        ms = ms.add_local(pv.binding);
+                        ms = ms.emit(ir.op_const_i32(0));
+                        ms = ms.emit(ir.op_store_local(ms.slot_of(pv.binding)));
+                    } else if (hb) {
                         // Bind the payload (offset 8) BEFORE the guard, so the
                         // guard may reference it (`Some(x) when x > 0`).
                         ms = ms.add_local(pv.binding);
@@ -21003,6 +21016,30 @@ function stmt_consume_unsafe_for(st: parser.Stmt, name: string, borrowable: stri
 // non-float number literal — i.e. the literal is a pure i32[] (the only element
 // type precise drops handle: scalar values whose buffer free needs no element
 // walk and whose methods don't keep the buffer live).
+// all_fresh_string_elems reports whether every element of an array literal is a
+// FRESH string — a literal (const_str allocs a fresh box per construction) or a
+// fresh producer (concat / named producer / string-method copy), the same rule
+// rcpayload_option_cand applies to a bare `string` payload, one level down.
+// Freshness has to hold PER ELEMENT because __fern_str_arr_free releases each
+// element box: one aliased element would be freed out from under its owner,
+// where the scalar-array case only ever frees the one buffer it was handed.
+// An empty literal is refused — nothing to reclaim, and admitting it would put
+// the drop on a shape whose element type is unknowable from the literal.
+function all_fresh_string_elems(elems: parser.Expr[]): boolean {
+    if (elems.len() == 0) { return false; }
+    var i: i32 = 0;
+    while (i < elems.len()) {
+        var fresh: boolean = false;
+        match (elems[i]) {
+            parser.ExprString(_) => { fresh = true; },
+            _ => { fresh = str_local_binding_is_fresh(elems[i]); }
+        }
+        if (!fresh) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 function all_i32_number_elems(elems: parser.Expr[]): boolean {
     if (elems.len() == 0) { return false; }
     var i: i32 = 0;
@@ -21125,9 +21162,10 @@ function struct_lit_precise_ok(structs: parser.StructDecl[], slit: parser.ExprSt
 // "opt-structpayload:<P>" = an Option/Result whose payload is a struct with
 // rc-array fields (#6127 — emit_opt_struct_payload_drop: op_opt_payload →
 // __struct_drop_<P> → payload dec → box dec, the struct name riding in the kind);
-// "opt-strpayload"
-// = a STRING-payload Option/Result (#4355 — emit_opt_str_payload_drop:
-// op_opt_payload → __fern_str_free → box dec); "enum-rcpayload:<E>"
+// "opt-payloadfree:<helper>"
+// = an Option/Result whose payload needs a release a plain rc-dec does not give
+// (#4355 string, #6495 string[] — emit_opt_payload_drop_via: op_opt_payload →
+// <helper> → box dec, the helper name riding in the kind); "enum-rcpayload:<E>"
 // = an rc-payload user enum (emit_enum_variant_drops: runtime variant-dispatch deep-
 // drop of enum <E>, whose name rides in the kind). Carrying the kind lets the emission
 // free a box whose type the slot alone can't classify — a Result box (Ok-vs-Err
@@ -21234,14 +21272,14 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // emission it is a pointer, which the slot type Result[T, E] alone
                 // cannot (an Ok-array box and an Err-scalar box spell the same).
                 var is_rcopt: boolean = false;
-                var rcopt_str: boolean = false;
+                var rcopt_pfree: string = "__fern_rc_dec";
                 var rcopt_sty: string = "";
                 if (!is_lit && !is_opt) {
                     var rcc: OptRcCand = rcpayload_option_cand(v, structs);
                     if (rcc.variant != "") {
                         if (!body_has_top_level_match(body, v.name) && !opt_body_binding_escapes(body, v.name, rcc.variant)) {
                             is_rcopt = true;
-                            rcopt_str = rcc.ptype == "string";
+                            rcopt_pfree = opt_payload_freefn(rcc.ptype);
                             rcopt_sty = opt_payload_deep_sty(rcc.ptype, structs);
                             if (rcopt_sty.len() > 0 && opt_body_field_moved(body, v.name, rcc.variant, rcopt_sty, structs)) { rcopt_sty = ""; }
                         }
@@ -21309,7 +21347,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                     }
                     if (last > i) {
                         var kind: string = "";
-                        if (is_rcopt && rcopt_str) { kind = "opt-strpayload"; }
+                        if (is_rcopt && rcopt_pfree != "__fern_rc_dec") { kind = "opt-payloadfree:" + rcopt_pfree; }
                         else if (is_rcopt && rcopt_sty.len() > 0) { kind = "opt-structpayload:" + rcopt_sty; }
                         else if (is_rcopt) { kind = "opt-rcpayload"; }
                         else if (is_opt || is_enum) { kind = "box-shallow"; }
@@ -21435,7 +21473,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
                 st = emit_enum_variant_drops_moved(st, opslot, eparts[0], emoved);
             } else if (oph + 1 < ope.len() && ope[oph + 1] == 115) {   // 115 = 's'
-                st = emit_opt_str_payload_drop(st, opslot);
+                st = emit_opt_payload_drop_via(st, opslot, "__fern_str_free");
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == 83) {    // 83 = 'S'
+                st = emit_opt_payload_drop_via(st, opslot, "__fern_str_arr_free");
             } else {
                 st = emit_opt_payload_drop(st, opslot);
             }
@@ -22358,8 +22398,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             if (rcopt.idxs[opj] == i && rcopt.blockable[opj]) {
                 var opslot2: i32 = st.slot_of(rcopt.names[opj]);
                 if (opslot2 >= st.n_params) {
-                    var opk: string = "#a";
-                    if (rcopt.strs[opj]) { opk = "#s"; }
+                    var opk: string = optret_payload_tag(rcopt.pfrees[opj]);
                     st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(opslot2) + opk));
                 }
             }
@@ -22507,8 +22546,8 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             if (rcopt.idxs[rk] == i && rcopt.blockable[rk]) {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.n_params) {
-                    if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, tagged_payload_freefn(rcopt.strs[rk]), tagged_errfreefn(rcopt.errstrs[rk])); }
-                    else if (rcopt.strs[rk]) { st = emit_opt_str_payload_drop(st, rslot); }
+                    if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, rcopt.pfrees[rk], tagged_errfreefn(rcopt.errstrs[rk])); }
+                    else if (rcopt.pfrees[rk] != "__fern_rc_dec") { st = emit_opt_payload_drop_via(st, rslot, rcopt.pfrees[rk]); }
                     else if (rcopt.stys[rk].len() > 0) { st = emit_opt_struct_payload_drop(st, rslot, rcopt.stys[rk]); }
                     else { st = emit_opt_payload_drop(st, rslot); }
                 }
@@ -30329,12 +30368,29 @@ function rcpayload_option_cand(v: parser.StmtVar, structs: parser.StructDecl[]):
         if (sfresh) { return OptRcCand { variant: kind, ptype: "string" }; }
         return OptRcCand { variant: "", ptype: "" };
     }
+    // Annotated STRING[] payload (#6495) — the per-ELEMENT sibling of the
+    // `string` case above. is_leaksafe_array_field refuses `string[]` because a
+    // single __fern_rc_dec leaves every element box behind, which is exactly
+    // what left this shape at frees=0; __fern_str_arr_free is the release that
+    // walks them, and it already exists for the string[] LOCAL sweep. Admitted
+    // only for a literal whose every element is fresh, so the array and each
+    // element box are sole-owned.
+    if (pt == "string[]") {
+        match (arg0) {
+            parser.ExprArray(sarr) => {
+                if (all_fresh_string_elems(sarr.elements)) { return OptRcCand { variant: kind, ptype: "string[]" }; }
+            },
+            _ => {}
+        }
+        return OptRcCand { variant: "", ptype: "" };
+    }
     // Un-annotated array literal (Option infers its single param) — the exact
     // element type is immaterial to a shallow buffer dec, so tag it i32[]/f64[].
     match (arg0) {
         parser.ExprArray(arrl) => {
             if (all_i32_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "i32[]" }; }
             if (all_f64_number_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "f64[]" }; }
+            if (all_fresh_string_elems(arrl.elements)) { return OptRcCand { variant: kind, ptype: "string[]" }; }
         },
         // Un-annotated STRING literal payload (`var o = Some("x")`) — unambiguous
         // by shape (a fresh box per construction), unlike a bare `a + b` producer
@@ -31012,7 +31068,7 @@ function opt_payload_deep_sty(ptype: string, structs: parser.StructDecl[]): stri
 // FIELDS; a block-level drop zeroes the slot and starves that machinery,
 // leaking the field buffers (the #5453 CI regression) — so struct payloads
 // stay fn-level-only, where the pass and the machinery agree.
-struct OptRcFrees { idxs: i32[], names: string[], strs: boolean[], blockable: boolean[], stys: string[], tagged: boolean[], errstrs: boolean[] }
+struct OptRcFrees { idxs: i32[], names: string[], pfrees: string[], blockable: boolean[], stys: string[], tagged: boolean[], errstrs: boolean[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -31108,7 +31164,7 @@ function call_init_callee_in(e: parser.Expr, names: string[]): boolean {
 function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[], err_fresh: string[], nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
-    var strs: boolean[] = [];
+    var pfrees: string[] = [];
     var blockable: boolean[] = [];
     var stys: string[] = [];
     var tagged: boolean[] = [];
@@ -31177,7 +31233,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
                             names = names.append(v.name);
-                            strs = strs.append(cand.ptype == "string");
+                            pfrees = pfrees.append(opt_payload_freefn(cand.ptype));
                             var dsty: string = opt_payload_deep_sty(cand.ptype, structs);
                             // The MATCH, not body[match_idx] — under a nested lookup the
                             // latter is the enclosing `if`, which this predicate cannot
@@ -31194,7 +31250,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             // block pass would emit a shallow dec and strand the field
                             // buffers, which is the #5453 regression this gate was added
                             // for.
-                            blockable = blockable.append(cand.ptype == "string" || is_leaksafe_array_field(cand.ptype) || dsty.len() > 0);
+                            blockable = blockable.append(cand.ptype == "string" || cand.ptype == "string[]" || is_leaksafe_array_field(cand.ptype) || dsty.len() > 0);
                             tagged = tagged.append(call_pt != "");
                             // #6360: the Err arm's string may be released too, but
                             // only for a call-bound candidate whose producer is
@@ -31211,7 +31267,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names, strs: strs, blockable: blockable, stys: stys, tagged: tagged, errstrs: errstrs };
+    return OptRcFrees { idxs: idxs, names: names, pfrees: pfrees, blockable: blockable, stys: stys, tagged: tagged, errstrs: errstrs };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
@@ -31222,11 +31278,16 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
 // box, so a single __fern_rc_dec releases it with no inner walk. The option box is
 // then dec'd and the slot zeroed so the exit sweep decs a null. Payload dropped
 // BEFORE the box, each freed exactly once.
-// emit_opt_str_payload_drop — the STRING-payload sibling of emit_opt_payload_drop
-// (#4355): identical shape, but the payload at offset 8 is a string box, released
-// by the rc-aware __fern_str_free (box + separate data buffer on asm; one inline
-// block on wasm, where it maps to $__fern_arr_dec). The classifier admitted only
-// FRESH payloads (literal / fresh producer), so the box is the sole owner; a
+// emit_opt_payload_drop_via is that shape with the payload's release helper
+// spelled out, because the three admitted payloads need three different ones and
+// differ in NOTHING else. __fern_rc_dec releases a flat scalar-array buffer or a
+// scalar-only struct box. __fern_str_free releases a string box (box + separate
+// data buffer on asm; one inline block on wasm, where it maps to $__fern_arr_dec)
+// — a plain rc-dec would free the 24-byte string block by the ARRAY layout's size
+// class on asm, the wrong class. __fern_str_arr_free walks a string[]'s ELEMENT
+// boxes before freeing the buffer (#6495); a plain rc-dec frees the buffer and
+// strands every element. The classifier admitted only FRESH payloads (literal /
+// fresh producer, per element for a string[]), so each box is sole-owned; a
 // literal's .rodata data is heap-guard-skipped and a double free ticks the
 // underflow detector.
 // Which runtime helper releases a tag-guarded payload whole: a string box needs
@@ -31240,16 +31301,33 @@ function tagged_errfreefn(err_str: boolean): string {
     return "";
 }
 
-function tagged_payload_freefn(is_str: boolean): string {
-    if (is_str) { return "__fern_str_free"; }
+// opt_payload_freefn maps an admitted payload TYPE to the runtime helper that
+// releases it whole. The single place the mapping lives, so the untagged, the
+// tagged and the optret-pending paths cannot disagree about what frees a
+// payload — they used to carry a boolean apiece, which had no room for a third
+// payload kind.
+// optret_payload_tag is opt_payload_freefn's spelling for an optret_pending
+// entry, which carries the release as ONE character after the '#'. Kept next to
+// it so a fourth payload kind cannot get a helper here and no tag there — the
+// reader of these entries falls back to the plain box dec, which for a string[]
+// would strand every element.
+function optret_payload_tag(freefn: string): string {
+    if (freefn == "__fern_str_free") { return "#s"; }
+    if (freefn == "__fern_str_arr_free") { return "#S"; }
+    return "#a";
+}
+
+function opt_payload_freefn(ptype: string): string {
+    if (ptype == "string") { return "__fern_str_free"; }
+    if (ptype == "string[]") { return "__fern_str_arr_free"; }
     return "__fern_rc_dec";
 }
 
-function emit_opt_str_payload_drop(s: LowerState, slot: i32): LowerState {
+function emit_opt_payload_drop_via(s: LowerState, slot: i32, freefn: string): LowerState {
     var st: LowerState = s;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_opt_payload());
-    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+    st = st.emit(ir.op_call_direct(freefn, 1));
     st = st.emit(ir.op_drop());
     // free the option box itself and zero the slot.
     st = st.emit(ir.op_load_local(slot));
@@ -31261,19 +31339,7 @@ function emit_opt_str_payload_drop(s: LowerState, slot: i32): LowerState {
 }
 
 function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
-    var st: LowerState = s;
-    // release the payload (flat scalar-array buffer or scalar-only struct box).
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_opt_payload());
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    st = st.emit(ir.op_drop());
-    // free the option box itself and zero the slot.
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_store_local(slot));
-    return st;
+    return emit_opt_payload_drop_via(s, slot, "__fern_rc_dec");
 }
 
 // emit_opt_struct_payload_drop — the STRUCT-payload sibling of
@@ -31304,9 +31370,8 @@ function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
 //
 //     if (box != 0) { if (tag == 0) { freefn(payload) } rc_dec(box) } slot = 0
 //
-// `freefn` is __fern_rc_dec for a leak-safe scalar array and __fern_str_free for
-// a string payload (box + separate data buffer on asm), matching the untagged
-// emit_opt_payload_drop / emit_opt_str_payload_drop split.
+// `freefn` comes from opt_payload_freefn, the same mapping the untagged
+// emit_opt_payload_drop_via reads.
 //
 // Tag 0 is Some/Ok, matching emit_optstruct_deep_free, whose null-then-tag shape
 // this follows exactly. The slot is zeroed so the exit sweep decs a null rather
@@ -40046,8 +40111,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             if (rcoptfrees.idxs[opj] == j && rcoptfrees.blockable[opj]) {
                 var opslot2: i32 = s.slot_of(rcoptfrees.names[opj]);
                 if (opslot2 >= s.n_params) {
-                    var opk: string = "#a";
-                    if (rcoptfrees.strs[opj]) { opk = "#s"; }
+                    var opk: string = optret_payload_tag(rcoptfrees.pfrees[opj]);
                     s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(opslot2) + opk));
                 }
             }
@@ -40304,13 +40368,16 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                     // exactly as the enum name does for "enum-rcpayload:" — the slot type
                     // Option[P] names it, but a Result[P, E] does not.
                     s = emit_opt_struct_payload_drop(s, dslot, pk[18 : pk.len()]);
-                } else if (dslot >= s.n_params && pk == "opt-strpayload") {
-                    // Fresh STRING-payload Option/Result (#4355), last-used in a nested
-                    // block — same gates as "opt-rcpayload", but the payload at offset 8
-                    // is a string box released by the rc-aware __fern_str_free (a plain
-                    // rc-dec would free the 24-byte string block by the ARRAY layout's
-                    // size class on asm — wrong class, heap corruption).
-                    s = emit_opt_str_payload_drop(s, dslot);
+                } else if (dslot >= s.n_params && pk.len() > 16 && pk[0:16] == "opt-payloadfree:") {
+                    // Fresh STRING- (#4355) or STRING[]- (#6495) payload Option/Result,
+                    // last-used in a nested block — same gates as "opt-rcpayload", but
+                    // the payload at offset 8 needs a release a plain rc-dec does not
+                    // give: __fern_str_free for a string box (rc-dec would free the
+                    // 24-byte string block by the ARRAY layout's size class on asm —
+                    // wrong class, heap corruption), __fern_str_arr_free for a string[]
+                    // (rc-dec frees the buffer and strands every element box). The
+                    // helper NAME rides in the kind, as the struct name does above.
+                    s = emit_opt_payload_drop_via(s, dslot, pk[16 : pk.len()]);
                 } else if (dslot >= s.n_params && pk.len() > 15 && pk[0:15] == "enum-rcpayload:"
                         && util.index_of_str(ecross.donors, pdrops.names[pi]) < 0) {
                     // Fresh rc-PAYLOAD user-enum (a variant with a leak-safe array /
@@ -40385,9 +40452,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                 var roslot: i32 = s.slot_of(rcoptfrees.names[roi]);
                 if (roslot >= s.n_params) {
                     if (rcoptfrees.tagged[roi]) {
-                        s = emit_opt_tagged_payload_drop(s, roslot, tagged_payload_freefn(rcoptfrees.strs[roi]), tagged_errfreefn(rcoptfrees.errstrs[roi]));
-                    } else if (rcoptfrees.strs[roi]) {
-                        s = emit_opt_str_payload_drop(s, roslot);
+                        s = emit_opt_tagged_payload_drop(s, roslot, rcoptfrees.pfrees[roi], tagged_errfreefn(rcoptfrees.errstrs[roi]));
+                    } else if (rcoptfrees.pfrees[roi] != "__fern_rc_dec") {
+                        s = emit_opt_payload_drop_via(s, roslot, rcoptfrees.pfrees[roi]);
                     } else if (rcoptfrees.stys[roi].len() > 0) {
                         s = emit_opt_struct_payload_drop(s, roslot, rcoptfrees.stys[roi]);
                     } else {

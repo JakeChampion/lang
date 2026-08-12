@@ -3081,11 +3081,15 @@ type StructDecl struct {
 	// actual freeing. See docs/MUST-CONSUME.md.
 	MustConsume bool
 	// SourceModule mirrors FuncDecl.SourceModule — modload stamps
-	// the canonical module path that declared this struct so the
-	// LSP can answer cross-module goto-definition queries (jump
+	// the canonical module path that declared this struct. The LSP
+	// answers cross-module goto-definition queries with it (jump
 	// from `util.Point` use site to `Point`'s declaration in
-	// util.fern). Empty for parser-only single-file programs and
-	// checker-synthesised decls.
+	// util.fern), and the checker scopes the nominal name by it: a
+	// struct is only a concrete type for the modules that can see
+	// it, so one module's `struct V` cannot capture another's `V`
+	// type parameter (#6118). Empty for parser-only single-file
+	// programs and checker-synthesised decls, which the checker
+	// reads as unscoped.
 	SourceModule string
 }
 

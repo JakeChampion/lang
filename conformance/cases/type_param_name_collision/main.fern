@@ -1,0 +1,42 @@
+// A user type named `K`, `V` or `T` must not collide with the type
+// PARAMETERS a stdlib generic declares under those names. Modules are
+// merged into one program before checking, so a nominal type is only
+// concrete for the modules that can actually see it: `core/map`'s
+// `(m: Map[K, V]) merge(...)` binds K and V as variables here, however
+// many `struct K` declarations exist in modules it never imported.
+//
+// #6118 scoped that lookup. This case pins the RUNTIME half of it —
+// the fix landed with check-time coverage only, so nothing established
+// that a program built on the un-captured type parameters actually
+// executes correctly on every backend.
+import "core/int";
+import "core/map";
+import "std/array";
+
+struct K { a: i32 }
+struct V { n: i32 }
+struct T { z: i32 }
+
+function main(): i32 {
+    var m: Map[i32, V] = map_new(8);
+    m = m.insert(1, V { n: 10 });
+    m = m.insert(2, V { n: 32 });
+
+    var total: i32 = 0;
+    match (m.get(1)) {
+        Some(v) => { total = total + v.n; },
+        None => {},
+    }
+    match (m.get(2)) {
+        Some(v) => { total = total + v.n; },
+        None => {},
+    }
+
+    // std/array's methods are declared over `T`, so the struct above
+    // reaches them the same way.
+    var xs: i32[] = [1, 2, 3, 4];
+    var k: K = K { a: xs.len() };
+    var t: T = T { z: xs.sum() };
+
+    return total + t.z + k.a + m.len();
+}
