@@ -266,7 +266,7 @@ Same nets as the existing self-host work, plus IR-specific ones:
   dec-sweep skips slots `< n_params`; the caller retains ownership. The
   `n_params` borrow boundary.
 - 2026-06-10: **Slice 15 — peak-memory measurement — DONE.**
-  `__heap_used()` (bytes bump-allocated; freelist reuse does not bump)
+  `__heap_bump_bytes()` (bytes bump-allocated; freelist reuse does not bump)
   makes the reclamation win measurable: three arrays each freed before the
   next reuse ONE block (20 B) vs three live arrays (60 B). Doc log brought
   current (slices 8–15).
@@ -279,7 +279,7 @@ Same nets as the existing self-host work, plus IR-specific ones:
   selected by the backend, every step differentially matched against the
   production AST backend. Remaining (diminishing returns in this toy
   freestanding model; each unobservable until paired with the one below):
-  precise-drops (mid-function last-use frees — needs `__heap_used`-style
+  precise-drops (mid-function last-use frees — needs `__heap_bump_bytes`-style
   peak observation), borrow escape inference (only matters once
   precise-drops free escaped params mid-function), strings / structs as
   further heap types, and the eventual integration of `emit_module_ir`
