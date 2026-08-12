@@ -27988,7 +27988,127 @@ pub function fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.S
 function field_type_is_array(t: string): boolean {
     return t.len() >= 2 && t[t.len() - 2 : t.len()] == "[]";
 }
-function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[]): boolean {
+// struct_lit_field_ident_count: how many of `slit`'s field values are the bare
+// ident `name`. One is a move-out; TWO would give the returned box two owning
+// references to one buffer under a single rc, so __struct_drop_<T> would free it
+// twice. The array-LITERAL form cannot express that (two literals are two
+// buffers), so the check arrives with the ident form.
+function struct_lit_field_ident_count(slit: parser.ExprStructLit, name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < slit.field_values.len()) {
+        match (slit.field_values[i]) {
+            parser.ExprIdent(fid) => { if (fid.name == name) { n = n + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// local_decl_count: how many `var name` declarations `stmts` contains, nested
+// blocks included.
+function local_decl_count(stmts: parser.Stmt[], name: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
+            parser.StmtIf(f) => { n = n + local_decl_count(f.then_body, name) + local_decl_count(f.else_body, name); },
+            parser.StmtWhile(w) => { n = n + local_decl_count(w.body, name); },
+            parser.StmtFor(fo) => { n = n + local_decl_count(fo.body, name); },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { n = n + local_decl_count(m.arms[a].body, name); a = a + 1; } },
+            parser.StmtDefer(d) => { n = n + local_decl_count([d.action], name); },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// arr_field_ident_is_frame_built: `name` is an array LOCAL this frame built from
+// a literal, only ever self-appended to, and never escaped except into the
+// returned struct literal — so the returned box reaches the caller as the sole
+// owner of that buffer, exactly as a direct array literal in the field would.
+// The three predicates are the ones "ARR:" already uses for the same proof one
+// container out; the difference is only which single escape is forgiven.
+function arr_field_ident_is_frame_built(name: string, fnbody: parser.Stmt[]): boolean {
+    // Exactly one declaration, so the literal-init witness below cannot be a
+    // shadowed sibling of a `var xs = param` in another block — arr_local_has_
+    // literal_init answers on the first declaration it meets, and the two escape
+    // scans are name-keyed, so neither would see the second one.
+    if (local_decl_count(fnbody, name) != 1) { return false; }
+    if (!arr_local_has_literal_init(fnbody, name)) { return false; }
+    if (arr_reassigned_other_than_selfappend(fnbody, name)) { return false; }
+    var no_borrow: string[] = [];
+    return !body_unsafe_for_allow_structret(fnbody, name, no_borrow);
+}
+
+// body_unsafe_for_allow_structret / stmt_unsafe_for_allow_structret: body_unsafe_for
+// with one use forgiven — `name` appearing as a bare field value of a
+// RETURN-POSITION struct literal, which is the move-out being proved. Every other
+// unsafe use, including a non-bare field value in that same literal, still flags.
+function body_unsafe_for_allow_structret(stmts: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_unsafe_for_allow_structret(stmts[i], name, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable); },
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprStructLit(rlit) => {
+                    var fi: i32 = 0;
+                    while (fi < rlit.field_values.len()) {
+                        var bare: boolean = false;
+                        match (rlit.field_values[fi]) {
+                            parser.ExprIdent(fid) => { bare = fid.name == name; },
+                            _ => {}
+                        }
+                        if (!bare && expr_unsafe_for(rlit.field_values[fi], name, borrowable)) { return true; }
+                        fi = fi + 1;
+                    }
+                    return false;
+                },
+                _ => { return expr_unsafe_for(r.value, name, borrowable); }
+            }
+        },
+        parser.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable); },
+        parser.StmtAssign(a) => { return expr_unsafe_for(a.value, name, borrowable); },
+        parser.StmtIf(f) => {
+            if (expr_unsafe_for(f.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_allow_structret(f.then_body, name, borrowable) || body_unsafe_for_allow_structret(f.else_body, name, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (expr_unsafe_for(w.cond, name, borrowable)) { return true; }
+            return body_unsafe_for_allow_structret(w.body, name, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            var iter_unsafe: boolean = true;
+            match (fo.iter) {
+                parser.ExprIdent(_) => { iter_unsafe = false; },
+                _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable); }
+            }
+            if (iter_unsafe) { return true; }
+            return body_unsafe_for_allow_structret(fo.body, name, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (expr_unsafe_for(m.scrutinee, name, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && expr_unsafe_for(m.arms[ai].guard, name, borrowable)) { return true; }
+                if (body_unsafe_for_allow_structret(m.arms[ai].body, name, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[]): boolean {
     match (e) {
         parser.ExprStructLit(slit) => {
             if (!(decl_is_struct(structs, slit.type_name) && decl_is_leaksafe(structs, slit.type_name))) { return false; }
@@ -28003,6 +28123,17 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
                     var v: parser.Expr = slit.field_values[i];
                     var ok: boolean = iife_returns_fresh_array(v);
                     match (v) { parser.ExprArray(_) => { ok = true; }, _ => {} }
+                    // `var xs = [ … ]; return Q { xs: xs, … }` — how a producer is
+                    // actually written, and the literal-only rule declined it, so
+                    // every caller's `var q = mk(i)` earned no reclaim credit and
+                    // leaked box + buffer per call (#6758).
+                    match (v) {
+                        parser.ExprIdent(vid) => {
+                            if (!ok && struct_lit_field_ident_count(slit, vid.name) == 1
+                                && arr_field_ident_is_frame_built(vid.name, fnbody)) { ok = true; }
+                        },
+                        _ => {}
+                    }
                     if (!ok) { return false; }
                 }
                 i = i + 1;
@@ -28013,15 +28144,15 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
     }
     return false;
 }
-function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
+function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs) || body_has_nonstrictfresh_return(f.else_body, structs)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -28392,7 +28523,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs)) {
+        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
@@ -28443,7 +28574,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // established safe floor, never an over-release.
         if (funcs[k].receiver_type.len() == 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
-                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs)
+                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body)
                 && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
             out = out.append("STRFLDF:" + funcs[k].name);
         }

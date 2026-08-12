@@ -7101,3 +7101,48 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   leaks. Every value matches native (`__rc_underflow()` probes are self-host-only,
   so `fern -interp` is not their oracle — they carry a 99 sentinel instead).
   Refs #6495 #6360 #4355 #4451.
+
+- 2026-08-12: **A struct factory that builds its array field in a LOCAL is
+  strict-fresh (#6758).** `return_value_is_strictfresh_struct` admitted an array
+  field only as a direct LITERAL, so `var xs: i32[] = [k, 8]; return Q { xs: xs,
+  pos: 1 };` — the ordinary way to write a factory — never entered
+  `return_fresh_struct_ret_fns`. Every caller's `var q: Q = mkq(i)` then earned no
+  reclaim credit at all, and box plus buffer leaked per call.
+
+  | producer, per iteration | before | after | native |
+  |---|---|---|---|
+  | `var xs = [k, 8]; return Q { xs: xs, … }` | 88 B | **0** | 0 |
+  | `var xs = []; … xs = xs.append(i); return Q { xs: xs, … }` | 104 B | **0** | 0 |
+
+  Unbounded before (176 B at 2× the rounds), flat after; identical on arm64, and
+  wasm went 56 → 0. The emitted `churn` carried no rc call whatsoever, which is
+  the signature of a missing credit rather than an unbalanced one.
+
+  **The proof is the one `ARR:` already uses, one container out.** That entry
+  admits a returned array LOCAL when it is literal-initialised, only ever
+  self-appended to, and does not otherwise escape (`body_returns_local_built_arr`);
+  the same three predicates prove a field value is frame-built, with exactly one
+  escape forgiven instead — appearing as a bare field value of the returned
+  literal (`body_unsafe_for_allow_structret`, the `_allow_ret` variant one shape
+  over).
+
+  **Two refusals, and the second is the one the literal form could never raise.**
+  A field seeded from a PARAM keeps leaking, because crediting it would have the
+  caller's reclaim free the caller's buffer. And ONE local answering TWO fields
+  (`Q { xs: xs, ys: xs }`) is refused outright: the box carries a single rc while
+  `__struct_drop_Q` would free that buffer once per field — two literals are two
+  buffers, so only the ident spelling can express the double free.
+  `local_decl_count` guards the third hazard: the literal-init witness answers on
+  the first declaration it meets and both escape scans are name-keyed, so a
+  shadowed `var xs = param` in another block would otherwise ride the first
+  declaration's verdict.
+
+  **Not fixed here, and the rest of #6758:** the same loop-local struct with an
+  ENUM field instead of an array still leaks 120 B/iteration (72 on wasm), and a
+  bare rc-payload enum local built in a loop leaks 160 B. Neither is an array
+  field, so neither passes through this predicate at all.
+
+  VERIFIED: new `TestSelfHostFreshRetLocalArrFieldIR{X86_64,Arm64}` — two leak
+  rows exiting 98 on the parent commit on both backends, two negatives that exit 0
+  on both sides and are there to stay that way; cross-backend exit agreement on
+  wasm. Refs #6758 #6491 #3457 #4451.
