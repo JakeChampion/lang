@@ -252,13 +252,14 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// triple to a single const_i32 before the backends see it, so this golden
 		// doubles as the fold's pin. `x * 10` survives because `x` is a load, not
 		// a constant.
-		// The `store_local 0 ; load_local 0` pair this golden used to carry is now a
-		// single `tee_local 0`: ir.fuse_tee runs last in optimize_ops (#6638), so
-		// this doubles as the fusion's pin on the real lowering path alongside the
-		// fold's.
+		// The `store_local 0 ; load_local 0` pair this golden used to carry is GONE
+		// (#6638): ir.fuse_tee collapses it to a `tee_local 0`, and then
+		// ir.propagate_copies drops that tee outright because nothing else touches
+		// slot 0 — the write is dead and the value rides the operand stack into the
+		// mul. So this pins both passes on the real lowering path alongside the
+		// fold's. A slot the RC sweeps read would keep its tee; an i32 is not swept.
 		const want = "const_i32 5\n" +
 			"int_cast\n" +
-			"tee_local 0\n" +
 			"const_i32_text 10\n" +
 			"mul\n" +
 			"int_cast\n" +
@@ -270,8 +271,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 		}
 		// exit code is ops.len() in -dump mode.
-		if code := cmd.ProcessState.ExitCode(); code != 7 {
-			t.Errorf("dump op count = %d, want 7", code)
+		if code := cmd.ProcessState.ExitCode(); code != 6 {
+			t.Errorf("dump op count = %d, want 6", code)
 		}
 	})
 }

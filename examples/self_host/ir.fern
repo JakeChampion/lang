@@ -2247,11 +2247,11 @@ pub function optimize_ops(ops: Op[]): Op[] {
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return fuse_tee(eliminate_dead_code(cur)); }
+        if (!r.changed) { return fold_const_binaries(propagate_copies(fuse_tee(eliminate_dead_code(cur)))); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return fuse_tee(eliminate_dead_code(cur));
+    return fold_const_binaries(propagate_copies(fuse_tee(eliminate_dead_code(cur))));
 }
 
 // ---- tee fusion --------------------------------------------------------
@@ -2271,6 +2271,79 @@ pub function optimize_ops(ops: Op[]): Op[] {
 // alone; widening that is copy propagation's job, not a peephole's. Runs LAST,
 // after dead-code elimination, so a pair the DCE walk exposes is still caught.
 // Idempotent: a tee_local matches neither arm, so a second run is a no-op.
+// propagate_copies drops a `tee_local X` whose slot NOTHING else touches — the
+// op-list half of native's internal/ir/copyprop.go (#6638).
+//
+// A tee writes the slot and keeps the value on the operand stack. When no other
+// op in the function reads, stores or tees that slot, the write is dead and the
+// tee reduces to "pop, push" — identity. The shape comes straight out of
+// fuse_tee: the inliner binds a single-use argument to a fresh slot, the bind
+// round-trip fuses to a tee, and then nothing references the slot at all.
+// Native's worked example, which this reproduces:
+//
+//	inline     const 7 ; store ; load ; const 2 ; mul ; return
+//	fuse_tee   const 7 ; tee   ;        const 2 ; mul ; return
+//	this pass  const 7 ;                const 2 ; mul ; return
+//	fold       const 14 ;                                return
+//
+// The last line is why optimize_ops folds once more after this runs — without
+// it the exposed const/const/binary triple has nothing to collapse it.
+//
+// SAFE because the RC exit sweeps are IN this op stream: a swept local is read
+// by a `load_local` before its dec, so its slot is never "untouched" and its tee
+// is never dropped. optimize_ops runs over the COMPLETE lowering, sweeps
+// included, which is what makes the whole-function count trustworthy.
+//
+// DELIBERATELY NOT PORTED: native's other half, rewriting a dead `store_local`
+// to a `drop`. That one changes an op's stack EFFECT rather than removing an
+// identity, and it needs the two-word question answered first — native fans the
+// drop out for a wasm32 string slot (slotIsTwoWord) because its string is a
+// (data, len) pair there. The self-host's string representation differs per
+// backend, so that rewrite wants its own measurement rather than a transcription.
+pub function propagate_copies(ops: Op[]): Op[] {
+    var k_load: i32 = kind_id("load_local");
+    var k_store: i32 = kind_id("store_local");
+    var k_tee: i32 = kind_id("tee_local");
+    var maxs: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var kt: i32 = ops[i].kind_tag;
+        if (kt == k_load || kt == k_store || kt == k_tee) {
+            if (ops[i].i32_imm > maxs) { maxs = ops[i].i32_imm; }
+        }
+        i = i + 1;
+    }
+    if (maxs < 0) { return ops; }
+    var reads: i32[] = [];
+    var stores: i32[] = [];
+    var tees: i32[] = [];
+    var z: i32 = 0;
+    while (z <= maxs) { reads = reads.append(0); stores = stores.append(0); tees = tees.append(0); z = z + 1; }
+    i = 0;
+    while (i < ops.len()) {
+        var kt2: i32 = ops[i].kind_tag;
+        var sl: i32 = ops[i].i32_imm;
+        if (sl >= 0 && sl <= maxs) {
+            if (kt2 == k_load) { reads = reads.with(sl, reads[sl] + 1); }
+            else if (kt2 == k_store) { stores = stores.with(sl, stores[sl] + 1); }
+            else if (kt2 == k_tee) { tees = tees.with(sl, tees[sl] + 1); }
+        }
+        i = i + 1;
+    }
+    var out: Op[] = [];
+    i = 0;
+    while (i < ops.len()) {
+        var o: Op = ops[i];
+        var dead_tee: boolean = false;
+        if (o.kind_tag == k_tee && o.i32_imm >= 0 && o.i32_imm <= maxs) {
+            if (reads[o.i32_imm] == 0 && stores[o.i32_imm] == 0 && tees[o.i32_imm] == 1) { dead_tee = true; }
+        }
+        if (!dead_tee) { out = out.append(o); }
+        i = i + 1;
+    }
+    return out;
+}
+
 pub function fuse_tee(ops: Op[]): Op[] {
     var k_store: i32 = kind_id("store_local");
     var k_load: i32 = kind_id("load_local");
