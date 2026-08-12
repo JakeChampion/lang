@@ -27,9 +27,10 @@ import (
 //
 // Pinning both is what makes this test say something. The analysis agrees with
 // native on every shape below — it marks the local moved exactly where native
-// elides the inc, and declines exactly where native keeps it. The emitter does
-// not read that verdict at a construction site, so `incs` is 1 whether the
-// local moved or not. See the header on the incs column below.
+// elides the inc, and declines exactly where native keeps it. #6726 connected
+// the two at the STRUCT-LITERAL field site, so those rows now read 0; the tuple
+// and array element sites still emit their retain and read 1, which is what
+// makes this table the record of how far the emitter has caught up.
 //
 // Native's closure-capture case has no row: `lower_module` does not run
 // lift_lambdas, so a function containing a nested one does not lower through
@@ -54,6 +55,9 @@ func TestSelfHostMoveOnConstructionIRX86_64(t *testing.T) {
 		// It matches native's elision decision on every row.
 		moved string
 		// incs is how many `__fern_rc_inc` calls the emitter wrote into `f`.
+		// 0 where the emitter consumes the moved verdict (#6726: the struct
+		// -literal field site), 1 where it does not yet — and 1 on the rows the
+		// ANALYSIS declines, which is where 1 is the right answer for good.
 		//
 		// Every construction row is 1, INCLUDING the moved ones, where native
 		// emits 0: the emitter does not consume the move verdict at a
@@ -83,7 +87,7 @@ function f(): i32 {
     return s.inner[0];
 }
 function main(): i32 { return f(); }`,
-			moved: "x", incs: 1,
+			moved: "x", incs: 0,
 		},
 		{
 			name: "tuple-element",
@@ -116,7 +120,7 @@ function f(): Wrap {
     return s;
 }
 function main(): i32 { return f().inner[0]; }`,
-			moved: "x", incs: 1,
+			moved: "x", incs: 0,
 		},
 		{
 			// Move-on-destructure: the tuple box alias. The self-host emits

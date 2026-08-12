@@ -543,10 +543,40 @@ pub struct LowerState {
     // lowering any field value, so a nested literal inside one (`S { inner: T {
     // ys: o.ys } }`) sees "" and keeps its retain.
     selfrebind: string,
+    // moved_names: locals this function MOVES into a construction at their last
+    // use (moved_locals_toplevel_of — native's computeMovedLocals). A move means
+    // the constructed box takes over the local's reference, so the construction
+    // needs no retain and the exit sweep must not release it. #6726: the verdict
+    // was computed and printed by -rc-plan and read by nothing, so both halves
+    // were emitted and cancelled — correct, and two memory round-trips per
+    // construction on the hottest shape the compiler's own sources have.
+    moved_names: string[],
+    // moved_elided: the slots whose construction retain was ACTUALLY elided.
+    // The sweep skips exactly these rather than everything in moved_names: a
+    // move site whose emitter does not yet consult the verdict still emits its
+    // inc, and dropping that local's dec would turn a balanced pair into a leak.
+    // Recorded by the emitter that elides, so the two halves cannot drift.
+    moved_elided: i32[],
 }
 
 // with_selfrebind marks (or clears, with "") the local whose self-rebind literal
 // is being lowered. See the field's comment on LowerState.
+// moves_local: does this function MOVE `name` into a construction at its last
+// use? The construction then owns the reference, so the retain is redundant with
+// the sweep dec that cancels it (#6726).
+pub function (s: LowerState) moves_local(name: string): boolean {
+    return util.index_of_str(s.moved_names, name) >= 0;
+}
+
+// note_moved_elided records that the retain for `slot` was actually skipped, so
+// emit_dec_sweep_except_list skips its dec too. Recorded by the eliding emitter
+// rather than derived from moved_names: a site that still emits its retain must
+// keep its dec.
+pub function (s: LowerState) note_moved_elided(slot: i32): LowerState {
+    if (slot < 0 || slot_list_has(s.moved_elided, slot)) { return s; }
+    return LowerState { ...s, moved_elided: s.moved_elided.append(slot) };
+}
+
 pub function (s: LowerState) with_selfrebind(name: string): LowerState {
     return LowerState { ...s, selfrebind: name };
 }
@@ -10954,8 +10984,23 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     // the stack and pushes it back (the helper returns its arg), so
                     // the net stack effect is unchanged for struct_make — the same
                     // alias-inc idiom as emit_arr_store, without the cow/store wrap.
+                    // #6726: unless the analysis says this construction MOVES the
+                    // local. Then the box takes over the local's reference — the
+                    // retain and the sweep dec that cancels it are both redundant,
+                    // and both are dropped (note_moved_elided pairs them).
+                    var fav_moved: i32 = 0 - 1;
                     if (fav_alias_inc) {
+                        match (slit.field_values[found]) {
+                            parser.ExprIdent(mvid) => {
+                                if (sm.moves_local(mvid.name)) { fav_moved = sm.slot_of(mvid.name); }
+                            },
+                            _ => {}
+                        }
+                    }
+                    if (fav_alias_inc && fav_moved < 0) {
                         sm = sm.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    } else if (fav_moved >= 0) {
+                        sm = sm.note_moved_elided(fav_moved);
                     }
                     // COMPACT: [box, value] on the stack -> store the override in place.
                     if (compact) {
@@ -21238,7 +21283,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -39392,7 +39437,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "" };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -46367,7 +46412,7 @@ struct MlOut { names: string[], sites: string[] }
 // rc_ml_compute: the ported analysis — owned rc locals moved into an alias /
 // destructure / construction at their last use, at a dominating
 // (pre-first-return) top-level statement, with their move-site positions.
-function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut {
+function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut {
     var moved: MlOut = MlOut { names: [], sites: [] };
     // local name->type table, reusing the freeEligible collector (params
     // recorded first so destructure typing can read them, then locals).
@@ -46422,12 +46467,38 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut
         if (rc_ml_stmt_has_return(fn.body[k])) { saw_return = true; }
         k = k + 1;
     }
-    return rc_ml_loop_body_moves(fn.body, fn, st.types_n, st.types_t, structs, moved);
+    return moved;
+}
+
+// rc_ml_compute is rc_ml_compute_toplevel plus the loop-body moves.
+function rc_ml_compute(fn: parser.FuncDecl, structs: parser.StructDecl[]): MlOut {
+    var st2: FeState = FeState { tainted: [], an: [], av: [], types_n: [], types_t: [] };
+    var pj: i32 = 0;
+    while (pj < fn.params.len()) {
+        st2 = FeState { tainted: st2.tainted, an: st2.an, av: st2.av, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name) };
+        pj = pj + 1;
+    }
+    st2 = rc_fe_collect_types(fn.body, st2, structs, []);
+    return rc_ml_loop_body_moves(fn.body, fn, st2.types_n, st2.types_t, structs, rc_ml_compute_toplevel(fn, structs));
 }
 
 // moved_locals_of / move_sites_of: the two pub views over rc_ml_compute.
 pub function moved_locals_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
     return rc_ml_compute(fn, structs).names;
+}
+
+// moved_locals_toplevel_of is the subset the EMITTER acts on (#6726): the
+// top-level moves only, without rc_ml_loop_body_moves' additions.
+//
+// A top-level move is recorded at statement k only when no earlier statement
+// contains a return and the local is never read after k, so at every exit the
+// move has already happened and skipping the local's sweep dec is exact. A
+// LOOP-BODY move is not that: the local is rebound each iteration, and the
+// rebind's consume-dec would release a value the previous iteration's
+// construction now owns. That half needs the rebind site to agree too, so it
+// stays on the retain-and-cancel path until then.
+pub function moved_locals_toplevel_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    return rc_ml_compute_toplevel(fn, structs).names;
 }
 pub function move_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
     return rc_ml_compute(fn, structs).sites;
@@ -47260,7 +47331,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "" };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
