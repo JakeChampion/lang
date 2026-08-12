@@ -17,6 +17,7 @@
 //     fern -fmt <entry.fern>                format the entry file to stdout
 //     fern -targets                         list the targets + capabilities
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
+//     fern -tangle <doc.fern.md>            literate: emit the tangled source
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
@@ -68,6 +69,7 @@ import "./caps";
 import "./modloader";
 import "./visibility";
 import "./fern_toml";
+import "./literate";
 import "./mvs";
 import "./treeshake";
 import "./arm64_native";
@@ -317,6 +319,7 @@ function usage(): i32 {
     eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
+    eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
     eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
     return 2;
 }
@@ -1043,6 +1046,80 @@ function file_readable(path: string): boolean {
     return false;
 }
 
+// run_tangle implements `-tangle FILE.fern.md`: expand a literate document's
+// chunks into plain Fern source (#6751). `literate.fern` has carried the
+// engine — single-file `<<*>>`, multi-file `file=PATH`, the entry rule —
+// since it was ported; nothing called any of it until now.
+//
+// A document declaring `file=PATH` blocks tangles to one module per path,
+// each under a `// ==> path <==` banner, because a multi-module program is
+// one narrative and several files.
+function run_tangle(path: string, out_path: string): i32 {
+    var src: string = "";
+    var ok: boolean = false;
+    match (read_file(path)) {
+        Ok(s) => { src = s; ok = true; },
+        Err(e) => { },
+    }
+    if (!ok) {
+        eprint("fern: cannot read " + path);
+        return 1;
+    }
+    var files: literate.FilePiece[] = literate.parse_file_pieces(src);
+    if (files.len() > 0) {
+        match (literate.tangle_files(src)) {
+            literate.FileTangleOk(o) => {
+                var out: string = "";
+                var i: i32 = 0;
+                while (i < o.files.len()) {
+                    // A blank line between modules, so the banners read as
+                    // separators rather than as comments on the line above.
+                    if (i > 0) { out = out + "\n"; }
+                    out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
+                    i = i + 1;
+                }
+                return tangle_emit(out, out_path);
+            },
+            literate.FileTangleErr(e) => {
+                eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+                return 1;
+            },
+        }
+    }
+    match (literate.tangle(src)) {
+        literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
+        literate.TangleErr(e) => {
+            eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+            return 1;
+        },
+    }
+}
+
+// end_with_newline terminates the tangled source. `join_lines` joins with
+// newlines rather than after them, so the last line arrives bare — and a
+// module whose final line has no newline is a diff against native's output
+// and an oddity in the file `-o` writes.
+function end_with_newline(code: string): string {
+    if (code.len() > 0 && code[code.len() - 1] == 10) { return code; }   // '\n'
+    return code + "\n";
+}
+
+// tangle_emit writes the tangled source to `-o` when one was given, else to
+// stdout — the pipeline shape `-tangle` is usually used in.
+function tangle_emit(code: string, out_path: string): i32 {
+    if (out_path.len() == 0) {
+        write(code);
+        return 0;
+    }
+    match (write_file(out_path, code)) {
+        Ok(u) => { return 0; },
+        Err(e) => {
+            eprint("fern: cannot write output: " + out_path);
+            return 1;
+        },
+    }
+}
+
 // read_stdin reads the whole of stdin, which is how `-` names a program with
 // no file behind it: a pipeline stage, an editor buffer, or a host with no
 // filesystem to open (#6643). `read_line` keeps its newline, so the lines
@@ -1240,6 +1317,7 @@ function run(): i32 {
     var mode_caps: boolean = false;
     var mode_targets: boolean = false;
     var mode_resolve: boolean = false;
+    var mode_tangle: boolean = false;
     var mode_add: boolean = false;
     // Every non-flag argument, in order. The compile modes read the first two
     // (entry, stdlib root); `-add` takes three of its own.
@@ -1287,6 +1365,10 @@ function run(): i32 {
             emit_syms = true;
         } else if (a == "-capabilities") {
             mode_caps = true;
+        } else if (a == "-tangle") {
+            // Literate: expand a .fern.md document's chunks into Fern source.
+            // It reads a document, not a module, so it never loads imports.
+            mode_tangle = true;
         } else if (a == "-add") {
             // Manifest editing: append a declared dependency. Takes NAME SPEC
             // DIR positionally, not an entry module.
@@ -1336,6 +1418,12 @@ function run(): i32 {
     // `-resolve` takes a directory (or any file inside the package), not an
     // entry module — it reads manifests and never compiles anything.
     if (mode_resolve) { return run_resolve(entry_path); }
+
+    // `-tangle` reads a literate document and compiles nothing.
+    if (mode_tangle) {
+        if (!have_entry) { return usage(); }
+        return run_tangle(entry_path, out_path);
+    }
 
     // `-add` edits a manifest and compiles nothing.
     if (mode_add) { return run_add(pos); }
