@@ -116,15 +116,29 @@ runs:
         # functype tag 0x40->0x43; component instances are now non-reentrant,
         # so the async-import composer emits a sibling-nested structure) — the
         # composer was ported to match. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
-        mkdir -p "$HOME/.wasmtime/bin"
-        curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
-          | tar -xJ -C "$HOME"
+        #
+        # Every download RETRIES and lands in a FILE before it is unpacked.
+        # Neither is cosmetic. A bare `curl … | tar` cannot retry — curl has
+        # already written part of the stream into tar by the time the transfer
+        # dies — and a 5xx body reaches tar as an archive, so the release
+        # blipping reports `xz: File format not recognized` and a tar exit
+        # status, naming the wrong step entirely. Both halves of that were
+        # observed on one run: a 503 on x86-64 and a died-connection on
+        # aarch64, each failing a job that never ran a test.
+        dl() {
+          curl -sSfL --retry 5 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 20 -o "$2" "$1"
+        }
+        mkdir -p "$HOME/.wasmtime/bin" "$HOME/wasi-adapter"
+        dl "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
+          "$HOME/wasmtime.tar.xz"
+        tar -xJf "$HOME/wasmtime.tar.xz" -C "$HOME"
         install -m 0755 "$HOME/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
-        curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.253.0/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
-          | tar -xz -C "$HOME"
-        mkdir -p "$HOME/wasi-adapter"
-        curl -sSfL -o "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" \
-          "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm"
+        dl "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.253.0/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
+          "$HOME/wasm-tools.tar.gz"
+        tar -xzf "$HOME/wasm-tools.tar.gz" -C "$HOME"
+        dl "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm" \
+          "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm"
 
     - name: Wire wasmtime PATH + adapter env
       if: inputs.wasmtime == 'true'
