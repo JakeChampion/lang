@@ -79,7 +79,20 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"tee_reversed: load_local 0 ; store_local 0\n" +
 		"tee_two: tee_local 0 ; tee_local 1\n" +
 		"tee_idempotent=1\n" +
-		"tee_in_optimize: const_i32 4 ; tee_local 0 ; return\n"
+		// The tee is GONE here where the direct fuse_tee cases above keep theirs:
+		// optimize_ops runs propagate_copies after the fusion, and nothing else
+		// touches slot 0, so the write is dead.
+		"tee_in_optimize: const_i32 4 ; return\n" +
+		// #6638 copy propagation. The three "live" rows are the gate: a real read, a
+		// second store, and a second tee each keep the slot alive. cp_pipeline is
+		// native's worked example end to end — inline round trip, fuse, drop the dead
+		// tee, then fold the exposed const pair to a single 14.
+		"cp_dead_tee: const_i32 7 ; const_i32 2 ; mul\n" +
+		"cp_live_read: const_i32 7 ; tee_local 0 ; load_local 0 ; add\n" +
+		"cp_live_store: const_i32 7 ; tee_local 0 ; const_i32 1 ; store_local 0\n" +
+		"cp_two_tees: const_i32 7 ; tee_local 0 ; const_i32 8 ; tee_local 0\n" +
+		"cp_store_kept: const_i32 7 ; store_local 3\n" +
+		"cp_pipeline: const_i32 14 ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

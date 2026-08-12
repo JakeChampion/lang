@@ -210,6 +210,38 @@ function main(): i32 {
     var tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
     out = out + "tee_in_optimize: " + render(ir.optimize_ops(tee_opt)) + "\n";
 
+    // 13. propagate_copies (#6638): a tee whose slot NOTHING else touches is
+    //     identity — pop then push — so it goes.
+    var cp_dead: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(2), ir.op_bin("mul", 0, false)];
+    out = out + "cp_dead_tee: " + render(ir.propagate_copies(cp_dead)) + "\n";
+
+    // 13a. A slot with a real READ elsewhere keeps its tee — that load would
+    //      observe the value the tee wrote.
+    var cp_read: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_load_local(0), ir.op_bin("add", 0, false)];
+    out = out + "cp_live_read: " + render(ir.propagate_copies(cp_read)) + "\n";
+
+    // 13b. A second STORE to the slot keeps it too: something later reassigns it,
+    //      so the slot is real state rather than a round trip.
+    var cp_store: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(1), ir.op_store_local(0)];
+    out = out + "cp_live_store: " + render(ir.propagate_copies(cp_store)) + "\n";
+
+    // 13c. TWO tees of the same slot both stay — neither is the sole toucher, and
+    //      dropping either changes what the other's slot holds.
+    var cp_two: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(8), ir.op_tee_local(0)];
+    out = out + "cp_two_tees: " + render(ir.propagate_copies(cp_two)) + "\n";
+
+    // 13d. A plain store_local is left alone: rewriting a dead store to a drop
+    //      changes an op's stack EFFECT and is deliberately not ported yet.
+    var cp_st: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(3)];
+    out = out + "cp_store_kept: " + render(ir.propagate_copies(cp_st)) + "\n";
+
+    // 13e. The native worked example end to end, through optimize_ops: the inline
+    //      round trip fuses to a tee, the tee is dead, and the fold then has an
+    //      adjacent const pair to collapse.
+    var cp_pipeline: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
+                                ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return()];
+    out = out + "cp_pipeline: " + render(ir.optimize_ops(cp_pipeline)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.
