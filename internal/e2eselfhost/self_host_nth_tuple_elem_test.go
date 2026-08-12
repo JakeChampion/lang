@@ -33,7 +33,7 @@ func TestSelfHostNthTupleElem(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "astwalk.fern", "ir.fern", "parser.fern",
-		"asmcore.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "nth_tuple_elem_run.fern",
+		"asmcore.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "nth_tuple_elem_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

@@ -36,7 +36,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := t.TempDir()
-	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
+	for _, name := range []string{"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern"} {
 		src, rerr := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if rerr != nil {
 			t.Fatalf("read %s: %v", name, rerr)

@@ -32,7 +32,7 @@ func TestSelfHostTupleElemTag(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "ir.fern",
-		"irlower.fern", "tuple_elem_tag_run.fern",
+		"irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "tuple_elem_tag_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

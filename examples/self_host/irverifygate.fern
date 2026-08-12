@@ -1,0 +1,83 @@
+// examples/self_host/irverifygate.fern — the compile-path gate for the IR
+// verifiers (#6639).
+//
+// irverify.fern and irverifystack.fern were written and then only ever run
+// from test drivers: irverify_run.fern builds op streams by hand, and
+// irlower_run.fern sweeps the conformance corpus through `-verify` /
+// `-verifystack`. Neither is the compiler. So the module with the most
+// lowering in it — the self-host compiler's own sources, ~1000 functions of
+// the hardest code the lowerer sees — went through every build unchecked, and
+// a malformed op stream still reached the backend the way it always did: as a
+// SIGSEGV on the register backends, or a module wasmtime refuses to validate.
+//
+// This file closes that. Every backend calls verify_or_refuse once per
+// function it is about to emit, so ANY compile — a fixture, a driver, the
+// bootstrap self-compile — can be run under FERN_IR_VERIFY=1 and get the
+// malformed op named at the point it was produced.
+//
+// It is deliberately small and depends only on the verifiers and the op type.
+// Taking the four fields rather than an irlower.LowerResult is what keeps it
+// that way: it does not pull irlower in, so the driver that tests it does not
+// either.
+//
+// # Off by default, for the reason native's verifiers are
+//
+// The pass is a second walk of every op stream. That is cheap next to
+// lowering, but it is not free, and a verifier's value is as a diagnostic
+// under suspicion rather than as a tax on every build. The issue's plan is a
+// flag first and on-by-default once the self-compile is clean under it.
+//
+// # What it does NOT check, and why
+//
+// The call-arity check needs a whole-program signature list, which the
+// per-function emit does not hold — threading one through three backends to
+// re-derive what the corpus gate already checks with a real list would be a
+// large change for a check that is already covered. And a function the stack
+// pass cannot model is skipped rather than reported: that pass is fail-soft by
+// design (its header says why), and turning an unmodelled op into a hard error
+// here would make a widened op vocabulary look like a lowering bug.
+
+import "./ir";
+import "./irverify";
+import "./irverifystack";
+
+// verify_on reports whether FERN_IR_VERIFY is set.
+pub function verify_on(): boolean {
+    match (env("FERN_IR_VERIFY")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
+// verify_problems runs both verifiers over one lowered function and returns
+// everything they found, structure problems first.
+//
+// Pure, and separate from the refusal below so the gate's verdict can be
+// asserted without the exit that acting on it entails.
+pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32): irverify.Problem[] {
+    var no_sigs: irverify.FnSig[] = [];
+    var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, no_sigs);
+    var sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
+    var i: i32 = 0;
+    while (i < sr.problems.len()) {
+        out = out.append(sr.problems[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// verify_or_refuse is what the backends call: a no-op unless FERN_IR_VERIFY is
+// set, and otherwise a hard exit naming what the verifiers found.
+//
+// Exiting rather than returning a diagnostic is the point. The alternative is
+// emitting the malformed stream anyway, which is exactly the behaviour the
+// flag exists to replace.
+pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
+    if (!verify_on()) { return 0; }
+    var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals);
+    if (ps.len() == 0) { return 0; }
+    eprint("FERN_IR_VERIFY: " + fn_name + " lowered to malformed IR (#6639):"
+        + irverify.format_problems(ps, 20) + "\n");
+    exit(4);
+    return 0;
+}
