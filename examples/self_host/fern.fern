@@ -1054,7 +1054,7 @@ function file_readable(path: string): boolean {
 // A document declaring `file=PATH` blocks tangles to one module per path,
 // each under a `// ==> path <==` banner, because a multi-module program is
 // one narrative and several files.
-function run_tangle(path: string, out_path: string): i32 {
+function run_tangle(path: string, out_path: string, chunk: string): i32 {
     var src: string = "";
     var ok: boolean = false;
     match (read_file(path)) {
@@ -1065,10 +1065,26 @@ function run_tangle(path: string, out_path: string): i32 {
         eprint("fern: cannot read " + path);
         return 1;
     }
+    // `-chunk NAME` expands one definition rather than the document, so it
+    // answers about the chunk whether or not the document has a root.
+    if (chunk.len() > 0) {
+        match (literate.tangle_chunk(src, chunk)) {
+            literate.TangleOk(o) => { return tangle_emit(end_with_newline(o.code), out_path); },
+            literate.TangleErr(e) => {
+                eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
+                return 1;
+            },
+        }
+    }
     var files: literate.FilePiece[] = literate.parse_file_pieces(src);
     if (files.len() > 0) {
         match (literate.tangle_files(src)) {
             literate.FileTangleOk(o) => {
+                // With `-o`, a multi-file document writes one module per
+                // path INTO that directory rather than one concatenated
+                // file: the banners are a reading aid for stdout, not a
+                // format anything consumes.
+                if (out_path.len() > 0) { return tangle_write_files(o.files, out_path); }
                 var out: string = "";
                 var i: i32 = 0;
                 while (i < o.files.len()) {
@@ -1078,7 +1094,7 @@ function run_tangle(path: string, out_path: string): i32 {
                     out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
                     i = i + 1;
                 }
-                return tangle_emit(out, out_path);
+                return tangle_emit(out, "");
             },
             literate.FileTangleErr(e) => {
                 eprint(path + ":" + checker.itoa_nn(e.line) + ":1: error: " + e.msg);
@@ -1105,19 +1121,45 @@ function end_with_newline(code: string): string {
 }
 
 // tangle_emit writes the tangled source to `-o` when one was given, else to
-// stdout — the pipeline shape `-tangle` is usually used in.
+// stdout — the pipeline shape `-tangle` is usually used in. A written file
+// is announced on stderr, so `-o` reports what it produced without
+// contaminating a redirected stdout.
 function tangle_emit(code: string, out_path: string): i32 {
     if (out_path.len() == 0) {
         write(code);
         return 0;
     }
     match (write_file(out_path, code)) {
-        Ok(u) => { return 0; },
+        Ok(u) => {
+            eprint("wrote " + out_path);
+            return 0;
+        },
         Err(e) => {
             eprint("fern: cannot write output: " + out_path);
             return 1;
         },
     }
+}
+
+// tangle_write_files writes one module per `file=PATH` root into `dir`.
+//
+// A path with a directory segment is refused rather than written to the
+// wrong place: creating the parent needs a directory-creating builtin the
+// language does not have (#6749), and silently flattening `a/b.fern` to
+// `b.fern` would produce a tree that compiles differently from native's.
+function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
+    var i: i32 = 0;
+    while (i < files.len()) {
+        var rel: string = files[i].path;
+        if (util.contains(rel, "/")) {
+            eprint("fern: -tangle -o: " + rel + " needs a subdirectory, which this driver cannot create yet (#6749)");
+            return 1;
+        }
+        var code: i32 = tangle_emit(end_with_newline(files[i].code), dir + "/" + rel);
+        if (code != 0) { return code; }
+        i = i + 1;
+    }
+    return 0;
 }
 
 // read_stdin reads the whole of stdin, which is how `-` names a program with
@@ -1318,6 +1360,7 @@ function run(): i32 {
     var mode_targets: boolean = false;
     var mode_resolve: boolean = false;
     var mode_tangle: boolean = false;
+    var chunk: string = "";
     var mode_add: boolean = false;
     // Every non-flag argument, in order. The compile modes read the first two
     // (entry, stdlib root); `-add` takes three of its own.
@@ -1380,6 +1423,10 @@ function run(): i32 {
             mode_resolve = true;
         } else if (a == "-targets") {
             mode_targets = true;
+        } else if (a == "-chunk") {
+            i = i + 1;
+            if (i >= av.len()) { return usage(); }
+            chunk = av[i];
         } else if (a == "-emit") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -1422,7 +1469,7 @@ function run(): i32 {
     // `-tangle` reads a literate document and compiles nothing.
     if (mode_tangle) {
         if (!have_entry) { return usage(); }
-        return run_tangle(entry_path, out_path);
+        return run_tangle(entry_path, out_path, chunk);
     }
 
     // `-add` edits a manifest and compiles nothing.
