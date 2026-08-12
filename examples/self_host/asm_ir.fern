@@ -17,6 +17,7 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverifygate";
 
 // ir_eligible reports whether a function is in the IR path's current subset:
 // i32 functions with params, direct calls, and arrays (heap alloc / index /
@@ -4498,6 +4499,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");

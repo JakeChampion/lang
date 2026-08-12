@@ -32,7 +32,7 @@ func TestSelfHostSSALiftCoverageScan(t *testing.T) {
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "ir.fern", "ssa.fern",
-		"ssa_lift.fern", "irlower.fern", "checker.fern", "builtins.fern",
+		"ssa_lift.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "checker.fern", "builtins.fern",
 		"treeshake.fern", "ssa_lift_scan_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))

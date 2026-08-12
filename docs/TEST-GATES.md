@@ -276,6 +276,19 @@ answer, these are the tools, in the order they are usually reached for:
   costs, and what it does *not* catch:
   `docs/SANITIZER.md`. The individual flags below remain the right tool once
   you know what you are chasing.
+- **`FERN_IR_VERIFY=1`** — reach for this one FIRST when the self-host compiles
+  a program that then segfaults, or emits a wasm module wasmtime will not
+  validate. Every self-host backend runs the two IR verifiers over each
+  function before emitting it, so a local index outside the frame, an unclosed
+  scope, a branch with no target, or an operand-stack imbalance exits 4 naming
+  the function and the op index — at the point the lowering produced it, rather
+  than wherever the machine code happens to fall over. Off by default;
+  observation only, so the emitted code is byte-identical either way and a
+  diagnosis made under it is about the same compiler that failed without it.
+  It does NOT check call arity (the per-function emit holds no whole-program
+  signature list — `irlower_run -verify` does, over the conformance corpus),
+  and a function holding an op the stack pass cannot model is skipped rather
+  than reported.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
   compile over-release anything", readable from Fern. The self-host drivers
   call it themselves on every run (`util.rc_underflow_guard`).

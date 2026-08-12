@@ -19,7 +19,7 @@ func WriteSelfHostModloadProject(t *testing.T) string {
 	dir := t.TempDir()
 	for _, name := range []string{
 		"util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern",
-		"ir.fern", "irlower.fern", "asm_ir.fern", "asm_arm64_ir.fern",
+		"ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern",
 		"flatten.fern", "modloader.fern", "fern_toml.fern", "builtins.fern", "asm_modload_run.fern",
 		// treeshake backs the over-budget per-module rescue: the driver derives
 		// the reachable-name set from it before pruning each unit.

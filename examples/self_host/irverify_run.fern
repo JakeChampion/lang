@@ -1,6 +1,8 @@
 // examples/self_host/irverify_run.fern — driver for the IR verifiers: the
-// structure pass (irverify.fern, #6639 slice 1) and the operand-stack pass
-// (irverifystack.fern, slice 2).
+// structure pass (irverify.fern, #6639 slice 1), the operand-stack pass
+// (irverifystack.fern, slice 2), the allocation-budget pass
+// (irfipverify.fern, slice 3), and the compile-path gate the backends call
+// (irverifygate.fern).
 //
 // Every check is asserted in BOTH directions: a malformed op stream it must
 // report, and a well-formed one it must stay silent on. The silent half is
@@ -11,11 +13,17 @@
 // Exit code 0 means every assertion held; a non-zero code identifies which
 // one failed, so a regression names its own case without needing the
 // stdout diff.
+//
+// `-refuse` drives the gate's REFUSAL instead: it hands verify_or_refuse a
+// stream whose local index is outside the frame, so the half that reads
+// FERN_IR_VERIFY and exits is testable from somewhere. It cannot be reached
+// through a backend — the compiler does not emit malformed IR on demand.
 
 import "./ir";
 import "./irverify";
 import "./irverifystack";
 import "./irfipverify";
+import "./irverifygate";
 import "./util";
 
 function no_sigs(): irverify.FnSig[] { return []; }
@@ -260,7 +268,68 @@ function fip_checks(): i32 {
     return 0;
 }
 
+// gate_checks covers irverifygate.verify_problems — the verdict the backends
+// act on (#6639). It is its own case set because the gate MERGES the two
+// passes, and a merge that dropped one of them would still look clean against
+// either pass's own tests.
+function gate_checks(): i32 {
+    // A function that pushes its result and returns it draws nothing from
+    // either pass. This is the case that decides whether the gate is usable at
+    // all: it runs on every function of every compile, so a false positive here
+    // would refuse valid programs.
+    var clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
+    if (irverifygate.verify_problems("f", clean, 0, 1).len() != 0) { return 170; }
+
+    // A STRUCTURE problem alone: the local index is outside a 1-slot frame.
+    // The stack pass is silent on it (load_local pops nothing either way), so
+    // this reaches the gate only through irverify.
+    var bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
+    if (irverifygate.verify_problems("f", bad_slot, 0, 1).len() != 1) { return 171; }
+    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1)[0]),
+        "is outside the frame")) { return 172; }
+
+    // A STACK problem alone: `add` needs two operands and is handed one. The
+    // frame is well-formed, so irverify says nothing and only the stack pass
+    // reaches the gate — the direction a merge dropping irverifystack would
+    // miss, which is the class the gate was built for.
+    var underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
+    if (irverifygate.verify_problems("f", underflow, 0, 1).len() != 1) { return 173; }
+    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1)[0]),
+        "operand stack underflow")) { return 174; }
+
+    // Both at once: the gate reports each pass's findings, structure first.
+    var both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
+    var bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1);
+    if (bps.len() != 2) { return 175; }
+    if (!util.contains(irverify.problem_str(bps[0]), "is outside the frame")) { return 176; }
+    if (!util.contains(irverify.problem_str(bps[1]), "operand stack underflow")) { return 177; }
+    return 0;
+}
+
+// refuse_probe drives irverifygate.verify_or_refuse — the half that reads
+// FERN_IR_VERIFY and exits — from a stream that is definitely malformed.
+//
+// It exists because the backends' call sites cannot be tested from the other
+// side: the compiler does not emit malformed IR on demand, so nothing would
+// otherwise pin that the flag is read, that a non-empty verdict is acted on,
+// or that the exit code is 4. Reached only via `-refuse`.
+function refuse_probe(): i32 {
+    var malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
+    irverifygate.verify_or_refuse("probe", malformed, 0, 1);
+    // Only reachable with the flag unset: the gate must be inert by default,
+    // which is as much of the contract as the refusal is.
+    print("irverifygate: inert (FERN_IR_VERIFY unset)");
+    return 0;
+}
+
 function main(): i32 {
+    var av: string[] = args();
+    var ai: i32 = 0;
+    while (ai < av.len()) {
+        if (av[ai] == "-refuse") { return refuse_probe(); }
+        ai = ai + 1;
+    }
+
     // ---- 1. local index bounds ----------------------------------------
     // A frame of 3 slots admits 0..2 and refuses 3 and -1.
     var in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];
@@ -410,8 +479,12 @@ function main(): i32 {
     var fc: i32 = fip_checks();
     if (fc != 0) { return fc; }
 
+    var gc: i32 = gate_checks();
+    if (gc != 0) { return gc; }
+
     print("irverify: all structural checks agree");
     print("irverifystack: all stack checks agree");
     print("irfipverify: all allocation-budget checks agree");
+    print("irverifygate: compile-path gate agrees");
     return 0;
 }

@@ -26,6 +26,7 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverifygate";
 import "./asm_ir";
 import "./lexer";
 
@@ -442,6 +443,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");

@@ -52,7 +52,7 @@ func TestSelfHostSSALiftIRLower(t *testing.T) {
 	for _, name := range []string{
 		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern",
 		"ir.fern", "ssa.fern", "ssa_x86.fern", "ssa_arm64.fern",
-		"irlower.fern", "ssa_lift.fern", "ssa_lift_irlower_run.fern",
+		"irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ssa_lift.fern", "ssa_lift_irlower_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {

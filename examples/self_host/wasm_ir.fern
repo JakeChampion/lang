@@ -27,6 +27,7 @@ import "./parser";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverifygate";
 import "./asm_ir";
 import "./asmcore";
 import "./astwalk";
@@ -3109,6 +3110,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // allow `.`. r.n_params already counts the receiver as the first param.
     var fn_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals);
     var out: string = "  (func $" + fn_name;
     var p: i32 = 0;
     while (p < r.n_params) {
