@@ -810,6 +810,35 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
     return util.index_of_str(s.reclaimable_names, "VIEWFRAME:" + name) >= 0;
 }
 
+// mark_enum_field_alias records that local `name` was bound from a DIRECT enum
+// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
+// alias of the source struct's enum box (#6121). Storing it into a container
+// then needs the same Perceus dup the direct read gets, because
+// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
+// reclaimed. Appended rather than pre-scanned: the bind always precedes the
+// store, and enum_field_read_type needs the slot types the scan does not have.
+pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
+    return LowerState { ...s, reclaimable_names: s.reclaimable_names.append("ENUMALIAS:" + name) };
+}
+
+// is_enum_field_alias reports whether `name` carries the mark above. Rebinding
+// the name to a non-alias value does not clear it — a stale mark costs one
+// retain too many, which leaks and never over-frees.
+pub function (s: LowerState) is_enum_field_alias(name: string): boolean {
+    return util.index_of_str(s.reclaimable_names, "ENUMALIAS:" + name) >= 0;
+}
+
+// enum_alias_ident_escapes reports whether `e` is a bare ident on a local bound
+// from an enum field read — the routed-through-a-local form of the direct
+// `enum_field_read_type` container store, and retained at the same three sites.
+pub function enum_alias_ident_escapes(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_enum_field_alias(id.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -11700,7 +11729,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // (discardable_scalar_arrarr_lit et al) are unaffected.
                 match (arr.elements[i]) {
                     parser.ExprIdent(eid) => {
-                        if (sa.slot_is_rc_container(sa.slot_of(eid.name))) {
+                        if (sa.slot_is_rc_container(sa.slot_of(eid.name))
+                            || sa.is_enum_field_alias(eid.name)) {
                             sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
                         }
                     },
@@ -15930,6 +15960,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
+    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
+    // the source struct's enum box (#6121). No dup here — an alias that never
+    // escapes must not outlive the struct — only the mark, so a later container
+    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
         var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
@@ -17685,6 +17720,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
                                         aps = aps.emit(ir.op_drop());
                                     }
+                                    // The enum-field alias routed through a local
+                                    // (#6121) — same escape, same dup as the direct
+                                    // `xs.append(nxt.node)` read below.
+                                    else if (apelslot >= 0 && s.is_enum_field_alias(apel.name)) {
+                                        aps = aps.emit(ir.op_load_local(apelslot));
+                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                        aps = aps.emit(ir.op_drop());
+                                    }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
                                 // escapes the same way, against the k_enum dec of the
@@ -19429,7 +19472,7 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     // A DIRECT ENUM field read appended here aliases the source struct's enum box,
     // which __struct_drop_<T>'s k_enum arm decs on reclamation — retain it so that
     // dec only releases the dup, exactly as the in-place append path does (#6049).
-    if (enum_field_read_type(val, st) != "") {
+    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
         st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
     }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
