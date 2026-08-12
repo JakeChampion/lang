@@ -7033,10 +7033,12 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the mark: a stale mark costs one retain too many, which leaks and never
   over-frees.
 
-  **Not this defect, and left open:** the same loop-local struct leaks ~120 B per
-  iteration with *no* field read at all (`var first: P = mkp(i); t = t + first.pos`
-  measures the same 120 B as the aliasing spelling), so it is a struct-local
-  reclaim gap, not an alias one. Measured identical on the parent commit.
+  **Not this defect, and filed as #6758:** the same loop-local struct leaks
+  ~120 B per iteration with *no* field read at all (`var first: P = mkp(i); t = t
+  + first.pos` measures the same 120 B as the aliasing spelling), and 88 B for an
+  `i32[]` field in place of the enum one. Native is flat on both, so it is a
+  self-host struct-local reclaim gap, not an alias one. Measured identical on the
+  parent commit.
 
   VERIFIED: new `TestSelfHostEnumFieldAliasIR{X86_64,Arm64}` — three cases, all
   three exit 97 (value read back wrong) on the parent commit on both backends;
