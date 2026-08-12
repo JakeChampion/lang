@@ -3494,6 +3494,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             out = out + "    local.get " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind_tag == 19) {  // store_local
             out = out + "    local.set " + util.i32_to_string(o.i32_imm) + "\n";
+        } else if (o.kind_tag == 20) {  // tee_local
+            // store_local + load_local fused (#6638). This is the backend the
+            // fusion is FOR: one `local.tee` is a byte and a load cheaper than
+            // `local.set $X; local.get $X`, where the register backends generate
+            // equivalent code either way.
+            out = out + "    local.tee " + util.i32_to_string(o.i32_imm) + "\n";
         } else if (o.kind_tag == 34) {  // not
             out = out + "    i32.eqz\n";
         } else if (o.kind_tag == 160) {  // return

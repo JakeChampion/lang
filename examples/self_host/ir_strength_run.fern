@@ -173,6 +173,43 @@ function main(): i32 {
                          ir.op_return(), ir.op_const_i32(9), ir.op_drop()];
     out = out + "dce_in_optimize: " + render(ir.optimize_ops(both)) + "\n";
 
+    // 12. fuse_tee (#6638): `store_local X ; load_local X` becomes one
+    //     `tee_local X`. wasm turns that into a single `local.tee`; the
+    //     register backends peek the operand-stack top instead of popping
+    //     and re-pushing it.
+    var tee_hit: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
+    out = out + "tee_fused: " + render(ir.fuse_tee(tee_hit)) + "\n";
+
+    // 12a. A DIFFERENT slot is not a tee — the value stored and the value
+    //      loaded are unrelated.
+    var tee_slot: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_load_local(1)];
+    out = out + "tee_other_slot: " + render(ir.fuse_tee(tee_slot)) + "\n";
+
+    // 12b. NON-ADJACENT is refused even when nothing between them can touch
+    //      the slot. Widening that is copy propagation's job, not a peephole's.
+    var tee_gap: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(0), ir.op_const_i32(1), ir.op_drop(), ir.op_load_local(0)];
+    out = out + "tee_gap: " + render(ir.fuse_tee(tee_gap)) + "\n";
+
+    // 12c. The reversed adjacency is a plain read-then-write, not a tee.
+    var tee_rev: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(0)];
+    out = out + "tee_reversed: " + render(ir.fuse_tee(tee_rev)) + "\n";
+
+    // 12d. Two pairs in a row both fuse — consuming the load must not make
+    //      the walk skip the next store.
+    var tee_two: ir.Op[] = [ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(1)];
+    out = out + "tee_two: " + render(ir.fuse_tee(tee_two)) + "\n";
+
+    // 12e. Idempotent: a tee_local matches neither arm of the pattern.
+    var tee_once: ir.Op[] = ir.fuse_tee(tee_hit);
+    var tee_stable: i32 = 0;
+    if (render(ir.fuse_tee(tee_once)) == render(tee_once)) { tee_stable = 1; }
+    out = out + "tee_idempotent=" + util.i32_to_string(tee_stable) + "\n";
+
+    // 12f. optimize_ops runs it LAST, after the dead-code walk — so a pair the
+    //      DCE exposes is still fused.
+    var tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
+    out = out + "tee_in_optimize: " + render(ir.optimize_ops(tee_opt)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.

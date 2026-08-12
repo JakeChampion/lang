@@ -252,10 +252,13 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 		// triple to a single const_i32 before the backends see it, so this golden
 		// doubles as the fold's pin. `x * 10` survives because `x` is a load, not
 		// a constant.
+		// The `store_local 0 ; load_local 0` pair this golden used to carry is now a
+		// single `tee_local 0`: ir.fuse_tee runs last in optimize_ops (#6638), so
+		// this doubles as the fusion's pin on the real lowering path alongside the
+		// fold's.
 		const want = "const_i32 5\n" +
 			"int_cast\n" +
-			"store_local 0\n" +
-			"load_local 0\n" +
+			"tee_local 0\n" +
 			"const_i32_text 10\n" +
 			"mul\n" +
 			"int_cast\n" +
@@ -267,8 +270,8 @@ func TestSelfHostIRLowerRoundTrip(t *testing.T) {
 			t.Errorf("lowered op stream mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 		}
 		// exit code is ops.len() in -dump mode.
-		if code := cmd.ProcessState.ExitCode(); code != 8 {
-			t.Errorf("dump op count = %d, want 8", code)
+		if code := cmd.ProcessState.ExitCode(); code != 7 {
+			t.Errorf("dump op count = %d, want 7", code)
 		}
 	})
 }

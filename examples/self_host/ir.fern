@@ -2247,11 +2247,48 @@ pub function optimize_ops(ops: Op[]): Op[] {
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return eliminate_dead_code(cur); }
+        if (!r.changed) { return fuse_tee(eliminate_dead_code(cur)); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return eliminate_dead_code(cur);
+    return fuse_tee(eliminate_dead_code(cur));
+}
+
+// ---- tee fusion --------------------------------------------------------
+//
+// fuse_tee collapses the `store_local X ; load_local X` adjacency into a single
+// `tee_local X` — the op-list twin of native's internal/ir/tee.go (#6638).
+//
+// The pattern arrives from the closure inliner's arg-bind round trip, from a
+// `var x = …` immediately read, and from the assignment-as-expression lowering.
+// wasm is what the pass is FOR: `local.tee` is a byte and a load cheaper than
+// `local.set $X ; local.get $X`. The register backends peek the operand-stack top
+// instead of popping and re-pushing it, which is a wash — native's own header
+// calls the pass "effectively WASM-only in payoff".
+//
+// Fires ONLY on an immediate adjacency addressing the same slot. Anything
+// between the two — even an op that cannot touch the slot — leaves the pair
+// alone; widening that is copy propagation's job, not a peephole's. Runs LAST,
+// after dead-code elimination, so a pair the DCE walk exposes is still caught.
+// Idempotent: a tee_local matches neither arm, so a second run is a no-op.
+pub function fuse_tee(ops: Op[]): Op[] {
+    var k_store: i32 = kind_id("store_local");
+    var k_load: i32 = kind_id("load_local");
+    var out: Op[] = [];
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (i + 1 < ops.len()
+                && ops[i].kind_tag == k_store
+                && ops[i + 1].kind_tag == k_load
+                && ops[i].i32_imm == ops[i + 1].i32_imm) {
+            out = out.append(op_tee_local(ops[i].i32_imm));
+            i = i + 2;
+        } else {
+            out = out.append(ops[i]);
+            i = i + 1;
+        }
+    }
+    return out;
 }
 
 // is_commutative_kind reports whether `id` is an integer binary op whose
