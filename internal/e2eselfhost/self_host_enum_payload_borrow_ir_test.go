@@ -187,3 +187,131 @@ function main(): i32 {
     return 0;
 }`, "option-array-payload-arm-borrow", 0)
 }
+
+// #6121: routing the same enum field read through a LOCAL defeated #6049's
+// retain. `var tmp: N = first.node` binds an uncounted alias of the source
+// struct's enum box; the container store that follows is then a bare ident, and
+// the ident arm only retained an rc-CONTAINER slot (array / string / tuple), of
+// which an enum slot is none. So __struct_drop_P's k_enum arm freed the box the
+// array still pointed at — the identical use-after-free #6049 fixed for the
+// direct spelling, one indirection away, on all three backends.
+//
+// The bind takes no dup: an alias that never escapes must not outlive the
+// struct. The mark travels with the name (mark_enum_field_alias) and the retain
+// happens at the store, so the balance is exactly the direct read's — field
+// rc 1 → store dup 2 → __struct_drop_<T> 1 → the container keeps it.
+//
+// Every case churns after the struct dies so a freed block is really recycled;
+// without that the stale pointer still reads plausible data (97 = value read
+// back wrong, 96 = wrong length, 99 = over-release detector).
+var selfHostEnumFieldAliasCases = []struct {
+	name string
+	src  string
+	exit int
+}{
+	// The issue's repro: the array LITERAL element is a bare ident.
+	{"alias-into-array-literal", `enum N { Leaf(i32), Seq(N[]) }
+struct P { node: N, pos: i32 }
+function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var out: N[] = [tmp]; return out; }
+function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
+function main(): i32 {
+    var xs: N[] = build();
+    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    var churn2: N = Leaf(55);
+    if (describe(xs[0]) != 102) { return 97; }
+    if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// The .append sibling — the in-place arr_push path, where the retain is an
+	// inc bracket over the loaded slot rather than an inline inc.
+	{"alias-into-append", `enum N { Leaf(i32), Seq(N[]) }
+struct P { node: N, pos: i32 }
+function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var out: N[] = []; out = out.append(tmp); return out; }
+function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
+function main(): i32 {
+    var xs: N[] = build();
+    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    var churn2: N = Leaf(55);
+    if (describe(xs[0]) != 102) { return 97; }
+    if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// TWO containers off one alias: the retain is per-store, not per-bind, so
+	// both references are counted and the struct's dec still leaves one live.
+	{"alias-into-two-containers", `enum N { Leaf(i32), Seq(N[]) }
+struct P { node: N, pos: i32 }
+function mkp(): P { var kids: N[] = [Leaf(7), Leaf(8)]; return P { node: Seq(kids), pos: 1 }; }
+function build(): N[] { var first: P = mkp(); var tmp: N = first.node; var a: N[] = [tmp]; var b: N[] = []; b = b.append(tmp); return a.append(b[0]); }
+function describe(n: N): i32 { match (n) { Leaf(v) => { return v; }, Seq(xs) => { return 100 + xs.len(); } } }
+function main(): i32 {
+    var xs: N[] = build();
+    var churn: N[] = [Leaf(1), Leaf(2), Leaf(3)];
+    var churn2: N = Leaf(55);
+    if (xs.len() != 2) { return 96; }
+    if (describe(xs[0]) != 102) { return 97; }
+    if (describe(xs[1]) != 102) { return 97; }
+    if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+}
+
+// TestSelfHostEnumFieldAliasIRX86_64 — the #6121 cases through the production
+// x86-64 IR path. All three exit 97 on the parent commit.
+func TestSelfHostEnumFieldAliasIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range selfHostEnumFieldAliasCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d (97 = enum box read back wrong → use-after-free; 99 = over-release detector)", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
+
+// TestSelfHostEnumFieldAliasIRArm64 — the same cases on arm64, which the shared
+// irlower analysis makes a real second backend rather than a formality: the
+// retain sites emit through a different instruction selector, and the parent
+// commit fails all three here too.
+func TestSelfHostEnumFieldAliasIRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+
+	for _, tc := range selfHostEnumFieldAliasCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
+			cmd := runArm64Bin(qemu, progBin)
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			}
+		})
+	}
+}
