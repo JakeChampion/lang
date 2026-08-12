@@ -95,12 +95,20 @@ func TestSelfHostStrengthIRX86_64(t *testing.T) {
 // imul/mul it replaced.
 //
 // Only the emitted text is checked, so neither qemu nor a linker is needed.
+//
+// The multiplicand is a PARAMETER, not a local bound to a literal. It used to be
+// `var x: i32 = 5; return x * 8`, and #6638's copy propagation made that program
+// stop exercising this assertion: dropping the dead tee let the fold see the
+// constant, so the whole body collapses to `const_i32 40 ; return` with no shift
+// to inspect. That is better code and still returns 40 — but it is not this
+// test's subject. A parameter keeps the multiplicand opaque to the fold so the
+// peephole's output is what actually reaches the backend.
 func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
-	src := []byte("function main(): i32 { var x: i32 = 5; return x * 8; }\n")
+	src := []byte("function shift8(x: i32): i32 { return x * 8; }\nfunction main(): i32 { return shift8(5); }\n")
 
 	for _, tc := range []struct {
 		target  string
