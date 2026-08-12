@@ -1588,6 +1588,18 @@ function check_expr(e: parser.Expr, s: Scope): Type {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.is_float) { return t_float(); }
+            // A SUFFIX names the type outright. Without this every integer
+            // literal typed i32, and check_call_expr's if-expression arm — which
+            // types the desugared IIFE from its branches' common type — handed
+            // irlower `c.ty = "i32"` for `if (c) { big_u64 } else { 0u64 }`.
+            // expr_is_u64 trusts that tag before its structural walk, so the
+            // chained `>>` selected the SIGNED shift: wrong once bit 63 is set,
+            // with no trap and no diagnostic. parser.if_expr_rt and mono_infer
+            // are the sibling literal classifiers.
+            if (n.suffix == "i64") { return t_i64(); }
+            if (n.suffix == "u64") { return t_u64(); }
+            if (n.suffix == "u32") { return t_u32(); }
+            if (n.suffix == "u8") { return t_u8(); }
             return t_i32();
         },
         parser.ExprBool(_) => { return t_bool(); },
