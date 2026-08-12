@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/modload"
@@ -135,5 +136,58 @@ func TestRunVendorWorkspaceUnion(t *testing.T) {
 	}
 	if _, _, err := modload.Load(filepath.Join(root, "app", "main.fern")); err != nil {
 		t.Fatalf("member build should resolve ext from the root vendor/: %v", err)
+	}
+}
+
+// A versioned (MVS) dependency names no directory of its own, so its source
+// has to come from fern.lock — the same place a build reads it from. Before
+// this resolved through the lock, `m.DepDir` answered the manifest's OWN
+// directory: the package was vendored into its own vendor/ under its own
+// name, and the dependency was dropped silently.
+func TestRunVendorVersionedDepThroughLock(t *testing.T) {
+	root := writeVendorTree(t, map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\nindex = \"../index.toml\"\n" +
+			"[dependencies]\nlibv = \"1.0.0\"\n",
+		"app/main.fern":        `import "libv";` + "\n" + `function main(): i32 { return libv.n(); }`,
+		"index.toml":           "[libv]\n\"1.0.0\" = { path = \"libv-1.0.0\" }\n",
+		"libv-1.0.0/fern.toml": "[package]\nname = \"libv\"\n",
+		"libv-1.0.0/lib.fern":  "pub function n(): i32 { return 7; }",
+	})
+	app := filepath.Join(root, "app")
+	if err := runResolve(app); err != nil {
+		t.Fatal(err)
+	}
+	if err := runVendor(app); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(app, "vendor", "libv", "lib.fern")); err != nil {
+		t.Fatalf("the locked version should be vendored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(app, "vendor", "app")); !os.IsNotExist(err) {
+		t.Error("the package vendored ITSELF — a versioned dep resolved to its own manifest dir")
+	}
+	// The pinned source is now the only copy the build can reach.
+	if err := os.RemoveAll(filepath.Join(root, "libv-1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := modload.Load(filepath.Join(app, "main.fern")); err != nil {
+		t.Fatalf("vendored load of a versioned dep should be offline: %v", err)
+	}
+}
+
+// A versioned dependency with no lock at all is refused, naming `-resolve` —
+// vendoring never resolves versions on its own.
+func TestRunVendorVersionedDepWithoutLock(t *testing.T) {
+	root := writeVendorTree(t, map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\nindex = \"../index.toml\"\n" +
+			"[dependencies]\nlibv = \"1.0.0\"\n",
+		"app/main.fern": `function main(): i32 { return 0; }`,
+	})
+	err := runVendor(filepath.Join(root, "app"))
+	if err == nil {
+		t.Fatal("expected a refusal for a versioned dep with no fern.lock")
+	}
+	if !strings.Contains(err.Error(), "fern -resolve") {
+		t.Errorf("refusal should name `fern -resolve`, got: %v", err)
 	}
 }

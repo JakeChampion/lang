@@ -850,6 +850,11 @@ func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (
 	return filepath.Abs(filepath.Join(depDir, lib))
 }
 
+// LockedDepDir is lockedDepDir for callers outside the loader — `fern
+// -vendor`, which must reach a versioned dependency's source the same way
+// a build does, and report the same diagnostic when it cannot.
+func LockedDepDir(manDir, name string) (string, error) { return lockedDepDir(manDir, name) }
+
 // lockedDepDir resolves a versioned (MVS) dependency `name` through the
 // package's fern.lock: the lock pins an exact version and its source (a
 // local dir, or a url whose archive lives in the content-addressed

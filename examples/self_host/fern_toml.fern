@@ -364,9 +364,12 @@ pub function dep_hash(m: Manifest, name: string): Option[string] {
 // LockEntry is one resolved dependency from fern.lock: the package name
 // plus, for a `path`-sourced version, its directory, and for a
 // `url`-sourced version, its `sha256:<hex>` hash — resolved from the
-// per-machine content-addressed store (#4949).
+// per-machine content-addressed store (#4949). `version` is the pinned
+// version; the loader does not need it, but a diagnostic naming what was
+// selected does.
 pub struct LockEntry {
     name: string,
+    version: string,
     path: string,
     hash: string,
 }
@@ -376,6 +379,7 @@ pub struct LockEntry {
 pub function parse_lock(src: string): LockEntry[] {
     var out: LockEntry[] = [];
     var name: string = "";
+    var version: string = "";
     var path: string = "";
     var hash: string = "";
     var have: boolean = false;
@@ -387,8 +391,9 @@ pub function parse_lock(src: string): LockEntry[] {
         if (line.len() == 0) { continue; }
         if (line[0] == 35) { continue; }              // '#'
         if (line == "[[package]]") {
-            if (have) { out = out.append(LockEntry { name: name, path: path, hash: hash }); }
+            if (have) { out = out.append(LockEntry { name: name, version: version, path: path, hash: hash }); }
             name = "";
+            version = "";
             path = "";
             hash = "";
             have = true;
@@ -401,6 +406,9 @@ pub function parse_lock(src: string): LockEntry[] {
         if (key == "name") {
             match (quoted_value(val, 0)) { Some(v) => { name = v; }, None => { } }
         }
+        if (key == "version") {
+            match (quoted_value(val, 0)) { Some(v) => { version = v; }, None => { } }
+        }
         if (key == "path") {
             match (quoted_value(val, 0)) { Some(v) => { path = v; }, None => { } }
         }
@@ -408,8 +416,30 @@ pub function parse_lock(src: string): LockEntry[] {
             match (quoted_value(val, 0)) { Some(v) => { hash = v; }, None => { } }
         }
     }
-    if (have) { out = out.append(LockEntry { name: name, path: path, hash: hash }); }
+    if (have) { out = out.append(LockEntry { name: name, version: version, path: path, hash: hash }); }
     return out;
+}
+
+// lock_has returns whether `name` has a [[package]] entry at all — the
+// question "is this dependency resolved?", which lock_path_of / lock_hash_of
+// cannot answer on their own (each is None for the other's source form).
+pub function lock_has(entries: LockEntry[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        if (entries[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// lock_version_of returns the version pinned for `name`, or "".
+pub function lock_version_of(entries: LockEntry[], name: string): string {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        if (entries[i].name == name) { return entries[i].version + ""; }
+        i = i + 1;
+    }
+    return "";
 }
 
 // lock_path_of returns the resolved directory of a `path`-sourced locked
