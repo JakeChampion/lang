@@ -1,0 +1,202 @@
+// examples/self_host/ferndoc_run.fern — driver for the doc-comment
+// association pass (ferndoc.fern, #6642).
+//
+// Reads a module on stdin and prints what the pass bound to what, one line per
+// public declaration plus the module intro. The rendering is deliberately flat
+// and unambiguous rather than pretty: a doc's newlines and backslashes are
+// escaped, so one output line is exactly one declaration and a diff points at
+// the association that changed.
+//
+//     intro:<module intro, or empty>
+//     <kind> <name> <line>:<col> <doc, escaped>
+//
+// `-self` runs the pass's own assertions instead — the both-directions case
+// set, whose exit code names the failing case.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+import "./ferndoc";
+import "./util";
+
+// escape renders a multi-line doc on one output line.
+//
+// The backslash is escaped as well as the newline, and it has to be: doc
+// prose in the stdlib contains literal `\r\n` two-character sequences (the CSV
+// and HTTP modules describe record separators), so an escape that only
+// rewrote newlines would be ambiguous with text that was already there.
+function escape(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i] as i32;
+        if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+function report(src: string): string {
+    var dm: ferndoc.DocModule = ferndoc.docs_of(src);
+    var out: string = "intro:" + escape(dm.intro) + "\n";
+    var i: i32 = 0;
+    while (i < dm.decls.len()) {
+        var d: ferndoc.DocDecl = dm.decls[i];
+        out = out + d.kind + " " + d.name + " "
+            + util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col)
+            + " " + escape(d.doc) + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+// ---- self-checks -------------------------------------------------------
+
+// c builds a comment at `line` so the walker cases read as positions, which is
+// the only thing take_doc looks at. Column is irrelevant to association and is
+// fixed at 1 to say so.
+function c(line: i32, text: string): lexer.Comment {
+    return lexer.Comment { line: line, col: 1, text: text };
+}
+
+function took(cs: lexer.Comment[], cursor: i32, decl_line: i32): string {
+    return ferndoc.take_doc(cs, cursor, decl_line).doc;
+}
+
+// self_checks returns 0, or the id of the failing case.
+function self_checks(): i32 {
+    // ---- 1. trim_space -------------------------------------------------
+    if (ferndoc.trim_space("  hi  ") != "hi") { return 1; }
+    if (ferndoc.trim_space("\t\nhi\r\n") != "hi") { return 2; }
+    if (ferndoc.trim_space("   ") != "") { return 3; }
+    if (ferndoc.trim_space("") != "") { return 4; }
+    // Interior space survives — only the ends are trimmed.
+    if (ferndoc.trim_space("  a  b  ") != "a  b") { return 5; }
+
+    // ---- 2. the run directly above -------------------------------------
+    var one: lexer.Comment[] = [c(4, " doc")];
+    if (took(one, 0, 5) != "doc") { return 10; }
+    // One blank line is enough to detach it.
+    if (took(one, 0, 6) != "") { return 11; }
+    // A comment BELOW the declaration is not its doc.
+    if (took(one, 0, 3) != "") { return 12; }
+    // A comment on the declaration's own line is a trailing comment.
+    if (took(one, 0, 4) != "") { return 13; }
+
+    // ---- 3. runs join, gaps split --------------------------------------
+    var run: lexer.Comment[] = [c(3, " first"), c(4, " second")];
+    if (took(run, 0, 5) != "first\nsecond") { return 20; }
+    // A gap inside means only the run touching the declaration is taken.
+    var split: lexer.Comment[] = [c(2, " far"), c(4, " near")];
+    if (took(split, 0, 5) != "near") { return 21; }
+    // ...and the cursor lands past it, so nothing is handed out twice.
+    if (ferndoc.take_doc(split, 0, 5).cursor != 2) { return 22; }
+    // The detached run is not resurrected by a later declaration either.
+    if (took(split, 2, 9) != "") { return 23; }
+
+    // ---- 4. the cursor is the whole state ------------------------------
+    // Two documented declarations in a row: each takes its own run, and the
+    // second must not see the first's.
+    var two: lexer.Comment[] = [c(1, " a"), c(4, " b")];
+    var t1: ferndoc.TakeResult = ferndoc.take_doc(two, 0, 2);
+    if (t1.doc != "a" || t1.cursor != 1) { return 30; }
+    var t2: ferndoc.TakeResult = ferndoc.take_doc(two, t1.cursor, 5);
+    if (t2.doc != "b" || t2.cursor != 2) { return 31; }
+    // Asking from an exhausted cursor is empty, not a crash.
+    if (took(two, 2, 9) != "") { return 32; }
+    if (took([], 0, 1) != "") { return 33; }
+
+    // A declaration on line 1 has no line above it. `decl_line - 1` is 0 and
+    // no comment can sit there, so the answer is empty rather than the first
+    // comment in the file.
+    if (took([c(1, " x")], 0, 1) != "") { return 34; }
+
+    // ---- 5. module intro -----------------------------------------------
+    // A header run followed by a blank line is the intro, joined by SPACE.
+    var hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
+    if (ferndoc.module_intro(hdr, 5) != "Package foo. Second line.") { return 40; }
+    // Running straight into the first declaration makes it that declaration's
+    // doc instead — line 3 is directly below a run ending at line 2.
+    if (ferndoc.module_intro(hdr, 3) != "") { return 41; }
+    // Not starting at line 1 is not a header.
+    if (ferndoc.module_intro([c(2, " later")], 9) != "") { return 42; }
+    if (ferndoc.module_intro([], 9) != "") { return 43; }
+    // No declarations at all: the header stands.
+    if (ferndoc.module_intro(hdr, 0) != "Package foo. Second line.") { return 44; }
+
+    // ---- 6. end to end -------------------------------------------------
+    // The shape the whole pass exists for: a header, a private declaration
+    // between two public ones, and a blank line detaching a comment.
+    var src: string = "// Header line.\n"
+        + "\n"
+        + "// Adds.\n"
+        + "pub function add(a: i32, b: i32): i32 { return a + b; }\n"
+        + "\n"
+        + "// Private, and its doc goes nowhere.\n"
+        + "function helper(): i32 { return 0; }\n"
+        + "\n"
+        + "// Detached.\n"
+        + "\n"
+        + "pub function bare(): i32 { return 1; }\n";
+    var dm: ferndoc.DocModule = ferndoc.docs_of(src);
+    if (dm.intro != "Header line.") { return 50; }
+    if (dm.decls.len() != 2) { return 51; }
+    if (dm.decls[0].name != "add" || dm.decls[0].doc != "Adds.") { return 52; }
+    // `bare`'s comment is one blank line up, so it documents nothing — and the
+    // private declaration's comment never leaks onto it either.
+    if (dm.decls[1].name != "bare" || dm.decls[1].doc != "") { return 53; }
+    if (dm.decls[0].kind != "function") { return 54; }
+
+    // Structs and enums are collected too, in source order rather than list
+    // order — the parser hands back a separate list per decl kind.
+    var src2: string = "// Point.\n"
+        + "pub struct P { x: i32 }\n"
+        + "\n"
+        + "// Colour.\n"
+        + "pub enum C { Red, Blue }\n"
+        + "\n"
+        + "// Maker.\n"
+        + "pub function make(): i32 { return 0; }\n";
+    var dm2: ferndoc.DocModule = ferndoc.docs_of(src2);
+    // The header runs straight into `struct P`, so it is P's doc, not an intro.
+    if (dm2.intro != "") { return 60; }
+    if (dm2.decls.len() != 3) { return 61; }
+    if (dm2.decls[0].kind != "struct" || dm2.decls[0].name != "P") { return 62; }
+    if (dm2.decls[0].doc != "Point.") { return 63; }
+    if (dm2.decls[1].kind != "enum" || dm2.decls[1].name != "C") { return 64; }
+    if (dm2.decls[1].doc != "Colour.") { return 65; }
+    if (dm2.decls[2].kind != "function" || dm2.decls[2].name != "make") { return 66; }
+    if (dm2.decls[2].doc != "Maker.") { return 67; }
+
+    // A private declaration is not documented at all, and neither is a
+    // `__`-prefixed public one.
+    var src3: string = "// Hidden.\n"
+        + "function priv(): i32 { return 0; }\n"
+        + "// Also hidden.\n"
+        + "pub function __internal(): i32 { return 0; }\n"
+        + "// Shown.\n"
+        + "pub function shown(): i32 { return 0; }\n";
+    var dm3: ferndoc.DocModule = ferndoc.docs_of(src3);
+    if (dm3.decls.len() != 1) { return 70; }
+    if (dm3.decls[0].name != "shown" || dm3.decls[0].doc != "Shown.") { return 71; }
+
+    return 0;
+}
+
+function main(): i32 {
+    var av: string[] = args();
+    var i: i32 = 0;
+    while (i < av.len()) {
+        if (av[i] == "-self") {
+            var rc: i32 = self_checks();
+            if (rc != 0) { return rc; }
+            print("ferndoc: association agrees");
+            return 0;
+        }
+        i = i + 1;
+    }
+    write(report(io.read_all_stdin()));
+    return 0;
+}
