@@ -979,7 +979,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		for _, tp := range fn.TypeParams {
 			seen[tp] = true
 		}
-		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen)
+		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen, fn.SourceModule)
 		// Receiver type-vars go FIRST: the call site seeds them
 		// positionally from the receiver's type args (a method like
 		// `(b: Box[T]) map[U](...)` gets T from the receiver and infers
@@ -3926,17 +3926,21 @@ func deriveRecvEnum(ed *ast.EnumDecl) (ast.EnumType, []string) {
 }
 
 // collectFreeTypeVars walks a method-receiver type and collects the
-// names that are NOT known structs / enums — i.e. the implicit type
-// variables a generic-receiver method binds (the `T` in `Box[T]`).
-// Built-in scalar types are NumberType / FloatType / BoolType /
-// StringType, not named StructType, so they're excluded naturally; a
-// name that happens to match a real struct / enum is treated as a
-// concrete instantiation, not a variable. Dedupes via `seen`.
-func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string]bool) {
+// names that are NOT structs / enums visible from `src`, the module
+// that declared the method — i.e. the implicit type variables a
+// generic-receiver method binds (the `T` in `Box[T]`). Built-in scalar
+// types are NumberType / FloatType / BoolType / StringType, not named
+// StructType, so they're excluded naturally; a name that resolves to a
+// struct / enum the declaring module can reach is treated as a concrete
+// instantiation, not a variable. Dedupes via `seen`.
+//
+// Visibility matters because the merged program is flat: without it a
+// `struct V` in one module would make `core/map`'s `(m: Map[K, V])`
+// methods bind only K, and the stdlib would fail to check against a
+// type it cannot even name.
+func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string]bool, src string) {
 	named := func(name string, args []ast.Type) {
-		_, isStruct := c.info.Structs[name]
-		_, isEnum := c.info.Enums[name]
-		if !isStruct && !isEnum {
+		if !c.nominalVisibleFrom(name, src) {
 			if !seen[name] {
 				seen[name] = true
 				*out = append(*out, name)
@@ -3944,7 +3948,7 @@ func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string
 			return
 		}
 		for i := range args {
-			c.collectFreeTypeVars(args[i], out, seen)
+			c.collectFreeTypeVars(args[i], out, seen, src)
 		}
 	}
 	switch x := t.(type) {
@@ -3953,14 +3957,40 @@ func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string
 	case ast.EnumType:
 		named(x.Name, x.Args)
 	case ast.ArrayType:
-		c.collectFreeTypeVars(x.Elem, out, seen)
+		c.collectFreeTypeVars(x.Elem, out, seen, src)
 	case ast.SliceType:
-		c.collectFreeTypeVars(x.Elem, out, seen)
+		c.collectFreeTypeVars(x.Elem, out, seen, src)
 	case ast.TupleType:
 		for i := range x.Elems {
-			c.collectFreeTypeVars(x.Elems[i], out, seen)
+			c.collectFreeTypeVars(x.Elems[i], out, seen, src)
 		}
 	}
+}
+
+// nominalVisibleFrom reports whether `name` denotes a struct or enum
+// that module `src` can reference, under the same import-graph rules
+// methodVisibleHere applies to methods: an unstamped decl (built-in or
+// synthesised) is universal, an unstamped caller is unconstrained, and
+// the flat-loaded stdlib sees itself.
+func (c *checker) nominalVisibleFrom(name, src string) bool {
+	var declSrc string
+	if sd, ok := c.info.Structs[name]; ok {
+		declSrc = sd.SourceModule
+	} else if ed, ok := c.info.Enums[name]; ok {
+		declSrc = ed.SourceModule
+	} else {
+		return false
+	}
+	if declSrc == "" || src == "" || declSrc == src {
+		return true
+	}
+	if strings.HasPrefix(declSrc, "stdlib://") && strings.HasPrefix(src, "stdlib://") {
+		return true
+	}
+	if c.info.ModuleImports == nil {
+		return true
+	}
+	return c.info.ModuleImports[src][declSrc]
 }
 
 // bindDeriveTypeParams turns a synthesised derive method into a generic
