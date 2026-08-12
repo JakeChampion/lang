@@ -170,7 +170,7 @@ env:
   # same regex as the two lists above, and each has a matching job below.
   # (Distinct from ISOLATED_DRIVER_TESTS, which is about *where fern.fern gets
   # cold-built*, not about run length.)
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only. EMPTY means nothing is
   # quarantined — the #4801 quarantine is fully retired.
@@ -580,6 +580,65 @@ jobs:
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWasmWholeCompilerShardedLink$' -test.v -test.timeout 28m
+
+  # THE ARM64 PER-MODULE WHOLE-COMPILER BUILD. Emits all ~37 units of the
+  # compiler as arm64 asm, cross-links them, and runs the result under qemu as a
+  # compiler — the guard for the `close_needs` use-after-free that only arm64
+  # surfaced.
+  #
+  # Its own job for the same reason as the wasm link above, and it is worth
+  # spelling out how far its weight had drifted: the entry said 80 s while the
+  # test cost ~945 s in CI (run 31561068121 shard5: 426 s of per-module emit,
+  # then ~508 s of link + qemu + the step-7 merged-default compile). LPT ranked
+  # it below entries a tenth its size, and the shard holding it hit `panic: test
+  # timed out after 18m0s` — deterministically, since the partition is
+  # deterministic: two unrelated branches failed the same shard5 at the same
+  # 1123 s within a minute of each other. 87% of the shards' whole wall for one
+  # test is past what any weight can schedule around.
+  #
+  # `needs: warm` unlike the wasm twin: this one's driver IS warmed
+  # (asm_modload_run, the `load` group), so restoring it skips a ~70 s emit.
+  arm64-permodule-wholecompiler:
+    needs: [build, warm]
+    name: arm64-permodule-wholecompiler-x86_64
+    runs-on: ubuntu-latest
+    # ~15.7 min measured inside a shard; 35 is ~2.2x that, matching the headroom
+    # the wasm twin gets.
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      # Assembles arm64 units with the cross gcc and RUNS the linked compiler,
+      # so this needs both halves of the toolchain.
+      - name: aarch64 cross-gcc + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-x86_64
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: warm-x86_64-*
+          path: ${{ runner.temp }}/warm
+      - name: arm64 per-module whole-compiler build + run
+        run: |
+          set -euo pipefail
+          chmod +x e2eselfhost.test
+          BIN="$PWD/e2eselfhost.test"
+          # Writable dir first, then every warm artifact dir as a read-only
+          # source — the same ':'-list the shards build.
+          CACHE="$RUNNER_TEMP/uc-local"
+          mkdir -p "$CACHE"
+          for d in "$RUNNER_TEMP"/warm/*/; do
+            if [ -d "$d" ]; then CACHE="$CACHE:${d%/}"; fi
+          done
+          export FERN_SELFHOST_BUILD_CACHE="$CACHE"
+          echo "FERN_SELFHOST_BUILD_CACHE=$FERN_SELFHOST_BUILD_CACHE"
+          cd internal/e2eselfhost
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostModloadPerModuleWholeCompilerArm64$' -test.v -test.timeout 33m
 
   # The fixture corpus, run through the SELF-HOST compiler, once per target it
   # emits. Nothing else does: all four of TestFernFixtures' backends are the

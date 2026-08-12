@@ -53,6 +53,8 @@
 # are filtered out before the partition sees them, so an entry for one is dead.
 # TestSelfHostWasmWholeCompilerShardedLink went that way: weighted 240 from a
 # 170 s local measurement, it still ran 12.8 min in CI and timed out its shard.
+# TestSelfHostModloadPerModuleWholeCompilerArm64 followed at ~945 s measured in
+# CI against an entry of 80 — 87% of the shards' wall for one test.
 
 # Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
 TestSelfHostModloadPerModuleWholeCompilerX86_64 460
@@ -68,7 +70,6 @@ TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
-TestSelfHostModloadPerModuleWholeCompilerArm64 80
 TestSelfHostFieldReclaimIRX86_64 55
 TestSelfHostAsmIRPath 28
 TestSelfHostStdTestE2E 18
