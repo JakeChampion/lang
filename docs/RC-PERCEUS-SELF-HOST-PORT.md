@@ -7044,3 +7044,60 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   three exit 97 (value read back wrong) on the parent commit on both backends;
   cross-backend exit agreement on wasm (wasmtime) for the same programs.
   Refs #6121 #6049 #4365 #4451.
+- 2026-08-12: **`Option[string[]]` / `Result[string[], _]` — the per-ELEMENT
+  release (#6495).** Two of the three rows #6495's leak list left open, and one
+  cause between them. Re-measured on `cb2dbf2` before touching anything, 400 then
+  800 iterations, `FERN_LEAKCHECK=1`, self-host x86-64 against native:
+
+  | shape | before | after | native |
+  |---|---|---|---|
+  | `Option[string[]]` | `allocs=1600 frees=0` **51200 B** | `1600/1600` **0** | `800/800` 0 |
+  | `Result[string[], string]` | `allocs=1600 frees=0` **51200 B** | `1600/1600` **0** | `800/800` 0 |
+  | `Option[Option[i32[]]]` | `allocs=1200 frees=0` 48000 B | unchanged | `1200/1200` 0 |
+
+  Exactly x2.0 per doubling before, flat after. The third row is untouched and
+  still open — it is the OTHER cause the list names (`rcpayload_option_cand` has
+  no branch whose payload is itself an Option), not another admission.
+
+  **`frees=0`, not a partial release, and that is the tell.** The class admits a
+  payload its drop releases WHOLE, and `is_leaksafe_array_field` decides which
+  arrays qualify — a flat scalar buffer one `__fern_rc_dec` frees with no inner
+  walk. It refuses `string[]` CORRECTLY (a plain dec frees the buffer and strands
+  every element box), and nothing else claimed the shape, so the candidate was
+  refused outright rather than half-released.
+
+  **The release already existed**, which is why this is an irlower change with no
+  runtime work: `__fern_str_arr_free` walks the element boxes then frees the
+  buffer, rc-guarded, and has backed the string[] LOCAL sweep and the string[]
+  struct FIELD reclaim since #4355 on all three backends (wasm routes it to
+  `$__fern_arr_dec_ptr`).
+
+  **Freshness is per ELEMENT, and it is the whole soundness argument.** The scalar
+  case only ever frees the one buffer it was handed, so a fresh literal suffices;
+  here each element box is freed too, so ONE aliased element would be released out
+  from under its owner. `all_fresh_string_elems` demands every element be a literal
+  or a fresh producer — the same rule the bare `string` payload already applied,
+  one level down.
+
+  The boolean that carried "is this payload a string" is **gone**: three payload
+  kinds now need three helpers, so `OptRcFrees` carries the helper NAME
+  (`opt_payload_freefn`), `emit_opt_str_payload_drop` collapsed into
+  `emit_opt_payload_drop_via` (the two differed in exactly one call), and the
+  precise-drop kind `opt-strpayload` became `opt-payloadfree:<helper>`. The one
+  place that was NOT derivable — an optret_pending entry carries the release as a
+  single character — got `optret_payload_tag` next to the mapping it mirrors, so a
+  fourth kind cannot get a helper in one and no tag in the other. A missing tag
+  there falls back to the plain box dec, which for a string[] strands every
+  element.
+
+  VERIFIED: new `TestSelfHostOptStrArrPayloadX86_64` — 7 rows on exact alloc/free
+  balance (a bump bound cannot separate "freed the buffer" from "freed the
+  elements", and the element boxes are most of the bytes): Option, Result, the
+  un-annotated literal, an element-read value guard, the scalar-array control, and
+  the two hazards. Three rows in the shared `optStructReclaimCases` table carry it
+  to **arm64 (qemu) and wasm (wasmtime)**. The hazards — an ALIASED payload read
+  after the match, and an arm binding that escapes — stay REFUSED with a nonzero
+  remainder, which is the conservative side: releasing there dangles rather than
+  leaks. Every value matches native (`__rc_underflow()` probes are self-host-only,
+  so `fern -interp` is not their oracle — they carry a 99 sentinel instead).
+  Refs #6495 #6360 #4355 #4451.
