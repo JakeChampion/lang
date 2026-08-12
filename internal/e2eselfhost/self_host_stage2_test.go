@@ -41,7 +41,7 @@ func TestSelfHostStage2Bootstrap(t *testing.T) {
 		"    return 0;\n" +
 		"}\n"
 	files := map[string]string{"main.fern": entry}
-	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "asm_ir"} {
+	for _, m := range []string{"util", "astwalk", "asmcore", "lexer", "parser", "ir", "irlower", "irverify", "irverifystack", "irverifygate", "asm_ir"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
 			t.Fatalf("read %s.fern: %v", m, err)
