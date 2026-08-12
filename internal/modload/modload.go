@@ -487,9 +487,11 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, sd := range prog.Structs {
-		// Same source-module stamping as FuncDecl — used by the
-		// LSP to answer cross-module goto-def queries on type
-		// names. No semantic effect on the rest of the pipeline.
+		// Same source-module stamping as FuncDecl. The LSP answers
+		// cross-module goto-def on type names with it, and the checker
+		// scopes nominal type names by it — every module's decls land
+		// in one merged table, so `struct V` here must not make another
+		// module's `V` type parameter concrete (#6118).
 		sd.SourceModule = path
 		if sd.Public {
 			mod.publicStructs[sd.Name] = true
