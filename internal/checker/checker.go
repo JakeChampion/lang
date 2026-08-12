@@ -2877,31 +2877,6 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	return c.info, nil
 }
 
-// methodVisibleHere reports whether `mangled` is callable from
-// the current call-site context. The rule (per
-// docs/PRELUDE-TO-MODULES.md) is: a method declared in module M
-// is callable from a file F only if M ∈ closure(F).
-//
-// Empty source modules on either side skip the check —
-// accommodation for checker-synthesised methods (Reader /
-// Writer / Map / MapIter / the inline-IR `Array.push`) and
-// single-file programs that bypass modload.
-//
-// Same-module always passes (a module can always call its own
-// methods regardless of import graph). Cross-module visibility
-// consults the program-wide import-closure map modload built
-// during `combine`.
-//
-// Stdlib-to-stdlib shortcut: a method declared in any stdlib
-// module is universally callable from any other stdlib module
-// regardless of import closure. The stdlib's method graph has
-// natural cycles (std/string's bodies call (i32) byte methods
-// from std/i32; std/i32's bodies call (string) methods from
-// std/string) that modload's cycle-detector would otherwise
-// reject; modload clears `SourceModule` on every stdlib-loaded
-// fn, so the shortcut lets stdlib internals call each other
-// freely — only USER → stdlib visibility still requires an
-// explicit import.
 // validScalarValue reports whether v is a Unicode scalar value: in
 // 0..0x10FFFF and not one of the UTF-16 surrogates 0xD800..0xDFFF. This is
 // `char`'s domain (#5629) — the surrogates are excluded because they only
@@ -3968,29 +3943,48 @@ func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string
 }
 
 // nominalVisibleFrom reports whether `name` denotes a struct or enum
-// that module `src` can reference, under the same import-graph rules
-// methodVisibleHere applies to methods: an unstamped decl (built-in or
-// synthesised) is universal, an unstamped caller is unconstrained, and
-// the flat-loaded stdlib sees itself.
+// that module `src` can reference. A name that is no type at all is not
+// visible as one.
 func (c *checker) nominalVisibleFrom(name, src string) bool {
-	var declSrc string
 	if sd, ok := c.info.Structs[name]; ok {
-		declSrc = sd.SourceModule
-	} else if ed, ok := c.info.Enums[name]; ok {
-		declSrc = ed.SourceModule
-	} else {
-		return false
+		return c.moduleSees(src, sd.SourceModule)
 	}
-	if declSrc == "" || src == "" || declSrc == src {
+	if ed, ok := c.info.Enums[name]; ok {
+		return c.moduleSees(src, ed.SourceModule)
+	}
+	return false
+}
+
+// moduleSees reports whether a declaration made in module `decl` is
+// reachable from module `from`, per the import closure modload recorded
+// during `combine`. The rule (docs/PRELUDE-TO-MODULES.md) is that a
+// declaration in module M is nameable from a file F only if M ∈ closure(F).
+//
+// An empty module on either side passes: an unstamped decl (built-in or
+// checker-synthesised) is universal, and an unstamped caller — a
+// single-file program that bypassed modload — is unconstrained.
+//
+// Same-module always passes: a module can always see its own decls.
+//
+// Stdlib-to-stdlib shortcut: a declaration in any stdlib module is
+// visible from any other stdlib module regardless of import closure. The
+// stdlib's method graph has natural cycles (std/string's bodies call
+// (i32) byte methods from std/i32; std/i32's bodies call (string) methods
+// from std/string) that modload's cycle-detector would otherwise reject;
+// modload clears `SourceModule` on every stdlib-loaded fn under
+// LoadStdlibFlat, and this shortcut covers the recursive load. Only
+// USER → stdlib visibility requires an explicit import.
+func (c *checker) moduleSees(from, decl string) bool {
+	if from == "" || decl == "" || from == decl {
 		return true
 	}
-	if strings.HasPrefix(declSrc, "stdlib://") && strings.HasPrefix(src, "stdlib://") {
+	if strings.HasPrefix(from, "stdlib://") && strings.HasPrefix(decl, "stdlib://") {
 		return true
 	}
 	if c.info.ModuleImports == nil {
 		return true
 	}
-	return c.info.ModuleImports[src][declSrc]
+	return c.info.ModuleImports[from][decl]
 }
 
 // bindDeriveTypeParams turns a synthesised derive method into a generic
@@ -4789,25 +4783,16 @@ func (c *checker) expandTraits(traits []string) []string {
 	return out
 }
 
+// methodVisibleHere reports whether `mangled` is callable from the
+// current call-site context — moduleSees applied to the method's
+// declaring module, which is what makes a checker-synthesised method
+// (Reader / Writer / Map / MapIter / the inline-IR `Array.push`, none of
+// which carry a source module) callable everywhere.
 func (c *checker) methodVisibleHere(mangled string) bool {
-	methodSrc := c.info.MethodSources[mangled]
-	if methodSrc == "" {
+	if c.current == nil {
 		return true
 	}
-	if c.current == nil || c.current.SourceModule == "" {
-		return true
-	}
-	if c.current.SourceModule == methodSrc {
-		return true
-	}
-	if strings.HasPrefix(c.current.SourceModule, "stdlib://") &&
-		strings.HasPrefix(methodSrc, "stdlib://") {
-		return true
-	}
-	if c.info.ModuleImports == nil {
-		return true
-	}
-	return c.info.ModuleImports[c.current.SourceModule][methodSrc]
+	return c.moduleSees(c.current.SourceModule, c.info.MethodSources[mangled])
 }
 
 // methodImplementsTrait reports whether calling `methodName` on receiver
