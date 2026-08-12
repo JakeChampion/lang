@@ -2926,6 +2926,19 @@ pub function selfrebind_field_alias(e: parser.Expr, srb: string): boolean {
     return false;
 }
 
+// ctor_selfrebind_payload reports whether `e` is exactly the local `srb` — the
+// one a variant constructor is being rebound INTO (`srb = Cons(1, srb)`). `srb`
+// is "" everywhere else. The payload field then takes over the slot's reference
+// rather than adding an owner, so the construction needs no retain.
+pub function ctor_selfrebind_payload(e: parser.Expr, srb: string): boolean {
+    if (srb.len() == 0) { return false; }
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == srb; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string): boolean {
     var seen: string[] = [];
     return decl_is_leaksafe_d(structs, struct_name, 0, seen);
@@ -8157,7 +8170,11 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         // Perceus alias-inc below so the variant box retains the buffer
         // (the safe-leak invariant — see the inc site after each arg).
         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
-        var vctor: LowerState = s;
+        // Consumed below, then cleared at once so a NESTED ctor in an argument
+        // (`a = Cons(1, Cons(2, a))`) keeps its own retain — the same one-
+        // expression scoping the struct-literal path gives it (#6653).
+        var ctor_selfrebind: string = s.selfrebind;
+        var vctor: LowerState = s.with_selfrebind("");
         var vi: i32 = 0;
         while (vi < c.args.len()) {
             // An i64 payload field is an 8-byte i64 value (a bare
@@ -8191,6 +8208,35 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                     },
                     _ => {}
                 }
+            }
+            // An ENUM payload (`Cons(n, xs)`, decl_is_enum) is a second owner of
+            // whatever box it stores, so it takes the same Perceus dup — the
+            // struct-lit path's direct-enum-field rule (see fav_alias_inc), with
+            // the same exemption: a FRESH variant ctor is sole-owned at rc 1 and
+            // needs none. Without it a bare enum local stored into a variant box
+            // is an UNCOUNTED alias, and the count that says so is the one every
+            // consume path reads to decide whether it may free (#6720): a
+            // consuming walk over `Cons(x, borrowed)` was told each cell was
+            // uniquely owned and reclaimed the caller's list from under it.
+            // A non-fresh payload that is genuinely sole-owned then LEAKS rather
+            // than double-frees — the safe-leak invariant the rest of this
+            // construction path holds to.
+            //
+            // EXCEPT a consume-rebind (`acc = Cons(1, acc)`, ctor_selfrebind):
+            // the slot is superseded by the box being built, so the slot's own
+            // reference TRANSFERS into the payload field and the owner count is
+            // unchanged — a move, which is what native's last-use analysis makes
+            // of it too. Retaining there pins every cell of an accumulator loop
+            // at rc 2, and a consuming walk then reads a non-unique cell and
+            // declines to recycle it: `inc_all(build(2000))` reallocates its
+            // whole input instead of reusing it (187 KiB against 93 KiB), which
+            // is the FBIP guarantee `trmc-consume-halves-peak` gates. The loop
+            // rebind is exactly the shape moved_locals_toplevel_of leaves out,
+            // so the move verdict cannot supply this one.
+            if (decl_is_enum(vctor.structs, decl_field_type_at(vctor.structs, cid.name, vi))
+                && variant_ctor_enum_owner(c.args[vi], vctor.structs).len() == 0
+                && !ctor_selfrebind_payload(c.args[vi], ctor_selfrebind)) {
+                vctor = vctor.emit(ir.op_call_direct("__fern_rc_inc", 1));
             }
             vi = vi + 1;
         }
@@ -17927,8 +17973,20 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // RHS, so its override path can drop the retain on a field aliased off `o`
     // (#6653). Only a DIRECT literal — anything else (a call, an if-expression)
     // does not hand this slot the box it built.
+    //
+    // A DIRECT variant constructor (`acc = Cons(1, acc)`) hands it the box just
+    // as a literal does, so it is marked the same way — there the payload that
+    // names this slot is a move, not a second owner (ctor_selfrebind_payload).
     match (a.value) {
         parser.ExprStructLit(_) => { aas = aas.with_selfrebind(a.target); },
+        parser.ExprCall(sbc) => {
+            match (sbc.callee) {
+                parser.ExprIdent(sbid) => {
+                    if (decl_is_struct(s.structs, sbid.name)) { aas = aas.with_selfrebind(a.target); }
+                },
+                _ => {}
+            }
+        },
         _ => {}
     }
     var se: LowerState = lower_expr(a.value, aas);

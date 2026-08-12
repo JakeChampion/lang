@@ -1,0 +1,60 @@
+// An accumulator rebind — `acc = Cons(i, acc)` — MOVES the slot's reference
+// into the cell it builds. The slot is superseded by that cell, so the payload
+// field inherits the reference the slot was holding and the owner count is
+// unchanged; retaining there instead would pin every cell of the loop at rc 2,
+// and a consuming walk that reads those counts would find nothing unique to
+// recycle (`trmc-consume-halves-peak`).
+//
+// The move is only sound while a SECOND owner is still counted separately, so
+// this runs the rebind on an ALIASED accumulator: `grown` supersedes its own
+// slot while `keep` still names the same spine. Under-counting there is
+// invisible until something frees, so the consuming walk over `keep` comes
+// after — it declines only if the alias is counted — and both `keep` and
+// `grown` are read back once it has run.
+import "std/i32";
+import "core/int";
+
+enum List { Cons(i32, List), Nil }
+
+function build(n: i32): List {
+    var acc: List = Nil;
+    var i: i32 = 1;
+    while (i <= n) {
+        acc = Cons(i, acc);
+        i = i + 1;
+    }
+    return acc;
+}
+
+function inc_all(xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+
+function sum(l: List): i32 {
+    match (l) {
+        Cons(h, t) => { return h + sum(t); },
+        Nil => { return 0; },
+    }
+}
+
+function main(): i32 {
+    // The plain loop: every cell it hands back is intact.
+    var xs: List = build(4);
+    print((sum(xs)).to_string());
+
+    // The rebind on an aliased spine.
+    var keep: List = build(3);
+    var grown: List = keep;
+    grown = Cons(10, grown);
+    print((sum(grown)).to_string());
+
+    // A consuming walk over the alias: it must stop at the shared head.
+    var ys: List = inc_all(keep);
+    print((sum(ys)).to_string());
+    print((sum(keep)).to_string());
+    print((sum(grown)).to_string());
+    return 0;
+}
