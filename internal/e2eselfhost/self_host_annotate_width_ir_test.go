@@ -29,6 +29,19 @@ function main(): i32 { return ((big() + big()) / 1000000000) as i32; }`}, // 10
 	// u64 call result mod (bit-63 set value): unsigned 64-bit.
 	{"u64_call_mod", `function bu(): u64 { return 18000000000000000000 as u64; }
 function main(): i32 { return (bu() % 1000000007 as u64) as i32; }`}, // 18000000000000000000 % 1000000007
+	// A u64-SUFFIXED literal in a desugared if-expression branch. check_expr
+	// typed every integer literal i32 whatever its suffix, so check_call_expr
+	// stamped the IIFE i32 and expr_is_u64 — which trusts that tag ahead of its
+	// structural walk — answered false: the chained `>>` took the SIGNED shift
+	// and 0xFFFF… >> 60 came back -1 instead of 15. Only the direct-operand
+	// position was exposed; through a local the slot carries the width.
+	{"u64_suffix_if_expr_shift", `function shifted(c: boolean, p: u64): u64 { return (if (c) { 18446744073709551615u64 } else { p }) >> 60u64; }
+function main(): i32 { return shifted(true, 1u64) as i32; }`}, // 15
+	// The match-EXPRESSION spelling desugars to the same IIFE, and both branches
+	// being literals is what makes check_call_expr's branch types agree — the
+	// shape that stamped a confident, wrong i32.
+	{"u64_suffix_match_expr_shift", `function d(c: i32): u64 { return (match (c) { 1 => 18446744073709551615u64, _ => 0u64 }) >> 60u64; }
+function main(): i32 { return d(1) as i32; }`}, // 15
 }
 
 // TestSelfHostAnnotateWidthIR_X86_64 pins the checker-stamped result type feeding

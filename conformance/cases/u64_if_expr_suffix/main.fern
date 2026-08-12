@@ -1,0 +1,36 @@
+// A desugared if-EXPRESSION takes its type from its branches, and the self-host
+// checker typed every integer literal i32 whatever its suffix — so
+// `(if (c) { big_u64 } else { 0u64 })` was tagged i32 and the chained `>>` / `/`
+// selected the SIGNED instruction. Wrong only once the top bit is set, with no
+// trap and no diagnostic. Binding the value to a local first was always fine:
+// the slot carries the width, so only the direct-operand position was exposed.
+function shifted(c: boolean, p: u64): u64 {
+    return (if (c) { 18446744073709551615u64 } else { p }) >> 60u64;
+}
+
+function both_lit(c: boolean): u64 {
+    return (if (c) { 18446744073709551615u64 } else { 0u64 }) >> 60u64;
+}
+
+function divided(c: boolean, d: u64): u64 {
+    return (if (c) { 18446744073709551615u64 } else { 0u64 }) / d;
+}
+
+function narrow(c: boolean): u32 {
+    return (if (c) { 4294967295u32 } else { 0u32 }) >> 24u32;
+}
+
+// The match-EXPRESSION spelling desugars to the same 0-arg IIFE.
+function picked(c: i32): u64 {
+    return (match (c) { 1 => 18446744073709551615u64, _ => 0u64 }) >> 60u64;
+}
+
+function main(): i32 {
+    if (shifted(true, 1u64) != 15u64) { return 1; }
+    if (shifted(false, 32u64) != 0u64) { return 2; }
+    if (both_lit(true) != 15u64) { return 3; }
+    if (divided(true, 3u64) != 6148914691236517205u64) { return 4; }
+    if (narrow(true) != 255u32) { return 5; }
+    if (picked(1) != 15u64) { return 6; }
+    return 0;
+}
