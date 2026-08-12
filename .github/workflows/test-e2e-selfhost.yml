@@ -158,12 +158,12 @@ concurrency:
 # 10 GB repo-cache budget that restore was evicted, forcing a SECOND cold rebuild
 # that itself got preempted — hence the fold.) A single string is the source of
 # truth for BOTH the `cli` job's `-test.run` filter and the `test` shards'
-# `-test.list` exclusion, so the two can't drift. ALL FOUR t.Skip on aarch64 (they
+# `-test.list` exclusion, so the two can't drift. ALL OF THEM t.Skip on aarch64 (they
 # need a native x86 run), so this is x86-only and excluding them from the aarch64
 # shards loses no coverage. Adding a NEW test that builds fern.fern? Add its
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
-  ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds"
+  ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64"
   # OWN_JOB_TESTS: heavy whole-compiler proofs that RUN in CI but in a job of
   # their own, so their minutes do not lengthen whichever shard the LPT
   # partition happens to drop them into. Excluded from shard selection by the
@@ -300,7 +300,7 @@ jobs:
           if-no-files-found: warn
 
   # WHOLE-COMPILER (fern.fern) BUILD + ITS ISOLATED TESTS. Builds the single
-  # largest driver once, then runs the four ISOLATED_DRIVER_TESTS that consume
+  # largest driver once, then runs the ISOLATED_DRIVER_TESTS that consume
   # it, in-process, reading the just-built driver from the LOCAL on-disk cache
   # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,

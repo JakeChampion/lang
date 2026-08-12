@@ -1757,7 +1757,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[
     var out: parser.TypeAlias[] = aliases;
     var i: i32 = 0;
     while (i < enums.len()) {
-        out = out.append(parser.TypeAlias { name: enums[i].name, variants: enums[i].variant_names, line: 0, col: 0 });
+        out = out.append(parser.TypeAlias { name: enums[i].name, variants: enums[i].variant_names, line: 0, col: 0 , is_pub: true });
         i = i + 1;
     }
     return out;

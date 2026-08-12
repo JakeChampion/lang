@@ -39,10 +39,17 @@ func TestSelfHostPubVisibilityX86_64(t *testing.T) {
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	// The imported module: one exported function, one private, and a private
-	// one the module itself calls (so the same-module case is exercised).
+	// one the module itself calls (so the same-module case is exercised). The
+	// types cover #6723 — a public and a private struct, plus an exported enum,
+	// whose VARIANTS carry no `pub` of their own and must stay reachable.
 	lib := `pub function visible(): i32 { return 1; }
 function hidden(): i32 { return 41; }
 pub function uses_own_private(): i32 { return hidden() + 1; }
+pub struct Open { a: i32 }
+struct Secret { b: i32 }
+pub enum Shown { One, Two(i32) }
+enum Hidden { Alpha, Beta }
+pub function own_secret(): i32 { var s: Secret = Secret { b: 5 }; return s.b; }
 `
 	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatalf("write lib.fern: %v", err)
@@ -88,6 +95,41 @@ pub function uses_own_private(): i32 { return hidden() + 1; }
 	// inferred from the mangled name.
 	check(t, "own_private",
 		"import \"./lib\";\nfunction main(): i32 { return lib.uses_own_private(); }\n",
+		0, "")
+
+	// --- #6723: the same rule for TYPES ---------------------------------
+	//
+	// A qualified type never appears in an expression — it lives in a type-name
+	// STRING (a var's declared type, a param/return type, a field type, and a
+	// struct literal's type_name). These cases pin that second scan.
+
+	// REJECT: a private struct, named in a type position AND as a literal.
+	check(t, "private_type",
+		"import \"./lib\";\nfunction main(): i32 { var s: lib.Secret = lib.Secret { b: 7 }; return s.b - 7; }\n",
+		1, "lib.Secret is not exported (declare it as `pub struct Secret …` to make it accessible from other modules)")
+
+	// ACCEPT: the exported struct, same two positions.
+	check(t, "public_type",
+		"import \"./lib\";\nfunction main(): i32 { var s: lib.Open = lib.Open { a: 3 }; return s.a - 3; }\n",
+		0, "")
+
+	// REJECT: a private ENUM. The message must name the right keyword — a
+	// reader told to write `pub struct Hidden` on an enum is sent nowhere.
+	check(t, "private_enum",
+		"import \"./lib\";\nfunction main(): i32 { var h: lib.Hidden = lib.Alpha; return 0; }\n",
+		1, "is not exported (declare it as `pub enum Hidden …`")
+
+	// ACCEPT: an exported enum's VARIANT. A variant carries no `pub` of its
+	// own, so a rule keyed on the variant's flag rather than its enum's would
+	// reject every qualified variant construction in the stdlib.
+	check(t, "public_enum_variant",
+		"import \"./lib\";\nfunction main(): i32 { var s: lib.Shown = lib.Two(4); match (s) { Two(v) => { return v - 4; }, _ => { return 9; } } }\n",
+		0, "")
+
+	// ACCEPT: a module using its OWN private type through a public function —
+	// the type sibling of the own-private-function case.
+	check(t, "own_private_type",
+		"import \"./lib\";\nfunction main(): i32 { return lib.own_secret() - 5; }\n",
 		0, "")
 
 	// REJECT on the COMPILE path too, not just `-check`: native refuses to
