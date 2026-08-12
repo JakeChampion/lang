@@ -810,6 +810,35 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
     return util.index_of_str(s.reclaimable_names, "VIEWFRAME:" + name) >= 0;
 }
 
+// mark_enum_field_alias records that local `name` was bound from a DIRECT enum
+// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
+// alias of the source struct's enum box (#6121). Storing it into a container
+// then needs the same Perceus dup the direct read gets, because
+// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
+// reclaimed. Appended rather than pre-scanned: the bind always precedes the
+// store, and enum_field_read_type needs the slot types the scan does not have.
+pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
+    return LowerState { ...s, reclaimable_names: s.reclaimable_names.append("ENUMALIAS:" + name) };
+}
+
+// is_enum_field_alias reports whether `name` carries the mark above. Rebinding
+// the name to a non-alias value does not clear it — a stale mark costs one
+// retain too many, which leaks and never over-frees.
+pub function (s: LowerState) is_enum_field_alias(name: string): boolean {
+    return util.index_of_str(s.reclaimable_names, "ENUMALIAS:" + name) >= 0;
+}
+
+// enum_alias_ident_escapes reports whether `e` is a bare ident on a local bound
+// from an enum field read — the routed-through-a-local form of the direct
+// `enum_field_read_type` container store, and retained at the same three sites.
+pub function enum_alias_ident_escapes(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { return s.is_enum_field_alias(id.name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -2921,6 +2950,19 @@ pub function selfrebind_field_alias(e: parser.Expr, srb: string): boolean {
                 _ => { return false; }
             }
         },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// ctor_selfrebind_payload reports whether `e` is exactly the local `srb` — the
+// one a variant constructor is being rebound INTO (`srb = Cons(1, srb)`). `srb`
+// is "" everywhere else. The payload field then takes over the slot's reference
+// rather than adding an owner, so the construction needs no retain.
+pub function ctor_selfrebind_payload(e: parser.Expr, srb: string): boolean {
+    if (srb.len() == 0) { return false; }
+    match (e) {
+        parser.ExprIdent(id) => { return id.name == srb; },
         _ => { return false; }
     }
     return false;
@@ -8157,7 +8199,11 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         // Perceus alias-inc below so the variant box retains the buffer
         // (the safe-leak invariant — see the inc site after each arg).
         if (c.args.len() != decl_field_count(s.structs, cid.name)) { return s.fail(); }
-        var vctor: LowerState = s;
+        // Consumed below, then cleared at once so a NESTED ctor in an argument
+        // (`a = Cons(1, Cons(2, a))`) keeps its own retain — the same one-
+        // expression scoping the struct-literal path gives it (#6653).
+        var ctor_selfrebind: string = s.selfrebind;
+        var vctor: LowerState = s.with_selfrebind("");
         var vi: i32 = 0;
         while (vi < c.args.len()) {
             // An i64 payload field is an 8-byte i64 value (a bare
@@ -8191,6 +8237,35 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                     },
                     _ => {}
                 }
+            }
+            // An ENUM payload (`Cons(n, xs)`, decl_is_enum) is a second owner of
+            // whatever box it stores, so it takes the same Perceus dup — the
+            // struct-lit path's direct-enum-field rule (see fav_alias_inc), with
+            // the same exemption: a FRESH variant ctor is sole-owned at rc 1 and
+            // needs none. Without it a bare enum local stored into a variant box
+            // is an UNCOUNTED alias, and the count that says so is the one every
+            // consume path reads to decide whether it may free (#6720): a
+            // consuming walk over `Cons(x, borrowed)` was told each cell was
+            // uniquely owned and reclaimed the caller's list from under it.
+            // A non-fresh payload that is genuinely sole-owned then LEAKS rather
+            // than double-frees — the safe-leak invariant the rest of this
+            // construction path holds to.
+            //
+            // EXCEPT a consume-rebind (`acc = Cons(1, acc)`, ctor_selfrebind):
+            // the slot is superseded by the box being built, so the slot's own
+            // reference TRANSFERS into the payload field and the owner count is
+            // unchanged — a move, which is what native's last-use analysis makes
+            // of it too. Retaining there pins every cell of an accumulator loop
+            // at rc 2, and a consuming walk then reads a non-unique cell and
+            // declines to recycle it: `inc_all(build(2000))` reallocates its
+            // whole input instead of reusing it (187 KiB against 93 KiB), which
+            // is the FBIP guarantee `trmc-consume-halves-peak` gates. The loop
+            // rebind is exactly the shape moved_locals_toplevel_of leaves out,
+            // so the move verdict cannot supply this one.
+            if (decl_is_enum(vctor.structs, decl_field_type_at(vctor.structs, cid.name, vi))
+                && variant_ctor_enum_owner(c.args[vi], vctor.structs).len() == 0
+                && !ctor_selfrebind_payload(c.args[vi], ctor_selfrebind)) {
+                vctor = vctor.emit(ir.op_call_direct("__fern_rc_inc", 1));
             }
             vi = vi + 1;
         }
@@ -11700,7 +11775,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // (discardable_scalar_arrarr_lit et al) are unaffected.
                 match (arr.elements[i]) {
                     parser.ExprIdent(eid) => {
-                        if (sa.slot_is_rc_container(sa.slot_of(eid.name))) {
+                        if (sa.slot_is_rc_container(sa.slot_of(eid.name))
+                            || sa.is_enum_field_alias(eid.name)) {
                             sa = sa.emit(ir.op_call_direct("__fern_rc_inc", 1));
                         }
                     },
@@ -15930,6 +16006,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
+    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
+    // the source struct's enum box (#6121). No dup here — an alias that never
+    // escapes must not outlive the struct — only the mark, so a later container
+    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
         var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
@@ -17685,6 +17766,14 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
                                         aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
                                         aps = aps.emit(ir.op_drop());
                                     }
+                                    // The enum-field alias routed through a local
+                                    // (#6121) — same escape, same dup as the direct
+                                    // `xs.append(nxt.node)` read below.
+                                    else if (apelslot >= 0 && s.is_enum_field_alias(apel.name)) {
+                                        aps = aps.emit(ir.op_load_local(apelslot));
+                                        aps = aps.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                                        aps = aps.emit(ir.op_drop());
+                                    }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
                                 // escapes the same way, against the k_enum dec of the
@@ -17927,8 +18016,20 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // RHS, so its override path can drop the retain on a field aliased off `o`
     // (#6653). Only a DIRECT literal — anything else (a call, an if-expression)
     // does not hand this slot the box it built.
+    //
+    // A DIRECT variant constructor (`acc = Cons(1, acc)`) hands it the box just
+    // as a literal does, so it is marked the same way — there the payload that
+    // names this slot is a move, not a second owner (ctor_selfrebind_payload).
     match (a.value) {
         parser.ExprStructLit(_) => { aas = aas.with_selfrebind(a.target); },
+        parser.ExprCall(sbc) => {
+            match (sbc.callee) {
+                parser.ExprIdent(sbid) => {
+                    if (decl_is_struct(s.structs, sbid.name)) { aas = aas.with_selfrebind(a.target); }
+                },
+                _ => {}
+            }
+        },
         _ => {}
     }
     var se: LowerState = lower_expr(a.value, aas);
@@ -19429,7 +19530,7 @@ pub function lower_arr_append_value(obj: parser.Expr, val: parser.Expr, s: Lower
     // A DIRECT ENUM field read appended here aliases the source struct's enum box,
     // which __struct_drop_<T>'s k_enum arm decs on reclamation — retain it so that
     // dec only releases the dup, exactly as the in-place append path does (#6049).
-    if (enum_field_read_type(val, st) != "") {
+    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
         st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
     }
     // The clone (a fresh slice, cap == len) is grown immediately, so this

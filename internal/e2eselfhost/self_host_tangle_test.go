@@ -86,6 +86,75 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 		})
 	}
 
+	// `-chunk NAME` expands one definition rather than the document — the
+	// shape used to inspect or extract a single chunk.
+	t.Run("chunk", func(t *testing.T) {
+		tmp := t.TempDir()
+		doc := filepath.Join(tmp, "doc.fern.md")
+		if err := os.WriteFile(doc, []byte("```fern\n<<*>>=\nfunction main(): i32 {\n    <<compute>>\n}\n```\n\n```fern\n<<compute>>=\nvar n: i32 = 20;\nreturn n + 2;\n```\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		nativeOut, err := exec.Command(nativeBin, "-tangle", "-chunk", "compute", doc).Output()
+		if err != nil {
+			t.Fatalf("native -chunk: %v", err)
+		}
+		shOut, err := exec.Command(driverBin, "-tangle", "-chunk", "compute", doc).Output()
+		if err != nil {
+			t.Fatalf("self-host -chunk: %v", err)
+		}
+		if string(nativeOut) != string(shOut) {
+			t.Errorf("-chunk output differs:\n--- native ---\n%q\n--- self-host ---\n%q", nativeOut, shOut)
+		}
+		if !strings.Contains(string(nativeOut), "var n: i32 = 20;") {
+			t.Errorf("native -chunk did not expand the chunk: %q", nativeOut)
+		}
+		// A chunk nothing defines is refused by both, rather than expanding
+		// to nothing and reporting success.
+		nativeMiss := exec.Command(nativeBin, "-tangle", "-chunk", "nope", doc)
+		_ = nativeMiss.Run()
+		shMiss := exec.Command(driverBin, "-tangle", "-chunk", "nope", doc)
+		_ = shMiss.Run()
+		if n, s := nativeMiss.ProcessState.ExitCode(), shMiss.ProcessState.ExitCode(); n != s || n == 0 {
+			t.Errorf("undefined chunk: native exit %d, self-host exit %d (both should be non-zero)", n, s)
+		}
+	})
+
+	// A multi-file document under `-o` writes one module per path into that
+	// DIRECTORY — the banner-joined form is for stdout only. Compared as a
+	// tree: same file names, same bytes in each.
+	t.Run("output-dir-multi-file", func(t *testing.T) {
+		tmp := t.TempDir()
+		doc := filepath.Join(tmp, "doc.fern.md")
+		if err := os.WriteFile(doc, []byte("```fern file=lib.fern\npub function tag(): i32 { return 5; }\n```\n\n```fern file=main.fern entry\nimport \"./lib\";\nfunction main(): i32 { return lib.tag(); }\n```\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		nativeDir, selfDir := filepath.Join(tmp, "native"), filepath.Join(tmp, "selfhost")
+		for _, d := range []string{nativeDir, selfDir} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := exec.Command(nativeBin, "-tangle", "-o", nativeDir, doc).Run(); err != nil {
+			t.Fatalf("native -tangle -o DIR: %v", err)
+		}
+		if err := exec.Command(driverBin, "-tangle", "-o", selfDir, doc).Run(); err != nil {
+			t.Fatalf("self-host -tangle -o DIR: %v", err)
+		}
+		for _, name := range []string{"lib.fern", "main.fern"} {
+			want, err := os.ReadFile(filepath.Join(nativeDir, name))
+			if err != nil {
+				t.Fatalf("native did not write %s: %v", name, err)
+			}
+			got, err := os.ReadFile(filepath.Join(selfDir, name))
+			if err != nil {
+				t.Fatalf("self-host did not write %s: %v", name, err)
+			}
+			if string(want) != string(got) {
+				t.Errorf("%s differs:\n--- native ---\n%q\n--- self-host ---\n%q", name, want, got)
+			}
+		}
+	})
+
 	// `-o` writes the tangled source instead of printing it, and writes the
 	// same bytes stdout would have carried.
 	t.Run("output-file", func(t *testing.T) {

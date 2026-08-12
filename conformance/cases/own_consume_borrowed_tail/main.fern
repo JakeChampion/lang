@@ -1,0 +1,56 @@
+// A consuming (`own`) rebuild of a list whose spine the CALLER still holds.
+//
+// `Cons(7, shared)` is a fresh construction, so E051 admits it as an owned
+// argument — but its tail is borrowed, and the construction retains it. One
+// level in, the walk therefore meets a cell two owners reach.
+//
+// The walk decides per level, from that cell's own refcount, whether it may
+// take the box. Declining at the shared cell is not sufficient: the cell BELOW
+// it is reached only through the surviving box's tail field, so its count reads
+// 1, the level below calls itself the sole owner, and it reclaims a cell
+// `shared` still reaches. `sum(shared)` then walks the rebuilt list — 8 rather
+// than 6, off a block the allocator had handed back out (#6720).
+//
+// So the stop has to propagate down the spine. The loop runs the same shape
+// with the freed cells recycled into later rounds, which is the form the defect
+// takes in a real traversal: on both natives it was a segfault, not a wrong
+// answer.
+import "std/i32";
+import "core/int";
+
+enum List { Cons(i32, List), Nil }
+
+function build(n: i32): List {
+    if (n == 0) { return Nil; }
+    return Cons(n, build(n - 1));
+}
+
+function inc_all(own xs: List): List {
+    match (xs) {
+        Cons(h, t) => { return Cons(h + 1, inc_all(t)); },
+        Nil => { return Nil; },
+    }
+}
+
+function sum(l: List): i32 {
+    match (l) {
+        Cons(h, t) => { return h + sum(t); },
+        Nil => { return 0; },
+    }
+}
+
+function main(): i32 {
+    var shared: List = build(3);
+
+    var ys: List = inc_all(Cons(7, shared));
+    print((sum(ys)).to_string());
+    print((sum(shared)).to_string());
+
+    var t: i32 = 0;
+    for r in 0..20 {
+        var zs: List = inc_all(Cons(9, shared));
+        t = t + sum(zs) + sum(shared);
+    }
+    print(t.to_string());
+    return 0;
+}

@@ -6998,6 +6998,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   path putting the emitted checkpoint through the self-host's own assembler.
   Refs #6728 #6705 #5330 #3425.
 
+- 2026-08-12: **An enum field bound to a LOCAL is retained where it escapes, not
+  where it is bound (#6121).** #6049 gave a direct enum field read stored into a
+  container (`[first.node]`, `xs.append(p.node)`) its Perceus dup; routing the
+  same value through a local first defeated it, because the container element is
+  then a bare ident and the ident arm only retains an rc-CONTAINER slot (array /
+  string / tuple), which an enum slot is not. `__struct_drop_P`'s `k_enum` arm
+  freed the box the array still pointed at.
+
+  | | interp / native | self-host before | self-host after |
+  |---|---|---|---|
+  | `var tmp = first.node; [tmp]` | 102 | **1** | 102 |
+  | `var tmp = first.node; out.append(tmp)` | 102 | 1 | 102 |
+
+  Wrong on all three backends before (x86-64, arm64, wasm), correct on all three
+  after — the analysis is shared `irlower` so the backends only inherit it.
+
+  **The dup is at the STORE, not the bind, and that is the decision the issue
+  left open.** A dup at the bind would balance nothing: a plain enum slot is not
+  swept (an enum box and its payload are never swept — the IR leak-mode
+  invariant), so every non-escaping alias would leak permanently, and the
+  escaping one would need the sweep back to avoid double-counting. Retaining at
+  the store instead reproduces the direct read's balance exactly — field rc 1 →
+  store dup 2 → `__struct_drop_<T>` 1 → the container keeps it — and costs
+  nothing when the alias never escapes. Two containers off one alias take two
+  dups, which is the same rule, not a special case.
+
+  `mark_enum_field_alias` seeds `ENUMALIAS:<name>` in `reclaimable_names` at the
+  bind (appended, not pre-scanned: the bind always precedes the store, and
+  `enum_field_read_type` needs slot types the pre-scan does not have), and the
+  three sites that already consult `enum_field_read_type` — the array-literal
+  element, the in-place `append`, and the clone-form `append` — consult the mark
+  for a bare ident too. Rebinding the name to a non-alias value does not clear
+  the mark: a stale mark costs one retain too many, which leaks and never
+  over-frees.
+
+  **Not this defect, and filed as #6758:** the same loop-local struct leaks
+  ~120 B per iteration with *no* field read at all (`var first: P = mkp(i); t = t
+  + first.pos` measures the same 120 B as the aliasing spelling), and 88 B for an
+  `i32[]` field in place of the enum one. Native is flat on both, so it is a
+  self-host struct-local reclaim gap, not an alias one. Measured identical on the
+  parent commit.
+
+  VERIFIED: new `TestSelfHostEnumFieldAliasIR{X86_64,Arm64}` — three cases, all
+  three exit 97 (value read back wrong) on the parent commit on both backends;
+  cross-backend exit agreement on wasm (wasmtime) for the same programs.
+  Refs #6121 #6049 #4365 #4451.
 - 2026-08-12: **`Option[string[]]` / `Result[string[], _]` — the per-ELEMENT
   release (#6495).** Two of the three rows #6495's leak list left open, and one
   cause between them. Re-measured on `cb2dbf2` before touching anything, 400 then
