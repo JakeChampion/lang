@@ -179,13 +179,19 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 		t.Fatalf("running cmd/ferndoc: %v\n%s", err, genErr.String())
 	}
 
-	stdDir := filepath.Join(langSrcAbs(t, "internal"), "stdlib", "std")
-	srcs, err := filepath.Glob(filepath.Join(stdDir, "*.fern"))
-	if err != nil {
-		t.Fatalf("globbing std: %v", err)
+	// Both import roots, for the reason the page differential sweeps both:
+	// `core` carries the container and comparison modules, and a gate that
+	// skipped them would leave the densest generic code unchecked.
+	var srcs []string
+	for _, root := range []string{"std", "core"} {
+		found, err := filepath.Glob(filepath.Join(langSrcAbs(t, "internal"), "stdlib", root, "*.fern"))
+		if err != nil {
+			t.Fatalf("globbing %s: %v", root, err)
+		}
+		srcs = append(srcs, found...)
 	}
-	if len(srcs) < 40 {
-		t.Fatalf("found %d std modules, expected the full set — a shrunken sweep proves nothing", len(srcs))
+	if len(srcs) < 45 {
+		t.Fatalf("found %d stdlib modules, expected the full set — a shrunken sweep proves nothing", len(srcs))
 	}
 
 	var compared, skipped, withDoc int
@@ -266,7 +272,7 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 	t.Logf("ferndoc differential: %d modules compared (%d documented decls matched), %d skipped for unported decl shapes", compared, withDoc, skipped)
 }
 
-// ferndocPageDivergences is every std module whose rendered page cannot match
+// ferndocPageDivergences is every stdlib module whose rendered page cannot match
 // cmd/ferndoc's byte-for-byte, and the front-end fact that stops it. All four
 // causes are data the self-host parser does not keep — none is a rendering
 // choice, and none can be fixed inside ferndoc.fern.
@@ -283,6 +289,8 @@ var ferndocPageDivergences = map[string]string{
 	"error":   "no TraitDecl",
 	"json":    "no TraitDecl",
 	"num":     "no TraitDecl",
+	"cmp":     "no TraitDecl",
+	"iter":    "no TraitDecl",
 	// `const` desugars to a zero-arg function, recoverable through
 	// FuncDecl.is_const but not as native's ConstDecl.
 	"time": "const desugars to a function",
@@ -308,8 +316,9 @@ var ferndocPageDivergences = map[string]string{
 	"sim": "impl trait name loses its module qualifier",
 }
 
-// TestSelfHostFerndocPagesMatchNative renders every std module through the
-// self-hosted generator and compares the page with cmd/ferndoc's byte for byte.
+// TestSelfHostFerndocPagesMatchNative renders every stdlib module — `std` and
+// `core` both — through the self-hosted generator and compares the page with
+// cmd/ferndoc's byte for byte.
 //
 // Byte-for-byte is the gate #6642 asked for, and it is worth the strictness: a
 // doc generator's whole output is its contract, so front matter, fence
@@ -337,13 +346,25 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 		t.Fatalf("running cmd/ferndoc: %v\n%s", err, genErr.String())
 	}
 
-	stdDir := filepath.Join(langSrcAbs(t, "internal"), "stdlib", "std")
-	srcs, err := filepath.Glob(filepath.Join(stdDir, "*.fern"))
-	if err != nil {
-		t.Fatalf("globbing std: %v", err)
+	// BOTH namespaces: `std` and `core` are separate import roots and
+	// cmd/ferndoc gives each a page, so a gate over `std` alone would leave the
+	// container and comparison modules — some of the densest generic code in
+	// the tree — unchecked.
+	var srcs []string
+	roots := map[string]string{}
+	for _, root := range []string{"std", "core"} {
+		dir := filepath.Join(langSrcAbs(t, "internal"), "stdlib", root)
+		found, err := filepath.Glob(filepath.Join(dir, "*.fern"))
+		if err != nil {
+			t.Fatalf("globbing %s: %v", root, err)
+		}
+		for _, f := range found {
+			srcs = append(srcs, f)
+			roots[f] = root
+		}
 	}
-	if len(srcs) < 40 {
-		t.Fatalf("found %d std modules, expected the full set — a shrunken sweep proves nothing", len(srcs))
+	if len(srcs) < 45 {
+		t.Fatalf("found %d stdlib modules, expected the full set — a shrunken sweep proves nothing", len(srcs))
 	}
 
 	var matched int
@@ -361,7 +382,7 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 			continue // ferndoc emits no page for a module with no public decls
 		}
 
-		cmd := exec.Command(bin, "-page", "std/"+base)
+		cmd := exec.Command(bin, "-page", roots[s]+"/"+base)
 		cmd.Stdin = bytes.NewReader(src)
 		got, rerr := cmd.Output()
 		if rerr != nil {
@@ -382,7 +403,7 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 		matched++
 	}
 
-	if matched < 30 {
+	if matched < 38 {
 		t.Errorf("only %d modules rendered byte-identically (of %d, %d listed as diverging) — the gate has gone hollow",
 			matched, len(srcs), len(ferndocPageDivergences))
 	}
