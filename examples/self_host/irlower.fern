@@ -19017,7 +19017,13 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // (the lift wrapped the payload into a `__mkclo$`
                         // box, elem_type_tag tags it "clo") — same box,
                         // same env-first dispatch.
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn) { return s.fail(); }
+                        // A VOID payload (`Ok(u)` on a `Result[void, E]` — every
+                        // fallible filesystem builtin: write_file, remove_file,
+                        // create_dir_all, remove_dir_all). There is nothing at
+                        // offset 8 to read, so it is accepted here and bound
+                        // below without a payload load.
+                        var ptag_is_void: boolean = ptag == "void";
+                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -19027,7 +19033,14 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     ms = ms.emit(ir.op_const_i32(want));
                     ms = ms.emit(ir.op_bin("ne", 0, false));   // 1 if tag != want
                     ms = ms.emit(ir.op_brif(0));               // -> skip arm on mismatch
-                    if (hb) {
+                    // A void payload has no value at offset 8 — `Ok(u)` on a
+                    // `Result[void, E]` binds the unit. Give the name a slot
+                    // holding 0 so a body reference resolves, and read nothing.
+                    if (hb && ptag == "void") {
+                        ms = ms.add_local(pv.binding);
+                        ms = ms.emit(ir.op_const_i32(0));
+                        ms = ms.emit(ir.op_store_local(ms.slot_of(pv.binding)));
+                    } else if (hb) {
                         // Bind the payload (offset 8) BEFORE the guard, so the
                         // guard may reference it (`Some(x) when x > 0`).
                         ms = ms.add_local(pv.binding);

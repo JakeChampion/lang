@@ -19,6 +19,7 @@
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
+//     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
 // backend, the environment half says what the host provides, and neither is
@@ -321,6 +322,7 @@ function usage(): i32 {
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
     eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
     eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
+    eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)\n");
     return 2;
 }
 
@@ -869,6 +871,311 @@ function valid_dep_name(s: string): boolean {
     return true;
 }
 
+// VendorSrc is one dependency's resolved source directory, or the
+// diagnostic explaining why it has none.
+struct VendorSrc { dir: string, err: string }
+
+// VendorSet is the flat name → source-directory map vendoring builds, as
+// parallel arrays, plus the first error that stopped the walk.
+struct VendorSet { names: string[], srcs: string[], err: string }
+
+// run_vendor implements `-vendor <ABS-DIR>`: flatten the whole transitive
+// dependency graph of the manifest governing DIR into `<root>/vendor/<name>/`,
+// one directory per package keyed by its manifest `name`. After vendoring, a
+// build resolves every declared dependency out of vendor/ and reaches neither
+// the deps' original locations nor the network — which is what makes the
+// vendored tree the offline artefact.
+//
+// DIR must be absolute, the same departure `-resolve` and `-add` take: there
+// is no working-directory builtin, and a vendor tree written under the wrong
+// root is worse than a refusal. A url dependency is copied FROM the store, so
+// it is reachable here — populating the store is `fern -fetch`, which is still
+// native's.
+function run_vendor(start: string): i32 {
+    if (!mvs.is_abs(start)) {
+        eprint("vendor: pass an absolute path (this driver has no working-directory builtin)");
+        return 2;
+    }
+    var dir: string = start;
+    if (!is_dir(start)) {
+        var readable: boolean = false;
+        match (read_file(start)) { Ok(s) => { readable = true; }, Err(e) => { } }
+        if (!readable) {
+            eprint("vendor: cannot read " + start);
+            return 1;
+        }
+        dir = dir_of(start);
+    }
+    var mdir: string = find_manifest_dir(dir);
+    if (mdir.len() == 0) {
+        eprint("vendor: no fern.toml governs " + dir);
+        return 1;
+    }
+    var root: fern_toml.Manifest = read_manifest(mdir + "/");
+
+    // A workspace root vendors the UNION of its members' external
+    // dependencies into the root's vendor/ (members resolve out of it); a
+    // plain package vendors its own transitive deps.
+    var starts: string[] = [];
+    if (root.members.len() == 0) {
+        starts = starts.append(mdir + "");
+    } else {
+        var mi: i32 = 0;
+        while (mi < root.members.len()) {
+            var rel: string = root.members[mi];
+            mi = mi + 1;
+            var mem: string = rel;
+            if (!mvs.is_abs(rel)) { mem = mvs.join_path(mdir, rel); }
+            if (!has_manifest(mem)) {
+                eprint("vendor: workspace member " + mvs.quoted(rel) + " has no fern.toml");
+                return 1;
+            }
+            starts = starts.append(mem + "");
+        }
+    }
+
+    var set: VendorSet = vendor_collect(starts);
+    if (set.err.len() > 0) {
+        eprint(set.err);
+        return 1;
+    }
+
+    var vdir: string = mdir + "/vendor";
+    match (remove_dir_all(vdir)) {
+        Ok(u) => { },
+        Err(e) => {
+            eprint("vendor: clearing " + vdir);
+            return 1;
+        },
+    }
+    var i: i32 = 0;
+    while (i < set.names.len()) {
+        var err: string = copy_package(set.srcs[i], vdir + "/" + set.names[i]);
+        if (err.len() > 0) {
+            eprint("vendor: copying " + mvs.quoted(set.names[i]) + ": " + err);
+            return 1;
+        }
+        i = i + 1;
+    }
+    eprint("vendor: " + util.i32_to_string(set.names.len()) + " package(s) written to " + vdir);
+    return 0;
+}
+
+// vendor_collect walks the dependency graph breadth-first from each starting
+// manifest directory, keying every package it reaches by its manifest `name`
+// (falling back to the dependency key when the dep has no manifest of its
+// own). Workspace-member deps are skipped: they live in the workspace tree and
+// resolve by name, not out of vendor/.
+//
+// The flat namespace is what forces the collision check — two distinct
+// packages claiming one name would silently overwrite each other.
+function vendor_collect(starts: string[]): VendorSet {
+    var names: string[] = [];
+    var srcs: string[] = [];
+    var seen: string[] = [];
+    var queue: string[] = starts;
+    var qi: i32 = 0;
+    while (qi < queue.len()) {
+        var mdir: string = queue[qi];
+        qi = qi + 1;
+        if (str_index(seen, mdir) >= 0) { continue; }
+        seen = seen.append(mdir + "");
+        var man: fern_toml.Manifest = read_manifest(mdir + "/");
+        var di: i32 = 0;
+        while (di < man.deps.len()) {
+            var d: fern_toml.Dep = man.deps[di];
+            di = di + 1;
+            if (d.kind == "workspace") { continue; }
+            var src: VendorSrc = vendor_dep_dir(mdir, d);
+            if (src.err.len() > 0) {
+                return VendorSet { names: names, srcs: srcs, err: src.err };
+            }
+            var key: string = d.name + "";
+            var pkg_name: string = read_manifest(src.dir + "/").name;
+            if (pkg_name.len() > 0) { key = pkg_name; }
+            var at: i32 = str_index(names, key);
+            if (at >= 0) {
+                if (srcs[at] != src.dir) {
+                    return VendorSet { names: names, srcs: srcs,
+                        err: "vendor: two different packages both named " + mvs.quoted(key)
+                            + " (" + srcs[at] + " and " + src.dir + ") — package names must be unique to vendor" };
+                }
+            } else {
+                names = names.append(key + "");
+                srcs = srcs.append(src.dir + "");
+            }
+            if (has_manifest(src.dir)) { queue = queue.append(src.dir + ""); }
+        }
+    }
+    return VendorSet { names: names, srcs: srcs, err: "" };
+}
+
+// vendor_dep_dir resolves one declared dependency to the directory whose
+// sources get copied: a path dep's directory, a versioned dep's fern.lock
+// source, or a url dep's already-populated store directory.
+function vendor_dep_dir(mdir: string, d: fern_toml.Dep): VendorSrc {
+    if (d.kind == "version") { return vendor_locked_dir(mdir, d.name); }
+    if (d.kind == "url") {
+        var store: string = store_dir(d.hash);
+        if (store.len() == 0) {
+            return VendorSrc { dir: "", err: "dependency " + mvs.quoted(d.name) + " (" + d.hash
+                + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml` before vendoring" };
+        }
+        return VendorSrc { dir: store, err: "" };
+    }
+    if (mvs.is_abs(d.path)) { return VendorSrc { dir: mvs.join_path(d.path, "."), err: "" }; }
+    return VendorSrc { dir: mvs.join_path(mdir, d.path), err: "" };
+}
+
+// vendor_locked_dir resolves a versioned (MVS) dependency through the
+// package's fern.lock, exactly as a build does. Without it, a versioned dep
+// names no directory at all and vendoring would silently copy the package
+// into its own vendor/ under its own name.
+function vendor_locked_dir(mdir: string, name: string): VendorSrc {
+    var lsrc: string = "";
+    var have: boolean = false;
+    match (read_file(mdir + "/fern.lock")) { Ok(s) => { lsrc = s; have = true; }, Err(e) => { } }
+    if (!have) {
+        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
+            + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+    }
+    var entries: fern_toml.LockEntry[] = fern_toml.parse_lock(lsrc);
+    if (!fern_toml.lock_has(entries, name)) {
+        return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+            + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+    }
+    match (fern_toml.lock_path_of(entries, name)) {
+        Some(p) => { return VendorSrc { dir: p, err: "" }; },
+        None => { },
+    }
+    match (fern_toml.lock_hash_of(entries, name)) {
+        Some(h) => {
+            var store: string = store_dir(h);
+            if (store.len() == 0) {
+                return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + "@"
+                    + fern_toml.lock_version_of(entries, name) + " (" + h
+                    + ") is not in the package store — run `fern -fetch " + mdir + "/fern.toml`" };
+            }
+            return VendorSrc { dir: store, err: "" };
+        },
+        None => { },
+    }
+    return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
+        + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
+}
+
+// store_dir returns the content-addressed store directory holding the archive
+// for a `sha256:<hex>` hash, or "" when it is absent (or the hash is not one).
+// Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is NOT
+// fallen through on a miss; otherwise the user cache dir is $XDG_CACHE_HOME,
+// else $HOME/.cache — with $HOME/Library/Caches tried as the darwin sibling.
+// Read-only: the store is populated and sha256-verified by `fern -fetch`.
+function store_dir(hash: string): string {
+    if (hash.len() < 8 || hash[0:7] != "sha256:") { return ""; }
+    var hex: string = hash[7:hash.len()] + "";
+    match (env("FERN_CACHE_DIR")) {
+        Some(d) => { return dir_or_empty(d + "/pkgs/" + hex); },
+        None => { },
+    }
+    match (env("XDG_CACHE_HOME")) {
+        Some(x) => { return dir_or_empty(x + "/fern/pkgs/" + hex); },
+        None => { },
+    }
+    match (env("HOME")) {
+        Some(h) => {
+            var linux: string = dir_or_empty(h + "/.cache/fern/pkgs/" + hex);
+            if (linux.len() > 0) { return linux; }
+            return dir_or_empty(h + "/Library/Caches/fern/pkgs/" + hex);
+        },
+        None => { },
+    }
+    return "";
+}
+
+function dir_or_empty(p: string): string {
+    if (is_dir(p)) { return p; }
+    return "";
+}
+
+// has_manifest reports whether a fern.toml sits directly in `dir`. Distinct
+// from read_manifest, which fabricates an empty manifest for a directory that
+// has none — a difference vendoring turns on (whether to recurse into a dep).
+function has_manifest(dir: string): boolean {
+    match (read_file(dir + "/fern.toml")) { Ok(s) => { return true; }, Err(e) => { } }
+    return false;
+}
+
+// str_index returns the position of `want` in `xs`, or -1.
+function str_index(xs: string[], want: string): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == want) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// copy_package copies a package's Fern sources into `dst`: fern.toml plus
+// every .fern / .fern.md file, preserving subdirectory layout. A nested
+// vendor/ is skipped (only the flat top-level one matters), as are
+// dot-directories — a vendored package is source, not a working tree.
+// Returns "" on success, or the diagnostic body naming what failed.
+function copy_package(src: string, dst: string): string {
+    // Relative subdirectories still to visit, "" being the package root. A
+    // worklist rather than recursion: the whole walk then shares one
+    // early-return path for the first read that fails.
+    var rels: string[] = [""];
+    var ri: i32 = 0;
+    while (ri < rels.len()) {
+        var rel: string = rels[ri];
+        ri = ri + 1;
+        var sdir: string = src;
+        if (rel.len() > 0) { sdir = src + "/" + rel; }
+        var entries: string[] = [];
+        var listed: boolean = false;
+        match (read_dir(sdir)) { Ok(ns) => { entries = ns; listed = true; }, Err(e) => { } }
+        if (!listed) { return "cannot read " + sdir; }
+        var i: i32 = 0;
+        while (i < entries.len()) {
+            var name: string = entries[i];
+            i = i + 1;
+            var child_rel: string = name + "";
+            if (rel.len() > 0) { child_rel = rel + "/" + name; }
+            var child: string = src + "/" + child_rel;
+            if (is_dir(child)) {
+                if (name == "vendor") { continue; }
+                if (name.len() > 0 && name[0] == 46) { continue; }   // '.', and so `.` / `..`
+                rels = rels.append(child_rel + "");
+                continue;
+            }
+            if (!is_vendorable(name)) { continue; }
+            var body: string = "";
+            var read_ok: boolean = false;
+            match (read_file(child)) { Ok(s) => { body = s; read_ok = true; }, Err(e) => { } }
+            if (!read_ok) { return "cannot read " + child; }
+            var out: string = dst + "/" + child_rel;
+            match (create_dir_all(dir_of(out))) {
+                Ok(u) => { },
+                Err(e) => { return "cannot create " + dir_of(out); },
+            }
+            match (write_file(out, body)) {
+                Ok(u) => { },
+                Err(e) => { return "cannot write " + out; },
+            }
+        }
+    }
+    return "";
+}
+
+// is_vendorable selects the files a vendored package consists of: its
+// manifest and its Fern sources, literate documents included.
+function is_vendorable(name: string): boolean {
+    if (name == "fern.toml") { return true; }
+    if (name.len() >= 8 && name[name.len() - 8:name.len()] == ".fern.md") { return true; }
+    if (name.len() >= 5 && name[name.len() - 5:name.len()] == ".fern") { return true; }
+    return false;
+}
+
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `ok` is false when a module could not be read — the
@@ -1365,6 +1672,7 @@ function run(): i32 {
     var mode_tangle: boolean = false;
     var chunk: string = "";
     var mode_add: boolean = false;
+    var mode_vendor: boolean = false;
     // Every non-flag argument, in order. The compile modes read the first two
     // (entry, stdlib root); `-add` takes three of its own.
     var pos: string[] = [];
@@ -1419,6 +1727,10 @@ function run(): i32 {
             // Manifest editing: append a declared dependency. Takes NAME SPEC
             // DIR positionally, not an entry module.
             mode_add = true;
+        } else if (a == "-vendor") {
+            // Flatten the transitive dependency graph into <root>/vendor/.
+            // Like -resolve it reads manifests, so it takes a directory.
+            mode_vendor = true;
         } else if (a == "-resolve") {
             // Version resolution (MVS) over the manifest's [package] index,
             // writing fern.lock. It reads manifests, not sources, so it takes
@@ -1468,6 +1780,12 @@ function run(): i32 {
     // `-resolve` takes a directory (or any file inside the package), not an
     // entry module — it reads manifests and never compiles anything.
     if (mode_resolve) { return run_resolve(entry_path); }
+
+    // `-vendor` copies sources between directories and compiles nothing.
+    if (mode_vendor) {
+        if (!have_entry) { return usage(); }
+        return run_vendor(entry_path);
+    }
 
     // `-tangle` reads a literate document and compiles nothing.
     if (mode_tangle) {
