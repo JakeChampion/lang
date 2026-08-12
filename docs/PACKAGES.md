@@ -277,7 +277,8 @@ subset.
 | versioned deps whose lock source is a `url` | ✅ | ✅ read-only (see below) |
 | `-resolve` (Minimum Version Selection → `fern.lock`) | ✅ | ✅ `path`-sourced index entries; absolute DIR only (see below) |
 | `-check <DIR>` (package, or every `[workspace]` member) | ✅ | ✅ |
-| CLI commands `-fetch` / `-vendor` / `-add` | ✅ | ❌ (#6640) |
+| `-add NAME SPEC` | ✅ | ✅ `path:` / `workspace`; `url:` is native-only |
+| CLI commands `-fetch` / `-vendor` | ✅ | ❌ (#6640) |
 
 The self-hosted loader (`examples/self_host/modloader.fern` +
 `fern_toml.fern`) resolves every **disk-resolvable** form: `path` deps,
@@ -296,6 +297,13 @@ via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
 `fern -fetch` responsibility (the no-build-time-network constraint), so
 the self-host loader trusts an already-populated store exactly as the
 native loader does at build time.
+
+Manifest EDITING is the self-host's for the two offline sources: `fern -add
+NAME path:../dir` and `fern -add NAME workspace` splice a dependency line into
+`[dependencies]`, textually, so comments and formatting survive.
+`TestSelfHostAddDifferentialX86_64` compares the resulting manifest bytes with
+native's. `url:` stays native-only: recording the archive's sha256 means
+fetching it.
 
 Workspace CHECKING is the self-host's too: `fern -check <DIR>` type-checks the
 package governing DIR, or every member of the workspace it roots, aggregating

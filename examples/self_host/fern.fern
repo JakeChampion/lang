@@ -17,6 +17,7 @@
 //     fern -fmt <entry.fern>                format the entry file to stdout
 //     fern -targets                         list the targets + capabilities
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
+//     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //
 // A target is `<isa>-<environment>` (#6529 / #6635): the ISA half picks the
 // backend, the environment half says what the host provides, and neither is
@@ -314,6 +315,7 @@ function usage(): i32 {
     eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
+    eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
     return 2;
 }
 
@@ -734,6 +736,134 @@ function run_resolve(start: string): i32 {
     return 0;
 }
 
+// run_add implements `-add NAME SPEC <ABS-DIR>`: append a declared dependency
+// to the nearest fern.toml. SPEC selects the source — `path:../helper`,
+// `workspace`, or `url:https://…`, which this driver refuses (recording the
+// archive's sha256 means fetching it, and fetching stays native's `-fetch`).
+//
+// The manifest is edited TEXTUALLY, so existing formatting and comments
+// survive: a dependency is a line spliced into `[dependencies]`, not a
+// re-render of a parsed tree.
+function run_add(pos: string[]): i32 {
+    if (pos.len() < 2) {
+        eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
+        return 1;
+    }
+    var name: string = pos[0];
+    var spec: string = pos[1];
+    if (pos.len() < 3) {
+        eprint("add: pass the package directory (this driver has no working-directory builtin)");
+        return 2;
+    }
+    var dir: string = pos[2];
+    if (!mvs.is_abs(dir)) {
+        eprint("add: pass an absolute directory (this driver has no working-directory builtin)");
+        return 2;
+    }
+    if (!valid_dep_name(name)) {
+        eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+        return 1;
+    }
+    var mdir: string = find_manifest_dir(dir);
+    if (mdir.len() == 0) {
+        eprint("add: no fern.toml governs " + dir + " — create one with a [package] table first");
+        return 1;
+    }
+    var mpath: string = mdir + "/fern.toml";
+    if (fern_toml.has_dep(read_manifest(mdir + "/"), name)) {
+        eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+        return 1;
+    }
+    var line: string = "";
+    if (spec == "workspace") {
+        line = name + " = { workspace = true }";
+    } else if (spec.len() >= 5 && spec[0:5] == "path:") {
+        var p: string = spec[5:spec.len()] + "";
+        if (p.len() == 0) {
+            eprint("add: empty path in " + mvs.quoted(spec));
+            return 1;
+        }
+        line = name + " = { path = " + mvs.quoted(p) + " }";
+    } else if (spec.len() >= 4 && spec[0:4] == "url:") {
+        eprint("add: a url dependency records the archive's sha256, which means fetching it — use the native `fern -add` (this driver has no fetcher)");
+        return 1;
+    } else {
+        eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+        return 1;
+    }
+
+    var orig: string = "";
+    var ok: boolean = false;
+    match (read_file(mpath)) {
+        Ok(s) => { orig = s; ok = true; },
+        Err(e) => { },
+    }
+    if (!ok) {
+        eprint("add: cannot read " + mpath);
+        return 1;
+    }
+    var updated: string = insert_dependency(orig, line);
+    // Read the edit back before committing it. Native re-parses with a strict
+    // manifest parser and refuses to write a manifest that would not load;
+    // this reader never rejects, so the equivalent check is positive — the
+    // dependency the edit claims to add has to be there when the result is
+    // parsed again.
+    if (!fern_toml.has_dep(fern_toml.parse(updated), name)) {
+        eprint("add: the edit would not declare " + mvs.quoted(name) + " — no change written");
+        return 1;
+    }
+    match (write_file(mpath, updated)) {
+        Ok(u) => { },
+        Err(e) => {
+            eprint("add: cannot write " + mpath);
+            return 1;
+        },
+    }
+    eprint("add: " + line);
+    return 0;
+}
+
+// insert_dependency splices a dependency line into a manifest's
+// [dependencies] table, creating the table at EOF when there is none.
+// Everything else — formatting, comments, other sections — survives verbatim.
+function insert_dependency(src: string, line: string): string {
+    var lines: string[] = mvs.split_char(src, 10);   // '\n'
+    var i: i32 = 0;
+    while (i < lines.len()) {
+        if (mvs.trim(lines[i]) == "[dependencies]") {
+            var out: string = "";
+            var k: i32 = 0;
+            while (k < lines.len()) {
+                if (k > 0) { out = out + "\n"; }
+                out = out + lines[k];
+                if (k == i) { out = out + "\n" + line; }
+                k = k + 1;
+            }
+            return out;
+        }
+        i = i + 1;
+    }
+    var sep: string = "\n";
+    if (src.len() > 0 && src[src.len() - 1] == 10) { sep = ""; }
+    return src + sep + "\n[dependencies]\n" + line + "\n";
+}
+
+// valid_dep_name accepts letters, digits, `_` and `-`, and refuses a leading
+// digit — the manifest's own rule for a dependency key.
+function valid_dep_name(s: string): boolean {
+    if (s.len() == 0) { return false; }
+    if (s[0] >= 48 && s[0] <= 57) { return false; }   // '0'..'9'
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var c: i32 = s[i] as i32;
+        var alpha: boolean = (c >= 97 && c <= 122) || (c >= 65 && c <= 90);
+        var digit: boolean = c >= 48 && c <= 57;
+        if (!alpha && !digit && c != 95 && c != 45) { return false; }   // '_' '-'
+        i = i + 1;
+    }
+    return true;
+}
+
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `ok` is false when a module could not be read — the
@@ -1092,6 +1222,10 @@ function run(): i32 {
     var mode_caps: boolean = false;
     var mode_targets: boolean = false;
     var mode_resolve: boolean = false;
+    var mode_add: boolean = false;
+    // Every non-flag argument, in order. The compile modes read the first two
+    // (entry, stdlib root); `-add` takes three of its own.
+    var pos: string[] = [];
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
     var optimize: boolean = false;
@@ -1135,6 +1269,10 @@ function run(): i32 {
             emit_syms = true;
         } else if (a == "-capabilities") {
             mode_caps = true;
+        } else if (a == "-add") {
+            // Manifest editing: append a declared dependency. Takes NAME SPEC
+            // DIR positionally, not an entry module.
+            mode_add = true;
         } else if (a == "-resolve") {
             // Version resolution (MVS) over the manifest's [package] index,
             // writing fern.lock. It reads manifests, not sources, so it takes
@@ -1163,6 +1301,7 @@ function run(): i32 {
             eprint("\n");
             return 2;
         } else {
+            pos = pos.append(a);
             if (!have_entry) {
                 entry_path = a;
                 have_entry = true;
@@ -1179,6 +1318,9 @@ function run(): i32 {
     // `-resolve` takes a directory (or any file inside the package), not an
     // entry module — it reads manifests and never compiles anything.
     if (mode_resolve) { return run_resolve(entry_path); }
+
+    // `-add` edits a manifest and compiles nothing.
+    if (mode_add) { return run_add(pos); }
 
     if (!have_entry) { return usage(); }
 

@@ -288,6 +288,18 @@ pub function dep_path(m: Manifest, name: string): Option[string] {
     return None;
 }
 
+// has_dep reports whether `name` is declared at all — a different question
+// from dep_kind, which answers "" both for an undeclared dependency and for a
+// declared one whose form this reader does not recognise.
+pub function has_dep(m: Manifest, name: string): boolean {
+    var i: i32 = 0;
+    while (i < m.deps.len()) {
+        if (m.deps[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // dep_kind returns the kind of dependency `name` ("path"/"workspace"/
 // "version"/""), or "" when undeclared. Iterates m.deps directly (see
 // dep_path on why no Option[Dep] intermediary).
