@@ -13242,7 +13242,12 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // ImplInfo is the per-impl metadata parse_module retains so it can
 // synthesise inherited defaults after the full module is parsed (a trait
 // may be declared after the impl that depends on it).
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[] }
+// trait_spelling is the trait name AS WRITTEN, qualifier included
+// (`async.Driver`). `trait_name` is the resolved simple name, which is what
+// parse_module matches against the trait's default methods and what the
+// emitter needs — so the spelling rides beside it rather than replacing it.
+// Empty for an inherent impl, which has no trait.
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[], trait_spelling: string }
 
 // str_list_contains reports whether `xs` holds `want`.
 function str_list_contains(xs: string[], want: string): boolean {
@@ -14120,7 +14125,7 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // The trait name is parsed and discarded: the self-host resolves
 // `obj.method()` by the receiver's concrete type, not via the
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
-function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], Par) {
+function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string, Par) {
     var out: FuncDecl[] = [];
     var method_names: string[] = [];
     p = p.advance(); // `impl`
@@ -14161,9 +14166,17 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // (`impl Trait for Type`) it's the trait; for an inherent impl
     // (`impl Type { … }`, #2700) there is no `for` and this name IS the
     // impl type, with no trait.
+    // parse_type_name resolves `mod.Name` to the bare `Name`, which is right
+    // for everything downstream and wrong for anyone reporting what the source
+    // said. Read the qualifier off the tokens BEFORE it is consumed.
+    var first_spelling: string = "";
+    if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "." && p.peek_ident_at(2).len() > 0) {
+        first_spelling = p.peek_ident() + "." + p.peek_ident_at(2);
+    }
     var (tnr_name, tnr_ret_arr, tnr_fn_ret, tnr_p) = parse_type_name(p);
     p = tnr_p;
     var first_name: string = tnr_name;
+    var trait_spelling: string = "";
     var trait_name: string = "";
     var impl_type: string = "";
     if (p.peek_keyword() == "for") {
@@ -14171,6 +14184,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
         // Trait name retained so parse_module can match the impl against
         // the trait's default methods.
         trait_name = first_name;
+        trait_spelling = first_spelling;
         var (ity_name, ity_ret_arr, ity_fn_ret, ity_p) = parse_type_name(p);
         p = ity_p;
         impl_type = ity_name;
@@ -14206,7 +14220,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the trait decl's bracket-free simple name). Without the strip,
     // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
     // the `Greet` trait, and its default methods are never synthesised (#4340).
-    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, p);
+    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, trait_spelling, p);
 }
 
 // finalize_impl_method turns a parsed impl/trait-default method `m` into
@@ -15543,14 +15557,14 @@ pub function parse_module(toks: lexer.Token[]): Module {
             continue;
         }
         if (kw == "impl") {
-            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_p) = parse_impl_decl(p);
+            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_trait_spelling, imr_p) = parse_impl_decl(p);
             p = imr_p;
             var mi: i32 = 0;
             while (mi < imr_funcs.len()) {
                 funcs = funcs.append(imr_funcs[mi]);
                 mi = mi + 1;
             }
-            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, method_names: imr_method_names });
+            impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, method_names: imr_method_names, trait_spelling: imr_trait_spelling });
             continue;
         }
         // `resource Name;` — a top-level WIT resource-handle declaration (P5).

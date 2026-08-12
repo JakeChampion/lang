@@ -763,7 +763,8 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
             trait_name: im.trait_name,
             impl_type: rewrite_type_name(im.impl_type, ctx),
             type_params: im.type_params,
-            method_names: im.method_names
+            method_names: im.method_names,
+            trait_spelling: im.trait_spelling
         });
         i = i + 1;
     }

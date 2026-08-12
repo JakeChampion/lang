@@ -36,7 +36,7 @@
 // # What is not here yet
 //
 // Four things the self-host FRONT END does not carry, each of which stops a
-// page matching native's bytes and none of which can be fixed here:
+// page matching native's bytes and none of which can be fixed from here:
 //
 //   - `trait` reaches the parser only as `TraitReq`, which has no visibility,
 //     so `pub trait` cannot be rendered;
@@ -45,9 +45,7 @@
 //   - `parse_func_decl` keeps `type_params: bounded_tps`, so an unbounded `[T]`
 //     survives only as a COUNT and `map[T, U]` cannot be spelled back;
 //   - there is no `str` type distinct from `string` (the gap #6604 landed on),
-//     so a `str` return renders as `string`;
-//   - `ImplInfo.trait_name` drops a module qualifier, so `impl async.Driver for
-//     Sim` tabulates its trait as `Driver`.
+//     so a `str` return renders as `string`.
 //
 // The page differential lists exactly which stdlib module each of these costs,
 // and fails if one is fixed without the list being updated.
@@ -462,14 +460,24 @@ function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: str
 // `cells` accumulates each trait's row already rendered — the types joined by
 // the backtick-comma-backtick that separates them in the table — because the
 // self-host has no array-of-arrays to group into.
+// trait_label is the trait as the source wrote it — qualifier included — which
+// is what native's table shows. parse_type_name resolves `async.Driver` to
+// `Driver`, so the spelling rides beside the resolved name on ImplInfo; an
+// inherent impl has no trait and no spelling.
+function trait_label(im: parser.ImplInfo): string {
+    if (im.trait_spelling.len() > 0) { return im.trait_spelling; }
+    return im.trait_name;
+}
+
 function render_impls(impls: parser.ImplInfo[]): string {
     var order: string[] = [];
     var cells: string[] = [];
     var i: i32 = 0;
     while (i < impls.len()) {
-        var at: i32 = util.index_of_str(order, impls[i].trait_name);
+        var tn: string = trait_label(impls[i]);
+        var at: i32 = util.index_of_str(order, tn);
         if (at < 0) {
-            order = order.append(impls[i].trait_name);
+            order = order.append(tn);
             cells = cells.append(impls[i].impl_type);
         } else {
             cells = cells.with(at, cells[at] + "`, `" + impls[i].impl_type);

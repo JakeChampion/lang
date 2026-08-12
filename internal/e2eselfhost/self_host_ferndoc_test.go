@@ -311,9 +311,6 @@ var ferndocPageDivergences = map[string]string{
 	"string":  "no str type",
 	"unicode": "no str type",
 	"utf8":    "no str type",
-	// ImplInfo.trait_name drops a module qualifier, so `impl async.Driver
-	// for Sim` renders its trait as `Driver` in the implementations table.
-	"sim": "impl trait name loses its module qualifier",
 }
 
 // TestSelfHostFerndocPagesMatchNative renders every stdlib module — `std` and
@@ -403,7 +400,7 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 		matched++
 	}
 
-	if matched < 38 {
+	if matched < 39 {
 		t.Errorf("only %d modules rendered byte-identically (of %d, %d listed as diverging) — the gate has gone hollow",
 			matched, len(srcs), len(ferndocPageDivergences))
 	}
