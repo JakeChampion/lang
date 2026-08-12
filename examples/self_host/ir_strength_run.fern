@@ -230,8 +230,10 @@ function main(): i32 {
     var cp_two: ir.Op[] = [ir.op_const_i32(7), ir.op_tee_local(0), ir.op_const_i32(8), ir.op_tee_local(0)];
     out = out + "cp_two_tees: " + render(ir.propagate_copies(cp_two)) + "\n";
 
-    // 13d. A plain store_local is left alone: rewriting a dead store to a drop
-    //      changes an op's stack EFFECT and is deliberately not ported yet.
+    // 13d. A plain store_local is LEFT ALONE. Rewriting a dead store to a drop
+    //      needs slot types this pass does not have: a `dyn Trait` slot is TWO
+    //      operand-stack values, so one drop strands one of them — measured as a
+    //      rejected wasm module and a segfault on the register backends.
     var cp_st: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(3)];
     out = out + "cp_store_kept: " + render(ir.propagate_copies(cp_st)) + "\n";
 
