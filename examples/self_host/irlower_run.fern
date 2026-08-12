@@ -8,10 +8,11 @@
 // (`-dump-fn <name>` for any other function). A `main` outside the lowered
 // subset makes lowering bail -> exit 200.
 //
-// `-verify` / `-verifystack` (#6639): run the IR verifiers over every lowered
-// function and report, exiting 1 when anything is found. `-verifystack` also
-// prints how much of the module it could model, since an empty problem list
-// means nothing without it.
+// `-verify` / `-verifystack` / `-verifyfip` (#6639): run the IR verifiers over
+// every lowered function and report, exiting 1 when anything is found.
+// `-verifystack` also prints how much of the module it could model, and
+// `-verifyfip` a per-function `claim=… fresh=… paired=…` census, since an empty
+// problem list means nothing without knowing how much was looked at.
 //
 // `-rc-plan` (#4482): print each function's Perceus decision-table dump
 // (irlower.rc_plan_dump — the self-host half of the rcPlan differential
@@ -33,6 +34,7 @@ import "./ir";
 import "./irlower";
 import "./irverify";
 import "./irverifystack";
+import "./irfipverify";
 import "./util";
 
 // verify_all runs the IR structure verifier (#6639 slice 1) over every
@@ -86,6 +88,43 @@ function verify_stack_all(fns: irlower.LoweredFn[]): StackSweep {
     return StackSweep { problems: out, cov: cov };
 }
 
+// FipSweep is one module's `fip` / `fbip` allocation-budget verdict: the
+// problems found, and the per-function census behind them. The census travels
+// with the problems for the same reason the stack pass reports coverage — a
+// clean verdict over a module whose reuse layer paired nothing is not the same
+// result as one over a module where it paired everything, and only the counts
+// tell them apart.
+struct FipSweep { problems: irverify.Problem[], census: string }
+
+// verify_fip_all runs the allocation-budget verifier (#6639 slice 3) over every
+// successfully lowered function, pairing each with its declared claim.
+// `funcs` is the same list, in the same order, that `fns` was lowered from.
+function verify_fip_all(funcs: parser.FuncDecl[], fns: irlower.LoweredFn[]): FipSweep {
+    var out: irverify.Problem[] = [];
+    var census: string = "";
+    var i: i32 = 0;
+    while (i < fns.len() && i < funcs.len()) {
+        if (fns[i].ok) {
+            var claim: irfipverify.FipClaim = irfipverify.FipClaim {
+                fn_name: fns[i].name, is_fip: funcs[i].fip, is_fbip: funcs[i].fbip,
+                allowance: funcs[i].fip_allowance
+            };
+            var r: irfipverify.FipResult = irfipverify.verify_fip_fn(claim, fns[i].ops);
+            var kw: string = "-";
+            if (funcs[i].fip) { kw = "fip"; }
+            if (funcs[i].fbip) { kw = "fbip"; }
+            census = census + fns[i].name + " claim=" + kw
+                + "(" + util.i32_to_string(funcs[i].fip_allowance) + ")"
+                + " fresh=" + util.i32_to_string(r.fresh)
+                + " paired=" + util.i32_to_string(r.paired) + "\n";
+            var k: i32 = 0;
+            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
+        }
+        i = i + 1;
+    }
+    return FipSweep { problems: out, census: census };
+}
+
 // slot_line renders one slot class, or nothing when the class is empty — so a
 // function with no strings has no `str` line rather than an empty one.
 function slot_line(kind: string, slots: i32[]): string {
@@ -106,6 +145,7 @@ function main(): i32 {
     var want_str_own: boolean = false;
     var want_verify: boolean = false;
     var want_vstack: boolean = false;
+    var want_vfip: boolean = false;
     var want_slots: boolean = false;
     // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
     // The verifiers report per function, so the follow-up question is always
@@ -122,6 +162,7 @@ function main(): i32 {
         if (av[ai] == "-str-own") { want_str_own = true; }
         if (av[ai] == "-verify") { want_verify = true; }
         if (av[ai] == "-verifystack") { want_vstack = true; }
+        if (av[ai] == "-verifyfip") { want_vfip = true; }
         if (av[ai] == "-slots") { want_slots = true; }
         ai = ai + 1;
     }
@@ -224,6 +265,23 @@ function main(): i32 {
         write("irverifystack: " + util.i32_to_string(sw.problems.len()) + " problem(s) ("
             + irverifystack.coverage_str(sw.cov) + ")"
             + irverify.format_problems(sw.problems, 20) + "\n");
+        return 1;
+    }
+
+    if (want_vfip) {
+        // Same defaults-FILLED module as `-verify`, for the same reason: the
+        // production backends reach the IR through lift_lambdas, which runs
+        // fill_default_args_module first.
+        var ffilled: parser.Module = parser.fill_default_args_module(mod);
+        var ffns: irlower.LoweredFn[] = irlower.lower_module(ffilled.funcs, mod.structs);
+        var fw: FipSweep = verify_fip_all(ffilled.funcs, ffns);
+        write(fw.census);
+        if (fw.problems.len() == 0) {
+            write("irfipverify: clean\n");
+            return 0;
+        }
+        write("irfipverify: " + util.i32_to_string(fw.problems.len()) + " problem(s)"
+            + irverify.format_problems(fw.problems, 20) + "\n");
         return 1;
     }
 

@@ -1238,6 +1238,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e053-fip-nonfip-call", "function g(): i32 { return 1; }\nfip function f(): i32 {\n    return g();\n}\nfunction main(): i32 { return f(); }\n", []string{"E053"}},
 		{"e053-fip-arith-ok", "fip function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n", nil},
 		{"e053-fip-fipcall-ok", "fip function g(): i32 { return 1; }\nfip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
+		// `fbip` and the graded `fip(n)` / `fbip(n)` run the SAME walk with the
+		// constructor rule relaxed — the IR's E068 budget owns those sites
+		// (#6639 slice 3). Everything else stays rejected for them, including
+		// array literals, for which no reuse pairing exists.
+		{"e053-fbip-struct-lit-ok", "struct P { x: i32 }\nfbip function mk(a: i32): i32 {\n    var p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", nil},
+		{"e053-graded-fip-struct-lit-ok", "struct P { x: i32 }\nfip(1) function mk(a: i32): i32 {\n    var p = P { x: a };\n    return p.x;\n}\nfunction main(): i32 { return mk(1); }\n", nil},
+		{"e053-fbip-enum-ctor-ok", "enum L { C(i32), N }\nfbip function mk(a: i32): i32 {\n    match (C(a)) { C(v) => { return v; }, N => { return 0; } }\n}\nfunction main(): i32 { return mk(1); }\n", nil},
+		{"e053-fbip-array-lit", "fbip function mk(): i32 {\n    var a = [1, 2];\n    return a[0];\n}\nfunction main(): i32 { return mk(); }\n", []string{"E053"}},
+		{"e053-fbip-concat", "fbip function j(a: string, b: string): string {\n    return a + b;\n}\nfunction main(): i32 { return 0; }\n", []string{"E053"}},
+		// The call rule is asymmetric: `fbip` may call `fip` or `fbip`, but a
+		// `fip` function may not lean on a `fbip` one — its claim is stronger.
+		{"e053-fbip-calls-fip-ok", "fip function g(): i32 { return 1; }\nfbip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
+		{"e053-fbip-calls-fbip-ok", "fbip function g(): i32 { return 1; }\nfbip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", nil},
+		{"e053-fip-calls-fbip", "fbip function g(): i32 { return 1; }\nfip function f(): i32 { return g() + 1; }\nfunction main(): i32 { return f(); }\n", []string{"E053"}},
 		// E065 (returning a `str` view of a function-local string): a local
 		// owned string (annotated or inferred) escaping through a str return
 		// draws E065, incl. through a local `str` binding chase. A literal,

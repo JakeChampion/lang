@@ -165,14 +165,22 @@ lowering already happens; `fip` asserts zero heap allocation,
 heap values (allocation = minting owned), and every in-place
 write goes through a unique root.
 
-Self-host status: **partially ported.** Plain `fip` + the E053
-walk are ported (`e053_diags` checker.fern:7220, the walk at
-7026-7227). `fbip` and the graded forms are parse-TOLERATED and
-DROPPED by the self-host parser
-(`examples/self_host/parser.fern:11925-11942`) because the E068
-verification needs the reuse analyses, which port with goal-2's
-reuse slice (NICHE-BORROWS-PLAN.md E2'/E4). **This is the real
-remaining porting gap of the four surfaces.**
+Self-host status: **ported, with the reuse layer behind.** All
+three bits are stamped by the parser (`fip`, `fbip`, and the
+graded allowance), the E053 walk applies native's constructor
+relaxation and its asymmetric call rule, and the IR-side budget
+check is `examples/self_host/irfipverify.fern` (#6639 slice 3),
+driven by `irlower_run -verifyfip`. It counts the constructor ops
+a fresh site lowers to rather than native's single `OpAlloc`, and
+names a site by op index — the self-host `ir.Op` carries no source
+position.
+
+What is still behind is the *pairing*, not the verification: the
+self-host reuse layer pairs the R3 general case but not the R1
+struct self-overwrite or the R4 consuming-match rebuild, so a bare
+`fbip` native accepts needs a grade here. The counts are pinned by
+`TestSelfHostFipCensusOnNativesShapes`, which fails when the port
+closes either gap.
 
 ### 2.3 Owned `T[]` vs view `[T]` / `str` — E063 / E065
 

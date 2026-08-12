@@ -7757,6 +7757,15 @@ function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: s
 // construction, string concatenation (incl. the f-string `+`-chain desugar),
 // calls to non-`fip` functions, any other method call, indirect calls, and
 // index/field writes not rooted at an `own` parameter.
+//
+// `fbip function` (fully in place with borrowing) runs the SAME walk with one
+// relaxation: constructor expressions — struct / tuple literals and payload-
+// carrying enum variants — are allowed, because irfipverify.fern's E068 checks
+// each such site is reuse-paired or inside the graded allowance. A graded
+// `fip(n)` / `fbip(n)` takes the same relaxation. Array literals stay rejected
+// for both (no array reuse pairing exists), as do string concat, CoW-copy
+// writes, and unproven calls. Call rule: `fip` may only call `fip`; `fbip` may
+// call either.
 function e053_root_len(target: string): i32 {
     // `xs[0]` / `p.f` → byte length of the base identifier being written
     // through, or -1 for a bare local rebind (no `[` / `.`), which
@@ -7799,33 +7808,44 @@ function e053_stringish(e: parser.Expr, cur: Scope): boolean {
     }
 }
 
-function e053_expr(e: parser.Expr, fname: string, fips: string[], variants: string[], own: string[], cur: Scope): Diag[] {
+// E053Ctx is the per-function context the walk carries. `ctor_ok` is the
+// relaxation the IR's allocation budget pays for: a `fbip` function, and a
+// graded `fip(n)` / `fbip(n)`, may write constructor expressions because
+// irfipverify's E068 checks each emitted site is reuse-paired or inside the
+// allowance. The checker never counts n — the count is the IR's.
+struct E053Ctx { fname: string, kw: string, ctor_ok: boolean, callable: string[], variants: string[], own: string[] }
+
+function e053_expr(e: parser.Expr, fx: E053Ctx, cur: Scope): Diag[] {
     var out: Diag[] = [];
     match (e) {
         parser.ExprArray(a) => {
-            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (array literal)", 0, 0));
+            out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (array literal)", 0, 0));
             var i: i32 = 0;
-            while (i < a.elements.len()) { out = append_diags(out, e053_expr(a.elements[i], fname, fips, variants, own, cur)); i = i + 1; }
+            while (i < a.elements.len()) { out = append_diags(out, e053_expr(a.elements[i], fx, cur)); i = i + 1; }
         },
         parser.ExprTuple(t) => {
-            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (tuple literal)", t.line, t.col));
+            if (!fx.ctor_ok) {
+                out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (tuple literal)", t.line, t.col));
+            }
             var i: i32 = 0;
-            while (i < t.elements.len()) { out = append_diags(out, e053_expr(t.elements[i], fname, fips, variants, own, cur)); i = i + 1; }
+            while (i < t.elements.len()) { out = append_diags(out, e053_expr(t.elements[i], fx, cur)); i = i + 1; }
         },
         parser.ExprStructLit(sl) => {
-            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
-            if (sl.has_base) { out = append_diags(out, e053_expr(sl.base, fname, fips, variants, own, cur)); }
+            if (!fx.ctor_ok) {
+                out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (struct literal \"" + sl.type_name + "\")", sl.line, sl.col));
+            }
+            if (sl.has_base) { out = append_diags(out, e053_expr(sl.base, fx, cur)); }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { out = append_diags(out, e053_expr(sl.field_values[i], fname, fips, variants, own, cur)); i = i + 1; }
+            while (i < sl.field_values.len()) { out = append_diags(out, e053_expr(sl.field_values[i], fx, cur)); i = i + 1; }
         },
         parser.ExprBinary(b) => {
             if (b.op == "+" && (e053_stringish(b.left, cur) || e053_stringish(b.right, cur))) {
-                out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (string concatenation)", b.line, b.col));
+                out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (string concatenation)", b.line, b.col));
             }
-            out = append_diags(out, e053_expr(b.left, fname, fips, variants, own, cur));
-            out = append_diags(out, e053_expr(b.right, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(b.left, fx, cur));
+            out = append_diags(out, e053_expr(b.right, fx, cur));
         },
-        parser.ExprUnary(u) => { out = append_diags(out, e053_expr(u.operand, fname, fips, variants, own, cur)); },
+        parser.ExprUnary(u) => { out = append_diags(out, e053_expr(u.operand, fx, cur)); },
         parser.ExprCall(c) => {
             var args_checked: boolean = false;
             match (c.callee) {
@@ -7840,96 +7860,101 @@ function e053_expr(e: parser.Expr, fname: string, fips: string[], variants: stri
                     }
                     var root_own: boolean = false;
                     var oi: i32 = 0;
-                    while (oi < own.len()) { if (own[oi] == recv_root) { root_own = true; } oi = oi + 1; }
+                    while (oi < fx.own.len()) { if (fx.own[oi] == recv_root) { root_own = true; } oi = oi + 1; }
                     if (fa.field == "with" && root_own) {
                         // allowed
                     } else if (fa.field == "len") {
                         // allowed
                     } else {
-                        out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not call method \"" + fa.field + "\" (not proven allocation-free)", fa.line, fa.col));
+                        out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not call method \"" + fa.field + "\" (not proven allocation-free)", fa.line, fa.col));
                     }
-                    out = append_diags(out, e053_expr(fa.obj, fname, fips, variants, own, cur));
+                    out = append_diags(out, e053_expr(fa.obj, fx, cur));
                 },
                 parser.ExprIdent(id) => {
                     var is_variant: boolean = false;
                     var vi: i32 = 0;
-                    while (vi < variants.len()) { if (variants[vi] == id.name) { is_variant = true; } vi = vi + 1; }
+                    while (vi < fx.variants.len()) { if (fx.variants[vi] == id.name) { is_variant = true; } vi = vi + 1; }
                     if (is_variant) {
-                        if (c.args.len() > 0) {
-                            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not allocate (enum variant construction)", c.line, c.col));
+                        if (c.args.len() > 0 && !fx.ctor_ok) {
+                            out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not allocate (enum variant construction)", c.line, c.col));
                         }
                     } else {
-                        var is_fip: boolean = false;
+                        // `fip` is the stronger claim and may only lean on
+                        // other `fip` callees; `fbip` may also call `fbip`,
+                        // whose own construction sites E068 verifies in turn.
+                        var callable: boolean = false;
                         var fi: i32 = 0;
-                        while (fi < fips.len()) { if (fips[fi] == id.name) { is_fip = true; } fi = fi + 1; }
-                        if (!is_fip) {
-                            out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may only call other `fip` functions, not \"" + id.name + "\"", c.line, c.col));
+                        while (fi < fx.callable.len()) { if (fx.callable[fi] == id.name) { callable = true; } fi = fi + 1; }
+                        if (!callable) {
+                            var only: string = "may only call other `fip` functions, not \"";
+                            if (fx.kw == "fbip") { only = "may only call `fip` or `fbip` functions, not \""; }
+                            out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" " + only + id.name + "\"", c.line, c.col));
                         }
                     }
                 },
                 _ => {
-                    out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
-                    out = append_diags(out, e053_expr(c.callee, fname, fips, variants, own, cur));
+                    out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
+                    out = append_diags(out, e053_expr(c.callee, fx, cur));
                 }
             }
             var ai: i32 = 0;
-            while (ai < c.args.len()) { out = append_diags(out, e053_expr(c.args[ai], fname, fips, variants, own, cur)); ai = ai + 1; }
+            while (ai < c.args.len()) { out = append_diags(out, e053_expr(c.args[ai], fx, cur)); ai = ai + 1; }
         },
         parser.ExprIndex(ix) => {
-            out = append_diags(out, e053_expr(ix.array, fname, fips, variants, own, cur));
-            out = append_diags(out, e053_expr(ix.index, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(ix.array, fx, cur));
+            out = append_diags(out, e053_expr(ix.index, fx, cur));
         },
         parser.ExprSlice(sl) => {
-            out = append_diags(out, e053_expr(sl.array, fname, fips, variants, own, cur));
-            out = append_diags(out, e053_expr(sl.start, fname, fips, variants, own, cur));
-            out = append_diags(out, e053_expr(sl.end, fname, fips, variants, own, cur));
+            out = append_diags(out, e053_expr(sl.array, fx, cur));
+            out = append_diags(out, e053_expr(sl.start, fx, cur));
+            out = append_diags(out, e053_expr(sl.end, fx, cur));
         },
-        parser.ExprFieldAccess(fa) => { out = append_diags(out, e053_expr(fa.obj, fname, fips, variants, own, cur)); },
+        parser.ExprFieldAccess(fa) => { out = append_diags(out, e053_expr(fa.obj, fx, cur)); },
         _ => { }
     }
     return out;
 }
 
-function e053_stmts(stmts: parser.Stmt[], fname: string, fips: string[], variants: string[], own: string[], s: Scope): Diag[] {
+function e053_stmts(stmts: parser.Stmt[], fx: E053Ctx, s: Scope): Diag[] {
     var out: Diag[] = [];
     var cur: Scope = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtVar(v) => { out = append_diags(out, e053_expr(v.init, fname, fips, variants, own, cur)); },
-            parser.StmtReturn(r) => { out = append_diags(out, e053_expr(r.value, fname, fips, variants, own, cur)); },
-            parser.StmtExpr(e) => { out = append_diags(out, e053_expr(e.value, fname, fips, variants, own, cur)); },
+            parser.StmtVar(v) => { out = append_diags(out, e053_expr(v.init, fx, cur)); },
+            parser.StmtReturn(r) => { out = append_diags(out, e053_expr(r.value, fx, cur)); },
+            parser.StmtExpr(e) => { out = append_diags(out, e053_expr(e.value, fx, cur)); },
             parser.StmtAssign(a) => {
                 // (Re)binding a local slot allocates nothing; an index/field
                 // write is in-place only when rooted at an `own` parameter —
                 // otherwise it triggers a copy-on-write.
                 var trl: i32 = e053_root_len(a.target);
-                if (trl >= 0 && !e053_root_is_own(a.target, trl, own)) {
-                    out = out.append(dg_at("E053", "`fip` function \"" + fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
+                if (trl >= 0 && !e053_root_is_own(a.target, trl, fx.own)) {
+                    out = out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not write to a non-`own` heap value (triggers a copy-on-write)", a.line, a.col));
                 }
-                out = append_diags(out, e053_expr(a.value, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_expr(a.value, fx, cur));
             },
             parser.StmtIf(f) => {
-                out = append_diags(out, e053_expr(f.cond, fname, fips, variants, own, cur));
-                out = append_diags(out, e053_stmts(f.then_body, fname, fips, variants, own, cur));
-                out = append_diags(out, e053_stmts(f.else_body, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_expr(f.cond, fx, cur));
+                out = append_diags(out, e053_stmts(f.then_body, fx, cur));
+                out = append_diags(out, e053_stmts(f.else_body, fx, cur));
             },
             parser.StmtWhile(w) => {
-                out = append_diags(out, e053_expr(w.cond, fname, fips, variants, own, cur));
-                out = append_diags(out, e053_stmts(w.body, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_expr(w.cond, fx, cur));
+                out = append_diags(out, e053_stmts(w.body, fx, cur));
             },
             parser.StmtFor(fr) => {
-                out = append_diags(out, e053_expr(fr.iter, fname, fips, variants, own, cur));
-                out = append_diags(out, e053_stmts(fr.body, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_expr(fr.iter, fx, cur));
+                out = append_diags(out, e053_stmts(fr.body, fx, cur));
             },
             parser.StmtMatch(m) => {
-                out = append_diags(out, e053_expr(m.scrutinee, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_expr(m.scrutinee, fx, cur));
                 var a2: i32 = 0;
-                while (a2 < m.arms.len()) { out = append_diags(out, e053_stmts(m.arms[a2].body, fname, fips, variants, own, cur)); a2 = a2 + 1; }
+                while (a2 < m.arms.len()) { out = append_diags(out, e053_stmts(m.arms[a2].body, fx, cur)); a2 = a2 + 1; }
             },
             parser.StmtDefer(d) => {
                 var one: parser.Stmt[] = [d.action];
-                out = append_diags(out, e053_stmts(one, fname, fips, variants, own, cur));
+                out = append_diags(out, e053_stmts(one, fx, cur));
             },
             _ => { }
         }
@@ -7939,14 +7964,27 @@ function e053_stmts(stmts: parser.Stmt[], fname: string, fips: string[], variant
     return out;
 }
 
-function e053_diags(efn: parser.FuncDecl, fips: string[], variants: string[], s: Scope): Diag[] {
+// e053_diags walks one annotated function. `fips` / `fbips` are the module's
+// two claim sets; the callee rule picks which of them this function may reach.
+function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], variants: string[], s: Scope): Diag[] {
     var own: string[] = [];
     var pi: i32 = 0;
     while (pi < efn.params.len()) {
         if (efn.params[pi].own) { own = own.append(efn.params[pi].name); }
         pi = pi + 1;
     }
-    return e053_stmts(efn.body, efn.name, fips, variants, own, s);
+    var kw: string = "fip";
+    var callable: string[] = fips;
+    if (efn.fbip) {
+        kw = "fbip";
+        var bi: i32 = 0;
+        while (bi < fbips.len()) { callable = callable.append(fbips[bi]); bi = bi + 1; }
+    }
+    var fx: E053Ctx = E053Ctx {
+        fname: efn.name, kw: kw, ctor_ok: efn.fbip || efn.fip_allowance > 0,
+        callable: callable, variants: variants, own: own
+    };
+    return e053_stmts(efn.body, fx, s);
 }
 
 // ---- E065: returning a `str` view of a function-local string ---------------
@@ -9108,10 +9146,12 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // E053 (`fip` no-allocation verification), E065 (`str` view escaping a
     // function-local string), and E032 (`use` binding-type inference).
     var fip_names: string[] = [];
+    var fbip_names: string[] = [];
     var str_ret_names: string[] = [];
     var fni: i32 = 0;
     while (fni < mod.funcs.len()) {
         if (mod.funcs[fni].fip) { fip_names = fip_names.append(mod.funcs[fni].name); }
+        if (mod.funcs[fni].fbip) { fbip_names = fbip_names.append(mod.funcs[fni].name); }
         if (mod.funcs[fni].ret_str) { str_ret_names = str_ret_names.append(mod.funcs[fni].name); }
         fni = fni + 1;
     }
@@ -9134,8 +9174,8 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var exi: i32 = 0;
     while (exi < mod.funcs.len()) {
         var xfn: parser.FuncDecl = mod.funcs[exi];
-        if (xfn.fip) {
-            body_diags = append_diags(body_diags, e053_diags(xfn, fip_names, e053_variants, build_func_scope(xfn, sigs, structs, unions, methods)));
+        if (xfn.fip || xfn.fbip) {
+            body_diags = append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, build_func_scope(xfn, sigs, structs, unions, methods)));
         }
         if (xfn.ret_str) {
             body_diags = append_diags(body_diags, e065_diags(xfn, str_ret_names, build_func_scope(xfn, sigs, structs, unions, methods)));
@@ -10055,7 +10095,7 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
 
 function annotate_func(fd: parser.FuncDecl, mt: ModuleTables): parser.FuncDecl {
     var s: Scope = build_func_scope(fd, mt.sigs, mt.structs, mt.unions, mt.methods);
-    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
+    return parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: annotate_block(fd.body, s), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
 }
 
 // annotate_module stamps every call, field-access and index expression — in a function

@@ -1,0 +1,177 @@
+// examples/self_host/irfipverify.fern — the `fip` / `fbip` allocation-budget
+// verifier for the self-host IR, mirroring native's internal/ir/fip_verify.go
+// (#6639 slice 3).
+//
+// The checker's E053 walk enforces the SHAPE rules of the two annotations.
+// This pass closes the loop from the other end: it checks the ops the lowering
+// ACTUALLY emitted against the annotation's allocation budget, which is the
+// half E053 cannot do — a construct the checker believes heap-neutral can
+// still lower to an allocation, and a `fbip` body is admitted to write
+// constructors precisely because someone downstream is supposed to count them.
+// Until this existed, `fbip` was an unverified assertion on the self-host side,
+// on the very reuse layer the Perceus port is about.
+//
+//   - `fip`             — zero fresh allocation ops. E053 already rejects every
+//     allocating construct, so an op found here is checker/IR drift and is
+//     reported as such rather than papered over.
+//   - `fbip`            — every constructor site must be reuse-PAIRED with a
+//     donor box. A paired site lowers to a `__fern_alloc_reuse` call instead of
+//     the fresh constructor op, so the scan below counts exactly the un-paired
+//     sites.
+//   - `fip(n)` / `fbip(n)` — at most n fresh sites. The count is owned here,
+//     not by the checker.
+//
+// Koka semantics note: fip/fbip is a SHAPE guarantee, not a per-execution one.
+// A paired site still carries the runtime `is_unique` guard, and its
+// shared-input fallback allocates inside `__fern_alloc_reuse` — that fallback
+// does NOT count here (exactly Koka's stance: on shared inputs a fip function
+// may copy).
+//
+// Two adaptations from native, both forced by the self-host IR's shape:
+//
+//  1. **Sites are named by op index, not source position.** Native's `Op`
+//     carries a `Pos` it maps back to the constructor expression the user
+//     wrote; the self-host `Op` has no position field at all. The op KIND is
+//     the label instead, which loses the line but not the construct.
+//  2. **The op set is the constructor ops, not `alloc`.** Native lowers every
+//     aggregate through `OpAlloc`, so counting that one kind covers them all.
+//     The self-host lowers a struct / tuple / array / Option to a single
+//     composite op that allocates in the backend, so the equivalent set is
+//     those ops — which is exactly the set E053's constructor relaxation
+//     admits, so counting them here is what pays for that relaxation.
+//
+// Known hole, shared with native: a string VIEW box (`str_slice`) is a fresh
+// 24-byte allocation neither compiler counts. E053 does not reject slicing
+// either, so a bare `fip` body may slice and still verify. See #6713.
+//
+// This file is read-only over the emitted ops — it never influences a pairing
+// decision. Its siblings are irverify.fern (structure, slice 1) and
+// irverifystack.fern (operand-stack discipline, slice 2); it reuses their
+// `Problem` so a driver can report all three from one list.
+
+import "./ir";
+import "./irverify";
+import "./util";
+
+// ---- the claim ---------------------------------------------------------
+
+// FipClaim is what a function declared about itself. Built from the FuncDecl
+// by the caller, so this module stays a leaf over `ir` (the same reason
+// irverify takes an `FnSig[]` rather than importing the parser).
+//
+// `is_fip` and `is_fbip` are mutually exclusive — the parser stamps exactly
+// one — and a claim with neither is verified vacuously, which is how a caller
+// can hand the whole module in without filtering it first.
+pub struct FipClaim {
+    fn_name: string,
+    is_fip: boolean,
+    is_fbip: boolean,
+    allowance: i32,
+}
+
+pub function claim_none(name: string): FipClaim {
+    return FipClaim { fn_name: name, is_fip: false, is_fbip: false, allowance: 0 };
+}
+
+// ---- the result --------------------------------------------------------
+
+// FipResult carries the verdict plus the two counts behind it. The counts are
+// reported for the reason native's verifystack reports coverage: a clean
+// verdict means little on its own — "0 fresh, 0 paired" is a function that
+// constructs nothing, "0 fresh, 7 paired" is the reuse layer actually working,
+// and only the second is evidence.
+pub struct FipResult {
+    problems: irverify.Problem[],
+    fresh: i32,
+    paired: i32,
+}
+
+// ---- the op table ------------------------------------------------------
+
+// fresh_alloc_what names the construct an op allocates a FRESH box for, or ""
+// when the op allocates nothing at this point in the program.
+//
+// The list is deliberately narrower than ir.op_allocates, which answers a
+// different question ("does this module need the heap + RC runtime?") and so
+// admits ops that read the runtime without allocating — const_struct's box is
+// static data, heap_bump_bytes only reads the cursor. Counting those would
+// report a budget overrun for a function that allocates nothing.
+pub function fresh_alloc_what(o: ir.Op): string {
+    var t: i32 = o.kind_tag;
+    // Constructor expressions: what E053's `ctor_ok` relaxation lets a `fbip`
+    // body write, and therefore what this pass has to count on its behalf. A
+    // reuse-paired site is NOT here — it lowers to a `__fern_alloc_reuse` call
+    // plus in-place field stores, and never emits its constructor op.
+    if (t == 138) {
+        if (o.str.len() > 0) { return "struct/enum construction \"" + o.str + "\""; }
+        return "struct/enum construction";
+    }
+    if (t == 198) { return "functional struct update"; }
+    if (t == 142) { return "tuple literal"; }
+    if (t == 87) { return "array literal"; }
+    if (t == 120) { return "Option construction"; }
+    if (t == 146) { return "dyn box"; }
+    // Never admitted by E053 under any grading, so an occurrence is drift:
+    // a construct the checker believed heap-neutral that lowers to an
+    // allocation anyway.
+    if (t == 98) { return "string concatenation"; }
+    if (t == 76) { return "heap allocation"; }
+    if (t == 77) { return "byte-buffer allocation"; }
+    return "";
+}
+
+// is_paired_alloc reports whether an op IS a reuse-paired construction — the
+// call the pairing machinery emits in place of a constructor op. Counted, not
+// charged: it is the evidence that the fbip claim is being earned rather than
+// merely tolerated.
+pub function is_paired_alloc(o: ir.Op): boolean {
+    return o.kind_tag == ir.kind_id("call_direct") && o.str == "__fern_alloc_reuse";
+}
+
+// ---- the pass ----------------------------------------------------------
+
+// verify_fip_fn checks one lowered function's ops against its claim. Returns
+// at most one problem — native reports a single E068 naming every offending
+// site, and a per-site list would bury the count, which is the actual verdict.
+pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
+    var out: irverify.Problem[] = [];
+    var fresh: i32 = 0;
+    var paired: i32 = 0;
+    var sites: string = "";
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (is_paired_alloc(ops[i])) {
+            paired = paired + 1;
+        } else {
+            var what: string = fresh_alloc_what(ops[i]);
+            if (what.len() > 0) {
+                if (fresh > 0) { sites = sites + "; "; }
+                sites = sites + what + " at op " + util.i32_to_string(i);
+                fresh = fresh + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (!claim.is_fip && !claim.is_fbip) {
+        return FipResult { problems: out, fresh: fresh, paired: paired };
+    }
+    if (fresh <= claim.allowance) {
+        return FipResult { problems: out, fresh: fresh, paired: paired };
+    }
+    var kw: string = "fip";
+    if (claim.is_fbip) { kw = "fbip"; }
+    var remedy: string = "pair each construction with a dead uniquely-owned donor of the same shape, or grade the claim (`" + kw + "(n)`)";
+    if (claim.is_fip && claim.allowance == 0) {
+        // A bare `fip` body passes E053 with no allocating construct at all, so
+        // a site here is a construct the checker believed heap-neutral that
+        // lowers to an allocation.
+        remedy = "this construct passed the E053 shape check but lowers to an allocation (checker/IR drift — please report it)";
+    }
+    out = out.append(irverify.Problem {
+        fn_name: claim.fn_name, op: 0 - 1, kind: "E068",
+        msg: "`" + kw + "` function \"" + claim.fn_name + "\" allocates: "
+            + util.i32_to_string(fresh) + " un-reused allocation site(s) exceed the allowance of "
+            + util.i32_to_string(claim.allowance) + ": " + sites + " — " + remedy
+    });
+    return FipResult { problems: out, fresh: fresh, paired: paired };
+}
