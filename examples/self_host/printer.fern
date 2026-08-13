@@ -414,6 +414,165 @@ function print_stmt_inline(st: parser.Stmt): string {
     return text;
 }
 
+// ForCSugar is a C-style `for` recovered from the desugar the parser lowered it
+// to. `ok` is false for an ordinary `if`.
+//
+// `init` and `step` hold zero or one statement each — the header allows both to
+// be empty (`for (; c; )`). `cond` is the loop condition; an omitted one
+// desugars to the literal `true` and is reprinted that way, since the lowered
+// form keeps no record of which of the two was written.
+struct ForCSugar { init: parser.Stmt[], cond: parser.Expr, step: parser.Stmt[], body: parser.Stmt[], ok: boolean }
+
+function no_c_for(): ForCSugar {
+    var none: parser.Stmt[] = [];
+    return ForCSugar { init: none, cond: parser.ExprBool { value: true }, step: none, body: none, ok: false };
+}
+
+// as_c_for recognises the C-style-for desugar and takes the three header
+// clauses and the body back out of it. Its marker is the synthesised flag
+// variable, `__forc_<line>_<col>`: the `__` prefix is reserved, so no source
+// program can present this shape by accident.
+//
+// The shape is parse_for's, and the two must move together — a change to the
+// desugar that this stops recognising silently reverts to printing the
+// while-loop.
+//
+//     if (true) { INIT…; var __forc_L_C = true; while (true) {
+//         if (!__forc_L_C) { STEP }
+//         __forc_L_C = false;
+//         if (!(COND)) { break; }
+//         BODY…
+//     } }
+function as_c_for(ifs: parser.StmtIf): ForCSugar {
+    if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) { return no_c_for(); }
+    var outer: parser.Stmt[] = ifs.then_body;
+    if (outer.len() < 2) { return no_c_for(); }
+    var flag: string = "";
+    match (outer[outer.len() - 2]) {
+        parser.StmtVar(v) => {
+            if (is_forc_name(v.name) && expr_is_true(v.init)) { flag = v.name; }
+        },
+        _ => {},
+    }
+    if (flag.len() == 0) { return no_c_for(); }
+    var wbody: parser.Stmt[] = [];
+    var have_while: boolean = false;
+    match (outer[outer.len() - 1]) {
+        parser.StmtWhile(w) => {
+            if (expr_is_true(w.cond) && w.label.len() == 0) { wbody = w.body; have_while = true; }
+        },
+        _ => {},
+    }
+    if (!have_while || wbody.len() < 3) { return no_c_for(); }
+
+    // wbody[0]: `if (!flag) { STEP }` — STEP is its then-body, possibly empty.
+    var step: parser.Stmt[] = [];
+    var step_ok: boolean = false;
+    match (wbody[0]) {
+        parser.StmtIf(s) => {
+            if (is_not_of_ident(s.cond, flag) && s.else_body.len() == 0) { step = s.then_body; step_ok = true; }
+        },
+        _ => {},
+    }
+    if (!step_ok) { return no_c_for(); }
+
+    // wbody[1]: `flag = false`.
+    var assign_ok: boolean = false;
+    match (wbody[1]) {
+        parser.StmtAssign(a) => {
+            if (a.target == flag && expr_is_false(a.value)) { assign_ok = true; }
+        },
+        _ => {},
+    }
+    if (!assign_ok) { return no_c_for(); }
+
+    // wbody[2]: `if (!(COND)) { break; }`.
+    var cond: parser.Expr = parser.ExprBool { value: true };
+    var cond_ok: boolean = false;
+    match (wbody[2]) {
+        parser.StmtIf(c) => {
+            if (c.else_body.len() == 0 && c.then_body.len() == 1) {
+                match (c.then_body[0]) {
+                    parser.StmtBreak(b) => {
+                        if (b.label.len() == 0) {
+                            match (c.cond) {
+                                parser.ExprUnary(u) => {
+                                    if (u.op == "!") { cond = u.operand; cond_ok = true; }
+                                },
+                                _ => {},
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            }
+        },
+        _ => {},
+    }
+    if (!cond_ok) { return no_c_for(); }
+
+    var init: parser.Stmt[] = [];
+    var ii: i32 = 0;
+    while (ii + 2 < outer.len()) { init = init.append(outer[ii]); ii = ii + 1; }
+    var body: parser.Stmt[] = [];
+    var bi: i32 = 3;
+    while (bi < wbody.len()) { body = body.append(wbody[bi]); bi = bi + 1; }
+    return ForCSugar { init: init, cond: cond, step: step, body: body, ok: true };
+}
+
+// is_forc_name reports the synthesised first-iteration flag `__forc_<l>_<c>`.
+function is_forc_name(name: string): boolean {
+    return name.len() > 7 && name[0:7] == "__forc_";
+}
+
+function expr_is_true(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprBool(b) => { return b.value; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+function expr_is_false(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprBool(b) => { return !b.value; },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// is_not_of_ident reports `!<name>`.
+function is_not_of_ident(e: parser.Expr, name: string): boolean {
+    match (e) {
+        parser.ExprUnary(u) => {
+            if (u.op != "!") { return false; }
+            match (u.operand) {
+                parser.ExprIdent(id) => { return id.name == name; },
+                _ => { return false; },
+            }
+        },
+        _ => { return false; },
+    }
+    return false;
+}
+
+// print_c_for renders the recovered header. The clause statements print with
+// their trailing `;` stripped: the header's own separators supply them, and a
+// clause is an ordinary statement everywhere else.
+function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
+    var init: string = "";
+    if (fc.init.len() == 1) { init = strip_semi(print_stmt_inline(fc.init[0])); }
+    var step: string = "";
+    if (fc.step.len() == 1) { step = strip_semi(print_stmt_inline(fc.step[0])); }
+    var (body, g) = print_block(fc.body, depth, f);
+    return ("for (" + init + "; " + print_expr(fc.cond) + "; " + step + ") " + body, g);
+}
+
+function strip_semi(s: string): string {
+    if (s.len() > 0 && s[s.len() - 1] == 59) { return s[0:s.len() - 1] + ""; }   // ';'
+    return s;
+}
+
 // print_if_chain renders an if/else with no leading indent and no trailing
 // newline. An `else` whose whole body is a single `if` is an else-IF chain and
 // stays on one line, the way native prints it: re-nesting it in braces adds a
@@ -477,7 +636,16 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             return ("return " + print_expr(r.value) + ";", f);
         },
         parser.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },
-        parser.StmtIf(ifs) => { return print_if_chain(ifs, depth, f); },
+        parser.StmtIf(ifs) => {
+            // A C-style `for` reaches the printer as its desugar — the parser
+            // lowers it at parse time and the Stmt union has no node for it
+            // (StmtFor models the range form only). Printing the desugar
+            // rewrites the user's loop into a synthesised while-loop, flag and
+            // all, so reprint the header from the shape instead (#6771).
+            var fc: ForCSugar = as_c_for(ifs);
+            if (fc.ok) { return print_c_for(fc, depth, f); }
+            return print_if_chain(ifs, depth, f);
+        },
         parser.StmtWhile(w) => {
             var (wb, wg) = print_block(w.body, depth, f);
             return ("while (" + print_expr(w.cond) + ") " + wb, wg);
