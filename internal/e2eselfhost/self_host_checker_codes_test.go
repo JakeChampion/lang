@@ -778,6 +778,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"enum-match-payload-exhaustive-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { var o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		{"union-match-foreign-variant", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type U = A | B;\nfunction f(u: U): i32 { match (u) { A(a) => { return a.x; }, C(c) => { return c.z; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A { x: 1 }); }\n", []string{"E001", "E014"}},
 		{"match-qualifier-mismatch", "enum E { A, B }\nenum F { C, D }\nfunction f(e: E): i32 { match (e) { F.A => { return 1; }, _ => { return 0; } } return 0; }\nfunction main(): i32 { return f(A); }\n", []string{"E029"}},
+		// The EXPRESSION form of the same mismatch (#6576). Native's expression
+		// arm loop carried its own copy of the qualifier validation with the
+		// enum-qualifier case missing, so it reported the module-mismatch
+		// wording here and — worse — rejected the LEGAL `E.A` spelling outright,
+		// while the self-host accepted it. The two frontends disagreed about
+		// what the language is, with native as the odd one out; both call sites
+		// now share checkVariantQualifier.
+		// `F.A` rather than `F.C`, mirroring the statement row: the variant NAME
+		// is one E really has, so the qualifier is the only mistake and E029 is
+		// the only code. `F.C` additionally draws a cascading E014 from native
+		// and not from the self-host — a real but separate difference in how far
+		// each carries on after the first error, which this row is not about.
+		{"match-qualifier-mismatch-expr", "enum E { A, B }\nenum F { C, D }\nfunction f(e: E): i32 { return match (e) { F.A => 1i32, _ => 0i32 }; }\nfunction main(): i32 { return f(A); }\n", []string{"E029"}},
+		// The legal spelling, in both positions: a qualifier naming the
+		// scrutinee's OWN enum. Neither checker may report anything.
+		{"match-qualifier-own-enum-stmt", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { E.A => { return 1; }, E.B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
+		{"match-qualifier-own-enum-expr", "enum E { A, B }\nfunction f(e: E): i32 { return match (e) { E.A => 1i32, E.B => 2i32 }; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"match-qualifier-correct-ok", "enum E { A, B }\nfunction f(e: E): i32 { match (e) { E.A => { return 1; }, E.B => { return 2; } } return 0; }\nfunction main(): i32 { return f(A); }\n", nil},
 		{"union-struct-name-collision", "struct A { x: i32 }\nstruct B { y: i32 }\nstruct C { z: i32 }\npub type B = A | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-distinct-name-ok", "struct A { x: i32 }\nstruct C { z: i32 }\npub type U = A | C;\nfunction main(): i32 { return 0; }\n", nil},

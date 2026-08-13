@@ -5530,3 +5530,59 @@ func TestUnknownVariantHintDistinguishesTypoFromCatchAll(t *testing.T) {
 		})
 	}
 }
+
+// A qualified variant pattern must mean the same thing in a match EXPRESSION as
+// in a match STATEMENT. It did not: the expression arm loop carried its own copy
+// of the qualifier validation, and that copy was missing the enum-qualifier case
+// while its comment claimed to be "the same qualifier validation as the stmt-form
+// arm loop above". So `Color.Red` on a `Color` scrutinee — the spelling E029's own
+// catalogue entry documents as legal — type-checked as a statement and was
+// rejected as an expression, with a message naming a module the user never wrote
+// (#6576).
+//
+// The self-host checker had it right on both forms all along, so this was the two
+// frontends disagreeing about what the language is, with native as the odd one
+// out. Both call sites now share checkVariantQualifier.
+func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
+	const enums = "enum Color { Red, Green }\nenum Status { Ok, Err }\n"
+
+	mustOK := func(name, src string) {
+		t.Helper()
+		if err := checkSource(t, enums+src); err != nil {
+			t.Errorf("%s: want accepted, got: %v", name, err)
+		}
+	}
+	mustE029 := func(name, src, want string) {
+		t.Helper()
+		err := checkSource(t, enums+src)
+		if err == nil {
+			t.Fatalf("%s: want E029, got no error", name)
+		}
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: want an E029 reading %q, got: %v", name, want, err)
+		}
+		// The module branch is the wrong diagnosis for an enum qualifier: it
+		// names a module the user never wrote.
+		if strings.Contains(err.Error(), "names module") {
+			t.Errorf("%s: reported the module-qualifier form, want the enum-mismatch one: %v", name, err)
+		}
+	}
+
+	// The enum-qualifier spelling is legal in BOTH positions. The expression
+	// form is the one that was wrong.
+	mustOK("stmt-enum-qualifier",
+		"function f(c: Color): i32 { match (c) { Color.Red => { return 1; }, Color.Green => { return 2; } } return 0; }")
+	mustOK("expr-enum-qualifier",
+		"function f(c: Color): i32 { return match (c) { Color.Red => 1i32, Color.Green => 2i32 }; }")
+
+	// A qualifier naming a DIFFERENT enum is the real E029, and it must read as
+	// an enum mismatch in both positions. The expression form used to fall
+	// through to the module branch and report `names module "Status"`, which
+	// points at a module that does not exist instead of at the actual mistake.
+	mustE029("stmt-wrong-enum",
+		"function f(c: Color): i32 { match (c) { Status.Ok => { return 1; }, _ => { return 0; } } return 0; }",
+		`qualifier "Status" does not match scrutinee enum Color`)
+	mustE029("expr-wrong-enum",
+		"function f(c: Color): i32 { return match (c) { Status.Ok => 1i32, _ => 0i32 }; }",
+		`qualifier "Status" does not match scrutinee enum Color`)
+}
