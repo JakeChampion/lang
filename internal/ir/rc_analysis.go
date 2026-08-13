@@ -3759,35 +3759,6 @@ func (o identOrder) isLast(id *ast.Ident) bool {
 // The receiver shape check shared by isSelfArrayPushLocal (which adds the
 // borrowed-param exclusion its overwrite-free reclaim needs) and
 // inPlacePushes (which deliberately does not — see below).
-// deferOrLambdaNames returns the names readable after the statement that
-// mentions them completes: anything referenced under a defer action or inside
-// a lambda body, since a closure can run later and read a captured binding.
-// Conservative — any occurrence of the name is enough.
-func deferOrLambdaNames(body ast.Node) map[string]bool {
-	esc := map[string]bool{}
-	ast.Walk(body, func(n ast.Node) bool {
-		var sub ast.Node
-		switch d := n.(type) {
-		case *ast.Defer:
-			sub = d.Expr
-		case *ast.Lambda:
-			sub = n
-		default:
-			return true
-		}
-		ast.Walk(sub, func(m ast.Node) bool {
-			if id, isIdent := m.(*ast.Ident); isIdent {
-				esc[id.Name] = true
-			}
-			return true
-		})
-		// Descend anyway: a Defer's own subtree holds no Return/Assign exprs
-		// to mark, but nested statements still need the scan above.
-		return true
-	})
-	return esc
-}
-
 func pushOnIdent(e ast.Expr) (*ast.Call, *ast.Ident) {
 	call, ok := e.(*ast.Call)
 	if !ok {
@@ -3873,6 +3844,35 @@ func inPlacePushes(body ast.Node) map[*ast.Call]bool {
 		return true
 	})
 	return ok
+}
+
+// deferOrLambdaNames returns the names still readable once the statement that
+// mentions them completes: anything referenced under a defer action or inside a
+// lambda body, since a closure can run later and read a captured binding.
+// Conservative — any occurrence of the name is enough. Both return-position
+// exemptions below rest on it.
+func deferOrLambdaNames(body ast.Node) map[string]bool {
+	esc := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		var sub ast.Node
+		switch d := n.(type) {
+		case *ast.Defer:
+			sub = d.Expr
+		case *ast.Lambda:
+			sub = n
+		default:
+			return true
+		}
+		ast.Walk(sub, func(m ast.Node) bool {
+			if id, isIdent := m.(*ast.Ident); isIdent {
+				esc[id.Name] = true
+			}
+			return true
+		})
+		// Descend anyway: nested statements hold names of their own.
+		return true
+	})
+	return esc
 }
 
 // place is one syntactic read of a container root: either a BARE occurrence of
