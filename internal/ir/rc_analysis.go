@@ -3759,6 +3759,35 @@ func (o identOrder) isLast(id *ast.Ident) bool {
 // The receiver shape check shared by isSelfArrayPushLocal (which adds the
 // borrowed-param exclusion its overwrite-free reclaim needs) and
 // inPlacePushes (which deliberately does not — see below).
+// deferOrLambdaNames returns the names readable after the statement that
+// mentions them completes: anything referenced under a defer action or inside
+// a lambda body, since a closure can run later and read a captured binding.
+// Conservative — any occurrence of the name is enough.
+func deferOrLambdaNames(body ast.Node) map[string]bool {
+	esc := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		var sub ast.Node
+		switch d := n.(type) {
+		case *ast.Defer:
+			sub = d.Expr
+		case *ast.Lambda:
+			sub = n
+		default:
+			return true
+		}
+		ast.Walk(sub, func(m ast.Node) bool {
+			if id, isIdent := m.(*ast.Ident); isIdent {
+				esc[id.Name] = true
+			}
+			return true
+		})
+		// Descend anyway: a Defer's own subtree holds no Return/Assign exprs
+		// to mark, but nested statements still need the scan above.
+		return true
+	})
+	return esc
+}
+
 func pushOnIdent(e ast.Expr) (*ast.Call, *ast.Ident) {
 	call, ok := e.(*ast.Call)
 	if !ok {
@@ -3804,32 +3833,7 @@ func pushOnIdent(e ast.Expr) (*ast.Call, *ast.Ident) {
 // takes the copy path, exactly as before #4827.
 func inPlacePushes(body ast.Node) map[*ast.Call]bool {
 	ok := map[*ast.Call]bool{}
-	// Names readable after the enclosing statement completes: anything
-	// referenced under a defer action or inside a lambda body (a closure
-	// can run later and read a captured binding). Conservative — any
-	// occurrence of the name disqualifies its return-position pushes.
-	esc := map[string]bool{}
-	ast.Walk(body, func(n ast.Node) bool {
-		var sub ast.Node
-		switch d := n.(type) {
-		case *ast.Defer:
-			sub = d.Expr
-		case *ast.Lambda:
-			sub = n
-		default:
-			return true
-		}
-		ast.Walk(sub, func(m ast.Node) bool {
-			if id, isIdent := m.(*ast.Ident); isIdent {
-				esc[id.Name] = true
-			}
-			return true
-		})
-		// Descend anyway: a Defer's own subtree holds no Return/Assign
-		// exprs to mark, and marking inside a Lambda is skipped below,
-		// but nested statements still need the esc scan above.
-		return true
-	})
+	esc := deferOrLambdaNames(body)
 	ast.Walk(body, func(n ast.Node) bool {
 		switch st := n.(type) {
 		case *ast.Lambda:
@@ -3869,6 +3873,249 @@ func inPlacePushes(body ast.Node) map[*ast.Call]bool {
 		return true
 	})
 	return ok
+}
+
+// place is one syntactic read of a container root: either a BARE occurrence of
+// the root ident, which hands the whole container over and so reaches every
+// field, or the longest ident-rooted field chain (`o.a.b`), which reaches only
+// what sits under that path.
+type place struct {
+	root string
+	path []string // nil for a bare occurrence
+	node ast.Node
+}
+
+// fieldPlace decomposes an ident-rooted field chain into its root name and the
+// field path read from the root outwards.
+func fieldPlace(fa *ast.FieldAccess) (string, []string, bool) {
+	var rev []string
+	for e := ast.Expr(fa); ; {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			rev = append(rev, x.Field)
+			e = x.Target
+		case *ast.Ident:
+			path := make([]string, len(rev))
+			for i, f := range rev {
+				path[len(rev)-1-i] = f
+			}
+			return x.Name, path, true
+		default:
+			return "", nil, false
+		}
+	}
+}
+
+// overlaps reports whether reading `q` can reach the buffer `p` names: a bare
+// root reaches every field, and two chains collide when one path is a prefix of
+// the other (`o.a` contains `o.a.b`).
+func (p place) overlaps(q place) bool {
+	if p.root != q.root {
+		return false
+	}
+	n := min(len(p.path), len(q.path))
+	for i := 0; i < n; i++ {
+		if p.path[i] != q.path[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// placesIn collects every place under `n`. A field chain is recorded once, at
+// its outermost FieldAccess; the idents inside it are NOT also recorded as bare
+// occurrences, which is what keeps `o.ys` from reading as a whole-container use.
+func placesIn(n ast.Node) []place {
+	var out []place
+	ast.Walk(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.FieldAccess:
+			root, path, ok := fieldPlace(x)
+			if !ok {
+				return true
+			}
+			out = append(out, place{root: root, path: path, node: x})
+			return false
+		case *ast.Ident:
+			out = append(out, place{root: x.Name, node: x})
+		}
+		return true
+	})
+	return out
+}
+
+func isArrayPushCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == "__method_Array_push" && len(c.Args) == 2
+}
+
+// fieldPlaceAppendCopies returns the appends whose receiver is a field PLACE
+// (`o.xs`, `o.a.b`) and whose rc==1 in-place grow would still be observable
+// through the container, so emitArrayPush must force the copy path (#6665).
+//
+// A field receiver carries none of the uniqueness information a bare ident
+// does: rc==1 says the container holds the only reference to the buffer, not
+// that nobody reads it again — the container is still named, and reading its
+// field again yields the same pointer. So an overlapping read of the place —
+// the same field chain, a prefix of it, or a bare read of the root, which
+// hands the whole container over — forces the copy unless one of three things
+// puts every such read out of the grow's reach:
+//
+//   - REBIND. The append feeds the literal that REPLACES the container
+//     (`o = S { xs: o.xs.append(v), ys: o.ys }`), so later reads of `o.xs`
+//     resolve through the new container and should see the appended value.
+//     This is the self-host EmitState threading shape and it must stay O(1).
+//     It excuses only reads through the NAME: an overlapping read inside the
+//     replacing expression is evaluated against the pre-append container
+//     (`inner: I { data: o.xs }`, the #6665 repro), and a bare read that binds
+//     the container elsewhere (`var old = o`) keeps the old one reachable
+//     under another name.
+//   - RETURN. The append sits in a return expression with no overlapping read
+//     later in that expression, so the function exits before anything here can
+//     look again. What the CALLER can still see through a parameter is the
+//     #4873 caller-side grow bracket's job; a name captured by a defer or a
+//     lambda is excluded because those run after the return expression.
+//   - NO OVERLAP at all in the body.
+//
+// A struct-update SPREAD base does not count as an overlapping read of the
+// field the same literal overrides — `A { ...a, code: a.code.append(v) }`
+// copies every field of `a` except `code`, so its copy never names the grown
+// buffer. This is the assembler's own emit shape; treating `...a` as a
+// whole-container read cost 75% of the self-host driver's compile time.
+func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
+	// The container-replacing assignment, and the return expression, each
+	// field append sits under.
+	rebind := map[*ast.Call]*ast.Assign{}
+	retExpr := map[*ast.Call]ast.Expr{}
+	// Bare reads of a root that BIND the container somewhere it outlives the
+	// expression: anything under a `var` initialiser or an assignment's value.
+	capturing := map[ast.Node]bool{}
+	markPushes := func(scope ast.Expr, want string, mark func(*ast.Call)) {
+		ast.Walk(scope, func(m ast.Node) bool {
+			if _, isLambda := m.(*ast.Lambda); isLambda {
+				return false // runs when the closure is called, not here
+			}
+			c, isCall := m.(*ast.Call)
+			if !isCall || !isArrayPushCall(c) {
+				return true
+			}
+			if fa, isFA := c.Args[0].(*ast.FieldAccess); isFA {
+				if root, _, ok := fieldPlace(fa); ok && (want == "" || root == want) {
+					mark(c)
+				}
+			}
+			return true
+		})
+	}
+	// Struct-update spread bases, keyed by the base expression's place node.
+	spreadOf := map[ast.Node]*ast.StructLit{}
+	ast.Walk(body, func(n ast.Node) bool {
+		lit, isLit := n.(*ast.StructLit)
+		if !isLit || lit.Base == nil {
+			return true
+		}
+		switch bx := lit.Base.(type) {
+		case *ast.Ident:
+			spreadOf[bx] = lit
+		case *ast.FieldAccess:
+			if _, _, ok := fieldPlace(bx); ok {
+				spreadOf[bx] = lit
+			}
+		}
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		var bound ast.Expr
+		var boundTo string
+		switch st := n.(type) {
+		case *ast.Assign:
+			bound = st.Value
+			if t, isID := st.Target.(*ast.Ident); isID && st.Value != nil {
+				boundTo = t.Name
+				markPushes(st.Value, t.Name, func(c *ast.Call) { rebind[c] = st })
+			}
+		case *ast.Var:
+			bound, boundTo = st.Init, st.Name
+		case *ast.Return:
+			if st.Value != nil {
+				markPushes(st.Value, "", func(c *ast.Call) { retExpr[c] = st.Value })
+			}
+		}
+		if bound != nil {
+			for _, q := range placesIn(bound) {
+				// Reading a container to rebuild ITSELF (`a = A { ...a, … }`)
+				// hands the old value to its own replacement, not to a name
+				// that outlives it.
+				if len(q.path) == 0 && q.root != boundTo {
+					capturing[q.node] = true
+				}
+			}
+		}
+		return true
+	})
+
+	byRoot := map[string][]place{}
+	for _, q := range placesIn(body) {
+		byRoot[q.root] = append(byRoot[q.root], q)
+	}
+	esc := deferOrLambdaNames(body)
+	out := map[*ast.Call]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		c, isCall := n.(*ast.Call)
+		if !isCall || !isArrayPushCall(c) {
+			return true
+		}
+		fa, isFA := c.Args[0].(*ast.FieldAccess)
+		if !isFA {
+			return true
+		}
+		root, path, ok := fieldPlace(fa)
+		if !ok {
+			return true
+		}
+		p := place{root: root, path: path, node: fa}
+		// The expression the append's own statement evaluates, if that
+		// statement puts the reads after it out of reach.
+		var scope ast.Expr
+		if asn := rebind[c]; asn != nil {
+			scope = asn.Value
+		} else if re, isRet := retExpr[c]; isRet && !esc[root] {
+			scope = re
+		}
+		inScope := map[ast.Node]bool{}
+		if scope != nil {
+			for _, q := range placesIn(scope) {
+				inScope[q.node] = true
+			}
+		}
+		for _, q := range byRoot[root] {
+			if q.node == fa || !p.overlaps(q) || overriddenSpread(spreadOf[q.node], q, p) {
+				continue
+			}
+			if scope == nil || inScope[q.node] || (len(q.path) == 0 && capturing[q.node]) {
+				out[c] = true
+				break
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// overriddenSpread reports whether `q` is the spread base of a struct-update
+// literal that explicitly overrides the field `p` continues into, so the
+// literal's copy of `q` never carries p's buffer.
+func overriddenSpread(lit *ast.StructLit, q, p place) bool {
+	if lit == nil || len(q.path) >= len(p.path) {
+		return false
+	}
+	next := p.path[len(q.path)]
+	for _, fl := range lit.Fields {
+		if fl.Name == next {
+			return true
+		}
+	}
+	return false
 }
 
 // computeBorrowedAliases finds `var y = x` aliases that are pure BORROWED
