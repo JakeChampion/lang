@@ -294,18 +294,29 @@ function resolve_path(import_path: string, entry_dir: string, root: string): str
     return root + "/" + import_path + ".fern";
 }
 
-// add_imports appends each of mod's loadable import paths to paths
-// (deduped by full path), returning the grown list.
-function add_imports(paths: string[], mod: parser.Module, root: string, deps: string[]): string[] {
+// ImportQueue is the breadth-first import worklist: each path paired with the
+// directory of the module that imported it. A dependency's `import "./util"`
+// names a file beside the DEPENDENCY, and a dependency's own dependencies are
+// declared in the dependency's manifest — so an import cannot be resolved
+// without knowing where it was written (#6756).
+struct ImportQueue { paths: string[], dirs: string[] }
+
+// queue_imports appends each of mod's loadable import paths (deduped by full
+// path), each tagged with `from_dir` — mod's own directory, which is what its
+// imports resolve against.
+function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[]): ImportQueue {
+    var paths: string[] = q.paths;
+    var dirs: string[] = q.dirs;
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
         if (should_load(ip, root, deps) && !util.has_str(paths, ip)) {
             paths = paths.append(ip);
+            dirs = dirs.append(from_dir + "");
         }
         i = i + 1;
     }
-    return paths;
+    return ImportQueue { paths: paths, dirs: dirs };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -1205,20 +1216,27 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     var pkgs: caps.Pkg[] = [root_pkg(man)];
     var no_mods: flatten.LoadedModule[] = [];
 
-    var paths: string[] = add_imports([], entry_mod, root, deps);
+    var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [] }, entry_mod, dir_slash, root, deps);
     var loaded: flatten.LoadedModule[] = [];
     var done: string[] = [];
     var j: i32 = 0;
-    while (j < paths.len()) {
-        var ipath: string = paths[j];
+    while (j < q.paths.len()) {
+        var ipath: string = q.paths[j];
+        var from: string = q.dirs[j];
         j = j + 1;
         if (!util.has_str(done, ipath)) {
             done = done.append(ipath);
-            var mpath: string = resolve_path(ipath, dir, root);
+            var from_dir: string = from;
+            if (from_dir.len() > 1) { from_dir = from_dir[0:from_dir.len() - 1] + ""; }
+            var mpath: string = resolve_path(ipath, from_dir, root);
             var msrc: string = "";
             var mok: boolean = false;
+            // The directory the module was read from — where ITS imports and
+            // ITS manifest live. Same as the importer's for a sibling file,
+            // different for anything reached through a manifest.
+            var mdir: string = dir_slash;
             match (read_file(mpath)) {
-                Ok(s2) => { msrc = s2; mok = true; },
+                Ok(s2) => { msrc = s2; mok = true; mdir = dir_of(mpath) + "/"; },
                 Err(e) => { mok = false; },
             }
             if (!mok) {
@@ -1228,10 +1246,8 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 // the only way to reach a package that carries its own
                 // manifest — the rules above can only name a sibling file or
                 // something under the stdlib root.
-                match (modloader.resolve_module_src(dir_slash, ipath, module_name(ipath))) {
-                    Some(s3) => { msrc = s3; mok = true; },
-                    None => { },
-                }
+                var r: modloader.Resolved = modloader.resolve_module(from, ipath, module_name(ipath));
+                if (r.ok) { msrc = r.src; mok = true; mdir = r.dir; }
             }
             if (!mok) {
                 eprint("fern: cannot read module: ");
@@ -1241,8 +1257,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             }
             var m: parser.Module = parser.parse_module(lexer.tokenize(msrc));
             loaded = loaded.append(flatten.LoadedModule { name: module_name(ipath), mod: m });
-            pkgs = add_pkg(pkgs, man, dir_slash, ipath);
-            paths = add_imports(paths, m, root, deps);
+            // Attribute and expand against the manifest GOVERNING the importer,
+            // which is the entry's only for a direct import.
+            var from_man: fern_toml.Manifest = read_manifest(from);
+            pkgs = add_pkg(pkgs, from_man, from, ipath);
+            q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
         }
     }
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);

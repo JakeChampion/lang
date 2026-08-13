@@ -83,6 +83,15 @@ function enqueue_imports(queue: string[], seen: string[], mod: parser.Module): s
     return out;
 }
 
+// fill_dirs appends `n` copies of `dir`, keeping the directory list the same
+// length as the import queue it parallels.
+function fill_dirs(dirs: string[], dir: string, n: i32): string[] {
+    var out: string[] = dirs;
+    var i: i32 = 0;
+    while (i < n) { out = out.append(dir + ""); i = i + 1; }
+    return out;
+}
+
 // try_read reads `<dir><rel>.fern`, returning Some(source) or None.
 function try_read(dir: string, rel: string): Option[string] {
     match (read_file(dir + rel + ".fern")) {
@@ -92,19 +101,56 @@ function try_read(dir: string, rel: string): Option[string] {
     return None;
 }
 
-// resolve_module_src finds the source for import `path`. It tries the full
-// (possibly `std/`-prefixed) path first, then the flat basename in the
-// entry directory — so `import "std/io"` resolves to `<dir>/std/io.fern`
-// when vendored there, or `<dir>/io.fern` when laid out flat.
+// Resolved is a module's source together with the DIRECTORY it was read
+// from. The directory is what the module's own imports resolve against —
+// a dependency's `import "./util"` names a file beside the dependency, and
+// its declared dependencies live in the dependency's manifest, not the
+// entry package's.
+pub struct Resolved { src: string, dir: string, ok: boolean }
+
+function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false }; }
+
+// res_read reads `<dir><rel>.fern` and reports the directory it came from —
+// `dir` plus any directory part of `rel`, so a module reached as `std/io`
+// resolves its own siblings under `<dir>std/`.
+function res_read(dir: string, rel: string): Resolved {
+    match (try_read(dir, rel)) {
+        Some(s) => { return Resolved { src: s, dir: dir_part(dir, rel), ok: true }; },
+        None => { return res_none(); },
+    }
+    return res_none();
+}
+
+// dir_part appends `rel`'s directory component to `dir`: ("/a/", "std/io") →
+// "/a/std/", ("/a/", "io") → "/a/".
+function dir_part(dir: string, rel: string): string {
+    var cut: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < rel.len()) {
+        if (rel[i] == 47) { cut = i; }   // '/'
+        i = i + 1;
+    }
+    if (cut < 0) { return dir; }
+    return dir + rel[0:cut + 1] + "";
+}
+
+// resolve_module_src finds the source for import `path`, discarding the
+// directory it was found in. `resolve_module` is the full answer.
 pub function resolve_module_src(dir: string, path: string, name: string): Option[string] {
-    match (try_read(dir, rel_path(path))) {
-        Some(s) => { return Some(s); },
-        None => { },
-    }
-    match (try_read(dir, name)) {
-        Some(s) => { return Some(s); },
-        None => { },
-    }
+    var r: Resolved = resolve_module(dir, path, name);
+    if (!r.ok) { return None; }
+    return Some(r.src);
+}
+
+// resolve_module finds the source for import `path` and the directory it
+// lives in. It tries the full (possibly `std/`-prefixed) path first, then the
+// flat basename in `dir` — so `import "std/io"` resolves to `<dir>/std/io.fern`
+// when vendored there, or `<dir>/io.fern` when laid out flat.
+pub function resolve_module(dir: string, path: string, name: string): Resolved {
+    var direct: Resolved = res_read(dir, rel_path(path));
+    if (direct.ok) { return direct; }
+    var flat: Resolved = res_read(dir, name);
+    if (flat.ok) { return flat; }
     // Manifest fallback (mirrors native's resolveImport): path / workspace /
     // versioned(lock) deps, vendored mode, and — since #4949 — url+hash
     // deps resolved from the per-machine content-addressed store via the
@@ -114,28 +160,25 @@ pub function resolve_module_src(dir: string, path: string, name: string): Option
 }
 
 // try_manifest resolves a DECLARED dependency `name` from `<dir>fern.toml`
-// across the disk-resolvable forms. Returns None when there is no
-// manifest, `name` is not a declared dep, or the form is not
-// disk-resolvable (url).
-function try_manifest(dir: string, name: string): Option[string] {
+// across the disk-resolvable forms. Not-ok when there is no manifest, `name`
+// is not a declared dep, or the form is not disk-resolvable.
+function try_manifest(dir: string, name: string): Resolved {
     match (read_file(dir + "fern.toml")) {
         Ok(src) => {
             var m: fern_toml.Manifest = fern_toml.parse(src);
             var kind: string = fern_toml.dep_kind(m, name);
-            if (kind.len() == 0) { return None; }   // undeclared / unrecognised form
+            if (kind.len() == 0) { return res_none(); }   // undeclared / unrecognised form
 
             // Vendored mode: a declared dep resolves from <vendor-root>/
             // vendor/<name>/ when that tree exists — offline, form-agnostic,
             // taking precedence (mirrors the native vendored-mode rule).
-            match (try_vendor(dir, name)) {
-                Some(s) => { return Some(s); },
-                None => { },
-            }
+            var vend: Resolved = try_vendor(dir, name);
+            if (vend.ok) { return vend; }
 
             if (kind == "path") {
                 match (fern_toml.dep_path(m, name)) {
                     Some(dp) => { return load_lib(dir + dp + "/"); },
-                    None => { return None; },
+                    None => { return res_none(); },
                 }
             }
             if (kind == "workspace") {
@@ -152,25 +195,25 @@ function try_manifest(dir: string, name: string): Option[string] {
             if (kind == "url") {
                 match (fern_toml.dep_hash(m, name)) {
                     Some(h) => { return load_from_store(h); },
-                    None => { return None; },
+                    None => { return res_none(); },
                 }
             }
-            return None;
+            return res_none();
         },
-        Err(e) => { return None; },
+        Err(e) => { return res_none(); },
     }
-    return None;
+    return res_none();
 }
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
 // module (default lib.fern) and loads that file.
-function load_lib(depdir: string): Option[string] {
+function load_lib(depdir: string): Resolved {
     var deplib: string = "lib.fern";
     match (read_file(depdir + "fern.toml")) {
         Ok(src) => { deplib = fern_toml.parse(src).lib; },
         Err(e) => { },
     }
-    return try_read(depdir, strip_fern_ext(deplib));
+    return res_read(depdir, strip_fern_ext(deplib));
 }
 
 // parent_dir returns `dir` with its last path segment removed (both
@@ -190,25 +233,22 @@ function parent_dir(dir: string): string {
 // try_vendor resolves `name` from `<vendor-root>/vendor/<name>/` when such
 // a tree governs `dir` — either dir's own vendor/ or an ancestor's (a
 // workspace member sharing the root vendor/). Walks up reading each level.
-function try_vendor(dir: string, name: string): Option[string] {
+function try_vendor(dir: string, name: string): Resolved {
     var d: string = dir;
     var steps: i32 = 0;
     while (d.len() > 0 && steps < 64) {
-        var cand: string = d + "vendor/" + name + "/";
-        match (load_lib(cand)) {
-            Some(s) => { return Some(s); },
-            None => { },
-        }
+        var cand: Resolved = load_lib(d + "vendor/" + name + "/");
+        if (cand.ok) { return cand; }
         d = parent_dir(d);
         steps = steps + 1;
     }
-    return None;
+    return res_none();
 }
 
 // load_workspace_member finds the enclosing [workspace] root (the nearest
 // ancestor fern.toml with a members list) and loads the member whose
 // package name == `name`.
-function load_workspace_member(dir: string, name: string): Option[string] {
+function load_workspace_member(dir: string, name: string): Resolved {
     var d: string = dir;
     var steps: i32 = 0;
     while (d.len() > 0 && steps < 64) {
@@ -222,7 +262,7 @@ function load_workspace_member(dir: string, name: string): Option[string] {
                         if (member_name(memdir) == name) { return load_lib(memdir); }
                         mi = mi + 1;
                     }
-                    return None;   // workspace found, no such member
+                    return res_none();   // workspace found, no such member
                 }
             },
             Err(e) => { },
@@ -230,7 +270,7 @@ function load_workspace_member(dir: string, name: string): Option[string] {
         d = parent_dir(d);
         steps = steps + 1;
     }
-    return None;
+    return res_none();
 }
 
 // member_name returns a package directory's declared [package] name, or ""
@@ -245,8 +285,8 @@ function member_name(memdir: string): string {
 
 // load_locked resolves a versioned dep `name` through `<dir>fern.lock`,
 // loading the pinned version's lib when its source is a local `path`. A
-// url-sourced lock entry returns None (the store is unreachable here).
-function load_locked(dir: string, name: string): Option[string] {
+// url-sourced lock entry resolves through the store.
+function load_locked(dir: string, name: string): Resolved {
     match (read_file(dir + "fern.lock")) {
         Ok(src) => {
             var entries: fern_toml.LockEntry[] = fern_toml.parse_lock(src);
@@ -258,12 +298,12 @@ function load_locked(dir: string, name: string): Option[string] {
             // the content-addressed store, keyed by the lock's hash.
             match (fern_toml.lock_hash_of(entries, name)) {
                 Some(h) => { return load_from_store(h); },
-                None => { return None; },
+                None => { return res_none(); },
             }
         },
-        Err(e) => { return None; },
+        Err(e) => { return res_none(); },
     }
-    return None;
+    return res_none();
 }
 
 // load_from_store resolves a url/hash dependency from the per-machine
@@ -276,8 +316,8 @@ function load_locked(dir: string, name: string): Option[string] {
 // store is populated + sha256-verified by native `fern -fetch`; the
 // loader trusts an already-populated store, exactly like the native
 // loader does at build time (#4949 — no build-time network).
-function load_from_store(hash: string): Option[string] {
-    if (hash.len() < 8 || hash[0:7] != "sha256:") { return None; }
+function load_from_store(hash: string): Resolved {
+    if (hash.len() < 8 || hash[0:7] != "sha256:") { return res_none(); }
     var hex: string = hash[7:hash.len()] + "";
     match (env("FERN_CACHE_DIR")) {
         Some(d) => { return load_lib(d + "/pkgs/" + hex + "/"); },
@@ -289,14 +329,13 @@ function load_from_store(hash: string): Option[string] {
     }
     match (env("HOME")) {
         Some(h) => {
-            match (load_lib(h + "/.cache/fern/pkgs/" + hex + "/")) {
-                Some(s) => { return Some(s); },
-                None => { return load_lib(h + "/Library/Caches/fern/pkgs/" + hex + "/"); },
-            }
+            var linux: Resolved = load_lib(h + "/.cache/fern/pkgs/" + hex + "/");
+            if (linux.ok) { return linux; }
+            return load_lib(h + "/Library/Caches/fern/pkgs/" + hex + "/");
         },
-        None => { return None; },
+        None => { return res_none(); },
     }
-    return None;
+    return res_none();
 }
 
 // strip_fern_ext removes a trailing ".fern" so the name joins onto
@@ -323,28 +362,38 @@ function append_enums(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.
 }
 
 // load_imports walks the entry module's import graph breadth-first,
-// reading each resolvable sibling `.fern` file and parsing it into a
+// reading each resolvable `.fern` file and parsing it into a
 // flatten.LoadedModule keyed by basename (what `mod.X` references resolve
 // to). Unresolvable imports (intrinsics / not-vendored stdlib) are
 // silently skipped.
+//
+// Each queued import carries the directory it was written IN, and a module
+// is resolved against that rather than against the entry's directory: a
+// dependency's `import "./util"` names a file beside the dependency, and its
+// declared dependencies live in its own manifest. Resolving everything
+// against the entry meant a dependency's own dependencies never loaded at
+// all — silently, since an unresolvable import is skipped (#6756).
 pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModule[] {
     var loaded: flatten.LoadedModule[] = [];
     var seen: string[] = [];
     var queue: string[] = enqueue_imports([], seen, entry);
+    var queue_dirs: string[] = fill_dirs([], dir, queue.len());
     var qi: i32 = 0;
     while (qi < queue.len()) {
         var path: string = queue[qi];
+        var from: string = queue_dirs[qi];
         qi = qi + 1;
         var name: string = base_name(path);
         if (contains(seen, name)) { continue; }
         seen = seen.append(name);
-        match (resolve_module_src(dir, path, name)) {
-            Some(src) => {
-                var m: parser.Module = parser.parse_module(lexer.tokenize(src));
-                loaded = loaded.append(flatten.LoadedModule { name: name, mod: m });
-                queue = enqueue_imports(queue, seen, m);
-            },
-            None => { },   // not a local file — intrinsic / not vendored
+        var r: Resolved = resolve_module(from, path, name);
+        if (r.ok) {
+            var m: parser.Module = parser.parse_module(lexer.tokenize(r.src));
+            loaded = loaded.append(flatten.LoadedModule { name: name, mod: m });
+            var before: i32 = queue.len();
+            queue = enqueue_imports(queue, seen, m);
+            // The module's own imports resolve against ITS directory.
+            queue_dirs = fill_dirs(queue_dirs, r.dir, queue.len() - before);
         }
     }
     return loaded;
