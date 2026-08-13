@@ -1,0 +1,243 @@
+// examples/self_host/irverifyprovided.fern — the callee-resolution verifier
+// (#6639 slice 4), mirroring native's internal/ir/verifyprovided.go.
+//
+// Every `call_direct` names its callee by string. Three things can satisfy
+// that name: a function the program DECLARES, an `@import` extern the host
+// supplies, or a runtime helper whose body a backend emits. Anything else is
+// a call to a symbol nothing defines — which surfaces as a link error if you
+// are lucky, and as a call into whatever the linker happened to place at that
+// name if you are not.
+//
+// The other three passes cannot see this class. irverify.fern checks a call's
+// ARITY against the module's own functions and deliberately leaves an
+// unresolved name alone; irverifystack.fern models the operand stack, where a
+// nonexistent callee with a plausible arity balances perfectly; irfipverify
+// counts allocations. A missing body is invisible to all three.
+//
+// # Why the inventory is a SECOND record
+//
+// asm_ir.is_fern_helper already answers "does the emitter provide this?", and
+// this file could call it. It deliberately does not — for the reason native's
+// verifyprovided.go gives:
+//
+//   > It is deliberately a SECOND record rather than a shared one: the point
+//   > of a verifier is to disbelieve the compiler, and reading a signature
+//   > out of the same place the emitter reads it would make the two agree by
+//   > construction.
+//
+// What keeps the copy honest is the audit in the direction it can be checked:
+// every name here must satisfy the emitter's own predicate (asm_modload_run
+// `-provided-audit`), so an entry naming a helper no backend emits fails a
+// test. The other direction — a helper the emitter gained and this file did
+// not — is not enumerable from a predicate, and shows up instead as an
+// unresolved callee in the corpus sweep, which is the failure this pass exists
+// to produce.
+//
+// # Resolution needs the WHOLE program
+//
+// A single module's lowering leaves every imported `Type.method` unresolved by
+// construction: a census over the 454 conformance fixtures found 255 distinct
+// unresolved names, ~200 of them stdlib methods reached through an import. So
+// the declared set has to come from the merged bundle — `asm_modload_run
+// -verifyprovided`, not the single-module `irlower_run`.
+//
+// It also has to come from the module's DECLARED functions, not its lowered
+// ones. `early` (conformance defer_block_form) is an ordinary top-level
+// function whose lowering bailed, and `unbox` (generic_box) is generic, so it
+// is monomorphised under another name and the declared spelling never lowers
+// at all. Resolving against what lowered would report a missing callee on
+// exactly the functions a lowering bug already hid.
+
+import "./ir";
+import "./irverify";
+import "./util";
+
+// ---- the inventory -----------------------------------------------------
+
+// provided_names is the exact-match half of the record: the runtime helpers a
+// backend emits a body for. Enumerable rather than a predicate so the audit
+// can walk it.
+//
+// Grouped as the emitters group them, so a reader comparing the two lists is
+// comparing like for like.
+pub function provided_names(): string[] {
+    return [
+        // reference counting, and the grow-bracket share pair
+        "__fern_rc_inc",
+        "__fern_rc_dec",
+        "__fern_rc_is_unique",
+        "__fern_rc_underflow_get",
+        "__fern_arr_share_inc",
+        "__fern_arr_share_dec",
+        // reclaim: strings, arrays of them, arrays of arrays, maps
+        "__fern_str_free",
+        "__fern_str_arr_free",
+        "__fern_arrarr_free",
+        "__fern_strarrarr_free",
+        "__fern_optarrarr_free",
+        "__fern_map_free",
+        "__fern_map_free_vs",
+        "__fern_map_free_ks",
+        "__fern_map_free_kvs",
+        "__fern_snapshot_dec",
+        // FBIP reuse degrade
+        "__fern_alloc_reuse",
+        // stringifiers and the decimal parse
+        "__fern_i32_to_string",
+        "__fern_u32_to_string",
+        "__fern_i64_to_string",
+        "__fern_u64_to_string",
+        "__fern_str_to_i32",
+        "__fern_chr",
+        // scalar-array and integer helpers
+        "__fern_arr_i32_sum",
+        "__fern_arr_i32_product",
+        "__fern_arr_i32_index_of",
+        "__fern_arr_i32_min_opt",
+        "__fern_arr_i32_max_opt",
+        "__fern_arr_str_index_of",
+        "__fern_arr_str_join",
+        "__fern_i32_pow",
+        "__fern_i32_gcd",
+        "__fern_i32_lcm"
+    ];
+}
+
+// is_generated_helper reports the per-TYPE helpers the emitters synthesise one
+// body per instantiated type for. They cannot be listed: the suffix is a type
+// name the program supplies, so the rule is a prefix and not an inventory.
+pub function is_generated_helper(name: string): boolean {
+    if (name.len() > 14 && name[0:14] == "__struct_drop_") { return true; }
+    return name.len() > 16 && name[0:16] == "__field_reclaim_";
+}
+
+// is_c_call_shim reports the `__c_call<n>` FFI family — `__c_call0`..`_4` with
+// an optional `_f32` / `_f64` return suffix. Restated here rather than taken
+// from asm_ir for the same reason the inventory is: a second record.
+pub function is_c_call_shim(name: string): boolean {
+    if (name.len() < 9) { return false; }
+    if (name[0:8] != "__c_call") { return false; }
+    var d: str = name[8:9];
+    if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") { return false; }
+    var rest: str = name[9 : name.len()];
+    return rest == "" || rest == "_f32" || rest == "_f64";
+}
+
+// is_provided is the whole record: the inventory, the generated-helper
+// prefixes, and the FFI shims.
+pub function is_provided(name: string): boolean {
+    if (is_generated_helper(name)) { return true; }
+    if (is_c_call_shim(name)) { return true; }
+    return util.has_str(provided_names(), name);
+}
+
+// ---- the declared-name index -------------------------------------------
+
+// NameIndex is a membership set over the program's declared names, bucketed so
+// a lookup does not scan the whole set. The self-host compiler declares ~3000
+// functions and emits tens of thousands of calls, so a linear `has_str` per
+// call op makes the pass quadratic on the one program it most needs to check.
+//
+// Two flat arrays rather than a `string[][]`: `starts` holds each bucket's
+// first index into `items` (length n_buckets + 1, so bucket b spans
+// [starts[b], starts[b+1])), and `items` holds the names grouped by bucket.
+pub struct NameIndex { starts: i32[], items: string[] }
+
+function n_buckets(): i32 { return 1024; }
+
+// bucket_of hashes a name to its bucket. Ordinary polynomial hashing; the
+// multiply is allowed to wrap, which is what makes it a hash.
+function bucket_of(name: string): i32 {
+    var h: i32 = 0;
+    var i: i32 = 0;
+    while (i < name.len()) {
+        h = h * 31 + (name[i] as i32);
+        i = i + 1;
+    }
+    // Negate rather than mask, and treat the one value whose negation is
+    // itself (i32 min) as bucket 0 — `%` on a negative would index backwards.
+    if (h < 0) { h = 0 - h; }
+    if (h < 0) { return 0; }
+    return h % n_buckets();
+}
+
+// name_index builds the membership set. Counting pass, prefix sum, placement
+// pass — so it is linear in the number of names rather than quadratic.
+pub function name_index(names: string[]): NameIndex {
+    var nb: i32 = n_buckets();
+    var counts: i32[] = [];
+    var i: i32 = 0;
+    while (i <= nb) { counts = counts.append(0); i = i + 1; }
+    var j: i32 = 0;
+    while (j < names.len()) {
+        var b: i32 = bucket_of(names[j]);
+        counts = counts.with(b + 1, counts[b + 1] + 1);
+        j = j + 1;
+    }
+    var k: i32 = 1;
+    while (k <= nb) { counts = counts.with(k, counts[k] + counts[k - 1]); k = k + 1; }
+    // `cursor` walks each bucket's fill point; `counts` stays the boundaries.
+    var cursor: i32[] = [];
+    var c: i32 = 0;
+    while (c <= nb) { cursor = cursor.append(counts[c]); c = c + 1; }
+    var items: string[] = [];
+    var f: i32 = 0;
+    while (f < names.len()) { items = items.append(""); f = f + 1; }
+    var m: i32 = 0;
+    while (m < names.len()) {
+        var bb: i32 = bucket_of(names[m]);
+        items = items.with(cursor[bb], names[m]);
+        cursor = cursor.with(bb, cursor[bb] + 1);
+        m = m + 1;
+    }
+    return NameIndex { starts: counts, items: items };
+}
+
+// index_has reports membership.
+pub function index_has(ix: NameIndex, name: string): boolean {
+    if (ix.items.len() == 0) { return false; }
+    var b: i32 = bucket_of(name);
+    var i: i32 = ix.starts[b];
+    var end: i32 = ix.starts[b + 1];
+    while (i < end) {
+        if (ix.items[i] == name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ---- the pass ----------------------------------------------------------
+
+// ProvidedResult is one module's verdict: the problems, and how many
+// call_direct ops were resolved behind them. The count travels with the
+// problems for the reason the stack pass reports coverage — a clean verdict
+// over a module with no calls in it is not the same result as a clean verdict
+// over the compiler.
+pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
+
+// verify_provided_fn checks every `call_direct` in one function against
+// `declared` (the program's declared function names, plus its externs) and the
+// provided record, and reports each callee neither can satisfy.
+//
+// An empty callee name is irverify.fern's problem, not this one — it reports
+// that already, and repeating it here would double every occurrence.
+pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: NameIndex): ProvidedResult {
+    var out: irverify.Problem[] = [];
+    var calls: i32 = 0;
+    var k_calld: i32 = ir.kind_id("call_direct");
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
+            calls = calls + 1;
+            if (!index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
+                out = out.append(irverify.Problem {
+                    fn_name: fn_name, op: i, kind: "call_direct",
+                    msg: "calls " + ops[i].str
+                        + ", which the program does not declare and no backend provides"
+                });
+            }
+        }
+        i = i + 1;
+    }
+    return ProvidedResult { problems: out, calls: calls };
+}

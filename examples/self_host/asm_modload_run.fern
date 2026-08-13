@@ -29,8 +29,105 @@ import "./flatten";
 import "./asm_arm64_ir";
 import "./asm_ir";
 import "./irlower";
+import "./ir";
+import "./irverify";
+import "./irverifyprovided";
 import "./modloader";
 import "./treeshake";
+
+// ---- callee resolution (#6639 slice 4) ---------------------------------
+
+// declared_names is every function the WHOLE program declares, spelled the way
+// a call_direct names it: bare for a free function, `Type.method` for a
+// receiver method — the same key irlower.lower_module stores on LoweredFn.
+//
+// Built from the DECLARED functions, not the lowered ones. A function whose
+// lowering bailed, and a generic monomorphised under another name, are both
+// absent from the lowered set while being perfectly well declared; resolving
+// against what lowered would report a missing callee on exactly the functions
+// a lowering bug already hid. `@import` externs are ordinary FuncDecls here,
+// so the host-supplied half needs no separate arm.
+function declared_names(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() > 0) {
+            out = out.append(util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name);
+        } else {
+            out = out.append(funcs[i].name);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// verify_provided_module runs the resolution pass over the whole merged
+// program and writes the verdict. Returns the process exit code.
+//
+// This is the driver the sweep has to use: `irlower_run` lowers ONE module, so
+// every imported `Type.method` is unresolved there by construction — a census
+// over the conformance corpus found ~200 of 255 distinct unresolved names were
+// stdlib methods reached through an import. The declared set is only complete
+// once the bundle is.
+function verify_provided_module(merged: parser.Module): i32 {
+    var vmod: parser.Module = asm_ir.lift_lambdas(parser.module_with_builtins(merged));
+    var ix: irverifyprovided.NameIndex = irverifyprovided.name_index(declared_names(vmod.funcs));
+    var fns: irlower.LoweredFn[] = irlower.lower_module(vmod.funcs, vmod.structs);
+    var probs: irverify.Problem[] = [];
+    var calls: i32 = 0;
+    var checked: i32 = 0;
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].ok) {
+            checked = checked + 1;
+            var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn(fns[i].name, fns[i].ops, ix);
+            calls = calls + r.calls;
+            var k: i32 = 0;
+            while (k < r.problems.len()) { probs = probs.append(r.problems[k]); k = k + 1; }
+        }
+        i = i + 1;
+    }
+    var tally: string = "checked " + util.i32_to_string(checked) + " functions, "
+        + util.i32_to_string(calls) + " direct calls";
+    if (probs.len() == 0) {
+        write("irverifyprovided: clean (" + tally + ")\n");
+        return 0;
+    }
+    write("irverifyprovided: " + util.i32_to_string(probs.len()) + " problem(s) (" + tally + ")"
+        + irverify.format_problems(probs, 20) + "\n");
+    return 1;
+}
+
+// provided_audit checks the verifier's inventory against the EMITTER's own
+// predicate, and writes any name the two disagree about.
+//
+// Only this direction is checkable: `asm_ir.is_fern_helper` is a predicate, so
+// a helper the emitter gained and the inventory did not cannot be enumerated
+// out of it. That direction surfaces instead as an unresolved callee in the
+// corpus sweep — which is the failure the pass exists to produce, so it is
+// covered, just not here. This half catches the other drift: an inventory
+// entry naming a helper no backend emits, which would silently excuse a real
+// missing body.
+function provided_audit(): i32 {
+    var names: string[] = irverifyprovided.provided_names();
+    var bad: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (!asm_ir.is_fern_helper(names[i])) { bad = bad.append(names[i]); }
+        i = i + 1;
+    }
+    if (bad.len() == 0) {
+        write("provided-audit: all " + util.i32_to_string(names.len())
+            + " inventory entries are emitted by the backend\n");
+        return 0;
+    }
+    var out: string = "provided-audit: " + util.i32_to_string(bad.len())
+        + " inventory entrie(s) no backend emits:";
+    var j: i32 = 0;
+    while (j < bad.len()) { out = out + "\n    " + bad[j]; j = j + 1; }
+    write(out + "\n");
+    return 1;
+}
 
 // builtin_view returns `base` (the union of every per-module unit's structs)
 // extended with the built-in TYPE layouts the compiler's own code references:
@@ -796,6 +893,8 @@ function main(): i32 {
     // build (run_per_module) — routing every module through the IR path instead
     // of the merged AST emit below.
     var probe: boolean = false;
+    var vprovided: boolean = false;
+    var paudit: boolean = false;
     var entry_path: string = "";
     var pm_mode: string = "";
     var pm_index: i32 = 0 - 1;
@@ -841,6 +940,8 @@ function main(): i32 {
     var ai: i32 = 1;
     while (ai < a.len()) {
         if (a[ai] == "-ir-probe") { probe = true; }
+        else if (a[ai] == "-verifyprovided") { vprovided = true; }
+        else if (a[ai] == "-provided-audit") { paudit = true; }
         else if (a[ai] == "-per-module-count") { pm_mode = "count"; }
         else if (a[ai] == "-per-module-needs") { pm_mode = "needs"; }
         else if (a[ai] == "-per-module-func-counts") { pm_mode = "func-counts"; }
@@ -891,8 +992,10 @@ function main(): i32 {
         else if (entry_path == "") { entry_path = a[ai]; }
         ai = ai + 1;
     }
+    // The audit reads only the two records, so it takes no entry file.
+    if (paudit) { return provided_audit(); }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-assume-eligible]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-assume-eligible]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -905,6 +1008,7 @@ function main(): i32 {
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
+            if (vprovided) { return verify_provided_module(merged); }
             if (probe) {
                 // Probe the module codegen actually routes on: run the same
                 // module_with_builtins pipeline the emit path below uses
