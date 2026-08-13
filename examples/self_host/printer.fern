@@ -1026,10 +1026,99 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
     return out + "}\n";
 }
 
+// print_type_params_except renders a decl's type parameters minus `skip`, or ""
+// when nothing is left.
+function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
+    var names: string[] = [];
+    var bounds: string[] = [];
+    var i: i32 = 0;
+    while (i < fd.type_params.len()) {
+        if (!util.has_str(skip, fd.type_params[i])) {
+            names = names.append(fd.type_params[i]);
+            if (i < fd.bound_traits.len()) { bounds = bounds.append(fd.bound_traits[i]); } else { bounds = bounds.append(""); }
+        }
+        i = i + 1;
+    }
+    if (names.len() == 0) { return ""; }
+    var out: string = "[";
+    var j: i32 = 0;
+    while (j < names.len()) {
+        if (j > 0) { out = out + ", "; }
+        out = out + names[j];
+        if (bounds[j].len() > 0) { out = out + ": " + join_plus(bounds[j]); }
+        j = j + 1;
+    }
+    return out + "]";
+}
+
+// print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` (or an
+// inherent `impl Type { … }`) from the written form parse_impl_decl retains.
+// The methods are the DESUGARED forms, which is what native prints too.
+function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
+    var out: string = "impl";
+    if (id.type_params.len() > 0) {
+        out = out + "[";
+        var tpi: i32 = 0;
+        while (tpi < id.type_params.len()) {
+            if (tpi > 0) { out = out + ", "; }
+            out = out + id.type_params[tpi];
+            if (tpi < id.bounds.len() && id.bounds[tpi].len() > 0) { out = out + ": " + join_plus(id.bounds[tpi]); }
+            tpi = tpi + 1;
+        }
+        out = out + "]";
+    }
+    out = out + " ";
+    if (id.trait_ref.len() > 0) { out = out + id.trait_ref + " for "; }
+    out = out + id.type_ref;
+    if (id.methods.len() == 0) { return (out + " {}\n", f); }
+    out = out + " {\n";
+    var g: Fmt = f;
+    var mi: i32 = 0;
+    while (mi < id.methods.len()) {
+        var (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, g);
+        out = out + mtext;
+        g = mg;
+        mi = mi + 1;
+    }
+    return (out + "}\n", g);
+}
+
+// print_impl_method emits one method at one indent level. An impl block states
+// its methods with `self` as an ordinary first PARAMETER, so a receiver — which
+// is what the decl was desugared into — is re-inserted there. A receiver-less
+// method is an associated function and its parameters stand as written.
+function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (string, Fmt) {
+    // finalize_impl_method merges the IMPL's type parameters into the method's,
+    // so printing them here would restate `[T]` on every method of an
+    // `impl[T] …` — which native rejects outright ("cannot declare its own type
+    // parameters inside a parametric impl block").
+    var out: string = indent_str(1) + "function " + m.name + print_type_params_except(m, impl_tps) + "(";
+    var first: boolean = true;
+    if (m.receiver_name.len() > 0) {
+        out = out + m.receiver_name;
+        if (m.receiver_type.len() > 0) { out = out + ": " + m.receiver_type; }
+        first = false;
+    }
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        if (!first) { out = out + ", "; }
+        if (m.params[i].own) { out = out + "own "; }
+        out = out + m.params[i].name;
+        if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
+        first = false;
+        i = i + 1;
+    }
+    out = out + ")";
+    if (m.ret_type.len() > 0) { out = out + ": " + m.ret_type; }
+    if (m.body.len() == 0) { return (out + ";\n", f); }
+    var (body, g) = print_block(m.body, 1, f);
+    return (out + " " + body + "\n", g);
+}
+
 // print_trait_decl reconstructs `pub trait Name[T]: Super { … }` from the
 // written form parse_trait_decl retains. The compile path's own views of a
 // trait cannot be printed from — see parser.TraitDecl.
-function print_trait_decl(td: parser.TraitDecl): string {
+function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
     var out: string = "";
     if (td.is_pub) { out = out + "pub "; }
     out = out + "trait " + td.name;
@@ -1052,19 +1141,22 @@ function print_trait_decl(td: parser.TraitDecl): string {
             spi = spi + 1;
         }
     }
-    if (td.methods.len() == 0) { return out + " {}\n"; }
+    if (td.methods.len() == 0) { return (out + " {}\n", f); }
     out = out + " {\n";
+    var g: Fmt = f;
     var mi: i32 = 0;
     while (mi < td.methods.len()) {
-        out = out + print_trait_method(td.methods[mi]);
+        var (mtext, mg) = print_trait_method(td.methods[mi], g);
+        out = out + mtext;
+        g = mg;
         mi = mi + 1;
     }
-    return out + "}\n";
+    return (out + "}\n", g);
 }
 
 // print_trait_method emits one signature at one indent level: `;`-terminated
 // when it was written abstract, else with its default body.
-function print_trait_method(m: parser.FuncDecl): string {
+function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     var out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
     var i: i32 = 0;
     while (i < m.params.len()) {
@@ -1076,9 +1168,9 @@ function print_trait_method(m: parser.FuncDecl): string {
     }
     out = out + ")";
     if (m.ret_type.len() > 0) { out = out + ": " + m.ret_type; }
-    if (m.body.len() == 0) { return out + ";\n"; }
-    var (body, g) = print_block(m.body, 1, Fmt { comments: [], ci: 0, blanks: [] });
-    return out + " " + body + "\n";
+    if (m.body.len() == 0) { return (out + ";\n", f); }
+    var (body, g) = print_block(m.body, 1, f);
+    return (out + " " + body + "\n", g);
 }
 
 function print_type_alias(a: parser.TypeAlias): string {
@@ -1125,7 +1217,7 @@ function decl_sep(out: string): string {
 }
 
 pub function print_module(mod: parser.Module): string {
-    return format_module(mod, [], [], []);
+    return format_module(mod, [], [], [], []);
 }
 
 // format_module is the `-fmt` entry point: the module, the comments the lexer
@@ -1137,7 +1229,7 @@ pub function print_module(mod: parser.Module): string {
 // cursor only moves forward, so a kind-grouped emit would drain a comment
 // against whichever declaration happened to be printed first and RELOCATE it
 // onto an unrelated one — the same reason native's Format orders by position.
-pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], comments: lexer.Comment[], blanks: boolean[]): string {
+pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], comments: lexer.Comment[], blanks: boolean[]): string {
     var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
     var out: string = "";
     // Imports cluster at the top with no blank between them.
@@ -1199,6 +1291,11 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], comme
         kinds = kinds.append(4); idxs = idxs.append(ti2); lines = lines.append(traits[ti2].line);
         ti2 = ti2 + 1;
     }
+    var ipi: i32 = 0;
+    while (ipi < impls.len()) {
+        kinds = kinds.append(5); idxs = idxs.append(ipi); lines = lines.append(impls[ipi].line);
+        ipi = ipi + 1;
+    }
     // SOURCE functions only. `@derive` synthesises its methods at PARSE time
     // (synth_derives), so they are in `mod.funcs` by the time the printer runs —
     // printing them expands one attribute into hand-written method bodies, and
@@ -1239,7 +1336,16 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], comme
         if (kinds[di] == 0) { out = out + print_struct_decl(mod.structs[idxs[di]]); }
         else if (kinds[di] == 1) { out = out + print_enum_decl(mod.enums[idxs[di]], mod.structs); }
         else if (kinds[di] == 2) { out = out + print_type_alias(mod.aliases[idxs[di]]); }
-        else if (kinds[di] == 4) { out = out + print_trait_decl(traits[idxs[di]]); }
+        else if (kinds[di] == 4) {
+            var (ttext, tf) = print_trait_decl(traits[idxs[di]], f);
+            out = out + ttext;
+            f = tf;
+        }
+        else if (kinds[di] == 5) {
+            var (itext, iff) = print_impl_decl(impls[idxs[di]], f);
+            out = out + itext;
+            f = iff;
+        }
         else {
             if (mod.funcs[idxs[di]].is_const) { out = out + print_const_decl(mod.funcs[idxs[di]]); }
             else {
@@ -1885,7 +1991,7 @@ function main(): i32 {
     // come back is a declaration the reformat deleted.
     var srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
     var pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
-    var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, [], []);
+    var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, [], []);
     var rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
     if (rtTr.ptraits.len() != 1) { return 299; }
     if (rtTr.ptraits[0].name != "Greet") { return 300; }
@@ -1907,7 +2013,46 @@ function main(): i32 {
     if (pfQ.ptraits.len() != 1) { return 311; }
     if (pfQ.ptraits[0].supertraits.len() != 1) { return 312; }
     if (pfQ.ptraits[0].supertraits[0] != "cmp.Ord") { return 313; }
-    if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, [], []), "pub trait Sortable: cmp.Ord {}")) { return 314; }
+    if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, [], []), "pub trait Sortable: cmp.Ord {}")) { return 314; }
+
+    // #6783: an `impl` block is desugared into free-standing receiver methods on
+    // the way in, so the block has to be retained beside the Module too. Under
+    // the formatter's parse its methods live on the ImplDecl ALONE — leaving
+    // them on Module.funcs as well would print each one twice.
+    var srcIm: string = "trait Display { function to_string(self: Self): string; } impl Display for i32 {} impl Display for boolean { function to_string(self: Self): string { return \"t\"; } } function main(): i32 { return 0; }";
+    var pfIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcIm));
+    if (pfIm.pimpls.len() != 2) { return 315; }
+    if (pfIm.pimpls[0].trait_ref != "Display") { return 316; }
+    if (pfIm.pimpls[0].type_ref != "i32") { return 317; }
+    if (pfIm.pimpls[0].methods.len() != 0) { return 318; }
+    if (pfIm.pimpls[1].methods.len() != 1) { return 319; }
+    // The written method is NOT also a free function, or it would print twice.
+    if (func_index(pfIm.pmod.funcs, "to_string") >= 0) { return 320; }
+    var outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, [], []);
+    if (!util.contains(outIm, "impl Display for i32 {}")) { return 321; }
+    // `Self` reads as the concrete type and the receiver goes back to being the
+    // first parameter — the shape an impl block requires, and what native emits.
+    if (!util.contains(outIm, "function to_string(self: boolean): string {")) { return 322; }
+    var rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
+    if (rtIm.pimpls.len() != 2) { return 323; }
+
+    // An inherent `impl Type { … }` has no trait, and an associated function
+    // (no `self`) keeps its parameter list exactly as written.
+    var pfIn: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+        "struct Box { item: i32 } impl Box { function zero(): Box { return Box { item: 0 }; } } function main(): i32 { return 0; }"));
+    if (pfIn.pimpls.len() != 1) { return 324; }
+    if (pfIn.pimpls[0].trait_ref.len() != 0) { return 325; }
+    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, [], []), "impl Box {")) { return 326; }
+    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, [], []), "function zero(): Box {")) { return 327; }
+
+    // A parametric impl states its bounds once, on the block: restating them on
+    // each method is a program native rejects outright.
+    var pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+        "import \"core/cmp\"; struct Box[T] { item: T } impl[T: cmp.Eq] cmp.Eq for Box[T] { function eq(self: Self, other: Self): boolean { return true; } } function main(): i32 { return 0; }"));
+    if (pfPa.pimpls.len() != 1) { return 328; }
+    var outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, [], []);
+    if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) { return 329; }
+    if (!util.contains(outPa, "function eq(self: Box[T], other: Box[T]): boolean {")) { return 330; }
 
     return 0;
 }

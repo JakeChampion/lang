@@ -42,13 +42,17 @@ import (
 // ride beside it, rather than as a field on Module that 101 literals would have
 // to carry and none would read.
 //
-// Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 210 of the 244 files under examples/ + internal/stdlib, against 0 before
-// #6762. What still differs: `impl` blocks lose their block shape the same way
-// traits did (#6783), `else { if … }` collapses to `else if` (#6779), and an
-// ARROW lambda — native reprints `() => e` as `function(): T { return e; }`,
-// filling in a return type from the callee's signature that the self-host
-// printer has no way to know.
+// #6783 did the same for `impl` blocks, which were desugared into free-standing
+// receiver methods on the way in.
+//
+// Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` agree byte for byte on 210
+// of the 244 files under examples/ + internal/stdlib, against 0 before #6762.
+// That count is unchanged by #6783 even though every impl block now prints
+// correctly: the files carrying one also carry the LAST structural divergence,
+// `else { if … }` collapsing to `else if` (#6779) — `core/cmp.fern` differs by
+// nothing else at all. The other remaining cause is an ARROW lambda: native
+// reprints `() => e` as `function(): T { return e; }`, filling in a return type
+// from the callee's signature that the self-host printer has no way to know.
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -379,6 +383,71 @@ return self.hi(x);
 
 function main(): i32 {
 return 0;
+}
+`},
+	// #6783: an `impl` block is desugared on the way in — each method becomes an
+	// ordinary receiver method on Module.funcs and the block reduces to the
+	// ImplInfo the E021 conformance walk reads — so a formatted file re-declared
+	// each method as a plain receiver method and the `impl` it belonged to was
+	// gone, leaving the type no longer implementing the trait. The block is
+	// retained beside the Module now, the way traits are.
+	//
+	// The methods print DESUGARED, which is also what native emits: `Self` reads
+	// as the concrete impl type and the `self` receiver goes back to being the
+	// first parameter. An empty impl adopts the trait's defaults and states no
+	// methods; a parametric one states its bounds once, on the block.
+	{"impl-blocks", `import "core/cmp";
+
+trait Display {
+function to_string(self: Self): string;
+}
+
+struct Box[T] { item: T }
+
+impl Display for i32 {}
+
+impl Display for boolean {
+function to_string(self: Self): string {
+if (self) {
+return "true";
+}
+return "false";
+}
+}
+
+impl[T: cmp.Eq] cmp.Eq for Box[T] {
+function eq(self: Self, other: Self): boolean {
+return self.item == other.item;
+}
+}
+
+impl Box[i32] {
+function zero(): Box[i32] {
+return Box { item: 0 };
+}
+function get(self: Self): i32 {
+return self.item;
+}
+}
+
+function main(): i32 {
+return 0;
+}
+`},
+	// A comment inside a trait or impl method body has to drain against the
+	// SHARED comment cursor. Printing those bodies with a fresh one dropped
+	// every such comment and flushed it at the end of the file, relocating it
+	// onto an unrelated declaration.
+	{"comments-inside-impl-bodies", `trait Display {
+function to_string(self: Self): string;
+}
+
+impl Display for boolean {
+function to_string(self: Self): string {
+// leading comment inside the method
+var s: string = "t";  // trailing on a statement
+return s;
+}
 }
 `},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
