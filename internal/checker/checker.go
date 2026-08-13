@@ -11921,7 +11921,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — explicit type args are not supported yet", tp, genericFn.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, genericFn.Name, genericFn.Name)
 					complete = false
 				}
 			}
@@ -12872,7 +12872,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// type param the (subset) overrides didn't touch.
 					args[i] = baseArgs[i]
 				} else {
-					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — explicit type args are not supported yet", tp, sd.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — annotate the binding with the concrete instantiation (e.g. var x: %s[i32] = ...)", tp, sd.Name, sd.Name)
 					complete = false
 				}
 			}
