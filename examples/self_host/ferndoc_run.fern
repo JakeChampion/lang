@@ -185,6 +185,135 @@ function self_checks(): i32 {
     return 0;
 }
 
+// doc_page_of renders one stdlib module, or "" for a file that documents
+// nothing. `ns` is the import namespace ("std" / "core") and `rel` the path
+// under it without the extension — together the `std/wasm/convert` a page is
+// titled by.
+function doc_page_of(root: string, ns: string, rel: string): string {
+    match (read_file(root + "/" + ns + "/" + rel + ".fern")) {
+        Ok(src) => { return ferndoc.render_page(src, ns + "/" + rel); },
+        Err(_) => { return ""; },
+    }
+    return "";
+}
+
+// doc_page_name flattens a module's relative path to its page's file name, so
+// a nested module stays one file and cannot collide with a top-level one:
+// `wasm/convert` -> `wasm_convert`, against a plain `convert`. Native's
+// collectFrom does the same, and the collision it is avoiding is real —
+// `std/convert.fern` and `std/wasm/convert.fern` both exist.
+function doc_page_name(rel: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < rel.len()) {
+        if (rel[i:i + 1] == "/") { out = out + "_"; } else { out = out + rel[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
+// doc_module_rels lists the documentable modules under `<root>/<ns>` as paths
+// RELATIVE to that namespace, extension stripped.
+//
+// The walk is a worklist rather than a recursion, and it identifies a
+// subdirectory by trying to read it: an entry read_dir succeeds on is a
+// directory, and one it fails on is a file this pass has no use for. That
+// avoids needing to stat every entry to answer a question read_dir already
+// answers. `_test_` files are per-test stubs and not part of the library's
+// surface, which is the same filter cmd/ferndoc's collectFrom applies.
+function doc_module_rels(root: string, ns: string): string[] {
+    var out: string[] = [];
+    var pending: string[] = [""];
+    var pi: i32 = 0;
+    while (pi < pending.len()) {
+        var rel: string = pending[pi];
+        var dir: string = root + "/" + ns;
+        if (rel.len() > 0) { dir = dir + "/" + rel; }
+        match (read_dir(dir)) {
+            Ok(names) => {
+                var i: i32 = 0;
+                while (i < names.len()) {
+                    var n: string = names[i];
+                    var child: string = n;
+                    if (rel.len() > 0) { child = rel + "/" + n; }
+                    if (n.len() > 5 && n[n.len() - 5 : n.len()] == ".fern") {
+                        if (!(n.len() > 6 && n[0:6] == "_test_")) {
+                            out = out.append(child[0 : child.len() - 5] + "");
+                        }
+                    } else {
+                        pending = pending.append(child);
+                    }
+                    i = i + 1;
+                }
+            },
+            Err(_) => {},
+        }
+        pi = pi + 1;
+    }
+    return out;
+}
+
+// run_doc implements `-doc -o DIR <stdlib-root>`: cmd/ferndoc's whole job, one
+// Markdown page per documentable module of `std/` and `core/`.
+//
+// It lives in this driver rather than as a `fern` verb because that is where
+// native keeps it — `cmd/ferndoc` is its own command, not a mode of `cmd/fern`
+// — and because the compiler should not carry a doc generator it never calls
+// (the binary is already the subject of #4109).
+//
+// Both namespaces are real import roots (`import "std/io"`, `import
+// "core/map"`), so both get pages, and a page is named by its BASENAME alone —
+// which is what makes a `std/x.fern` and a `core/x.fern` collide on write.
+// Native surfaces that loudly rather than letting one clobber the other; so
+// does this, and for the same reason a silent clobber would be a page that
+// documents the wrong module.
+//
+// A module whose page is empty is skipped, not written: everything on it was
+// filtered out, and an "(no public exports)" page only clutters the sidebar.
+function run_doc(root: string, out_dir: string): i32 {
+    if (root.len() == 0 || out_dir.len() == 0) {
+        eprint("usage: ferndoc_run -doc -o DIR <stdlib-root>\n");
+        return 2;
+    }
+    match (create_dir_all(out_dir)) {
+        Err(_) => {
+            eprint("ferndoc: cannot create output directory: " + out_dir + "\n");
+            return 1;
+        },
+        Ok(_) => {},
+    }
+    var written: string[] = [];
+    var namespaces: string[] = ["std", "core"];
+    var ni: i32 = 0;
+    while (ni < namespaces.len()) {
+        var ns: string = namespaces[ni];
+        var rels: string[] = doc_module_rels(root, ns);
+        var bi: i32 = 0;
+        while (bi < rels.len()) {
+            var rel: string = rels[bi];
+            var page: string = doc_page_of(root, ns, rel);
+            if (page.len() > 0) {
+                var name: string = doc_page_name(rel);
+                if (util.has_str(written, name)) {
+                    eprint("ferndoc: module page name \"" + name + "\" collides\n");
+                    return 1;
+                }
+                written = written.append(name);
+                match (write_file(out_dir + "/" + name + ".md", page)) {
+                    Err(_) => {
+                        eprint("ferndoc: cannot write page: " + out_dir + "/" + name + ".md\n");
+                        return 1;
+                    },
+                    Ok(_) => {},
+                }
+            }
+            bi = bi + 1;
+        }
+        ni = ni + 1;
+    }
+    return 0;
+}
+
 function main(): i32 {
     var av: string[] = args();
     var i: i32 = 0;
@@ -196,6 +325,24 @@ function main(): i32 {
             return 0;
         }
         i = i + 1;
+    }
+    // `-doc -o DIR <stdlib-root>` is the generator proper: every documentable
+    // module of the tree, one Markdown page each. The modes above take a single
+    // module on stdin; this one takes a tree and writes files.
+    var di: i32 = 0;
+    while (di < av.len()) {
+        if (av[di] == "-doc") {
+            var out_dir: string = "";
+            var root: string = "";
+            var ai: i32 = 1;
+            while (ai < av.len()) {
+                if (av[ai] == "-o" && ai + 1 < av.len()) { out_dir = av[ai + 1]; ai = ai + 1; }
+                else if (av[ai] != "-doc") { root = av[ai]; }
+                ai = ai + 1;
+            }
+            return run_doc(root, out_dir);
+        }
+        di = di + 1;
     }
     var mi: i32 = 0;
     while (mi < av.len()) {
