@@ -50,6 +50,13 @@ struct Secret { b: i32 }
 pub enum Shown { One, Two(i32) }
 enum Hidden { Alpha, Beta }
 pub function own_secret(): i32 { var s: Secret = Secret { b: 5 }; return s.b; }
+@must_consume
+struct Guarded { d: i32 }
+@must_consume
+pub struct GuardedOpen { d: i32 }
+function eat_guarded(own g: Guarded): i32 { return g.d; }
+pub function take_open(own g: GuardedOpen): i32 { return g.d; }
+pub function own_guarded(): i32 { return eat_guarded(Guarded { d: 6 }); }
 `
 	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatalf("write lib.fern: %v", err)
@@ -130,6 +137,33 @@ pub function own_secret(): i32 { var s: Secret = Secret { b: 5 }; return s.b; }
 	// the type sibling of the own-private-function case.
 	check(t, "own_private_type",
 		"import \"./lib\";\nfunction main(): i32 { return lib.own_secret() - 5; }\n",
+		0, "")
+
+	// An ATTRIBUTE in front of the declaration used to disable this rule
+	// outright. `@derive` and `@must_consume` each parse their own `pub` — the
+	// keyword may be written on either side of the attribute — and then built
+	// the declaration with a hardcoded `is_pub: true`, so a DECORATED private
+	// type was reachable from every module while an undecorated one beside it
+	// was not. #6778 fixed the parser while closing the formatter half of
+	// #6773, and what pins it today is the formatter differential: a
+	// regression that re-hardcodes the flag would surface there as a
+	// formatting difference rather than as the permissive #6714 divergence it
+	// is. These name the rule directly.
+	//
+	// The private case puts the type in an `own` PARAMETER rather than binding
+	// a value: a marked local carries the E067 obligation too, and that second
+	// diagnostic would let the case pass on the wrong error. `own` is the
+	// declared sink, so the signature owes nothing itself.
+	check(t, "private_must_consume_type",
+		"import \"./lib\";\nfunction peek(own g: lib.Guarded): i32 { return g.d; }\nfunction main(): i32 { return 0; }\n",
+		1, "lib.Guarded is not exported (declare it as `pub struct Guarded …` to make it accessible from other modules)")
+
+	check(t, "public_must_consume_type",
+		"import \"./lib\";\nfunction main(): i32 { return lib.take_open(lib.GuardedOpen { d: 3 }) - 3; }\n",
+		0, "")
+
+	check(t, "own_private_must_consume_type",
+		"import \"./lib\";\nfunction main(): i32 { return lib.own_guarded() - 6; }\n",
 		0, "")
 
 	// REJECT on the COMPILE path too, not just `-check`: native refuses to
