@@ -200,6 +200,59 @@ pub function early(a: i32): void {
   }
 }
 `},
+	// The rest of the loop family. The C-style form is #6771's, covered by the
+	// `c-style-for` cases below; these are the ones with no NATIVE node (#6770),
+	// where native wrote its own expansion — `__range_hi_1`, `__foreach_iter_1`,
+	// the map iterator's cursor calls — back over the user's source.
+	{"for-range", `function hi(): i32 {
+  return 4;
+}
+
+function main(): i32 {
+  var t: i32 = 0;
+  for i in 0..4 {
+    t = t + i;
+  }
+  for j in 0..=4 {
+    t = t + j;
+  }
+  for k in 1..hi() {
+    t = t + k;
+  }
+  return t;
+}
+`},
+	{"for-array-and-map", `function main(m: map[string, i32], a: i32[]): i32 {
+  var t: i32 = 0;
+  for x in a {
+    t = t + x;
+  }
+  for (k, v) in m {
+    t = t + v + k.len();
+  }
+  return t;
+}
+`},
+	// A loop label and the `break` / `continue` naming it are one fact written
+	// twice: dropping either half retargets the jump at the innermost loop, so
+	// the reformatted program leaves a different loop than the one written.
+	{"loop-labels", `function main(a: i32[]): i32 {
+  var t: i32 = 0;
+  outer: while (t < 10) {
+    inner: for (var i: i32 = 0; i < 3; i = i + 1) {
+      if (i == 2) {
+        continue outer;
+      }
+      break inner;
+    }
+    t = t + 1;
+  }
+  each: for x in a {
+    break each;
+  }
+  return t;
+}
+`},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
 function mk(x: i32, y: i32): P {
 return P { x: x, y: y };

@@ -421,11 +421,13 @@ function print_stmt_inline(st: parser.Stmt): string {
 // be empty (`for (; c; )`). `cond` is the loop condition; an omitted one
 // desugars to the literal `true` and is reprinted that way, since the lowered
 // form keeps no record of which of the two was written.
-struct ForCSugar { init: parser.Stmt[], cond: parser.Expr, step: parser.Stmt[], body: parser.Stmt[], ok: boolean }
+// `label` is the loop label the source wrote, which with_loop_label parks on
+// the desugar's inner while — there is no other loop in the shape to carry it.
+struct ForCSugar { init: parser.Stmt[], cond: parser.Expr, step: parser.Stmt[], body: parser.Stmt[], label: string, ok: boolean }
 
 function no_c_for(): ForCSugar {
     var none: parser.Stmt[] = [];
-    return ForCSugar { init: none, cond: parser.ExprBool { value: true }, step: none, body: none, ok: false };
+    return ForCSugar { init: none, cond: parser.ExprBool { value: true }, step: none, body: none, label: "", ok: false };
 }
 
 // as_c_for recognises the C-style-for desugar and takes the three header
@@ -456,10 +458,11 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     }
     if (flag.len() == 0) { return no_c_for(); }
     var wbody: parser.Stmt[] = [];
+    var label: string = "";
     var have_while: boolean = false;
     match (outer[outer.len() - 1]) {
         parser.StmtWhile(w) => {
-            if (expr_is_true(w.cond) && w.label.len() == 0) { wbody = w.body; have_while = true; }
+            if (expr_is_true(w.cond)) { wbody = w.body; label = w.label; have_while = true; }
         },
         _ => {},
     }
@@ -517,7 +520,7 @@ function as_c_for(ifs: parser.StmtIf): ForCSugar {
     var body: parser.Stmt[] = [];
     var bi: i32 = 3;
     while (bi < wbody.len()) { body = body.append(wbody[bi]); bi = bi + 1; }
-    return ForCSugar { init: init, cond: cond, step: step, body: body, ok: true };
+    return ForCSugar { init: init, cond: cond, step: step, body: body, label: label, ok: true };
 }
 
 // is_forc_name reports the synthesised first-iteration flag `__forc_<l>_<c>`.
@@ -565,7 +568,7 @@ function print_c_for(fc: ForCSugar, depth: i32, f: Fmt): (string, Fmt) {
     var step: string = "";
     if (fc.step.len() == 1) { step = strip_semi(print_stmt_inline(fc.step[0])); }
     var (body, g) = print_block(fc.body, depth, f);
-    return ("for (" + init + "; " + print_expr(fc.cond) + "; " + step + ") " + body, g);
+    return (loop_label(fc.label) + "for (" + init + "; " + print_expr(fc.cond) + "; " + step + ") " + body, g);
 }
 
 function strip_semi(s: string): string {
@@ -593,6 +596,49 @@ function print_if_chain(ifs: parser.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
     }
     var (else_text, g3) = print_block(ifs.else_body, depth, g);
     return (out + " else " + else_text, g3);
+}
+
+// loop_label renders the `name: ` a labeled loop carries. Dropping it also
+// strips the `break name` / `continue name` that target it, so the reformatted
+// program leaves a different loop than the one written.
+function loop_label(label: string): string {
+    if (label.len() == 0) { return ""; }
+    return label + ": ";
+}
+
+// for_binder renders a StmtFor's binder. The map form `for (k, v) in m` stores
+// its two names comma-joined in the one field, and reprinting that bare gives
+// `for k,v in m`, which does not parse.
+function for_binder(var_name: string): string {
+    var i: i32 = 0;
+    while (i < var_name.len()) {
+        if (var_name[i:i + 1] == ",") {
+            return "(" + var_name[0:i] + ", " + var_name[i + 1:var_name.len()] + ")";
+        }
+        i = i + 1;
+    }
+    return var_name;
+}
+
+// print_for_iter renders a StmtFor's iterable. The range forms are carried as
+// a synthetic `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call
+// (parse_for_stmt), which is a parser-internal name no source may write.
+function print_for_iter(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 2) {
+                match (c.callee) {
+                    parser.ExprIdent(id) => {
+                        if (id.name == "__range") { return print_expr(c.args[0]) + ".." + print_expr(c.args[1]); }
+                        if (id.name == "__range_incl") { return print_expr(c.args[0]) + "..=" + print_expr(c.args[1]); }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return print_expr(e);
 }
 
 // print_stmt renders ONE statement as a complete line — indent, text, any
@@ -648,16 +694,22 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         },
         parser.StmtWhile(w) => {
             var (wb, wg) = print_block(w.body, depth, f);
-            return ("while (" + print_expr(w.cond) + ") " + wb, wg);
+            return (loop_label(w.label) + "while (" + print_expr(w.cond) + ") " + wb, wg);
         },
         parser.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value) + ";", f); },
         parser.StmtMatch(m) => { return print_match(m, depth, f); },
         parser.StmtFor(fo) => {
             var (fb, fg) = print_block(fo.body, depth, f);
-            return ("for " + fo.var_name + " in " + print_expr(fo.iter) + " " + fb, fg);
+            return (loop_label(fo.label) + "for " + for_binder(fo.var_name) + " in " + print_for_iter(fo.iter) + " " + fb, fg);
         },
-        parser.StmtBreak(_) => { return ("break;", f); },
-        parser.StmtContinue(_) => { return ("continue;", f); },
+        parser.StmtBreak(b) => {
+            if (b.label.len() > 0) { return ("break " + b.label + ";", f); }
+            return ("break;", f);
+        },
+        parser.StmtContinue(c) => {
+            if (c.label.len() > 0) { return ("continue " + c.label + ";", f); }
+            return ("continue;", f);
+        },
         parser.StmtUnknown(u) => { return ("/*unknown-stmt:" + u.kind + "*/", f); }
     }
     return ("/*unhandled-stmt*/", f);
@@ -1568,6 +1620,52 @@ function main(): i32 {
     var rtFn: parser.Module = roundtrip_module("function LIMIT(): i32 { return 41; }");
     if (rtFn.funcs.len() != 1) { return 254; }
     if (rtFn.funcs[0].is_const) { return 255; }
+
+    // Every `for` reprints as the sugar the source wrote, not as the desugar
+    // it parses to (#6771). Round-tripping is not enough to see this: the
+    // expansion re-parses to itself, so the assertions read the emitted TEXT
+    // and reject the synthesised names — `__forc_<line>_<col>` bakes the
+    // loop's position into the program, so the same loop one line down would
+    // otherwise reformat to different source.
+    var srcCFor: string = "function main(): i32 { var s: i32 = 0; for (var i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
+    var outCFor: string = print_module(parser.parse_module(lexer.tokenize(srcCFor)));
+    if (!util.contains(outCFor, "for (var i: i32 = 0; i < 3; i = i + 1) {")) { return 260; }
+    if (util.contains(outCFor, "__forc_")) { return 261; }
+    // …and it still re-parses to the same desugar, so the loop the compiler
+    // sees is unchanged.
+    var rtCFor: parser.Module = roundtrip_module(srcCFor);
+    if (rtCFor.funcs.len() != 1) { return 262; }
+    match (rtCFor.funcs[0].body[1]) {
+        parser.StmtIf(cf) => { if (!as_c_for(cf).ok) { return 263; } },
+        _ => { return 264; }
+    }
+
+    // An omitted INIT / STEP keeps the header's arity.
+    var outBare: string = print_module(parser.parse_module(lexer.tokenize(
+        "function main(): i32 { var i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }")));
+    if (!util.contains(outBare, "for (; i < 3; ) {")) { return 265; }
+
+    // The range forms are carried as a synthetic `__range` / `__range_incl`
+    // call, which is a parser-internal name no source may spell.
+    var outRange: string = print_module(parser.parse_module(lexer.tokenize(
+        "function main(): i32 { var t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }")));
+    if (!util.contains(outRange, "for i in 0..4 {")) { return 266; }
+    if (!util.contains(outRange, "for j in 0..=4 {")) { return 267; }
+    if (util.contains(outRange, "__range")) { return 268; }
+
+    // The map form stores its two binders comma-joined in the one field;
+    // reprinting that bare gives `for k,v in m`, which does not parse.
+    var outMap: string = print_module(parser.parse_module(lexer.tokenize(
+        "function main(m: map[string, i32]): i32 { var t: i32 = 0; for (k, v) in m { t = t + v; } return t; }")));
+    if (!util.contains(outMap, "for (k, v) in m {")) { return 269; }
+
+    // A label and the break / continue naming it are one fact written twice.
+    var srcLabels: string = "function main(): i32 { var t: i32 = 0; outer: while (t < 10) { inner: for (var i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
+    var outLabels: string = print_module(parser.parse_module(lexer.tokenize(srcLabels)));
+    if (!util.contains(outLabels, "outer: while (t < 10) {")) { return 270; }
+    if (!util.contains(outLabels, "inner: for (var i: i32 = 0; i < 3; i = i + 1) {")) { return 271; }
+    if (!util.contains(outLabels, "continue outer;")) { return 272; }
+    if (!util.contains(outLabels, "break inner;")) { return 273; }
 
     return 0;
 }

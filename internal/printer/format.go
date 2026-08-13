@@ -911,10 +911,71 @@ func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
 	f.b.WriteByte('}')
 }
 
+// formatLoopLabel emits `name: ` ahead of a loop header. Dropping it also
+// strips the `break name` / `continue name` that target it, so the reformatted
+// program jumps out of a different loop than the one written.
+func (f *formatter) formatLoopLabel(label string) {
+	if label == "" {
+		return
+	}
+	f.b.WriteString(label)
+	f.b.WriteString(": ")
+}
+
+// formatJumpLabel closes a `break` / `continue`, with the label it targets.
+func (f *formatter) formatJumpLabel(label string) {
+	if label != "" {
+		f.b.WriteByte(' ')
+		f.b.WriteString(label)
+	}
+	f.b.WriteByte(';')
+}
+
+// formatForEach emits the three `for … in …` surface forms: the plain
+// iterator `for x in xs`, the range `for i in lo..hi` (`..=` when inclusive),
+// and the map destructuring `for (k, v) in m`.
+func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
+	f.formatLoopLabel(fe.Label)
+	f.b.WriteString("for ")
+	if fe.Var2 != "" {
+		f.b.WriteByte('(')
+		f.b.WriteString(fe.Var)
+		f.b.WriteString(", ")
+		f.b.WriteString(fe.Var2)
+		f.b.WriteByte(')')
+	} else {
+		f.b.WriteString(fe.Var)
+	}
+	f.b.WriteString(" in ")
+	f.formatExpr(fe.Iter, precLowest)
+	if fe.RangeHigh != nil {
+		if fe.RangeIncl {
+			f.b.WriteString("..=")
+		} else {
+			f.b.WriteString("..")
+		}
+		f.formatExpr(fe.RangeHigh, precLowest)
+	}
+	f.b.WriteByte(' ')
+	f.formatStmt(fe.Body, depth)
+}
+
 func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	switch x := s.(type) {
 	case *ast.Block:
+		// A Block the parser built to scope a `for … in …` desugar reprints
+		// as that loop: its statements are synthetic bindings whose names
+		// (`__foreach_iter_1`, `__range_hi_1`) would otherwise be written
+		// into the user's source, and `-fmt -w` makes that permanent.
+		if x.Sugar != nil {
+			f.formatForEach(x.Sugar, depth)
+			return
+		}
 		f.formatBlock(x, depth)
+	case *ast.ForEach:
+		// A lazy `stream[T]` foreach is left undesugared for the checker, so
+		// this form does reach the printer directly.
+		f.formatForEach(x, depth)
 	case *ast.If:
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, precLowest)
@@ -925,6 +986,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.formatStmt(x.Else, depth)
 		}
 	case *ast.While:
+		f.formatLoopLabel(x.Label)
 		f.b.WriteString("while (")
 		f.formatExpr(x.Cond, precLowest)
 		f.b.WriteString(") ")
@@ -945,9 +1007,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			}
 			return
 		}
+		f.formatLoopLabel(x.Label)
 		f.b.WriteString("loop ")
 		f.formatStmt(x.Body, depth)
 	case *ast.For:
+		f.formatLoopLabel(x.Label)
 		f.b.WriteString("for (")
 		if x.Init != nil {
 			f.formatStmt(x.Init, depth)
@@ -967,9 +1031,11 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString(") ")
 		f.formatStmt(x.Body, depth)
 	case *ast.Break:
-		f.b.WriteString("break;")
+		f.b.WriteString("break")
+		f.formatJumpLabel(x.Label)
 	case *ast.Continue:
-		f.b.WriteString("continue;")
+		f.b.WriteString("continue")
+		f.formatJumpLabel(x.Label)
 	case *ast.Return:
 		f.b.WriteString("return")
 		if x.Value != nil {

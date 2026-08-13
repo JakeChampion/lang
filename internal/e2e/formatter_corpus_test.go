@@ -28,6 +28,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/parser"
@@ -106,6 +107,19 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 			twice := printer.Format(prog2)
 			if once != twice {
 				t.Errorf("format not idempotent (first pass != second pass); first differing run is the second format")
+			}
+			// No parse-time desugar reaches the output. Idempotence is blind to
+			// this class — format → parse → format is a fixed point on the
+			// leaked expansion too, since the second pass has nothing left to
+			// desugar (#6770) — so the property to assert is that the formatter
+			// never writes a name only the compiler can synthesise back over the
+			// user's source. `-fmt -w` would make that permanent, and the names
+			// carry a counter or the loop's line/column, so the same code moved
+			// down a line reformats to different text.
+			for _, synth := range []string{"__range_hi_", "__foreach_iter_", "__foreach_idx_", "__foreach_len_", "__forc_"} {
+				if strings.Contains(once, synth) && !strings.Contains(string(src), synth) {
+					t.Errorf("formatted output leaks the synthetic name %q, which the source does not spell\n--- formatted ---\n%s", synth, once)
+				}
 			}
 		})
 	}
