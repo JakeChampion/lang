@@ -41,12 +41,51 @@ function quote_string(s: string): string {
     return out + "\"";
 }
 
-// print_expr emits an expression in source-text form. Binary
-// expressions are always fully parenthesised to side-step the
-// precedence table — the result is re-parseable even if it's
-// noisier than a hand-formatted version. Future polish would
-// thread parent precedence through to drop redundant parens.
+// =================== PRECEDENCE ====================
+//
+// Levels mirror the parser's, and native's printer's: higher binds tighter, and
+// an operand is parenthesised only where its own operator binds less tightly
+// than the context around it. The two tables must agree or the two formatters
+// disagree about the canonical form of every expression (#6762).
+//
+// Bitwise (`|`, `^`, `&`) sits BELOW the comparison family, matching the
+// grammar (parse_logical_and → parse_bit_or → parse_bit_xor → parse_bit_and →
+// parse_equality → parse_relational), so `==` binds tighter than `&`. Ordering
+// these the other way silently rewrites `(n & (n - 1)) == 0` — the
+// is-power-of-2 idiom — into `n & n - 1 == 0`, which re-parses as ANDing a
+// number with a boolean.
+function prec_lowest(): i32 { return 0; }
+function prec_unary(): i32 { return 15; }
+function prec_primary(): i32 { return 16; }
+
+// binary_prec is the level of `op`; an operator the table does not know sits at
+// the lowest level, so it keeps its parens.
+function binary_prec(op: string): i32 {
+    if (op == "||") { return 4; }
+    if (op == "&&") { return 5; }
+    if (op == "|") { return 6; }
+    if (op == "^") { return 7; }
+    if (op == "&") { return 8; }
+    if (op == "==" || op == "!=") { return 9; }
+    if (op == "<" || op == "<=" || op == ">" || op == ">=") { return 10; }
+    if (op == "<<" || op == ">>" || op == "<<|" || op == "<<?" || op == ">>?") { return 11; }
+    if (op == "+" || op == "-" || op == "+|" || op == "-|" || op == "+?" || op == "-?") { return 12; }
+    if (op == "*" || op == "/" || op == "%" || op == "*|" || op == "*?" || op == "/?" || op == "%?") { return 13; }
+    return prec_lowest();
+}
+
+// print_expr emits an expression at the outermost level, where nothing around
+// it can require parens.
 function print_expr(e: parser.Expr): string {
+    return print_expr_prec(e, prec_lowest());
+}
+
+// print_expr_prec emits `e` inside a context binding at `parent_prec`, adding
+// parentheses only where dropping them would reassociate. A left-associative
+// operator passes its own level to its LEFT operand and one above it to the
+// right, which is what keeps `a - (b - c)` parenthesised and `(a - b) - c`
+// bare.
+function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
     match (e) {
         parser.ExprNumber(n) => {
             if (n.suffix.len() > 0) { return n.text + n.suffix; }
@@ -59,11 +98,18 @@ function print_expr(e: parser.Expr): string {
             return "false";
         },
         parser.ExprBinary(b) => {
-            return "(" + print_expr(b.left) + " " + b.op + " " + print_expr(b.right) + ")";
+            var p: i32 = binary_prec(b.op);
+            var inner: string = print_expr_prec(b.left, p) + " " + b.op + " " + print_expr_prec(b.right, p + 1);
+            if (p < parent_prec) { return "(" + inner + ")"; }
+            return inner;
         },
-        parser.ExprUnary(u) => { return "(" + u.op + print_expr(u.operand) + ")"; },
+        parser.ExprUnary(u) => {
+            var uinner: string = u.op + print_expr_prec(u.operand, prec_unary());
+            if (parent_prec >= prec_unary()) { return "(" + uinner + ")"; }
+            return uinner;
+        },
         parser.ExprCall(c) => {
-            var out: string = print_expr(c.callee) + "(";
+            var out: string = print_expr_prec(c.callee, prec_primary()) + "(";
             var i: i32 = 0;
             while (i < c.args.len()) {
                 if (i > 0) { out = out + ", "; }
@@ -93,10 +139,10 @@ function print_expr(e: parser.Expr): string {
             return out + ")";
         },
         parser.ExprIndex(x) => {
-            return print_expr(x.array) + "[" + print_expr(x.index) + "]";
+            return print_expr_prec(x.array, prec_primary()) + "[" + print_expr(x.index) + "]";
         },
         parser.ExprSlice(sl) => {
-            return print_expr(sl.array) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
+            return print_expr_prec(sl.array, prec_primary()) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
         },
         parser.ExprStructLit(sl) => {
             var out: string = sl.type_name + " {";
@@ -114,9 +160,11 @@ function print_expr(e: parser.Expr): string {
             }
             return out + " }";
         },
-        parser.ExprFieldAccess(fa) => { return print_expr(fa.obj) + "." + fa.field; },
+        parser.ExprFieldAccess(fa) => { return print_expr_prec(fa.obj, prec_primary()) + "." + fa.field; },
         parser.ExprLambda(lm) => {
-            var out: string = "function (";
+            // `function(` with no space, matching native — the spaced form
+            // re-parses but is not the canonical spelling.
+            var out: string = "function(";
             var pi: i32 = 0;
             while (pi < lm.params.len()) {
                 if (pi > 0) { out = out + ", "; }
@@ -128,6 +176,14 @@ function print_expr(e: parser.Expr): string {
             }
             out = out + ")";
             if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
+            // A one-statement body renders inline, so a short predicate lambda
+            // stays on the line that passes it. A lambda is an EXPRESSION, so
+            // the multi-line form indents against a depth this walk does not
+            // carry — it lands at column 0 mid-line, which is why matching
+            // native's inline rule matters beyond style.
+            if (lm.body.len() == 1 && stmt_is_single_line(lm.body[0])) {
+                return out + " { " + print_stmt_inline(lm.body[0]) + " }";
+            }
             return out + " " + print_block(lm.body, 0);
         },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
@@ -137,13 +193,12 @@ function print_expr(e: parser.Expr): string {
 
 // =================== STATEMENTS ====================
 
-// indent_str returns `depth` copies of "    " — four spaces per
-// level. Block-form stmt emission uses this to keep the output
-// re-parseable and roughly human-readable.
+// indent_str returns `depth` copies of "  " — two spaces per level, the width
+// native's formatter uses and the one `make fmt-check` gates the tree against.
 function indent_str(depth: i32): string {
     var out: string = "";
     var i: i32 = 0;
-    while (i < depth) { out = out + "    "; i = i + 1; }
+    while (i < depth) { out = out + "  "; i = i + 1; }
     return out;
 }
 
@@ -193,6 +248,49 @@ function print_match(m: parser.StmtMatch, depth: i32): string {
     return out;
 }
 
+// stmt_is_single_line: the statement kinds native renders on one line, and so
+// the ones a one-statement lambda body may keep inline.
+function stmt_is_single_line(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtReturn(_) => { return true; },
+        parser.StmtVar(_) => { return true; },
+        parser.StmtExpr(_) => { return true; },
+        parser.StmtAssign(_) => { return true; },
+        parser.StmtBreak(_) => { return true; },
+        parser.StmtContinue(_) => { return true; },
+        parser.StmtDefer(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// print_stmt_inline renders `st` for a position that CONTINUES the current
+// line, so it drops the newline the statement form ends with. Only called at
+// depth 0 (a lambda body), where there is no leading indent to drop either.
+function print_stmt_inline(st: parser.Stmt): string {
+    var s: string = print_stmt(st, 0);
+    var end: i32 = s.len();
+    while (end > 0 && s[end - 1] == 10) { end = end - 1; }
+    return "" + s[0:end];
+}
+
+// print_if_chain renders an if/else with no leading indent and no trailing
+// newline. An `else` whose whole body is a single `if` is an else-IF chain and
+// stays on one line, the way native prints it: re-nesting it in braces adds a
+// level of indent per arm, so a five-arm chain drifts ten columns from the form
+// `make fmt-check` gates the tree against.
+function print_if_chain(ifs: parser.StmtIf, depth: i32): string {
+    var out: string = "if (" + print_expr(ifs.cond) + ") " + print_block(ifs.then_body, depth);
+    if (ifs.else_body.len() == 0) { return out; }
+    if (ifs.else_body.len() == 1) {
+        match (ifs.else_body[0]) {
+            parser.StmtIf(nested) => { return out + " else " + print_if_chain(nested, depth); },
+            _ => {}
+        }
+    }
+    return out + " else " + print_block(ifs.else_body, depth);
+}
+
 function print_stmt(st: parser.Stmt, depth: i32): string {
     var pad: string = indent_str(depth);
     match (st) {
@@ -204,13 +302,7 @@ function print_stmt(st: parser.Stmt, depth: i32): string {
         },
         parser.StmtReturn(r) => { return pad + "return " + print_expr(r.value) + ";\n"; },
         parser.StmtExpr(x) => { return pad + print_expr(x.value) + ";\n"; },
-        parser.StmtIf(ifs) => {
-            var out: string = pad + "if (" + print_expr(ifs.cond) + ") " + print_block(ifs.then_body, depth);
-            if (ifs.else_body.len() > 0) {
-                out = out + " else " + print_block(ifs.else_body, depth);
-            }
-            return out + "\n";
-        },
+        parser.StmtIf(ifs) => { return pad + print_if_chain(ifs, depth) + "\n"; },
         parser.StmtWhile(w) => {
             return pad + "while (" + print_expr(w.cond) + ") " + print_block(w.body, depth) + "\n";
         },
@@ -422,7 +514,33 @@ function print_type_alias(a: parser.TypeAlias): string {
 }
 
 function print_import(im: parser.Import): string {
+    // A `pub use "path".{a, b};` re-export is an import record too, and both
+    // its spelling and the `as` ALIAS are load-bearing: dropping either leaves
+    // every use of the bound name undefined, so it is data loss rather than a
+    // style difference.
+    if (im.is_reexport) {
+        var re: string = "pub use " + quote_string(im.path) + ".{";
+        var ri: i32 = 0;
+        while (ri < im.reexport_names.len()) {
+            if (ri > 0) { re = re + ", "; }
+            re = re + im.reexport_names[ri];
+            ri = ri + 1;
+        }
+        return re + "};\n";
+    }
+    if (im.alias.len() > 0) {
+        return "import " + quote_string(im.path) + " as " + im.alias + ";\n";
+    }
     return "import " + quote_string(im.path) + ";\n";
+}
+
+// decl_sep is the separator before a top-level declaration: native's formatter
+// blank-separates every one of them unconditionally, and emits nothing before
+// the first (#6762). Imports are the exception — they cluster with no blank
+// between them — so they do not go through this.
+function decl_sep(out: string): string {
+    if (out.len() == 0) { return ""; }
+    return "\n";
 }
 
 pub function print_module(mod: parser.Module): string {
@@ -452,9 +570,9 @@ pub function print_module(mod: parser.Module): string {
         var ei: i32 = 0 - 1;
         if (owner.len() > 0) { ei = enum_index(mod.enums, owner); }
         if (ei < 0) {
-            out = out + print_struct_decl(mod.structs[i]);
+            out = out + decl_sep(out) + print_struct_decl(mod.structs[i]);
         } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
-            out = out + print_enum_decl(mod.enums[ei], mod.structs);
+            out = out + decl_sep(out) + print_enum_decl(mod.enums[ei], mod.structs);
         }
         i = i + 1;
     }
@@ -462,12 +580,12 @@ pub function print_module(mod: parser.Module): string {
     // nothing above emits it.
     var vi: i32 = 0;
     while (vi < mod.enums.len()) {
-        if (mod.enums[vi].variant_names.len() == 0) { out = out + print_enum_decl(mod.enums[vi], mod.structs); }
+        if (mod.enums[vi].variant_names.len() == 0) { out = out + decl_sep(out) + print_enum_decl(mod.enums[vi], mod.structs); }
         vi = vi + 1;
     }
     var ai: i32 = 0;
     while (ai < mod.aliases.len()) {
-        out = out + print_type_alias(mod.aliases[ai]);
+        out = out + decl_sep(out) + print_type_alias(mod.aliases[ai]);
         ai = ai + 1;
     }
     // SOURCE functions only. `@derive` synthesises its methods at PARSE time
@@ -479,6 +597,7 @@ pub function print_module(mod: parser.Module): string {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (mod.funcs[fi].line > 0) {
+            out = out + decl_sep(out);
             if (mod.funcs[fi].is_const) { out = out + print_const_decl(mod.funcs[fi]); }
             else { out = out + print_func_decl(mod.funcs[fi]); }
         }
@@ -486,7 +605,7 @@ pub function print_module(mod: parser.Module): string {
     }
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
-        out = out + print_stmt(mod.top_stmts[j], 0);
+        out = out + decl_sep(out) + print_stmt(mod.top_stmts[j], 0);
         j = j + 1;
     }
     return out;
