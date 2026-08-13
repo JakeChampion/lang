@@ -412,9 +412,23 @@ pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[
 // same way.
 pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean }
 
+// ImplDecl is an `impl` block as WRITTEN, retained for the formatter (#6783) for
+// the same reason TraitDecl is. parse_impl_decl desugars on the way in — each
+// method becomes an ordinary receiver method on `Module.funcs` and the block
+// reduces to an ImplInfo (trait name, impl type, method names) for the E021
+// conformance walk — so a formatted file re-declared each method as a plain
+// receiver method and the `impl` it belonged to was gone. A type stopped
+// implementing the trait.
+//
+// `methods` holds the DESUGARED forms, which is what native prints too: `Self`
+// already reads as the concrete impl type there, and a method's `self` receiver
+// is re-inserted as its first parameter at print time. `trait_ref` is "" for an
+// inherent `impl Type { … }`.
+pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32 }
+
 // ParsedFmt is parse_module_verbatim's result: the module plus the decls kept
 // only for printing.
-pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[] }
+pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -14271,9 +14285,11 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // The trait name is parsed and discarded: the self-host resolves
 // `obj.method()` by the receiver's concrete type, not via the
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
-function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string, Par) {
+function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string, ImplDecl, Par) {
     var out: FuncDecl[] = [];
     var method_names: string[] = [];
+    var iline: i32 = p.peek_line();
+    var icol: i32 = p.peek_col();
     p = p.advance(); // `impl`
     // Parametric impl: `impl[T: Bound] Trait for Box[T] { … }`. Collect
     // the impl's type-parameter names (bounded ones drive
@@ -14281,32 +14297,16 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // carries them — the `for` type (`Box[T]`) keeps `T`, and the
     // emitter strips the generic args to the base struct name `Box`.
     // See docs/TRAITS.md.
+    // Consumed through the shared list parser; the BOUNDED names are what drives
+    // monomorphisation, and the whole list with its bounds is what the formatter
+    // needs — `impl[T: cmp.Eq]` reprinted as `impl` drops the constraint.
+    var (impl_tpl, impl_tp_p) = parse_type_param_list(p);
+    p = impl_tp_p;
     var impl_tps: string[] = [];
-    if (p.peek_punct() == "[") {
-        p = p.advance();
-        while (!p.at_end()) {
-            if (p.peek_punct() == "]") { break; }
-            var tpn: string = p.peek_ident();
-            if (tpn.len() == 0) { p = p.advance(); continue; }
-            p = p.advance();
-            var bounded: boolean = false;
-            if (p.peek_punct() == ":") {
-                bounded = true;
-                p = p.advance();
-                var go2: boolean = true;
-                while (go2 && !p.at_end()) {
-                    if (p.peek_ident().len() > 0) { p = p.advance(); }
-                    if (p.peek_punct() == ".") {
-                        p = p.advance();
-                        if (p.peek_ident().len() > 0) { p = p.advance(); }
-                    }
-                    if (p.peek_punct() == "+") { p = p.advance(); } else { go2 = false; }
-                }
-            }
-            if (bounded) { impl_tps = impl_tps.append(tpn); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
-        }
-        if (p.peek_punct() == "]") { p = p.advance(); }
+    var itpi: i32 = 0;
+    while (itpi < impl_tpl.tnames.len()) {
+        if (impl_tpl.tbounds[itpi].len() > 0) { impl_tps = impl_tps.append(impl_tpl.tnames[itpi]); }
+        itpi = itpi + 1;
     }
     // First name after `impl` (possibly `mod.Name`). For a trait impl
     // (`impl Trait for Type`) it's the trait; for an inherent impl
@@ -14366,7 +14366,9 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the trait decl's bracket-free simple name). Without the strip,
     // `impl Greet[i32] for P` records trait_name "Greet[i32]", never matches
     // the `Greet` trait, and its default methods are never synthesised (#4340).
-    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, trait_spelling, p);
+    return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, method_names, trait_spelling,
+            ImplDecl { trait_ref: trait_name, type_ref: impl_type, type_params: impl_tpl.tnames, bounds: impl_tpl.tbounds, methods: out, line: iline, col: icol },
+            p);
 }
 
 // finalize_impl_method turns a parsed impl/trait-default method `m` into
@@ -15427,7 +15429,7 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var (m, t) = parse_module_flagged(toks, false);
+    var (m, t, im) = parse_module_flagged(toks, false);
     return m;
 }
 
@@ -15438,11 +15440,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
 // reach it spelled as written, which every compile-path `type_name == "string"`
 // / `== "fn"` dispatch would misread.
 pub function parse_module_verbatim(toks: lexer.Token[]): ParsedFmt {
-    var (m, t) = parse_module_flagged(toks, true);
-    return ParsedFmt { pmod: m, ptraits: t };
+    var (m, t, im) = parse_module_flagged(toks, true);
+    return ParsedFmt { pmod: m, ptraits: t, pimpls: im };
 }
 
-function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[]) {
+function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[]) {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
@@ -15456,6 +15458,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     var resources: ResourceDecl[] = [];
     var exports: ExportBinding[] = [];
     var traits: TraitDecl[] = [];
+    var impl_decls: ImplDecl[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
@@ -15730,10 +15733,14 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             continue;
         }
         if (kw == "impl") {
-            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_trait_spelling, imr_p) = parse_impl_decl(p);
+            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_method_names, imr_trait_spelling, imr_decl, imr_p) = parse_impl_decl(p);
             p = imr_p;
+            impl_decls = impl_decls.append(imr_decl);
+            // Under verbatim the methods live on the ImplDecl alone: adding them
+            // to `funcs` too would print each one twice, once inside its block
+            // and once as the free-standing receiver method it desugars to.
             var mi: i32 = 0;
-            while (mi < imr_funcs.len()) {
+            while (mi < imr_funcs.len() && !p.verbatim) {
                 funcs = funcs.append(imr_funcs[mi]);
                 mi = mi + 1;
             }
@@ -15771,7 +15778,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // written method gets. Self-host parity with the Go checker's
     // synthesizeTraitDefaults (see docs/TRAITS.md); same-module only.
     var iii: i32 = 0;
-    while (iii < impl_infos.len()) {
+    while (iii < impl_infos.len() && !verbatim) {
         var info: ImplInfo = impl_infos[iii];
         var ddi: i32 = 0;
         while (ddi < trait_defaults.len()) {
@@ -15793,7 +15800,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits);
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits, impl_decls);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
