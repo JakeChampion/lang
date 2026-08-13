@@ -119,6 +119,11 @@ function main(): i32 { var t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); var 
 	// per cell without the rewrite.
 	run(t, mixedCtorProg(100000, 200000), "trmc-mixed-ctor-deep", 0)
 
+	// The gate is on the arity of the ctors BUILT, not of the variants matched: a
+	// one-payload `B` cell can be walked (and shallow-freed by the consuming
+	// traversal) while the node built over it is a two-payload `A`.
+	run(t, mixedScrutArityProg(), "trmc-mixed-ctor-narrow-scrutinee", 0)
+
 	// EXCLUDED — recursive ctors of different payload ARITY. The hole is filled by
 	// an op_struct_set at a compile-time field index, so the tail cannot sit at
 	// index 1 in one iteration and index 0 in the next; the detector bails and the
@@ -177,6 +182,25 @@ function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: bool
 function main(): i32 { var ys: List = step(build(%d)); if (score(ys) != %d) { return 1; } return __rc_underflow(); }`, n, want)
 }
 
+// mixedScrutArityProg walks a list whose `B` cells carry one payload and whose
+// `A` / `Z` cells carry two, rebuilding every cell as a two-payload node. The
+// consuming traversal shallow-frees the `B` box while the loop holds an `A`
+// under construction; `score` signs the three variants apart, so
+// A(2) Z(4) A(7) A(4) scores 2 - 4 + 7 + 4 = 9.
+func mixedScrutArityProg() string {
+	return `enum L { A(i32, L), Z(i32, L), B(L), Nil }
+function step(xs: L): L {
+    match (xs) {
+        A(h, t) => { return A(h + 1, step(t)); },
+        Z(h, t) => { return Z(h - 1, step(t)); },
+        B(t) => { return A(7, step(t)); },
+        Nil => { return Nil; },
+    }
+}
+function score(l: L): i32 { var acc: i32 = 0; var cur: L = l; var go: boolean = true; while (go) { match (cur) { A(h, t) => { acc = acc + h; cur = t; }, Z(h, t) => { acc = acc - h; cur = t; }, B(t) => { acc = acc + 1000; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { var xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs)) != 9) { return 1; } return __rc_underflow(); }`
+}
+
 // countSelfCalls counts `call __fn_<name>` sites in emitted x86-64 asm. A TRMC'd
 // function keeps only its callers' call sites; the recursive ones are gone.
 func countSelfCalls(asm, name string) int {
@@ -233,6 +257,7 @@ function main(): i32 { var ys: List = inc_all(build(200000)); if (sum(ys) != 400
 		// layout engine as well as the register one.
 		{"trmc-mixed-ctor-wasm", mixedCtorProg(3, 6), 0},
 		{"trmc-mixed-ctor-deep-wasm", mixedCtorProg(100000, 200000), 0},
+		{"trmc-mixed-ctor-narrow-scrutinee-wasm", mixedScrutArityProg(), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
