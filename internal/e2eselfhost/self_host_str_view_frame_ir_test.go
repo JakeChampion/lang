@@ -34,6 +34,10 @@ import (
 // escape cases below carry the value guards that turn a wrong admission into a wrong
 // ANSWER rather than only a byte count.
 //
+// The cases at the end of the list are #6604's: the same box in the same borrow
+// positions, but as an ANONYMOUS temp with no binding for the scan to approve, so
+// their whitelist is applied at the lowering call site instead.
+//
 // wasm is unaffected: its `str_slice` copies the bytes into a fresh inline block, so
 // there is no box to place.
 var strViewFrameCases = []struct {
@@ -213,6 +217,123 @@ function main(): i32 {
         if (xs[j][0] != s[j]) { return 95; }
         acc = acc + (xs[j][0] as i32);
         j = j + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// #6604: the same box, in the same borrow positions, with no NAME at all. An
+	// ANONYMOUS slice temp — `"x" + s[0:1]`, `s[a:b].len()`, `s[a:b] == "x"`,
+	// `s[a:b][i]`, `s[a:b][c:d]` — is consumed by the operator that built it, so it
+	// cannot outlive either the frame or its own site, yet every one of them took a
+	// heap box until now. Measured on the issue's struct-rebind reproducer, x86-64:
+	// 9736 / 19200 fresh bytes at 50 / 100 rounds before, 136 / 0 after (native is
+	// 64 / 0). The temps have no binding for view_frame_names_of to approve, which is
+	// why the whitelist for them lives at the lowering CALL SITE instead.
+	{"strview-temp-loop-flat", `function main(): i32 {
+    var s: string = "hello world";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        acc = (acc + s[0:4].len() + (s[2:6][1] as i32) + ("<" + s[1:3]).len()) % 251;
+        if (s[0:5] == "hello") { acc = (acc + 1) % 251; }
+        acc = (acc + s[1:7][2:4].len()) % 251;
+        i = i + 1;
+    }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) {
+        acc = (acc + s[0:4].len() + (s[2:6][1] as i32) + ("<" + s[1:3]).len()) % 251;
+        if (s[0:5] == "hello") { acc = (acc + 1) % 251; }
+        acc = (acc + s[1:7][2:4].len()) % 251;
+        j = j + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    // The concat still allocates its RESULT per iteration; only the five VIEW boxes
+    // are gone, so the bound is the concat's share rather than zero.
+    if (b2 - b1 >= 300000) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// VALUE guard: every borrow position reads bytes back, with bounds that vary per
+	// iteration. A temp placed in a slot another live view owns prints as a wrong
+	// answer here rather than as a byte count.
+	{"strview-temp-value-exact", `function main(): i32 {
+    var s: string = "abcdefgh";
+    var u: string = "wxyz";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        if (("[" + s[i:i + 2] + "]").len() != 4) { return 96; }
+        if (s[i:i + 2].len() != 2) { return 95; }
+        if (s[i:i + 2][0] != s[i]) { return 94; }
+        acc = acc + (s[i:i + 2][0] as i32);
+        i = i + 1;
+    }
+    if (acc != 97 + 98 + 99 + 100 + 101 + 102) { return 93; }
+    // Two views of DIFFERENT sources live at once as the operands of one concat:
+    // one shared slot triple would make this "abxy" wrong.
+    if ((s[0:2] + u[1:3]) != "abxy") { return 92; }
+    if ((s[0:2] + s[4:6]) != "abef") { return 91; }
+    if (s[2:6][1:3] != "de") { return 90; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// ESCAPE negative — an anonymous slice in a position that is NOT a borrow (a call
+	// argument whose callee stores it) keeps its heap box. `churn` reuses the dead
+	// frame's slots before the views are read, so a wrongly-placed box is a wrong
+	// answer and not just a lucky read.
+	{"strview-temp-escape-arg-safe", `function collect(s: string, k: i32): string[] {
+    var xs: string[] = [];
+    var i: i32 = 0;
+    while (i < k) { xs = xs.append(s[i:i + 2]); i = i + 1; }
+    return xs;
+}
+function churn(n: i32): i32 {
+    var a: i32 = n * 3;
+    var b: i32 = a + 7;
+    var c: i32 = b * 2;
+    var d: i32 = c - a;
+    var e: i32 = d + b;
+    return a + b + c + d + e;
+}
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var xs: string[] = collect(s, 5);
+    var acc: i32 = churn(4) % 251;
+    var j: i32 = 0;
+    while (j < xs.len()) {
+        if (xs[j].len() != 2) { return 96; }
+        if (xs[j][0] != s[j]) { return 95; }
+        j = j + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// ESCAPE negative — an anonymous slice RETURNED from a callee. The borrow
+	// positions are all inside the callee's own expression; a `return` is not one of
+	// them, so the box must stay on the heap to survive the frame.
+	{"strview-temp-escape-return-safe", `function head(s: string): str { return s[0:4]; }
+function churn(n: i32): i32 {
+    var a: i32 = n * 3;
+    var b: i32 = a + 7;
+    var c: i32 = b * 2;
+    var d: i32 = c - a;
+    return a + b + c + d;
+}
+function main(): i32 {
+    var s: string = "hello world";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var v: str = head(s);
+        acc = (acc + churn(i)) % 251;
+        if (v.len() != 4) { return 96; }
+        if (v[0] != 104) { return 95; }
+        if (v[3] != 108) { return 94; }
+        i = i + 1;
     }
     if (__rc_underflow() != 0) { return 99; }
     if (acc < 0) { return 97; }

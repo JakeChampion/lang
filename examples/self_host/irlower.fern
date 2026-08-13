@@ -5609,7 +5609,7 @@ function lower_checked_binary(b: parser.ExprBinary, e: parser.Expr, s: LowerStat
 function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerState {
     var lf: boolean = is_fresh_str_temp(b.left, s);
     var rf: boolean = is_fresh_str_temp(b.right, s);
-    var sl: LowerState = lower_expr(b.left, s);
+    var sl: LowerState = lower_view_borrowed(b.left, s);
     if (!sl.ok) { return sl; }
     var lt: i32 = 0 - 1;
     if (lf) {
@@ -5619,7 +5619,7 @@ function emit_str_concat_reclaim(b: parser.ExprBinary, s: LowerState): LowerStat
         sl = sl.emit(ir.op_store_local(lt));
         sl = sl.emit(ir.op_load_local(lt));
     }
-    var sr: LowerState = lower_expr(b.right, sl);
+    var sr: LowerState = lower_view_borrowed(b.right, sl);
     if (!sr.ok) { return sr; }
     var rt: i32 = 0 - 1;
     if (rf) {
@@ -8835,7 +8835,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // map_new / Some / Ok), so this never shadows a user function.
     if (cid.name == "len" && c.args.len() == 1) {
         var lstr: boolean = expr_is_str(c.args[0], s);
-        var ls: LowerState = lower_expr(c.args[0], s);
+        var ls: LowerState = lower_view_borrowed(c.args[0], s);
         if (!ls.ok) { return ls; }
         if (lstr) { return ls.emit(ir.op_str_len()); }
         return ls.emit(ir.op_arr_len());
@@ -9909,7 +9909,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 return lr;
             }
         }
-        var sl: LowerState = lower_expr(fa.obj, s);
+        var sl: LowerState = lower_view_borrowed(fa.obj, s);
         if (!sl.ok) { return sl; }
         if (str_recv) { return sl.emit(ir.op_str_len()); }
         // A FRESH-ARRAY-returning call receiver (`mk(i).len()`,
@@ -11443,18 +11443,18 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // moved; the temp's own scope-exit / accumulator reclaim handles it).
                 if (b.op == "+") { return emit_str_concat_reclaim(b, s); }
                 if (b.op == "==" || b.op == "!=") {
-                    var sl: LowerState = lower_expr(b.left, s);
+                    var sl: LowerState = lower_view_borrowed(b.left, s);
                     if (!sl.ok) { return sl; }
-                    var sr: LowerState = lower_expr(b.right, sl);
+                    var sr: LowerState = lower_view_borrowed(b.right, sl);
                     if (!sr.ok) { return sr; }
                     var se: LowerState = sr.emit(ir.op_str_eq());
                     if (b.op == "!=") { return se.emit(ir.op_bin("not", 0, false)); }
                     return se;
                 }
                 if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-                    var cl: LowerState = lower_expr(b.left, s);
+                    var cl: LowerState = lower_view_borrowed(b.left, s);
                     if (!cl.ok) { return cl; }
-                    var cr: LowerState = lower_expr(b.right, cl);
+                    var cr: LowerState = lower_view_borrowed(b.right, cl);
                     if (!cr.ok) { return cr; }
                     // str_cmp(a,b) <rel> 0
                     var cc: LowerState = cr.emit(ir.op_str_cmp());
@@ -11890,7 +11890,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     if (ixown != "") { ixdeep = true; }
                 }
             }
-            var sidx: LowerState = lower_expr(ix.array, s);
+            var sidx: LowerState = lower_view_borrowed(ix.array, s);
             if (!sidx.ok) { return sidx; }
             var ixslot: i32 = 0 - 1;
             if (ixown != "") {
@@ -11952,7 +11952,10 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // expr_is_i64arr's ExprSlice cases.
             var slc_w: i32 = 32;
             if (slice_elem_is_wide(slc, s)) { slc_w = 64; }
-            var ssl: LowerState = lower_expr(slc.array, s);
+            // A slice OF a slice borrows its source: the outer box's data
+            // pointer aims into the ORIGINAL buffer, never into the inner box,
+            // so the inner one is dead the moment this op has read it.
+            var ssl: LowerState = lower_view_borrowed(slc.array, s);
             if (!ssl.ok) { return ssl; }
             ssl = lower_expr(slc.start, ssl);
             if (!ssl.ok) { return ssl; }
@@ -15312,6 +15315,31 @@ function view_frame_binding_ok(v: parser.StmtVar, s: LowerState): boolean {
     return false;
 }
 
+// view_frame_temp_ok decides whether an ANONYMOUS string-slice temporary may
+// take the frame form. #6713 placed the box of a NAMED `var t = s[a:b]` whose
+// every use borrows it; a temp consumed inside the expression that built it —
+// `"x" + o.name[0:1]`, `s[a:b].len()`, `s[a:b] == "x"` — has no name at all, so
+// neither hazard the named scan filters for can arise: nothing can carry it out
+// of the frame, and the enclosing operator has finished reading it before the
+// site can run again. Callers are the borrow positions themselves, which is
+// what makes the whitelist a property of the CALL SITE rather than of a scan.
+function view_frame_temp_ok(e: parser.Expr, s: LowerState): boolean {
+    if (s.for_wasm()) { return false; }
+    match (e) {
+        parser.ExprSlice(slc) => { return expr_is_str(slc.array, s); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// lower_view_borrowed lowers `e` in a position that only borrows a string for
+// the duration of one expression: a slice temp takes its box from the frame,
+// everything else lowers normally.
+function lower_view_borrowed(e: parser.Expr, s: LowerState): LowerState {
+    if (view_frame_temp_ok(e, s)) { return lower_str_slice_frame(e, s); }
+    return lower_expr(e, s);
+}
+
 // view_frame_slot_name is the name the reserved box slots carry. No source
 // identifier can start with `!` (the same reservation lower_block's `!retired!`
 // shadow-prefix relies on), so the three slots are unreachable by slot_of and
@@ -15324,7 +15352,7 @@ function view_frame_slot_name(): string { return "!view!"; }
 function lower_str_slice_frame(e: parser.Expr, s: LowerState): LowerState {
     match (e) {
         parser.ExprSlice(slc) => {
-            var fvs: LowerState = lower_expr(slc.array, s);
+            var fvs: LowerState = lower_view_borrowed(slc.array, s);
             if (!fvs.ok) { return fvs; }
             fvs = lower_expr(slc.start, fvs);
             if (!fvs.ok) { return fvs; }
