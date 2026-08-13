@@ -4439,6 +4439,23 @@ pub function expr_is_arr_src(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// arr_i32_recv reports whether `e` is a receiver the i32-element array helpers
+// (__fern_arr_i32_sum / _product / _index_of / _min_opt / _max_opt) accept: any
+// 4-byte-element array, either an owned array SOURCE or a borrowed array struct
+// FIELD read (`h.xs` where xs: i32[]/boolean[]/u32[]/u8[] — each stores its
+// element in a full 32-bit slot). The helpers take the array borrowed and return
+// a scalar, so the field read needs no rc traffic; expr_is_arr_src stays narrow
+// (it means a fresh/owned array and drives rc decisions).
+//
+// One predicate rather than the guard restated per builtin: the result-type
+// classifier (builtin_arr_opt_ret_type) has to agree with the lowering exactly,
+// or `match (h.xs.min())` reports no payload type while the call it describes is
+// emitted anyway.
+function arr_i32_recv(e: parser.Expr, s: LowerState): boolean {
+    if (expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) { return false; }
+    return expr_is_arr_src(e, s) || scalar_arr_field_type(e, s) != "";
+}
+
 pub function expr_is_str(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprString(_) => { return true; },
@@ -9649,8 +9666,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         return psi;
     }
     if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
-        && expr_is_arr_src(fa.obj, s)
-        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+        && arr_i32_recv(fa.obj, s)) {
         var pidx: LowerState = lower_expr(c.args[0], s);
         if (!pidx.ok) { return pidx; }
         pidx = lower_expr(fa.obj, pidx);
@@ -9663,8 +9679,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         return pidx;
     }
     if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0
-        && expr_is_arr_src(fa.obj, s)
-        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+        && arr_i32_recv(fa.obj, s)) {
         var parr: LowerState = lower_expr(fa.obj, s);
         if (!parr.ok) { return parr; }
         if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
@@ -9684,8 +9699,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // would bail — builtin_arr_opt_ret_type is what the scrutinee
     // resolvers consult instead. Same receiver guard as sum/product.
     if ((fa.field == "min" || fa.field == "max") && c.args.len() == 0
-        && expr_is_arr_src(fa.obj, s)
-        && !expr_is_strarr(fa.obj, s) && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) {
+        && arr_i32_recv(fa.obj, s)) {
         var pmm: LowerState = lower_expr(fa.obj, s);
         if (!pmm.ok) { return pmm; }
         if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
@@ -12422,12 +12436,11 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
 // (`match (xs.min())`, `xs.min()?`, `var o = xs.min()`) would fail to recover
 // Option[i32] and bail the module to the AST emitter. This is the composite-
 // return analogue of is_fern_helper: the registry for a helper's shape that the
-// module-derived side-tables cannot supply. The receiver guard mirrors the
-// lowering's (an array source that is not string[] / f64[] / i64[]) so the type
-// reported here agrees with the call that is actually emitted.
+// module-derived side-tables cannot supply. It shares the lowering's receiver
+// predicate (arr_i32_recv) so the type reported here cannot drift from the call
+// that is actually emitted.
 function builtin_arr_opt_ret_type(field: string, obj: parser.Expr, s: LowerState): string {
-    if ((field == "min" || field == "max") && expr_is_arr_src(obj, s)
-        && !expr_is_strarr(obj, s) && !expr_is_f64arr(obj, s) && !expr_is_i64arr(obj, s)) {
+    if ((field == "min" || field == "max") && arr_i32_recv(obj, s)) {
         return "Option[i32]";
     }
     return arr_method_opt_ret_type(field, obj, s);
