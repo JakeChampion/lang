@@ -1361,7 +1361,7 @@ func (g *generator) emitAllocRuntime() {
 	// pushes), so its self-compile live set runs higher than x86's for the
 	// same bundle — at 1.75 GiB (which x86 still clears) the arm64 stage-2
 	// fixpoint tipped into the exit-137 alloc trap as the IR subset widened.
-	// Matches asm_arm64.fern's own heap_size so the native (stage-0 mmc) and
+	// Matches asm_arm64_ir.fern's own heap_size so the native (stage-0 mmc) and
 	// self-host (stage-1+ gen) arm64 heaps stay in lockstep. Raised to 8 GiB
 	// when the arm64 stage-2 self-compile crossed the 3.5 GiB exit-137 alloc
 	// trap and its ~4.1 GiB live set outgrew every arena a 32-bit-safe
@@ -5382,7 +5382,7 @@ func (g *generator) emitNowUnixMsRuntime() {
 // `count*1e9` hits over long uptimes. The monotonic clock has an
 // unspecified zero, so only the DELTA between two readings is
 // meaningful — what benchmark timing wants. Mirrors the
-// self-host asm_arm64.fern recipe.
+// self-host asm_arm64_ir.fern recipe.
 func (g *generator) emitMonotonicNsRuntime() {
 	g.line("")
 	g.line(".global __fern_monotonic_ns")
@@ -9689,7 +9689,7 @@ type generator struct {
 	// shared .rodata polynomial-coefficient table. arm64 has no
 	// hardware sin/cos/exp/log, so these are range-reduction +
 	// minimax-polynomial approximations (a few ulp), ported from
-	// the self-hosted compiler's asm_arm64.fern.
+	// the self-hosted compiler's asm_arm64_ir.fern.
 	usesFloatTranscendentals bool
 	// usesReadLine pulls in `__fern_read_line()` — stdin
 	// one-byte reader. Returns Option[string]: Some(line)
