@@ -55,6 +55,7 @@ function quote_string(s: string): string {
 // is-power-of-2 idiom — into `n & n - 1 == 0`, which re-parses as ANDing a
 // number with a boolean.
 function prec_lowest(): i32 { return 0; }
+function prec_cast(): i32 { return 14; }
 function prec_unary(): i32 { return 15; }
 function prec_primary(): i32 { return 16; }
 
@@ -104,6 +105,16 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             return inner;
         },
         parser.ExprUnary(u) => {
+            // A cast is a unary node whose op is `as_<type>` (parse_cast's
+            // e_unary_at), not a prefix operator — printing it as one produced
+            // `as_i32s[i + 1]` for `s[i + 1] as i32`, which re-parses as a call
+            // to an undefined name. It binds at its own level, above every
+            // binary operator and below the postfix positions.
+            if (u.op.len() > 3 && u.op[0:3] == "as_") {
+                var cinner: string = print_expr_prec(u.operand, prec_cast()) + " as " + u.op[3:u.op.len()];
+                if (parent_prec >= prec_cast()) { return "(" + cinner + ")"; }
+                return cinner;
+            }
             var uinner: string = u.op + print_expr_prec(u.operand, prec_unary());
             if (parent_prec >= prec_unary()) { return "(" + uinner + ")"; }
             return uinner;
@@ -184,7 +195,8 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             if (lm.body.len() == 1 && stmt_is_single_line(lm.body[0])) {
                 return out + " { " + print_stmt_inline(lm.body[0]) + " }";
             }
-            return out + " " + print_block(lm.body, 0);
+            var (lam_body, _) = print_block(lm.body, 0, empty_fmt());
+            return out + " " + lam_body;
         },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
@@ -202,15 +214,133 @@ function indent_str(depth: i32): string {
     return out;
 }
 
-function print_block(body: parser.Stmt[], depth: i32): string {
+// =================== COMMENTS AND BLANK LINES ====================
+//
+// Comments and blank lines are not in the AST — the lexer hands them back
+// beside the tokens, and blank lines are read off the source text — so the
+// statement walk carries a CURSOR over the comment list and consumes from it
+// as it passes each source line (#6769). The rules are native's:
+//
+//   - a comment before the next statement's line emits as its own line at that
+//     statement's indent;
+//   - a comment ON the line of a just-emitted single-line statement emits
+//     inline after two spaces;
+//   - comments left over at the end of a block emit before its closing brace;
+//   - one blank line before a statement whose source had a blank directly
+//     above it, so runs collapse to one and a second format pass is a no-op.
+//
+// `comments` must be in source order, which is how tokenize_full returns them.
+// A cursor that never moves is the no-comment case, so print_module keeps
+// working by passing an empty list.
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[] }
+
+function empty_fmt(): Fmt { return Fmt { comments: [], ci: 0, blanks: [] }; }
+
+// blank_at reports whether source line `line` was blank. Out-of-range lines
+// (line 0, or past the end) are not blank.
+function (f: Fmt) blank_at(line: i32): boolean {
+    if (line < 0 || line >= f.blanks.len()) { return false; }
+    return f.blanks[line];
+}
+
+// blank_before: did the source have a blank line directly above this
+// construct? A leading comment block belongs to the construct, so the line
+// looked at is the comment's, not the statement's.
+function (f: Fmt) blank_before(line: i32): boolean {
+    var top: i32 = line;
+    if (f.ci < f.comments.len() && f.comments[f.ci].line < line) { top = f.comments[f.ci].line; }
+    return f.blank_at(top - 1);
+}
+
+// drain_leading emits every pending comment written ABOVE source line `line`.
+// A comment on the same line stays queued for emit_trailing.
+function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
+    var out: string = "";
+    var g: Fmt = f;
+    while (g.ci < g.comments.len() && g.comments[g.ci].line < line) {
+        out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
+        g = Fmt { ...g, ci: g.ci + 1 };
+    }
+    return (out, g);
+}
+
+// emit_trailing emits a comment sharing the source line of the statement just
+// written — `putchar(70);  // F`. No newline: the caller's line break follows.
+function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
+    if (f.ci < f.comments.len() && f.comments[f.ci].line == line) {
+        return ("  //" + f.comments[f.ci].text, Fmt { ...f, ci: f.ci + 1 });
+    }
+    return ("", f);
+}
+
+// drain_all flushes every remaining comment at `depth` — end of file, and the
+// tail of a block whose last statement is behind the cursor.
+function drain_all(f: Fmt, depth: i32): (string, Fmt) {
+    var out: string = "";
+    var g: Fmt = f;
+    while (g.ci < g.comments.len()) {
+        out = out + indent_str(depth) + "//" + g.comments[g.ci].text + "\n";
+        g = Fmt { ...g, ci: g.ci + 1 };
+    }
+    return (out, g);
+}
+
+// drain_before flushes the comments written above `limit` — a block's closing
+// brace, whose line the AST does not record, so the bound is the line of the
+// construct that FOLLOWS the block instead.
+function drain_before(f: Fmt, limit: i32, depth: i32): (string, Fmt) {
+    return drain_leading(f, limit, depth);
+}
+
+// stmt_line reports the source line a statement starts on, or 0 for one the
+// compiler synthesised (no source position, so nothing can attach to it).
+function stmt_line(st: parser.Stmt): i32 {
+    match (st) {
+        parser.StmtVar(v) => { return v.line; },
+        parser.StmtReturn(r) => { return r.line; },
+        parser.StmtAssign(a) => { return a.line; },
+        parser.StmtExpr(x) => { return x.line; },
+        parser.StmtIf(f) => { return f.line; },
+        parser.StmtWhile(w) => { return w.line; },
+        parser.StmtFor(fo) => { return fo.line; },
+        parser.StmtMatch(m) => { return m.line; },
+        parser.StmtDefer(d) => { return d.line; },
+        parser.StmtBreak(b) => { return b.line; },
+        parser.StmtContinue(c) => { return c.line; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+// print_block renders `{ … }` and is the one place statements are drained
+// against: a comment above a statement, a blank line the author left before
+// it, and whatever is still queued when the block ends.
+function print_block(body: parser.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
+    // An empty block is a one-liner, as native prints it. Supporting a comment
+    // inside one would force it multi-line for a comment with nothing to
+    // attach to; the parent's drain picks those up instead.
+    if (body.len() == 0) { return ("{}", f); }
     var out: string = "{\n";
+    var g: Fmt = f;
     var i: i32 = 0;
+    var last_line: i32 = 0;
     while (i < body.len()) {
-        out = out + print_stmt(body[i], depth + 1);
+        var ln: i32 = stmt_line(body[i]);
+        // Never a blank just inside the opening brace.
+        if (i > 0 && ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
+        if (ln > 0) {
+            var (lead, g1) = drain_leading(g, ln, depth + 1);
+            out = out + lead;
+            g = g1;
+        }
+        var (body_text, g2) = print_stmt(body[i], depth + 1, g);
+        out = out + body_text;
+        g = g2;
+        if (ln > last_line) { last_line = ln; }
         i = i + 1;
     }
     out = out + indent_str(depth) + "}";
-    return out;
+    return (out, g);
 }
 
 function print_pattern(pat: parser.Pattern): string {
@@ -234,18 +364,30 @@ function print_pattern(pat: parser.Pattern): string {
     return "_";
 }
 
-function print_match(m: parser.StmtMatch, depth: i32): string {
+function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     var pad: string = indent_str(depth);
-    var out: string = pad + "match (" + print_expr(m.scrutinee) + ") {\n";
+    var out: string = "match (" + print_expr(m.scrutinee) + ") {\n";
+    var g: Fmt = f;
     var i: i32 = 0;
     while (i < m.arms.len()) {
-        out = out + indent_str(depth + 1) + print_pattern(m.arms[i].pattern) + " => " + print_block(m.arms[i].body, depth + 1);
+        var (arm_body, g1) = print_block(m.arms[i].body, depth + 1, g);
+        g = g1;
+        out = out + indent_str(depth + 1) + print_pattern(m.arms[i].pattern) + " => " + arm_body;
         if (i + 1 < m.arms.len()) { out = out + ","; }
         out = out + "\n";
         i = i + 1;
     }
-    out = out + pad + "}\n";
-    return out;
+    return (out + pad + "}", g);
+}
+
+// expr_is_missing reports an expression slot the parser never filled — a void
+// `return;`, whose value is the unknown-token placeholder for the `;`.
+function expr_is_missing(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprUnknown(u) => { return u.kind.len() == 0 || u.kind[0:6] == "punct:"; },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // stmt_is_single_line: the statement kinds native renders on one line, and so
@@ -265,13 +407,11 @@ function stmt_is_single_line(st: parser.Stmt): boolean {
 }
 
 // print_stmt_inline renders `st` for a position that CONTINUES the current
-// line, so it drops the newline the statement form ends with. Only called at
-// depth 0 (a lambda body), where there is no leading indent to drop either.
+// line — a one-statement lambda body. A lambda carries no comment cursor: it
+// is an expression, and native does not drain inside one either.
 function print_stmt_inline(st: parser.Stmt): string {
-    var s: string = print_stmt(st, 0);
-    var end: i32 = s.len();
-    while (end > 0 && s[end - 1] == 10) { end = end - 1; }
-    return "" + s[0:end];
+    var (text, _) = print_stmt_body(st, 0, empty_fmt());
+    return text;
 }
 
 // print_if_chain renders an if/else with no leading indent and no trailing
@@ -279,67 +419,109 @@ function print_stmt_inline(st: parser.Stmt): string {
 // stays on one line, the way native prints it: re-nesting it in braces adds a
 // level of indent per arm, so a five-arm chain drifts ten columns from the form
 // `make fmt-check` gates the tree against.
-function print_if_chain(ifs: parser.StmtIf, depth: i32): string {
-    var out: string = "if (" + print_expr(ifs.cond) + ") " + print_block(ifs.then_body, depth);
-    if (ifs.else_body.len() == 0) { return out; }
+function print_if_chain(ifs: parser.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
+    var (then_text, g) = print_block(ifs.then_body, depth, f);
+    var out: string = "if (" + print_expr(ifs.cond) + ") " + then_text;
+    if (ifs.else_body.len() == 0) { return (out, g); }
     if (ifs.else_body.len() == 1) {
         match (ifs.else_body[0]) {
-            parser.StmtIf(nested) => { return out + " else " + print_if_chain(nested, depth); },
+            parser.StmtIf(nested) => {
+                var (nested_text, g2) = print_if_chain(nested, depth, g);
+                return (out + " else " + nested_text, g2);
+            },
             _ => {}
         }
     }
-    return out + " else " + print_block(ifs.else_body, depth);
+    var (else_text, g3) = print_block(ifs.else_body, depth, g);
+    return (out + " else " + else_text, g3);
 }
 
-function print_stmt(st: parser.Stmt, depth: i32): string {
-    var pad: string = indent_str(depth);
+// print_stmt renders ONE statement as a complete line — indent, text, any
+// inline trailing comment, and the newline. Comments ABOVE it were already
+// drained by the block loop; a nested block drains its own.
+function print_stmt(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
+    var (text, g) = print_stmt_body(st, depth, f);
+    var out: string = indent_str(depth) + text;
+    // Only a single-line statement can carry a trailing comment: on a compound
+    // one the same-line comment sits against the header, not the body, and
+    // native does not attach it either.
+    if (stmt_is_single_line(st)) {
+        var ln: i32 = stmt_line(st);
+        if (ln > 0) {
+            var (tr, g2) = emit_trailing(g, ln);
+            return (out + tr + "\n", g2);
+        }
+    }
+    return (out + "\n", g);
+}
+
+// print_stmt_body is the statement text with no indent and no newline.
+function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     match (st) {
-        parser.StmtDefer(d) => { if (d.on_error != 0) { return pad + "errdefer " + print_stmt(d.action, 0); } return pad + "defer " + print_stmt(d.action, 0); },
+        parser.StmtDefer(d) => {
+            var (act, dg) = print_stmt_body(d.action, depth, f);
+            if (d.on_error != 0) { return ("errdefer " + act, dg); }
+            return ("defer " + act, dg);
+        },
         parser.StmtVar(v) => {
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
-            return pad + "var " + v.name + ann + " = " + print_expr(v.init) + ";\n";
+            return ("var " + v.name + ann + " = " + print_expr(v.init) + ";", f);
         },
-        parser.StmtReturn(r) => { return pad + "return " + print_expr(r.value) + ";\n"; },
-        parser.StmtExpr(x) => { return pad + print_expr(x.value) + ";\n"; },
-        parser.StmtIf(ifs) => { return pad + print_if_chain(ifs, depth) + "\n"; },
+        parser.StmtReturn(r) => {
+            // A void `return;` parses with no value expression, which reaches
+            // the printer as the unknown-token placeholder for the `;` that
+            // followed. Printing that placeholder emits a comment INTO the
+            // source; the statement is just `return;`.
+            if (expr_is_missing(r.value)) { return ("return;", f); }
+            return ("return " + print_expr(r.value) + ";", f);
+        },
+        parser.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },
+        parser.StmtIf(ifs) => { return print_if_chain(ifs, depth, f); },
         parser.StmtWhile(w) => {
-            return pad + "while (" + print_expr(w.cond) + ") " + print_block(w.body, depth) + "\n";
+            var (wb, wg) = print_block(w.body, depth, f);
+            return ("while (" + print_expr(w.cond) + ") " + wb, wg);
         },
-        parser.StmtAssign(a) => { return pad + a.target + " = " + print_expr(a.value) + ";\n"; },
-        parser.StmtMatch(m) => { return print_match(m, depth); },
-        parser.StmtFor(f) => {
-            return pad + "for " + f.var_name + " in " + print_expr(f.iter) + " " + print_block(f.body, depth) + "\n";
+        parser.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value) + ";", f); },
+        parser.StmtMatch(m) => { return print_match(m, depth, f); },
+        parser.StmtFor(fo) => {
+            var (fb, fg) = print_block(fo.body, depth, f);
+            return ("for " + fo.var_name + " in " + print_expr(fo.iter) + " " + fb, fg);
         },
-        parser.StmtBreak(_) => { return pad + "break;\n"; },
-        parser.StmtContinue(_) => { return pad + "continue;\n"; },
-        parser.StmtUnknown(u) => { return pad + "/*unknown-stmt:" + u.kind + "*/\n"; }
+        parser.StmtBreak(_) => { return ("break;", f); },
+        parser.StmtContinue(_) => { return ("continue;", f); },
+        parser.StmtUnknown(u) => { return ("/*unknown-stmt:" + u.kind + "*/", f); }
     }
-    return pad + "/*unhandled-stmt*/\n";
+    return ("/*unhandled-stmt*/", f);
 }
 
 // =================== MODULE ====================
 
-function print_func_decl(fd: parser.FuncDecl): string {
+function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
     // attribute on its own line followed by a body-less function (`;`).
     var out: string = "";
     if (fd.import_iface.len() > 0) {
         out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
     }
-    // `async` selects the WASI Preview-3 `canon lift async` export surface, so
-    // dropping it changes what a `-target wasm32-wasi -emit core-module` build exports. Native
-    // rejects `async` combined with `fip`, so the two never both print.
-    if (fd.async) { out = out + "async "; }
+    // Modifier ORDER is native's: `pub`, then `fip`/`fbip`, then `async`.
+    //
+    // `pub` is what makes the function reachable across modules, so dropping it
+    // turns a formatted library file into one whose exports no longer resolve.
     // `fip` selects the E053 no-allocation walk and `fbip` its constructor-
     // relaxed sibling, with the graded `(n)` naming the allocation budget E068
-    // enforces — so dropping any of the three here would make formatting a file
-    // stop verifying the guarantee the annotation exists to state.
+    // enforces. `async` selects the WASI Preview-3 `canon lift async` export
+    // surface, so dropping it changes what a `-emit core-module` build exports.
+    if (fd.is_pub) { out = out + "pub "; }
+    // Only a FuncDecl's is_pub records the source `pub`. Struct / enum / alias
+    // visibility is not carried yet, and their is_pub is hardcoded true to keep
+    // them unrestricted — printing from it would stamp `pub` onto every one.
     if (fd.fip || fd.fbip) {
         if (fd.fip) { out = out + "fip"; } else { out = out + "fbip"; }
         if (fd.fip_allowance > 0) { out = out + "(" + util.i32_to_string(fd.fip_allowance) + ")"; }
         out = out + " ";
     }
+    if (fd.async) { out = out + "async "; }
     out = out + "function ";
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
@@ -348,7 +530,20 @@ function print_func_decl(fd: parser.FuncDecl): string {
         if (fd.receiver_type.len() > 0) { out = out + ": " + fd.receiver_type; }
         out = out + ") ";
     }
-    out = out + fd.name + "(";
+    out = out + fd.name;
+    // Type parameters. `function first[T](xs: T[])` formatted without them
+    // leaves every `T` in the signature unbound, so the file stops compiling.
+    if (fd.type_params.len() > 0) {
+        out = out + "[";
+        var tpi: i32 = 0;
+        while (tpi < fd.type_params.len()) {
+            if (tpi > 0) { out = out + ", "; }
+            out = out + fd.type_params[tpi];
+            tpi = tpi + 1;
+        }
+        out = out + "]";
+    }
+    out = out + "(";
     var i: i32 = 0;
     while (i < fd.params.len()) {
         if (i > 0) { out = out + ", "; }
@@ -361,11 +556,10 @@ function print_func_decl(fd: parser.FuncDecl): string {
     out = out + ")";
     if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
     if (fd.import_iface.len() > 0) {
-        out = out + ";\n";
-        return out;
+        return (out + ";\n", f);
     }
-    out = out + " " + print_block(fd.body, 0) + "\n";
-    return out;
+    var (body_text, g) = print_block(fd.body, 0, f);
+    return (out + " " + body_text + "\n", g);
 }
 
 function print_struct_decl(sd: parser.StructDecl): string {
@@ -384,7 +578,20 @@ function print_struct_decl(sd: parser.StructDecl): string {
         out = out + ")\n";
     }
     if (sd.must_consume) { out = out + "@must_consume\n"; }
-    out = out + "struct " + sd.name + " {";
+    out = out + "struct " + sd.name;
+    // Type parameters, for the same reason a function's matter: `struct Set { xs: T[] }`
+    // leaves T unbound.
+    if (sd.type_params.len() > 0) {
+        out = out + "[";
+        var tpi: i32 = 0;
+        while (tpi < sd.type_params.len()) {
+            if (tpi > 0) { out = out + ", "; }
+            out = out + sd.type_params[tpi];
+            tpi = tpi + 1;
+        }
+        out = out + "]";
+    }
+    out = out + " {";
     var i: i32 = 0;
     while (i < sd.fields.len()) {
         if (i > 0) { out = out + ","; }
@@ -403,7 +610,9 @@ function print_struct_decl(sd: parser.StructDecl): string {
 // it has no such rule, so `NAME + 1` there is an operator applied to a
 // function value.
 function print_const_decl(fd: parser.FuncDecl): string {
-    var out: string = "const " + fd.name;
+    var out: string = "";
+    if (fd.is_pub) { out = out + "pub "; }
+    out = out + "const " + fd.name;
     if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
     var i: i32 = 0;
     while (i < fd.body.len()) {
@@ -544,35 +753,55 @@ function decl_sep(out: string): string {
 }
 
 pub function print_module(mod: parser.Module): string {
+    return format_module(mod, [], []);
+}
+
+// format_module is the `-fmt` entry point: the module, the comments the lexer
+// collected beside the tokens (`tokenize_full`), and a per-line blank-line map.
+// Passing empty lists for both gives the plain printer, which is what
+// print_module is.
+//
+// Declarations emit in SOURCE ORDER rather than grouped by kind. The comment
+// cursor only moves forward, so a kind-grouped emit would drain a comment
+// against whichever declaration happened to be printed first and RELOCATE it
+// onto an unrelated one — the same reason native's Format orders by position.
+pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks: boolean[]): string {
+    var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
     var out: string = "";
-    // Imports first — convention in the self-host source is to
-    // group them at the top of the file before any decls.
+    // Imports cluster at the top with no blank between them.
     var ii: i32 = 0;
     while (ii < mod.imports.len()) {
+        if (mod.imports[ii].line > 0) {
+            var (ilead, fi2) = drain_leading(f, mod.imports[ii].line, 0);
+            out = out + ilead;
+            f = fi2;
+        }
         out = out + print_import(mod.imports[ii]);
         ii = ii + 1;
     }
-    // Struct decls — the parser uses them to resolve struct-
-    // typed param / field names referenced later.
+    // The declarations to emit, as (kind, index) pairs ordered by source line.
+    // kind 0 = struct, 1 = enum (at its first variant's position), 2 = alias,
+    // 3 = function/const.
     //
     // An enum is desugared into one variant struct per variant, so it is
-    // reconstructed at the position its FIRST variant occupies and its remaining
-    // variants are skipped. Rendering the variants as bare structs instead drops
-    // the enum type from the output entirely, leaving annotations that name it
-    // dangling.
-    //
-    // A variant whose owner is not declared in this module keeps the struct
-    // rendering: `module_with_builtins` synthesises Option / Result variant
-    // records with an `enum_owner` and no matching EnumDecl.
+    // reconstructed at the position its FIRST variant occupies and its
+    // remaining variants are skipped — rendering them as bare structs would
+    // drop the enum type and leave every annotation naming it dangling. A
+    // variant whose owner is not declared here keeps the struct rendering:
+    // `module_with_builtins` synthesises Option / Result variant records with
+    // an `enum_owner` and no matching EnumDecl.
+    var kinds: i32[] = [];
+    var idxs: i32[] = [];
+    var lines: i32[] = [];
     var i: i32 = 0;
     while (i < mod.structs.len()) {
         var owner: string = mod.structs[i].enum_owner;
         var ei: i32 = 0 - 1;
         if (owner.len() > 0) { ei = enum_index(mod.enums, owner); }
         if (ei < 0) {
-            out = out + decl_sep(out) + print_struct_decl(mod.structs[i]);
+            kinds = kinds.append(0); idxs = idxs.append(i); lines = lines.append(mod.structs[i].line);
         } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
-            out = out + decl_sep(out) + print_enum_decl(mod.enums[ei], mod.structs);
+            kinds = kinds.append(1); idxs = idxs.append(ei); lines = lines.append(mod.structs[i].line);
         }
         i = i + 1;
     }
@@ -580,12 +809,14 @@ pub function print_module(mod: parser.Module): string {
     // nothing above emits it.
     var vi: i32 = 0;
     while (vi < mod.enums.len()) {
-        if (mod.enums[vi].variant_names.len() == 0) { out = out + decl_sep(out) + print_enum_decl(mod.enums[vi], mod.structs); }
+        if (mod.enums[vi].variant_names.len() == 0) {
+            kinds = kinds.append(1); idxs = idxs.append(vi); lines = lines.append(mod.enums[vi].line);
+        }
         vi = vi + 1;
     }
     var ai: i32 = 0;
     while (ai < mod.aliases.len()) {
-        out = out + decl_sep(out) + print_type_alias(mod.aliases[ai]);
+        kinds = kinds.append(2); idxs = idxs.append(ai); lines = lines.append(mod.aliases[ai].line);
         ai = ai + 1;
     }
     // SOURCE functions only. `@derive` synthesises its methods at PARSE time
@@ -597,18 +828,58 @@ pub function print_module(mod: parser.Module): string {
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (mod.funcs[fi].line > 0) {
-            out = out + decl_sep(out);
-            if (mod.funcs[fi].is_const) { out = out + print_const_decl(mod.funcs[fi]); }
-            else { out = out + print_func_decl(mod.funcs[fi]); }
+            kinds = kinds.append(3); idxs = idxs.append(fi); lines = lines.append(mod.funcs[fi].line);
         }
         fi = fi + 1;
     }
+    // Insertion sort by source line — stable, so two declarations sharing a
+    // line keep the order they were collected in.
+    var si: i32 = 1;
+    while (si < lines.len()) {
+        var sj: i32 = si;
+        while (sj > 0 && lines[sj - 1] > lines[sj]) {
+            var tl: i32 = lines[sj - 1]; var tk: i32 = kinds[sj - 1]; var ti: i32 = idxs[sj - 1];
+            lines = lines.with(sj - 1, lines[sj]); kinds = kinds.with(sj - 1, kinds[sj]); idxs = idxs.with(sj - 1, idxs[sj]);
+            lines = lines.with(sj, tl); kinds = kinds.with(sj, tk); idxs = idxs.with(sj, ti);
+            sj = sj - 1;
+        }
+        si = si + 1;
+    }
+    var di: i32 = 0;
+    while (di < kinds.len()) {
+        var dline: i32 = lines[di];
+        if (out.len() > 0) {
+            if (f.blank_before(dline) || di > 0 || mod.imports.len() > 0) { out = out + "\n"; }
+        }
+        if (dline > 0) {
+            var (lead, fl) = drain_leading(f, dline, 0);
+            out = out + lead;
+            f = fl;
+        }
+        if (kinds[di] == 0) { out = out + print_struct_decl(mod.structs[idxs[di]]); }
+        else if (kinds[di] == 1) { out = out + print_enum_decl(mod.enums[idxs[di]], mod.structs); }
+        else if (kinds[di] == 2) { out = out + print_type_alias(mod.aliases[idxs[di]]); }
+        else {
+            if (mod.funcs[idxs[di]].is_const) { out = out + print_const_decl(mod.funcs[idxs[di]]); }
+            else {
+                var (ftext, ff) = print_func_decl(mod.funcs[idxs[di]], f);
+                out = out + ftext;
+                f = ff;
+            }
+        }
+        di = di + 1;
+    }
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
-        out = out + decl_sep(out) + print_stmt(mod.top_stmts[j], 0);
+        if (out.len() > 0) { out = out + "\n"; }
+        var (stext, sf) = print_stmt(mod.top_stmts[j], 0, f);
+        out = out + stext;
+        f = sf;
         j = j + 1;
     }
-    return out;
+    // Comments past the last declaration.
+    var (tail, _) = drain_all(f, 0);
+    return out + tail;
 }
 
 // =================== VALIDATION ====================

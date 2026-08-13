@@ -23,12 +23,17 @@ import (
 // rejects — the "the two frontends disagree about what the language is" shape
 // of #6576, one level up, at its written form.
 //
-// The corpus below carries no comments and no blank lines. That is a real
-// limit, not an oversight: the self-host printer emits neither, because
-// placing them needs a source line on every statement node and six of the
-// self-host's Stmt kinds (StmtExpr / StmtIf / StmtWhile / StmtMatch / StmtFor
-// / StmtDefer) carry none. Separate mechanism, separate change; these cases
-// gate everything else, which is every line of every file.
+// #6769 added the other half: comments and blank lines. Placing them needs a
+// source line on every statement, so five Stmt kinds grew one and parse_stmt
+// stamps it; the cases at the end of the list are that half's.
+//
+// Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
+// 176 of the 244 files under examples/ + internal/stdlib, against 0 before
+// #6762. What still differs is information the PARSER does not keep, so no
+// printer can recover it: `str` is canonicalised to `string`, a function-typed
+// parameter to `fn`, `trait` declarations have no Module field at all, struct
+// visibility is not carried, and a `let (a, b) = …` destructuring loses its
+// shape. Those are filed separately.
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -112,6 +117,86 @@ total = total + 1;
 i = i + 1;
 }
 return total;
+}
+`},
+	// #6769: comments and blank lines. Leading comments attach to the statement
+	// below them, a comment on a single-line statement's own line goes inline
+	// after two spaces, and one blank line survives where the author left one
+	// (runs collapse to one, and a blank just inside `{` is dropped).
+	{"comments-and-blanks", `// file header, above the import
+import "std/i32";
+
+// doc comment for f
+function f(a: i32): i32 {
+  // leading comment on the var
+  var t: i32 = a + 1;
+
+  // leading comment on the if
+  if (t > 0) {
+    return t;  // trailing on a return
+  }
+  return 0;
+}
+
+function g(): i32 {
+  var x: i32 = 1;  // trailing on a var
+
+
+  var y: i32 = 2;
+  return x + y;
+}
+`},
+	// A comment after a block's LAST statement belongs to whatever follows it at
+	// the OUTER indent, not to the block it trails — the cursor is monotonic, so
+	// getting this wrong relocates the comment into an unrelated body.
+	{"comments-at-block-end", `function f(a: i32): i32 {
+  if (a > 0) {
+    return 1;
+  }
+  // between the if and the return
+  return 0;
+}
+
+function g(): i32 {
+  return 2;
+}
+// trailing comment past the last declaration
+`},
+	// Declarations emit in SOURCE order, not grouped by kind: a monotonic comment
+	// cursor would otherwise drain a comment against whichever declaration was
+	// printed first and reattach it to an unrelated one.
+	{"decl-source-order", `// about the first function
+function one(): i32 {
+  return 1;
+}
+
+// about the struct
+struct P { x: i32, y: i32 }
+
+// about the second function
+function two(p: P): i32 {
+  return p.x + p.y;
+}
+`},
+	// The modifiers and the shapes a formatter must not drop: `pub` on a
+	// function, type parameters, an aliased import, a cast, a void `return;`.
+	//
+	// The struct here is deliberately NOT `pub`: only a FuncDecl's is_pub
+	// records the source keyword, while a struct's is hardcoded true to keep it
+	// unrestricted, so printing from it would stamp `pub` onto every struct in
+	// the file. Struct visibility is parser surface, filed with the rest.
+	{"modifiers-and-shapes", `import "std/i32" as ints;
+
+struct Box[T] { item: T }
+
+pub function widen(s: string, i: i32): i32 {
+  return s[i] as i32;
+}
+
+pub function early(a: i32): void {
+  if (a > 0) {
+    return;
+  }
 }
 `},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
