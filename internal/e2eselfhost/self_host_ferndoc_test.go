@@ -294,23 +294,6 @@ var ferndocPageDivergences = map[string]string{
 	// `const` desugars to a zero-arg function, recoverable through
 	// FuncDecl.is_const but not as native's ConstDecl.
 	"time": "const desugars to a function",
-	// parse_func_decl stores `type_params: bounded_tps` — only the type
-	// parameters carrying a trait bound. An unbounded `[T]` survives as a
-	// COUNT (type_param_count) with its name discarded, so `map[T, U]`
-	// cannot be rendered back.
-	"array":  "unbounded type-param names discarded",
-	"option": "unbounded type-param names discarded",
-	"result": "unbounded type-param names discarded",
-	"sort":   "unbounded type-param names discarded",
-	// No `str` type: the self-host has no borrowed-view type distinct from
-	// `string`, which is the same gap #6604 landed on, so a `str` return
-	// renders as `string`.
-	"fetch":   "no str type",
-	"http":    "no str type",
-	"path":    "no str type",
-	"string":  "no str type",
-	"unicode": "no str type",
-	"utf8":    "no str type",
 }
 
 // TestSelfHostFerndocPagesMatchNative renders every stdlib module — `std` and
@@ -400,7 +383,7 @@ func TestSelfHostFerndocPagesMatchNative(t *testing.T) {
 		matched++
 	}
 
-	if matched < 39 {
+	if matched < 50 {
 		t.Errorf("only %d modules rendered byte-identically (of %d, %d listed as diverging) — the gate has gone hollow",
 			matched, len(srcs), len(ferndocPageDivergences))
 	}
