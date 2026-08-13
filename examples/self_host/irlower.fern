@@ -29542,7 +29542,16 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
 // sole owner). NOT a scalar (no rc — released with the box), NOT string[] / enum /
 // map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: parser.StructDecl[], t: string): boolean {
-    return is_leaksafe_array_field(t) || t == "string"
+    // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
+    // tree enum is built from): `__fern_arrarr_free` rc-guards the buffer, decs
+    // each element BOX, then frees the buffer. That is the one-level model the
+    // struct-array path already uses — an element's own payload survives one
+    // level down, which leaks rather than dangles (#6758).
+    //
+    // Admitting it is what unblocks the whole enum: enum_all_variants_rc_droppable
+    // bails on the first non-droppable variant, so `Seq(N[])` was taking the
+    // scalar `Leaf(i32)` variant down with it and neither was reclaimed.
+    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string"
         || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t))
         // #4355 slice 8: a SCALAR-ONLY struct payload (`S { m: i32, n: i32 }`)
         // is one flat rc-headered box with no inner rc fields — released by a
@@ -30015,6 +30024,15 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                 var eft: string = decl_field_type_at(st.structs, vname, fk);
                 if (util.index_of_str(moved, vname + "#" + util.i32_to_string(fk)) >= 0) {
                     // moved-out payload: the arm's escaping binding owns it now.
+                } else if (is_enum_array_field_type(st.structs, eft)) {
+                    // ENUM-array payload: the elements are rc-headered boxes, so a
+                    // single dec of the buffer would strand every one of them.
+                    // __fern_arrarr_free decs each element first (rc-guarded, so a
+                    // shared element only decs) and then frees the buffer.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                    st = st.emit(ir.op_drop());
                 } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
                     // elements carry no inner pointers to release).
