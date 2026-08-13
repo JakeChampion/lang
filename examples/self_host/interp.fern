@@ -2070,6 +2070,13 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // Codegen hands back raw zeroed bytes; the boxed model
     // hands back n zero VInts, which `.with(i, b)` then fills
     // and `string_from_bytes_unchecked` packs.
+    //
+    // The rest of the raw-memory family — `__load_i32`, `__store_ptr`,
+    // `__ptr_width`, `__memset`, `__memcpy` — is deliberately absent, as it
+    // is from internal/interp. Those pretend to a flat byte address space no
+    // boxed model has, and outside std/jni they are used only by
+    // core/map.fern, whose bodies neither engine runs: Map is a native value
+    // here (VMap) and in the native interpreter.
     if (name == "__alloc_u8") {
         if (args.len() != 1) { return v_err("__alloc_u8: expected 1 arg (n)"); }
         if (!is_i32_arg(args[0])) { return v_err("__alloc_u8: arg must be an integer"); }
