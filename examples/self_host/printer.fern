@@ -577,15 +577,16 @@ function strip_semi(s: string): string {
 }
 
 // print_if_chain renders an if/else with no leading indent and no trailing
-// newline. An `else` whose whole body is a single `if` is an else-IF chain and
-// stays on one line, the way native prints it: re-nesting it in braces adds a
-// level of indent per arm, so a five-arm chain drifts ten columns from the form
-// `make fmt-check` gates the tree against.
+// newline. An `else` the SOURCE wrote as a chain stays one — but only then:
+// `else if` and `else { if … }` parse to the same one-element else_body, so
+// rendering every such body as a chain rewrote the second spelling into the
+// first (#6779). They are not interchangeable to a reader, to `make fmt-check`,
+// or to a block-scoped binding written before the inner `if`.
 function print_if_chain(ifs: parser.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
     var (then_text, g) = print_block(ifs.then_body, depth, f);
     var out: string = "if (" + print_expr(ifs.cond) + ") " + then_text;
     if (ifs.else_body.len() == 0) { return (out, g); }
-    if (ifs.else_body.len() == 1) {
+    if (ifs.else_chained && ifs.else_body.len() == 1) {
         match (ifs.else_body[0]) {
             parser.StmtIf(nested) => {
                 var (nested_text, g2) = print_if_chain(nested, depth, g);
