@@ -921,14 +921,19 @@ pub function resolve_labels_module(mod: Module): Module {
 // pattern on an imported struct has never been written here. Pre-scanned once
 // per stream rather than accumulated as decls are parsed, so a match written
 // ahead of the struct it destructures still resolves.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[] }
+// verbatim keeps the WRITTEN spelling of a type where the compile parse
+// canonicalises it — `str` erased to `string`, a function type coarsed to the
+// flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are what
+// every downstream `== "string"` / `== "fn"` dispatch site reads, and the
+// formatter is the one consumer that parses without compiling.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
     var out: string[] = [];
-    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out };
+    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false };
     while (!q.at_end()) {
         if (q.peek_keyword() != "struct") { q = q.advance(); continue; }
         q = q.advance();
@@ -986,15 +991,15 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim };
 }
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 function (p: Par) with_no_struct(v: boolean): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames };
+    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim };
 }
 function (p: Par) with_map_kind(v: i32): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames };
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -1818,7 +1823,7 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
 // parser's parseExprFromText.
 function parse_expr_from_text(text: string): Expr {
     var toks: lexer.Token[] = lexer.tokenize(text);
-    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
 }
@@ -4772,7 +4777,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false };
     var out: Stmt[] = [];
     while (!p.at_end()) {
         var (r_stmt, r_p) = parse_stmt(p);
@@ -5049,14 +5054,15 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             var td: i32 = 0;
             var is_fn: boolean = false;
             var top_comma: boolean = false;
+            var tprev_word: boolean = false;
             while (!p.at_end()) {
                 var tpk: string = p.peek_punct();
-                if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); continue; }
-                if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); if (td == 0) { break; } continue; }
-                if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); continue; }
-                if (tpk == "[") { tbuf = tbuf + "["; p = p.advance(); continue; }
-                if (tpk == "]") { tbuf = tbuf + "]"; p = p.advance(); continue; }
-                if (tpk == ".") { tbuf = tbuf + "."; p = p.advance(); continue; }
+                if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); tprev_word = false; continue; }
+                if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); tprev_word = false; if (td == 0) { break; } continue; }
+                if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); tprev_word = false; continue; }
+                if (tpk == "[") { tbuf = tbuf + "["; p = p.advance(); tprev_word = false; continue; }
+                if (tpk == "]") { tbuf = tbuf + "]"; p = p.advance(); tprev_word = false; continue; }
+                if (tpk == ".") { tbuf = tbuf + "."; p = p.advance(); tprev_word = false; continue; }
                 // A `=>` *inside* the parens with NO depth-1 comma means the
                 // parens wrap a whole function type (`(() => i32)`), not a
                 // tuple — coarse it to "fn" (a closure box). With a depth-1
@@ -5065,11 +5071,17 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // reconstructed spelling so coarsen_fn_elems below can
                 // collapse just the fn-typed SEGMENTS. (The `(T,…) => R`
                 // form, with `=>` *after* the parens, is handled below.)
-                if (tpk == "=>") { is_fn = true; tbuf = tbuf + "=>"; p = p.advance(); continue; }
+                if (tpk == "=>") { is_fn = true; tbuf = tbuf + "=>"; p = p.advance(); tprev_word = false; continue; }
                 var tseg: string = p.peek_ident();
                 if (tseg.len() == 0) { tseg = p.peek_keyword(); }
                 if (tseg.len() == 0) { p = p.advance(); continue; }
+                // Two adjacent word tokens have no separator of their own, so
+                // `dyn Speak` collects as `dynSpeak`. Only `-fmt` reinserts the
+                // space: the compile parse feeds this spelling to consumers that
+                // match on it, and they were written against the mashed form.
+                if (p.verbatim && tprev_word) { tbuf = tbuf + " "; }
                 tbuf = tbuf + tseg;
+                tprev_word = true;
                 p = p.advance();
             }
             // Parenthesized function type `(… => …)` → coarse "fn", plus any
@@ -5128,6 +5140,15 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // non-empty, non-string, unbracketed fn_ret as a STRUCT name now
                 // asks is_struct_ret_name directly, which rejects every scalar.
                 else if (!r_is_arr && is_scalar_ret_name(rr_name)) { fn_ret_ty = rr_name; }
+                // `-fmt` keeps the declared signature instead of the flat tag:
+                // `fn` names neither what the callback takes nor what it
+                // returns, so a reformatted `cmp: (T, T) => i32` would lose
+                // both (#6773). `fnr_name` is "fn" plus any trailing `[]`, and
+                // native prints an array-of-closures as `(T) => R[]` — so the
+                // suffix rides on the end here too.
+                if (p.verbatim) {
+                    return (tbuf + " => " + rr_name + fnr_name[2 : fnr_name.len()], r_is_arr, fn_ret_ty, fnr_p);
+                }
                 return (fnr_name, r_is_arr, fn_ret_ty, fnr_p);
             }
             // Tuple type — return the reconstructed precise spelling
@@ -5184,8 +5205,10 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     // every downstream `== "string"` dispatch site working unchanged -- the
     // self-host COMPILES str programs, natively-checked. A qualified
     // `str.Foo` keeps its nominal spelling (the dot-chain above already
-    // extended base past the bare name).
-    if (base == "str") { base = "string"; }
+    // extended base past the bare name). `-fmt` opts out (Par.verbatim): the
+    // erasure rewrites the program's ownership on a reformat, `str` being a
+    // borrowed view and `string` owned backing storage (#6773).
+    if (base == "str" && !p.verbatim) { base = "string"; }
     if (p.peek_punct() != "[") {
         return (base, false, "", p);
     }
@@ -5485,6 +5508,69 @@ function parse_param(p: Par): (ParamDecl, Par) {
 // result into a degenerate FuncDecl with empty name on failure so
 // the caller can spot it.
 
+// TpList is one generic type-parameter list: the names in source order and,
+// parallel to them, each one's `+`-joined trait bound ("" when unbounded).
+struct TpList { tnames: string[], tbounds: string[] }
+
+// parse_type_param_list consumes `[T]` / `[T: Bound, U]` when the cursor sits
+// on `[`, else returns an empty list with the cursor untouched. A function
+// writes one list after its name; a METHOD writes one before its receiver.
+function parse_type_param_list(p: Par): (TpList, Par) {
+    var names: string[] = [];
+    var bounds: string[] = [];
+    if (p.peek_punct() != "[") { return (TpList { tnames: names, tbounds: bounds }, p); }
+    p = p.advance();
+    while (!p.at_end()) {
+        if (p.peek_punct() == "]") { break; }
+        var tpname: string = p.peek_ident();
+        if (tpname.len() == 0) { p = p.advance(); continue; }
+        p = p.advance();
+        var this_bounds: string = "";
+        if (p.peek_punct() == ":") {
+            p = p.advance();
+            // Consume `Trait (+ Trait)*`, each possibly `mod.Trait` and
+            // each possibly carrying generic args (`Iterator[i32]`).
+            // Accumulate the trait name(s) into this_bounds (a `+`-joined
+            // list; base name only for a generic-arg bound) so the checker
+            // can test conformance of the call-site type argument (#4842).
+            var go: boolean = true;
+            while (go && !p.at_end()) {
+                var tname: string = "";
+                if (p.peek_ident().len() > 0) { tname = p.peek_ident(); p = p.advance(); }
+                if (p.peek_punct() == ".") {
+                    p = p.advance();
+                    if (p.peek_ident().len() > 0) { tname = tname + "." + p.peek_ident(); p = p.advance(); }
+                }
+                // A parametrised-trait bound (`T: Iterator[i32]`) carries a
+                // bracketed type-arg list after the trait name — consume the
+                // balanced `[ … ]` (possibly nested) so the bound parses and
+                // the function stays on the monomorphisation / IR path rather
+                // than mis-parsing at the `[` and bailing to AST.
+                if (p.peek_punct() == "[") {
+                    var depth: i32 = 0;
+                    var bgo: boolean = true;
+                    while (bgo && !p.at_end()) {
+                        var bpk: string = p.peek_punct();
+                        if (bpk == "[") { depth = depth + 1; p = p.advance(); }
+                        else if (bpk == "]") { depth = depth - 1; p = p.advance(); if (depth == 0) { bgo = false; } }
+                        else { p = p.advance(); }
+                    }
+                }
+                if (tname.len() > 0) {
+                    if (this_bounds.len() > 0) { this_bounds = this_bounds + "+"; }
+                    this_bounds = this_bounds + tname;
+                }
+                if (p.peek_punct() == "+") { p = p.advance(); } else { go = false; }
+            }
+        }
+        names = names.append(tpname);
+        bounds = bounds.append(this_bounds);
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == "]") { p = p.advance(); }
+    return (TpList { tnames: names, tbounds: bounds }, p);
+}
+
 function parse_func_decl(p: Par): (FuncDecl, Par) {
     // Caller has already peeked the `function` keyword. Consume.
     var fline: i32 = p.peek_line();
@@ -5516,6 +5602,24 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     // count is recorded so the checker can flag a generic-call type-argument
     // arity mismatch (E040).
     var all_tp_count: i32 = 0;
+    // A METHOD's type parameters are written BEFORE its receiver clause
+    // (`function [U] (o: Option[T]) map(…)`) — the receiver's own variables
+    // come from the receiver type, so a method's own cannot follow the name
+    // without ambiguity. That is the spelling native's formatter emits, so a
+    // stdlib formatted by `fern -fmt` has to parse here too.
+    var (pre_tps, pre_p) = parse_type_param_list(p);
+    p = pre_p;
+    var tpi1: i32 = 0;
+    while (tpi1 < pre_tps.tnames.len()) {
+        all_tp_count = all_tp_count + 1;
+        if (p.verbatim || pre_tps.tbounds[tpi1].len() > 0) {
+            bounded_tps = bounded_tps.append(pre_tps.tnames[tpi1]);
+            bound_names = bound_names.append(pre_tps.tbounds[tpi1]);
+        } else {
+            unbounded_tps = unbounded_tps.append(pre_tps.tnames[tpi1]);
+        }
+        tpi1 = tpi1 + 1;
+    }
     // Optional receiver clause: `function (recv: RecvType) name(…)`.
     // Distinguished from the param list by appearing before the
     // method name. A `(` immediately after `function` triggers
@@ -5558,66 +5662,24 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
         return (FuncDecl { name: "", receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: false }, p);
     }
     p = p.advance();
-    // Optional generic type parameters: `name[T]`, `name[T: Bound, U]`.
-    // UNBOUNDED params are erased (the self-host ABI is a uniform 8-byte
-    // slot, so one body fits every instantiation). BOUNDED params name a
-    // trait whose methods the body calls on a `T`-typed value — those
-    // can't be erased (dynamic dispatch can't read a shape pointer off
-    // an unboxed primitive), so we record them for the monomorphiser.
-    // See docs/TRAITS.md (self-host slice 2).
-    if (p.peek_punct() == "[") {
-        p = p.advance();
-        while (!p.at_end()) {
-            if (p.peek_punct() == "]") { break; }
-            var tpname: string = p.peek_ident();
-            if (tpname.len() == 0) { p = p.advance(); continue; }
-            p = p.advance();
-            all_tp_count = all_tp_count + 1;
-            var has_bound: boolean = false;
-            var this_bounds: string = "";
-            if (p.peek_punct() == ":") {
-                has_bound = true;
-                p = p.advance();
-                // Consume `Trait (+ Trait)*`, each possibly `mod.Trait` and
-                // each possibly carrying generic args (`Iterator[i32]`).
-                // Accumulate the trait name(s) into this_bounds (a `+`-joined
-                // list; base name only for a generic-arg bound) so the checker
-                // can test conformance of the call-site type argument (#4842).
-                var go: boolean = true;
-                while (go && !p.at_end()) {
-                    var tname: string = "";
-                    if (p.peek_ident().len() > 0) { tname = p.peek_ident(); p = p.advance(); }
-                    if (p.peek_punct() == ".") {
-                        p = p.advance();
-                        if (p.peek_ident().len() > 0) { tname = tname + "." + p.peek_ident(); p = p.advance(); }
-                    }
-                    // A parametrised-trait bound (`T: Iterator[i32]`) carries a
-                    // bracketed type-arg list after the trait name — consume the
-                    // balanced `[ … ]` (possibly nested) so the bound parses and
-                    // the function stays on the monomorphisation / IR path rather
-                    // than mis-parsing at the `[` and bailing to AST.
-                    if (p.peek_punct() == "[") {
-                        var depth: i32 = 0;
-                        var bgo: boolean = true;
-                        while (bgo && !p.at_end()) {
-                            var bpk: string = p.peek_punct();
-                            if (bpk == "[") { depth = depth + 1; p = p.advance(); }
-                            else if (bpk == "]") { depth = depth - 1; p = p.advance(); if (depth == 0) { bgo = false; } }
-                            else { p = p.advance(); }
-                        }
-                    }
-                    if (tname.len() > 0) {
-                        if (this_bounds.len() > 0) { this_bounds = this_bounds + "+"; }
-                        this_bounds = this_bounds + tname;
-                    }
-                    if (p.peek_punct() == "+") { p = p.advance(); } else { go = false; }
-                }
-            }
-            if (has_bound) { bounded_tps = bounded_tps.append(tpname); bound_names = bound_names.append(this_bounds); }
-            else { unbounded_tps = unbounded_tps.append(tpname); }
-            if (p.peek_punct() == ",") { p = p.advance(); }
+    // Generic type parameters written AFTER the name (`name[T: Bound, U]`).
+    var (post_tps, post_p) = parse_type_param_list(p);
+    p = post_p;
+    var tpi0: i32 = 0;
+    while (tpi0 < post_tps.tnames.len()) {
+        all_tp_count = all_tp_count + 1;
+        // type_params carries only the BOUNDED ones — the unbounded ones are
+        // erased and the monomorphiser has no use for their names, so they are
+        // dropped. `-fmt` keeps the whole list in source order instead: a
+        // formatted `function each[T, U](…)` that loses `[T, U]` leaves every
+        // T and U in the signature unbound (#6773).
+        if (p.verbatim || post_tps.tbounds[tpi0].len() > 0) {
+            bounded_tps = bounded_tps.append(post_tps.tnames[tpi0]);
+            bound_names = bound_names.append(post_tps.tbounds[tpi0]);
+        } else {
+            unbounded_tps = unbounded_tps.append(post_tps.tnames[tpi0]);
         }
-        if (p.peek_punct() == "]") { p = p.advance(); }
+        tpi0 = tpi0 + 1;
     }
     if (p.peek_punct() != "(") {
         return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: false }, p);
@@ -15300,7 +15362,20 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks) };
+    return parse_module_flagged(toks, false);
+}
+
+// parse_module_verbatim is `-fmt`'s entry: the same parse, with the type
+// canonicalisations that lose a written spelling switched off (Par.verbatim).
+// The module it returns is for PRINTING only — a `str` annotation and a
+// `(T) => R` param type reach it spelled as written, which every compile-path
+// `type_name == "string"` / `== "fn"` dispatch would misread.
+pub function parse_module_verbatim(toks: lexer.Token[]): Module {
+    return parse_module_flagged(toks, true);
+}
+
+function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): Module {
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
     var trait_reqs: TraitReq[] = [];
@@ -15337,7 +15412,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var (iar_iface, iar_wit, iar_is_import, iar_p) = parse_import_attr(p);
                 p = iar_p;
                 var ik: string = p.peek_keyword();
-                if (ik == "pub") { p = p.advance(); ik = p.peek_keyword(); }
+                if (ik == "pub") { p = p.advance(); ik = p.peek_keyword(); decl_pub = true; }
                 // `@import(iface, wit) async function …` — the Preview-3 async
                 // import. Same contextual rule as the top-level probe.
                 var i_async: boolean = false;
@@ -15346,7 +15421,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 if (ik == "function") {
                     var (ifr_func, ifr_p) = parse_func_decl(p);
                     p = ifr_p;
-                    var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async };
+                    var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async, is_pub: decl_pub };
                     funcs = funcs.append(ifn);
                 } else if (p.peek_ident() == "resource") {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
@@ -15367,11 +15442,11 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var (ear_iface, ear_wit, ear_is_import, ear_p) = parse_export_attr(p);
                 p = ear_p;
                 var xk: string = p.peek_keyword();
-                if (xk == "pub") { p = p.advance(); xk = p.peek_keyword(); }
+                if (xk == "pub") { p = p.advance(); xk = p.peek_keyword(); decl_pub = true; }
                 if (xk == "function") {
                     var (xfr_func, xfr_p) = parse_func_decl(p);
                     p = xfr_p;
-                    funcs = funcs.append(xfr_func);
+                    funcs = funcs.append(FuncDecl { ...xfr_func, is_pub: decl_pub });
                     exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit });
                 }
                 continue;
@@ -15396,13 +15471,13 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 // native-valid programs.
                 p = probe.advance();  // consume `must_consume`
                 var mck: string = p.peek_keyword();
-                if (mck == "pub") { p = p.advance(); mck = p.peek_keyword(); }
+                if (mck == "pub") { p = p.advance(); mck = p.peek_keyword(); decl_pub = true; }
                 var mco_p: Par = skip_decl_modifier(p, "opaque", "struct");
                 if (mco_p.pos != p.pos) { p = mco_p; mck = "struct"; }
                 if (mck == "struct") {
                     var (mcs_decl, mcs_p) = parse_struct_decl(p);
                     p = mcs_p;
-                    structs = structs.append(StructDecl { ...mcs_decl, must_consume: true });
+                    structs = structs.append(StructDecl { ...mcs_decl, must_consume: true, is_pub: decl_pub });
                     continue;
                 }
                 if (mck == "enum") {
@@ -15410,7 +15485,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var mcecol: i32 = p.peek_col();
                     var (mce_name, mce_variants, mce_type_params, mce_p) = parse_enum_decl(p);
                     p = mce_p;
-                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: true });
+                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: decl_pub });
                     var mcei: i32 = 0;
                     while (mcei < mce_variants.len()) {
                         structs = structs.append(mce_variants[mcei]);
@@ -15423,7 +15498,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var (dr_derives, dr_p) = parse_derive_attr(p);
             p = dr_p;
             var dk: string = p.peek_keyword();
-            if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); }
+            if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); decl_pub = true; }
             var do_p: Par = skip_decl_modifier(p, "opaque", "struct");
             if (do_p.pos != p.pos) { p = do_p; dk = "struct"; }
             if (dk == "struct") {

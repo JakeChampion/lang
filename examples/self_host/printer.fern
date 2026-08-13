@@ -455,6 +455,66 @@ function print_stmt(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     return (out + "\n", g);
 }
 
+// split_commas splits a comma-joined binding / field list. Destructure names
+// never contain a comma, so no nesting awareness is needed.
+function split_commas(csv: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= csv.len()) {
+        if (i == csv.len() || csv[i] == 44) {
+            out = out.append(csv[start : i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// join_csv respells a comma-joined list with native's `, ` separator.
+function join_csv(csv: string): string {
+    var parts: string[] = split_commas(csv);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + parts[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+function is_struct_destructure(type_name: string): boolean {
+    return type_name.len() >= 4 && type_name[0:4] == "@sd:";
+}
+
+// print_struct_destructure respells `let Point { x, y } = E;` from the marker
+// parse_struct_destructure encodes into type_name ("@sd:<Struct>:<fields>",
+// with the bound names comma-joined in `name`). A field renamed on binding
+// prints as `field: binding`, which is also how it was written.
+function print_struct_destructure(v: parser.StmtVar): string {
+    var rest: str = v.type_name[4 : v.type_name.len()];
+    var colon: i32 = 0 - 1;
+    var ri: i32 = 0;
+    while (ri < rest.len()) {
+        if (rest[ri] == 58 && colon < 0) { colon = ri; }
+        ri = ri + 1;
+    }
+    if (colon < 0) { return "var " + v.name + " = " + print_expr(v.init) + ";"; }
+    var struct_name: str = rest[0 : colon];
+    var fields: string[] = split_commas(rest[colon + 1 : rest.len()]);
+    var binds: string[] = split_commas(v.name);
+    var out: string = "let " + struct_name + " { ";
+    var i: i32 = 0;
+    while (i < fields.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + fields[i];
+        if (i < binds.len() && binds[i] != fields[i]) { out = out + ": " + binds[i]; }
+        i = i + 1;
+    }
+    return out + " } = " + print_expr(v.init) + ";";
+}
+
 // print_stmt_body is the statement text with no indent and no newline.
 function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     match (st) {
@@ -464,6 +524,15 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             return ("defer " + act, dg);
         },
         parser.StmtVar(v) => {
+            // Both destructuring forms parse to a StmtVar: the bindings are
+            // comma-joined into `name`, and a STRUCT destructure additionally
+            // tags `type_name` with the parser's `@sd:Type:field,field` marker.
+            // Printed as a plain `var` they re-parse as something else — or, for
+            // the tuple form, do not re-parse at all (#6773).
+            if (is_struct_destructure(v.type_name)) { return (print_struct_destructure(v), f); }
+            if (util.contains(v.name, ",")) {
+                return ("let (" + join_csv(v.name) + ") = " + print_expr(v.init) + ";", f);
+            }
             var ann: string = "";
             if (v.type_name.len() > 0) { ann = ": " + v.type_name; }
             return ("var " + v.name + ann + " = " + print_expr(v.init) + ";", f);
@@ -497,6 +566,42 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 
 // =================== MODULE ====================
 
+// print_type_params renders `[T, K: cmp.Ord]`, or "" when the decl has none.
+// The trait bound matters: dropping it turns a constrained generic into an
+// unconstrained one, which the checker then refuses at the call site.
+function print_type_params(fd: parser.FuncDecl): string {
+    if (fd.type_params.len() == 0) { return ""; }
+    var out: string = "[";
+    var i: i32 = 0;
+    while (i < fd.type_params.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + fd.type_params[i];
+        if (i < fd.bound_traits.len() && fd.bound_traits[i].len() > 0) {
+            // Multi-trait bounds are stored `+`-joined; native spells them
+            // ` + `.
+            out = out + ": " + join_plus(fd.bound_traits[i]);
+        }
+        i = i + 1;
+    }
+    return out + "]";
+}
+
+// join_plus respells a `+`-joined trait list with native's ` + ` separator.
+function join_plus(bounds: string): string {
+    var out: string = "";
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= bounds.len()) {
+        if (i == bounds.len() || bounds[i] == 43) {
+            if (out.len() > 0) { out = out + " + "; }
+            out = out + bounds[start : i];
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     // An `@import` extern (P4 — docs/WIT-BRING-YOUR-OWN.md) renders as the
     // attribute on its own line followed by a body-less function (`;`).
@@ -513,9 +618,6 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     // enforces. `async` selects the WASI Preview-3 `canon lift async` export
     // surface, so dropping it changes what a `-emit core-module` build exports.
     if (fd.is_pub) { out = out + "pub "; }
-    // Only a FuncDecl's is_pub records the source `pub`. Struct / enum / alias
-    // visibility is not carried yet, and their is_pub is hardcoded true to keep
-    // them unrestricted — printing from it would stamp `pub` onto every one.
     if (fd.fip || fd.fbip) {
         if (fd.fip) { out = out + "fip"; } else { out = out + "fbip"; }
         if (fd.fip_allowance > 0) { out = out + "(" + util.i32_to_string(fd.fip_allowance) + ")"; }
@@ -523,25 +625,22 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     }
     if (fd.async) { out = out + "async "; }
     out = out + "function ";
+    // Type parameters. `function first[T](xs: T[])` formatted without them
+    // leaves every `T` in the signature unbound, so the file stops compiling.
+    // A METHOD's go BEFORE its receiver clause (`function [U] (o: Opt) map`),
+    // which is where native prints them and the only spelling that re-parses:
+    // the receiver's own type variables come from the receiver type.
+    var tps: string = print_type_params(fd);
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
     if (fd.receiver_name.len() > 0) {
+        if (tps.len() > 0) { out = out + tps + " "; }
         out = out + "(" + fd.receiver_name;
         if (fd.receiver_type.len() > 0) { out = out + ": " + fd.receiver_type; }
         out = out + ") ";
-    }
-    out = out + fd.name;
-    // Type parameters. `function first[T](xs: T[])` formatted without them
-    // leaves every `T` in the signature unbound, so the file stops compiling.
-    if (fd.type_params.len() > 0) {
-        out = out + "[";
-        var tpi: i32 = 0;
-        while (tpi < fd.type_params.len()) {
-            if (tpi > 0) { out = out + ", "; }
-            out = out + fd.type_params[tpi];
-            tpi = tpi + 1;
-        }
-        out = out + "]";
+        out = out + fd.name;
+    } else {
+        out = out + fd.name + tps;
     }
     out = out + "(";
     var i: i32 = 0;
@@ -578,6 +677,7 @@ function print_struct_decl(sd: parser.StructDecl): string {
         out = out + ")\n";
     }
     if (sd.must_consume) { out = out + "@must_consume\n"; }
+    if (sd.is_pub) { out = out + "pub "; }
     out = out + "struct " + sd.name;
     // Type parameters, for the same reason a function's matter: `struct Set { xs: T[] }`
     // leaves T unbound.
@@ -667,6 +767,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
         out = out + ")\n";
     }
     if (ed.must_consume) { out = out + "@must_consume\n"; }
+    if (ed.is_pub) { out = out + "pub "; }
     out = out + "enum " + ed.name;
     if (ed.type_params.len() > 0) {
         out = out + "[";
@@ -712,7 +813,9 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
 }
 
 function print_type_alias(a: parser.TypeAlias): string {
-    var out: string = "type " + a.name + " = ";
+    var out: string = "";
+    if (a.is_pub) { out = out + "pub "; }
+    out = out + "type " + a.name + " = ";
     var i: i32 = 0;
     while (i < a.variants.len()) {
         if (i > 0) { out = out + " | "; }
@@ -801,7 +904,10 @@ pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks
         if (ei < 0) {
             kinds = kinds.append(0); idxs = idxs.append(i); lines = lines.append(mod.structs[i].line);
         } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
-            kinds = kinds.append(1); idxs = idxs.append(ei); lines = lines.append(mod.structs[i].line);
+            // The EnumDecl carries the source line; its desugared variant
+            // records are all stamped 0, which sorts every enum above the
+            // first struct in the file.
+            kinds = kinds.append(1); idxs = idxs.append(ei); lines = lines.append(mod.enums[ei].line);
         }
         i = i + 1;
     }
@@ -1401,5 +1507,76 @@ function main(): i32 {
     if (rtFn.funcs.len() != 1) { return 254; }
     if (rtFn.funcs[0].is_const) { return 255; }
 
+    // #6773: `pub` on a struct / enum / alias. Printed from is_pub, which
+    // already recorded the written keyword — nothing read it, so a formatted
+    // library file kept its function exports and lost every type export.
+    var srcVis: string = "pub struct A { x: i32 } struct B { y: i32 } pub enum C { P } enum D { Q } pub type E = A | B; type F = A | B; function main(): i32 { return 0; }";
+    var rtVis: parser.Module = roundtrip_module(srcVis);
+    if (!rtVis.structs[struct_index(rtVis.structs, "A")].is_pub) { return 256; }
+    if (rtVis.structs[struct_index(rtVis.structs, "B")].is_pub) { return 257; }
+    if (!rtVis.enums[enum_index(rtVis.enums, "C")].is_pub) { return 258; }
+    if (rtVis.enums[enum_index(rtVis.enums, "D")].is_pub) { return 259; }
+    if (rtVis.aliases.len() != 2) { return 260; }
+    if (!rtVis.aliases[0].is_pub) { return 261; }
+    if (rtVis.aliases[1].is_pub) { return 262; }
+
+    // #6773: both destructuring forms. Printed as a plain `var` the tuple one
+    // emitted `var a,b = …`, which is not syntax the parser accepts back — so
+    // the re-parse is the assertion.
+    var srcTd: string = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
+    var rtTd: parser.Module = roundtrip_module(srcTd);
+    var mti: i32 = func_index(rtTd.funcs, "main");
+    if (mti < 0) { return 263; }
+    if (rtTd.funcs[mti].body.len() != 2) { return 264; }
+    match (rtTd.funcs[mti].body[0]) {
+        parser.StmtVar(v) => {
+            if (v.name != "a,b") { return 265; }
+            if (v.type_name.len() != 0) { return 266; }
+        },
+        _ => { return 267; }
+    }
+    // The struct form keeps the type it destructures and each field's binding,
+    // including a field renamed on binding (`y: bb`).
+    var srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
+    var rtSd: parser.Module = roundtrip_module(srcSd);
+    var msi: i32 = func_index(rtSd.funcs, "main");
+    if (msi < 0) { return 268; }
+    match (rtSd.funcs[msi].body[0]) {
+        parser.StmtVar(v) => {
+            if (v.name != "x,bb") { return 269; }
+            if (v.type_name != "@sd:P:x,y") { return 270; }
+        },
+        _ => { return 271; }
+    }
+
+    // #6773: a METHOD's type parameters are written before its receiver. The
+    // parser accepts that spelling now, so the printer's own output re-parses.
+    var srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
+    var rtMt: parser.Module = roundtrip_module(srcMt);
+    var mmi: i32 = func_index(rtMt.funcs, "map");
+    if (mmi < 0) { return 272; }
+    if (rtMt.funcs[mmi].receiver_name != "o") { return 273; }
+    if (rtMt.funcs[mmi].type_param_count != 1) { return 274; }
+
     return 0;
+}
+
+// struct_index / func_index locate a declaration by name for the assertions
+// above, which cannot rely on declaration order surviving the round-trip.
+function struct_index(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name && structs[i].enum_owner.len() == 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function func_index(funcs: parser.FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
 }

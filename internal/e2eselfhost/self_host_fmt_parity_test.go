@@ -27,13 +27,20 @@ import (
 // source line on every statement, so five Stmt kinds grew one and parse_stmt
 // stamps it; the cases at the end of the list are that half's.
 //
+// #6773 closed four of the five parser-side losses that came after: `str` was
+// canonicalised to `string` and a function type coarsed to the flat `fn` tag,
+// both now held by Par.verbatim — a parse mode only `-fmt` selects, since those
+// canonicalisations are exactly what the compile path's `type_name == "string"`
+// / `== "fn"` dispatch sites read. Struct / enum / alias `pub` and both
+// destructuring forms needed no parser work at all: the data was already on the
+// node and the printer did not read it.
+//
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 176 of the 244 files under examples/ + internal/stdlib, against 0 before
-// #6762. What still differs is information the PARSER does not keep, so no
-// printer can recover it: `str` is canonicalised to `string`, a function-typed
-// parameter to `fn`, `trait` declarations have no Module field at all, struct
-// visibility is not carried, and a `let (a, b) = …` destructuring loses its
-// shape. Those are filed separately.
+// 196 of the 244 files under examples/ + internal/stdlib, against 176 before
+// and 0 before #6762. What still differs: `trait` declarations have no Module
+// field at all (#6773's remaining item), a method's own type parameters are
+// dropped, `else { if … }` collapses to `else if`, and the C-style / range
+// `for` desugars leak (#6770, #6771).
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -180,11 +187,8 @@ function two(p: P): i32 {
 `},
 	// The modifiers and the shapes a formatter must not drop: `pub` on a
 	// function, type parameters, an aliased import, a cast, a void `return;`.
-	//
-	// The struct here is deliberately NOT `pub`: only a FuncDecl's is_pub
-	// records the source keyword, while a struct's is hardcoded true to keep it
-	// unrestricted, so printing from it would stamp `pub` onto every struct in
-	// the file. Struct visibility is parser surface, filed with the rest.
+	// The unexported struct pins the other half of the visibility rule that
+	// `visibility-on-types` covers: an absent `pub` must stay absent.
 	{"modifiers-and-shapes", `import "std/i32" as ints;
 
 struct Box[T] { item: T }
@@ -197,6 +201,95 @@ pub function early(a: i32): void {
   if (a > 0) {
     return;
   }
+}
+`},
+	// #6773 item 1: `str` is a borrowed VIEW and `string` owned storage, so
+	// erasing one to the other at the parse boundary means a reformat rewrites
+	// the program's ownership. The return position is where the corpus has
+	// almost all of them (every `std/string` trimmer returns `str`).
+	{"written-str-spelling", `pub function head(s: string): str {
+return s[0:1];
+}
+pub function tag(s: str, t: str): i32 {
+return s.len() + t.len();
+}
+struct View { text: str, label: string }
+function main(): i32 {
+var t: str = "  hi  ";
+var u: string = "owned";
+return t.len() + u.len();
+}
+`},
+	// #6773 item 2: the flat `fn` tag names neither what the callback takes nor
+	// what it returns, so a formatted signature stopped stating its own
+	// contract. Zero-arg, multi-arg, array-returning and qualified-return forms
+	// all appear in the stdlib.
+	{"written-fn-type-spelling", `struct Rec { n: i32 }
+pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
+return arr;
+}
+pub function each[T, U](xs: T[], f: (T) => U[], p: (T) => boolean, mk: () => Rec, sink: (T) => void): i32 {
+return xs.len();
+}
+function main(): i32 {
+return 0;
+}
+`},
+	// #6773 item 4: `pub` on a struct / enum / alias. Only FuncDecl.is_pub was
+	// being read, so a formatted library file kept its function exports and
+	// silently lost every type export.
+	{"visibility-on-types", `pub struct Open { x: i32 }
+
+struct Shut { y: i32 }
+
+pub enum Colour { Red, Green }
+
+enum Hidden { On, Off }
+
+pub type Either = Open | Shut;
+
+type Private = Open | Shut;
+
+pub function use_them(o: Open, c: Colour): i32 {
+return o.x;
+}
+`},
+	// #6773 item 5: both destructuring forms parse to a StmtVar — the tuple one
+	// with its bindings comma-joined, the struct one additionally tagged on
+	// type_name — and printing either as a plain `var` emitted `var a,b = …`,
+	// which is not syntax the parser accepts back.
+	{"destructuring-forms", `struct Point { x: i32, y: i32 }
+function pair(): (i32, i32) {
+return (1, 2);
+}
+function main(): i32 {
+let (a, b) = pair();
+let (q, r, s) = (1, 2, 3);
+let Point { x, y } = Point { x: 4, y: 5 };
+let Point { x: px, y: py } = Point { x: 6, y: 7 };
+return a + b + q + r + s + x + y + px + py;
+}
+`},
+	// Surfaced by the two cases above: FuncDecl.type_params carried only the
+	// BOUNDED parameters (the unbounded ones are erased and the monomorphiser
+	// has no use for their names), so a formatted `each[T, U]` lost both and
+	// left every T and U unbound. A METHOD's parameters are written before its
+	// receiver — the spelling native emits, which the self-host parser did not
+	// accept, so its own formatted output did not re-parse.
+	{"type-parameter-lists", `import "core/cmp";
+
+enum Opt[T] { Some(T), None }
+
+pub function each[T, U](xs: T[], f: (T) => U): i32 {
+return xs.len();
+}
+
+pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
+return arr;
+}
+
+pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
+return None;
 }
 `},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
