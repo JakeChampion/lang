@@ -444,3 +444,266 @@ func TestSelfHostFipVerifyCorpusClean(t *testing.T) {
 		t.Errorf("fip pass censused %d lowered functions across the corpus, expected the full set — a shrunken sweep proves nothing", seen)
 	}
 }
+
+// TestSelfHostIRVerifyProvided exercises the callee-resolution verifier
+// (examples/self_host/irverifyprovided.fern, #6639 slice 4) — the port of
+// native's internal/ir/verifyprovided.go.
+//
+// Same driver and the same both-directions discipline as the passes above.
+// The silent half is the load-bearing one here too, and for a sharper reason
+// than usual: this pass rests on an INVENTORY of runtime-helper names, and an
+// inventory is a thing that goes stale. A missing entry is a report on valid
+// IR; a wrong prefix rule excuses a genuinely missing body. The driver's cases
+// pin both edges, including the near-misses (`__c_call5`, `__struct_drop_`
+// with no type, a truncated helper name) that a loose prefix rule would admit.
+//
+// Exit 0 means every assertion held; a non-zero code is the failing case's id
+// in irverify_run.fern's provided_checks.
+func TestSelfHostIRVerifyProvided(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+
+	cmd := exec.Command(bin)
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("irverify_run did not exit normally")
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("irverify_run exit code = %d, want 0 — that code is the failing assertion's id in irverify_run.fern", code)
+	}
+	if want := "irverifyprovided: all callee-resolution checks agree"; !strings.Contains(string(out), want) {
+		t.Errorf("irverify_run stdout = %q, want it to contain %q", out, want)
+	}
+}
+
+// TestSelfHostIRVerifyProvidedAudit is what keeps the verifier's inventory a
+// SECOND record rather than a stale one.
+//
+// irverifyprovided.fern deliberately does not call asm_ir.is_fern_helper: a
+// verifier that reads its answer out of the compiler agrees with the compiler
+// by construction, which is native's stated reason for keeping
+// verifyprovided.go's table separate. The cost of a copy is drift, and this
+// audit closes the half of it that can be closed — every inventory entry must
+// satisfy the emitter's own predicate, so an entry naming a helper no backend
+// emits fails here rather than silently excusing a real missing body.
+//
+// The other direction is not enumerable out of a predicate. A helper the
+// emitter gained and the inventory did not shows up as an unresolved callee in
+// the corpus sweeps below — which is the failure this pass exists to produce,
+// so it is covered, just not here.
+func TestSelfHostIRVerifyProvidedAudit(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("modload driver runs natively; skipping under an exec runner")
+	}
+	dir := writeSelfHostModloadProject(t)
+	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_audit")
+
+	cmd := exec.Command(bin, "-provided-audit")
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("driver did not exit normally")
+	}
+	if cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("provided-audit failed:\n%s", out)
+	}
+	if !strings.Contains(string(out), "inventory entries are emitted by the backend") {
+		t.Errorf("provided-audit stdout = %q, want the agreement line", out)
+	}
+}
+
+// TestSelfHostIRVerifyProvidedCompilerClean runs the resolution pass over the
+// self-host compiler's own sources — the largest program the lowerer sees, and
+// the one whose malformed output has actually cost the most (docs/TEST-GATES.md
+// on #6018).
+//
+// This is also the sweep that exercises the pass at scale: the compiler
+// declares thousands of functions, which is why the declared set is a bucketed
+// index rather than a linear scan.
+func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-compiler sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("modload driver runs natively; skipping under an exec runner")
+	}
+	dir := writeSelfHostModloadProject(t)
+	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_compiler")
+
+	cmd := exec.Command(bin, filepath.Join(dir, "asm_modload_run.fern"), "-verifyprovided")
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("driver did not exit normally")
+	}
+	if cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("resolution pass reported problems on the compiler's own sources:\n%s", out)
+	}
+	checked, calls := parseProvidedTally(string(out))
+	if checked < 500 {
+		t.Errorf("pass checked %d functions of the compiler, expected the full set — a shrunken sweep proves nothing (out: %s)", checked, out)
+	}
+	if calls < 5000 {
+		t.Errorf("pass resolved %d direct calls across the compiler, expected far more — a sweep that resolved nothing proves nothing (out: %s)", calls, out)
+	}
+}
+
+// parseProvidedTally reads the `checked N functions, M direct calls` line out
+// of a `-verifyprovided` run. A clean verdict over a program the pass barely
+// looked at is not a result, so the tally is asserted alongside it.
+func parseProvidedTally(out string) (int, int) {
+	i := strings.Index(out, "checked ")
+	if i < 0 {
+		return 0, 0
+	}
+	var checked, calls int
+	if _, err := fmt.Sscanf(out[i:], "checked %d functions, %d direct calls", &checked, &calls); err != nil {
+		return 0, 0
+	}
+	return checked, calls
+}
+
+// providedCorpusExpectedDirty are the conformance fixtures the resolution pass
+// reports, and is a list of three rather than a tolerance because each one is
+// the pass being RIGHT about a program that is deliberately wrong.
+//
+// This driver runs the front end and the lowerer, not the checker — that is
+// what makes it a verifier of the lowering rather than a second compiler. So a
+// fixture whose whole point is a program the checker rejects reaches the
+// lowerer anyway, and a program that calls a function it never declares
+// genuinely does emit a call to a symbol nothing defines:
+//
+//   - diag_e065 calls `name()`, which the fixture never defines.
+//   - diag_p004 calls `add()`, likewise.
+//   - diag_e019 does not reach the pass at all: `Pair[i32]` on a two-parameter
+//     struct crashes the lowerer, and it does so on this driver's ordinary emit
+//     path too — the fixture exists to be rejected by the checker, and nothing
+//     downstream of that is defined behaviour.
+//
+// Every other fixture in the corpus resolves clean.
+var providedCorpusExpectedDirty = map[string]bool{
+	"diag_e065": true,
+	"diag_p004": true,
+	"diag_e019": true,
+}
+
+// TestSelfHostIRVerifyProvidedCorpusClean sweeps the conformance corpus.
+//
+// It runs the MODLOAD driver rather than irlower_run, and that is the whole
+// reason this slice arrives later than its siblings. A single module's
+// lowering leaves every imported `Type.method` unresolved by construction: a
+// census over this corpus found 255 distinct unresolved callee names, ~200 of
+// them stdlib methods reached through an import. At that ratio the noise is
+// not a floor to tolerate, it is most of the signal — so the declared set has
+// to come from the merged bundle, which means staging each fixture beside a
+// resolvable stdlib.
+func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
+	if testing.Short() {
+		t.Skip("corpus sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("modload driver runs natively; skipping under an exec runner")
+	}
+	dir := writeSelfHostModloadProject(t)
+	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "provided_corpus")
+
+	stdRoot := langSrcAbs(t, filepath.Join("internal", "stdlib"))
+	caseDirs, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*"))
+	if err != nil {
+		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	if len(caseDirs) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(caseDirs))
+	}
+
+	work := t.TempDir()
+	// The fixture's own modules have to travel with it — several cases are
+	// multi-file (cross_module_bounded_method, multi_file, pub_use_reexport),
+	// and sweeping only main.fern would report their siblings' functions as
+	// undeclared, which is the same false positive the single-module driver
+	// produces at stdlib scale.
+	for _, name := range []string{"std", "core"} {
+		if err := os.Symlink(filepath.Join(stdRoot, name), filepath.Join(work, name)); err != nil {
+			t.Fatalf("linking stdlib %s: %v", name, err)
+		}
+	}
+
+	var dirty, unexpectedlyClean []string
+	swept, calls := 0, 0
+	for _, cd := range caseDirs {
+		name := filepath.Base(cd)
+		mains, _ := filepath.Glob(filepath.Join(cd, "*.fern"))
+		if len(mains) == 0 {
+			continue
+		}
+		stage := filepath.Join(work, "case")
+		if err := os.RemoveAll(stage); err != nil {
+			t.Fatalf("clearing stage: %v", err)
+		}
+		if err := os.MkdirAll(stage, 0o755); err != nil {
+			t.Fatalf("staging %s: %v", name, err)
+		}
+		// The stage sits INSIDE work so `std/` and `core/` resolve from the
+		// parent — modloader looks for `<dir>/std/x.fern`, so link them here
+		// too rather than relying on a walk upward.
+		for _, lib := range []string{"std", "core"} {
+			if err := os.Symlink(filepath.Join(stdRoot, lib), filepath.Join(stage, lib)); err != nil {
+				t.Fatalf("linking stdlib %s: %v", lib, err)
+			}
+		}
+		var hasMain bool
+		for _, f := range mains {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("reading %s: %v", f, err)
+			}
+			if filepath.Base(f) == "main.fern" {
+				hasMain = true
+			}
+			if err := os.WriteFile(filepath.Join(stage, filepath.Base(f)), src, 0o644); err != nil {
+				t.Fatalf("staging %s: %v", f, err)
+			}
+		}
+		if !hasMain {
+			continue
+		}
+		swept++
+		cmd := exec.Command(bin, filepath.Join(stage, "main.fern"), "-verifyprovided")
+		out, _ := cmd.Output()
+		clean := cmd.ProcessState != nil && cmd.ProcessState.Exited() && cmd.ProcessState.ExitCode() == 0
+		_, c := parseProvidedTally(string(out))
+		calls += c
+		switch {
+		case !clean && !providedCorpusExpectedDirty[name]:
+			dirty = append(dirty, name+": "+strings.TrimSpace(string(out)))
+		case clean && providedCorpusExpectedDirty[name]:
+			// A named exclusion that stopped being one is a stale list, which
+			// is how a tolerance quietly becomes permanent.
+			unexpectedlyClean = append(unexpectedlyClean, name)
+		}
+	}
+	if len(dirty) > 0 {
+		max := 15
+		if len(dirty) < max {
+			max = len(dirty)
+		}
+		t.Errorf("resolution pass reported problems on %d of %d conformance fixtures:\n  %s",
+			len(dirty), swept, strings.Join(dirty[:max], "\n  "))
+	}
+	if len(unexpectedlyClean) > 0 {
+		t.Errorf("these fixtures are listed as expected-dirty but resolved clean — drop them from providedCorpusExpectedDirty: %s",
+			strings.Join(unexpectedlyClean, ", "))
+	}
+	if swept < 400 {
+		t.Errorf("swept %d fixtures, expected the full corpus — a shrunken sweep proves nothing", swept)
+	}
+	if calls < 2000 {
+		t.Errorf("pass resolved %d direct calls across the corpus, expected far more — a sweep that resolved nothing proves nothing", calls)
+	}
+}

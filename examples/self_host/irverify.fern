@@ -20,8 +20,9 @@
 // This file checks STRUCTURE. Operand-stack discipline is its sibling
 // irverifystack.fern (#6639 slice 2), which reuses this file's Problem and
 // stands down wherever the two overlap — a malformed scope or an
-// out-of-range branch depth is reported here and only here. Native's
-// verifyprovided.go still has no counterpart (slice 4).
+// out-of-range branch depth is reported here and only here. Callee
+// RESOLUTION is irverifyprovided.fern (slice 4), which reports the callee this
+// file's arity check deliberately leaves alone.
 
 import "./ir";
 import "./util";
@@ -61,9 +62,10 @@ pub function format_problems(ps: Problem[], max: i32): string {
 
 // FnSig is the arity of a function the module defines. Only DEFINED
 // functions are listed: an unresolved callee name is left alone rather than
-// reported, because the self-host has no counterpart to native's
-// internal/caps inventory, so it cannot tell a builtin from a typo. That
-// check is #6639 slice 4 and arrives with the inventory it needs.
+// reported here, because one module's function list cannot tell a runtime
+// helper from a typo. irverifyprovided.fern (#6639 slice 4) is where that
+// question is answered, against the whole program plus an inventory of the
+// helpers the backends provide.
 pub struct FnSig { name: string, n_params: i32 }
 
 function sig_params_of(sigs: FnSig[], name: string): i32 {

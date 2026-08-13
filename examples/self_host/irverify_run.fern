@@ -23,6 +23,7 @@ import "./ir";
 import "./irverify";
 import "./irverifystack";
 import "./irfipverify";
+import "./irverifyprovided";
 import "./irverifygate";
 import "./util";
 
@@ -269,6 +270,104 @@ function fip_checks(): i32 {
 }
 
 // gate_checks covers irverifygate.verify_problems — the verdict the backends
+// ---- callee resolution (#6639 slice 4) ---------------------------------
+
+// pv_count is how many unresolved-callee problems `ops` draws against a
+// program declaring `declared`.
+function pv_count(ops: ir.Op[], declared: string[]): i32 {
+    return irverifyprovided.verify_provided_fn("f", ops, irverifyprovided.name_index(declared)).problems.len();
+}
+
+function pv_msg(ops: ir.Op[], declared: string[]): string {
+    var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverifyprovided.name_index(declared));
+    if (r.problems.len() == 0) { return ""; }
+    return irverify.problem_str(r.problems[0]);
+}
+
+// provided_checks asserts the resolution pass in both directions: the callee
+// nothing defines it must report, and the four things that resolve — a
+// declared function, a runtime helper, a per-type generated helper, and an FFI
+// shim — it must stay silent on.
+function provided_checks(): i32 {
+    var none: string[] = [];
+    var decl: string[] = ["main", "helper"];
+
+    // The failure this pass exists to catch: a call to a name nothing defines.
+    if (pv_count([ir.op_call_direct("nope", 1)], decl) != 1) { return 70; }
+    if (!util.contains(pv_msg([ir.op_call_direct("nope", 1)], decl),
+        "calls nope, which the program does not declare and no backend provides")) { return 71; }
+    // Located like every other problem: function, op index, kind.
+    if (!util.contains(pv_msg([ir.op_load_local(0), ir.op_call_direct("nope", 1)], decl),
+        "f: op 1 (call_direct):")) { return 72; }
+
+    // A declared function resolves.
+    if (pv_count([ir.op_call_direct("helper", 1)], decl) != 0) { return 73; }
+    // A runtime helper resolves off the inventory.
+    if (pv_count([ir.op_call_direct("__fern_rc_dec", 1)], none) != 0) { return 74; }
+    if (pv_count([ir.op_call_direct("__fern_arr_str_join", 2)], none) != 0) { return 75; }
+    // The per-type helpers resolve by prefix — their suffix is a type name the
+    // program supplies, so no inventory could carry them.
+    if (pv_count([ir.op_call_direct("__struct_drop_Holder", 1)], none) != 0) { return 76; }
+    if (pv_count([ir.op_call_direct("__field_reclaim_Box", 1)], none) != 0) { return 77; }
+    // The FFI shim family, across the arity and return-suffix axes.
+    if (pv_count([ir.op_call_direct("__c_call0", 1)], none) != 0) { return 78; }
+    if (pv_count([ir.op_call_direct("__c_call4_f64", 5)], none) != 0) { return 79; }
+    // …and its near-misses do NOT: the prefix rules must not admit a typo.
+    if (pv_count([ir.op_call_direct("__c_call5", 1)], none) != 1) { return 80; }
+    if (pv_count([ir.op_call_direct("__c_call0_f16", 1)], none) != 1) { return 81; }
+    if (pv_count([ir.op_call_direct("__struct_drop_", 1)], none) != 1) { return 82; }
+    if (pv_count([ir.op_call_direct("__fern_rc_de", 1)], none) != 1) { return 83; }
+
+    // An empty callee name is irverify.fern's problem; reporting it here too
+    // would double every occurrence.
+    if (pv_count([ir.op_call_direct("", 1)], none) != 0) { return 84; }
+    // Only call_direct names a callee — an indirect call has none to resolve.
+    if (pv_count([ir.op_call_indirect(2)], none) != 0) { return 85; }
+
+    // The call tally travels with the verdict, so a clean result over a module
+    // with no calls is distinguishable from a clean result over one with many.
+    var mixed: ir.Op[] = [ir.op_call_direct("helper", 1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_call_direct("nope", 0)];
+    var mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverifyprovided.name_index(decl));
+    if (mr.calls != 3) { return 86; }
+    if (mr.problems.len() != 1) { return 87; }
+
+    // ---- the name index ------------------------------------------------
+    // Membership is what the pass rests on, and a bucketing bug would show up
+    // as a false unresolved report rather than a crash. Check both answers,
+    // and check them at a size that spans many buckets.
+    var big: string[] = [];
+    var i: i32 = 0;
+    while (i < 3000) { big = big.append("fn_" + util.i32_to_string(i)); i = i + 1; }
+    var ix: irverifyprovided.NameIndex = irverifyprovided.name_index(big);
+    if (!irverifyprovided.index_has(ix, "fn_0")) { return 88; }
+    if (!irverifyprovided.index_has(ix, "fn_1499")) { return 89; }
+    if (!irverifyprovided.index_has(ix, "fn_2999")) { return 90; }
+    if (irverifyprovided.index_has(ix, "fn_3000")) { return 91; }
+    if (irverifyprovided.index_has(ix, "")) { return 92; }
+    // Every name goes in exactly once — a placement bug that overwrote a
+    // bucket entry would leave an earlier name unfindable.
+    var placed: i32 = 0;
+    var pj: i32 = 0;
+    while (pj < big.len()) {
+        if (irverifyprovided.index_has(ix, big[pj])) { placed = placed + 1; }
+        pj = pj + 1;
+    }
+    if (placed != 3000) { return 93; }
+    // The empty program's index answers no to everything rather than trapping.
+    if (irverifyprovided.index_has(irverifyprovided.name_index(none), "x")) { return 94; }
+
+    // The inventory is non-empty and every entry resolves through is_provided
+    // — an entry that did not would be dead weight the audit could not see.
+    var inv: string[] = irverifyprovided.provided_names();
+    if (inv.len() < 30) { return 95; }
+    var vi: i32 = 0;
+    while (vi < inv.len()) {
+        if (!irverifyprovided.is_provided(inv[vi])) { return 96; }
+        vi = vi + 1;
+    }
+    return 0;
+}
+
 // act on (#6639). It is its own case set because the gate MERGES the two
 // passes, and a merge that dropped one of them would still look clean against
 // either pass's own tests.
@@ -479,12 +578,16 @@ function main(): i32 {
     var fc: i32 = fip_checks();
     if (fc != 0) { return fc; }
 
+    var pc: i32 = provided_checks();
+    if (pc != 0) { return pc; }
+
     var gc: i32 = gate_checks();
     if (gc != 0) { return gc; }
 
     print("irverify: all structural checks agree");
     print("irverifystack: all stack checks agree");
     print("irfipverify: all allocation-budget checks agree");
+    print("irverifyprovided: all callee-resolution checks agree");
     print("irverifygate: compile-path gate agrees");
     return 0;
 }
