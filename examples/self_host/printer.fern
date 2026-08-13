@@ -555,7 +555,12 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         parser.StmtMatch(m) => { return print_match(m, depth, f); },
         parser.StmtFor(fo) => {
             var (fb, fg) = print_block(fo.body, depth, f);
-            return ("for " + fo.var_name + " in " + print_expr(fo.iter) + " " + fb, fg);
+            // A two-name loop (`for (k, v) in m`) stores its bindings
+            // comma-joined, like a tuple destructure; printed bare it emitted
+            // `for k,v in m`, which the parser does not accept back.
+            var fhead: string = fo.var_name;
+            if (util.contains(fhead, ",")) { fhead = "(" + join_csv(fhead) + ")"; }
+            return ("for " + fhead + " in " + print_expr(fo.iter) + " " + fb, fg);
         },
         parser.StmtBreak(_) => { return ("break;", f); },
         parser.StmtContinue(_) => { return ("continue;", f); },
@@ -1557,6 +1562,29 @@ function main(): i32 {
     if (mmi < 0) { return 272; }
     if (rtMt.funcs[mmi].receiver_name != "o") { return 273; }
     if (rtMt.funcs[mmi].type_param_count != 1) { return 274; }
+
+    // A two-name `for (k, v) in m` stores its bindings comma-joined, the same
+    // shape as a tuple destructure. Printed bare it emitted `for k,v in m`,
+    // which does not re-parse — so the loop is what the re-parse asserts.
+    // (Native leaks its own foreach desugar here, so this is a round-trip
+    // property rather than a byte-parity one; see #6770 / #6771.)
+    var srcFk: string = "import \"core/map\"; function main(): i32 { var m: Map[string, i32] = {}; var t: i32 = 0; for (k, v) in m { t = t + v + k.len(); } return t; }";
+    var rtFk: parser.Module = roundtrip_module(srcFk);
+    var mfi: i32 = func_index(rtFk.funcs, "main");
+    if (mfi < 0) { return 275; }
+    var sawfor: boolean = false;
+    var fki: i32 = 0;
+    while (fki < rtFk.funcs[mfi].body.len()) {
+        match (rtFk.funcs[mfi].body[fki]) {
+            parser.StmtFor(fo) => {
+                if (fo.var_name != "k,v") { return 276; }
+                sawfor = true;
+            },
+            _ => { }
+        }
+        fki = fki + 1;
+    }
+    if (!sawfor) { return 277; }
 
     return 0;
 }
