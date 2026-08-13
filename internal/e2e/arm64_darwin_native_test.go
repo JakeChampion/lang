@@ -275,6 +275,56 @@ func TestArm64DarwinNativeReadFile(t *testing.T) {
 	}
 }
 
+// TestArm64DarwinMonotonicNs covers `monotonic_ns()` on arm64-darwin, which
+// has no clock_gettime syscall and so reads CNTVCT_EL0 / CNTFRQ_EL0 with `mrs`
+// — an instruction the in-process assembler could not encode at all, making
+// every program that touched the builtin unbuildable for the target (#6800).
+//
+// Building is the gate on the encoding existing; running is the gate on it
+// being the RIGHT encoding. A sysreg is five bit fields naming a different
+// register when one is off, so the elapsed-time bound is what separates a real
+// counter read from a plausible-looking wrong one.
+func TestArm64DarwinMonotonicNs(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := "function main(): i32 {\n" +
+		"    var t0: i64 = monotonic_ns();\n" +
+		"    if (t0 <= (0 as i64)) { return 91; }\n" +
+		"    sleep_ms(50);\n" +
+		"    var t1: i64 = monotonic_ns();\n" +
+		"    var ms: i64 = (t1 - t0) / (1000000 as i64);\n" +
+		"    if (ms < (25 as i64)) { return 92; }\n" +
+		"    if (ms > (5000 as i64)) { return 93; }\n" +
+		"    return 0;\n" +
+		"}\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	out := filepath.Join(dir, "prog")
+	if o, err := exec.Command(bin, "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("native arm64-darwin build failed: %v\n%s", err, o)
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	cmd := exec.Command(out)
+	_ = cmd.Run()
+	ps := cmd.ProcessState
+	if ps == nil || !ps.Exited() {
+		t.Fatalf("native Mach-O did not run to a normal exit (state=%v)", ps)
+	}
+	switch code := ps.ExitCode(); code {
+	case 0:
+	case 91:
+		t.Error("monotonic_ns() returned <= 0 (CNTVCT_EL0 not read?)")
+	case 92, 93:
+		t.Errorf("50 ms sleep measured outside 25..5000 ms (exit %d): CNTFRQ_EL0 scaling wrong?", code)
+	default:
+		t.Errorf("unexpected exit code %d", code)
+	}
+}
+
 // TestArm64DarwinDwarfSymtab guards the -g static symbol table for the
 // arm64-darwin native path (#5537 slice 1, Mach-O): a `-g` build carries an
 // LC_SYMTAB whose entries resolve every function name, while the default build

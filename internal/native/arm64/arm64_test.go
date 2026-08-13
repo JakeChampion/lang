@@ -73,6 +73,10 @@ func TestEncodings(t *testing.T) {
 		{"udiv x0, x1, x2", arm64.UDIV(0, 1, 2), 0x9ac20820},
 		{"sdiv x0, x1, x2", arm64.SDIV(0, 1, 2), 0x9ac20c20},
 		{"msub x0,x1,x2,x3", arm64.MSUB(0, 1, 2, 3), 0x9b028c20},
+		{"mrs x9, cntvct_el0", arm64.MRS(9, 3, 3, 14, 0, 2), 0xd53be049},
+		{"mrs x10, cntfrq_el0", arm64.MRS(10, 3, 3, 14, 0, 0), 0xd53be00a},
+		{"mrs x0, cntpct_el0", arm64.MRS(0, 3, 3, 14, 0, 1), 0xd53be020}, // op2 selects the physical counter
+		{"mrs x30, cntvct_el0", arm64.MRS(30, 3, 3, 14, 0, 2), 0xd53be05e},
 		{"ldur x0, [x1, #-8]", arm64.LDUR(0, 1, -8), 0xf85f8020},
 		{"stur x0, [x1, #-8]", arm64.STUR(0, 1, -8), 0xf81f8020},
 		{"ldur x2, [x3, #15]", arm64.LDUR(2, 3, 15), 0xf840f062},

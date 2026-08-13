@@ -176,6 +176,54 @@ func TestAssembleBrk(t *testing.T) {
 	}
 }
 
+// TestAssembleMrsSysreg covers `mrs Xt, <sysreg>`, which the arm64-darwin
+// runtime emits for `monotonic_ns()` — CNTVCT_EL0 scaled by CNTFRQ_EL0, there
+// being no clock_gettime syscall on Darwin (#6800).
+//
+// Every expected word is what Apple `clang -c -arch arm64` emits for the same
+// line, read back with objdump. A sysreg is five separate bit fields
+// (op0:op1:CRn:CRm:op2) that name a completely different register when one is
+// off, so the encoding is pinned against a real assembler rather than derived.
+func TestAssembleMrsSysreg(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tmrs x9, cntvct_el0\n", 0xd53be049},
+		{"\tmrs x10, cntfrq_el0\n", 0xd53be00a},
+		{"\tmrs x0, cntfrq_el0\n", 0xd53be000},
+		{"\tmrs x30, cntvct_el0\n", 0xd53be05e},
+		{"\tmrs x9, CNTFRQ_EL0\n", 0xd53be009},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
+
+// TestAssembleMrsReject keeps an unlisted system register loud. Encoding a
+// guessed op0:op1:CRn:CRm:op2 would read some other register at runtime
+// instead of failing the build.
+func TestAssembleMrsReject(t *testing.T) {
+	for _, asm := range []string{
+		"\tmrs x0, cntpct_el0\n",     // real register, not in the table
+		"\tmrs x0, cntvct\n",         // misspelled
+		"\tmrs w0, cntvct_el0\n",     // 32-bit destination: no such form
+		"\tmrs x0\n",                 // missing operand
+		"\tmrs x0, cntvct_el0, x1\n", // too many operands
+	} {
+		if _, err := arm64.Assemble(asm); err == nil {
+			t.Errorf("Assemble(%q): expected an error, got none", asm)
+		}
+	}
+}
+
 func TestAssembleErrors(t *testing.T) {
 	if _, err := arm64.Assemble("\tfjcvtzs x0, d1\n"); err == nil {
 		t.Error("expected error for unsupported instruction")
@@ -282,6 +330,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 		"w_register_alu_extras": "" +
 			"\torr w0, w1, w2\n\teor w0, w1, w2\n\tsdiv w0, w1, w2\n\tlsr w0, w1, w2\n\tasr w0, w1, w2\n" +
 			"\tmsub w0, w1, w2, w3\n\tlsr w0, w1, #3\n\tasr w0, w1, #3\n",
+		"sysreg_mrs": "" +
+			"\tmrs x9, cntvct_el0\n\tmrs x10, cntfrq_el0\n\tmrs x0, cntfrq_el0\n\tmrs x30, cntvct_el0\n",
 		"cbz_cbnz_widths": "" +
 			"\tcbz w0, l0\n\tcbz x0, l0\n\tcbnz w1, l0\n\tcbnz x1, l0\n\tcbz w3, l0\nl0:\n\tret\n",
 	}

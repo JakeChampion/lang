@@ -710,6 +710,17 @@ func MSUB(rd, rn, rm, ra uint32) uint32 {
 	return 0x9B008000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// MRS encodes `mrs Xt, <sysreg>` — read a system register. The register
+// is named by the tuple op0:op1:CRn:CRm:op2; op0 is 2 or 3 and only its
+// low bit is encoded (bit 19), the rest of bits 31..20 being fixed.
+// Encoding: base 0xD5300000 | (op0&1)<<19 | op1<<16 | CRn<<12 | CRm<<8 | op2<<5 | Rt.
+func MRS(rt, op0, op1, crn, crm, op2 uint32) uint32 {
+	return 0xD5300000 |
+		((op0 & 1) << 19) | ((op1 & 7) << 16) |
+		((crn & 15) << 12) | ((crm & 15) << 8) | ((op2 & 7) << 5) |
+		(rt & regMask)
+}
+
 // ---- Floating-point (double-precision) ----
 //
 // FP registers d0..d31 share the 5-bit register field with the general

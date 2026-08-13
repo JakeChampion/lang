@@ -187,6 +187,8 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmUmov(a, ops)
 	case "msub":
 		return asmMsub(a, ops)
+	case "mrs":
+		return asmMrs(a, ops)
 	case "fadd", "fsub", "fmul", "fdiv":
 		return asmFloat3(a, mnem, ops)
 	case "fneg":
@@ -1078,6 +1080,36 @@ func asmMsub(a *Assembler, ops []string) error {
 		return err
 	}
 	a.Emit(clearSF(MSUB(rd, rn, rm, ra), is32(ops[0])))
+	return nil
+}
+
+// sysRegs maps the system-register names the backend reads to their
+// op0:op1:CRn:CRm:op2 encoding. Only the counter-timer registers the
+// Darwin monotonic clock needs are listed; an unlisted name is an error
+// rather than a guessed encoding.
+var sysRegs = map[string][5]uint32{
+	"cntfrq_el0": {3, 3, 14, 0, 0},
+	"cntvct_el0": {3, 3, 14, 0, 2},
+}
+
+// asmMrs handles `mrs Xt, <sysreg>`.
+func asmMrs(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("mrs expects Xt, sysreg")
+	}
+	if is32(ops[0]) {
+		return fmt.Errorf("mrs destination must be an x register, got %q", ops[0])
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	name := strings.ToLower(strings.TrimSpace(ops[1]))
+	f, ok := sysRegs[name]
+	if !ok {
+		return fmt.Errorf("unsupported system register %q", ops[1])
+	}
+	a.Emit(MRS(rt, f[0], f[1], f[2], f[3], f[4]))
 	return nil
 }
 
