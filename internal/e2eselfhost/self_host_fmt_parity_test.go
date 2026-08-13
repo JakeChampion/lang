@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	goparser "github.com/jakechampion/lang/internal/parser"
@@ -36,11 +37,12 @@ import (
 // node and the printer did not read it.
 //
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 196 of the 244 files under examples/ + internal/stdlib, against 176 before
-// and 0 before #6762. What still differs: `trait` declarations have no Module
-// field at all (#6773's remaining item), a method's own type parameters are
-// dropped, `else { if … }` collapses to `else if`, and the C-style / range
-// `for` desugars leak (#6770, #6771).
+// 208 of the 244 files under examples/ + internal/stdlib, against 0 before
+// #6762. What still differs: `trait` declarations have no Module field at all
+// (#6773's remaining item), `else { if … }` collapses to `else if` (#6779), and
+// an ARROW lambda — native reprints `() => e` as `function(): T { return e; }`,
+// filling in a return type from the callee's signature that the self-host
+// printer has no way to know.
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -292,6 +294,59 @@ pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
 return None;
 }
 `},
+	// The rest of the loop family. The C-style form is #6771's, covered by the
+	// `c-style-for` cases below; these are the ones with no NATIVE node (#6770),
+	// where native wrote its own expansion — `__range_hi_1`, `__foreach_iter_1`,
+	// the map iterator's cursor calls — back over the user's source.
+	{"for-range", `function hi(): i32 {
+  return 4;
+}
+
+function main(): i32 {
+  var t: i32 = 0;
+  for i in 0..4 {
+    t = t + i;
+  }
+  for j in 0..=4 {
+    t = t + j;
+  }
+  for k in 1..hi() {
+    t = t + k;
+  }
+  return t;
+}
+`},
+	{"for-array-and-map", `function main(m: map[string, i32], a: i32[]): i32 {
+  var t: i32 = 0;
+  for x in a {
+    t = t + x;
+  }
+  for (k, v) in m {
+    t = t + v + k.len();
+  }
+  return t;
+}
+`},
+	// A loop label and the `break` / `continue` naming it are one fact written
+	// twice: dropping either half retargets the jump at the innermost loop, so
+	// the reformatted program leaves a different loop than the one written.
+	{"loop-labels", `function main(a: i32[]): i32 {
+  var t: i32 = 0;
+  outer: while (t < 10) {
+    inner: for (var i: i32 = 0; i < 3; i = i + 1) {
+      if (i == 2) {
+        continue outer;
+      }
+      break inner;
+    }
+    t = t + 1;
+  }
+  each: for x in a {
+    break each;
+  }
+  return t;
+}
+`},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
 function mk(x: i32, y: i32): P {
 return P { x: x, y: y };
@@ -302,6 +357,61 @@ var q: P = P { ...p, y: p.y + 1 };
 var xs: i32[] = [1, 2, 3, 4];
 var s: string = "a" + "b" + "c";
 return p.x + q.y + xs[2] + s.len();
+}
+`},
+	// #6771: the C-style `for` is desugared at parse time, so the printer sees
+	// an `if (true)` wrapping a flag-driven `while` and used to print exactly
+	// that — writing the desugar, synthesised `__forc_<line>_<col>` and all,
+	// back over the user's loop. Native keeps the loop, so comparing against it
+	// is what catches the leak; idempotence cannot, since the second pass has
+	// nothing left to desugar.
+	//
+	// All three header clauses are optional, and an omitted one takes a
+	// different path through the desugar, so each is covered: an empty init, an
+	// empty step, and a `continue` (which is the reason the desugar runs STEP
+	// at the TOP of the body rather than the bottom).
+	{"c-style-for", `function main(): i32 {
+var sum: i32 = 0;
+for (var i: i32 = 1; i <= 10; i = i + 1) {
+sum = sum + i;
+}
+return sum;
+}
+`},
+	{"c-style-for-optional-clauses", `function main(): i32 {
+var t: i32 = 0;
+var j: i32 = 0;
+for (; j < 3; j = j + 1) {
+t = t + 1;
+}
+for (var m: i32 = 0; m < 4; ) {
+m = m + 1;
+t = t + 1;
+}
+for (var n: i32 = 0; n < 5; n = n + 1) {
+if (n == 2) {
+continue;
+}
+t = t + 1;
+}
+return t;
+}
+`},
+	// The recogniser keys on the reserved `__forc_` flag name, so a hand-written
+	// block of the same SHAPE must still print as itself. Without this the
+	// reconstruction would rewrite ordinary code into a loop that never existed
+	// — the bug's mirror image.
+	{"if-true-while-is-not-a-for", `function main(): i32 {
+var acc: i32 = 0;
+if (true) {
+var q: i32 = 1;
+var r = true;
+while (true) {
+acc = acc + q;
+break;
+}
+}
+return acc;
 }
 `},
 }
@@ -365,5 +475,54 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 				t.Errorf("self-host -fmt is not idempotent\n--- first ---\n%s\n--- second ---\n%s", got, got2)
 			}
 		})
+	}
+}
+
+// TestSelfHostFmtKeepsCStyleFor states the property #6771 names, independently
+// of native: formatting must not write a compiler-synthesised name into the
+// user's source.
+//
+// The parity cases above catch the leak by comparing against native, which is
+// the stronger check while native is right. This one survives native
+// regressing — and it is the assertion a reader of #6771 would write, since
+// `__forc_` appearing in formatted output is the bug, whatever native does.
+// #6770 is the same class on native's side, for the range form.
+func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("CLI driver test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	const src = `function main(): i32 {
+  var sum: i32 = 0;
+  for (var i: i32 = 1; i <= 10; i = i + 1) {
+    sum = sum + i;
+  }
+  return sum;
+}
+`
+	path := filepath.Join(dir, "keep_c_for.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(fernBin, "-fmt", path).Output()
+	if err != nil {
+		t.Fatalf("self-host -fmt: %v", err)
+	}
+	got := string(out)
+	if strings.Contains(got, "__forc_") {
+		t.Errorf("formatted output leaks the desugar's synthesised flag:\n%s", got)
+	}
+	if !strings.Contains(got, "for (var i: i32 = 1; i <= 10; i = i + 1)") {
+		t.Errorf("the C-style for header did not survive formatting:\n%s", got)
+	}
+	// Source preservation is the point, so the formatted file must still be the
+	// same program: `-fmt` is advertised as a round-trip, and a rewritten loop
+	// that happens to compute the same thing is still a rewritten loop.
+	if got != src {
+		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", src, got)
 	}
 }

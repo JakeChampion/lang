@@ -2304,6 +2304,12 @@ type Stmt interface {
 type Block struct {
 	P     Position
 	Stmts []Stmt
+	// Sugar records the `for … in …` loop this Block is the desugar of, so
+	// the formatter reprints the loop the user wrote instead of the lowered
+	// index loop and its synthetic bindings. Nil on every other Block, and
+	// read by the printer only — the walk deliberately skips it, since its
+	// Body is the same node the lowered loop already carries.
+	Sugar *ForEach
 }
 type If struct {
 	P    Position
@@ -2381,6 +2387,15 @@ type ForEach struct {
 	Iter   Expr
 	Body   Stmt
 	Label  string
+	// RangeHigh marks the range form `for i in LOW..HIGH`: Iter is LOW and
+	// RangeHigh the bound, with RangeIncl selecting `..=`. That form is
+	// desugared at parse time, so a ForEach carrying it exists only as a
+	// Block's Sugar.
+	RangeHigh Expr
+	RangeIncl bool
+	// Var2 is the value binder of the map form `for (K, V) in m` — Var is
+	// the key. Empty for every other form.
+	Var2 string
 }
 
 // DesugarForEachArray lowers a ForEach over an array/string/slice to the
@@ -2422,7 +2437,7 @@ func DesugarForEachArray(fe *ForEach) *Block {
 		Body:  &Block{P: kw, Stmts: innerStmts},
 		Label: fe.Label,
 	}
-	return &Block{P: kw, Stmts: []Stmt{declIter, declLen, declIdx, forLoop}}
+	return &Block{P: kw, Stmts: []Stmt{declIter, declLen, declIdx, forLoop}, Sugar: fe}
 }
 
 // StreamElemKind returns the canonical kind string for a scalar stream element
@@ -2505,7 +2520,7 @@ func DesugarForEachStream(fe *ForEach, elemType Type) *Block {
 		Label: fe.Label,
 	}
 	drop := &ExprStmt{P: kw, Expr: &Call{P: kw, Callee: mkIdent("__stream_drop"), Args: []Expr{mkIdent(cName)}}}
-	return &Block{P: kw, Stmts: []Stmt{declC, loop, drop}}
+	return &Block{P: kw, Stmts: []Stmt{declC, loop, drop}, Sugar: fe}
 }
 
 // Break / Continue carry an optional Label naming an enclosing labeled

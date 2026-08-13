@@ -30,6 +30,13 @@ var labeledBreakIRCases = []struct {
 	{"continue-outer", `function main(): i32 { var i = 0; var c = 0; outer: while (i < 3) { i = i + 1; var j = 0; while (j < 3) { j = j + 1; if (j == 1) { continue outer; } c = c + 1; } } return c; }`},
 	// labeled for loops.
 	{"labeled-for-break", `function main(): i32 { var c = 0; outer: for i in 0..3 { for j in 0..3 { c = c + 1; if (j == 1) { break outer; } } } return c; }`},
+	// A labeled C-style `for`. The Stmt union has no node for it — the parser
+	// desugars it to `if (true) { INIT; var __forc_L_C = true; while (true)
+	// { … } }` — so the label has to land on the while inside that scoping if,
+	// not on the if. It did not, so the name named no loop and `break outer`
+	// left the INNER loop instead: the same program, one exit level short.
+	{"labeled-c-for-break", `function main(): i32 { var c = 0; outer: for (var i = 0; i < 3; i = i + 1) { for j in 0..3 { c = c + 1; if (j == 1) { break outer; } } } return c; }`},
+	{"labeled-c-for-continue", `function main(): i32 { var c = 0; outer: for (var i = 0; i < 3; i = i + 1) { for j in 0..3 { c = c + 1; if (j == 0) { continue outer; } } } return c; }`},
 	// triple nesting, continue the MIDDLE loop (depth 1 from the innermost).
 	{"triple-continue-mid", `function main(): i32 { var c = 0; mid: for i in 0..3 { for j in 0..3 { for k in 0..3 { c = c + 1; if (k == 0) { continue mid; } } } } return c; }`},
 	// labeled break out of a match arm inside the inner loop (exercises the

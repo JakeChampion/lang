@@ -3173,7 +3173,9 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 			Body:  body,
 			Label: label,
 		}
-		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}}, nil
+		sugar := &ast.ForEach{P: kw.Pos, ID: rid, Var: nameTok.Text, VarPos: nameTok.Pos,
+			Iter: expr, RangeHigh: high, RangeIncl: inclusive, Body: body, Label: label}
+		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}, Sugar: sugar}, nil
 	}
 	body, err := p.parseStmt()
 	if err != nil {
@@ -3415,6 +3417,8 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, e
 	return &ast.Block{
 		P:     kw.Pos,
 		Stmts: []ast.Stmt{declIter, forLoop},
+		Sugar: &ast.ForEach{P: kw.Pos, ID: id, Var: keyTok.Text, VarPos: keyTok.Pos,
+			Var2: valTok.Text, Iter: expr, Body: body, Label: label},
 	}, nil
 }
 

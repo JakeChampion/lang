@@ -230,6 +230,74 @@ func TestFormatForLoop(t *testing.T) {
 	}
 }
 
+// Every `for … in …` surface form reprints as itself rather than as its
+// parse-time desugar (#6770). The desugar writes compiler-synthesised names
+// (`__range_hi_1`, `__foreach_iter_1`) into the block the user wrote, so
+// `-fmt -w` made them permanent and changed what is in scope there.
+//
+// Idempotence is the wrong property to test for this: format → parse →
+// format is a fixed point on the leaked desugar too, because the second pass
+// has nothing left to desugar. What has to hold is source preservation, so
+// each case asserts the formatted text against the input.
+func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
+	for _, tc := range []struct{ name, loop string }{
+		{"range", "for i in 0..4 {\n    t = t + i;\n  }"},
+		{"range-inclusive", "for i in 0..=4 {\n    t = t + i;\n  }"},
+		{"range-call-bound", "for i in lo()..hi() {\n    t = t + i;\n  }"},
+		{"array", "for x in a {\n    t = t + x;\n  }"},
+		{"labelled-array", "each: for x in a {\n    break each;\n  }"},
+		{"nested", "for x in a {\n    for y in a {\n      t = t + x * y;\n    }\n  }"},
+	} {
+		src := "function lo(): i32 {\n  return 0;\n}\n\nfunction hi(): i32 {\n  return 4;\n}\n\nfunction f(a: i32[]): i32 {\n  var t: i32 = 0;\n  " +
+			tc.loop + "\n  return t;\n}\n"
+		if got := formatSrc(t, src); got != src {
+			t.Errorf("%s: formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, src)
+		}
+	}
+}
+
+// The map form binds two names through one iterator, so losing the sugar
+// leaves `__foreach_iter_1.key()` / `.value()` calls in the source.
+func TestFormatMapForEachKeepsItsSugar(t *testing.T) {
+	src := `function f(m: map[string, i32]): i32 {
+  var t: i32 = 0;
+  for (k, v) in m {
+    t = t + v + k.len();
+  }
+  return t;
+}
+`
+	if got := formatSrc(t, src); got != src {
+		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+}
+
+// A loop label and the `break` / `continue` that target it are the same
+// fact written twice; dropping either half silently retargets the jump to
+// the innermost loop.
+func TestFormatKeepsLoopLabels(t *testing.T) {
+	src := `function f(a: i32[]): i32 {
+  var t: i32 = 0;
+  outer: while (t < 10) {
+    inner: for (var i: i32 = 0; i < 3; i = i + 1) {
+      if (i == 2) {
+        continue outer;
+      }
+      break inner;
+    }
+    t = t + 1;
+  }
+  spin: loop {
+    break spin;
+  }
+  return t;
+}
+`
+	if got := formatSrc(t, src); got != src {
+		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+}
+
 // Format → parse → Format is byte-stable: a second pass produces
 // identical output. Idempotence is the contract every formatter
 // honours so editors can run it on every save without churn.

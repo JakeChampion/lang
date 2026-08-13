@@ -550,6 +550,25 @@ function with_loop_label(st: Stmt, label: string): Stmt {
     match (st) {
         StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line }; },
+        StmtIf(f) => {
+            // A C-style `for` desugars to `if (true) { INIT; var __forc_…;
+            // while (true) { … } }` (parse_for_stmt), so the source label
+            // belongs to that inner while — without this a `break outer`
+            // inside the loop finds no loop carrying the name.
+            var n: i32 = f.then_body.len();
+            if (n == 0) { return st; }
+            match (f.then_body[n - 1]) {
+                StmtWhile(w2) => {
+                    var relabelled: Stmt[] = [];
+                    var i: i32 = 0;
+                    while (i < n - 1) { relabelled = relabelled.append(f.then_body[i]); i = i + 1; }
+                    relabelled = relabelled.append(StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line });
+                    return StmtIf { cond: f.cond, then_body: relabelled, else_body: f.else_body, line: f.line };
+                },
+                _ => { return st; }
+            }
+            return st;
+        },
         _ => { return st; }
     }
     return st;
