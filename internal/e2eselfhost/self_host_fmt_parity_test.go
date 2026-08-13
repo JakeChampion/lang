@@ -370,6 +370,51 @@ return p.x + q.y + xs[2] + s.len();
 	// different path through the desugar, so each is covered: an empty init, an
 	// empty step, and a `continue` (which is the reason the desugar runs STEP
 	// at the TOP of the body rather than the bottom).
+	// #6779: `else if` and `else { if … }` parse to the same one-element
+	// else_body, and the printer rendered every such body as a chain — so the
+	// block form was rewritten into the chained one. The reverse never
+	// happened, which is why only one direction is asserted by construction:
+	// both spellings must come back as they were written.
+	//
+	// `indent-nesting` above has an if/else but no NESTED else, which is why
+	// nothing caught this. The third function is the case that is not merely
+	// cosmetic: a binding declared before the inner `if` is scoped to the else
+	// block, and the collapse has nowhere to put it.
+	{"else-block-vs-else-if", `function f(c: i32): i32 {
+  if (c == 1) {
+    return 1;
+  } else {
+    if (c == 2) {
+      return 2;
+    }
+  }
+  return 0;
+}
+
+function g(c: i32): i32 {
+  if (c == 1) {
+    return 1;
+  } else if (c == 2) {
+    return 2;
+  } else if (c == 3) {
+    return 3;
+  } else {
+    return 4;
+  }
+}
+
+function h(c: i32): i32 {
+  if (c == 1) {
+    return 1;
+  } else {
+    var x: i32 = c + 1;
+    if (x == 3) {
+      return 2;
+    }
+  }
+  return 0;
+}
+`},
 	{"c-style-for", `function main(): i32 {
 var sum: i32 = 0;
 for (var i: i32 = 1; i <= 10; i = i + 1) {

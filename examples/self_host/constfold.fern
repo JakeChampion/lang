@@ -241,8 +241,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
                 cond: fold_expr(ifs.cond),
                 then_body: fold_block(ifs.then_body),
                 else_body: fold_block(ifs.else_body),
-                line: ifs.line
-            };
+                line: ifs.line, else_chained: ifs.else_chained };
         },
         parser.StmtWhile(w) => {
             return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line };

@@ -512,8 +512,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
                 cond: rewrite_expr(f.cond, ctx),
                 then_body: rewrite_block(f.then_body, ctx),
                 else_body: rewrite_block(f.else_body, ctx),
-                line: f.line
-            };
+                line: f.line, else_chained: f.else_chained };
         },
         parser.StmtWhile(w) => {
             return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line };
