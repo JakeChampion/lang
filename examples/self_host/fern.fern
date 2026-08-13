@@ -1231,12 +1231,15 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             var mpath: string = resolve_path(ipath, from_dir, root);
             var msrc: string = "";
             var mok: boolean = false;
-            // The directory the module was read from — where ITS imports and
-            // ITS manifest live. Same as the importer's for a sibling file,
-            // different for anything reached through a manifest.
-            var mdir: string = dir_slash;
+            // The root the module's OWN imports resolve against. A module read
+            // beside the importer (or under the stdlib root) shares the
+            // importer's root — an import path is package-relative, so a
+            // module reached as `std/float` still writes `import "std/string"`
+            // for its sibling. Only crossing into another PACKAGE, through the
+            // manifest, moves the root.
+            var mdir: string = from;
             match (read_file(mpath)) {
-                Ok(s2) => { msrc = s2; mok = true; mdir = dir_of(mpath) + "/"; },
+                Ok(s2) => { msrc = s2; mok = true; },
                 Err(e) => { mok = false; },
             }
             if (!mok) {

@@ -110,28 +110,19 @@ pub struct Resolved { src: string, dir: string, ok: boolean }
 
 function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false }; }
 
-// res_read reads `<dir><rel>.fern` and reports the directory it came from —
-// `dir` plus any directory part of `rel`, so a module reached as `std/io`
-// resolves its own siblings under `<dir>std/`.
+// res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
+// resolve against, which is `dir` — not the sub-directory the file happens to
+// sit in. An import path is relative to the package root, so `std/float`
+// reaching `<dir>std/float.fern` still writes `import "std/string"` for its
+// sibling, and resolving that against `<dir>std/` would look for
+// `<dir>std/std/string.fern`. The root changes only when resolution crosses
+// into another PACKAGE, which is what the manifest arms return.
 function res_read(dir: string, rel: string): Resolved {
     match (try_read(dir, rel)) {
-        Some(s) => { return Resolved { src: s, dir: dir_part(dir, rel), ok: true }; },
+        Some(s) => { return Resolved { src: s, dir: dir, ok: true }; },
         None => { return res_none(); },
     }
     return res_none();
-}
-
-// dir_part appends `rel`'s directory component to `dir`: ("/a/", "std/io") →
-// "/a/std/", ("/a/", "io") → "/a/".
-function dir_part(dir: string, rel: string): string {
-    var cut: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i < rel.len()) {
-        if (rel[i] == 47) { cut = i; }   // '/'
-        i = i + 1;
-    }
-    if (cut < 0) { return dir; }
-    return dir + rel[0:cut + 1] + "";
 }
 
 // resolve_module_src finds the source for import `path`, discarding the
