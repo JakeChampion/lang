@@ -231,20 +231,21 @@ function fold_unary(op: string, operand: parser.Expr): parser.Expr {
 
 function fold_stmt(st: parser.Stmt): parser.Stmt {
     match (st) {
-        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error }; },
+        parser.StmtDefer(d) => { return parser.StmtDefer { action: fold_stmt(d.action), on_error: d.on_error, line: d.line }; },
         parser.StmtVar(v) => { return parser.StmtVar { name: v.name, type_name: v.type_name, init: fold_expr(v.init), line: v.line, col: v.col, is_str: v.is_str }; },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: fold_expr(r.value), line: r.line, col: r.col }; },
-        parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value) }; },
+        parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value), line: x.line }; },
         parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         parser.StmtIf(ifs) => {
             return parser.StmtIf {
                 cond: fold_expr(ifs.cond),
                 then_body: fold_block(ifs.then_body),
-                else_body: fold_block(ifs.else_body)
+                else_body: fold_block(ifs.else_body),
+                line: ifs.line
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label };
+            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line };
         },
         parser.StmtMatch(m) => {
             var arms: parser.MatchArm[] = [];
@@ -256,7 +257,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
             return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
         parser.StmtFor(f) => {
-            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label };
+            return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label, line: f.line };
         },
         parser.StmtBreak(_) => { return st; },
         parser.StmtContinue(_) => { return st; },

@@ -135,17 +135,17 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // are checker-only metadata).
 pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean }
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
-pub struct StmtExpr { value: Expr }
+pub struct StmtExpr { value: Expr, line: i32 }
 // StmtIf models `if (cond) { then... } else { else... }`. else_body
 // is empty (`[]`) when the source omits the `else` branch; the
 // checker / interp branch on `len(else_body) == 0` rather than a
 // separate `has_else` flag.
-pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[] }
+pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32 }
 // StmtWhile models `while (cond) { body... }`. The body executes
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
 // short-circuits an if-branch.
-pub struct StmtWhile { cond: Expr, body: Stmt[], label: string }
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32 }
 // StmtAssign models a re-assignment to an existing var: `x = expr;`.
 // The target is an ident name — full lvalue syntax (field /
 // index / tuple) is a later port milestone. The checker verifies
@@ -198,7 +198,7 @@ pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, o
 // loop binds `var_name` to each element in turn. break /
 // continue inside the body aren't modeled yet — a future
 // slice can add them as StmtBreak / StmtContinue.
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string }
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32 }
 // StmtBreak / StmtContinue model `break;` and `continue;`. The
 // tag fields are placeholder payload — variants need a shape
 // in the union and these stmts have no other state. The
@@ -217,7 +217,7 @@ pub struct StmtUnknown { kind: string }
 // `on_error` is 1 for an `errdefer` — cleanup that runs only on an error
 // exit (a `return` of a None/Err value), not on success or falloff. 0 for
 // a plain `defer`. lower_defers schedules the two kinds at the right exits.
-pub struct StmtDefer { action: Stmt, on_error: i32 }
+pub struct StmtDefer { action: Stmt, on_error: i32, line: i32 }
 
 pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
               | StmtAssign | StmtMatch | StmtFor
@@ -317,7 +317,7 @@ pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is
 // bundled), and the bundler reads the names to build the re-export table
 // that redirects a consumer's `facade.name` to the original module's
 // mangled symbol. See flatten.bundle / docs/PRELUDE-TO-MODULES.md.
-pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string }
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32 }
 
 // warn_unresolved_imports prints a stderr diagnostic when `mod` declares imports
 // that the CALLER has no module loader to resolve, and reports whether it did.
@@ -532,15 +532,15 @@ function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i
 function s_return(value: Expr): Stmt { return StmtReturn { value: value, line: 0, col: 0 }; }
 // s_return_at carries the `return` keyword position so E002 / E012 point at it.
 function s_return_at(value: Expr, line: i32, col: i32): Stmt { return StmtReturn { value: value, line: line, col: col }; }
-function s_expr(value: Expr): Stmt { return StmtExpr { value: value }; }
+function s_expr(value: Expr): Stmt { return StmtExpr { value: value, line: 0 }; }
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
-    return StmtIf { cond: cond, then_body: then_body, else_body: else_body };
+    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0 };
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
-    return StmtWhile { cond: cond, body: body, label: "" };
+    return StmtWhile { cond: cond, body: body, label: "", line: 0 };
 }
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
-    return StmtFor { var_name: var_name, iter: iter, body: body, label: "" };
+    return StmtFor { var_name: var_name, iter: iter, body: body, label: "", line: 0 };
 }
 // with_loop_label stamps a parsed loop label onto a freshly-built while/for loop
 // (a no-op for the empty label or a non-loop stmt). `loop`/for-range parse helpers
@@ -548,8 +548,8 @@ function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
 function with_loop_label(st: Stmt, label: string): Stmt {
     if (label.len() == 0) { return st; }
     match (st) {
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line }; },
         _ => { return st; }
     }
     return st;
@@ -627,13 +627,13 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             }
         },
         StmtIf(f) => {
-            return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
+            return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b), line: f.line };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label };
+            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label };
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label, line: fr.line };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -798,8 +798,8 @@ function p_variant_n(type_name: string, prefix: string, n: i32): Pattern {
 }
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
-function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0 }; }
-function s_errdefer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 1 }; }
+function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0, line: 0 }; }
+function s_errdefer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 1, line: 0 }; }
 
 // label_depth returns the relative loop depth of `name` in the enclosing-loop
 // label stack (the last entry is the innermost loop), or -1 if absent. Depth 0 is
@@ -837,13 +837,13 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label };
+            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label };
+            return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
         },
         StmtIf(f) => {
-            return StmtIf { cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
+            return StmtIf { cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels), line: f.line };
         },
         StmtMatch(m) => {
             var arms2: MatchArm[] = [];
@@ -856,7 +856,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
         },
         StmtDefer(dd) => {
-            return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error };
+            return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error, line: dd.line };
         },
         _ => { return st; }
     }
@@ -4183,7 +4183,33 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
     return (s_for(fvar, iter_expr, fb_body), p);
 }
 
+// with_stmt_line stamps the source line a statement STARTS on. Five Stmt kinds
+// grew the field for the formatter, which places a comment by comparing its
+// line against the line of the statement that follows it (#6769); the other
+// kinds already carried a position from their own construction, and a
+// synthesised statement keeps the 0 its literal gives it — the same
+// "0 cannot name anything the user wrote" convention print_module already uses
+// to skip `@derive`'s methods.
+function with_stmt_line(st: Stmt, line: i32): Stmt {
+    match (st) {
+        StmtExpr(x) => { return StmtExpr { value: x.value, line: line }; },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: f.then_body, else_body: f.else_body, line: line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line }; },
+        StmtFor(fo) => { return StmtFor { var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line }; },
+        StmtDefer(d) => { return StmtDefer { action: d.action, on_error: d.on_error, line: line }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
+// parse_stmt parses one statement and stamps the line it began on.
 function parse_stmt(p: Par): (Stmt, Par) {
+    var stmt_line: i32 = p.peek_line();
+    var (parsed, after) = parse_stmt_at(p);
+    return (with_stmt_line(parsed, stmt_line), after);
+}
+
+function parse_stmt_at(p: Par): (Stmt, Par) {
     // A bare block `{ ... }` in statement position is its own scope. The
     // self-host Stmt union has no StmtBlock node, so desugar it to
     // `if (true) { ... }` — reusing the scoped if-body (the same trick
@@ -6058,6 +6084,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
 // the surrounding loop can recover.
 
 function parse_import(p: Par): (Import, Par) {
+    var imp_line: i32 = p.peek_line();
     p = p.advance();  // consume `import`
     var path: string = "";
     var t: lexer.Token = p.peek();
@@ -6077,7 +6104,7 @@ function parse_import(p: Par): (Import, Par) {
         if (alias.len() > 0) { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias }, p);
+    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line }, p);
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -6087,6 +6114,7 @@ function parse_import(p: Par): (Import, Par) {
 // consumer's `facade.name` to the target's mangled symbol. Malformed
 // input degrades to an empty re-export the caller can recover from.
 function parse_pubuse(p: Par): (Import, Par) {
+    var pu_line: i32 = p.peek_line();
     p = p.advance();  // consume `use`
     var path: string = "";
     var t: lexer.Token = p.peek();
@@ -6109,7 +6137,7 @@ function parse_pubuse(p: Par): (Import, Par) {
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "" }, p);
+    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line }, p);
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -7632,7 +7660,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
         },
         StmtExpr(x) => {
             var xv: RExpr = mono_expr(x.value, env, funcs, ins);
-            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
         },
         StmtAssign(a) => {
             var av: RExpr = mono_expr(a.value, env, funcs, ins);
@@ -7642,18 +7670,18 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
             var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
             var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0 }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
             var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins, ret_ty);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
@@ -7844,11 +7872,11 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
         match (st) {
             StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
-            StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts) }); },
+            StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label }); },
-            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts), line: f.line }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
@@ -7924,11 +7952,11 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
         match (st) {
             StmtVar(v) => { out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str }); },
             StmtReturn(r) => { out = out.append(StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
-            StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang) }); },
+            StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang) }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label }); },
-            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label }); },
+            StmtIf(f) => { out = out.append(StmtIf { cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang), line: f.line }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label, line: w.line }); },
+            StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
@@ -8877,7 +8905,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         },
         StmtExpr(x) => {
             var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
-            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
         },
         StmtAssign(a) => {
             var av: RExpr = ms_expr(a.value, env, gstructs, funcs, ins);
@@ -8887,18 +8915,18 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
             var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
             var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0 }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
             var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins, ret_ty);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
             var benv: MEnv = env.ebind(fr.var_name, "");
             var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins, ret_ty);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = ms_expr(m.scrutinee, env, gstructs, funcs, ins);
@@ -9970,7 +9998,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
         },
         StmtExpr(x) => {
             var xv: RExpr = me_expr(x.value, "", env, enums, structs, funcs, ins);
-            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr }, renv: env, rins2: xv.rins };
+            return RStmtOne { rstmt: StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
         },
         StmtAssign(a) => {
             var av: RExpr = me_expr(a.value, env.elook(a.target), env, enums, structs, funcs, ins);
@@ -9980,12 +10008,12 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             var cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
             var tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
             var eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0 }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
             var wb: RStmts = me_stmts(w.body, env, ret_ty, enums, structs, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = me_expr(fr.iter, "", env, enums, structs, funcs, ins);
@@ -9998,7 +10026,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             if (type_ends_arr(itty)) { elty = itty[0 : itty.len() - 2] + ""; }
             var benv: MEnv = env.ebind(fr.var_name, elty);
             var fb: RStmts = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
-            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label }, renv: env, rins2: fb.rins3 };
+            return RStmtOne { rstmt: StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line }, renv: env, rins2: fb.rins3 };
         },
         StmtMatch(m) => {
             var sv: RExpr = me_expr(m.scrutinee, "", env, enums, structs, funcs, ins);
@@ -11167,13 +11195,13 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }
                 return [ivar, hivar, s_while(e_bool(true), wbody)];
             }
-            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label }];
+            return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label, line: fr.line }];
         },
         StmtIf(f) => {
-            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body), line: f.line }];
         },
         StmtWhile(w) => {
-            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label }];
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line }];
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -11186,7 +11214,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
         },
         StmtDefer(d) => {
             var r: Stmt[] = desugar_ranges_one(d.action);
-            if (r.len() == 1) { return [StmtDefer { action: r[0], on_error: d.on_error }]; }
+            if (r.len() == 1) { return [StmtDefer { action: r[0], on_error: d.on_error, line: d.line }]; }
             return [st];
         },
         _ => { return [st]; }
@@ -11376,12 +11404,12 @@ function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
     match (st) {
         StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str }; },
         StmtReturn(r) => { return StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
-        StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs) }; },
-        StmtIf(f) => { return StmtIf { cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs) }; },
-        StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label }; },
+        StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs), line: x.line }; },
+        StmtIf(f) => { return StmtIf { cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs), line: f.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label }; },
-        StmtDefer(d) => { return StmtDefer { action: rvf_stmt(d.action, structs), on_error: d.on_error }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line }; },
+        StmtDefer(d) => { return StmtDefer { action: rvf_stmt(d.action, structs), on_error: d.on_error, line: d.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
@@ -12457,18 +12485,18 @@ function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
     match (st) {
         StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: cf_rw_expr(v.init, f, target), line: v.line, col: v.col, is_str: v.is_str }; },
         StmtReturn(r) => { return StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
-        StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target) }; },
+        StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        StmtIf(fst) => { return StmtIf { cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target) }; },
-        StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label }; },
+        StmtIf(fst) => { return StmtIf { cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target), line: fst.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label, line: w.line }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) { arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard }); i = i + 1; }
             return StmtMatch { scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtDefer(d) => { return StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error }; },
+        StmtDefer(d) => { return StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
     }
     return st;
@@ -12551,9 +12579,9 @@ pub function elide_len_bounded_body(stmts: Stmt[]): Stmt[] {
 // lifted to their own FuncDecls before lower_func, each processed separately).
 function elb_recurse_stmt(st: Stmt): Stmt {
     match (st) {
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label }; },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body), line: f.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
@@ -12564,7 +12592,7 @@ function elb_recurse_stmt(st: Stmt): Stmt {
             }
             return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
-        StmtDefer(d) => { return StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error }; },
+        StmtDefer(d) => { return StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
     }
     return st;
@@ -12575,11 +12603,11 @@ function elb_recurse_stmt(st: Stmt): Stmt {
 // statement immediately before the loop (the source of `i`'s start value).
 function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
     var m: LenLoopMatch = elb_loop_match(w.cond);
-    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
-    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
-    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
-    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
-    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label }; }
+    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
+    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
+    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
+    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
+    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
     var nb: Stmt[] = [];
     var i: i32 = 0;
     var stop: boolean = false;
@@ -12590,7 +12618,7 @@ function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
         nb = nb.append(st);
         i = i + 1;
     }
-    return StmtWhile { cond: w.cond, body: nb, label: w.label };
+    return StmtWhile { cond: w.cond, body: nb, label: w.label, line: w.line };
 }
 
 // elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
@@ -12783,11 +12811,11 @@ function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
     match (st) {
         StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str }; },
         StmtReturn(r) => { return StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
-        StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr) }; },
+        StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) }; },
-        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label }; },
+        StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr), line: f.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
@@ -13173,9 +13201,9 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
             }
             return st;
         },
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs) }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label }; },
-        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fnv_rewrite_block(fr.body, whole, funcs, structs), label: fr.label }; },
+        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs), line: f.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label, line: w.line }; },
+        StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fnv_rewrite_block(fr.body, whole, funcs, structs), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var ai: i32 = 0;
@@ -15196,15 +15224,15 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
             var val: Expr = settle_to_name(settle_expr(a.value, funcs, structs), settle_local_type(names, types, a.target));
             return StmtAssign { target: a.target, value: val, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
-        StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, funcs, structs) }; },
+        StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, funcs, structs), line: x.line }; },
         StmtIf(f) => {
-            return StmtIf { cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs) };
+            return StmtIf { cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs), line: f.line };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label };
+            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label };
+            return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label, line: fr.line };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -15217,7 +15245,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
             return StmtMatch { scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms, line: m.line, col: m.col, origin: m.origin };
         },
         StmtDefer(dd) => {
-            return StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, funcs, structs), on_error: dd.on_error };
+            return StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, funcs, structs), on_error: dd.on_error, line: dd.line };
         },
         _ => { return st; }
     }

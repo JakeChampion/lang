@@ -59,6 +59,28 @@ import "./wasm_ir";
 import "./checker";
 import "./interp";
 import "./printer";
+
+// blank_line_map marks the 1-based source lines that hold nothing but
+// whitespace, indexed by line number so the formatter can ask about one in
+// constant time. Element 0 is unused (there is no line 0).
+function blank_line_map(src: string): boolean[] {
+    var out: boolean[] = [false];
+    var i: i32 = 0;
+    var n: i32 = src.len();
+    var blank: boolean = true;
+    while (i < n) {
+        var b: i32 = src[i] as i32;
+        if (b == 10) {
+            out = out.append(blank);
+            blank = true;
+        } else if (b != 32 && b != 9 && b != 13) {
+            blank = false;
+        }
+        i = i + 1;
+    }
+    out = out.append(blank);
+    return out;
+}
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
@@ -1858,7 +1880,11 @@ function run(): i32 {
     // -fmt is per-file: format the entry source and emit it, without
     // loading transitive imports (formatting one file never needs them).
     if (mode_fmt) {
-        var formatted: string = printer.print_module(entry_mod);
+        // Formatting is the one mode that needs the trivia the compile path
+        // discards: `tokenize_full` keeps the `//` comments beside the tokens,
+        // and the blank-line map is read straight off the source (#6769).
+        var flex: lexer.LexResult = lexer.tokenize_full(esrc);
+        var formatted: string = printer.format_module(parser.parse_module(flex.tokens), flex.comments, blank_line_map(esrc));
         if (out_path.len() > 0) {
             match (write_file(out_path, formatted)) {
                 Err(e) => {

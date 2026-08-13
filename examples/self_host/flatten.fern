@@ -502,7 +502,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             return parser.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
         },
         parser.StmtExpr(x) => {
-            return parser.StmtExpr { value: rewrite_expr(x.value, ctx) };
+            return parser.StmtExpr { value: rewrite_expr(x.value, ctx), line: x.line };
         },
         parser.StmtAssign(a) => {
             return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
@@ -511,18 +511,20 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             return parser.StmtIf {
                 cond: rewrite_expr(f.cond, ctx),
                 then_body: rewrite_block(f.then_body, ctx),
-                else_body: rewrite_block(f.else_body, ctx)
+                else_body: rewrite_block(f.else_body, ctx),
+                line: f.line
             };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label };
+            return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line };
         },
         parser.StmtFor(f) => {
             return parser.StmtFor {
                 var_name: f.var_name,
                 iter: rewrite_expr(f.iter, ctx),
                 body: rewrite_block(f.body, ctx),
-                label: f.label
+                label: f.label,
+                line: f.line
             };
         },
         parser.StmtMatch(m) => {
@@ -537,7 +539,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
         // Rewrite the deferred action's cross-module references before
         // lower_defers (module_with_builtins) schedules it at the exits.
         parser.StmtDefer(d) => {
-            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error };
+            return parser.StmtDefer { action: rewrite_stmt(d.action, ctx), on_error: d.on_error, line: d.line };
         },
         _ => { return st; }
     }

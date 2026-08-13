@@ -1524,7 +1524,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                     // => return …, Err(e) => return … }`) fail build_func.
                     chain = then_body;
                 } else {
-                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain };
+                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain, line: 0 };
                     chain = [theif];
                 }
             }
@@ -1646,7 +1646,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var bi: i32 = 0;
     while (bi < fr.body.len()) { wbody = wbody.append(fr.body[bi]); bi = bi + 1; }
 
-    var lp: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody, label: "" };
+    var lp: parser.Stmt = parser.StmtWhile { cond: guard, body: wbody, label: "", line: 0 };
 
     var chain: parser.Stmt[] = [decl_arr, decl_i, lp];
     return build_stmts(chain, s);
