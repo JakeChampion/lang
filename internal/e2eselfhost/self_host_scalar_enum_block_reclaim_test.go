@@ -217,6 +217,145 @@ function main(): i32 {
 		}
 	})
 
+	// --- NO-consuming-match half (#6758 follow-up) --------------------------
+	//
+	// Every case above matches its candidate, and that is what freed it:
+	// consumed_scalar_enum_frees only ever claims a name whose own statement
+	// list also MATCHES it. A scalar-enum local that is never matched — read
+	// through a field, passed to a borrowing helper, or simply built and
+	// dropped — was therefore reclaimed NOWHERE and leaked its 40-byte box per
+	// iteration, unbounded, where native is flat at 0.
+	//
+	// This is the scalar sibling of the gap #6606 closed for the rc-payload
+	// half, and the easier one: with no rc payload there is nothing under the
+	// box to walk, so both the rebind and the scope-exit sweep release it with
+	// a plain shallow dec. It is credited "SCENUMS:".
+
+	t.Run("no_match_loop_local", func(t *testing.T) {
+		// Built and never matched. Before the credit this leaked one box per
+		// iteration; the value is read back so a release landing under a live
+		// reference shows up as a wrong exit code rather than only as bytes.
+		src := `enum M { A(i32), B(i32) }
+function tag(m: M): i32 {
+    match (m) { A(_) => { return 1; }, B(_) => { return 2; } }
+    return 0;
+}
+function round(n: i32): i32 {
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 4) {
+        var m: M = A(k + n);
+        acc = acc + tag(m);
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_loop", src, 4)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a scalar-enum local with NO consuming "+
+				"match is claimed by neither the match free nor, before this, any "+
+				"sweep; the leak scales with the iteration count", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — must balance exactly", allocs, frees)
+		}
+	})
+
+	t.Run("no_match_never_read", func(t *testing.T) {
+		// The degenerate shape: constructed, never used at all. Nothing but a
+		// sweep can reclaim it.
+		src := `enum M { A(i32), B(i32) }
+function round(n: i32): i32 {
+    var k: i32 = 0;
+    while (k < 4) {
+        var m: M = A(k + n);
+        k = k + 1;
+    }
+    return k;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_unused", src, 4)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d", allocs, frees)
+		}
+	})
+
+	t.Run("no_match_rebound", func(t *testing.T) {
+		// Rebound with no match anywhere: the rebind must release the box it
+		// supersedes AND the sweep must take the final one. Getting only one of
+		// the two is the n-1-of-n signature.
+		//
+		// `tag` here must not BIND the payload: a callee that returns what it
+		// pulled out of the box is not borrowable, so the name is refused and
+		// the shape leaks — correct conservatism, and the reason this case reads
+		// the tag rather than the value.
+		src := `enum M { A(i32), B(i32) }
+function tag(m: M): i32 {
+    match (m) { A(_) => { return 1; }, B(_) => { return 2; } }
+    return 0;
+}
+function round(n: i32): i32 {
+    var m: M = A(n);
+    var i: i32 = 0;
+    while (i < 4) { if (i % 2 == 0) { m = B(i); } else { m = A(i); } i = i + 1; }
+    return tag(m);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_rebound", src, 1)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — every rebind releases the box it overwrites "+
+				"and the sweep takes the last one", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	t.Run("escaping_local_is_refused", func(t *testing.T) {
+		// NEGATIVE: the local ESCAPES (it is returned), so it must NOT be
+		// credited — a sweep here would free a box the caller still holds. The
+		// value is read back in main, so a wrong admission is a wrong answer or
+		// an over-release, not just a byte count.
+		src := `enum M { A(i32), B(i32) }
+function mk(n: i32): M {
+    var m: M = A(n);
+    return m;
+}
+function tag(m: M): i32 {
+    match (m) { A(x) => { return x; }, B(y) => { return y + 1; } }
+    return 0;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { var e: M = mk(r); t = t + tag(e); r = r + 1; }
+    return t / 100;
+}`
+		allocs, _, _ := counts(t, "scalar_enum_escape", src, 49)
+		if allocs == 0 {
+			t.Fatal("probe allocated nothing")
+		}
+	})
+
 	// --- rc-PAYLOAD half (#6127) --------------------------------------------
 	//
 	// consumed_rcpayload_enum_frees was the last member of this family without a

@@ -949,6 +949,15 @@ function slot_name_retired(n: string): boolean {
 // assumption is what made the original note wrong once the class grew a second
 // shape.
 //
+// "SCENUMS:" is the scalar sibling admitted for the same reason RCENUMS was: an
+// all-scalar enum local with NO consuming match is claimed by neither
+// consumed_scalar_enum_frees (which only ever takes a name its own statement
+// list also matches) nor any sweep, and leaked its 40-byte box per iteration.
+// It needs no deep drop — every payload is a scalar — so one predicate serves
+// both the rebind and the sweep. It is held DISJOINT from the dyn credit at the
+// predicate: `var d: dyn Show = Add(41)` satisfies both classifiers, and letting
+// both claim it was an over-release, not a leak.
+//
 // The BARE-name struct credit (slot_is_reclaimable_struct) leaks 8800 here and
 // stays leaking, because switching it on **segfaults the gen1 self-compile**.
 // That credit is the most heavily used one in the compiler's own sources — the
@@ -15817,6 +15826,13 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     if (slot_is_reclaimable_rcenum(sb, slot)) {
         return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
     }
+    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`):
+    // the re-declaration must release the box it supersedes. A shallow dec is the
+    // whole release — every payload is a scalar — so emit_arr_store's cow-guarded
+    // do_dec branch is exactly right, the same one a scalar-tuple rebind takes.
+    if (slot_is_reclaimable_scenum(sb, slot)) {
+        return emit_arr_store(sb, slot, false, true);
+    }
     match (v.init) {
         parser.ExprTuple(dtl) => {
             if (slot_is_reclaimable_rctuple(sb, slot)) {
@@ -18154,6 +18170,12 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // payload even once the credit was granted.
     if (slot_is_reclaimable_rcenum(s, slot)) {
         return emit_enum_deep_reinit_store(se, slot, s.struct_type_of_slot(slot));
+    }
+    // The same release on the REBIND path (`m = B(i)`), for the same reason the
+    // rc half needs one: without it the assign fell through to a store with no
+    // dec and every superseded box leaked.
+    if (slot_is_reclaimable_scenum(s, slot)) {
+        return emit_arr_store(se, slot, reassign_inc, true);
     }
     // A reclaimable SCALAR-TUPLE rebind (`p = (i, i + 1)`, credited "TUPREBIND:"):
     // release the box this store supersedes. emit_arr_store's do_dec branch is
@@ -21798,6 +21820,16 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rej = rej + 1;
     }
+    // Sweepable ALL-SCALAR enum locals ("SCENUMS:"): the final value's box, freed
+    // with the same shallow dec the rebind uses. emit_scalar_enum_box_free zeroes
+    // the slot afterwards, so a second sweep on another return edge is a no-op.
+    var sej: i32 = st.n_params;
+    while (sej < st.locals.len()) {
+        if (!slot_list_has(keeps, sej) && slot_is_reclaimable_scenum(st, sej)) {
+            st = emit_scalar_enum_box_free(st, sej);
+        }
+        sej = sej + 1;
+    }
     // Reclaimable Option[<tuple-with-array>] locals (#4365): deep-free the final
     // live box (Some payload tuple + option box) via the same inline path the
     // loop-rebind uses. An opt_type slot is NOT is_arr, so it takes a dedicated
@@ -22689,7 +22721,7 @@ function arr_slots_of(s: LowerState): i32[] {
         // the exit dec-sweep / loop-rebind release never decs an uninitialised
         // (e.g. untaken-branch) slot — __fern_arr_dec null-guards, but the slot
         // must hold null not stack garbage.
-        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
+        if (s.is_arr_slot(i) || slot_is_reclaimable_struct_scoped(s, i) || slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rcenum(s, i) || slot_is_reclaimable_scenum(s, i) || slot_is_reclaimable_dyn(s, i) || slot_is_reclaimable_opttup(s, i) || slot_is_reclaimable_optstruct(s, i) || slot_is_reclaimable_optarrarr(s, i) || slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i)) { out = out.append(i); }
         i = i + 1;
     }
     return out;
@@ -24179,6 +24211,52 @@ function stmt_assigns_fresh_rcenum(st: parser.Stmt, name: string, owner: string,
         parser.StmtDefer(d) => { return stmt_assigns_fresh_rcenum(d.action, name, owner, structs, opt_fresh_ret); },
         _ => { return true; }
     }
+}
+
+// collect_fresh_scenum_names: all-scalar ENUM locals with NO consuming match in
+// their block — the scalar sibling of collect_fresh_rcenum_names' "S:" half
+// (#6606). consumed_scalar_enum_frees only ever covers a name its own statement
+// list also MATCHES, so `while (i < k) { var m: M = A(i); … }` on an enum whose
+// every payload is scalar was reclaimed nowhere and leaked its 40-byte box per
+// iteration where native is flat.
+//
+// The release is a SHALLOW dec: every payload is a scalar, so there is nothing
+// under the box to walk and nothing to dangle. That makes this the easiest
+// member of the family to admit — the rc half needs a runtime variant dispatch
+// to know what to deep-drop, and this one needs none.
+//
+// Gates: a fresh sole-owner construction (fresh_scalar_enum_init), no consuming
+// match in the block (a matched name is consumed_scalar_enum_frees' candidate,
+// and crediting it here would be a second claim on a released box), a rebind
+// that always rebuilds a fresh all-scalar enum, and body_unsafe_for to prove the
+// name never escapes.
+function collect_fresh_scenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            parser.StmtVar(v) => {
+                var owner: string = fresh_scalar_enum_init(v.init, structs);
+                var rebind_ok: boolean = util.index_of_str(reassigned, v.name) < 0
+                    || all_assigns_fresh_scalar_enum(stmts, v.name, structs);
+                if (owner != "" && rebind_ok && sole_top_level_match_idx(stmts, v.name) < 0
+                        && !body_unsafe_for(stmts, v.name, borrowable)) {
+                    a = push_str_unique(a, v.name);
+                }
+            },
+            parser.StmtIf(iff) => { a = collect_fresh_scenum_names(iff.then_body, structs, borrowable, a); a = collect_fresh_scenum_names(iff.else_body, structs, borrowable, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_scenum_names(w.body, structs, borrowable, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_scenum_names(fo.body, structs, borrowable, a); },
+            parser.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = collect_fresh_scenum_names(m.arms[mi].body, structs, borrowable, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
 }
 
 function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: string[], borrowable: string[], acc: string[]): string[] {
@@ -27428,6 +27506,15 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
             out = out.append("RCENUM:" + rname);
         }
         rei = rei + 1;
+    }
+    // All-scalar ENUM locals with no consuming match ("SCENUMS:"): the shallow
+    // sibling of the "RCENUMS:" credit above. Both the loop rebind and the
+    // scope-exit sweep release the box with a plain rc-dec.
+    var scenums: string[] = collect_fresh_scenum_names(body, structs, borrowable, []);
+    var sei: i32 = 0;
+    while (sei < scenums.len()) {
+        out = out.append("SCENUMS:" + scenums[sei]);
+        sei = sei + 1;
     }
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
@@ -31614,6 +31701,29 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
     return util.index_of_str(s.reclaimable_names, "RCENUMS:" + reclaim_slot_name(s, i)) >= 0;
+}
+
+// slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
+// credited "SCENUMS:" (#6758 follow-up). Keyed on reclaim_slot_name for the same
+// reason slot_is_reclaimable_rcenum_sweep is: retire_locals renames a
+// block-scoped local on block exit, and a name-keyed credit would miss the slot
+// at the sweep and free n-1 of n.
+//
+// One predicate serves both the rebind and the sweep here, unlike the rc half,
+// because the release is the same shallow dec either way — there is no deep drop
+// whose double-claim would have to be kept apart.
+function slot_is_reclaimable_scenum(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    // A `var d: dyn Show = Add(41)` is a fresh all-scalar enum construction AND a
+    // dyn local, so it satisfies both classifiers. The dyn credit already frees
+    // that box with a shallow dec; claiming it here too is a second dec on a
+    // released box, which is an over-release the rc detector reports rather than
+    // a leak. Disjointness is enforced HERE, at the one predicate every emission
+    // site consults, rather than in the collector — the collector sees the
+    // declared type, but a future overlap need not come through one.
+    if (slot_is_reclaimable_dyn(s, i)) { return false; }
+    return util.index_of_str(s.reclaimable_names, "SCENUMS:" + reclaim_slot_name(s, i)) >= 0;
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
