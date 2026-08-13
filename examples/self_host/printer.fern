@@ -578,6 +578,7 @@ function print_struct_decl(sd: parser.StructDecl): string {
         out = out + ")\n";
     }
     if (sd.must_consume) { out = out + "@must_consume\n"; }
+    if (sd.is_pub) { out = out + "pub "; }
     out = out + "struct " + sd.name;
     // Type parameters, for the same reason a function's matter: `struct Set { xs: T[] }`
     // leaves T unbound.
@@ -667,6 +668,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
         out = out + ")\n";
     }
     if (ed.must_consume) { out = out + "@must_consume\n"; }
+    if (ed.is_pub) { out = out + "pub "; }
     out = out + "enum " + ed.name;
     if (ed.type_params.len() > 0) {
         out = out + "[";
@@ -712,7 +714,9 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
 }
 
 function print_type_alias(a: parser.TypeAlias): string {
-    var out: string = "type " + a.name + " = ";
+    var out: string = "";
+    if (a.is_pub) { out = out + "pub "; }
+    out = out + "type " + a.name + " = ";
     var i: i32 = 0;
     while (i < a.variants.len()) {
         if (i > 0) { out = out + " | "; }
@@ -801,7 +805,12 @@ pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks
         if (ei < 0) {
             kinds = kinds.append(0); idxs = idxs.append(i); lines = lines.append(mod.structs[i].line);
         } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
-            kinds = kinds.append(1); idxs = idxs.append(ei); lines = lines.append(mod.structs[i].line);
+            // The enum's own line, not the variant struct's: `parse_enum_decl`
+            // synthesises the variant records at line 0, which would sort every
+            // enum above the first real declaration in the file.
+            var eln: i32 = mod.enums[ei].line;
+            if (eln == 0) { eln = mod.structs[i].line; }
+            kinds = kinds.append(1); idxs = idxs.append(ei); lines = lines.append(eln);
         }
         i = i + 1;
     }

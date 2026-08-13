@@ -5883,7 +5883,11 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
 // is optional). Errors leave the parser at the offending token;
 // surrounding parse_module recovers via the StructDecl with
 // empty name.
-
+//
+// `is_pub` comes back false: the `pub` keyword sits before the `struct` this
+// starts at, so every caller stamps the real value. False rather than true so
+// a caller that forgets fails loudly at the use site (E-visibility on a type
+// the source did export) instead of silently disabling the rule.
 function parse_struct_decl(p: Par): (StructDecl, Par) {
     var sline: i32 = p.peek_line();
     var scol: i32 = p.peek_col();
@@ -5892,7 +5896,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: false }, p);
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -5916,7 +5920,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: false }, p);
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
@@ -5936,7 +5940,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: false }, p);
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -5954,12 +5958,12 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
         var empty: string[] = [];
-        return (TypeAlias { name: "", variants: empty, line: taline, col: tacol , is_pub: true }, p);
+        return (TypeAlias { name: "", variants: empty, line: taline, col: tacol , is_pub: false }, p);
     }
     p = p.advance();
     if (p.peek_punct() != "=") {
         var empty2: string[] = [];
-        return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol , is_pub: true }, p);
+        return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol , is_pub: false }, p);
     }
     p = p.advance();  // consume `=`
     var variants: string[] = [];
@@ -5977,7 +5981,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
         break;
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (TypeAlias { name: name, variants: variants, line: taline, col: tacol , is_pub: true }, p);
+    return (TypeAlias { name: name, variants: variants, line: taline, col: tacol , is_pub: false }, p);
 }
 
 // parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), V3 { f: U }, … }`
@@ -15315,10 +15319,9 @@ pub function parse_module(toks: lexer.Token[]): Module {
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
-        // and `pub type` all dispatch correctly. The modifier is CAPTURED for
-        // functions (stamped onto the FuncDecl below, like `async` / `fip`) so
-        // the cross-module export rule can see it; struct / type / enum
-        // visibility is not carried yet, so those stay unrestricted.
+        // and `pub type` all dispatch correctly. The modifier is CAPTURED on
+        // every declaration kind it can precede (like `async` / `fip`): the
+        // cross-module export rule reads it, and so does `-fmt`.
         var decl_pub: boolean = false;
         if (kw == "pub") {
             p = p.advance();
@@ -15337,7 +15340,8 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var (iar_iface, iar_wit, iar_is_import, iar_p) = parse_import_attr(p);
                 p = iar_p;
                 var ik: string = p.peek_keyword();
-                if (ik == "pub") { p = p.advance(); ik = p.peek_keyword(); }
+                var i_pub: boolean = decl_pub;
+                if (ik == "pub") { p = p.advance(); ik = p.peek_keyword(); i_pub = true; }
                 // `@import(iface, wit) async function …` — the Preview-3 async
                 // import. Same contextual rule as the top-level probe.
                 var i_async: boolean = false;
@@ -15346,7 +15350,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 if (ik == "function") {
                     var (ifr_func, ifr_p) = parse_func_decl(p);
                     p = ifr_p;
-                    var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async };
+                    var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async, is_pub: i_pub };
                     funcs = funcs.append(ifn);
                 } else if (p.peek_ident() == "resource") {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
@@ -15396,13 +15400,16 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 // native-valid programs.
                 p = probe.advance();  // consume `must_consume`
                 var mck: string = p.peek_keyword();
-                if (mck == "pub") { p = p.advance(); mck = p.peek_keyword(); }
+                // `pub` may sit on either side of the attribute; `decl_pub`
+                // holds the one that preceded it.
+                var mc_pub: boolean = decl_pub;
+                if (mck == "pub") { p = p.advance(); mck = p.peek_keyword(); mc_pub = true; }
                 var mco_p: Par = skip_decl_modifier(p, "opaque", "struct");
                 if (mco_p.pos != p.pos) { p = mco_p; mck = "struct"; }
                 if (mck == "struct") {
                     var (mcs_decl, mcs_p) = parse_struct_decl(p);
                     p = mcs_p;
-                    structs = structs.append(StructDecl { ...mcs_decl, must_consume: true });
+                    structs = structs.append(StructDecl { ...mcs_decl, must_consume: true, is_pub: mc_pub });
                     continue;
                 }
                 if (mck == "enum") {
@@ -15410,7 +15417,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                     var mcecol: i32 = p.peek_col();
                     var (mce_name, mce_variants, mce_type_params, mce_p) = parse_enum_decl(p);
                     p = mce_p;
-                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: true });
+                    enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: mc_pub });
                     var mcei: i32 = 0;
                     while (mcei < mce_variants.len()) {
                         structs = structs.append(mce_variants[mcei]);
@@ -15423,13 +15430,14 @@ pub function parse_module(toks: lexer.Token[]): Module {
             var (dr_derives, dr_p) = parse_derive_attr(p);
             p = dr_p;
             var dk: string = p.peek_keyword();
-            if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); }
+            var d_pub: boolean = decl_pub;
+            if (dk == "pub") { p = p.advance(); dk = p.peek_keyword(); d_pub = true; }
             var do_p: Par = skip_decl_modifier(p, "opaque", "struct");
             if (do_p.pos != p.pos) { p = do_p; dk = "struct"; }
             if (dk == "struct") {
                 var (dsr_decl, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
-                structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives, is_pub: decl_pub });
+                structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives, is_pub: d_pub });
                 funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
                 continue;
             }
@@ -15438,7 +15446,7 @@ pub function parse_module(toks: lexer.Token[]): Module {
                 var decol: i32 = p.peek_col();
                 var (denr_name, denr_variants, denr_type_params, denr_p) = parse_enum_decl(p);
                 p = denr_p;
-                enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, is_pub: decl_pub });
+                enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, is_pub: d_pub });
                 var dei: i32 = 0;
                 while (dei < denr_variants.len()) {
                     structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });

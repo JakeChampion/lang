@@ -28,12 +28,11 @@ import (
 // stamps it; the cases at the end of the list are that half's.
 //
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 176 of the 244 files under examples/ + internal/stdlib, against 0 before
+// 180 of the 244 files under examples/ + internal/stdlib, against 0 before
 // #6762. What still differs is information the PARSER does not keep, so no
 // printer can recover it: `str` is canonicalised to `string`, a function-typed
-// parameter to `fn`, `trait` declarations have no Module field at all, struct
-// visibility is not carried, and a `let (a, b) = …` destructuring loses its
-// shape. Those are filed separately.
+// parameter to `fn`, `trait` declarations have no Module field at all, and a
+// `let (a, b) = …` destructuring loses its shape (#6773).
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -180,11 +179,6 @@ function two(p: P): i32 {
 `},
 	// The modifiers and the shapes a formatter must not drop: `pub` on a
 	// function, type parameters, an aliased import, a cast, a void `return;`.
-	//
-	// The struct here is deliberately NOT `pub`: only a FuncDecl's is_pub
-	// records the source keyword, while a struct's is hardcoded true to keep it
-	// unrestricted, so printing from it would stamp `pub` onto every struct in
-	// the file. Struct visibility is parser surface, filed with the rest.
 	{"modifiers-and-shapes", `import "std/i32" as ints;
 
 struct Box[T] { item: T }
@@ -209,6 +203,52 @@ var q: P = P { ...p, y: p.y + 1 };
 var xs: i32[] = [1, 2, 3, 4];
 var s: string = "a" + "b" + "c";
 return p.x + q.y + xs[2] + s.len();
+}
+`},
+	// Visibility on the three type declarations. `pub` is not decoration: a
+	// missing one makes the type private, which the cross-module rule (#6714)
+	// rejects at every use site outside the module, and an ADDED one exports a
+	// type the author kept internal. Both halves are pinned — a printer that
+	// stamps `pub` unconditionally passes on the first two decls alone.
+	{"type-visibility", `pub struct Open { a: i32 }
+
+struct Closed { b: i32 }
+
+pub enum Reach { Near, Far }
+
+enum Hidden { Here, There }
+
+pub struct Third { c: i32 }
+
+@derive(Eq)
+pub struct Decorated { d: i32 }
+
+@must_consume
+struct Held { e: i32 }
+
+pub type Any = Open | Closed;
+
+type Some = Closed | Third;
+
+function main(): i32 {
+  var c: Closed = Closed { b: 1 };
+  return c.b;
+}
+`},
+	// Declaration ORDER, which an enum used to break: the printer positions a
+	// reconstructed enum by its first variant record, and the parser synthesises
+	// those at line 0, so every enum in a file sorted above the first real
+	// declaration. The struct before and the alias after are what catches it.
+	{"decl-order-enum-between", `struct Before { a: i32 }
+
+enum Mid { Left(i32), Right }
+
+struct Last { b: i32 }
+
+type After = Before | Last;
+
+function main(): i32 {
+  return 0;
 }
 `},
 }
