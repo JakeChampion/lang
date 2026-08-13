@@ -7163,16 +7163,19 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   recursive arm of which already shared a ctor the emitted bytes are unchanged:
   same arity, and the per-arm ctor resolves to the same name.
 
-  **Deliberately NOT widened, both matching native:** guarded arms — a guard
-  makes arm coverage non-structural, and the loop's fall-off-the-last-arm edge is
-  `continue`, so a shape where every guard is false would spin instead of
-  returning; the self-host also cannot lower a guarded match at all today, which
-  makes TRMC the wrong place to start. And multi-statement arm bodies — admitting
-  leading statements means lowering them inside a body that deliberately runs
-  without the RC sweeps. Both wait on native's sibling widening (#4402).
+  **Deliberately NOT widened, both matching native:** `when`-guarded arms — a
+  guard makes arm coverage non-structural, so "every variant has an arm" stops
+  meaning "some arm runs"; an iteration where nothing matches falls out of the
+  loop with the last node's tail hole never filled. Admitting them needs a
+  coverage rule (an unguarded arm per variant) that native does not have either.
+  And multi-statement arm bodies — admitting leading statements means lowering
+  them inside a body that deliberately runs without the RC sweeps. Both wait on
+  native's sibling widening (#5344, under #4402).
 
   VERIFIED: `TestSelfHostTrmcIRX86_64` (mixed-ctor value where a wrong-variant
-  rewrite scores 60 instead of 6, mixed-ctor 200k-deep, plus asm self-call
-  witnesses pinning the two excluded shapes to the plain recursion) and
-  `TestSelfHostTrmcWasmIR` (same two positives). The deep case exits 134 on the
-  parent commit. Refs #5334 #4352 #4402 #4451.
+  rewrite scores 60 instead of 6; mixed-ctor 200k-deep; a narrow one-payload
+  scrutinee cell shallow-freed under a wider built node; plus asm self-call
+  witnesses pinning mixed arity, a guarded arm and a multi-statement arm to the
+  plain recursion) and `TestSelfHostTrmcWasmIR` (the three positives). The deep
+  case exits 134 on the parent commit, and 60 conformance fixtures emit
+  byte-identical wat across the change. Refs #5334 #4352 #5344 #4402 #4451.

@@ -21,9 +21,9 @@ import (
 //
 // Recursive arms may build DIFFERENT variants (#5334) as long as they agree on
 // payload arity, which is what makes the tail index a single constant. Arms whose
-// ctors disagree on arity, tree-shaped bodies (two self-calls), multi-statement
-// arm bodies and non-last-hole shapes keep the plain recursion — the detector
-// bails, which countSelfCalls witnesses.
+// ctors disagree on arity, `when` guards, tree-shaped bodies (two self-calls),
+// multi-statement arm bodies and non-last-hole shapes keep the plain recursion —
+// the detector bails, which countSelfCalls witnesses.
 func TestSelfHostTrmcIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -143,10 +143,30 @@ function main(): i32 { var xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(ste
 		t.Errorf("trmc-mixed-arity-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire on mixed arities)", n)
 	}
 
+	// EXCLUDED — a `when` guard. The loop's per-arm skip falls through to the next
+	// arm, and off the LAST arm it leaves the loop with the hole never filled, so
+	// admitting guards needs a coverage argument the detector cannot make: with a
+	// guard in play "every variant has an arm" no longer means "some arm runs".
+	// Native refuses them for the same reason.
+	asm = run(t, `enum List { Cons(i32, List), Nil }
+function step(xs: List): List {
+    match (xs) {
+        Cons(h, t) when h > 0 => { return Cons(h + 1, step(t)); },
+        Cons(h, t) => { return Cons(0, step(t)); },
+        Nil => { return Nil; },
+    }
+}
+function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
+function main(): i32 { var xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(step(xs)) != 6) { return 1; } return __rc_underflow(); }`,
+		"trmc-guarded-arm-not-rewritten", 0)
+	if n := countSelfCalls(asm, "step"); n < 2 {
+		t.Errorf("trmc-guarded-arm-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire on a guarded arm)", n)
+	}
+
 	// EXCLUDED — a multi-statement arm body. Native's detectTrmc requires the arm
 	// to be a single `return` too; admitting leading statements means lowering
 	// them inside a body that deliberately runs without the RC sweeps, so it waits
-	// on the sibling native widening (#4402) rather than diverging here.
+	// on the sibling native widening (#5344) rather than diverging here.
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 function step(xs: List): List {
     match (xs) {
