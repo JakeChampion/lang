@@ -1119,3 +1119,60 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 		})
 	}
 }
+
+// A `for x in LO..HI` loop is desugared at parse time into a block holding a
+// synthesised `__range_hi_N` binding and a C-style `for`. The formatter used to
+// print that expansion, which writes a compiler-generated name into the user's
+// source and loses the loop's intent — data loss on a `-fmt -w`, not a style
+// difference (#6770). Loop.IsTodo is the precedent: a parse-time desugar the
+// printer must reverse.
+func TestFormatRangeForKeepsSugar(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{
+			`function f(): i32 { var t: i32 = 0; for i in 0..4 { t = t + i; } return t; }`,
+			"function f(): i32 {\n  var t: i32 = 0;\n  for i in 0..4 {\n    t = t + i;\n  }\n  return t;\n}\n",
+		},
+		{
+			// The inclusive form differs only in the desugared comparison
+			// operator, so it is the one that catches reading `<` for `<=`.
+			`function f(): i32 { var t: i32 = 0; for i in 1..=3 { t = t + i; } return t; }`,
+			"function f(): i32 {\n  var t: i32 = 0;\n  for i in 1..=3 {\n    t = t + i;\n  }\n  return t;\n}\n",
+		},
+		{
+			// Non-literal bounds: LOW rides the For's init and HIGH the
+			// synthesised binding, so an expression in either is where a
+			// wrong field read shows up.
+			`function f(n: i32): i32 { var t: i32 = 0; for i in (n - 4)..(n + 1) { t = t + i; } return t; }`,
+			"function f(n: i32): i32 {\n  var t: i32 = 0;\n  for i in n - 4..n + 1 {\n    t = t + i;\n  }\n  return t;\n}\n",
+		},
+	} {
+		if got := formatSrc(t, tc.in); got != tc.want {
+			t.Errorf("format(%q):\ngot  %q\nwant %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The reconstructed sugar must re-parse to the same loop, and formatting it a
+// second time must be a fixed point — the property a desugar leak breaks
+// silently, since format→parse→format IS stable on the expansion (the second
+// pass has nothing left to desugar) and only source-preservation fails.
+func TestFormatRangeForRoundTrips(t *testing.T) {
+	src := `function f(): i32 {
+  var t: i32 = 0;
+  for i in 0..4 {
+    t = t + i;
+  }
+  for j in 1..=3 {
+    t = t + j;
+  }
+  return t;
+}
+`
+	once := formatSrc(t, src)
+	if once != src {
+		t.Errorf("already-formatted source changed:\ngot  %q\nwant %q", once, src)
+	}
+	if twice := formatSrc(t, once); twice != once {
+		t.Errorf("not idempotent:\ngot  %q\nwant %q", twice, once)
+	}
+}

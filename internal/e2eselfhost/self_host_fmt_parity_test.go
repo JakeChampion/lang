@@ -28,12 +28,12 @@ import (
 // stamps it; the cases at the end of the list are that half's.
 //
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 176 of the 244 files under examples/ + internal/stdlib, against 0 before
+// 177 of the 244 files under examples/ + internal/stdlib, against 0 before
 // #6762. What still differs is information the PARSER does not keep, so no
 // printer can recover it: `str` is canonicalised to `string`, a function-typed
 // parameter to `fn`, `trait` declarations have no Module field at all, struct
 // visibility is not carried, and a `let (a, b) = …` destructuring loses its
-// shape. Those are filed separately.
+// shape. Those are #6773.
 var fmtParityCases = []struct {
 	name string
 	src  string
@@ -197,6 +197,66 @@ pub function early(a: i32): void {
   if (a > 0) {
     return;
   }
+}
+`},
+	// Both `for` forms are parse-time DESUGARS, and each compiler leaked its own
+	// (#6770 native, #6771 self-host). Native expanded `for i in 0..4` into a
+	// block around a synthesised `__range_hi_N` binding; the self-host printed
+	// the parser-internal `for i in __range(0, 4)` call, which does not even
+	// re-parse as the same loop. The C-style `for` was the self-host's alone: it
+	// came back as `if (true) { … while (true) { … } }` around a `__forc_5_7`
+	// flag keyed to the loop's original line and column.
+	//
+	// Both are now reconstructed, so this is also the case that unblocked
+	// examples/sum_for.fern — the last corpus file diverging for a reason other
+	// than parser-discarded information.
+	{"for-loop-desugars", `function ranges(n: i32): i32 {
+  var t: i32 = 0;
+  for i in 0..4 {
+    t = t + i;
+  }
+  for j in 1..=3 {
+    t = t + j;
+  }
+  for k in (n - 4)..n {
+    t = t + k;
+  }
+  return t;
+}
+
+function cstyle(n: i32): i32 {
+  var sum: i32 = 0;
+  for (var i: i32 = 1; i <= 10; i = i + 1) {
+    sum = sum + i;
+  }
+  var j: i32 = 0;
+  for (; j < 3; j = j + 1) {
+    sum = sum + n;
+  }
+  return sum;
+}
+
+function main(): i32 {
+  return ranges(5) + cstyle(2);
+}
+`},
+	// A hand-written `if (true) { … }` around a `while (true)` must NOT be
+	// mistaken for a C-style-for expansion. The reconstruction keys on the
+	// synthesised `__forc_` flag and requires the whole shape, so this prints as
+	// what it is.
+	{"true-if-is-not-a-cfor", `function main(): i32 {
+  var t: i32 = 0;
+  if (true) {
+    var i: i32 = 0;
+    while (true) {
+      if (!(i < 3)) {
+        break;
+      }
+      t = t + i;
+      i = i + 1;
+    }
+  }
+  return t;
 }
 `},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }

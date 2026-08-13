@@ -866,6 +866,32 @@ func isSingleLineStmt(s ast.Stmt) bool {
 	return false
 }
 
+// rangeForParts pulls `for <name> in <lo>..<hi>` back out of the block
+// parseForEach built for it: Stmts is [Var(__range_hi_N, hi), For{Init: Var(name,
+// lo), Cond: name <op> __range_hi_N, …}], and the comparison operator is what
+// distinguishes the half-open `..` from the inclusive `..=`. Returns ok=false
+// if the block does not have that exact shape, so a mis-set marker degrades to
+// printing the desugar rather than panicking.
+func rangeForParts(b *ast.Block) (lo, hi ast.Expr, name string, inclusive, ok bool) {
+	if len(b.Stmts) != 2 {
+		return nil, nil, "", false, false
+	}
+	declHi, okv := b.Stmts[0].(*ast.Var)
+	loop, okf := b.Stmts[1].(*ast.For)
+	if !okv || !okf || loop.Init == nil {
+		return nil, nil, "", false, false
+	}
+	initVar, okiv := loop.Init.(*ast.Var)
+	if !okiv {
+		return nil, nil, "", false, false
+	}
+	cmp, okc := loop.Cond.(*ast.Binary)
+	if !okc {
+		return nil, nil, "", false, false
+	}
+	return initVar.Init, declHi.Init, initVar.Name, cmp.Op == "<=", true
+}
+
 // formatBranch renders an `if`-expression branch — always brace-wrapped
 // (`{ … }`), since an `if`-expr branch is syntactically a block. A bare
 // expression branch renders `{ e }` (byte-identical to the pre-block-expr
@@ -914,6 +940,26 @@ func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
 func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 	switch x := s.(type) {
 	case *ast.Block:
+		// A `for x in LO..HI` desugar reprints as its sugar. Without this the
+		// formatter wrote the expansion — a synthesised `__range_hi_N` binding
+		// visible in the user's source — back over the loop (#6770).
+		if x.RangeFor {
+			if lo, hi, name, incl, ok := rangeForParts(x); ok {
+				f.b.WriteString("for ")
+				f.b.WriteString(name)
+				f.b.WriteString(" in ")
+				f.formatExpr(lo, precLowest)
+				if incl {
+					f.b.WriteString("..=")
+				} else {
+					f.b.WriteString("..")
+				}
+				f.formatExpr(hi, precLowest)
+				f.b.WriteByte(' ')
+				f.formatStmt(x.Stmts[1].(*ast.For).Body, depth)
+				return
+			}
+		}
 		f.formatBlock(x, depth)
 	case *ast.If:
 		f.b.WriteString("if (")

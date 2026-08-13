@@ -2304,6 +2304,12 @@ type Stmt interface {
 type Block struct {
 	P     Position
 	Stmts []Stmt
+	// RangeFor marks the block parseForEach synthesises for `for x in LO..HI`:
+	// Stmts is exactly [Var(__range_hi_N, HI), For{Init: Var(x, LO), …}]. The
+	// formatter reprints the sugar from it instead of the desugar, which
+	// otherwise writes a compiler-synthesised name into the user's source
+	// (#6770). Same marker precedent as If.IsAssert and Loop.IsTodo.
+	RangeFor bool
 }
 type If struct {
 	P    Position

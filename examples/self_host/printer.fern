@@ -390,6 +390,166 @@ function expr_is_missing(e: parser.Expr): boolean {
     return false;
 }
 
+// range_call_sugar renders `__range(LO, HI)` as `LO..HI` and `__range_incl` as
+// `LO..=HI`. Empty for anything else, which is an ordinary iterable.
+function range_call_sugar(e: parser.Expr): string {
+    match (e) {
+        parser.ExprCall(c) => {
+            if (c.args.len() != 2) { return ""; }
+            match (c.callee) {
+                parser.ExprIdent(id) => {
+                    if (id.name == "__range") { return print_expr(c.args[0]) + ".." + print_expr(c.args[1]); }
+                    if (id.name == "__range_incl") { return print_expr(c.args[0]) + "..=" + print_expr(c.args[1]); }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// --- C-style `for` reconstruction (#6771) ------------------------------------
+//
+// `for (INIT; COND; STEP) BODY` is parsed into
+//
+//     if (true) { INIT; var __forc_<l>_<c> = true; while (true) { WBODY } }
+//
+// with WBODY = [ if (!flag) { STEP }, flag = false, if (!(COND)) { break }, BODY… ].
+// Printing that expansion writes the flag — a name the user never wrote, keyed
+// to the loop's original line and column — back over their source, so the sugar
+// is reconstructed from the shape instead.
+//
+// No AST marker is needed: the synthesised flag NAME is the marker. Nothing a
+// user can write produces this exact nesting around a local whose name starts
+// with `__forc_`, and the check requires every part of the shape before it
+// commits, so an unrecognised variation prints the expansion rather than
+// mis-reading it.
+function cfor_flag_name(st: parser.Stmt): string {
+    match (st) {
+        parser.StmtVar(v) => {
+            if (v.name.len() > 7 && v.name[0:7] == "__forc_") { return v.name; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// expr_is_true_lit: the `true` literal both synthesised conditions use.
+function expr_is_true_lit(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprBool(b) => { return b.value; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// unary_not_operand returns the operand of a `!e`, or a null-ish marker via ok.
+function unary_not_operand(e: parser.Expr): (parser.Expr, boolean) {
+    match (e) {
+        parser.ExprUnary(u) => {
+            if (u.op == "!") { return (u.operand, true); }
+            return (e, false);
+        },
+        _ => { return (e, false); }
+    }
+    return (e, false);
+}
+
+// is_cfor_shape reports whether `ifs` is a C-style-for expansion.
+function is_cfor_shape(ifs: parser.StmtIf): boolean {
+    if (!expr_is_true_lit(ifs.cond)) { return false; }
+    if (ifs.else_body.len() != 0) { return false; }
+    var n: i32 = ifs.then_body.len();
+    if (n < 2) { return false; }
+    if (cfor_flag_name(ifs.then_body[n - 2]).len() == 0) { return false; }
+    match (ifs.then_body[n - 1]) {
+        parser.StmtWhile(w) => {
+            if (!expr_is_true_lit(w.cond)) { return false; }
+            if (w.body.len() < 3) { return false; }
+            // wbody[2] must be `if (!(COND)) { break; }`.
+            match (w.body[2]) {
+                parser.StmtIf(g) => {
+                    var (_, isnot) = unary_not_operand(g.cond);
+                    if (!isnot) { return false; }
+                    if (g.then_body.len() != 1) { return false; }
+                    match (g.then_body[0]) {
+                        parser.StmtBreak(_) => { return true; },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// print_cfor renders the reconstructed `for (INIT; COND; STEP) BODY`, with no
+// leading indent and no trailing newline.
+function print_cfor(ifs: parser.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
+    var n: i32 = ifs.then_body.len();
+    var out: string = "for (";
+    // INIT — everything before the flag declaration. An empty init prints as
+    // the bare `;` native writes for it.
+    var ii: i32 = 0;
+    while (ii < n - 2) {
+        if (ii > 0) { out = out + " "; }
+        var (itext, _) = print_stmt_body(ifs.then_body[ii], depth, empty_fmt());
+        out = out + itext;
+        ii = ii + 1;
+    }
+    if (n - 2 == 0) { out = out + ";"; }
+    out = out + " ";
+    var g: Fmt = f;
+    match (ifs.then_body[n - 1]) {
+        parser.StmtWhile(w) => {
+            // COND is the operand of the `!` in wbody[2]'s guard. A source-empty
+            // condition became the `true` literal, which native prints as empty.
+            match (w.body[2]) {
+                parser.StmtIf(guard) => {
+                    var (cond_e, _) = unary_not_operand(guard.cond);
+                    if (!expr_is_true_lit(cond_e)) { out = out + print_expr(cond_e); }
+                },
+                _ => {}
+            }
+            out = out + "; ";
+            // STEP is wbody[0]'s then-body, which is empty when the source had none.
+            match (w.body[0]) {
+                parser.StmtIf(stepif) => {
+                    if (stepif.then_body.len() == 1) {
+                        var (stext, _) = print_stmt_body(stepif.then_body[0], depth, empty_fmt());
+                        // The step is an expression, not a statement, so it carries
+                        // no `;` inside the header.
+                        out = out + strip_trailing_semi(stext);
+                    }
+                },
+                _ => {}
+            }
+            out = out + ") ";
+            // BODY is everything after the three synthesised statements.
+            var body: parser.Stmt[] = [];
+            var bi: i32 = 3;
+            while (bi < w.body.len()) { body = body.append(w.body[bi]); bi = bi + 1; }
+            var (btext, bg) = print_block(body, depth, g);
+            g = bg;
+            out = out + btext;
+        },
+        _ => {}
+    }
+    return (out, g);
+}
+
+// strip_trailing_semi drops one trailing `;` — a for-header's step is written
+// as an expression, while print_stmt_body renders it as a statement.
+function strip_trailing_semi(t: string): string {
+    if (t.len() > 0 && t[t.len() - 1] == 59) { return "" + t[0:t.len() - 1]; }
+    return t;
+}
+
 // stmt_is_single_line: the statement kinds native renders on one line, and so
 // the ones a one-statement lambda body may keep inline.
 function stmt_is_single_line(st: parser.Stmt): boolean {
@@ -477,7 +637,10 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             return ("return " + print_expr(r.value) + ";", f);
         },
         parser.StmtExpr(x) => { return (print_expr(x.value) + ";", f); },
-        parser.StmtIf(ifs) => { return print_if_chain(ifs, depth, f); },
+        parser.StmtIf(ifs) => {
+            if (is_cfor_shape(ifs)) { return print_cfor(ifs, depth, f); }
+            return print_if_chain(ifs, depth, f);
+        },
         parser.StmtWhile(w) => {
             var (wb, wg) = print_block(w.body, depth, f);
             return ("while (" + print_expr(w.cond) + ") " + wb, wg);
@@ -486,6 +649,13 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         parser.StmtMatch(m) => { return print_match(m, depth, f); },
         parser.StmtFor(fo) => {
             var (fb, fg) = print_block(fo.body, depth, f);
+            // `for x in LO..HI` is parsed as a synthetic `__range(LO, HI)` /
+            // `__range_incl(LO, HI)` call. Printing the call writes a
+            // parser-internal builtin into the user's source — it does not even
+            // re-parse as the same loop — so the sugar is reconstructed here
+            // (#6770's self-host side).
+            var rng: string = range_call_sugar(fo.iter);
+            if (rng.len() > 0) { return ("for " + fo.var_name + " in " + rng + " " + fb, fg); }
             return ("for " + fo.var_name + " in " + print_expr(fo.iter) + " " + fb, fg);
         },
         parser.StmtBreak(_) => { return ("break;", f); },

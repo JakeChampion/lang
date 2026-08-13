@@ -3173,7 +3173,10 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 			Body:  body,
 			Label: label,
 		}
-		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}}, nil
+		// RangeFor lets the formatter reprint `for x in LO..HI` rather than this
+		// desugar — writing `__range_hi_N` back over the user's source is data
+		// loss, not a style difference (#6770).
+		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}, RangeFor: true}, nil
 	}
 	body, err := p.parseStmt()
 	if err != nil {
