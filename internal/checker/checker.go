@@ -9572,27 +9572,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		// Validate the optional qualifier on the variant pattern.
-		// Two forms:
-		//   1. Module qualifier (`mod.TokA`): modload rewrote
-		//      it to the canonical module path so an equality
-		//      comparison against the enum's SourceModule is
-		//      enough.
-		//   2. Enum qualifier (`Color.Red`): names the scrutinee
-		//      enum directly. modload leaves these intact (it
-		//      detects the qualifier as a known enum name and
-		//      suppresses the "unknown module" error).
-		if arm.VariantModule != "" {
-			if _, qualIsEnum := c.info.Enums[arm.VariantModule]; qualIsEnum {
-				if arm.VariantModule != ed.Name {
-					c.errfCode(arm.P, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
-						arm.VariantModule, ed.Name)
-				}
-			} else if ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
-				c.errfCode(arm.P, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
-					arm.VariantModule, ed.Name, ed.SourceModule)
-			}
-		}
+		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		// Find the variant on this enum.
 		varIdx := -1
 		var variant *ast.EnumVariant
@@ -10372,11 +10352,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			continue
 		}
-		// Same qualifier validation as the stmt-form arm loop above.
-		if arm.VariantModule != "" && ed.SourceModule != "" && arm.VariantModule != ed.SourceModule {
-			c.errfCode(arm.P, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
-				arm.VariantModule, ed.Name, ed.SourceModule)
-		}
+		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -14444,4 +14420,36 @@ func isBareNumericLiteral(e ast.Expr) bool {
 		return x.Op == "-" && isBareNumericLiteral(x.Operand)
 	}
 	return false
+}
+
+// checkVariantQualifier validates the optional qualifier on a variant pattern,
+// for both the statement and the expression form of `match`. Two spellings are
+// legal:
+//
+//  1. Module qualifier (`mod.TokA`): modload rewrote it to the canonical module
+//     path, so comparing against the enum's SourceModule is enough.
+//  2. Enum qualifier (`Color.Red`): names the scrutinee enum directly. modload
+//     leaves these intact — it recognises the qualifier as a known enum name and
+//     suppresses its "unknown module" error.
+//
+// The two call sites used to carry their own copy, and the expression form's
+// copy was missing case 2 while its comment claimed to be the same check. So
+// `Color.Red` type-checked as a statement and was rejected as an expression —
+// one construct with two answers depending only on its position (#6576). One
+// function now, so they cannot drift again.
+func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) {
+	if qualifier == "" {
+		return
+	}
+	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
+		if qualifier != ed.Name {
+			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
+				qualifier, ed.Name)
+		}
+		return
+	}
+	if ed.SourceModule != "" && qualifier != ed.SourceModule {
+		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
+			qualifier, ed.Name, ed.SourceModule)
+	}
 }
