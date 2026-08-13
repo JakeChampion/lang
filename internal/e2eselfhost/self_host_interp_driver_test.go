@@ -296,19 +296,25 @@ var interpProgs = []struct {
 	// Unlabeled break/continue still bind to the innermost loop (depth 0 —
 	// the encoding's base case, unchanged).
 	{"unlabeled-break-innermost", "function main(): i32 { var s = 0; var i = 0; while (i < 3) { var j = 0; while (j < 10) { if (j == 2) { break; } s = s + 1; j = j + 1; } i = i + 1; } return s; }", 6},
+	// Wrapping i32 arithmetic (#5622) through the COMPILED interpreter:
+	// `+ - * <<` are two's-complement modular at the operand width
+	// (docs/INTEGER-SEMANTICS.md), including on a value read out of a
+	// VInt enum payload. Each returns 7 iff the result wrapped and 5 iff
+	// it stayed wide in a 64-bit register; `not-greater` is the sharpest
+	// of them, since an unnarrowed 2147483648 compares ABOVE i32::MAX.
+	{"i32-wrap-add-negative", "function main(): i32 { var a: i32 = 2147483647; if ((a + 1) < 0) { return 7; } return 5; }", 7},
+	{"i32-wrap-add-eq-min", "function main(): i32 { var a: i32 = 2147483647; if ((a + 1) == (0 - 2147483647 - 1)) { return 7; } return 5; }", 7},
+	{"i32-wrap-add-via-locals", "function main(): i32 { var a: i32 = 2147483647; var b: i32 = a + 1; var c: i32 = 0 - 2147483647 - 1; if (b == c) { return 7; } return 5; }", 7},
+	{"i32-wrap-add-literals", "function main(): i32 { if ((2147483647 + 1) == (0 - 2147483647 - 1)) { return 7; } return 5; }", 7},
+	{"i32-wrap-add-not-greater", "function main(): i32 { var a: i32 = 2147483647; if ((a + 1) > a) { return 5; } return 7; }", 7},
+	{"i32-wrap-sub", "function main(): i32 { var a: i32 = 0 - 2147483647 - 1; if ((a - 1) == 2147483647) { return 7; } return 5; }", 7},
+	{"i32-wrap-mul", "function main(): i32 { var a: i32 = 100000; if ((a * 100000) == 1410065408) { return 7; } return 5; }", 7},
+	{"i32-wrap-shl", "function main(): i32 { var a: i32 = 1; if ((a << 31) == (0 - 2147483647 - 1)) { return 7; } return 5; }", 7},
 	// Saturating operators (#5542) in the SELF-HOST tree-walking
 	// interpreter: interp.fern computes the i32 forms exactly in a host
 	// i64 and clamps, and the i64 forms with the same pre-check /
 	// round-trip shapes irlower emits. These are the interp-side sibling
 	// of internal/e2e/saturating_arith_test.go.
-	//
-	// There is deliberately no `2147483647 + 1 == i32::MIN` control here:
-	// this interpreter does not wrap i32 arithmetic at all once it is
-	// compiled by the self-hosted compiler (an i32 read out of a VInt
-	// payload keeps its 64-bit register width), which is a separate,
-	// pre-existing divergence from docs/INTEGER-SEMANTICS.md. The
-	// wrapping control lives in internal/e2e/saturating_arith_test.go and
-	// in the self-host IR suite, both of which do hold it.
 	{"sat-add-hi", "function main(): i32 { var a: i32 = 2147483647; if ((a +| 1) == a) { return 7; } return 0; }", 7},
 	{"sat-sub-lo", "function main(): i32 { var a: i32 = 0 - 2147483647 - 1; if ((a -| 1) == a) { return 7; } return 0; }", 7},
 	{"sat-mul-hi", "function main(): i32 { if ((100000 *| 100000) == 2147483647) { return 7; } return 0; }", 7},
