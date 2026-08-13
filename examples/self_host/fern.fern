@@ -1906,7 +1906,8 @@ function run(): i32 {
         // discards: `tokenize_full` keeps the `//` comments beside the tokens,
         // and the blank-line map is read straight off the source (#6769).
         var flex: lexer.LexResult = lexer.tokenize_full(esrc);
-        var formatted: string = printer.format_module(parser.parse_module_verbatim(flex.tokens), flex.comments, blank_line_map(esrc));
+        var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+        var formatted: string = printer.format_module(pf.pmod, pf.ptraits, flex.comments, blank_line_map(esrc));
         if (out_path.len() > 0) {
             match (write_file(out_path, formatted)) {
                 Err(e) => {

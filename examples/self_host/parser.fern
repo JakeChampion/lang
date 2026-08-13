@@ -391,6 +391,26 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // the trait's declaration (Self resolves to the impl type at the check site).
 pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[] }
 
+// TraitDecl is the `trait` block as WRITTEN, retained for the formatter alone
+// (#6773). The compile path reads two DERIVED views of it and neither can be
+// printed from: TraitReq keeps the abstract method set for E021, with names
+// simplified past any `mod.` qualifier, and TraitDefault keeps the bodied
+// methods so they can be synthesised onto impls that omit them. Between them
+// they drop the `pub`, the type parameters, the source position, and the order
+// the methods were written in — so a formatted file lost its `trait` blocks
+// entirely and every `impl` of one then named a trait the file no longer
+// declared. A method's body is empty when it was written abstract.
+//
+// It rides beside Module rather than on it: 101 Module literals across the
+// self-host would each have to carry a list none of them reads, which is the
+// #6693 shape. The formatter already takes its comment and blank-line maps the
+// same way.
+pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean }
+
+// ParsedFmt is parse_module_verbatim's result: the module plus the decls kept
+// only for printing.
+pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[] }
+
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
 // from an `@import("iface", "wit-resource-name")` attribute (empty for an
@@ -14767,11 +14787,18 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
-function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
+function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
     var defaults: TraitDefault[] = [];
     var required: string[] = [];
     var required_sigs: FuncDecl[] = [];
     var supertraits: string[] = [];
+    // The written form, for the formatter: every method in source order (an
+    // empty body marks an abstract one), the supertraits with any `mod.`
+    // qualifier intact, and the decl's own position.
+    var decl_methods: FuncDecl[] = [];
+    var decl_supers: string[] = [];
+    var tline: i32 = p.peek_line();
+    var tcol: i32 = p.peek_col();
     p = p.advance(); // `trait`
     var tname: string = p.peek_ident();
     if (tname.len() > 0) { p = p.advance(); } // name
@@ -14783,17 +14810,11 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
     // trait's declared params carry no weight — but they MUST be consumed
     // here or `[T]` and the trait body spill back into parse_module as a
     // stray array literal + orphan block, losing default methods (#4340).
-    // Mirrors the struct/enum decl generics loop (bracket-depth scan).
-    if (p.peek_punct() == "[") {
-        p = p.advance(); // consume `[`
-        var gd: i32 = 1;
-        while (!p.at_end() && gd > 0) {
-            var gpk: string = p.peek_punct();
-            if (gpk == "[") { gd = gd + 1; p = p.advance(); continue; }
-            if (gpk == "]") { gd = gd - 1; p = p.advance(); continue; }
-            p = p.advance();
-        }
-    }
+    // Consumed through the shared list parser, which also keeps the names for
+    // the formatter — printing the block without them leaves every `T` in the
+    // method signatures unbound.
+    var (trait_tps, trait_tp_p) = parse_type_param_list(p);
+    p = trait_tp_p;
     // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
     // `mod.Trait`). Dispatch is still by receiver type, but the supertrait
     // NAMES are retained for the E021 conformance check (#4347): an
@@ -14804,12 +14825,16 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
         var go_sup: boolean = true;
         while (go_sup && !p.at_end()) {
             var sup_name: string = "";
-            if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); p = p.advance(); }
+            var sup_written: string = "";
+            if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); sup_written = sup_name; p = p.advance(); }
             if (p.peek_punct() == ".") {
                 p = p.advance();
-                if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); p = p.advance(); }
+                if (p.peek_ident().len() > 0) { sup_name = p.peek_ident(); sup_written = sup_written + "." + sup_name; p = p.advance(); }
             }
-            if (sup_name.len() > 0) { supertraits = supertraits.append(derive_simple_name(sup_name)); }
+            if (sup_name.len() > 0) {
+                supertraits = supertraits.append(derive_simple_name(sup_name));
+                decl_supers = decl_supers.append(sup_written);
+            }
             if (p.peek_punct() == "+") { p = p.advance(); } else { go_sup = false; }
         }
     }
@@ -14820,6 +14845,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
             if (p.peek_keyword() == "function") {
                 var (fr_func, fr_p) = parse_func_decl(p);
                 p = fr_p;
+                decl_methods = decl_methods.append(fr_func);
                 // A non-empty body marks a default method. (An empty `{}`
                 // body is indistinguishable from an abstract `;` here and
                 // is treated as abstract — it would synthesise a no-op.)
@@ -14841,7 +14867,10 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, Par) {
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
-    return (defaults, TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits }, p);
+    return (defaults,
+            TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits },
+            TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false },
+            p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`
@@ -15381,19 +15410,22 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    return parse_module_flagged(toks, false);
+    var (m, t) = parse_module_flagged(toks, false);
+    return m;
 }
 
 // parse_module_verbatim is `-fmt`'s entry: the same parse, with the type
-// canonicalisations that lose a written spelling switched off (Par.verbatim).
-// The module it returns is for PRINTING only — a `str` annotation and a
-// `(T) => R` param type reach it spelled as written, which every compile-path
-// `type_name == "string"` / `== "fn"` dispatch would misread.
-pub function parse_module_verbatim(toks: lexer.Token[]): Module {
-    return parse_module_flagged(toks, true);
+// canonicalisations that lose a written spelling switched off (Par.verbatim),
+// and the print-only decls the Module has no room for alongside it. What it
+// returns is for PRINTING only — a `str` annotation and a `(T) => R` param type
+// reach it spelled as written, which every compile-path `type_name == "string"`
+// / `== "fn"` dispatch would misread.
+pub function parse_module_verbatim(toks: lexer.Token[]): ParsedFmt {
+    var (m, t) = parse_module_flagged(toks, true);
+    return ParsedFmt { pmod: m, ptraits: t };
 }
 
-function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): Module {
+function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[]) {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
@@ -15406,6 +15438,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): Module {
     var enums: EnumDecl[] = [];
     var resources: ResourceDecl[] = [];
     var exports: ExportBinding[] = [];
+    var traits: TraitDecl[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
@@ -15664,8 +15697,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): Module {
             continue;
         }
         if (kw == "trait") {
-            var (tpr_defaults, tpr_req, tpr_p) = parse_trait_decl(p);
+            var (tpr_defaults, tpr_req, tpr_decl, tpr_p) = parse_trait_decl(p);
             p = tpr_p;
+            traits = traits.append(TraitDecl { ...tpr_decl, is_pub: decl_pub });
             var tdi: i32 = 0;
             while (tdi < tpr_defaults.len()) {
                 trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
@@ -15742,7 +15776,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): Module {
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs })));
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

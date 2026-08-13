@@ -1026,6 +1026,61 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
     return out + "}\n";
 }
 
+// print_trait_decl reconstructs `pub trait Name[T]: Super { … }` from the
+// written form parse_trait_decl retains. The compile path's own views of a
+// trait cannot be printed from — see parser.TraitDecl.
+function print_trait_decl(td: parser.TraitDecl): string {
+    var out: string = "";
+    if (td.is_pub) { out = out + "pub "; }
+    out = out + "trait " + td.name;
+    if (td.type_params.len() > 0) {
+        out = out + "[";
+        var tpi: i32 = 0;
+        while (tpi < td.type_params.len()) {
+            if (tpi > 0) { out = out + ", "; }
+            out = out + td.type_params[tpi];
+            tpi = tpi + 1;
+        }
+        out = out + "]";
+    }
+    if (td.supertraits.len() > 0) {
+        out = out + ": ";
+        var spi: i32 = 0;
+        while (spi < td.supertraits.len()) {
+            if (spi > 0) { out = out + " + "; }
+            out = out + td.supertraits[spi];
+            spi = spi + 1;
+        }
+    }
+    if (td.methods.len() == 0) { return out + " {}\n"; }
+    out = out + " {\n";
+    var mi: i32 = 0;
+    while (mi < td.methods.len()) {
+        out = out + print_trait_method(td.methods[mi]);
+        mi = mi + 1;
+    }
+    return out + "}\n";
+}
+
+// print_trait_method emits one signature at one indent level: `;`-terminated
+// when it was written abstract, else with its default body.
+function print_trait_method(m: parser.FuncDecl): string {
+    var out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
+    var i: i32 = 0;
+    while (i < m.params.len()) {
+        if (i > 0) { out = out + ", "; }
+        if (m.params[i].own) { out = out + "own "; }
+        out = out + m.params[i].name;
+        if (m.params[i].type_name.len() > 0) { out = out + ": " + m.params[i].type_name; }
+        i = i + 1;
+    }
+    out = out + ")";
+    if (m.ret_type.len() > 0) { out = out + ": " + m.ret_type; }
+    if (m.body.len() == 0) { return out + ";\n"; }
+    var (body, g) = print_block(m.body, 1, Fmt { comments: [], ci: 0, blanks: [] });
+    return out + " " + body + "\n";
+}
+
 function print_type_alias(a: parser.TypeAlias): string {
     var out: string = "";
     if (a.is_pub) { out = out + "pub "; }
@@ -1070,7 +1125,7 @@ function decl_sep(out: string): string {
 }
 
 pub function print_module(mod: parser.Module): string {
-    return format_module(mod, [], []);
+    return format_module(mod, [], [], []);
 }
 
 // format_module is the `-fmt` entry point: the module, the comments the lexer
@@ -1082,7 +1137,7 @@ pub function print_module(mod: parser.Module): string {
 // cursor only moves forward, so a kind-grouped emit would drain a comment
 // against whichever declaration happened to be printed first and RELOCATE it
 // onto an unrelated one — the same reason native's Format orders by position.
-pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks: boolean[]): string {
+pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], comments: lexer.Comment[], blanks: boolean[]): string {
     var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
     var out: string = "";
     // Imports cluster at the top with no blank between them.
@@ -1139,6 +1194,11 @@ pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks
         kinds = kinds.append(2); idxs = idxs.append(ai); lines = lines.append(mod.aliases[ai].line);
         ai = ai + 1;
     }
+    var ti2: i32 = 0;
+    while (ti2 < traits.len()) {
+        kinds = kinds.append(4); idxs = idxs.append(ti2); lines = lines.append(traits[ti2].line);
+        ti2 = ti2 + 1;
+    }
     // SOURCE functions only. `@derive` synthesises its methods at PARSE time
     // (synth_derives), so they are in `mod.funcs` by the time the printer runs —
     // printing them expands one attribute into hand-written method bodies, and
@@ -1179,6 +1239,7 @@ pub function format_module(mod: parser.Module, comments: lexer.Comment[], blanks
         if (kinds[di] == 0) { out = out + print_struct_decl(mod.structs[idxs[di]]); }
         else if (kinds[di] == 1) { out = out + print_enum_decl(mod.enums[idxs[di]], mod.structs); }
         else if (kinds[di] == 2) { out = out + print_type_alias(mod.aliases[idxs[di]]); }
+        else if (kinds[di] == 4) { out = out + print_trait_decl(traits[idxs[di]]); }
         else {
             if (mod.funcs[idxs[di]].is_const) { out = out + print_const_decl(mod.funcs[idxs[di]]); }
             else {
@@ -1817,6 +1878,36 @@ function main(): i32 {
     if (mmi < 0) { return 296; }
     if (rtMt.funcs[mmi].receiver_name != "o") { return 297; }
     if (rtMt.funcs[mmi].type_param_count != 1) { return 298; }
+
+    // #6773 item 3: a `trait` block reaches the printer only through the two
+    // DERIVED views the compile path keeps, so it has to be retained beside the
+    // Module. The re-parse is the assertion: an emitted trait that does not
+    // come back is a declaration the reformat deleted.
+    var srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
+    var pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
+    var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, [], []);
+    var rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
+    if (rtTr.ptraits.len() != 1) { return 299; }
+    if (rtTr.ptraits[0].name != "Greet") { return 300; }
+    if (!rtTr.ptraits[0].is_pub) { return 301; }
+    if (rtTr.ptraits[0].type_params.len() != 1) { return 302; }
+    if (rtTr.ptraits[0].type_params[0] != "T") { return 303; }
+    if (rtTr.ptraits[0].supertraits.len() != 1) { return 304; }
+    if (rtTr.ptraits[0].supertraits[0] != "Display") { return 305; }
+    // Both methods, in source order, with the abstract / default split intact.
+    if (rtTr.ptraits[0].methods.len() != 2) { return 306; }
+    if (rtTr.ptraits[0].methods[0].name != "hi") { return 307; }
+    if (rtTr.ptraits[0].methods[0].body.len() != 0) { return 308; }
+    if (rtTr.ptraits[0].methods[1].name != "loud") { return 309; }
+    if (rtTr.ptraits[0].methods[1].body.len() == 0) { return 310; }
+    // A qualified supertrait keeps its module prefix — printed bare it names a
+    // trait that may not be in scope.
+    var pfQ: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+        "import \"core/cmp\"; pub trait Sortable: cmp.Ord {} function main(): i32 { return 0; }"));
+    if (pfQ.ptraits.len() != 1) { return 311; }
+    if (pfQ.ptraits[0].supertraits.len() != 1) { return 312; }
+    if (pfQ.ptraits[0].supertraits[0] != "cmp.Ord") { return 313; }
+    if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, [], []), "pub trait Sortable: cmp.Ord {}")) { return 314; }
 
     return 0;
 }

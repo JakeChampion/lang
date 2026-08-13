@@ -36,11 +36,17 @@ import (
 // destructuring forms needed no parser work at all: the data was already on the
 // node and the printer did not read it.
 //
+// #6773's last item closed the `trait` block: the compile path keeps two
+// DERIVED views of one and neither can be printed from, so the written form is
+// retained beside the Module — the way the comment and blank-line maps already
+// ride beside it, rather than as a field on Module that 101 literals would have
+// to carry and none would read.
+//
 // Corpus-wide, `fern -fmt` and `fern-selfhost -fmt` now agree byte for byte on
-// 208 of the 244 files under examples/ + internal/stdlib, against 0 before
-// #6762. What still differs: `trait` declarations have no Module field at all
-// (#6773's remaining item), `else { if … }` collapses to `else if` (#6779), and
-// an ARROW lambda — native reprints `() => e` as `function(): T { return e; }`,
+// 210 of the 244 files under examples/ + internal/stdlib, against 0 before
+// #6762. What still differs: `impl` blocks lose their block shape the same way
+// traits did (#6783), `else { if … }` collapses to `else if` (#6779), and an
+// ARROW lambda — native reprints `() => e` as `function(): T { return e; }`,
 // filling in a return type from the callee's signature that the self-host
 // printer has no way to know.
 var fmtParityCases = []struct {
@@ -345,6 +351,34 @@ function main(): i32 {
     break each;
   }
   return t;
+}
+`},
+	// #6773 item 3: a `trait` block reached the printer only as the two DERIVED
+	// views the compile path keeps — TraitReq's abstract method set (names
+	// simplified past any `mod.` qualifier) and TraitDefault's bodies — so the
+	// declaration vanished from formatted output entirely and every `impl` of
+	// one then named a trait the file no longer declared. The written form is
+	// retained beside the Module now. Generic parameters, a supertrait list, an
+	// empty block and a bodied default are each a piece the derived views drop.
+	{"trait-declarations", `pub trait Display {
+function to_string(self: Self): string;
+}
+
+trait Empty {}
+
+pub trait Ord: Display {
+function cmp(self: Self, other: Self): i32;
+}
+
+pub trait Greet[T] {
+function hi(self: Self, x: T): string;
+function loud(self: Self, x: T): string {
+return self.hi(x);
+}
+}
+
+function main(): i32 {
+return 0;
 }
 `},
 	{"decls-and-literals", `struct P { x: i32, y: i32 }
