@@ -33,19 +33,26 @@
 //     run-skipping does, because the run no longer ends directly above the
 //     declaration that asks.
 //
+// # The parse is VERBATIM
+//
+// docs_of and render_page parse through `parse_module_verbatim`, the mode
+// `-fmt` selects (#6773), not the compile-path `parse_module`. The compile
+// parse canonicalises a written type to what the dispatch sites downstream
+// read — `str` becomes `string`, and an unbounded `[T]` survives only as a
+// COUNT with its name discarded. Both are exactly what a doc page is FOR: a
+// signature documented as returning `string` when it returns a borrowed `str`
+// documents different ownership than the code has, and `map[T, U]` cannot be
+// spelled at all without the parameter names. Verbatim keeps the written
+// spelling, which is the same reason the formatter needs it.
+//
 // # What is not here yet
 //
-// Four things the self-host FRONT END does not carry, each of which stops a
-// page matching native's bytes and none of which can be fixed from here:
+// Two things the self-host FRONT END does not carry, neither fixable here:
 //
 //   - `trait` reaches the parser only as `TraitReq`, which has no visibility,
 //     so `pub trait` cannot be rendered;
 //   - `const` desugars to a zero-arg function (`FuncDecl.is_const`) rather than
-//     surviving as its own declaration;
-//   - `parse_func_decl` keeps `type_params: bounded_tps`, so an unbounded `[T]`
-//     survives only as a COUNT and `map[T, U]` cannot be spelled back;
-//   - there is no `str` type distinct from `string` (the gap #6604 landed on),
-//     so a `str` return renders as `string`.
+//     surviving as its own declaration.
 //
 // The page differential lists exactly which stdlib module each of these costs,
 // and fails if one is fixed without the list being updated.
@@ -291,7 +298,7 @@ pub struct DocModule { intro: string, decls: DocDecl[] }
 // collect the public declarations, and bind the comment runs to them.
 pub function docs_of(src: string): DocModule {
     var lr: lexer.LexResult = lexer.tokenize_full(src);
-    var mod: parser.Module = parser.parse_module(lr.tokens);
+    var mod: parser.Module = parser.parse_module_verbatim(lr.tokens);
     var decls: DocDecl[] = public_decls(mod);
     return DocModule {
         intro: module_intro(lr.comments, first_decl_line(mod)),
@@ -532,7 +539,7 @@ function enum_named(mod: parser.Module, name: string, line: i32): parser.EnumDec
 // content.
 pub function render_page(src: string, mod_path: string): string {
     var lr: lexer.LexResult = lexer.tokenize_full(src);
-    var mod: parser.Module = parser.parse_module(lr.tokens);
+    var mod: parser.Module = parser.parse_module_verbatim(lr.tokens);
     var decls: DocDecl[] = associate(lr.comments, public_decls(mod));
     if (decls.len() == 0 && mod.impls.len() == 0) { return ""; }
 
