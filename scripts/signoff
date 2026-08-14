@@ -28,9 +28,14 @@ cd "$ROOT"
 
 # lane|max_skips|min_pass|description|command
 #
-# max_skips: SKIPs that are legitimate for the lane. Above it, the signoff is
-#   refused — a SKIP is a missing dependency, not a pass, and `ok` in 0.3 s is
-#   a SKIP.
+# max_skips: SKIPs that are legitimate for the lane, meaning the ones the CI
+#   lane ALSO has. The rule is not "zero skips", it is "the same skips CI has":
+#   the macOS lane's runner has no qemu either, so its cross-arch cases skip
+#   there exactly as they do here (macos.yml says so), and demanding zero would
+#   make an honest lane unsignable. Above the number, refuse — an EXTRA skip is
+#   a missing dependency, and `ok` in 0.3 s is a SKIP.
+#   A count that goes stale fails loudly rather than silently, which is the
+#   point: a change in what skips is a thing to look at, not to absorb.
 # min_pass: PASSes the lane must produce to count as having run. This is the
 #   guard against the #6310 shape: `go test -run` exits 0 when its selector
 #   matches NOTHING, so exit status alone would happily sign off a lane that
@@ -43,8 +48,8 @@ lanes() {
   cat <<'EOF'
 lint|0|0|whole-repo cheap gates (build, vet, gofmt, fmt, deadcode, actionlint, testnames, freeze)|make lint-all
 units|0|1|the unit-test lane's packages, host-independent|go test -v $(scripts/unit-test-packages)
-wasm|0|1|wasm e2e under the pinned wasmtime + adapter, host-independent execution|go test -v ./internal/e2e/ -run 'TestWasm'
-macos-arm64|0|1|arm64-darwin native execution, both packages — this IS the CI lane's platform|go test -v -run TestArm64Darwin ./internal/e2e/ && go test -v -run TestSelfHostArm64Darwin ./internal/e2eselfhost/
+wasm|0|60|wasm e2e under the pinned wasmtime + adapter — needs an x86-64 host, see note|go test -v ./internal/e2e/ -run 'TestWasm'
+macos-arm64|13|40|arm64-darwin native execution, both packages — this IS the CI lane's platform|go test -v -run TestArm64Darwin ./internal/e2e/ && go test -v -run TestSelfHostArm64Darwin ./internal/e2eselfhost/
 EOF
 }
 
@@ -54,9 +59,13 @@ if [ "${1:-}" = "--list" ] || [ $# -eq 0 ]; then
   printf '%-22s %s\n' LANE DESCRIPTION
   lanes | awk -F'|' '{printf "%-22s %s\n", $1, $4}'
   echo
-  echo "Not signable on a Mac: the x86-64 / arm64 Linux ELF lanes. They run only"
-  echo "under qemu here (scripts/devbox), which docs/LOCAL-DEV-LOOP.md rules out"
-  echo "as a gate. Let CI run those."
+  echo "Not signable on a Mac:"
+  echo "  * the x86-64 / arm64 Linux ELF lanes — they run only under qemu here"
+  echo "    (scripts/devbox), which docs/LOCAL-DEV-LOOP.md rules out as a gate."
+  echo "  * wasm — 12 of the tests matching TestWasm* drive the x86-64 backend and"
+  echo "    skip without qemu-x86_64, where CI runs them on an x86_64 host. The"
+  echo "    lane will refuse here; run it from a Linux x86-64 machine."
+  echo "Let CI run those."
   exit 0
 fi
 
