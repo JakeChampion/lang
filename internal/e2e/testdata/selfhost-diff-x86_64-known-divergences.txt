@@ -18,15 +18,19 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-06 over seeds 0..511 (the leg's default corpus), after #6283
-# and the fail_why work: 361 agree, 0 diverge, 151 compile gaps. Count the gaps,
-# not just the agreements, when reading a run: the leg only proves what it could
-# COMPILE, so a fix that turns a wrong answer into an IR bail raises the gap
-# count while looking like a win in the divergence column.
+# Measured 2026-08-14 over seeds 0..511 (the leg's default corpus): 504 agree,
+# 0 diverge, 8 compile gaps — all of them the `<fn>$clo not defined` class, so
+# every other category in the census below is now empty. #6819 has since closed
+# one of the 8 (s0017 compiles and agrees), which should make it 505 / 7; that
+# figure is inferred from #6819's own 512-seed run, not re-swept here.
 #
-# That caution cuts both ways, and the last seven runs went the other way: 204
+# Count the gaps, not just the agreements, when reading a run: the leg only
+# proves what it could COMPILE, so a fix that turns a wrong answer into an IR
+# bail raises the gap count while looking like a win in the divergence column.
+#
+# That caution cuts both ways, and every run since has gone the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
-# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151. One bail can cost far
+# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8. One bail can cost far
 # more than the seed that exposes it — an if-expression whose branches are 64-bit
 # took the whole MODULE off the IR path, and fernsmith emits if-expressions
 # everywhere, so a single missing branch in one classifier was suppressing a
@@ -43,36 +47,30 @@
 # message, so it has been deleted rather than left as a second way to do the
 # same thing.
 #
-# CENSUS OF THE 151 GAPS, so the next round is aimed rather than sampled:
+# CENSUS OF THE GAPS, so the next round is aimed rather than sampled. Every
+# remaining gap is the `<fn>$clo not defined` class (#6256); the
+# `T.to_string`-on-a-bare-type-var and named-fail_why categories that used to sit
+# beside it are empty.
 #
-#   90  function value <fn>$clo not defined   → #6256, and now more than half the
-#                                               pile on its own. NOT one
-#                                               mechanism — the issue's own
-#                                               comments record that correction:
-#                                               several shapes share this
-#                                               message, and grouping by message
-#                                               is what made the first reduction
-#                                               fix the wrong thing. It has grown
-#                                               71 → 78 → 90 while nothing about
-#                                               it changed, purely because seeds
-#                                               that used to stop earlier now
-#                                               reach it. Read a moved number as
-#                                               a reordering before a regression.
-#   14  call to unknown symbol T.to_string    → a method call on a bare type var.
-#   47  a named fail_why, grouped by shape:
-#         13  `return` of a BINARY op (| * % >> << / -| *|)
-#          9  `return` of an IDENT (mostly `__chk_v0`, a %?/ /? match binding)
-#          9  `return` of a CALL (`id`, `pick` — the erased generics)
-#          9  an immediately-invoked value block (if/match-expression or
-#             comprehension desugar), incl. 2 in `return` and 1 in an assignment
-#          4  tuple literal / array literal / field access
-#          3  other
+# The class is NOT one mechanism, which is the standing lesson here: grouping by
+# message is what made the first reduction fix the wrong thing. #6256's sweep
+# separated the survivors by instrumenting `lower_expr`'s `ExprLambda` arm:
 #
-# The 47 are what to reduce next: each names its own shape, so they need no
-# instrumentation, and the `return`-of-X rows are 31 of them. Whether they share
-# a cause is UNMEASURED — the $clo pile is the standing warning against assuming
-# a shared message means a shared mechanism, and these share a shape, not even a
-# message. Re-measure before picking: draining one pile reshuffles the others.
+#   2  fn-valued capture with no `cap_type`                       (s0356, s0172)
+#   2  generic-passthrough arm values never walked                (s0393, s0215)
+#   2  the array gate failed by a passthrough arm, not a nested
+#      IIFE — same gate as the closed s0017, different failure    (s0042, s0211)
+#   1  nested IIFEs in non-array fn-value position                (s0199)
+#
+# HAZARD on the passthrough rows: `expr_is_closure_box` has no `PASSTHRU:` branch
+# (unlike `arr_elem_is_closure_box`), so boxing a passthrough arm leaves the
+# destination unmarked and converts a safe bail into a SIGSEGV. The destination
+# side has to move first.
+#
+# Read a moved count as a reordering before a regression: this class grew
+# 71 → 78 → 90 while nothing about it changed, purely because seeds that used to
+# stop earlier began reaching it. Re-measure before picking — draining one pile
+# reshuffles the others.
 
 # CRASHES — the self-host-compiled binary died by SIGSEGV where the interpreter
 # returned a value. These were ONE bug: #6207, a `Map { … }` literal whose keys
