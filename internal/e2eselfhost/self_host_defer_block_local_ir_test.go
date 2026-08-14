@@ -77,6 +77,22 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return
 	// (m is a string, so `.len()` dispatches str_len) and not just an i32.
 	{"string_block_local", `function f(a: Cell[i32], s: string): i32 { if (s.len() > 0) { var m: string = s + "!"; defer a.set(a.get() + m.len()); } return 1; }
 function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a, "abc"); return a.get() * 10 + r; }`, 41},
+	// The `?` failure edge is a THIRD replay site, reached from lower_try rather
+	// than the tail or a rewritten `return` — and it replays the cleanup once
+	// past the declaring block and once from inside it, which resolve by
+	// different routes (the record, and ordinary scope).
+	{"try_edge_after_block", `function g(x: i32): Option[i32] { if (x < 0) { return None; } return Some(x); }
+function f(a: Cell[i32], x: i32): Option[i32] { var n: i32 = 1; if (n > 0) { var k: i32 = 7; defer a.set(a.get() + k); } var v: i32 = g(x)?; return Some(v + 1); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 0 - 5)) { Some(v) => { r = v; }, None => { r = 9; } } return a.get() * 10 + r; }`, 79},
+	{"try_edge_inside_block", `function g(x: i32): Option[i32] { if (x < 0) { return None; } return Some(x); }
+function f(a: Cell[i32], x: i32): Option[i32] { var n: i32 = 1; if (n > 0) { var k: i32 = 4; defer a.set(a.get() + k); var v: i32 = g(x)?; return Some(v + n); } return Some(0); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 0 - 5)) { Some(v) => { r = v; }, None => { r = 9; } } return a.get() * 10 + r; }`, 49},
+	// `errdefer` over a block local rides the second cleanup list, so it needs
+	// the record on the error path and must stay silent on the Ok path.
+	{"errdefer_block_local", `function f(a: Cell[i32], x: i32): Result[i32, i32] { var n: i32 = 1; if (n > 0) { var k: i32 = 6; errdefer a.set(a.get() + k); } if (x < 0) { return Err(1); } return Ok(x); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 0 - 1)) { Ok(v) => { r = v; }, Err(e) => { r = e; } } return a.get() * 10 + r; }`, 61},
+	{"errdefer_block_local_ok_path", `function f(a: Cell[i32], x: i32): Result[i32, i32] { var n: i32 = 1; if (n > 0) { var k: i32 = 6; errdefer a.set(a.get() + k); } if (x < 0) { return Err(1); } return Ok(x); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 3)) { Ok(v) => { r = v; }, Err(e) => { r = e; } } return a.get() * 10 + r; }`, 3},
 }
 
 // TestSelfHostDeferBlockLocalIRX86_64 runs the cases through the self-hosted
