@@ -39,6 +39,23 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             }
             return acc;
         },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                acc = collect_idents_expr(ml.keys[i], acc);
+                acc = collect_idents_expr(ml.vals[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { acc = collect_idents_expr(fs.exprs[i], acc); }
+                i = i + 1;
+            }
+            return acc;
+        },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
@@ -301,6 +318,23 @@ pub function collect_calls_expr(e: parser.Expr, want: string[], acc: CallSite[])
             }
             return acc;
         },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                acc = collect_calls_expr(ml.keys[i], want, acc);
+                acc = collect_calls_expr(ml.vals[i], want, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { acc = collect_calls_expr(fs.exprs[i], want, acc); }
+                i = i + 1;
+            }
+            return acc;
+        },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
@@ -533,6 +567,23 @@ pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef
             var i: i32 = 0;
             while (i < a.elements.len()) {
                 acc = collect_qualrefs_expr(a.elements[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                acc = collect_qualrefs_expr(ml.keys[i], quals, acc);
+                acc = collect_qualrefs_expr(ml.vals[i], quals, acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { acc = collect_qualrefs_expr(fs.exprs[i], quals, acc); }
                 i = i + 1;
             }
             return acc;

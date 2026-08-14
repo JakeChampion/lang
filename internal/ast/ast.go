@@ -1735,6 +1735,13 @@ type FStringPart struct {
 type FloatLit struct {
 	P     Position
 	Value float64
+	// Raw is the literal AS WRITTEN, so `-fmt` re-emits the author's
+	// spelling instead of rendering Value back through %g — which
+	// rewrote `1e-6` to `1e-06`, `1e100` to `1e+100` and trimmed
+	// `0.7615941560` to `0.761594156` (#6802). Empty for a literal the
+	// compiler synthesised (constfold's folded results), which prints
+	// from Value as before.
+	Raw string
 	// Width is set by the checker once a concrete float type is
 	// known (`var x: f32 = 1.5` → 32). 0 means the literal stayed
 	// unsettled; every consumer (interp, IR lowering) defaults it

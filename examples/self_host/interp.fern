@@ -1790,6 +1790,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 captured_values: env.values
             };
         },
+        parser.ExprMapLit(_) => { return v_err("Map literal: formatter-only node"); },
+        parser.ExprFString(_) => { return v_err("f-string: formatter-only node"); },
         parser.ExprUnknown(u) => {
             // A float literal too large for f64 names its code, like the
             // checker and the asm front end report it (#6842).

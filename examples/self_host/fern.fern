@@ -14,7 +14,7 @@
 //     fern -check <DIR>                     check a package, or every
 //                                           member of the workspace it roots
 //     fern -interp <entry.fern>             evaluate; exit = program result
-//     fern -fmt <entry.fern>                format the entry file to stdout
+//     fern -fmt [-w | -d] <entry.fern>      format to stdout / in place / as a diff
 //     fern -targets                         list the targets + capabilities
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
@@ -80,6 +80,19 @@ function blank_line_map(src: string): boolean[] {
     }
     out = out.append(blank);
     return out;
+}
+
+// fmt_output_is_readable is the `-fmt -w` safety net: the formatted text must
+// come back through the formatter as itself. The parser has no error list — a
+// construct it refuses becomes an Unknown node the printer spells `/*unknown*/`
+// — so re-formatting is the check that reaches both halves at once, an
+// unreadable node and a printer that is not a fixed point on its own output.
+function fmt_output_is_readable(formatted: string): boolean {
+    if (util.contains(formatted, "/*unknown")) { return false; }
+    var flex: lexer.LexResult = lexer.tokenize_full(formatted);
+    var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+    var again: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(formatted));
+    return again == formatted;
 }
 import "./ssa";
 import "./ssa_x86";
@@ -351,6 +364,7 @@ function is_flag(a: string): boolean {
 
 function usage(): i32 {
     eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("       fern -fmt [-w | -d] <entry.fern>             (-w overwrites the file, -d prints a unified diff)\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
     eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
@@ -1710,6 +1724,10 @@ function run(): i32 {
     var mode_check: boolean = false;
     var mode_interp: boolean = false;
     var mode_fmt: boolean = false;
+    // `-fmt` output destination, mirroring native: stdout by default, the input
+    // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
+    var fmt_write: boolean = false;
+    var fmt_diff: boolean = false;
     var mode_caps: boolean = false;
     var mode_targets: boolean = false;
     var mode_resolve: boolean = false;
@@ -1740,6 +1758,10 @@ function run(): i32 {
             mode_interp = true;
         } else if (a == "-fmt") {
             mode_fmt = true;
+        } else if (a == "-w") {
+            fmt_write = true;
+        } else if (a == "-d") {
+            fmt_diff = true;
         } else if (a == "-ssa") {
             // Opt into the experimental SSA lowering pipeline (build_func →
             // optimise → regalloc → emit) for x86-64 / arm64 / a wasm subset.
@@ -1907,7 +1929,33 @@ function run(): i32 {
         // and the blank-line map is read straight off the source (#6769).
         var flex: lexer.LexResult = lexer.tokenize_full(esrc);
         var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-        var formatted: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, flex.comments, blank_line_map(esrc));
+        var formatted: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(esrc));
+        if (fmt_diff) {
+            var d: string = printer.unified_diff(esrc, formatted, entry_path, entry_path);
+            if (d.len() == 0) { return 0; }
+            write(d);
+            return 1;
+        }
+        if (fmt_write) {
+            // The only irreversible path, so it refuses to overwrite the input
+            // with output the parser cannot read back. A printer with no case
+            // for a node emits `/*unknown*/` rather than failing, and a file is
+            // not recoverable from a diagnostic printed after the write.
+            if (!fmt_output_is_readable(formatted)) {
+                eprint("fern: " + entry_path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
+                return 1;
+            }
+            match (write_file(entry_path, formatted)) {
+                Err(e) => {
+                    eprint("fern: cannot write back: ");
+                    eprint(entry_path);
+                    eprint("\n");
+                    return 1;
+                },
+                Ok(_) => {},
+            }
+            return 0;
+        }
         if (out_path.len() > 0) {
             match (write_file(out_path, formatted)) {
                 Err(e) => {

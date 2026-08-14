@@ -1953,6 +1953,11 @@ function check_expr(e: parser.Expr, s: Scope): Type {
             check_block(lm.body, body_scope);
             return t_func(pts, rt);
         },
+        // ExprMapLit is the formatter's written form of `Map { … }`; the compile
+        // parse desugars every map literal to its `map_new(…).insert(…)` chain,
+        // so one reaching here means a verbatim parse was fed to the checker.
+        parser.ExprMapLit(_) => { return t_unknown("Map literal: formatter-only node"); },
+        parser.ExprFString(_) => { return t_unknown("f-string: formatter-only node"); },
         parser.ExprUnknown(u) => { return t_unknown("parser-side unknown:" + u.kind); }
     }
     return t_unknown("unhandled Expr variant");
@@ -10163,7 +10168,7 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
             return parser.StmtIf { cond: annotate_expr(f.cond, s), then_body: annotate_block(f.then_body, s), else_body: annotate_block(f.else_body, s), line: f.line, else_chained: f.else_chained };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line };
+            return parser.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         parser.StmtAssign(a) => {
             return parser.StmtAssign { target: a.target, value: annotate_expr(a.value, s), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
