@@ -300,8 +300,16 @@ jobs:
       # only thing in the repo that records the number. Advisory — see
       # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
       # so a partial warm still reports the sizes it did produce.
+      #
+      # continue-on-error because all 28 shards `needs: warm`: a measurement
+      # step must not be able to hold the lane. Unlike the #6164 case, this
+      # hides nothing that was ever enforced — the findings ARE the annotations
+      # and the job summary, and the script exits 0 on every finding by design.
+      # Escalating to a real gate means dropping this flag AND setting
+      # FERN_CI_SIZE_GATE_STRICT.
       - name: check linked driver sizes against the baseline
         if: ${{ !cancelled() }}
+        continue-on-error: true
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v4
@@ -378,6 +386,7 @@ jobs:
       # here and nowhere else in the lane, so this is where it gets recorded.
       - name: check linked fern.fern size against the baseline
         if: ${{ !cancelled() }}
+        continue-on-error: true
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       - name: run isolated fern.fern driver tests (in-process, local cache)
         env:
@@ -1044,13 +1053,18 @@ jobs:
         run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20
       # AUDIT THE SHARD WEIGHTS against what the shards actually measured
       # (#6823). The durations rode in with the outcome markers, so this costs
-      # one awk pass over ~28 small files and no build. Advisory: it writes the
-      # job summary and warning annotations and always exits 0, so it cannot
-      # turn a green lane red — flip FERN_CI_WEIGHT_GATE_STRICT to "1" to
-      # escalate. `!cancelled()` so a run where a shard DID blow its timeout
-      # still gets the audit, which is exactly when its numbers matter.
+      # one awk pass over ~28 small files and no build. Advisory: the findings
+      # are the job summary and the warning annotations, and the script exits 0
+      # on all of them by design; continue-on-error keeps a bug in the audit from
+      # reddening the job that ENFORCES the shard results, which is the one thing
+      # here that must stay trustworthy. Escalating to a real gate means dropping
+      # that flag AND setting FERN_CI_WEIGHT_GATE_STRICT.
+      #
+      # `!cancelled()` so a run where a shard DID blow its timeout still gets the
+      # audit, which is exactly when its numbers matter.
       - name: audit shard weights against measured durations
         if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
           FERN_CI_WEIGHT_GATE_STRICT: "0"
         run: scripts/ci-test-weights check shard-outcomes .github/selfhost-test-weights.txt
