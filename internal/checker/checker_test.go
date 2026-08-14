@@ -21,6 +21,49 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// Construction-site type arguments on a struct literal (#6812): the
+// written instantiation seeds the field checks and outranks any
+// destination annotation, and its arity is validated against the decl.
+func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
+	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Point { x: i32 }\n"
+	ok := []string{
+		// The plain case inference would also have reached.
+		`function main(): i32 { var b = Box[i32] { val: 1 }; return b.val; }`,
+		// The case inference cannot reach: no field value pins T.
+		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		// Agreeing with the destination is fine.
+		`function main(): i32 { var b: Box[i64] = Box[i64] { val: 1 }; return 0; }`,
+	}
+	for _, body := range ok {
+		if err := checkSource(t, decls+body); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, body)
+		}
+	}
+
+	bad := []struct{ body, want string }{
+		{`function main(): i32 { var b = Box[i32, string] { val: 1 }; return 0; }`,
+			"Box expects 1 type argument(s), got 2"},
+		{`function main(): i32 { var p = Point[i32] { x: 1 }; return 0; }`,
+			"Point expects 0 type argument(s), got 1"},
+		// The written args, not the destination, drive the literal — so a
+		// disagreement is a plain assignment error rather than a silent retype.
+		{`function main(): i32 { var b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
+			"cannot assign Box[i32] to variable of type Box[i64]"},
+		{`function main(): i32 { var b = Box[i32] { val: "x" }; return 0; }`,
+			`field "val": expected i32, got string`},
+	}
+	for _, tc := range bad {
+		err := checkSource(t, decls+tc.body)
+		if err == nil {
+			t.Errorf("expected an error for %s, got none", tc.body)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("error %q does not contain %q\nsrc: %s", err.Error(), tc.want, tc.body)
+		}
+	}
+}
+
 // TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
 // literal whose field value conflicts with an explicit destination
 // instantiation — `var b: Box[i32] = Box { v: "x" }`. Checking the field only

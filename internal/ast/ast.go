@@ -2076,14 +2076,20 @@ type StructLit struct {
 	// ones. `base` must have the same struct type as TypeName. See
 	// docs/IMMUTABILITY-MIGRATION-PLAN.md.
 	Base Expr
-	// TypeArgs is filled by the checker when the literal
-	// instantiates a generic struct (StructDecl with non-empty
-	// TypeParams). Each entry is the inferred concrete type for
-	// the corresponding type parameter, in declaration order.
+	// TypeArgs holds the instantiation of a generic struct
+	// (StructDecl with non-empty TypeParams) — one entry per type
+	// parameter, in declaration order. The parser fills it from an
+	// explicit `Box[i32] { … }` type-argument list; otherwise the
+	// checker fills it with what it inferred from the field values.
 	// The monomorphisation pass uses it to mangle TypeName into
 	// `<base>__<arg1>__<arg2>` and clear the field. After
 	// monomorph runs, every StructLit has TypeArgs empty.
 	TypeArgs []Type
+	// TypeArgsWritten distinguishes the parser-filled TypeArgs
+	// above from the checker-inferred ones: a written instantiation
+	// is authoritative, so a destination type must not settle the
+	// literal's fields to a different one behind the user's back.
+	TypeArgsWritten bool
 }
 
 // TupleLit is `(e1, e2, …)`. Codegen lowers tuples to heap-allocated

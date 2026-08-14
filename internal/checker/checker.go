@@ -12722,6 +12722,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// For generic structs we infer type-args from field
 		// values via the same `unifyType` machinery used for
 		// generic function calls. Empty for non-generic structs.
+		// Type args written at the construction site
+		// (`Box[i32] { … }`) must match the decl's parameter count —
+		// including a count of zero, for a non-generic struct.
+		if n.TypeArgsWritten && len(n.TypeArgs) != len(sd.TypeParams) {
+			c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
+				sd.Name, len(sd.TypeParams), len(n.TypeArgs))
+			n.TypeArgs = nil
+			n.TypeArgsWritten = false
+		}
 		var sub map[string]ast.Type
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
@@ -12736,6 +12745,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
 				for i, tp := range sd.TypeParams {
 					sub[tp] = et.Args[i]
+				}
+			}
+			// Construction-site type args outrank the destination: the
+			// literal names its own instantiation, and a disagreement with
+			// the destination is caught by the assignment check.
+			if n.TypeArgsWritten {
+				for i, tp := range sd.TypeParams {
+					sub[tp] = n.TypeArgs[i]
 				}
 			}
 		}
@@ -13522,9 +13539,14 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				ml.KeyType = hn.Args[0]
 				ml.ValueType = hn.Args[1]
 			}
-		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 {
+		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 && !sl.TypeArgsWritten {
 			// Generic struct literal with a destination
 			// annotation: `var b: Box[i64] = Box { v: 100 }`.
+			// A literal that names its own instantiation
+			// (`Box[i32] { v: 100 }`) has already had its fields
+			// settled against THAT one, and re-settling them here
+			// would silently retype the literal to the
+			// destination instead of reporting the mismatch.
 			// Build the type-param substitution from the hint's
 			// Args, look up each field's declared type, and
 			// settle each field value against the substituted

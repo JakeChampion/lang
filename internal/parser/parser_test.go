@@ -1258,6 +1258,81 @@ func TestStructUpdateLitPureCopyParses(t *testing.T) {
 	}
 }
 
+// Construction-site type arguments — the `[ TypeArgs ]` of the spec
+// grammar's `StructLit = QualName [ TypeArgs ] '{' … '}'` (#6812).
+func TestStructLitTypeArgsParse(t *testing.T) {
+	cases := []struct {
+		name     string
+		init     string
+		typeName string
+		args     []string
+		hasBase  bool
+	}{
+		{"one arg", `Box[i32] { val: 1 }`, "Box", []string{"i32"}, false},
+		{"two args", `Pair[i32, string] { a: 1, b: "x" }`, "Pair", []string{"i32", "string"}, false},
+		{"nested arg", `Box[i32[]] { val: [1] }`, "Box", []string{"i32[]"}, false},
+		{"trailing comma", `Box[i32,] { val: 1 }`, "Box", []string{"i32"}, false},
+		{"qualified", `m.Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
+		{"path qualified", `m::Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
+		{"spread", `Box[i32] { ...b, val: 1 }`, "Box", []string{"i32"}, true},
+		{"no args", `Box { val: 1 }`, "Box", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Parse(`function main(): i32 { var v = ` + tc.init + `; return 0; }`)
+			if err != nil {
+				t.Fatalf("parse %s: %v", tc.init, err)
+			}
+			sl, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.StructLit)
+			if !ok {
+				t.Fatalf("%s: init should be StructLit, got %T",
+					tc.init, prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
+			}
+			if sl.TypeName != tc.typeName {
+				t.Errorf("TypeName = %q, want %q", sl.TypeName, tc.typeName)
+			}
+			if sl.TypeArgsWritten != (tc.args != nil) {
+				t.Errorf("TypeArgsWritten = %v, want %v", sl.TypeArgsWritten, tc.args != nil)
+			}
+			if len(sl.TypeArgs) != len(tc.args) {
+				t.Fatalf("got %d type args, want %d (%v)", len(sl.TypeArgs), len(tc.args), sl.TypeArgs)
+			}
+			for i, want := range tc.args {
+				if got := sl.TypeArgs[i].String(); got != want {
+					t.Errorf("TypeArgs[%d] = %s, want %s", i, got, want)
+				}
+			}
+			if (sl.Base != nil) != tc.hasBase {
+				t.Errorf("Base != nil = %v, want %v", sl.Base != nil, tc.hasBase)
+			}
+		})
+	}
+}
+
+// The struct-literal type-arg branch must not eat an ordinary index
+// whose `]` happens to be followed by a `{` — the disambiguator is the
+// type keyword after `[`, plus the same `noStructLit` gate the bare
+// `Ident { … }` form uses.
+func TestStructLitTypeArgsDoNotClaimIndexing(t *testing.T) {
+	prog, err := Parse(`function main(): i32 {
+			var xs = [1, 2, 3];
+			var n = 0;
+			while (xs[0] > 0) { n = n + 1; }
+			var y = xs[1];
+			return y + n;
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := prog.Funcs[0].Body.Stmts
+	if _, ok := body[2].(*ast.While); !ok {
+		t.Fatalf("`while (xs[0] > 0) { … }` should stay a While, got %T", body[2])
+	}
+	if _, ok := body[3].(*ast.Var).Init.(*ast.Index); !ok {
+		t.Errorf("`xs[1]` should stay an Index, got %T", body[3].(*ast.Var).Init)
+	}
+}
+
 func TestMethodReceiverParsing(t *testing.T) {
 	prog, err := Parse(`struct Point { x: i32, y: i32 }
 		function (p: Point) sum(): i32 { return p.x + p.y; }`)
