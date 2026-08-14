@@ -832,73 +832,6 @@ function (e: Env) update(name: string, v: Value): Env {
     return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
 }
 
-// =================== INTEGER PARSE ====================
-
-// The parser hands us a TokNumber whose text is the original
-// digit run. Turn that into an i32. No suffix handling here —
-// we lump everything into i32 at this layer, mirroring the
-// checker's TypeI32-only stance for the first cut.
-// str_to_i32 now lives in util.fern (imported as `util`). See SH-020.
-
-// str_to_f64 parses a decimal float literal: an optional `-`,
-// integer digits, optional `.` + fractional digits, and an
-// optional `e`/`E` exponent with an optional sign. Walks the
-// integer part first, then the fractional part with a 1/10**k
-// divisor, then scales by 10**exp. (The exponent scaling is a
-// minimal power-of-ten loop — SH-004/#2849 tracks a correctly
-// rounding decimal parser; this only stops `1e3` losing its
-// exponent entirely, #4342.)
-function str_to_f64(s: string): f64 {
-    var n: i32 = s.len();
-    var neg: boolean = false;
-    var i: i32 = 0;
-    if (n > 0 && s[0] == 45) { neg = true; i = 1; }  // '-' = 0x2D
-    var int_part: f64 = 0.0;
-    var frac_part: f64 = 0.0;
-    var divisor: f64 = 1.0;
-    var seen_dot: boolean = false;
-    while (i < n) {
-        var b: i32 = s[i] as i32;
-        if (b == 46) { seen_dot = true; i = i + 1; continue; }  // '.' = 0x2E
-        if (b < 48 || b > 57) { break; }
-        var d: i32 = b - 48;
-        var df: f64 = (d as f64);
-        if (seen_dot) {
-            divisor = divisor * 10.0;
-            frac_part = frac_part + (df / divisor);
-        } else {
-            int_part = int_part * 10.0 + df;
-        }
-        i = i + 1;
-    }
-    var v: f64 = int_part + frac_part;
-    // Exponent: `e`/`E`, an optional `+`/`-`, then digits. The mantissa loop
-    // broke at the `e`, so `i` points at it here. `1e3` -> 1000.0, `1.5e-2` ->
-    // 0.015. Applied before the mantissa sign so `-1e2` = -100.0.
-    if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
-        i = i + 1;
-        var exp_neg: boolean = false;
-        if (i < n && (s[i] == 43 || s[i] == 45)) {  // '+' / '-'
-            if (s[i] == 45) { exp_neg = true; }
-            i = i + 1;
-        }
-        var exp: i32 = 0;
-        while (i < n) {
-            var eb: i32 = s[i] as i32;
-            if (eb < 48 || eb > 57) { break; }
-            exp = exp * 10 + (eb - 48);
-            i = i + 1;
-        }
-        var k: i32 = 0;
-        while (k < exp) {
-            if (exp_neg) { v = v / 10.0; } else { v = v * 10.0; }
-            k = k + 1;
-        }
-    }
-    if (neg) { v = 0.0 - v; }
-    return v;
-}
-
 // =================== EVAL ====================
 
 // eval_expr: a depth-first walk of the parser's Expr tree.
@@ -1425,7 +1358,7 @@ function eval_unary(op: string, ov: Value): Value {
 // literals parse as i64 so a value beyond i32 range survives, and box_i64
 // narrows it back to a compact VInt when it fits.
 function eval_number_literal(is_float: boolean, t: string): Value {
-    if (is_float) { return v_float(str_to_f64(t)); }
+    if (is_float) { return v_float(f64_from_bits(util.parse_f64_bits(t))); }
     var hs: i32 = 0;
     if (t.len() > 0 && t[0] == 45) { hs = 1; }
     var is_radix: boolean = t.len() > hs + 1 && t[hs] == 48 && (t[hs + 1] == 120 || t[hs + 1] == 88 || t[hs + 1] == 98 || t[hs + 1] == 66);

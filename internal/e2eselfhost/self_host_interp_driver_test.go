@@ -40,9 +40,9 @@ var interpProgs = []struct {
 	// operand parsed independently, no fold in the interp).
 	{"hex-literal", "function main(): i32 { return 0x1F; }", 31},
 	{"hex-arith", "function main(): i32 { return 0x10 + 1; }", 17},
-	// Scientific-notation float literals (#4342): str_to_f64 parsed integer +
-	// fraction only and dropped the exponent, so `1e3` evaluated to 1.0. Now it
-	// scales by 10**exp. Each check returns 7 iff the exponent is honoured.
+	// Scientific-notation float literals (#4342): the literal reader parsed
+	// integer + fraction only and dropped the exponent, so `1e3` evaluated to
+	// 1.0. Each check returns 7 iff the exponent is honoured.
 	{"sci-float-exp", "function main(): i32 { if (1e3 == 1000.0) { return 7; } return 0; }", 7},
 	{"sci-float-frac", "function main(): i32 { if (1.5e2 == 150.0) { return 7; } return 0; }", 7},
 	{"sci-float-neg-exp", "function main(): i32 { var b: f64 = 1e-2; if (b > 0.009 && b < 0.011) { return 7; } return 0; }", 7},

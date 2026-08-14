@@ -305,7 +305,16 @@ pub function contains(haystack: string, needle: string): boolean {
 // is 0.D × 10^dp; binary-normalize into [0.5, 1) by exact ÷2/×2 counting
 // the binary exponent; pull the mantissa bits by repeated ×2 (the carry
 // out of the integer place is the next bit); round on the next bit + a
-// sticky flag. This is a verbatim mirror of watbin.parse_f64_bits and the
+// sticky flag.
+//
+// D is capped at 800 digits, which is what makes dropping the rest into the
+// sticky bit safe: an exact ULP tie needs at most 751 significant decimal
+// digits anywhere in the binary64 range (the smallest, 2^-1075, is
+// 5^1075 / 10^1075), so an input with a non-zero digit past 800 cannot be a
+// tie and rounding up off the round bit is correct. A smaller cap decides
+// long ties by truncation instead, which loses them by 1 ULP.
+//
+// This is a verbatim mirror of watbin.parse_f64_bits and the
 // three assemblers' parsers (x86_gas_parse_f64 / arm64_parse_f64) — those
 // stay standalone (deliberately import-free); this copy is the reachable-
 // from-the-emitters one (asm_ir / asm_arm64_ir already import util).
@@ -324,7 +333,7 @@ pub function parse_f64_bits(s: string): i64 {
         var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
-            if (digits.len() < 40) { digits = digits.append(d); }
+            if (digits.len() < 800) { digits = digits.append(d); }
             else { if (d != 0) { sticky = true; } }
             dp = dp + 1;
         }
@@ -336,7 +345,7 @@ pub function parse_f64_bits(s: string): i64 {
             var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
-                if (digits.len() < 40) { digits = digits.append(fd); }
+                if (digits.len() < 800) { digits = digits.append(fd); }
                 else { if (fd != 0) { sticky = true; } }
             } else {
                 dp = dp - 1;                // leading fraction zero shifts the point

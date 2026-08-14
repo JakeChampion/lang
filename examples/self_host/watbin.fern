@@ -462,8 +462,12 @@ function parse_f64_bits(s: string): i64 {
     else if (s.len() > 0 && s[0] == 43) { i = 1; }
     var signbit: i64 = 0;
     if (neg) { var one: i64 = 1; signbit = one << 63; }
-    // Collect significant digits (cap 40 — beyond that only stickiness
-    // matters) and the decimal point position: value = 0.digits × 10^dp.
+    // Collect significant digits and the decimal point position:
+    // value = 0.digits × 10^dp. The 800-digit cap is what makes dropping the
+    // rest into a sticky bit safe: an exact ULP tie needs at most 751
+    // significant decimal digits anywhere in the binary64 range (the smallest,
+    // 2^-1075, is 5^1075 / 10^1075), so an input with a non-zero digit past
+    // 800 cannot be a tie and rounding up off the round bit is correct.
     var digits: i32[] = [];
     var dp: i32 = 0;
     var sticky: boolean = false;
@@ -472,7 +476,7 @@ function parse_f64_bits(s: string): i64 {
         var d: i32 = (s[i] as i32) - 48;
         if (started || d != 0) {
             started = true;
-            if (digits.len() < 40) { digits = digits.append(d); }
+            if (digits.len() < 800) { digits = digits.append(d); }
             else { if (d != 0) { sticky = true; } }
             dp = dp + 1;
         }
@@ -484,7 +488,7 @@ function parse_f64_bits(s: string): i64 {
             var fd: i32 = (s[i] as i32) - 48;
             if (started || fd != 0) {
                 started = true;
-                if (digits.len() < 40) { digits = digits.append(fd); }
+                if (digits.len() < 800) { digits = digits.append(fd); }
                 else { if (fd != 0) { sticky = true; } }
             } else {
                 dp = dp - 1;                // leading fraction zero shifts the point
