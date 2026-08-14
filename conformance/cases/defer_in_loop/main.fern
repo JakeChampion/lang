@@ -1,0 +1,97 @@
+// A `defer` inside a loop body (#6379, #6836). Nothing in the corpus put one
+// there, and that is how a four-way split between the engines stayed invisible:
+// the interpreter registered one deferred call per EXECUTION and replayed them
+// all at function exit, while every compiled backend armed one flag per defer
+// STATEMENT and fired it once. Straight-line code cannot tell the models apart.
+//
+// The contract being pinned: each execution of the statement schedules its own
+// run, and that run happens when the iteration that executed it ends — the
+// tail, a `break`, a `continue`, a labelled edge out of several bodies at once,
+// or a `return` / `?` that leaves the function from mid-iteration. The action
+// reads its names when it runs, so an iteration's action sees that iteration's
+// values.
+
+import "std/i32";
+
+// The count, and the values: three iterations, three runs, each reading its
+// own `k`. One run at function exit would print `w20` alone.
+function counted(): i32 {
+    var i: i32 = 0;
+    while (i < 3) {
+        var k: i32 = i * 10;
+        defer print("w" + k.to_string());
+        i = i + 1;
+    }
+    print("w-done");
+    return i;
+}
+
+// The `for … in` form, whose loop variable is stepped after the body: the run
+// sits before the step, so it reads the iteration's own value.
+function ranged(): i32 {
+    for i in 0..3 {
+        defer print("f" + i.to_string());
+    }
+    print("f-done");
+    return 0;
+}
+
+// `continue` and `break` are edges out of the body, so the iteration's pending
+// action runs there — and only once, not again at function exit.
+function edges(): i32 {
+    var i: i32 = 0;
+    while (i < 5) {
+        var k: i32 = i;
+        defer print("e" + k.to_string());
+        i = i + 1;
+        if (k == 1) { continue; }
+        if (k == 3) { break; }
+    }
+    print("e-done");
+    return 0;
+}
+
+// A labelled `break` leaves two bodies at once: both run, innermost first.
+function nested(): i32 {
+    var i: i32 = 0;
+    outer: while (i < 2) {
+        defer print("o" + i.to_string());
+        var j: i32 = 0;
+        while (j < 3) {
+            var jj: i32 = j;
+            defer print("i" + jj.to_string());
+            if (jj == 1) { break outer; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    print("n-done");
+    return 0;
+}
+
+// A `return` from mid-iteration is a function exit: the iteration's pending
+// action runs there, LIFO with the function-body defer, and the iterations
+// that already ended do not run a second time.
+function early(): i32 {
+    defer print("fn-last");
+    var i: i32 = 0;
+    while (i < 4) {
+        var k: i32 = i;
+        defer print("r" + k.to_string());
+        if (k == 2) { return 7; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+function main(): i32 {
+    if (counted() != 3) { return 1; }
+    var r: i32 = ranged();
+    if (r != 0) { return 2; }
+    var e: i32 = edges();
+    if (e != 0) { return 3; }
+    var n: i32 = nested();
+    if (n != 0) { return 4; }
+    if (early() != 7) { return 5; }
+    return 0;
+}

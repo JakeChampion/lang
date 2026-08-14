@@ -75,6 +75,25 @@ function read(path: string): Result[string, IoError] {
 }
 ```
 
+In a **loop body** the scope that schedules the cleanup is the iteration,
+so each execution of the `defer` gets its own run at the end of *that*
+iteration — a `break`, a `continue` and the body's tail all count as its
+end. Nothing accumulates across iterations, and each run reads the values
+its own iteration left:
+
+```fern
+for path in paths {
+    var r: Reader = open(path)?;
+    defer r.close();          // closes this iteration's reader, before the next
+    consume(r.read_all());
+}
+```
+
+A `return` or a `?` that leaves the function from mid-iteration is an
+exit for both scopes: the iteration's pending cleanup runs there, then the
+function body's, LIFO. A deferred expression reads its names at the moment
+it runs, not at the `defer`.
+
 `errdefer` is the same idea, but it runs **only on an error exit** — a
 `?` that propagates an `Err`/`None`, or a `return` of an error value. Use
 it to undo partial work that should survive the success path but be rolled

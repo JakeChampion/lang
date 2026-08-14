@@ -4493,11 +4493,14 @@ func (b *builder) emitPairFormPayloadRetain(payload ast.Expr) {
 
 // loopFrame records one enclosing loop's label and its break/continue
 // target depths, so a labeled `break`/`continue` can resolve past
-// intervening loops.
+// intervening loops. deferIdxs are the indices (into b.defers) of the
+// defer statements lexically inside this loop's body — the ones whose
+// iteration-end cleanup every edge out of the body has to replay.
 type loopFrame struct {
-	label  string
-	breakD int32
-	contD  int32
+	label     string
+	breakD    int32
+	contD     int32
+	deferIdxs []int
 }
 
 // findLoopFrame returns the innermost enclosing loop frame whose label
@@ -4691,10 +4694,14 @@ type builder struct {
 	// before any IR emission. deferSlots holds the synthetic
 	// "active" flag local for each defer; lowering the Defer
 	// statement sets the flag to 1, and the cleanup blocks
-	// emitted before each return run the deferred expression
-	// only when the flag is set.
+	// emitted before each return — plus the ones on every edge
+	// out of a loop body, which also clear the flag — run the
+	// deferred expression only when the flag is set. deferIdx
+	// maps each node back to its index so a loop can find the
+	// defers inside its body.
 	defers     []*ast.Defer
 	deferSlots []int32
+	deferIdx   map[*ast.Defer]int
 	// ptrW is the target's heap-pointer width in bytes — 4 on
 	// wasm32, 8 on arm64. Sizes enum payload slots, struct
 	// field offsets, array element strides, and closure
@@ -4813,6 +4820,11 @@ func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 // implicit-return path at the end of `lowerFunc`. Plain `defer`s
 // run on EVERY exit; `errdefer`s (OnError) are skipped here and
 // replayed separately by emitErrDeferCleanup on the error paths.
+//
+// A defer inside a loop body reaches here too, for the exits that
+// leave the function from mid-iteration — emitIterDeferCleanup
+// clears the flag at the end of each iteration, so this replay is
+// a no-op for an iteration that already ended.
 func (b *builder) emitDeferCleanup() error {
 	return b.emitDeferCleanupKind(false)
 }
@@ -4847,6 +4859,81 @@ func (b *builder) emitDeferCleanupKind(onError bool) error {
 		b.closeScope()
 	}
 	return nil
+}
+
+// bodyDeferIdxs returns the indices into b.defers of every defer
+// statement lexically inside `body` — the defers a loop body owns.
+func (b *builder) bodyDeferIdxs(body ast.Stmt) []int {
+	if len(b.defers) == 0 {
+		return nil
+	}
+	var ds []*ast.Defer
+	collectDefers(body, &ds)
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(ds))
+	for _, d := range ds {
+		if i, ok := b.deferIdx[d]; ok {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// emitIterDeferCleanup replays the defers a loop body registered, at an
+// edge leaving that body (its tail, a `break`, a `continue`) — reverse
+// source order, each guarded by its active flag, and each flag cleared
+// after the run. Clearing is what makes the count per iteration: the
+// next iteration re-arms, and the function-exit replay skips a defer
+// whose iteration already ended.
+//
+// An errdefer's flag is cleared without running its action: leaving the
+// body normally is not an error exit, and a rollback armed in an earlier
+// iteration must not fire for a later iteration's failure.
+func (b *builder) emitIterDeferCleanup(idxs []int) error {
+	for k := len(idxs) - 1; k >= 0; k-- {
+		i := idxs[k]
+		b.emit(Op{Kind: OpLoadLocal, I32: b.deferSlots[i]})
+		b.openIf(BlockTypeVoid)
+		if !b.defers[i].OnError {
+			if err := b.expr(b.defers[i].Expr); err != nil {
+				return err
+			}
+			if exprLeavesValue(b.defers[i].Expr, b.info) {
+				b.emit(Op{Kind: OpDrop})
+			}
+		}
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: b.deferSlots[i]})
+		b.closeScope()
+	}
+	return nil
+}
+
+// emitIterDeferCleanupThrough replays the iteration-end cleanup of every
+// loop body a `break`/`continue` leaves — the innermost `levels` frames,
+// innermost first, so nested loops unwind LIFO.
+func (b *builder) emitIterDeferCleanupThrough(levels int) error {
+	for i := 0; i < levels; i++ {
+		fr := b.loopFrames[len(b.loopFrames)-1-i]
+		if err := b.emitIterDeferCleanup(fr.deferIdxs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loopFrameLevels returns how many enclosing loop frames a `break`/
+// `continue` targeting `label` leaves (1 for the innermost loop), or 0
+// when no frame matches.
+func (b *builder) loopFrameLevels(label string) int {
+	for i := len(b.loopFrames) - 1; i >= 0; i-- {
+		if b.loopFrames[i].label == label {
+			return len(b.loopFrames) - i
+		}
+	}
+	return 0
 }
 
 // hasErrDefers reports whether any registered defer is an
@@ -5045,10 +5132,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// That makes a defer reached inside a conditional a
 	// no-op when the conditional didn't fire.
 	collectDefers(fn.Body, &b.defers)
+	b.deferIdx = make(map[*ast.Defer]int, len(b.defers))
 	for i := range b.defers {
 		slot := b.allocSlot()
 		b.deferSlots = append(b.deferSlots, slot)
 		b.locals[fmt.Sprintf("__defer_%d_active", i)] = slot
+		b.deferIdx[b.defers[i]] = i
 	}
 	// safety net: zero-init every array-typed local
 	// slot at function entry. The function-exit dec sweep (in
@@ -6945,8 +7034,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.brTo(breakD, true)
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
-		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD, deferIdxs: b.bodyDeferIdxs(n.Body)})
 		if err := b.stmt(n.Body); err != nil {
+			return err
+		}
+		// Iteration-end cleanup for the defers this body registered, on the
+		// fall-through edge (`break`/`continue` emit their own before branching).
+		if err := b.emitIterDeferCleanup(b.loopFrames[len(b.loopFrames)-1].deferIdxs); err != nil {
 			return err
 		}
 		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
@@ -6966,8 +7060,11 @@ func (b *builder) stmt(s ast.Stmt) error {
 		loopD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
-		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD})
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD, deferIdxs: b.bodyDeferIdxs(n.Body)})
 		if err := b.stmt(n.Body); err != nil {
+			return err
+		}
+		if err := b.emitIterDeferCleanup(b.loopFrames[len(b.loopFrames)-1].deferIdxs); err != nil {
 			return err
 		}
 		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
@@ -6999,8 +7096,13 @@ func (b *builder) stmt(s ast.Stmt) error {
 		contD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, contD)
-		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: contD})
+		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: contD, deferIdxs: b.bodyDeferIdxs(n.Body)})
 		if err := b.stmt(n.Body); err != nil {
+			return err
+		}
+		// Inside the continue-block, so it runs on the fall-through edge only;
+		// a `continue` branches to the block's end and emits its own copy.
+		if err := b.emitIterDeferCleanup(b.loopFrames[len(b.loopFrames)-1].deferIdxs); err != nil {
 			return err
 		}
 		b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
@@ -7021,11 +7123,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if fr == nil {
 				return fmt.Errorf("ir: break label %q not found (compiler bug — should be checker-rejected)", n.Label)
 			}
+			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
+				return err
+			}
 			b.brTo(fr.breakD, false)
 			break
 		}
 		if len(b.breakStack) == 0 {
 			return fmt.Errorf("ir: break outside of a loop (compiler bug — should be checker-rejected)")
+		}
+		if err := b.emitIterDeferCleanupThrough(1); err != nil {
+			return err
 		}
 		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
@@ -7034,11 +7142,17 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if fr == nil {
 				return fmt.Errorf("ir: continue label %q not found (compiler bug — should be checker-rejected)", n.Label)
 			}
+			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
+				return err
+			}
 			b.brTo(fr.contD, false)
 			break
 		}
 		if len(b.contStack) == 0 {
 			return fmt.Errorf("ir: continue outside of a loop (compiler bug — should be checker-rejected)")
+		}
+		if err := b.emitIterDeferCleanupThrough(1); err != nil {
+			return err
 		}
 		b.brTo(b.contStack[len(b.contStack)-1], false)
 	case *ast.Return:

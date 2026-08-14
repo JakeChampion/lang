@@ -33,13 +33,12 @@ var deferBlockLocalCases = []struct {
 	{"if_block_local", `function f(a: Cell[i32]): i32 { var n: i32 = 1; if (n > 0) { var k: i32 = 7; defer a.set(a.get() + k); n = n + 1; } return n; }
 function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 72},
 	// The same gap in each other block-scoping statement. A defer inside a loop
-	// re-arms one flag per iteration and its action runs ONCE at exit, reading the
-	// local's FINAL value (3, 4) — locals are function-lifetime storage, not a
-	// per-iteration capture.
+	// body runs at the end of the iteration that executed it (#6379/#6836), so
+	// each iteration's action reads that iteration's `k`: 1+2+3 = 6, and 0+2+4 = 6.
 	{"while_block_local", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var k: i32 = i + 1; defer a.set(a.get() + k); i = i + 1; } return i; }
-function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 33},
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 63},
 	{"for_block_local", `function f(a: Cell[i32]): i32 { for i in 0..3 { var k: i32 = i * 2; defer a.set(a.get() + k); } return 9; }
-function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 49},
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 69},
 	{"match_arm_block_local", `function f(a: Cell[i32], o: Option[i32]): i32 { match (o) { Some(v) => { var k: i32 = v + 1; defer a.set(a.get() + k); }, None => {} } return 1; }
 function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a, Some(4)); return a.get() * 10 + r; }`, 51},
 	// Two SIBLING blocks declaring one name must resolve to two slots. Both run,

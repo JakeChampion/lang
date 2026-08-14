@@ -137,8 +137,10 @@ isn't significant.
 - **`function f(Pat: T)`** — destructuring parameter, same grammar again
   but irrefutable only (a tuple or struct pattern, optionally with an
   `@` binding for the whole value).
-- **`defer expr;`** / **`errdefer expr;`** — schedule expr to run on
-  function exit (LIFO); `errdefer` runs only on an error exit.
+- **`defer expr;`** / **`errdefer expr;`** — schedule expr to run when the
+  scope that reached the statement finishes (LIFO): function exit, or the
+  end of the iteration for a `defer` in a loop body. `errdefer` runs only
+  on an error exit.
 
 Ranges are `start..end` (exclusive) and `start..=end` (inclusive):
 

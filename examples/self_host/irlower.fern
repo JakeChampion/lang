@@ -956,6 +956,19 @@ function defer_replay_flag(cond: parser.Expr): string {
     return "";
 }
 
+// disarms_defer_flag: the assignment is a `__dfa<i> = 0` — the clear a loop
+// body's per-iteration cleanup writes after replaying its action, not an
+// arming `= 1`. It leaves nothing pending, so no block has to record slots
+// for it, and counting it would let a block holding only a `break` claim a
+// flag armed elsewhere.
+function disarms_defer_flag(v: parser.Expr): boolean {
+    match (v) {
+        parser.ExprNumber(n) => { return n.text == "0"; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // armed_defer_flags collects every defer flag `stmts` ARMS anywhere in its
 // subtree, so a block closing its scope knows which replays can still name the
 // locals it is about to retire. A flag is armed at exactly one `defer`
@@ -967,7 +980,7 @@ function armed_defer_flags(stmts: parser.Stmt[], acc: string[]): string[] {
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtAssign(a) => {
-                if (is_defer_flag_name(a.target) && util.index_of_str(out, a.target) < 0) { out = out.append(a.target); }
+                if (is_defer_flag_name(a.target) && !disarms_defer_flag(a.value) && util.index_of_str(out, a.target) < 0) { out = out.append(a.target); }
             },
             parser.StmtIf(f) => {
                 out = armed_defer_flags(f.then_body, out);

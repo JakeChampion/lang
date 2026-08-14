@@ -677,18 +677,33 @@ Deferred to a follow-up:
   the process exits after `main`, so the OS reclaims
   everything for free.
 - **`defer` keyword shipped.** `defer EXPR;` schedules `EXPR`
-  to run when the enclosing function exits. Multiple defers
-  run in LIFO order. Each Defer node gets a synthesised
-  "active" i32 local; reaching the statement at runtime sets
-  the flag, and the cleanup blocks emitted before each
-  return + at the end of the function run the deferred
-  expression only when the flag is set. Defers registered
-  inside a conditional that didn't fire are no-ops. The
-  return value is evaluated before defer cleanup runs (the
-  IR routes it through a temp slot), matching Go's "you
-  can't mutate the return value from a defer" semantics
-  without giving up named-return-value support that this
-  language doesn't have anyway.
+  to run when the scope that reached the statement finishes:
+  the enclosing function, or **the enclosing loop iteration**
+  for a defer in a loop body. Multiple defers run in LIFO
+  order. Each Defer node gets a synthesised "active" i32
+  local; reaching the statement at runtime sets the flag, and
+  the cleanup blocks emitted before each return + at the end
+  of the function run the deferred expression only when the
+  flag is set. Defers registered inside a conditional that
+  didn't fire are no-ops. A loop body additionally replays
+  its own defers on every edge out of the body (tail, `break`,
+  `continue`, labelled edges) and clears the flag there, so
+  the count is one run per iteration with no pending list to
+  allocate — a `return`/`?` from mid-iteration still exits
+  through the function-level replay, which the cleared flags
+  make a no-op for the iterations that already ended. That
+  narrow scoping is deliberate: Go's model (N registrations
+  pending at function exit) needs unbounded per-frame
+  storage, which the freestanding targets rule out, and only
+  a loop can execute one defer statement more than once. The
+  action reads its names when it RUNS, and the return value
+  is evaluated before defer cleanup does (the IR routes it
+  through a temp slot), matching Go's "you can't mutate the
+  return value from a defer" semantics without giving up
+  named-return-value support that this language doesn't have
+  anyway. #6379 / #6836 recorded the split that decided it:
+  the interpreter counted per execution, every compiled
+  backend fired once.
 - **Slice / view lifetime contract.** A `[T]` slice is a
   non-owning `{data_ptr, len}` pair into a parent owner —
   another slice, an `T[]` array, a `string`, or any heap
