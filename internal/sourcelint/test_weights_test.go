@@ -158,6 +158,12 @@ func TestCITestWeightsFlagsUnweightedHeavyTest(t *testing.T) {
 	if !strings.Contains(out, "::warning title=unweighted heavy test: TestSelfHostHeavy::") {
 		t.Errorf("missing the GitHub annotation:\n%s", out)
 	}
+	// The MESSAGE must name the test too, not just the title: GitHub renders the
+	// title only in its annotations UI, so a raw log line reads
+	// "measured 482s but has no entry" with no subject.
+	if !strings.Contains(out, "::TestSelfHostHeavy measured 482s but has no entry") {
+		t.Errorf("the annotation message must name the test, not only the title:\n%s", out)
+	}
 	// 482 * 1.5, rounded up: the suggestion carries the pessimism band rather
 	// than the raw measurement.
 	if !strings.Contains(out, "TestSelfHostHeavy 723") {
@@ -266,6 +272,31 @@ func TestCITestWeightsReportsWhenItRanBlind(t *testing.T) {
 				t.Errorf("want %q in:\n%s", tc.want, out)
 			}
 		})
+	}
+}
+
+// Timing files that exist but hold no rows are as blind as no files at all. This
+// is the nastier half of the no-data case: the artifacts arrive, the glob matches,
+// and without a check the run reports the all-clear having compared nothing.
+func TestCITestWeightsReportsEmptyTimingFiles(t *testing.T) {
+	timings := seed(t, map[string]string{
+		"x86_64-1.timings": "",
+		"x86_64-2.timings": "\n",
+	})
+	w := weightsFile(t, "TestSelfHostHeavy 738\n")
+
+	code, out := runWeights(t, nil, "check", timings, w)
+	if code != 0 {
+		t.Fatalf("want exit 0, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "NOT ONE DURATION") {
+		t.Errorf("empty timing files must be reported as blind:\n%s", out)
+	}
+	if !strings.Contains(out, "WARNING: shard weight audit ran blind") {
+		t.Errorf("empty timing files must annotate:\n%s", out)
+	}
+	if strings.Contains(out, "No weight discrepancies") {
+		t.Errorf("having compared nothing must not read as an all-clear:\n%s", out)
 	}
 }
 

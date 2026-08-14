@@ -106,12 +106,12 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       if (delta > tol) {
         nfind++
         printf "SUMMARY\tGREW: %s %s -> %s (%+.1f%%, baseline %d -> %d bytes).\n", d, mb(base[d]), mb(measured[d]), delta, base[d], measured[d]
-        printf "ANNOTATE\t%s grew %+.1f%%\tlinked %s against a baseline of %s — over the %s%% tolerance (#6826)\n", d, delta, mb(measured[d]), mb(base[d]), tol
+        printf "ANNOTATE\t%s grew %+.1f%%\t%s linked at %s against a baseline of %s — over the %s%% tolerance (#6826)\n", d, delta, d, mb(measured[d]), mb(base[d]), tol
         paste[d] = measured[d]
       } else if (delta < -tol) {
         nfind++
         printf "SUMMARY\tSHRANK: %s %s -> %s (%+.1f%%, baseline %d -> %d bytes).\n", d, mb(base[d]), mb(measured[d]), delta, base[d], measured[d]
-        printf "ANNOTATE\t%s shrank %+.1f%%\tlinked %s against a baseline of %s — update the baseline so the win becomes the new ceiling (#6826)\n", d, delta, mb(measured[d]), mb(base[d])
+        printf "ANNOTATE\t%s shrank %+.1f%%\t%s linked at %s against a baseline of %s — update the baseline so the win becomes the new ceiling (#6826)\n", d, delta, d, mb(measured[d]), mb(base[d])
         paste[d] = measured[d]
       }
     }

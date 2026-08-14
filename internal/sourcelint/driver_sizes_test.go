@@ -119,6 +119,9 @@ func TestCheckDriverSizesFlagsTheHistoricalGrowth(t *testing.T) {
 		"GREW: asm_ir_run.fern 127.5 MB -> 146.1 MB (+14.6%",
 		"GREW: wasm_ir_run.fern 58.9 MB -> 77.4 MB (+31.4%",
 		"::warning title=fern.fern grew +16.1%::",
+		// The message must name the driver as well as the title, or a raw log
+		// line reads "linked at 155.9 MB" with no subject.
+		"::fern.fern linked at 155.9 MB against a baseline of 134.2 MB",
 		"Corrected baseline",
 		"fern.fern 155895596",
 	} {

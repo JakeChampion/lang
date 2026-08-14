@@ -146,6 +146,14 @@ check() {
       }
       END {
         printf "SUMMARY\t### self-host shard weight audit\n"
+        # Files that exist but carry no rows are as blind as no files at all, and
+        # would otherwise fall through to the all-clear line below.
+        if (ntests == 0) {
+          printf "SUMMARY\t%d shard timing file(s) present but NOT ONE DURATION in them — nothing was compared.\n", nfiles
+          printf "ANNOTATE\tshard weight audit ran blind\t%d *.timings file(s) held no durations: the extract step produced empty output\n", nfiles
+          printf "FINDINGS\t0\n"
+          exit
+        }
         printf "SUMMARY\t%d tests measured across %d shard timing file(s); budget %ds/shard.\n", ntests, nfiles, budget
 
         for (i = 1; i <= nnames; i++) {
@@ -157,12 +165,12 @@ check() {
             if (!have) {
               nfind++
               printf "SUMMARY\tUNWEIGHTED: %s measured %ds with no entry (partitioned as 1s).\n", name, secs
-              printf "ANNOTATE\tunweighted heavy test: %s\tmeasured %ds but has no entry in .github/selfhost-test-weights.txt, so the LPT partition ranks it with the sub-second tests — add one (#6823)\n", name, secs
+              printf "ANNOTATE\tunweighted heavy test: %s\t%s measured %ds but has no entry in .github/selfhost-test-weights.txt, so the LPT partition ranks it with the sub-second tests — add one (#6823)\n", name, name, secs
               suggest[name] = ceil(secs * safety)
             } else if (secs > w * factor) {
               nfind++
               printf "SUMMARY\tUNDER-WEIGHTED: %s measured %ds against entry %d (%.1fx).\n", name, secs, w, secs / w
-              printf "ANNOTATE\tunder-weighted test: %s\tmeasured %ds against a declared weight of %d (%.1fx) — the partition is balancing on a wrong number (#6823)\n", name, secs, w, secs / w
+              printf "ANNOTATE\tunder-weighted test: %s\t%s measured %ds against a declared weight of %d (%.1fx) — the partition is balancing on a wrong number (#6823)\n", name, name, secs, w, secs / w
               suggest[name] = ceil(secs * safety)
             }
           }
@@ -176,7 +184,7 @@ check() {
           if (shardload[s] < loadfrac * budget) continue
           nfind++
           printf "SUMMARY\tSHARD NEAR BUDGET: %s measured %ds = %d%% of %ds.\n", s, shardload[s], 100 * shardload[s] / budget, budget
-          printf "ANNOTATE\tshard %s is at %d%% of its budget\tmeasured %ds of a %ds -test.timeout; one partition reshuffle from a timeout (#6823)\n", s, 100 * shardload[s] / budget, shardload[s], budget
+          printf "ANNOTATE\tshard %s is at %d%% of its budget\tshard %s measured %ds of a %ds -test.timeout; one partition reshuffle from a timeout (#6823)\n", s, 100 * shardload[s] / budget, s, shardload[s], budget
         }
 
         for (i = 1; i <= nnames; i++) {
