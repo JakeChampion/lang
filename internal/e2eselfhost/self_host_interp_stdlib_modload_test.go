@@ -48,6 +48,20 @@ var interpStdlibModloadCases = []struct {
 	// interpreter used to bind that name whole, so std/json's parser (which
 	// destructures on every step) died on an undefined identifier.
 	{"tuple-destructure", "function pair(): (i32, i32) { return (3, 4); }\nfunction main(): i32 {\n  var (a, b) = pair();\n  return a + b;\n}\n"},
+	// std/json is the stdlib module #6808 was reported against: `JsonValue` is
+	// injected by the front end, so its variants have no declaration anywhere
+	// in the parsed AST and the parser ran to completion only to stop at
+	// `undefined function: JNumber` when it went to build a value.
+	{"json-parse-array", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"[1,2,3]\")) {\n    Some(v) => {\n      match (v) {\n        JArray(items) => {\n          match (items[1]) {\n            JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n            _ => { return 2; }\n          }\n        },\n        _ => { return 3; }\n      }\n    },\n    None => { return 4; }\n  }\n}\n"},
+	// The object shape, which reaches JNumber through a `Map[string, JsonValue]`
+	// payload and a `.get` returning `Option[JsonValue]`.
+	{"json-parse-object", "import \"std/json\";\nfunction main(): i32 {\n  match (json.json_parse(\"{\\\"a\\\":[1,2,3]}\")) {\n    Some(v) => {\n      match (v) {\n        JObject(m) => {\n          match (m.get(\"a\")) {\n            Some(arr) => {\n              match (arr) {\n                JArray(items) => {\n                  match (items[1]) {\n                    JNumber(s) => { if (s == \"2\") { return 7; } return 1; },\n                    _ => { return 2; }\n                  }\n                },\n                _ => { return 3; }\n              }\n            },\n            None => { return 4; }\n          }\n        },\n        _ => { return 5; }\n      }\n    },\n    None => { return 6; }\n  }\n}\n"},
+	// Round-tripping a hand-built document through the encoder: construction on
+	// the way in, variant matching on the way out.
+	{"json-encode-roundtrip", "import \"std/json\";\nfunction main(): i32 {\n  var doc: JsonValue = JArray([JBool(true), JString(\"hi\"), JNull]);\n  if (json.json_encode(doc) != \"[true,\\\"hi\\\",null]\") { return 1; }\n  match (json.json_parse(json.json_encode(doc))) {\n    Some(JArray(items)) => { if (items.len() == 3) { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
+	// A user enum through the CLI's module loader, which merges every imported
+	// module's decls before the interpreter sees them.
+	{"user-enum-with-stdlib", "import \"std/string\";\nenum Tok { Word(string), Num(i32) }\nfunction render(t: Tok): string {\n  match (t) { Word(w) => { return w.to_ascii_upper(); }, Num(_) => { return \"#\"; } }\n}\nfunction main(): i32 {\n  if (render(Word(\"ok\")) == \"OK\" && render(Num(3)) == \"#\") { return 7; }\n  return 1;\n}\n"},
 }
 
 // TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`
