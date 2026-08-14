@@ -1894,6 +1894,26 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
     return false;
 }
 
+// is_array_recv_type reports an element-polymorphic array receiver spelling —
+// `T[]` for a single-uppercase-letter type variable, which is the ONLY array
+// receiver the language allows (a concrete `i32[]` receiver is E021). So one
+// untyped VArr can answer to all of them with nothing to disambiguate, which
+// is why the checker registers them under a single "Array" name too.
+function is_array_recv_type(t: string): boolean {
+    if (t.len() != 3) { return false; }
+    var c: i32 = t[0] as i32;
+    if (c < 65 || c > 90) { return false; }
+    return t[1] == 91 && t[2] == 93;
+}
+
+// name_ends_with reports whether `nm` is `suffix` or ends with it, which is
+// how a bundler-mangled `<mod>__<name>` is recognised as `<name>`.
+function name_ends_with(nm: string, suffix: string): boolean {
+    if (nm == suffix) { return true; }
+    if (nm.len() <= suffix.len()) { return false; }
+    return nm[nm.len() - suffix.len() : nm.len()] == suffix;
+}
+
 // variant_simple_name returns the final `.`-separated segment of a
 // (possibly qualified) variant name — `E.Red` → `Red`,
 // `lexer.TokIdent` → `TokIdent`, `Red` → `Red`. Used to match a
@@ -2127,6 +2147,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         VBool(_) => { recv_type = "bool"; },
         VFloat(_) => { recv_type = "f64"; },
         VFloat32(_) => { recv_type = "f32"; },
+        VArr(_) => { recv_type = "Array"; },
         _ => { return v_err("method `" + name + "`: receiver has no type name to dispatch on"); }
     }
     var i: i32 = 0;
@@ -2142,6 +2163,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         // (`function (sh: Shape) area()`) matches when recv's
         // struct type_name is in the union's variant list.
         if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
+            rt_match = true;
+        }
+        // Array-receiver methods, all of std/array: every array value answers
+        // to every `(xs: T[])` method, the single "Array" namespace the
+        // checker registers them under.
+        if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
             rt_match = true;
         }
         if (fd.name == name && fd.receiver_name.len() > 0 && rt_match) {
@@ -2162,6 +2189,28 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             return unwrap_try(step.ret);
         }
         i = i + 1;
+    }
+    // std/array's OTHER method convention: a concrete-element helper cannot be
+    // written as a `T[]` method, so it is a free `__method_Array_<name>(arr,
+    // …)` the front end dispatches `xs.<name>(…)` to. The bundler mangles the
+    // name with a `<mod>__` prefix, so an in-scope helper is the bare
+    // convention name or one ending in it — the suffix match
+    // checker.has_array_method makes.
+    if (recv_type == "Array") {
+        var conv: string = "__method_Array_" + name;
+        var ai: i32 = 0;
+        while (ai < funcs.len()) {
+            if (funcs[ai].receiver_name.len() == 0 && name_ends_with(funcs[ai].name, conv)) {
+                var conv_args: Value[] = [recv];
+                var aj: i32 = 0;
+                while (aj < args.len()) {
+                    conv_args = conv_args.append(args[aj]);
+                    aj = aj + 1;
+                }
+                return call_func(funcs[ai].name, conv_args, funcs, aliases, variants);
+            }
+            ai = ai + 1;
+        }
     }
     // No user method matched. Before erroring, try a FIELD holding a closure
     // (#6596): `h.f(3)` where `f: (i32) => i32` is a field, not a method. The
