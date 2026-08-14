@@ -4575,9 +4575,12 @@ type builder struct {
 	// every push site. appendOrderFn is the fn the cache was built for.
 	// appendInPlaceOK (built in the same refresh) is the set of push calls
 	// exempt from the reused-after forced copy — see inPlacePushes.
+	// appendFieldCopy (same refresh) is the field-receiver half of the same
+	// question — see fieldPlaceAppendCopies.
 	appendOrder     identOrder
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
+	appendFieldCopy map[*ast.Call]bool
 	// callArgDies (rebuilt in the same refresh) marks the ident args that
 	// die at each call via the strict self-reassign shape — see
 	// callArgDeaths. Read by the #4873 caller-side grow bracket.
@@ -17869,6 +17872,7 @@ func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = identOrderOf(b.fn.Body)
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
+		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body)
 		b.callArgDies = callArgDeaths(b.fn)
 		b.appendOrderFn = b.fn
 	}
@@ -17876,17 +17880,25 @@ func (b *builder) curAppendOrder() identOrder {
 }
 
 // appendForcesCopy reports whether emitArrayPush takes the #4827
-// forced-copy path for this `__method_Array_push` call: a non-self-reassign
-// append on a plain-IDENT operand that is reused after (not its last
-// occurrence) and not in the inPlacePushes exemption set (#4849's
-// return-position / borrowed-param self-reassign shapes). Shared between
-// emitArrayPush (which emits the rc bump that forces the grow helper's
-// copy path) and the stage-(b) arg-temp recognizer appendCopyTempType
-// (which reclaims the resulting fresh copy after a borrowing call — the
-// remaining forced-copy leak #4849's exemptions don't cover).
+// forced-copy path for this `__method_Array_push` call: an append whose
+// receiver buffer is still readable after the grow, so the rc==1 in-place
+// mutation would be observable. Two receiver shapes qualify — a
+// non-self-reassign plain-IDENT operand that is reused after (not its last
+// occurrence) and outside the inPlacePushes exemptions (#4849's
+// return-position / borrowed-param self-reassign shapes), and a FIELD place
+// the container can still be read through (#6665, fieldPlaceAppendCopies).
+// Shared between emitArrayPush (which emits the rc bump that forces the grow
+// helper's copy path) and the stage-(b) arg-temp recognizer
+// appendCopyTempType (which reclaims the resulting fresh copy after a
+// borrowing call — the remaining forced-copy leak #4849's exemptions don't
+// cover).
 func (b *builder) appendForcesCopy(n *ast.Call) bool {
 	if ast.Expr(n) == b.selfPushMoveCall {
 		return false
+	}
+	if _, ok := n.Args[0].(*ast.FieldAccess); ok {
+		b.curAppendOrder() // refresh appendFieldCopy for the current fn
+		return b.appendFieldCopy[n]
 	}
 	id, ok := n.Args[0].(*ast.Ident)
 	return ok && needsRcIncOnAlias(n.Args[0], b) &&
@@ -17935,31 +17947,32 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: arrSlot})
 
-	// Value semantics for a non-self-reassign append on a plain-IDENT
-	// operand that is REUSED after the append (not its last use). The grow
-	// helper's rc==1 in-place fast path mutates the operand buffer's
-	// length header and returns the SAME pointer; that's only sound when
-	// the binding is not read again. For a reused ident it corrupts later
-	// reads — e.g. `var a = walk(path.append(d), …); var b =
-	// path.append(d).len();`, where the first append mutates `path` in
-	// place and the second sees the longer buffer (interp ≠ compiled,
-	// #4827). Here the rc==1 check is not enough: `path` is uniquely
+	// Value semantics for a non-self-reassign append whose operand buffer is
+	// still readable after the grow. The grow helper's rc==1 in-place fast
+	// path mutates the operand buffer's length header and returns the SAME
+	// pointer; that's only sound when nothing reads the buffer again. For a
+	// reused ident it corrupts later reads — e.g. `var a = walk(path.append(d),
+	// …); var b = path.append(d).len();`, where the first append mutates
+	// `path` in place and the second sees the longer buffer (interp ≠
+	// compiled, #4827). Here the rc==1 check is not enough: `path` is uniquely
 	// referenced (rc 1) yet READ twice, and rc counts references, not
 	// uses. Bump the operand's rc across the grow so the helper takes the
 	// copy path (fresh buffer, operand untouched), then restore it.
 	//
-	// Scope is deliberately narrow — a bare ident whose occurrence here is
-	// NOT its last in the function body (identOrder). This leaves sound
-	// in-place cases on the fast path:
+	// Two operand shapes qualify: a bare ident whose occurrence here is NOT
+	// its last in the function body (identOrder), and a FIELD place the
+	// container can still be read through (fieldPlaceAppendCopies, #6665).
+	// This leaves sound in-place cases on the fast path:
 	//   - the ident's LAST use — nothing reads it after, so the mutation
 	//     is unobservable (the second `path.append` above);
 	//   - a fresh-temporary operand (array literal / call result) — no
 	//     other reference exists;
-	//   - a field / index operand — notably `S { f: s.f.append(v) }`
-	//     functional-update threading (the self-host EmitState `s =
-	//     s.emit(x)` shape), which must stay O(1)
-	//     (TestWASMSelfReassignFieldBounded) and whose container is
-	//     replaced rather than reused;
+	//   - an index operand;
+	//   - a field operand whose container is REPLACED by the literal the
+	//     append feeds and read through no overlapping place — `S { f:
+	//     s.f.append(v) }` functional-update threading (the self-host
+	//     EmitState `s = s.emit(x)` shape), which must stay O(1)
+	//     (TestWASMSelfReassignFieldBounded);
 	//   - the self-reassign form (selfPushMoveCall), whose in-place mutate
 	//     pairs with the assign-site overwrite dec — O(1) push loops;
 	//   - the inPlacePushes set — self-reassigns of BORROWED params
