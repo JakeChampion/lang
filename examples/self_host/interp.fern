@@ -276,15 +276,67 @@ function unwrap_try(v: Value): Value {
     return v;
 }
 
-// is_builtin_variant_name names the four Option / Result constructors. They
-// are declared nowhere a program can see — the parser has no enum decl for
-// them and modload injects no module — so `Some(42)` reaches eval_expr as a
-// plain call to an undefined name and `None` as an unbound identifier. Both build
-// the same payload-variant VStruct a user enum's `E.Some(x)` / `E.Red` build,
-// so match arms, `variant_simple_name` and value_eq need no Option-specific
-// case (#5990).
-function is_builtin_variant_name(name: string): boolean {
-    return name == "Some" || name == "None" || name == "Ok" || name == "Err";
+// module_variant_decls collects every enum-variant constructor the program can
+// name, as the lowered variant StructDecls the parser already produces for
+// `enum E { V(T) }` — `name` is the variant, `enum_owner` the enum, and the
+// `__ev` / `__ev1` / … field count the payload arity.
+//
+// Three sources, matching what the native interpreter registers (its `Enums`
+// table is `prog.Enums`, which the checker has already prepended its builtins
+// to):
+//
+//   * the module's own enums, lowered into `mod.structs` by parse_enum_decl;
+//   * JsonValue / IoError, which no program declares — `inject_builtin_enums`
+//     synthesises the same variant structs, and is idempotent when the real
+//     builtins.fern module is already merged in;
+//   * Option / Result, which `inject_builtin_enums` leaves out because the
+//     backends special-case Some / None / Ok / Err rather than emit variant
+//     structs for them. The interpreter has no such special case, so it wants
+//     ordinary decls (#5990).
+function module_variant_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
+    var all: parser.StructDecl[] = parser.inject_builtin_enums(structs);
+    all = add_variant_decl(all, "Some", 1, "Option");
+    all = add_variant_decl(all, "None", 0, "Option");
+    all = add_variant_decl(all, "Ok", 1, "Result");
+    all = add_variant_decl(all, "Err", 1, "Result");
+    var out: parser.StructDecl[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        if (all[i].enum_owner.len() > 0) { out = out.append(all[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// add_variant_decl synthesises one variant struct, skipping it when the
+// program already declares that name — a user `enum MyOpt { Some(i32) }`, or a
+// plain `struct Ok`, keeps its own decl.
+function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
+    var i: i32 = 0;
+    while (i < acc.len()) {
+        if (acc[i].name == name) { return acc; }
+        i = i + 1;
+    }
+    var fields: parser.StructFieldDecl[] = [];
+    var f: i32 = 0;
+    while (f < arity) {
+        var fname: string = "__ev";
+        if (f > 0) { fname = "__ev" + util.i32_to_string(f); }
+        fields = fields.append(parser.StructFieldDecl { name: fname, type_name: "", fn_ret: "" });
+        f = f + 1;
+    }
+    return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [] , is_pub: true });
+}
+
+// variant_arity returns the payload count of the enum variant of this name, or
+// -1 when no enum declares it.
+function variant_arity(name: string, variants: parser.StructDecl[]): i32 {
+    var i: i32 = 0;
+    while (i < variants.len()) {
+        if (variants[i].name == name) { return variants[i].fields.len(); }
+        i = i + 1;
+    }
+    return 0 - 1;
 }
 
 // user_func_exists reports whether the module declares a non-method function
@@ -326,33 +378,36 @@ function v_variant(name: string, args: Value[]): Value {
 // call_method can dispatch a method declared on a union (e.g.
 // `function (sh: Shape) area()`) when the receiver is one of
 // the union's variant structs.
-pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[] }
+//
+// variants carries every enum-variant decl the program can name — the
+// parser lowers `enum Shape { Circle(i32) }` to a StructDecl per variant
+// with `enum_owner` set, and `module_variant_decls` adds the front-end's
+// injected enums on top. It is what tells a call to `Circle(7)` apart from
+// a call to a function nobody declared.
+pub struct Env { names: string[], values: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[] }
 
+// new_env seeds a declaration-free scope: the bare-statement driver
+// (eval_program) has no module around it, so the only variants in reach are
+// the front-end's own injected enums.
 function new_env(): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
     var fs: parser.FuncDecl[] = [];
     var al: parser.TypeAlias[] = [];
-    return Env { names: ns, values: vs, funcs: fs, aliases: al };
+    var no_structs: parser.StructDecl[] = [];
+    return Env { names: ns, values: vs, funcs: fs, aliases: al, variants: module_variant_decls(no_structs) };
 }
 
-function new_env_with_funcs(fs: parser.FuncDecl[]): Env {
+function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
-    var al: parser.TypeAlias[] = [];
-    return Env { names: ns, values: vs, funcs: fs, aliases: al };
-}
-
-function new_env_with_funcs_aliases(fs: parser.FuncDecl[], al: parser.TypeAlias[]): Env {
-    var ns: string[] = [];
-    var vs: Value[] = [];
-    return Env { names: ns, values: vs, funcs: fs, aliases: al };
+    return Env { names: ns, values: vs, funcs: fs, aliases: al, variants: vd };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
     var ns: string[] = e.names.append(name);
     var vs: Value[] = e.values.append(v);
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -745,7 +800,7 @@ function (e: Env) update(name: string, v: Value): Env {
         }
         j = j + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
 }
 
 // =================== INTEGER PARSE ====================
@@ -1316,17 +1371,18 @@ function resolve_ident_value(name: string, env: Env): Value {
         while (ci < env.funcs.len()) {
             if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
                 var no_args: Value[] = [];
-                return call_func(name, no_args, env.funcs, env.aliases);
+                return call_func(name, no_args, env.funcs, env.aliases, env.variants);
             }
             ci = ci + 1;
         }
-        // `None` — the one builtin Option / Result constructor that
-        // takes no payload, so it appears as a bare identifier rather
-        // than a call (#5990). The const lookup above runs first, so a
-        // user `const None = …` still wins.
-        if (name == "None") {
+        // `None` / `Red` / `JNull` — a payload-less enum variant appears as a
+        // bare identifier rather than a call. The const lookup above runs
+        // first, so a user `const None = …` still wins. A variant that DOES
+        // carry payloads falls through to the undefined-identifier error, as
+        // naming it without calling it is a checker error upstream.
+        if (variant_arity(name, env.variants) == 0) {
             var none_args: Value[] = [];
-            return v_variant("None", none_args);
+            return v_variant(name, none_args);
         }
         // A top-level function named as a VALUE rather than called —
         // `[inc, dbl]`, or passing `inc` to a higher-order function
@@ -1413,12 +1469,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         VFunc(_) => { is_closure = true; closure_val = bound; },
                         _ => { name = id.name; }
                     }
-                    // `Some(x)` / `Ok(x)` / `Err(e)` — the builtin Option /
-                    // Result constructors, which no function table declares.
-                    // Checked after the VFunc probe and behind user_func_exists
-                    // so a local closure or a user-declared function of the same
+                    // `Circle(7)` / `Some(x)` / `JNumber(s)` — an enum-variant
+                    // constructor, which no function table declares. Checked
+                    // after the VFunc probe and behind user_func_exists so a
+                    // local closure or a user-declared function of the same
                     // name still wins (#5990).
-                    if (!is_closure && is_builtin_variant_name(name) && !user_func_exists(name, env.funcs)) {
+                    if (!is_closure && variant_arity(name, env.variants) >= 0 && !user_func_exists(name, env.funcs)) {
                         is_variant = true;
                         variant_name = name;
                     }
@@ -1505,12 +1561,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
             }
             if (is_variant) { return v_variant(variant_name, arg_vals); }
             if (is_method) {
-                return call_method(recv, name, arg_vals, env.funcs, env.aliases);
+                return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.variants);
             }
             if (is_closure) {
-                return call_closure(closure_val, arg_vals, env.funcs, env.aliases);
+                return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.variants);
             }
-            return call_func(name, arg_vals, env.funcs, env.aliases);
+            return call_func(name, arg_vals, env.funcs, env.aliases, env.variants);
         },
         parser.ExprTuple(t) => {
             var elems: Value[] = [];
@@ -1797,7 +1853,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[
 // captured names + values seed the body's env so free idents in
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
     var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [] };
     match (cv) {
         VFunc(v) => { fv = v; },
@@ -1806,7 +1862,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != fv.params.len()) {
         return v_err("arity mismatch calling closure");
     }
-    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases };
+    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, funcs: funcs, aliases: aliases, variants: variants };
     var j: i32 = 0;
     while (j < fv.params.len()) {
         env = env.bind(fv.params[j].name, coerce_int_width(args[j], fv.params[j].type_name));
@@ -1821,7 +1877,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     return unwrap_try(step.ret);
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
     // Built-in VMap methods are dispatched ahead of the user
     // FuncDecl walk — set / get_or / has / delete / len /
     // keys / values are baked in rather than user-defined.
@@ -1912,6 +1968,16 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 }
                 return VMap { keys: m.keys.append(args[0]), values: m.values.append(args[1]) };
             }
+            if (name == "get") {
+                if (args.len() != 1) { return v_err("map.get: need 1 arg"); }
+                var oi: i32 = 0;
+                while (oi < m.keys.len()) {
+                    if (value_eq(m.keys[oi], args[0])) { return v_variant("Some", [m.values[oi]]); }
+                    oi = oi + 1;
+                }
+                var no_payload: Value[] = [];
+                return v_variant("None", no_payload);
+            }
             if (name == "get_or") {
                 if (args.len() != 2) { return v_err("map.get_or: need 2 args"); }
                 var gi: i32 = 0;
@@ -1966,7 +2032,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             var ti: i32 = util.digits_to_i32(name);
             if (ti >= 0 && ti < tv.elements.len()) {
                 match (tv.elements[ti]) {
-                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases); },
+                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases, variants); },
                     _ => {}
                 }
             }
@@ -2004,7 +2070,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
-            var env: Env = new_env_with_funcs_aliases(funcs, aliases);
+            var env: Env = new_module_env(funcs, aliases, variants);
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
             while (j < fd.params.len()) {
@@ -2034,7 +2100,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             while (fi < sv2.field_names.len()) {
                 if (sv2.field_names[fi] == name) {
                     match (sv2.field_values[fi]) {
-                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases); },
+                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases, variants); },
                         _ => {}
                     }
                 }
@@ -2046,7 +2112,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     return v_err("undefined method `" + name + "` on `" + recv_type + "`");
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): Value {
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
     // Builtin: `len(a)` on an array → i32. Special-cased here
     // because the parser doesn't model builtins separately and
     // the interp has no Go-side host functions yet.
@@ -2178,7 +2244,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling `" + name + "`");
             }
-            var env: Env = new_env_with_funcs_aliases(funcs, aliases);
+            var env: Env = new_module_env(funcs, aliases, variants);
             var j: i32 = 0;
             while (j < fd.params.len()) {
                 env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
@@ -2683,7 +2749,7 @@ function trim_env(e: Env, base: i32): Env {
         vs = vs.append(e.values[i]);
         i = i + 1;
     }
-    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases };
+    return Env { names: ns, values: vs, funcs: e.funcs, aliases: e.aliases, variants: e.variants };
 }
 
 // eval_block walks a body, threading env forward through every
@@ -2746,15 +2812,16 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // Fold each enum into the alias table as a synthetic union so a method
     // declared on the enum type dispatches on its variant values.
     var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);
+    var all_variants: parser.StructDecl[] = module_variant_decls(mod.structs);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {
             var empty_args: Value[] = [];
-            return call_func("main", empty_args, mod.funcs, all_aliases);
+            return call_func("main", empty_args, mod.funcs, all_aliases, all_variants);
         }
         i = i + 1;
     }
-    var env: Env = new_env_with_funcs_aliases(mod.funcs, all_aliases);
+    var env: Env = new_module_env(mod.funcs, all_aliases, all_variants);
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
         var r: StepResult = eval_stmt(mod.top_stmts[j], env);
