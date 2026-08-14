@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // vendorTree renders the file tree under dir as sorted `path\ncontent` records,
@@ -231,8 +233,11 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 
 			run := func(bin, pkg string) (string, bool) {
 				cmd := exec.Command(bin, "-vendor", filepath.Join(pkg, c.target))
+				// The no-cache cases assert a load that reaches nothing; an
+				// inherited FERN_CACHE_DIR would hand them one.
+				cmd.Env = testenv.Clean()
 				if c.cache != "" {
-					cmd.Env = append(os.Environ(), "FERN_CACHE_DIR="+filepath.Join(pkg, c.cache))
+					cmd.Env = testenv.With("FERN_CACHE_DIR=" + filepath.Join(pkg, c.cache))
 				}
 				out, _ := cmd.CombinedOutput()
 				return string(out), cmd.ProcessState.ExitCode() == 0

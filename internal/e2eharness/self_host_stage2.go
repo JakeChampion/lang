@@ -6,11 +6,11 @@ package e2eharness
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // RunCapture runs the built driver binary (under the qemu runner if set), pipes
@@ -63,16 +63,7 @@ func RunCaptureStrictIR(t *testing.T, gcc string, runner []string, bin string, s
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
-	// Drop any ambient setting before adding ours: the package can be run with
-	// the flag already exported as a probe, and a duplicate key resolves to the
-	// FIRST occurrence, so appending alone would leave the outer value in force.
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
+	cmd.Env = testenv.With("FERN_STRICT_IR=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -28,6 +28,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // First arm64 e2e: `function main(): i32 { return 42; }`
@@ -9731,7 +9732,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	}
 
 	cmd := runArm64Bin(qemu, binPath)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	cmd.Env = testenv.With(fmt.Sprintf("PORT=%d", port))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

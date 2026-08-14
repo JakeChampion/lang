@@ -232,6 +232,50 @@ Worth knowing so you do not assume coverage you do not have:
    summary rather than waiting for a red. Weight pessimistically — the same test
    has measured 482 s and 738 s on consecutive runs.
 
+## A test that inherits the environment can be unable to fail
+
+`FERN_SIZE_TOLERANCE_PERCENT=99` in the shell takes the driver-size gate from
+three `GREW` findings to zero, so a test asserting on those findings asserts on
+an empty list. `FERN_LEAKCHECK=1` compiles the leak census into every in-process
+build, so `TestX8664HostlessArtifactHasNoSyscall` — whose whole claim is that a
+kernel-less artifact contains no syscall — reports on a configuration nobody
+chose. Neither shows up in a log: a vacuous test and a passing test print the
+same line (#6833).
+
+`internal/testenv` closes both halves, and neither is optional:
+
+- **A child environment is constructed, not inherited.** `testenv.Clean()`
+  returns the passthrough allowlist (PATH, HOME, TMPDIR, the C/nix/qemu/wasmtime
+  toolchain families) and nothing else; `testenv.With("FERN_STRICT_IR=1")` adds
+  exactly what the test exercises, replacing rather than shadowing so no
+  duplicate-key rule is in play. `TestNoTestInheritsTheAmbientEnvironment` in
+  `internal/sourcelint` fails on any new `os.Environ()` in `internal/`, `cmd/` or
+  `tools/`.
+- **The ambient environment is checked.** `internal/ast`'s compile-mode flags are
+  package-level vars read from `os.Getenv` at init, so an exported value changes
+  every in-process compile. `TestMain` in `internal/e2e`, `internal/e2eselfhost`,
+  `internal/e2eharness` and `internal/ir` calls `testenv.MustCheckAmbient()` and
+  refuses to run rather than reporting; `testenv.PinCompileFlags(t)` holds the
+  flags at OFF for a test that asserts a property of the default compile.
+
+`testenv.Vars` is the census: every `FERN_*` / `RUN_*` / `DIFF_ORACLE_*` name that
+Go reads, that a `.fern` compiler source reads via `env()`, or that anything under
+`.github/` or `scripts/` mentions must be classified **Semantic** (ambient
+forbidden — it changes what a compile emits, what an emitted program does, or
+which number a gate compares against) or **Lane** (a CI lane sets it to select
+coverage or name a tool). `TestEnvCensusIsComplete` pairs the list against those
+sites in both directions, so a new variable cannot skip classification and a dead
+row cannot linger.
+
+To run a suite under a knob on purpose, name it:
+
+```
+FERN_STRICT_IR=1 FERN_TEST_AMBIENT_OK=FERN_STRICT_IR go test ./internal/e2eselfhost/
+```
+
+`FERN_TEST_AMBIENT_OK` both accepts the variable and forwards it to children, so
+the probe reaches the self-host drivers. Anything not named there is stripped.
+
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 
 Route a probe program through the single-program path-probe driver

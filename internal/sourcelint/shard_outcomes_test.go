@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // scriptPath locates scripts/ci-verify-shard-outcomes from this package dir.
@@ -37,12 +39,12 @@ func runVerify(t *testing.T, markers map[string]string, tolerate bool, args ...s
 		}
 	}
 	cmd := exec.Command("bash", append([]string{scriptPath(t), dir}, args...)...)
-	// ciEnv, not os.Environ(): the ambient FERN_CI_TOLERATE_VANISHED_SHARDS
-	// would otherwise decide what this test asserts. See its doc comment.
+	// testenv.With, not os.Environ: the ambient FERN_CI_TOLERATE_VANISHED_SHARDS
+	// would otherwise decide what this test asserts.
 	if tolerate {
-		cmd.Env = ciEnv("FERN_CI_TOLERATE_VANISHED_SHARDS=1")
+		cmd.Env = testenv.With("FERN_CI_TOLERATE_VANISHED_SHARDS=1")
 	} else {
-		cmd.Env = ciEnv("FERN_CI_TOLERATE_VANISHED_SHARDS=0")
+		cmd.Env = testenv.With("FERN_CI_TOLERATE_VANISHED_SHARDS=0")
 	}
 	out, err := cmd.CombinedOutput()
 	code := 0
@@ -364,7 +366,7 @@ func TestClassifyVanishedShardsIsAdvisory(t *testing.T) {
 		cmd := exec.Command("bash", append([]string{p}, args...)...)
 		// No GH_TOKEN and no network expectation: gh either errors or is absent,
 		// and either way the script must not fail the build.
-		cmd.Env = append(os.Environ(), "GH_TOKEN=", "GITHUB_TOKEN=")
+		cmd.Env = testenv.With("GH_TOKEN=", "GITHUB_TOKEN=")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Errorf("args %v: classifier must exit 0 even when it cannot diagnose; got %v: %s", args, err, out)
@@ -399,7 +401,7 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 		t.Fatalf("write jobs: %v", err)
 	}
 	cmd := exec.Command("bash", script, "12345", "20")
-	cmd.Env = append(os.Environ(), "FERN_CI_JOBS_JSON="+path)
+	cmd.Env = testenv.With("FERN_CI_JOBS_JSON=" + path)
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("classifier must exit 0; got %v: %s", err, raw)

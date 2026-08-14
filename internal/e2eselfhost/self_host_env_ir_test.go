@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // TestSelfHostEnvIR pins `env(name)` lowering on the self-host x86-64 IR path.
@@ -58,9 +60,9 @@ func TestSelfHostEnvIR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		run := exec.Command(progBin)
-		run.Env = filterEnv(os.Environ(), "FERN_ENV_IR_TEST")
+		run.Env = testenv.Clean()
 		if tc.set {
-			run.Env = append(run.Env, "FERN_ENV_IR_TEST="+tc.val)
+			run.Env = testenv.With("FERN_ENV_IR_TEST=" + tc.val)
 		}
 		_ = run.Run()
 		if code := run.ProcessState.ExitCode(); code != tc.wantExit {
@@ -145,16 +147,4 @@ func TestSelfHostEnvIRWasm(t *testing.T) {
 			t.Errorf("env wasm IR (set=%v,val=%q): exit %d, want %d", tc.set, tc.val, code, tc.wantExit)
 		}
 	}
-}
-
-// filterEnv returns environ with any KEY=... entry for key removed.
-func filterEnv(environ []string, key string) []string {
-	out := environ[:0:0]
-	for _, e := range environ {
-		if strings.HasPrefix(e, key+"=") {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
 }

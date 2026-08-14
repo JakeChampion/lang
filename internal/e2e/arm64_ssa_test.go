@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // TestArm64SSACliRoundtrip drives the whole parse → check → ir →
@@ -1353,7 +1355,7 @@ function main(): i32 {
 			// The child inherits this environment either way (qemu-user forwards
 			// it to the guest), so a known variable makes the env() Some-path
 			// deterministic. Harmless to the cases that don't read it.
-			run.Env = append(os.Environ(), "FERN_E2E_VAR=hi")
+			run.Env = testenv.With("FERN_E2E_VAR=hi")
 			err := run.Run()
 			got := 0
 			if err != nil {

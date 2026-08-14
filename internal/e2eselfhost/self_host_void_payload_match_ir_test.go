@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os/exec"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // TestSelfHostVoidPayloadMatchIR pins a `match` whose arm binds a VOID payload
@@ -55,7 +57,7 @@ func TestSelfHostVoidPayloadMatchIR(t *testing.T) {
 		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
 	}
 	cmd.Stdin = bytes.NewReader([]byte(src))
-	cmd.Env = append(cmd.Environ(), "FERN_STRICT_IR=1")
+	cmd.Env = testenv.With("FERN_STRICT_IR=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	asm, err := cmd.Output()

@@ -10,6 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // TestSelfHostEnvX86_64 exercises the self-hosted x86-64 emitter's
@@ -54,7 +55,7 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 
 	t.Run("set", func(t *testing.T) {
 		cmd := mkCmd()
-		cmd.Env = append(os.Environ(), "FERN_SELFHOST_ENV_TEST=hello-env")
+		cmd.Env = testenv.With("FERN_SELFHOST_ENV_TEST=hello-env")
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 7 {
 			t.Errorf("env(set) exited %d, want 7 (1=None, 2=value mismatch)", code)
@@ -62,15 +63,7 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 	})
 	t.Run("unset", func(t *testing.T) {
 		cmd := mkCmd()
-		// Filter the variable out of the inherited environment.
-		var env []string
-		for _, kv := range os.Environ() {
-			if len(kv) >= 22 && kv[:22] == "FERN_SELFHOST_ENV_TEST" {
-				continue
-			}
-			env = append(env, kv)
-		}
-		cmd.Env = env
+		cmd.Env = testenv.Clean()
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 1 {
 			t.Errorf("env(unset) exited %d, want 1 (None arm)", code)
@@ -122,7 +115,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
 
 	t.Run("set", func(t *testing.T) {
 		cmd := runArm64Bin(qemu, envBin)
-		cmd.Env = append(os.Environ(), "FERN_SELFHOST_ENV_TEST=hello-env")
+		cmd.Env = testenv.With("FERN_SELFHOST_ENV_TEST=hello-env")
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 7 {
 			t.Errorf("env(set) exited %d, want 7 (1=None, 2=value mismatch)", code)
@@ -130,14 +123,7 @@ func TestSelfHostEnvArm64(t *testing.T) {
 	})
 	t.Run("unset", func(t *testing.T) {
 		cmd := runArm64Bin(qemu, envBin)
-		var env []string
-		for _, kv := range os.Environ() {
-			if len(kv) >= 22 && kv[:22] == "FERN_SELFHOST_ENV_TEST" {
-				continue
-			}
-			env = append(env, kv)
-		}
-		cmd.Env = env
+		cmd.Env = testenv.Clean()
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 1 {
 			t.Errorf("env(unset) exited %d, want 1 (None arm)", code)

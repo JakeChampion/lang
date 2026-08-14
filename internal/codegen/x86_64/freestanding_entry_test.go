@@ -10,12 +10,14 @@ import (
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/parser"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // compileWithOptions is `compile` with the emit options exposed, for the
 // entry-shape tests. The shared helper takes none.
 func compileWithOptions(t *testing.T, src string, opts Options) string {
 	t.Helper()
+	testenv.PinCompileFlags(t)
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

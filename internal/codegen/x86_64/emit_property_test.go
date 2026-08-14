@@ -23,6 +23,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // compile runs the front of the pipeline the CLI driver uses
@@ -30,6 +31,7 @@ import (
 // assembly text. It fails the test on any stage error.
 func compile(t *testing.T, src string) string {
 	t.Helper()
+	testenv.PinCompileFlags(t)
 	prog, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

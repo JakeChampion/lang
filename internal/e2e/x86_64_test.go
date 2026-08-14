@@ -33,6 +33,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // `function main(): i32 { return N; }` is the smallest
@@ -559,7 +560,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	} else {
 		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
 	}
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	cmd.Env = testenv.With(fmt.Sprintf("PORT=%d", port))
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // nativeLinkX86 is the default assemble+link for driver builds and huge
@@ -88,7 +89,7 @@ func TestNativeLinkX86MatchesGccLink(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 		}
-		cmd.Env = append(os.Environ(), "FERN_NATIVELINK_PROBE=on")
+		cmd.Env = testenv.With("FERN_NATIVELINK_PROBE=on")
 		out, _ := cmd.CombinedOutput()
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			t.Fatalf("%s did not exit normally (output: %q)", bin, out)
@@ -177,7 +178,7 @@ func TestNativeLinkArm64MatchesGccLink(t *testing.T) {
 
 	run := func(bin string) (string, int) {
 		cmd := RunArm64Bin(qemu, bin)
-		cmd.Env = append(os.Environ(), "FERN_NATIVELINK_PROBE=on")
+		cmd.Env = testenv.With("FERN_NATIVELINK_PROBE=on")
 		out, _ := cmd.CombinedOutput()
 		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 			t.Fatalf("%s did not exit normally (output: %q)", bin, out)

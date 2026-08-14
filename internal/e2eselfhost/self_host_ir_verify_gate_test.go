@@ -2,11 +2,12 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // #6639 slice 5: the IR verifiers now run on the COMPILE path.
@@ -103,17 +104,11 @@ func runGate(t *testing.T, runner []string, bin string, args []string, src strin
 		cmd = exec.Command(runner[0], a...)
 	}
 	cmd.Stdin = strings.NewReader(src)
-	// Strip any ambient value first: a duplicate key resolves to the FIRST
-	// occurrence, so appending alone would leave an outer setting in force and
-	// the "flag off" half of every case below would silently test nothing.
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_IR_VERIFY=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
+	// The "flag off" half of every case below asserts that the verifier is
+	// inert, which an ambient FERN_IR_VERIFY would silently void.
+	cmd.Env = testenv.Without("FERN_IR_VERIFY")
 	if verify {
-		cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=1")
+		cmd.Env = testenv.With("FERN_IR_VERIFY=1")
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -286,13 +281,7 @@ func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 
 	cmd := exec.Command(bin, entry)
 	cmd.Dir = dir
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_IR_VERIFY=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=1")
+	cmd.Env = testenv.With("FERN_IR_VERIFY=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

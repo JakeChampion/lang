@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // `std/test` ships as a pure-Lang unit-test runner the project
@@ -1670,7 +1672,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 
 	t.Run("with LANG_BIN set", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		cmd.Env = append(os.Environ(), "LANG_BIN="+bin)
+		cmd.Env = testenv.With("LANG_BIN=" + bin)
 		var out, errb bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &errb
@@ -1696,15 +1698,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 
 	t.Run("without LANG_BIN — skips cleanly", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		// Drop LANG_BIN from the environment explicitly —
-		// the parent process may have it set.
-		env := []string{}
-		for _, kv := range os.Environ() {
-			if !strings.HasPrefix(kv, "LANG_BIN=") {
-				env = append(env, kv)
-			}
-		}
-		cmd.Env = env
+		cmd.Env = testenv.Clean()
 		var out, errb bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &errb

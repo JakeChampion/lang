@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// A test guarded by `if os.Getenv("RUN_X") == "" { t.Skip(...) }` runs nowhere
-// unless something sets RUN_X. When nothing does, the test is DARK: it is in
+// A test guarded by `if os.Getenv(NAME) == "" { t.Skip(...) }` runs nowhere
+// unless something sets NAME. When nothing does, the test is DARK: it is in
 // the tree, it looks like coverage, `go test ./...` reports it as a pass, and
 // it has never executed.
 //

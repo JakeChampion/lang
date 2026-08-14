@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // TestArm64VeneerForcedReach compiles and runs ordinary programs with the
@@ -56,7 +58,7 @@ func TestArm64VeneerForcedReach(t *testing.T) {
 			// 64 instructions: short enough that every cross-function
 			// call needs a veneer, long enough that a function's own
 			// conditional branches (which are not veneered) still encode.
-			build.Env = append(os.Environ(), "FERN_ARM64_VENEER_REACH=64")
+			build.Env = testenv.With("FERN_ARM64_VENEER_REACH=64")
 			if o, err := build.CombinedOutput(); err != nil {
 				t.Fatalf("arm64 build under a forced branch span failed: %v\n%s", err, o)
 			}

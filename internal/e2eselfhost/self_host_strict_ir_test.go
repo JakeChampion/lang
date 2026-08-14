@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // FERN_STRICT_IR (#5646) turns the self-host compiler's IR-to-AST bail into a
@@ -653,17 +655,12 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	// Strip any ambient FERN_STRICT_IR first: the whole package can be run under
-	// it as a probe (see docs/SELFHOST-AST-RETIREMENT.md), and inheriting it would
-	// make the "unset" leg strict too, silently voiding the inertness assertion.
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
+	// The package can be run under an exported FERN_STRICT_IR as a probe (see
+	// docs/SELFHOST-AST-RETIREMENT.md), which would make the "unset" leg strict
+	// too and silently void the inertness assertion.
+	cmd.Env = testenv.Without("FERN_STRICT_IR")
 	if strict {
-		cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
+		cmd.Env = testenv.With("FERN_STRICT_IR=1")
 	}
 	_ = cmd.Run()
 	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // weightScript locates scripts/ci-test-weights from this package dir.
@@ -22,37 +24,19 @@ func weightScript(t *testing.T) string {
 	return p
 }
 
-// ciEnv builds a child environment with every variable that these scripts key
-// their behaviour off removed, then applies `extra`.
-//
-// Both scripts CHOOSE AN OUTPUT CHANNEL from the environment: with
-// GITHUB_ACTIONS set they emit `::warning` workflow commands, without it a plain
-// `WARNING:` line, and GITHUB_STEP_SUMMARY duplicates the report into a file.
-// Inheriting the ambient values means a test asserts one code path on a laptop
-// and a different one on a runner — which is exactly how the two "ran blind"
-// tests passed locally and failed in CI, asserting the `WARNING:` fallback while
-// the runner's GITHUB_ACTIONS=true produced `::warning`. Stripping the whole
-// family makes each test name the channel it is testing.
-func ciEnv(extra ...string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		switch {
-		case strings.HasPrefix(kv, "GITHUB_"),
-			strings.HasPrefix(kv, "RUNNER_"),
-			strings.HasPrefix(kv, "FERN_"):
-			continue
-		}
-		env = append(env, kv)
-	}
-	return append(env, extra...)
-}
-
 // runWeights invokes the script with `env` overrides and returns exit code plus
 // combined output.
+//
+// testenv.With, not os.Environ: both scripts CHOOSE AN OUTPUT CHANNEL from the
+// environment — with GITHUB_ACTIONS set they emit `::warning` workflow commands,
+// without it a plain `WARNING:` line, and GITHUB_STEP_SUMMARY duplicates the
+// report into a file. Inheriting meant a test asserted one code path on a laptop
+// and a different one on a runner, which is how the two "ran blind" tests passed
+// locally and failed in CI.
 func runWeights(t *testing.T, env []string, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{weightScript(t)}, args...)...)
-	cmd.Env = ciEnv(env...)
+	cmd.Env = testenv.With(env...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {

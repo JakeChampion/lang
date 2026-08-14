@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // runSizeCheck invokes scripts/ci-check-driver-sizes with `env` overrides and
@@ -20,7 +22,7 @@ func runSizeCheck(t *testing.T, env []string, args ...string) (int, string) {
 		t.Fatalf("size script missing: %v", err)
 	}
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Env = ciEnv(env...)
+	cmd.Env = testenv.With(env...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {

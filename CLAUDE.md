@@ -296,6 +296,12 @@ it.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
+- **Test environment** — a test builds a child environment with
+  `testenv.Clean` / `testenv.With`, never `os.Environ()`; a sourcelint gate fails
+  on the latter. **A new `FERN_*` / `RUN_*` variable must be classified in
+  `internal/testenv.Vars`** (Semantic = ambient forbidden, Lane = a CI lane sets
+  it) or a completeness test fails. Rationale and the
+  `FERN_TEST_AMBIENT_OK` escape hatch: `docs/TEST-GATES.md`.
 - **Capabilities** — two independent systems. `internal/platforms` gates what a
   *target* provides (the OS boundary; E066 post-tree-shake) —
   `docs/FREESTANDING-CORE.md` has the core-vs-host rule and every judgement call.

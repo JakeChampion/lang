@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // Three legs run the fixture corpus through the SELF-HOST compiler:
@@ -397,7 +399,7 @@ func strictIRBailSite(fernBin, target string, emit []string, mainPath, stdlibRoo
 	}
 	args := append([]string{"-target", target}, emit...)
 	cmd := exec.Command(fernBin, append(args, mainPath, stdlibRoot, "-o", os.DevNull)...)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	cmd.Env = testenv.With("FERN_STRICT_IR=1")
 	out, _ := cmd.CombinedOutput()
 	return "\n--- FERN_STRICT_IR=1 ---\n" + string(out)
 }

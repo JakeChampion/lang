@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testenv"
 )
 
 // The #4350 §6.5 reuse-on/off differential gate (the self-host sibling of
@@ -257,7 +259,7 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(prog))
-		cmd.Env = append(os.Environ(), extraEnv...)
+		cmd.Env = testenv.With(extraEnv...)
 		out, err := cmd.Output()
 		if err != nil || len(out) == 0 {
 			t.Fatalf("driver failed (env %v): %v", extraEnv, err)
