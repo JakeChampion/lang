@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# signoff — run a CI lane locally and record it green against the pushed SHA,
+# so the workflow can skip work this machine has already done.
+#
+#   scripts/signoff --list
+#   scripts/signoff macos-arm64
+#   scripts/signoff wasm --dry-run     # run + check, post nothing
+#
+# WHY THIS EXISTS. 75% of a PR's CI time here is spent waiting for a runner,
+# not using one (measured on run 31819148053: 945 job-minutes queued against
+# 317 running). A lane this machine can run FAITHFULLY is worth running here
+# and telling CI about, because it hands a slot back to every other lane.
+#
+# WHAT MAY BE SIGNED OFF — the whole design rests on this list being honest.
+# A lane qualifies only when a local pass means the same thing a CI pass means.
+# That is why the x86-64 and arm64 Linux ELF lanes are NOT here: this is a Mac,
+# they run only under qemu in scripts/devbox, and docs/LOCAL-DEV-LOOP.md is
+# explicit that qemu locally is for debugging a failure CI found, never a gate.
+# Signing off a lane you cannot faithfully reproduce manufactures exactly the
+# vacuous green this project keeps having to dig out (#6849, #6310, #5914).
+#
+# A signoff is scoped to one commit SHA. Push, then sign off; any new commit
+# needs its own.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+# lane|max_skips|description|command
+# max_skips is the number of SKIPs that are legitimate for the lane. Anything
+# above it fails the signoff: a SKIP is a missing dependency, not a pass, and
+# `ok` in 0.3 s is a SKIP.
+lanes() {
+  cat <<'EOF'
+lint|0|whole-repo cheap gates (build, vet, gofmt, fmt, deadcode, actionlint, testnames, freeze)|make lint-all
+units|0|the unit-test lane's packages, host-independent|go test $(scripts/unit-test-packages)
+wasm|0|wasm e2e under the pinned wasmtime + adapter, host-independent execution|go test ./internal/e2e/ -run 'TestWasm'
+macos-arm64|0|arm64-darwin native execution, both packages — this IS the CI lane's platform|go test -run TestArm64Darwin ./internal/e2e/ && go test -run TestSelfHostArm64Darwin ./internal/e2eselfhost/
+EOF
+}
+
+lane_field() { lanes | awk -F'|' -v l="$1" -v n="$2" '$1==l{print $n}'; }
+
+if [ "${1:-}" = "--list" ] || [ $# -eq 0 ]; then
+  printf '%-22s %s\n' LANE DESCRIPTION
+  lanes | awk -F'|' '{printf "%-22s %s\n", $1, $3}'
+  echo
+  echo "Not signable on a Mac: the x86-64 / arm64 Linux ELF lanes. They run only"
+  echo "under qemu here (scripts/devbox), which docs/LOCAL-DEV-LOOP.md rules out"
+  echo "as a gate. Let CI run those."
+  exit 0
+fi
+
+LANE="$1"; shift
+DRY_RUN=0
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+
+CMD="$(lane_field "$LANE" 4)"
+if [ -z "$CMD" ]; then
+  echo "signoff: unknown lane '$LANE' (see --list)" >&2
+  exit 2
+fi
+MAX_SKIPS="$(lane_field "$LANE" 2)"
+
+# --- the SHA must be exactly what is on the remote -------------------------
+# A signoff names a commit. If the tree is dirty, or HEAD is not the pushed
+# commit, then what ran here is not what CI would run.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "signoff: working tree is dirty; commit or stash before signing off" >&2
+  exit 1
+fi
+SHA="$(git rev-parse HEAD)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if ! git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
+  echo "signoff: no origin/$BRANCH — push the branch first" >&2
+  exit 1
+fi
+if [ "$(git rev-parse "origin/$BRANCH")" != "$SHA" ]; then
+  echo "signoff: HEAD ($SHA) is not what origin/$BRANCH points at; push first" >&2
+  exit 1
+fi
+
+# --- wasm lanes need the pinned toolchain, or they SKIP into a false pass ---
+case "$LANE" in
+  wasm)
+    eval "$("$ROOT/scripts/wasm-toolchain-pins")"
+    have="$(wasmtime --version 2>/dev/null | awk '{print $2}' || true)"
+    if [ "$have" != "$WASMTIME_VER" ]; then
+      echo "signoff: wasmtime $WASMTIME_VER required, found '${have:-none}'" >&2
+      echo "         every wasm test skips on a failed lookup, so this would sign off nothing" >&2
+      exit 1
+    fi
+    : "${FERN_WASI_ADAPTER:?signoff: FERN_WASI_ADAPTER is unset; the wasm tests would skip}"
+    [ -f "$FERN_WASI_ADAPTER" ] || { echo "signoff: adapter not found at $FERN_WASI_ADAPTER" >&2; exit 1; }
+    ;;
+esac
+
+LOG="$(mktemp -t "signoff-$LANE.XXXXXX")"
+echo "signoff: lane '$LANE' on $SHA"
+echo "signoff: \$ $CMD"
+set +e
+( eval "$CMD" ) >"$LOG" 2>&1
+STATUS=$?
+set -e
+
+PASS=$(grep -cE '^\s*--- PASS' "$LOG" || true)
+FAILN=$(grep -cE '^\s*--- FAIL' "$LOG" || true)
+SKIP=$(grep -cE '^\s*--- SKIP' "$LOG" || true)
+
+echo "signoff: exit=$STATUS pass=$PASS fail=$FAILN skip=$SKIP  (log: $LOG)"
+
+if [ "$STATUS" -ne 0 ] || [ "$FAILN" -gt 0 ]; then
+  echo "signoff: REFUSED — the lane is not green" >&2
+  grep -E '^\s*--- FAIL' "$LOG" | head -20 >&2 || true
+  exit 1
+fi
+if [ "$SKIP" -gt "$MAX_SKIPS" ]; then
+  echo "signoff: REFUSED — $SKIP skips, lane allows $MAX_SKIPS" >&2
+  echo "         a SKIP is a missing dependency, not a green light" >&2
+  grep -B1 -E '^\s*--- SKIP' "$LOG" | head -20 >&2 || true
+  exit 1
+fi
+
+DESC="local: $PASS pass, $SKIP skip on $(uname -s)/$(uname -m)"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "signoff: --dry-run, not posting. Would set signoff/$LANE=success ($DESC)"
+  exit 0
+fi
+
+REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+gh api "repos/$REPO/statuses/$SHA" \
+  -f state=success \
+  -f context="signoff/$LANE" \
+  -f description="$DESC" \
+  --silent
+echo "signoff: posted signoff/$LANE=success on $SHA"
