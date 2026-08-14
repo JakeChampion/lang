@@ -27,7 +27,7 @@ signable set is deliberately small:
 |---|---|
 | `lint` | host-independent whole-repo gates |
 | `units` | pure-Go packages |
-| `wasm` | wasm executes host-independently, and the signoff refuses to run unless the wasmtime version matches the pin exactly |
+| `wasm` | wasm executes host-independently, and the signoff refuses unless the wasmtime version matches the pin exactly. **Needs an x86-64 host**: 12 of the tests matching `TestWasm*` drive the x86-64 backend and skip without `qemu-x86_64`, where CI runs them on an x86_64 runner. On a Mac this lane refuses, correctly — signing it off here would claim 88 tests ran when 76 did |
 | `macos-arm64` | this machine IS the CI lane's platform (Apple Silicon macOS); covers both the `internal/e2e` and `internal/e2eselfhost` native-execution steps |
 
 Expect a modest saving, and do not oversell it: these lanes are ~19 of the 317
@@ -54,8 +54,15 @@ out: #6849 (five suites that could not fail), #6310 (a lane that ran 15 of the
   A signoff names one commit; if what ran here is not what was pushed, it means
   nothing;
 - the lane exits non-zero, or any `--- FAIL` appears;
-- the lane produces more `--- SKIP` than it declares (all are `0` today). A SKIP
-  is a missing dependency, not a green light, and `ok` in 0.3 s is a SKIP;
+- the lane produces fewer `--- PASS` than its floor. `go test -run` exits 0 when
+  its selector matches **nothing**, so exit status alone cannot tell "all green"
+  from "ran zero tests" — that is #6310's shape, and a signoff stands in for a
+  CI run, so it has to know the difference;
+- the lane produces more `--- SKIP` than it declares. The rule is **not** zero
+  skips, it is *the same skips CI has*: `macos-15` has no qemu either, so that
+  lane's cross-arch cases skip on the runner exactly as they do here. An extra
+  skip is a missing dependency; the declared count going stale fails loudly,
+  which is wanted, because a change in what skips is something to look at;
 - for `wasm`, the host `wasmtime` is not the pinned version, or
   `FERN_WASI_ADAPTER` is unset or missing. Every wasm test skips on a failed
   tool lookup, so without this check the lane would sign off having run nothing.
