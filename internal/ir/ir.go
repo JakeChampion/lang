@@ -4782,36 +4782,29 @@ func (b *builder) dynReclaim() bool {
 
 // collectDefers walks `s` recursively and appends every
 // `*ast.Defer` it finds (in source-declaration order) to
-// `out`. Function-bodies of nested local FuncDecls are NOT
-// traversed — those have their own defer scope handled by
-// lowerFunc when they're lowered separately.
+// `out`. Bodies of nested functions — a local FuncDecl, or a
+// Lambda that closureconv has not hoisted yet — are NOT
+// traversed: each owns its defer scope, handled by lowerFunc
+// when it is lowered separately.
+//
+// The walk has to reach statements nested inside EXPRESSIONS as
+// well as inside statements, because a block expression carries
+// statements: the block body of an arrow lambda is one, and a
+// defer the walk misses reaches `stmt()` anyway and fails the
+// pointer lookup there as a compiler bug (#6852).
 func collectDefers(s ast.Stmt, out *[]*ast.Defer) {
 	if s == nil {
 		return
 	}
-	switch x := s.(type) {
-	case *ast.Block:
-		for _, st := range x.Stmts {
-			collectDefers(st, out)
+	ast.Walk(s, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl, *ast.Lambda:
+			return false
+		case *ast.Defer:
+			*out = append(*out, x)
 		}
-	case *ast.If:
-		collectDefers(x.Then, out)
-		collectDefers(x.Else, out)
-	case *ast.While:
-		collectDefers(x.Body, out)
-	case *ast.Loop:
-		collectDefers(x.Body, out)
-	case *ast.For:
-		collectDefers(x.Init, out)
-		collectDefers(x.Step, out)
-		collectDefers(x.Body, out)
-	case *ast.Match:
-		for _, arm := range x.Arms {
-			collectDefers(arm.Body, out)
-		}
-	case *ast.Defer:
-		*out = append(*out, x)
-	}
+		return true
+	})
 }
 
 // emitDeferCleanup walks the registered defers in reverse
