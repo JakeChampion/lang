@@ -3939,9 +3939,9 @@ function mx_if_branch_types(f: parser.StmtIf, s: Scope): Type[] {
 }
 
 // mx_expr walks an expression, emitting E031 for any value match/if-
-// expression IIFE it finds and recursing into sub-expressions (so nested
-// match/if-expressions, and ones inside calls / operators / literals, are
-// all covered).
+// expression IIFE it finds and P002 for an out-of-range float literal, and
+// recursing into sub-expressions (so nested match/if-expressions, and ones
+// inside calls / operators / literals, are all covered).
 function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
     var out: Diag[] = [];
     match (e) {
