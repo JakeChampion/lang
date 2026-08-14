@@ -6,15 +6,20 @@ name: Test e2e differential
 # and wasmbin backends. Asserts byte-for-byte agreement.
 #
 # This is the heaviest single e2e test on the suite (~5+ min for
-# the full 2048-seed sweep). Sharded four ways via the
+# the full 2048-seed sweep). Sharded two ways via the
 # `DIFF_ORACLE_SHARD=I/N` env var the test honours: each shard
-# claims `seed % N == I`, so the 2048 seeds split as 512 per
-# shard. Crossed with the per-arch matrix that gives 8 parallel
-# jobs. (History: 4 shards → 2 to cut run-queue pressure → back to
-# 4 once this workflow became one of the slowest per-PR lanes
-# (~6.4 min wall) while the self-host workflow's aarch64 fan-out
-# was trimmed by 12 jobs, freeing more queue slots than this
-# re-adds.)
+# claims `seed % N == I`, so the 2048 seeds split as 1024 per
+# shard. Crossed with the per-arch matrix that gives 4 parallel
+# jobs.
+#
+# The shard count is set by queue pressure, not by the work. Measured
+# on run 31819148034: at four shards per arch the lane did 18.5 min of
+# work across 8 jobs and its longest shard was 2.6 min, on a PR where
+# 75% of all CI time was spent waiting for a runner rather than using
+# one. Two shards puts each at ~4.8 min against a 15-min timeout and
+# hands 4 slots back to the pool. Bump this (and DIFF_ORACLE_SHARD's
+# /N with it) if per-shard wall-clock creeps toward the slow lanes as
+# the corpus grows.
 #
 # Needs wasmtime because the wasmbin sub-test invokes
 # `wasmtime run --invoke main`. arm64 sub-tests skip on x86 (no
@@ -43,22 +48,21 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # Four shards = 512 seeds each; bump this if per-shard
-        # wall-clock creeps toward the slower workflows as the
-        # corpus grows (keep DIFF_ORACLE_SHARD's /N in sync).
-        shard: [0, 1, 2, 3]
+        # Two shards = 1024 seeds each. See the shard-count note above
+        # before changing this (keep DIFF_ORACLE_SHARD's /N in sync).
+        shard: [0, 1]
     name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
           gotestsum: "true"
-      - name: go test (differential shard ${{ matrix.shard }}/4)
+      - name: go test (differential shard ${{ matrix.shard }}/2)
         env:
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
           # Per-shard artifact dir so multiple shards on the
           # same runner don't clobber each other's failed-
           # program asm. `diffOracleArtifactDir()` reads this.

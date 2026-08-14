@@ -99,6 +99,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # An Apple Silicon dev machine reproduces THIS lane's platform exactly, so
+      # its two native-execution steps can be run locally and recorded against
+      # the pushed commit. The gate covers exactly those two steps and nothing
+      # else in the job — see docs/CI-SIGNOFF.md.
+      - uses: ./.github/actions/signoff-gate
+        id: gate
+        with:
+          lane: macos-arm64
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -128,6 +137,7 @@ jobs:
         run: go install gotest.tools/gotestsum@v1.13.0
 
       - name: go test (arm64-darwin native execution)
+        if: steps.gate.outputs.signed != 'true'
         # TestArm64DarwinBuilds detects runtime.GOOS=="darwin"
         # && GOARCH=="arm64" and switches from "verify Mach-O
         # file format" to "build with native clang+ld64 and
@@ -140,6 +150,7 @@ jobs:
           "$(go env GOPATH)/bin/gotestsum" --format standard-verbose -- -run TestArm64Darwin ./internal/e2e/
 
       - name: go test (SELF-HOST arm64-darwin native execution)
+        if: steps.gate.outputs.signed != 'true'
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
         # which lives in a different package (internal/e2eselfhost) and so was
         # not selected by the `-run TestArm64Darwin ./internal/e2e/` filter —
