@@ -20,7 +20,7 @@ func runSizeCheck(t *testing.T, env []string, args ...string) (int, string) {
 		t.Fatalf("size script missing: %v", err)
 	}
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = ciEnv(env...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -57,20 +57,50 @@ func TestCheckDriverSizesQuietOnBaseline(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", "fern.fern\t134243612\nasm_ir_run.fern\t127504604\nwasm_ir_run.fern\t58870908\n")
 
-	code, out := runSizeCheck(t, nil, base, report)
+	for _, env := range [][]string{{"GITHUB_ACTIONS=true"}, nil} {
+		code, out := runSizeCheck(t, env, base, report)
+		if code != 0 {
+			t.Fatalf("env %v: want exit 0, got %d: %s", env, code, out)
+		}
+		if !strings.Contains(out, "Every driver is within 5% of its baseline") {
+			t.Errorf("env %v: want the all-clear line, got:\n%s", env, out)
+		}
+		for _, bad := range []string{"GREW", "SHRANK", "WARNING", "::warning", "Corrected baseline"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("env %v: a matching run produced %q:\n%s", env, bad, out)
+			}
+		}
+		if !strings.Contains(out, "fern.fern (tracked artifact)") {
+			t.Errorf("env %v: the tracked artifact must be marked as such:\n%s", env, out)
+		}
+	}
+}
+
+// The size table is the "record it" half of #6826, so it has to reach the job
+// summary — and stdout regardless, so the script is usable by hand.
+func TestCheckDriverSizesWritesJobSummary(t *testing.T) {
+	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
+	report := writeTemp(t, "report.txt", sizeReport0814)
+
+	summary := filepath.Join(t.TempDir(), "summary.md")
+	code, out := runSizeCheck(t, []string{"GITHUB_STEP_SUMMARY=" + summary, "GITHUB_ACTIONS=true"}, base, report)
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d: %s", code, out)
 	}
-	if !strings.Contains(out, "Every driver is within 5% of its baseline") {
-		t.Errorf("want the all-clear line, got:\n%s", out)
+	body, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
 	}
-	for _, bad := range []string{"GREW", "SHRANK", "WARNING", "Corrected baseline"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("a matching run produced %q:\n%s", bad, out)
+	for _, want := range []string{"| driver | linked | baseline | delta |", "GREW: fern.fern", "Corrected baseline"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("summary missing %q:\n%s", want, body)
 		}
 	}
-	if !strings.Contains(out, "fern.fern (tracked artifact)") {
-		t.Errorf("the tracked artifact must be marked as such:\n%s", out)
+	if strings.Contains(string(body), "::warning") {
+		t.Errorf("annotations must not be pasted into the summary:\n%s", body)
+	}
+	if !strings.Contains(out, "::warning title=fern.fern grew") {
+		t.Errorf("the annotation still belongs on stdout:\n%s", out)
 	}
 }
 
@@ -152,19 +182,31 @@ func TestCheckDriverSizesReportsUnbaselinedOnce(t *testing.T) {
 }
 
 // Measuring nothing must not read as green: that is the failure mode the whole
-// check exists to remove.
+// check exists to remove. Asserted on both channels, each under the environment
+// that selects it.
 func TestCheckDriverSizesReportsWhenItRanBlind(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 
-	code, out := runSizeCheck(t, nil, base, filepath.Join(t.TempDir(), "never-written.txt"))
-	if code != 0 {
-		t.Fatalf("want exit 0, got %d: %s", code, out)
-	}
-	if !strings.Contains(out, "NO SIZE REPORT") {
-		t.Errorf("a missing report must say so:\n%s", out)
-	}
-	if !strings.Contains(out, "WARNING: driver size check ran blind") {
-		t.Errorf("a missing report must annotate:\n%s", out)
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"on a runner", []string{"GITHUB_ACTIONS=true"}, "::warning title=driver size check ran blind::"},
+		{"off a runner", nil, "WARNING: driver size check ran blind"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out := runSizeCheck(t, tc.env, base, filepath.Join(t.TempDir(), "never-written.txt"))
+			if code != 0 {
+				t.Fatalf("want exit 0, got %d: %s", code, out)
+			}
+			if !strings.Contains(out, "NO SIZE REPORT") {
+				t.Errorf("a missing report must say so:\n%s", out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("want %q in:\n%s", tc.want, out)
+			}
+		})
 	}
 }
 

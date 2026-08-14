@@ -22,12 +22,37 @@ func weightScript(t *testing.T) string {
 	return p
 }
 
+// ciEnv builds a child environment with every variable that these scripts key
+// their behaviour off removed, then applies `extra`.
+//
+// Both scripts CHOOSE AN OUTPUT CHANNEL from the environment: with
+// GITHUB_ACTIONS set they emit `::warning` workflow commands, without it a plain
+// `WARNING:` line, and GITHUB_STEP_SUMMARY duplicates the report into a file.
+// Inheriting the ambient values means a test asserts one code path on a laptop
+// and a different one on a runner — which is exactly how the two "ran blind"
+// tests passed locally and failed in CI, asserting the `WARNING:` fallback while
+// the runner's GITHUB_ACTIONS=true produced `::warning`. Stripping the whole
+// family makes each test name the channel it is testing.
+func ciEnv(extra ...string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		switch {
+		case strings.HasPrefix(kv, "GITHUB_"),
+			strings.HasPrefix(kv, "RUNNER_"),
+			strings.HasPrefix(kv, "FERN_"):
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, extra...)
+}
+
 // runWeights invokes the script with `env` overrides and returns exit code plus
 // combined output.
 func runWeights(t *testing.T, env []string, args ...string) (int, string) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{weightScript(t)}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = ciEnv(env...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -90,7 +115,9 @@ func TestCITestWeightsExtractPicksTopLevelDurations(t *testing.T) {
 }
 
 // Weights that match what the shards measured must produce no findings at all —
-// otherwise the annotation channel fills with noise and stops being read.
+// otherwise the annotation channel fills with noise and stops being read. Run in
+// both environments, since quiet has a different spelling in each and the one
+// that matters is the runner.
 func TestCITestWeightsQuietOnAccurateWeights(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\nTestSelfHostTiny\t0.40\n",
@@ -98,16 +125,18 @@ func TestCITestWeightsQuietOnAccurateWeights(t *testing.T) {
 	})
 	w := weightsFile(t, "# comment\nTestSelfHostHeavy 738\nTestSelfHostMid 125\n")
 
-	code, out := runWeights(t, nil, "check", timings, w)
-	if code != 0 {
-		t.Fatalf("want exit 0, got %d: %s", code, out)
-	}
-	if !strings.Contains(out, "No weight discrepancies") {
-		t.Errorf("want the all-clear line, got:\n%s", out)
-	}
-	for _, bad := range []string{"UNWEIGHTED", "UNDER-WEIGHTED", "WARNING", "Corrected weights"} {
-		if strings.Contains(out, bad) {
-			t.Errorf("accurate weights produced %q:\n%s", bad, out)
+	for _, env := range [][]string{{"GITHUB_ACTIONS=true"}, nil} {
+		code, out := runWeights(t, env, "check", timings, w)
+		if code != 0 {
+			t.Fatalf("env %v: want exit 0, got %d: %s", env, code, out)
+		}
+		if !strings.Contains(out, "No weight discrepancies") {
+			t.Errorf("env %v: want the all-clear line, got:\n%s", env, out)
+		}
+		for _, bad := range []string{"UNWEIGHTED", "UNDER-WEIGHTED", "WARNING", "::warning", "Corrected weights"} {
+			if strings.Contains(out, bad) {
+				t.Errorf("env %v: accurate weights produced %q:\n%s", env, bad, out)
+			}
 		}
 	}
 }
@@ -210,17 +239,33 @@ func TestCITestWeightsFlagsShardNearBudget(t *testing.T) {
 }
 
 // A gate that silently no-ops is worse than none, so losing the timing
-// artifacts has to be loud rather than green-and-quiet.
+// artifacts has to be loud rather than green-and-quiet — on BOTH channels. The
+// annotation wording differs by environment, so each is asserted under the
+// environment that selects it rather than under whatever the test host happens
+// to export.
 func TestCITestWeightsReportsWhenItRanBlind(t *testing.T) {
-	code, out := runWeights(t, nil, "check", t.TempDir(), weightsFile(t, "TestSelfHostHeavy 738\n"))
-	if code != 0 {
-		t.Fatalf("want exit 0, got %d: %s", code, out)
-	}
-	if !strings.Contains(out, "NO TIMING FILES") {
-		t.Errorf("a missing-artifact run must say so:\n%s", out)
-	}
-	if !strings.Contains(out, "WARNING: shard weight audit ran blind") {
-		t.Errorf("a missing-artifact run must annotate:\n%s", out)
+	weights := weightsFile(t, "TestSelfHostHeavy 738\n")
+
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"on a runner", []string{"GITHUB_ACTIONS=true"}, "::warning title=shard weight audit ran blind::"},
+		{"off a runner", nil, "WARNING: shard weight audit ran blind"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out := runWeights(t, tc.env, "check", t.TempDir(), weights)
+			if code != 0 {
+				t.Fatalf("want exit 0, got %d: %s", code, out)
+			}
+			if !strings.Contains(out, "NO TIMING FILES") {
+				t.Errorf("a missing-artifact run must say so:\n%s", out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("want %q in:\n%s", tc.want, out)
+			}
+		})
 	}
 }
 
@@ -242,28 +287,52 @@ func TestCITestWeightsStrictModeIsFatal(t *testing.T) {
 }
 
 // The report has to reach the job summary, which is where a green run's numbers
-// are readable at all.
+// are readable at all — and it has to reach stdout whether or not a summary file
+// exists, so the script is usable by hand.
 func TestCITestWeightsWritesJobSummary(t *testing.T) {
 	timings := seed(t, map[string]string{
 		"x86_64-11.timings": "TestSelfHostHeavy\t482.00\n",
 	})
 	w := weightsFile(t, "TestSelfHostSomethingElse 125\n")
-	summary := filepath.Join(t.TempDir(), "summary.md")
 
-	code, out := runWeights(t, []string{"GITHUB_STEP_SUMMARY=" + summary}, "check", timings, w)
-	if code != 0 {
-		t.Fatalf("want exit 0, got %d: %s", code, out)
-	}
-	body, err := os.ReadFile(summary)
-	if err != nil {
-		t.Fatalf("read summary: %v", err)
-	}
-	if !strings.Contains(string(body), "UNWEIGHTED: TestSelfHostHeavy") {
-		t.Errorf("summary missing the finding:\n%s", body)
-	}
-	if strings.Contains(string(body), "::warning") {
-		t.Errorf("annotations must not be pasted into the summary:\n%s", body)
-	}
+	t.Run("summary file set", func(t *testing.T) {
+		summary := filepath.Join(t.TempDir(), "summary.md")
+		code, out := runWeights(t, []string{"GITHUB_STEP_SUMMARY=" + summary}, "check", timings, w)
+		if code != 0 {
+			t.Fatalf("want exit 0, got %d: %s", code, out)
+		}
+		if !strings.Contains(out, "UNWEIGHTED: TestSelfHostHeavy") {
+			t.Errorf("stdout must carry the report too:\n%s", out)
+		}
+		body, err := os.ReadFile(summary)
+		if err != nil {
+			t.Fatalf("read summary: %v", err)
+		}
+		if !strings.Contains(string(body), "UNWEIGHTED: TestSelfHostHeavy") {
+			t.Errorf("summary missing the finding:\n%s", body)
+		}
+		if strings.Contains(string(body), "::warning") || strings.Contains(string(body), "WARNING:") {
+			t.Errorf("annotations must not be pasted into the summary:\n%s", body)
+		}
+	})
+
+	t.Run("summary file unset", func(t *testing.T) {
+		dir := t.TempDir()
+		code, out := runWeights(t, nil, "check", timings, w)
+		if code != 0 {
+			t.Fatalf("want exit 0, got %d: %s", code, out)
+		}
+		if !strings.Contains(out, "UNWEIGHTED: TestSelfHostHeavy") {
+			t.Errorf("with no summary file the report must still reach stdout:\n%s", out)
+		}
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("read dir: %v", err)
+		}
+		if len(ents) != 0 {
+			t.Errorf("no summary file was configured, yet %d file(s) were written", len(ents))
+		}
+	})
 }
 
 // A bad invocation must not pass vacuously.
