@@ -78,7 +78,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A cancelled upstream workflow tells us nothing new: it was superseded by a
+  # newer push, whose own run will re-trigger this. Evaluating it anyway costs a
+  # queued job per cancelled workflow, and with 16 watched workflows that is the
+  # bulk of the churn (measured: 58 runs of this workflow against a single SHA,
+  # 51 of them cancelled before they posted anything).
   status-comment:
+    if: >-
+      github.event_name != 'workflow_run'
+      || github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
