@@ -1,0 +1,84 @@
+import "core/cmp";
+import "std/array";
+import "std/set";
+import "std/test";
+// examples/tests/eq_bound_derive_test.fern — the Eq-driven std/array and
+// std/set verbs over a `@derive(Eq)` STRUCT element, the element type that only
+// satisfies the `T: cmp.Eq` bound through the derive. Each verb compares
+// through the bound's `eq` method; a body that used the `==` operator instead
+// rejected this element type with "cannot compare values of type Point",
+// reported as a monomorph compiler bug at a stdlib line (#6846). The i32 /
+// string coverage for the same verbs lives in the per-verb suites
+// (array_all_equal_test.fern, array_dedup_test.fern, …).
+
+@derive(cmp.Eq, cmp.Display)
+struct Point { x: i32, y: i32 }
+
+function p(x: i32, y: i32): Point {
+    return Point { x: x, y: y };
+}
+
+function test_all_equal(): test.TestOutcome {
+    var same: Point[] = [p(1, 2), p(1, 2)];
+    var mixed: Point[] = [p(1, 2), p(3, 4)];
+    return test.assert_true(same.all_equal() && !mixed.all_equal());
+}
+
+function test_dedup(): test.TestOutcome {
+    var runs: Point[] = [p(1, 2), p(1, 2), p(3, 4), p(1, 2)];
+    return test.assert_eq_array(runs.dedup(), [p(1, 2), p(3, 4), p(1, 2)]);
+}
+
+function test_distinct(): test.TestOutcome {
+    var runs: Point[] = [p(3, 4), p(1, 2), p(3, 4)];
+    return test.assert_eq_array(array.distinct(runs), [p(3, 4), p(1, 2)]);
+}
+
+function test_count(): test.TestOutcome {
+    var runs: Point[] = [p(1, 2), p(3, 4), p(1, 2)];
+    return test.assert_eq(array.count(runs, p(1, 2)), 2);
+}
+
+function test_index_of_last(): test.TestOutcome {
+    var runs: Point[] = [p(1, 2), p(3, 4), p(1, 2)];
+    match (runs.index_of_last(p(1, 2))) {
+        Some(i) => { return test.assert_eq(i, 2); },
+        None => { return test.fail("index_of_last found no match"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_starts_with(): test.TestOutcome {
+    var xs: Point[] = [p(1, 2), p(3, 4), p(5, 6)];
+    return test.assert_true(xs.starts_with([p(1, 2), p(3, 4)]) && !xs.starts_with([p(3, 4)]));
+}
+
+function test_ends_with(): test.TestOutcome {
+    var xs: Point[] = [p(1, 2), p(3, 4), p(5, 6)];
+    return test.assert_true(xs.ends_with([p(3, 4), p(5, 6)]) && !xs.ends_with([p(3, 4)]));
+}
+
+function test_set_membership(): test.TestOutcome {
+    var s: set.Set[Point] = set.set_of([p(1, 2), p(3, 4), p(1, 2)]);
+    if (s.len() != 2) { return test.fail("set_of kept a duplicate"); }
+    return test.assert_true(s.contains(p(1, 2)) && !s.contains(p(9, 9)));
+}
+
+function test_set_remove(): test.TestOutcome {
+    var s: set.Set[Point] = set.set_of([p(1, 2), p(3, 4)]);
+    return test.assert_eq_array(s.remove(p(1, 2)).to_array(), [p(3, 4)]);
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("Eq-bound verbs on a derived element");
+    r = r.it("all_equal",      test_all_equal);
+    r = r.it("dedup",          test_dedup);
+    r = r.it("distinct",       test_distinct);
+    r = r.it("count",          test_count);
+    r = r.it("index_of_last",  test_index_of_last);
+    r = r.it("starts_with",    test_starts_with);
+    r = r.it("ends_with",      test_ends_with);
+    r = r.it("set membership", test_set_membership);
+    r = r.it("set remove",     test_set_remove);
+    return r.finish();
+}
