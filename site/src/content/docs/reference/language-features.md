@@ -94,6 +94,12 @@ exit for both scopes: the iteration's pending cleanup runs there, then the
 function body's, LIFO. A deferred expression reads its names at the moment
 it runs, not at the `defer`.
 
+A loop iteration is the only scope narrower than a function that schedules
+its own cleanup. A lambda body is a function, so a `defer` written inside
+one runs when the lambda returns; a value-position `{ … }` block is not, so
+a `defer` inside a block expression belongs to the function containing the
+block and runs when that function returns.
+
 `errdefer` is the same idea, but it runs **only on an error exit** — a
 `?` that propagates an `Err`/`None`, or a `return` of an error value. Use
 it to undo partial work that should survive the success path but be rolled

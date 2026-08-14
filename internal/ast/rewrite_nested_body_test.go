@@ -59,6 +59,38 @@ func TestRewriteProgramExprsDescendsIntoNestedFunctionBody(t *testing.T) {
 	}
 }
 
+// The same for a `loop { … }` body. `loop` is its own statement kind rather
+// than sugar over While, so a rewriter that lists the loop forms by hand can
+// omit it and leave the body un-desugared — `a +? b` inside a `loop` was
+// rejected by both engines ("+?" not supported) while the identical code
+// inside a `while (true)` ran.
+func TestRewriteProgramExprsDescendsIntoLoopBody(t *testing.T) {
+	body := &Block{Stmts: []Stmt{
+		&ExprStmt{Expr: &Ident{Name: "target"}},
+	}}
+	prog := &Program{Funcs: []*FuncDecl{{
+		Name: "outer",
+		Body: &Block{Stmts: []Stmt{&Loop{Body: body}}},
+	}}}
+
+	visited := false
+	RewriteProgramExprs(prog, func(e Expr) Expr {
+		if id, ok := e.(*Ident); ok && id.Name == "target" {
+			visited = true
+			return &Ident{Name: "rewritten"}
+		}
+		return e
+	})
+
+	if !visited {
+		t.Fatal("the loop body was never visited")
+	}
+	es := body.Stmts[0].(*ExprStmt)
+	if id, ok := es.Expr.(*Ident); !ok || id.Name != "rewritten" {
+		t.Errorf("loop body expr = %#v, want the rewritten Ident", es.Expr)
+	}
+}
+
 // The same for an anonymous function expression, which the rewriter reaches
 // before closureconv hoists it into a top-level FuncDecl.
 func TestRewriteProgramExprsDescendsIntoLambdaBody(t *testing.T) {

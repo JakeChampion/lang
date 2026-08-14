@@ -74,6 +74,20 @@ function main(): i32 {
     var e: i32 = f();
     if (e != 0) { return e; }
 
+    // The same desugars inside a loop { … } body. A loop is a statement kind
+    // of its own rather than sugar over while (true), so a rewriter that lists
+    // the loop forms by hand can omit it — and then the identical expression
+    // compiles inside a while and is rejected inside a loop.
+    var lp: i32 = 0;
+    loop {
+        match (100 /? 5) { Some(v) => { if (v != 20) { lp = 40; } }, None => { lp = 41; } }
+        var p: V = V { x: 7 };
+        var q: V = V { x: 8 };
+        if ((p + q).x != 15) { lp = 42; }
+        break;
+    }
+    if (lp != 0) { return lp; }
+
     return 0;
 }
 `

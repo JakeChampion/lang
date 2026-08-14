@@ -234,6 +234,8 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 	case *While:
 		x.Cond = rewriteExpr(x.Cond, fn)
 		rewriteStmtChildren(x.Body, fn)
+	case *Loop:
+		rewriteStmtChildren(x.Body, fn)
 	case *For:
 		if x.Init != nil {
 			rewriteStmtChildren(x.Init, fn)
@@ -409,6 +411,8 @@ func walkChildren(n Node, fn func(Node) bool) {
 		}
 	case *While:
 		Walk(x.Cond, fn)
+		Walk(x.Body, fn)
+	case *Loop:
 		Walk(x.Body, fn)
 	case *For:
 		if x.Init != nil {

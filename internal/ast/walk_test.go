@@ -300,6 +300,27 @@ func TestWalk_DeepestNodeAtPosition(t *testing.T) {
 	}
 }
 
+func TestWalk_LoopBody(t *testing.T) {
+	// `loop { … }` is a statement kind of its own, not sugar the parser
+	// rewrites into a While, so a walk that forgets it sees an empty
+	// subtree where a whole loop body is. Every capability, treeshake and
+	// rc analysis in the tree reaches its statements through here.
+	root := &Loop{
+		P: Position{1, 1},
+		Body: &Block{Stmts: []Stmt{
+			&ExprStmt{Expr: &Call{
+				P:      Position{2, 5},
+				Callee: &Ident{P: Position{2, 5}, Name: "f"},
+			}},
+		}},
+	}
+	got := collectKinds(root)
+	want := []string{"*ast.Loop", "*ast.Block", "*ast.ExprStmt", "*ast.Call", "*ast.Ident"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("loop walk: got %v, want %v", got, want)
+	}
+}
+
 func TestWalk_LambdaBody(t *testing.T) {
 	// A Lambda's body is part of the enclosing tree: the Call inside
 	// must be visited (capability reporting attributes closure bodies
