@@ -9,7 +9,7 @@ import "std/array";
 //
 // The i32 cases here are self-host-gated; STRING-element all_equal is
 // native-differential-only, because it compares two array ELEMENTS
-// (`xs[i] == xs[0]`), and that element-vs-element string compare trips the
+// (`xs[i].eq(xs[0])`), and that element-vs-element string compare trips the
 // self-host compiler (the pointer-payload gap class, same as min/max_index).
 // The Go-side TestArrayAllEqual exercises a string[] on all four native
 // backends.

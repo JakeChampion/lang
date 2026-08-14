@@ -1122,6 +1122,24 @@ func TestRunnerArrayAllEqualExamplePasses(t *testing.T) {
 	}
 }
 
+// `examples/tests/eq_bound_derive_test.fern` runs the Eq-driven std/array and
+// std/set verbs over a `@derive(Eq)` STRUCT element — the element type that
+// satisfies `T: cmp.Eq` only through the derive, and so the one a body
+// comparing with the `==` operator rejected (#6846). Passing → exit 0.
+func TestRunnerEqBoundDeriveExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/eq_bound_derive_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: Eq-bound verbs on a derived element", "# pass 9", "# fail 0", "1..9"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/array_min_max_index_test.fern` covers std/array's
 // max_index / min_index[T: cmp.Ord] (free + method forms): the INDEX of the
 // largest / smallest element by Ord → Option[i32] (None on empty, first on a

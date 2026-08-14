@@ -309,7 +309,9 @@ convention.
   `distinct`), `binary_search` (O(log n) → `Option[i32]` over an
   ascending-sorted array), `all_equal` (≤ 1 distinct value),
   `count`, `is_sorted`, `equal`,
-  `starts_with`/`ends_with`.
+  `starts_with`/`ends_with`. Every Eq-bounded verb compares through
+  the bound's `eq` method, so a `@derive(Eq)` struct or enum element
+  works as well as a primitive one.
 
 ### `std/unicode`
 
@@ -530,7 +532,8 @@ the small-list convenience cases.
 A generic, value-semantic set of distinct elements,
 `Set[T: cmp.Eq]`. Every operation returns a NEW set and leaves
 its receiver untouched. Element type only needs `cmp.Eq`
-(membership is decided by `==`); iteration / `to_array()` is in
+(membership is decided by the bound's `eq`, so a `@derive(Eq)`
+struct or enum works); iteration / `to_array()` is in
 first-inserted order.
 
 - `set_new()`, `set_of(xs)` — empty set / dedup an array
