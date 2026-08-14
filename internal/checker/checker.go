@@ -10512,49 +10512,80 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 	fn.Params[0].Type = bindType
 }
 
+// typeParamsInScope is the set of type-parameter names the enclosing
+// generic declaration binds at the point being checked. Nil inside a
+// non-generic function, where no ParamType can be a real type.
+func (c *checker) typeParamsInScope() map[string]bool {
+	if c.current == nil || len(c.current.TypeParams) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(c.current.TypeParams))
+	for _, tp := range c.current.TypeParams {
+		set[tp] = true
+	}
+	return set
+}
+
+// errE040StructUninferred reports a generic struct literal whose type
+// parameter no field value pinned. Both spellings that fix it are
+// offered: the construction-site type args of #6812, and the binding
+// annotation that has always worked.
+func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
+	c.errfCode(p, "E040", "could not infer type parameter %s for struct %s — supply it explicitly at the construction site (e.g. %s[i32] { ... }) or annotate the binding (e.g. var x: %s[i32] = ...)",
+		tp, name, name, name)
+}
+
 // containsParamType reports whether t (or any of its component
 // types) is a still-unresolved generic ParamType. Used to flag
 // failed `use`-callback inference: a substitution that leaves a
 // ParamType behind means some type-parameter wasn't pinned by
 // the args.
 func containsParamType(t ast.Type) bool {
+	_, found := paramTypeNotIn(t, nil)
+	return found
+}
+
+// paramTypeNotIn returns the name of the first type parameter in t (or
+// any of its component types) that `inScope` doesn't contain. With a nil
+// set that is the first ParamType of any kind, which is what
+// containsParamType wants.
+func paramTypeNotIn(t ast.Type, inScope map[string]bool) (string, bool) {
 	switch x := t.(type) {
 	case ast.ParamType:
-		return true
+		if !inScope[x.Name] {
+			return x.Name, true
+		}
 	case ast.ArrayType:
-		return containsParamType(x.Elem)
+		return paramTypeNotIn(x.Elem, inScope)
 	case ast.SliceType:
-		return containsParamType(x.Elem)
+		return paramTypeNotIn(x.Elem, inScope)
 	case ast.TupleType:
 		for _, e := range x.Elems {
-			if containsParamType(e) {
-				return true
+			if name, found := paramTypeNotIn(e, inScope); found {
+				return name, true
 			}
 		}
-		return false
 	case ast.EnumType:
 		for _, a := range x.Args {
-			if containsParamType(a) {
-				return true
+			if name, found := paramTypeNotIn(a, inScope); found {
+				return name, true
 			}
 		}
-		return false
 	case ast.StructType:
 		for _, a := range x.Args {
-			if containsParamType(a) {
-				return true
+			if name, found := paramTypeNotIn(a, inScope); found {
+				return name, true
 			}
 		}
-		return false
 	case *ast.FuncType:
 		for _, p := range x.Params {
-			if containsParamType(p) {
-				return true
+			if name, found := paramTypeNotIn(p, inScope); found {
+				return name, true
 			}
 		}
-		return containsParamType(x.Result)
+		return paramTypeNotIn(x.Result, inScope)
 	}
-	return false
+	return "", false
 }
 
 // checkLocalFunc type-checks a nested function and records its
@@ -12881,6 +12912,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if len(sd.TypeParams) > 0 {
 			args := make([]ast.Type, len(sd.TypeParams))
 			complete := true
+			inScope := c.typeParamsInScope()
 			for i, tp := range sd.TypeParams {
 				if v, ok := sub[tp]; ok {
 					args[i] = v
@@ -12889,7 +12921,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// type param the (subset) overrides didn't touch.
 					args[i] = baseArgs[i]
 				} else {
-					c.errfCode(n.P, "E040", "could not infer type parameter %s for struct %s — annotate the binding with the concrete instantiation (e.g. var x: %s[i32] = ...)", tp, sd.Name, sd.Name)
+					c.errE040StructUninferred(n.P, tp, sd.Name)
+					complete = false
+					continue
+				}
+				// Unification succeeds vacuously when nothing pins a
+				// parameter: the declared field type is matched against a
+				// literal that only re-states it, binding `T` to itself.
+				// A ParamType is a real instantiation only when an
+				// enclosing generic declaration binds that name —
+				// otherwise the arg names a parameter that does not exist
+				// at the construction site, and monomorph mangles it into
+				// a struct nobody declared (`Stack__T`) and gives up with
+				// "compiler bug". The literal is simply under-inferred.
+				if _, escaped := paramTypeNotIn(args[i], inScope); escaped {
+					c.errE040StructUninferred(n.P, tp, sd.Name)
 					complete = false
 				}
 			}

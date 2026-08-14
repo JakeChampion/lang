@@ -21,6 +21,52 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// A generic struct literal no field value pins is an ordinary
+// under-inference, reported as E040 by the checker (#6813). Unification
+// binds the parameter to ITSELF in that case, so the arg looks inferred
+// and the failure used to survive to monomorph's re-check as a
+// "compiler bug" naming the mangled `Stack__T`.
+func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
+	const decls = "struct Stack[T] { items: T[] }\nstruct Tagged[T] { n: i32 }\n"
+	bad := []string{
+		// `[]` pins nothing.
+		`function main(): i32 { var s = Stack { items: [] }; return 0; }`,
+		// A phantom parameter no field mentions at all.
+		`function main(): i32 { var t = Tagged { n: 1 }; return t.n; }`,
+	}
+	for _, body := range bad {
+		err := checkSource(t, decls+body)
+		if err == nil {
+			t.Errorf("expected E040 for %s, got none", body)
+			continue
+		}
+		if !strings.Contains(err.Error(), "could not infer type parameter T for struct") {
+			t.Errorf("error %q is not the E040 inference message\nsrc: %s", err.Error(), body)
+		}
+		// The mangled name is monomorph's business and must never appear.
+		if strings.Contains(err.Error(), "Stack__") || strings.Contains(err.Error(), "Tagged__") {
+			t.Errorf("error %q leaks a mangled name\nsrc: %s", err.Error(), body)
+		}
+	}
+
+	// A parameter an ENCLOSING generic declaration binds is a real
+	// instantiation, left for the eventual monomorphic clone.
+	ok := []string{
+		`function wrap[T](x: T): i32 { var s = Stack { items: [x] }; return s.items.len(); }
+function main(): i32 { return wrap(7); }`,
+		`function wrap[U](x: U): i32 { var s: Stack[U] = Stack { items: [x] }; return s.items.len(); }
+function main(): i32 { return wrap(7); }`,
+		// Both remedies E040 names must actually work.
+		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { var s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
 // Construction-site type arguments on a struct literal (#6812): the
 // written instantiation seeds the field checks and outranks any
 // destination annotation, and its arity is validated against the decl.
