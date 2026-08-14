@@ -141,7 +141,10 @@ jobs:
       # so the exec half of eleven tests needs wasmtime. Without it they skip,
       # and this is the only runner that can launch their output at all.
       # Pinned to the same v46.0.1 setup-fern installs on Linux.
+      # Gated with the step it serves: a signed-off lane skips the self-host
+      # tests, so there is nothing here to run the emitted module for.
       - name: Cache wasmtime
+        if: steps.gate.outputs.signed != 'true'
         id: cache-wasmtime
         uses: actions/cache@v4
         with:
@@ -149,7 +152,7 @@ jobs:
           key: wasmtime-macos-arm64-v46.0.1
 
       - name: Install wasmtime (cache miss)
-        if: steps.cache-wasmtime.outputs.cache-hit != 'true'
+        if: steps.gate.outputs.signed != 'true' && steps.cache-wasmtime.outputs.cache-hit != 'true'
         run: |
           curl -sSfL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
             -o "$HOME/wasmtime.tar.xz" \
@@ -159,6 +162,7 @@ jobs:
           install -m 0755 "$HOME/wasmtime-v46.0.1-aarch64-macos/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
 
       - name: Wire wasmtime PATH
+        if: steps.gate.outputs.signed != 'true'
         run: echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
 
       - name: go test (arm64-darwin native execution)

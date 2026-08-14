@@ -250,7 +250,21 @@ Worth knowing so you do not assume coverage you do not have:
    as a RATIO — `TestNumericProperty_Differential` fails when under 80% of its
    seeds reach the oracle, because a wall of skips nobody totals is the same
    vacuum in slower motion.
-11. **A test that needs TWO backends on one host runs on neither single-backend
+11. **Most lanes cannot tell you whether a given test RAN.** They use gotestsum's
+   `pkgname-and-test-fails` formatter, which prints one line per package plus
+   failures — so a PASS, a SKIP and a cached replay are indistinguishable in the
+   log, and "did test X actually run?" has no answer from that lane at all. The
+   whole point of rule 6 is defeated when even the elapsed time is per-package.
+   Where a lane exists SPECIFICALLY to establish that something runs, give it
+   `--format standard-verbose` and `-count=1` (the latter defeats a cached PASS
+   being replayed without executing the binary) and have the test log what it
+   covered. `test-e2e-arm64.yml`'s backend-agreement step does exactly that: it
+   reported `ok internal/e2e (64ms)` for a two-backend compile-link-run, which
+   was unreadable either way, and now prints the case count it compared. This is
+   NOT fixed lane-wide — the other lanes still hide passes — so on any question
+   of the form "is this test running in CI" read the test's own output, not the
+   lane's colour, and add the output if it is not there.
+12. **A test that needs TWO backends on one host runs on neither single-backend
    lane.** `TestF64TranscendentalBackendsAgree` had compared nothing since it was
    written: the catch-all `test-e2e-other` lane owns its name, and each of that
    lane's arches has one of the two toolchains. It now runs on
