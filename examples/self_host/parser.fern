@@ -10539,68 +10539,117 @@ function dl_iter_cleanup(actions: Stmt[], flags: i32[], start: i32, end: i32): S
     return out;
 }
 
-// dl_expand_loop_edges inserts `cleanup` before every `break` / `continue`
-// that leaves this loop body — the body's other exit edges, next to the
-// tail. An unlabelled edge at this level targets this loop; a labelled one
-// targets it from anywhere inside, nested loops included. Nested loops are
-// only entered when this loop is labelled, since an unlabelled edge in
-// there leaves the nested body, which ran its own cleanup already.
-function dl_expand_loop_edges(stmts: Stmt[], cleanup: Stmt[], label: string, own_level: boolean): Stmt[] {
+// DeferEdges is dl_expand_loop_edges' output: the rewritten statements, and
+// how far into the action list the walk has passed an arming write.
+struct DeferEdges { stmts: Stmt[], armed: i32 }
+
+// dl_arm_index returns the action index an assignment ARMS (`__dfa<i> = 1`),
+// or -1 for anything else — including dl_iter_cleanup's own `__dfa<i> = 0`.
+// Indices below `from` have already been passed, so the scan starts there.
+function dl_arm_index(a: StmtAssign, from: i32, end: i32): i32 {
+    var one: boolean = false;
+    match (a.value) {
+        ExprNumber(n) => { one = n.text == "1"; },
+        _ => {},
+    }
+    if (!one) { return 0 - 1; }
+    var i: i32 = from;
+    while (i < end) {
+        if (a.target == "__dfa" + dl_itoa(i)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// dl_expand_loop_edges inserts the per-iteration cleanup before every `break` /
+// `continue` that leaves this loop body — the body's other exit edges, next to
+// the tail. An unlabelled edge at this level targets this loop; a labelled one
+// targets it from anywhere inside, nested loops included. Nested loops are only
+// REWRITTEN when this loop is labelled, since an unlabelled edge in there leaves
+// the nested body, which ran its own cleanup already; they are still walked, so
+// the arming writes inside them count.
+//
+// An edge replays only the actions armed EARLIER in the body (`armed`), not the
+// body's whole [start, end) range. A defer the edge has not reached yet cannot
+// be pending — every edge out of the body clears its flags, so each iteration
+// starts with all of them at 0 — and its action names locals that need not exist
+// at the edge. The range-for desugar puts exactly such an edge at the top of
+// every loop it builds (`if (i >= $hi) break;`), ahead of the whole body (#6860).
+function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], start: i32, armed0: i32, label: string, own_level: boolean): DeferEdges {
     var out: Stmt[] = [];
+    var armed: i32 = armed0;
+    var end: i32 = actions.len();
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
+            StmtAssign(a) => {
+                var ax: i32 = dl_arm_index(a, armed, end);
+                if (ax >= 0) { armed = ax + 1; }
+                out = out.append(stmts[i]);
+            },
             StmtBreak(b) => {
                 if ((own_level && b.label.len() == 0) || (label.len() > 0 && b.label == label)) {
+                    var cb: Stmt[] = dl_iter_cleanup(actions, flags, start, armed);
                     var kb: i32 = 0;
-                    while (kb < cleanup.len()) { out = out.append(cleanup[kb]); kb = kb + 1; }
+                    while (kb < cb.len()) { out = out.append(cb[kb]); kb = kb + 1; }
                 }
                 out = out.append(stmts[i]);
             },
             StmtContinue(c) => {
                 if ((own_level && c.label.len() == 0) || (label.len() > 0 && c.label == label)) {
+                    var cc: Stmt[] = dl_iter_cleanup(actions, flags, start, armed);
                     var kc: i32 = 0;
-                    while (kc < cleanup.len()) { out = out.append(cleanup[kc]); kc = kc + 1; }
+                    while (kc < cc.len()) { out = out.append(cc[kc]); kc = kc + 1; }
                 }
                 out = out.append(stmts[i]);
             },
             StmtIf(f) => {
-                out = out.append(s_if(f.cond,
-                    dl_expand_loop_edges(f.then_body, cleanup, label, own_level),
-                    dl_expand_loop_edges(f.else_body, cleanup, label, own_level)));
+                var tr: DeferEdges = dl_expand_loop_edges(f.then_body, actions, flags, start, armed, label, own_level);
+                var er: DeferEdges = dl_expand_loop_edges(f.else_body, actions, flags, start, armed, label, own_level);
+                if (tr.armed > armed) { armed = tr.armed; }
+                if (er.armed > armed) { armed = er.armed; }
+                out = out.append(s_if(f.cond, tr.stmts, er.stmts));
             },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: dl_expand_loop_edges(m.arms[ai].body, cleanup, label, own_level), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                    var ar: DeferEdges = dl_expand_loop_edges(m.arms[ai].body, actions, flags, start, armed, label, own_level);
+                    if (ar.armed > armed) { armed = ar.armed; }
+                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: ar.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
                     ai = ai + 1;
                 }
                 out = out.append(s_match(m.scrutinee, arms));
             },
             StmtWhile(w) => {
+                var wr: DeferEdges = dl_expand_loop_edges(w.body, actions, flags, start, armed, label, false);
+                if (wr.armed > armed) { armed = wr.armed; }
                 if (label.len() == 0) { out = out.append(stmts[i]); }
-                else { out = out.append(dl_while(w, dl_expand_loop_edges(w.body, cleanup, label, false))); }
+                else { out = out.append(dl_while(w, wr.stmts)); }
             },
             StmtFor(fr) => {
+                var fr2: DeferEdges = dl_expand_loop_edges(fr.body, actions, flags, start, armed, label, false);
+                if (fr2.armed > armed) { armed = fr2.armed; }
                 if (label.len() == 0) { out = out.append(stmts[i]); }
-                else { out = out.append(dl_for(fr, dl_expand_loop_edges(fr.body, cleanup, label, false))); }
+                else { out = out.append(dl_for(fr, fr2.stmts)); }
             },
             _ => { out = out.append(stmts[i]); },
         }
         i = i + 1;
     }
-    return out;
+    return DeferEdges { stmts: out, armed: armed };
 }
 
 // dl_loop_body wires one loop body up for per-iteration cleanup: the
 // actions it registered are indices [start, end), and every edge out of
-// the body — the tail, a `break`, a `continue` — replays them.
+// the body — the tail, a `break`, a `continue` — replays them. The tail is
+// past every arming write, so it replays the whole range.
 function dl_loop_body(body: Stmt[], actions: Stmt[], flags: i32[], start: i32, label: string): Stmt[] {
     var end: i32 = actions.len();
     if (end <= start) { return body; }
+    var r: DeferEdges = dl_expand_loop_edges(body, actions, flags, start, start, label, true);
+    var out: Stmt[] = r.stmts;
     var cleanup: Stmt[] = dl_iter_cleanup(actions, flags, start, end);
-    var out: Stmt[] = dl_expand_loop_edges(body, cleanup, label, true);
     var i: i32 = 0;
     while (i < cleanup.len()) { out = out.append(cleanup[i]); i = i + 1; }
     return out;
