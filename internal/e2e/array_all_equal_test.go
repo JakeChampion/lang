@@ -4,8 +4,10 @@ import "testing"
 
 // std/array's `all_equal[T: cmp.Eq](xs)` — true iff every element equals the
 // first (≤ 1 distinct value); vacuously true for length < 2, short-circuits on
-// the first differing element. The T: cmp.Eq bound supplies the `==` (structural
-// equality); the return is boolean. This differential exercises i32 AND string
+// the first differing element. The T: cmp.Eq bound supplies the compare (the
+// type's structural equality); the return is boolean. A `@derive(Eq)` struct
+// element is pinned by TestStdArrayEqBoundDeriveElement. This differential
+// exercises i32 AND string
 // arrays across interp / x86-64 / wasm / arm64. Returns 42 iff every check
 // holds; each leg skips itself when its toolchain is absent.
 const arrayAllEqualProg = `
