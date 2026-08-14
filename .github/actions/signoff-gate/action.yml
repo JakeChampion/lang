@@ -1,0 +1,47 @@
+name: Signoff gate
+description: >
+  Report whether a lane has been signed off locally for this exact commit, so a
+  job can skip work a developer machine already did. Outputs `signed`; it does
+  not skip anything by itself, because a composite action cannot end its job.
+
+inputs:
+  lane:
+    description: >
+      Lane name, matching `scripts/signoff --list`. Read as commit status
+      context `signoff/<lane>`.
+    required: true
+  sha:
+    description: Commit to look up. Defaults to the PR head, else the pushed SHA.
+    required: false
+    default: ""
+
+outputs:
+  signed:
+    description: "'true' when a successful signoff status exists for this lane and commit."
+    value: ${{ steps.check.outputs.signed }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LANE: ${{ inputs.lane }}
+        # github.event.pull_request.head.sha, not github.sha: on a
+        # pull_request event github.sha is the ephemeral merge commit, which is
+        # not what anyone can sign off locally.
+        SHA: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
+      run: |
+        set -euo pipefail
+        state=$(gh api "repos/${{ github.repository }}/commits/$SHA/status" \
+                  --jq ".statuses[] | select(.context==\"signoff/$LANE\") | .state" \
+                2>/dev/null | head -1 || true)
+        if [ "$state" = "success" ]; then
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "signoff/$LANE is green for $SHA — skipping this lane." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Lane signed off::signoff/$LANE is green for $SHA; this job is skipping its work."
+        else
+          echo "signed=false" >> "$GITHUB_OUTPUT"
+          echo "no signoff/$LANE for $SHA (state='${state:-none}') — running normally."
+        fi
