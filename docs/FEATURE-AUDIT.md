@@ -1192,8 +1192,8 @@ already landed and are now fully covered:
   scalar/string only) — `checker.fern` ~L3485, with `all_well_typed` set false
   on *any* diagnostic (L5782), so the interp/vm `run_pipeline` refuses.
 - **The self-host compile drivers gate on the cycle rules before codegen** —
-  `fern.fern`'s immutability gate (L528–553) filters `check_module` to
-  `filter_immutability` (E048/E049/E055/E056/E057) and rejects with a
+  `fern.fern`'s build gate filters `check_module` to `filter_build_gate`
+  (E048/E049/E055/E056/E057, plus P002 since #6842) and rejects with a
   `line:col: error[CODE]` diagnostic ahead of both the SSA and AST/IR emit paths
   (the #2825 fix; previously the codegen paths compiled `p.x = v` straight to a
   working binary).
@@ -4258,8 +4258,8 @@ detected `E048`/`E056` (the parser desugars `p.x = v` → `__set_field(...)` and
 `a[i] = v` → `__set_index(...)`), and `fern -check` reported them — but the
 `fern` CLI's **compile path** ran codegen (SSA / IR / AST) without the
 immutability gate, so it compiled forbidden mutation straight to a binary.
-`fern.fern` now runs `filter_immutability(check_module(...).diags)` before
-codegen (the same gate `asm_load_run` already had), matching the native
+`fern.fern` now runs `filter_build_gate(check_module(...).diags)` before
+codegen (widened from the `filter_immutability` set `asm_load_run` has), matching the native
 compiler, which always type-checks ahead of codegen. Guarded by
 `TestSelfHostCLIX86_64/compile-rejects-immutable-mutation`.
 

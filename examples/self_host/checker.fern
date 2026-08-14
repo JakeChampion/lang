@@ -3993,6 +3993,15 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
             while (fv < sl.field_values.len()) { out = append_diags(out, mx_expr(sl.field_values[fv], s, unions, enums)); fv = fv + 1; }
             if (sl.has_base) { out = append_diags(out, mx_expr(sl.base, s, unions, enums)); }
         },
+        parser.ExprUnknown(u) => {
+            // P002: a float literal whose magnitude f64 cannot hold. The
+            // parser plants this marker where the token becomes a value
+            // (util.f64_range_kind), because it has no error list of its own;
+            // native reports the same code from its parser (#6842).
+            if (util.is_f64_range_kind(u.kind)) {
+                out = out.append(dg_at("P002", util.f64_range_message(u.kind), u.line, u.col));
+            }
+        },
         _ => { }
     }
     return out;
@@ -6305,12 +6314,13 @@ pub struct Diag { code: string, message: string, line: i32, col: i32 }
 // cycle rules — E048 (field assign), E049 (reference-capture write-back),
 // E055 (discarded pure-collection result), E056 (subscript assign), E057
 // (Cell[T] element must be cycle-free — a composite/reference element could
-// reconstruct a cycle). These are the diagnostics the self-host compiler
-// enforces at the build gate (the rest of the checker is a partial port and
-// may false-positive, so the gate filters to this set). E057 belongs here
-// for the same cycle-freedom reason as the others, and matches the native
-// compiler, which rejects a Cell[composite] before codegen via its full
-// pre-codegen check. See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
+// reconstruct a cycle). They are the cycle-rule half of what the self-host
+// compiler enforces before codegen; is_build_gate_code below is the whole set,
+// and it stays narrow because the rest of the checker is a partial port and may
+// false-positive. E057 belongs here for the same cycle-freedom reason as the
+// others, and matches the native compiler, which rejects a Cell[composite]
+// before codegen via its full pre-codegen check.
+// See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
 pub function is_immutability_code(code: string): boolean {
     return code == "E048" || code == "E049" || code == "E055" || code == "E056" || code == "E057";
 }
@@ -6321,6 +6331,27 @@ pub function filter_immutability(diags: Diag[]): Diag[] {
     var i: i32 = 0;
     while (i < diags.len()) {
         if (is_immutability_code(diags[i].code)) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// is_build_gate_code reports whether `code` must reject a program before
+// codegen: the immutability cycle rules above, plus the front end's P002 (a
+// float literal too large for f64, #6842). P002 belongs on this side of the
+// false-positive line for the same reason the cycle rules do: it is decided by
+// the literal's own spelling, so it cannot mistake a valid program for an
+// invalid one, and native rejects the same source in its parser.
+pub function is_build_gate_code(code: string): boolean {
+    return is_immutability_code(code) || code == "P002";
+}
+
+// filter_build_gate keeps the diagnostics the compile path enforces.
+pub function filter_build_gate(diags: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (is_build_gate_code(diags[i].code)) { out = out.append(diags[i]); }
         i = i + 1;
     }
     return out;

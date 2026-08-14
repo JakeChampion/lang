@@ -3548,6 +3548,11 @@ pub function assignable(want: Ty, got: Ty): boolean {
 }
 
 function parse_unknown_error(where: string, kind: string): string {
+    // An out-of-range float literal is P002, the numeric-literal code native's
+    // parser reports for it, not the generic parser-side-unknown P001 (#6842).
+    if (util.is_f64_range_kind(kind)) {
+        return "error[P002]: " + where + ": " + util.f64_range_message(kind) + "\n";
+    }
     return "error[P001]: " + where + ": parser-side unknown: " + kind + "\n";
 }
 

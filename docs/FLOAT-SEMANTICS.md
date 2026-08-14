@@ -275,6 +275,21 @@ never a default. Pinned by `TestFloatDefaultWidthF64`
 (checker), and the `float-alias-ok` / `float-alias-mismatch`
 self-host checker-codes fixtures.
 
+### Literal range
+
+A float literal is range-checked at **f64** width whatever suffix it carries.
+A magnitude no double can hold is rejected by the front end as `P002`, so
+`1e309` and `1e400f32` are not programs; `3.5e38`, out of f32's range but well
+inside f64's, is a valid literal that nothing rejects. Underflow is not a range
+error at either width: `1e-400` is accepted and reads as `0.0`, matching
+`strconv.ParseFloat`, which reports `ErrRange` only at the overflow end.
+
+Both engines apply that rule. The self-host front end checks it where the token
+becomes a value (`parse_primary`, native's `parsePrimary` site) and reports
+the same code from the checker and from the asm front end (#6842). Gated by
+`TestSelfHostFrontEndNumericLiteralCodes` (`internal/e2eselfhost`) and
+`TestNumericLiteralErrorsCarryCode` (`internal/parser`).
+
 ## Generator + oracle implications
 
 `internal/fernsmith` has two generation profiles (see

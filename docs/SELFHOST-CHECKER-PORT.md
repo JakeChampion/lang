@@ -1277,3 +1277,22 @@ no port for unfiltered parity. Its explanation file has since been
 deleted: it documented a bare `len(x)` builtin that no longer exists
 (`len` is a method), so `fern explain E039` described a construct the
 language does not have.
+
+## The one front-end code: P002
+
+An out-of-range float literal is a FRONT-END rejection on both engines
+(native: strconv's `ErrRange` in `parsePrimary` → P002), and the self-host
+parser has no error list to report it through. So `parse_primary` plants an
+`ExprUnknown` carrying `util.f64_range_kind(text)` at the point the token would
+have become a value; `mx_expr` turns that marker into a positioned P002, and
+`asmcore.parse_unknown_error` names the same code on the compile path instead of
+its generic P001. Every consumer already rejected a parser-side unknown, so the
+single check in the parser is what makes the interp, the checker and the
+backends agree.
+
+The gate is `TestSelfHostFrontEndNumericLiteralCodes`, which drives
+checker_codes_run under the native interpreter and compares against the Go
+FRONT end. The E-code differential cannot cover this class: its oracle is the Go
+CHECKER, which never runs for a program the Go parser rejects, so a front-end
+divergence reads there as agreement. That is how #6842 stayed hidden while
+`1e309` compiled to +Inf.
