@@ -279,8 +279,7 @@ convention.
   `normalize_f64` (unit vector; zero / empty returned unchanged),
   `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
   (element-wise sum, runs to the shorter length)
-- **string[] core:** `join`, `index_of`, `position`, `contains`,
-  `reverse`,
+- **string[] core:** `join`, `position`, `reverse`,
   `filter_non_empty`, `count_non_empty`, `distinct`,
   `distinct_count`, `max_by_len`, `min_by_len`, `sum_lens`,
   `take`, `drop`, `all_non_empty`, `any_contains`,
