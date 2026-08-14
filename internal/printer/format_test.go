@@ -1187,3 +1187,108 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 		})
 	}
 }
+
+// A `Map { … }` literal had no printer case at all, so Format wrote the field
+// name and its `: ` and then nothing — `Layer { writes: , … }`, source that
+// cannot re-parse. `fern -fmt -w` on such a file destroyed it (#6803).
+func TestFormatMapLiteral(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"empty", "struct S { m: Map[string, i32] }\nfunction f(): S { return S { m: Map { } }; }", "S { m: Map { } }"},
+		{"entries", `function f(): Map[string, i32] { return Map { "a": 1, "b": 2 }; }`, `Map { "a": 1, "b": 2 }`},
+		{"expr_values", "function f(k: string, v: i32): Map[string, i32] { return Map { k: v + 1 }; }", "Map { k: v + 1 }"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if _, err := parser.Parse(got); err != nil {
+				t.Errorf("formatted output does not re-parse: %v\n%s", err, got)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
+// The parser renames a `_` binding to an internal `__discard_<line>_<col>_<n>`
+// so reading it back is an undefined-identifier error. Format printed that
+// name, writing a compiler-internal identifier — position suffix included —
+// back into the user's file (#6803).
+func TestFormatKeepsDiscardBindingAsUnderscore(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"tuple_destructure", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, x) = t(); return x; }", "let (_, x) = t();"},
+		{"both_discarded", "function t(): (i32, i32) { return (1, 2); }\nfunction f(): i32 { let (_, _) = t(); return 0; }", "let (_, _) = t();"},
+		{"var", "function f(): i32 { var _ = 1; return 0; }", "var _ = 1;"},
+		{"param", "function f(_: i32): i32 { return 0; }", "function f(_: i32): i32 {"},
+		{"lambda_param", "function f(): i32 { var g = function(_: i32): i32 { return 0; }; return g(1); }", "function(_: i32): i32"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if strings.Contains(got, "__discard_") {
+				t.Errorf("formatted output leaks the parser's synthesised discard name:\n%s", got)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
+// A literal's base is part of what the author wrote — the arm64 and x86
+// encoders spell every literal as the instruction encoding it is — and Format
+// rewrote `0xd2800000` to `3531603968` (#6803).
+func TestFormatKeepsHexLiteralBase(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"lowercase", "function f(): i32 { return 0xdead; }", "return 0xdead;"},
+		{"uppercase_digits", "function f(): u32 { return 0xFFFFFFFF as u32; }", "0xFFFFFFFF as u32"},
+		{"typed_suffix", "function f(): i64 { return 0xffi64; }", "return 0xffi64;"},
+		{"decimal_untouched", "function f(): i32 { return 4095; }", "return 4095;"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
+// An arrow lambda parses to the same node as `function(…) { … }`, so Format
+// re-emitted it in that form and had to supply a return type it does not know:
+// `() => e` became `function(): void { return e; }`, asserting `void` over an
+// expression that has a value (#6803).
+func TestFormatKeepsArrowLambda(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"no_params", "function g(f: () => i32): i32 { return f(); }\nfunction main(): i32 { return g(() => 7); }", "g(() => 7)"},
+		{"one_param", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g((x: i32) => x + 1); }", "g((x: i32) => x + 1)"},
+		{"annotated_return", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g((x: i32): i32 => x + 1); }", "g((x: i32): i32 => x + 1)"},
+		{"function_form_unchanged", "function g(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return g(function(x: i32): i32 { return x + 1; }); }", "function(x: i32): i32 { return x + 1; }"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if strings.Contains(got, "): void {") {
+				t.Errorf("formatted output invented a void return type:\n%s", got)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			// The checker is the assertion that matters: `void` over an
+			// expression that has a value is a type error, so a clean check
+			// is what says the round trip preserved the program.
+			if checkRejects(t, got) {
+				t.Errorf("formatted output no longer type-checks:\n%s", got)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
