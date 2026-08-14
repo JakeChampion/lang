@@ -15045,6 +15045,36 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 	b.emit(Op{Kind: OpDrop})
 }
 
+// emitMapOverwriteDrop releases the OLD handle of a Map reassignment whose
+// reference genuinely changed hands (`a = <a COW copy of a>`), where the new
+// handle may still share columns with the old buffer.
+//
+// It walks exactly the columns __map_own_copied_cols gives the copy a claim of
+// its own on: the string-KEY column, and the array-value column via the
+// kind-guarded __map_drop_values. A string or struct VALUE column is still
+// SHARED with the copy (#6242 claims neither), so walking it would free what
+// the new handle reads — those values leak here instead, until the claim
+// widens. Then the buf and handle, which are exclusively the old handle's.
+//
+// Every helper self-guards on the map's own rc==1, so a still-shared handle
+// only dec's. Net-zero on the operand stack, so a reinit RHS sitting
+// underneath is left untouched.
+func (b *builder) emitMapOverwriteDrop(slot int32, st ast.StructType) {
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	if len(st.Args) >= 1 {
+		if _, isStr := st.Args[0].(ast.StringType); isStr {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+}
+
 // localDeclType returns the declared type of a param or local by name.
 func (b *builder) localDeclType(name string) (ast.Type, bool) {
 	for _, p := range b.fn.Params {
@@ -15416,21 +15446,12 @@ func (b *builder) assign(n *ast.Assign) error {
 				// overwrote. The binding therefore owes a release only when
 				// the reference genuinely changed hands:
 				//
-				//   - new != old — the old handle lost this binding's claim.
-				//     Release it with the BUF-AND-HANDLE free, not the flat
-				//     dec (which frees nothing: every COW-copied table leaked,
-				//     1328 B an iteration in the temporary-bound insert loop
-				//     of #6227) and not emitMapSlotDrop's full walk (which the
-				//     exit sweep and the reinit path use). The column walks
-				//     must NOT run here — __map_cow_inplace copies the kv
-				//     buffer SHALLOWLY, so the fresh handle being stored
-				//     shares the old one's key / value pointers, and freeing
-				//     the key column pulls those strings out from under it
-				//     (SIGSEGV under qemu-aarch64; #6242 is the shallow copy
-				//     itself, and widens this back once it lands). The old BUFFER is
-				//     exclusively the old handle's, so that part is
-				//     unambiguously owed; __fern_map_drop self-guards on
-				//     rc==1, so a still-shared handle only dec's.
+				//   - new != old — the old handle lost this binding's claim,
+				//     so it is released by emitMapOverwriteDrop: the columns
+				//     a COW copy claims for itself, then the buf and handle.
+				//     A flat dec frees nothing here, and every COW-copied
+				//     table leaked behind it — 1328 B an iteration in the
+				//     temporary-bound insert loop of #6227.
 				//   - new == old — the same reference carried across the
 				//     rebind. A release is owed only if an alias inc created a
 				//     second count for it (`m = m2`); a self-mutation created
@@ -15445,9 +15466,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
 					b.emit(Op{Kind: OpNe})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					b.emit(Op{Kind: OpLoadLocal, I32: idx})
-					b.emit(Op{Kind: OpCallDirect, Str: "__fern_map_drop", I32: 1})
-					b.emit(Op{Kind: OpDrop})
+					b.emitMapOverwriteDrop(idx, mst)
 					if aliasInced {
 						b.emit(Op{Kind: OpElse})
 						b.emit(Op{Kind: OpLoadLocal, I32: idx})

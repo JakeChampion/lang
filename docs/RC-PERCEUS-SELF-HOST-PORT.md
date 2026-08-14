@@ -7314,3 +7314,50 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   independence), `…NoUnderflow{X86_64,Wasm,Arm64}` and `…Bounded{…}`. The wasm
   value leg FAILS on the parent commit and the wasm rc leg HANGS there;
   `TestMapCowTempBinding*` stays green. Refs #6242 #4355 #4353 #2704 #6227 #4451.
+
+- 2026-08-14: **The COW chain leaked everything the copy claimed, quadratically
+  (#6828).** The Map reassignment-overwrite (`a = <a COW copy of a>`) released
+  the old handle with the buf-and-handle free alone — #6227's workaround, which
+  existed because the column walks could not run while the copy shared the
+  columns. Once #6242 gave the copy its own claim that narrow free became a leak
+  of the whole claim per copy, and a CHAIN (round N's copy becomes round N+1's
+  source) reboxes N key cells and then drops the round-N map without freeing any
+  of them. `__heap_bump_bytes()` over a 100/200/400-round chain:
+
+  | | base (pre-#6242) | with #6242 | with the release widened |
+  |---|---|---|---|
+  | arm64-darwin | 30976 → 61952 (2.0x) | 357328 → 1354704 (3.8x) | 32576 → 65152 (2.0x) |
+  | wasm | 20736 → 41472 (2.0x) | 347088 → 1334224 (3.8x) | 22336 → 44672 (2.0x) |
+  | x86-64 | 34176 → 68352 | unchanged | unchanged |
+
+  **The single-word side is genuinely unaffected here**, which is the opposite of
+  #6242's trap and worth stating for that reason: there the key claim is one inc
+  on the string data, so a missing release inflates a count on a block the chain
+  keeps reachable anyway, where the two-word claim ALLOCATES a cell per entry per
+  copy and the leak is immediate.
+
+  **#6828 itself does not reproduce.** It was filed as a pre-existing
+  use-after-free surviving a revert of #6242, and the reading behind it — `-sanitize`
+  reporting `use-after-free (touched a quarantined block)`, exit 124, on the
+  multi-round churn program from both the base and the fixed compiler — was taken
+  from the intermediate cut of #6242 (the rebox WITHOUT the counting inc), not the
+  landed one. Re-measured on the merge: the base compiler reports
+  `use-after-free` on arm64-darwin and `rc over-release` on x86-64, exit 124 on
+  both, and `978a177ef` is clean on both. The leak above is what a churn-shaped
+  probe finds there now, and it is why the issue was worth working rather than
+  just closing.
+
+  The release may only cover the columns `__map_own_copied_cols` claims: the
+  string-key column and the array-value column (via the kind-guarded
+  `__map_drop_values`, a no-op for every other kind). A string or struct VALUE is
+  still shared with the copy, so walking it here would free what the new handle
+  reads — those two keep leaking until the claim widens, which is the same
+  boundary #6242 drew.
+
+  Nothing changes for the self-host, whose own lowering emits no map drop at all;
+  this is `internal/ir`, so the effect on it is via the compiler that builds it.
+
+  VERIFIED: new `TestMapCowChainReclaim{Interp,X86_64,Wasm,Arm64}` (array,
+  string and struct value columns, a live alias, a `keys()` snapshot, scalar
+  keys) and `TestMapCowChainBounded{X86_64,Wasm,Arm64}` (the ratio probe above
+  plus `__rc_underflow_count()`). Refs #6828 #6242 #6227 #4451.
