@@ -13674,7 +13674,13 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			// cast's int target type as the hint; we must
 			// leave the inner float binary alone so the cast
 			// lowers to a float→int trunc op.
-			if x.FloatWidth != 0 {
+			//
+			// A string concat is not arithmetic either: stamping IntWidth on
+			// it makes the next check pass type `"a" + "b"` as an integer add.
+			// Reached via the Call case below, which settles every argument
+			// bound to a bare `T` — so a `T: Eq` generic returning i32 called
+			// as `xs.index_of("a" + "b") != 1` settled a string argument.
+			if x.FloatWidth != 0 || x.IsStringConcat {
 				return
 			}
 			if x.IntWidth == 0 {
@@ -13797,7 +13803,8 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 	case *ast.Binary:
 		switch x.Op {
 		case "+", "-", "*", "/":
-			if x.FloatWidth == 0 {
+			// String concat is not arithmetic — same guard as settleInt's.
+			if x.FloatWidth == 0 && !x.IsStringConcat {
 				c.settleFloat(x.Left, hf)
 				c.settleFloat(x.Right, hf)
 				x.FloatWidth = width

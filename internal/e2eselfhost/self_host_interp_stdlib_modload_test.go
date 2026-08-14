@@ -86,6 +86,14 @@ var interpStdlibModloadCases = []struct {
 	{"array-closure-methods", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  var ys: i32[] = xs.map(function (v: i32): i32 { return v * 2; });\n  if (ys.len() != 3 || ys[0] != 6) { return 1; }\n  var big: i32[] = ys.filter(function (v: i32): boolean { return v > 3; });\n  if (big.len() != 2) { return 2; }\n  var total: i32 = xs.fold(0, function (acc: i32, v: i32): i32 { return acc + v; });\n  if (total != 6) { return 3; }\n  return 7;\n}\n"},
 	{"array-predicate-methods", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.is_empty()) { return 1; }\n  if (!xs.any(function (v: i32): boolean { return v == 2; })) { return 2; }\n  if (xs.all(function (v: i32): boolean { return v > 2; })) { return 3; }\n  if (xs.count_where(function (v: i32): boolean { return v > 1; }) != 2) { return 4; }\n  match (xs.first()) { Some(v) => { if (v != 3) { return 5; } }, None => { return 6; } }\n  match (xs.find(function (v: i32): boolean { return v == 1; })) { Some(v) => { if (v != 1) { return 8; } }, None => { return 9; } }\n  return 7;\n}\n"},
 	{"array-concrete-helpers", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.sum() != 6) { return 1; }\n  if (xs.product() != 6) { return 2; }\n  match (xs.max()) { Some(v) => { if (v != 3) { return 3; } }, None => { return 4; } }\n  if (xs.sorted_desc()[0] != 3) { return 5; }\n  if (xs.cumsum()[2] != 6) { return 6; }\n  var ws: string[] = [\"a\", \"b\", \"a\"];\n  if (ws.join(\"-\") != \"a-b-a\") { return 8; }\n  if (!ws.contains(\"b\")) { return 9; }\n  if (ws.distinct().len() != 2) { return 10; }\n  return 7;\n}\n"},
+	// `.index_of()` / `.contains()` on a non-string element WITH the import
+	// present (#6801). This spelling used to be the divergence: native
+	// resolved it to the string[]-only method and reported
+	// `expected string[], got i32[]`, while the import-free driver dialect
+	// lowered it through irlower's builtin intercept. Now both sides go
+	// through one Eq-bounded generic — and since the two engines are compared
+	// against each other, a self-host regression on the generic shows up here.
+	{"array-index-of-generic", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.index_of(1) != 1) { return 1; }\n  if (xs.index_of(9) != 0 - 1) { return 2; }\n  if (!xs.contains(2)) { return 3; }\n  if (xs.contains(9)) { return 4; }\n  var bs: u8[] = [7 as u8, 8 as u8];\n  if (bs.index_of(8 as u8) != 1) { return 5; }\n  if (!bs.contains(7 as u8)) { return 6; }\n  var ws: string[] = [\"a\", \"bb\"];\n  if (ws.index_of(\"bb\") != 1) { return 8; }\n  if (ws.index_of(\"zz\") != 0 - 1) { return 9; }\n  return 7;\n}\n"},
 }
 
 // TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`

@@ -32,7 +32,7 @@ import "std/string";
 // safe across the full i32 range.
 //
 // Dispatch via the same "Array.<method>" pattern used for
-// join / index_of / contains / reverse. The constrained
+// join / distinct / reverse. The constrained
 // receiver type makes `["a"].sum()` surface as a clean
 // type error rather than a missing-method one.
 
@@ -183,7 +183,8 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
 
 // `(arr: i32[]) first_index_of(v)` — Option[i32] index of
 // the first element equal to v. None if absent or empty.
-// Numeric companion to the existing string[] `index_of`.
+// The Option-returning form of the element-generic `.index_of`
+// (which uses the `-1` sentinel), for an i32[] receiver.
 pub function __method_Array_first_index_of(arr: i32[], v: i32): Option[i32] {
     var n: i32 = arr.len();
     var i: i32 = 0;
@@ -382,27 +383,6 @@ pub function __method_Array_join(arr: string[], sep: string): string {
         i = i + 1;
     }
     return string_from_bytes_unchecked(buf);
-}
-
-// `arr.index_of(s)` — first index of `s` in `arr`, or -1 if
-// absent. Linear scan — fine for the compiler-style use cases
-// (parser-keyword tables, type-list lookups, diagnostic-tag
-// indexing) where arrays are bounded and small.
-pub function __method_Array_index_of(arr: string[], s: string): i32 {
-    var i: i32 = 0;
-    while (i < arr.len()) {
-        if (arr[i] == s) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
-
-// `arr.contains(s)` — boolean companion. Thin wrapper over
-// index_of since contains-checks are common enough to deserve
-// the dedicated entrypoint, and `idx >= 0` is more verbose
-// than the boolean read.
-pub function __method_Array_contains(arr: string[], s: string): boolean {
-    return __method_Array_index_of(arr, s) != (0 - 1);
 }
 
 // `arr.position(s)` — Option[i32] index of the first element
@@ -1732,12 +1712,12 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // UNBOUNDED `[T]` would erase to a single pointer-compare clone and silently
 // miscompare strings.
 //
-// The element-generic `contains` / `index_of` / `distinct` / `eq_arrays` verbs
+// The free-function `contains` / `index_of` / `distinct` / `eq_arrays` verbs
 // live in core/cmp with the `Eq` trait they depend on (#5348 removed the
 // duplicate copies that used to live here); `import "core/cmp"` for those. The
-// string[]-specific `.contains()` / `.index_of()` / `.distinct()` receiver
-// methods above are a separate surface — array method dispatch keys on the
-// name only, so they can't fan out on element type.
+// `.contains()` / `.index_of()` receiver methods are element-generic over the
+// same bound (see the method-form block at the end of this file); the
+// string[]-specific `.distinct()` above is not.
 
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
@@ -2035,9 +2015,30 @@ pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean { return all_equal(xs); }
 pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean { return starts_with(xs, prefix); }
 pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean { return ends_with(xs, suffix); }
 
+// `xs.index_of(target)` — first index equal to `target`, or -1 when absent.
+// Linear scan; the `-1` sentinel (rather than `Option`) is what the
+// compiler-style call sites (keyword tables, type lists, diagnostic tags)
+// read with a `< 0` test. `xs.position(target)` is the Option-returning
+// form.
+// Compares with the `Eq` bound's `eq` method rather than `==`: the operator
+// desugars through a `Type.eq` lookup that is not visible from this module, so
+// `==` here would reject a caller's `@derive(Eq)` element type.
+pub function (xs: T[]) index_of[T: cmp.Eq](target: T): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].eq(target)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// `xs.contains(target)` — boolean membership test; delegates to core/cmp's
+// `contains`.
+pub function (xs: T[]) contains[T: cmp.Eq](target: T): boolean { return cmp.contains(xs, target); }
+
 // `xs.index_of_last(target)` — `Some(i)` for the LAST index equal to
-// `target`, else `None`. The reverse-scan companion to the existing
-// string[] `.index_of`/`.position`, over any `T: cmp.Eq`.
+// `target`, else `None`. The reverse-scan companion to `.index_of` /
+// `.position`, over any `T: cmp.Eq`.
 pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] { return index_of_last(xs, target); }
 
 // (No `T[][]` receiver method for `flatten` — array-receiver methods
