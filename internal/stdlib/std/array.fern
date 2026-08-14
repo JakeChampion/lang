@@ -457,7 +457,7 @@ pub function __method_Array_distinct(arr: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (out.index_of(arr[i]) < 0) { out = out.append(arr[i]); }
+        if (!cmp.contains(out, arr[i])) { out = out.append(arr[i]); }
         i = i + 1;
     }
     return out;
@@ -471,7 +471,7 @@ pub function __method_Array_distinct_count(arr: string[]): i32 {
     var seen: string[] = [];
     var i: i32 = 0;
     while (i < n) {
-        if (seen.index_of(arr[i]) < 0) { seen = seen.append(arr[i]); }
+        if (!cmp.contains(seen, arr[i])) { seen = seen.append(arr[i]); }
         i = i + 1;
     }
     return seen.len();

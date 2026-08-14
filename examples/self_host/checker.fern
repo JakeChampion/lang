@@ -928,6 +928,30 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
     return out;
 }
 
+// array_recv_method resolves an ARRAY-RECEIVER method — one written
+// `function (xs: T[]) <field>(…)`, the element-polymorphic form std/array uses
+// for its Eq/Ord verbs (`.index_of` / `.contains` / `.index_of_last` /
+// `.dedup` / `.is_sorted` / …). These are ordinary MethodSigs whose
+// receiver_type spelling ends in `[]`, not `__method_Array_*` free functions,
+// so has_array_method's name scan cannot see them. The element is always a
+// type VARIABLE (a concrete one is E021), so any array-receiver method in
+// scope applies to every array receiver — no element match to make. A slice
+// receiver (`[T]`) is a different namespace and must not match, hence the
+// leading-`[` exclusion.
+function (s: Scope) array_recv_method(field: string): MethodSig {
+    var i: i32 = 0;
+    while (i < s.methods.len()) {
+        var rt: string = s.methods[i].receiver_type;
+        if (s.methods[i].name == field && rt.len() > 2 && rt[0:1] != "["
+                && rt[rt.len() - 2 : rt.len()] == "[]") {
+            return s.methods[i];
+        }
+        i = i + 1;
+    }
+    var empty_pt: Type[] = [];
+    return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "" };
+}
+
 // has_array_method reports whether an auto-discovered std/array method
 // `__method_Array_<field>` is in scope. The function is in scope only when
 // std/array is imported; the bundler (flatten.bundle) mangles it to
@@ -935,6 +959,9 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
 // convention name (the native modload path, which keeps `__method_` bare) or a
 // mangled name ENDING in it. Match both so the array-method-existence check
 // resolves an imported method whichever loader built the table.
+//
+// An array-RECEIVER method (`(xs: T[]) <field>`) counts too — same surface,
+// declared the other way round.
 function (s: Scope) has_array_method(field: string): boolean {
     var target: string = "__method_Array_" + field;
     var tn: i32 = target.len();
@@ -945,14 +972,15 @@ function (s: Scope) has_array_method(field: string): boolean {
         if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return true; }
         i = i + 1;
     }
-    return false;
+    return s.array_recv_method(field).name.len() > 0;
 }
 
 // try_array_method_type resolves the result type of an array method call
 // `a.<field>(...)` where `a` is an array. The std/array helpers are free
 // functions named `__method_Array_<field>` (or the `<mod>__`-mangled form
 // the bundler emits, which still ends in that convention name), discovered
-// the same suffix-matching way has_array_method finds them. Returns the
+// the same suffix-matching way has_array_method finds them, or array-receiver
+// methods found through array_recv_method. Returns the
 // helper's declared return type, or t_unknown when no such helper is in
 // scope — at which point check_call_expr falls through to its normal
 // "receiver isn't a typed value" handling so a genuine unknown array
@@ -972,6 +1000,8 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
                 if (nm.len() > tn && nm[nm.len() - tn : nm.len()] == target) { return s.sigs[i].ret_type; }
                 i = i + 1;
             }
+            var arm: MethodSig = s.array_recv_method(field);
+            if (arm.name.len() > 0) { return arm.ret_type; }
             return t_unknown("no array method `" + field + "`");
         },
         _ => { return t_unknown("array_method_ret_type: receiver isn't an array"); }
@@ -5045,16 +5075,18 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
                             }
                             // E043 (array method existence): only `append` / `with`
                             // / `len` are unconditional array builtins. Every other
-                            // method is an auto-discovered std/array function —
-                            // `__method_Array_<name>`, in scope only when std/array
-                            // is imported — or a user-defined array method. When the
-                            // call is none of those it names a non-existent method.
-                            // Mirrors the Go checker, which registers append/with/len
-                            // unconditionally and resolves the rest from the imported
-                            // module (so `a.sum()` without `import "std/array"` is
-                            // E043, but resolves with it). User methods on a raw
-                            // array type aren't a case — Go forbids them (E021) — so
-                            // only the builtins + auto-discovered functions count.
+                            // method comes from an imported module, in one of two
+                            // spellings has_array_method covers — an auto-discovered
+                            // `__method_Array_<name>` free function, or an
+                            // element-polymorphic `function (xs: T[]) <name>(…)`
+                            // receiver method. When the call is none of those it
+                            // names a non-existent method. Mirrors the Go checker,
+                            // which registers append/with/len unconditionally and
+                            // resolves the rest from the imported module (so
+                            // `a.sum()` without `import "std/array"` is E043, but
+                            // resolves with it). Only the ELEMENT-POLYMORPHIC
+                            // receiver form exists — Go rejects a concrete element
+                            // type (E021) — so there is no per-element match to make.
                             if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len"
                                     && !s.has_array_method(mfa.field)) {
                                 out = out.append(dg_at("E043", "field access on non-struct value of type " + type_label(recv), mfa.line, mfa.col));
