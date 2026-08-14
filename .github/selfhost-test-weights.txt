@@ -77,6 +77,8 @@ TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
+TestSelfHostFnValueCaptureIRX86_64 25
+TestSelfHostFnValueCaptureWasmIR 25
 TestSelfHostAsmIRPath 28
 TestSelfHostStdTestE2E 18
 # Not a driver-restore cost like the block above: MEASURED 128 s against an entry

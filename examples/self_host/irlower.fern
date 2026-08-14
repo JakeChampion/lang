@@ -51049,11 +51049,22 @@ function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs:
             // TypeFloat does not.
             return fa.ty;
         },
+        // A local bound from a lambda literal is a fn value. The flat "fn" tag is
+        // what the env-box path wants: cap_slot_ok only asks whether the capture
+        // is pointer-shaped, and make_clo_func's `var cap: fn = __env[i]` read is
+        // the spelling lower_stmt_var recognises as a closure box.
+        parser.ExprLambda(_) => { return "fn"; },
         // `var b = f(…)` / `var b = s.m(…)` — the callee's DECLARED return type,
         // resolved exactly as the for-in / match-scrutinee arms do (callee_ret_type).
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(cid) => { return callee_ret_type(mfuncs, "", cid.name); },
+                // `__mkclo$…(caps…)` — the lift's env-box constructor, which is
+                // what a fn-valued local's lambda init has already become by the
+                // time a sibling closure's capture is typed.
+                parser.ExprIdent(cid) => {
+                    if (cid.name.len() > 8 && cid.name[0:8] == "__mkclo$") { return "fn"; }
+                    return callee_ret_type(mfuncs, "", cid.name);
+                },
                 parser.ExprFieldAccess(cfa) => {
                     var rty: string = cap_type_expr(cfa.obj, fd, depth - 1, structs, mfuncs);
                     if (rty.len() == 0) { return ""; }
@@ -51416,6 +51427,67 @@ function cap_slot_ok(t: string): boolean {
     return true;
 }
 
+// cap_fn_sig_wide reports whether a fn-VALUE capture's signature has a position
+// wasm cannot dispatch through the arity-keyed `$fn<N>` funcref type — an i64 /
+// u64 / f64 / f32 parameter or return. The capture rides the env box under the
+// flat "fn" tag, which carries no signature, so the call inside the hoisted body
+// dispatches through `$fn<N>` and pushes 32-bit args: right on the register
+// backends, an `indirect call type mismatch` on wasm. Declining keeps such a
+// closure on its honest bail instead.
+//
+// Answers only what it can prove, and only about a fn-valued LOCAL. An
+// unrecoverable signature is NOT wide, and a captured PARAMETER is left alone
+// (it reaches the env box by a route this file did not open — same defect,
+// tracked in #6862), so no capture that admitted before stops admitting.
+function cap_fn_sig_wide(name: string, fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) {
+        if (fd.params[pi].name == name) { return false; }
+        pi = pi + 1;
+    }
+    match (cap_local_init(fd.body, name)) {
+        parser.ExprLambda(lam) => { return lambda_sig_wide(lam.params, lam.ret_type); },
+        // The lift has already replaced a fn-valued local's lambda with the env
+        // box constructor by the time a sibling closure's capture is typed; the
+        // hoisted target carries the real signature, after its `__env` param.
+        parser.ExprCall(mk) => {
+            match (mk.callee) {
+                parser.ExprIdent(mkid) => {
+                    if (mkid.name.len() <= 8 || mkid.name[0:8] != "__mkclo$") { return false; }
+                    var tgt: string = mkid.name[8 : mkid.name.len()] + "";
+                    var fi: i32 = 0;
+                    while (fi < mfuncs.len()) {
+                        if (mfuncs[fi].name == tgt) {
+                            var ps: parser.ParamDecl[] = [];
+                            var pj: i32 = 1;
+                            while (pj < mfuncs[fi].params.len()) { ps = ps.append(mfuncs[fi].params[pj]); pj = pj + 1; }
+                            return lambda_sig_wide(ps, mfuncs[fi].ret_type);
+                        }
+                        fi = fi + 1;
+                    }
+                },
+                _ => {}
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// lambda_sig_wide reports whether any parameter or the return of a fn value's
+// signature is a width the arity-keyed funcref type cannot describe.
+function lambda_sig_wide(params: parser.ParamDecl[], ret: string): boolean {
+    var notps: string[] = [];
+    if (wasm_width_char(ret, notps) != "w") { return true; }
+    var i: i32 = 0;
+    while (i < params.len()) {
+        if (wasm_width_char(params[i].type_name, notps) != "w") { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // make_clo_func builds the hoisted body of an escaping/inline closure: a top-
 // level `<cloname>(__env: i32[], origparams…)` whose body reads each capture
 // from the env box (`var cap_i: <T> = __env[1+i]`; box slot 0 is the funcval,
@@ -51434,7 +51506,9 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
     if (caps.len() == 0) { return HoistResult { func: none, ok: false }; }
     var ci: i32 = 0;
     while (ci < caps.len()) {
-        if (!cap_slot_ok(cap_type(caps[ci], fd, structs, mfuncs))) { return HoistResult { func: none, ok: false }; }
+        var cty: string = cap_type(caps[ci], fd, structs, mfuncs);
+        if (!cap_slot_ok(cty)) { return HoistResult { func: none, ok: false }; }
+        if (cty == "fn" && cap_fn_sig_wide(caps[ci], fd, mfuncs)) { return HoistResult { func: none, ok: false }; }
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
@@ -53108,6 +53182,14 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(_) => {},
+                // A value-position if/match is an immediately-invoked 0-param
+                // lambda whose body lowers INLINE in the enclosing frame, so it
+                // captures nothing and a name it only calls is still only
+                // called. The closure rule below would box such a name.
+                parser.ExprLambda(il) => {
+                    if (c.args.len() == 0 && il.params.len() == 0) { acc = iife_body_value_use_idents(il, acc); }
+                    else { acc = value_use_idents_expr(c.callee, acc); }
+                },
                 _ => { acc = value_use_idents_expr(c.callee, acc); }
             }
             var i: i32 = 0;
@@ -53126,27 +53208,14 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
         parser.ExprSlice(sl) => { acc = value_use_idents_expr(sl.array, acc); acc = value_use_idents_expr(sl.start, acc); return value_use_idents_expr(sl.end, acc); },
         parser.ExprStructLit(sl) => { if (sl.has_base) { acc = value_use_idents_expr(sl.base, acc); } var i: i32 = 0; while (i < sl.field_values.len()) { acc = value_use_idents_expr(sl.field_values[i], acc); i = i + 1; } return acc; },
         parser.ExprFieldAccess(fa) => { return value_use_idents_expr(fa.obj, acc); },
-        parser.ExprLambda(lm) => {
-            // A nested lambda's VALUE-uses of the enclosing scope = its free vars
-            // collected with the SAME call-callee exclusion (a name only CALLED
-            // inside it is not a value-use of it), minus the lambda's own params +
-            // locals. Reusing astwalk.collect_idents_expr here would wrongly count a
-            // call-callee (e.g. `add` in `add(add(a))`) as a value-use and box a
-            // call-only sibling closure — regressing closure-calls-closure.
-            var inner: string[] = [];
-            var iu: i32 = 0;
-            while (iu < lm.body.len()) { inner = value_use_idents_stmt(lm.body[iu], inner); iu = iu + 1; }
-            var bound: string[] = [];
-            var ip: i32 = 0;
-            while (ip < lm.params.len()) { bound = bound.append(lm.params[ip].name); ip = ip + 1; }
-            var ib: i32 = 0;
-            while (ib < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[ib], bound); ib = ib + 1; }
-            var ik: i32 = 0;
-            while (ik < inner.len()) {
-                if (util.index_of_str(bound, inner[ik]) < 0) { acc = acc.append(inner[ik]); }
-                ik = ik + 1;
-            }
-            return acc;
+        parser.ExprLambda(_) => {
+            // Every free var of a real (non-inlined) lambda is a value-use,
+            // INCLUDING one it only calls: each capture is copied into the
+            // closure's env box (make_clo_func) or passed as the lifted call's
+            // extra argument (closure_lift_one), and both read a fn value with
+            // the uniform env-box ABI. collect_idents_expr's own ExprLambda arm
+            // computes exactly that free set.
+            return astwalk.collect_idents_expr(e, acc);
         },
         parser.ExprMapLit(ml) => {
             var mi: i32 = 0;
@@ -53166,6 +53235,24 @@ function value_use_idents_expr(e: parser.Expr, acc: string[]): string[] {
             return acc;
         },
         parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// iife_body_value_use_idents collects the enclosing-scope names a value-position
+// if/match's inlined body uses as VALUES: its body walked with the ordinary
+// statement rule, minus the names the body itself binds.
+function iife_body_value_use_idents(lm: parser.ExprLambda, acc: string[]): string[] {
+    var inner: string[] = [];
+    var iu: i32 = 0;
+    while (iu < lm.body.len()) { inner = value_use_idents_stmt(lm.body[iu], inner); iu = iu + 1; }
+    var bound: string[] = [];
+    var ib: i32 = 0;
+    while (ib < lm.body.len()) { bound = astwalk.collect_bound_stmt(lm.body[ib], bound); ib = ib + 1; }
+    var ik: i32 = 0;
+    while (ik < inner.len()) {
+        if (util.index_of_str(bound, inner[ik]) < 0) { acc = acc.append(inner[ik]); }
+        ik = ik + 1;
     }
     return acc;
 }
@@ -54728,7 +54815,13 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // 3. First-class (escaping) closure: a `return <capturing lambda>` hoists
         // its body to `<fd>$clo`. The lambda stays in the body (irlower lowers it
         // to a make_closure box); only the hoisted target is appended here.
-        var hc: HoistResult = hoist_escaping_closure(fd, gfns, mod.structs, sigs);
+        // The functions lifted for THIS entry join the signature list: a capture
+        // whose lambda the lift already replaced with an env-box marker resolves
+        // its signature through the hoisted target (cap_fn_sig_wide).
+        var hsigs: parser.FuncDecl[] = sigs;
+        var hj: i32 = 0;
+        while (hj < acc.funcs.len()) { hsigs = hsigs.append(acc.funcs[hj]); hj = hj + 1; }
+        var hc: HoistResult = hoist_escaping_closure(fd, gfns, mod.structs, hsigs);
         if (hc.ok) { acc = LiftAcc { funcs: acc.funcs.append(hc.func), counter: acc.counter + 1 }; }
         // Drain the functions lifted by THIS iteration onto the worklist so their
         // OWN nested lambdas lift in a later round, then clear them (the counter
