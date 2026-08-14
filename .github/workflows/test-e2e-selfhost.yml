@@ -905,14 +905,22 @@ jobs:
           # RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min job
           # budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
+          #
+          # `--jsonfile-timing-events` keeps the same stream in machine-readable
+          # form for the weight audit in `verify` (#6823): the per-test
+          # wall-clock the shard already prints is the measurement nothing was
+          # reading. The timing-events variant records only pass/skip/fail (not
+          # every output line), so the file stays small enough to ride in the
+          # outcome artifact, and it is written incrementally — a shard that
+          # times out still leaves the durations of everything it did finish.
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
-            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --raw-command -- \
+            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-selfhost.json" --raw-command -- \
                 go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
-            ( cd internal/e2e && gotestsum --format standard-verbose --raw-command -- \
+            ( cd internal/e2e && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-residual.json" --raw-command -- \
                 go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
       # RECORD THE SHARD'S VERDICT for the off-machine `verify` job. These steps
@@ -928,11 +936,30 @@ jobs:
       # `cancelled`, which `verify` would then report as a real test failure.
       # `verify` carries the matching guard, so on cancellation neither side
       # runs and no spurious verdict is produced.
+      #
+      # The same artifact carries this shard's per-test durations
+      # (`<host>-<shard>.timings`), extracted from the gotestsum jsonfile above,
+      # for the weight audit in `verify` (#6823). Riding along in the outcome
+      # artifact means no new upload, no new download and no new job. Missing
+      # jsonfiles are normal — the residual-package run does not happen when the
+      # selfhost-package run fails first — so the glob is filtered.
       - name: record shard outcome
         if: ${{ !cancelled() }}
         run: |
+          set -euo pipefail
           mkdir -p shard-outcome
           echo '${{ steps.run.outcome }}' > "shard-outcome/${{ matrix.host }}-${{ matrix.shard }}"
+          JSON=()
+          for j in "$RUNNER_TEMP"/shard-*.json; do
+            if [ -f "$j" ]; then JSON+=("$j"); fi
+          done
+          if [ ${#JSON[@]} -gt 0 ]; then
+            TIMINGS="shard-outcome/${{ matrix.host }}-${{ matrix.shard }}.timings"
+            scripts/ci-test-weights extract "${JSON[@]}" > "$TIMINGS"
+            echo "recorded durations for $(wc -l < "$TIMINGS") tests"
+          else
+            echo "no gotestsum timing events: no durations to record"
+          fi
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -996,3 +1023,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20
+      # AUDIT THE SHARD WEIGHTS against what the shards actually measured
+      # (#6823). The durations rode in with the outcome markers, so this costs
+      # one awk pass over ~28 small files and no build. Advisory: it writes the
+      # job summary and warning annotations and always exits 0, so it cannot
+      # turn a green lane red — flip FERN_CI_WEIGHT_GATE_STRICT to "1" to
+      # escalate. `!cancelled()` so a run where a shard DID blow its timeout
+      # still gets the audit, which is exactly when its numbers matter.
+      - name: audit shard weights against measured durations
+        if: ${{ !cancelled() }}
+        env:
+          FERN_CI_WEIGHT_GATE_STRICT: "0"
+        run: scripts/ci-test-weights check shard-outcomes .github/selfhost-test-weights.txt

@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# ci-test-weights — close the loop between MEASURED and DECLARED shard weights.
+#
+# Usage:
+#   ci-test-weights extract JSONFILE...        # test2json JSON -> `name<TAB>seconds`
+#   ci-test-weights check TIMINGS_DIR WEIGHTS  # compare, report, annotate
+#
+# WHY THIS EXISTS (#6823, second occurrence of #5914). The self-host shards are
+# partitioned by scripts/selfhost-shard-tests using the declared weights in
+# .github/selfhost-test-weights.txt. Nothing measured whether those weights were
+# true, so a badly wrong one pushed its shard past the job timeout and failed it
+# for real: TestSelfHostInterpDriverX86_64 sat at 7 while costing ~166 s (#5914),
+# then TestSelfHostAssumeEligibleByteIdenticalX86_64 had NO entry (weight 1)
+# while costing 482-738 s (#6823). Both dominated their shard on a GREEN run
+# before they failed anything — the number was in the log and nobody read it.
+#
+# `extract` runs on each shard (which already writes a gotestsum --jsonfile),
+# `check` runs off-shard in `verify`, which already aggregates the shard
+# artifacts. No extra build, no extra job.
+#
+# WARN, DO NOT FAIL (for now). Every finding is a job-summary line plus a
+# GitHub warning annotation, and the exit status is 0. A wrong weight cannot
+# drop or double-run a test — only skew balance — so this is advisory by
+# construction, and a flapping gate gets disabled. Set
+# FERN_CI_WEIGHT_GATE_STRICT=1 to make findings fatal; that escalation is
+# deliberately a one-variable change.
+#
+# SUGGESTIONS ONLY EVER RAISE A WEIGHT. The same test measured 482 s and 738 s
+# on consecutive runs, a ~50% swing, so a suggestion keyed to one measurement
+# would ratchet weights down into the next timeout. Suggested weight is
+# ceil(measured * FERN_WEIGHT_SAFETY) and is emitted only when it exceeds the
+# declared entry.
+
+set -euo pipefail
+
+# Below this, a wrong weight cannot plausibly threaten an 18-minute shard.
+MIN_SECONDS="${FERN_WEIGHT_MIN_FLAG_SECONDS:-60}"
+# Flag when measured exceeds the declared entry by more than this factor.
+UNDER_FACTOR="${FERN_WEIGHT_UNDER_FACTOR:-2}"
+# Pessimism band applied to a measurement before suggesting it as a weight.
+SAFETY="${FERN_WEIGHT_SAFETY:-1.5}"
+# The shards' `-test.timeout`, in seconds. Pinned to the workflow by
+# TestSelfHostWeightGateBudgetMatchesShardTimeout (internal/sourcelint).
+BUDGET="${FERN_WEIGHT_SHARD_BUDGET_SECONDS:-1080}"
+# A single test costing this share of the budget belongs in OWN_JOB_TESTS
+# rather than in a bigger weight (#6667) — no weight can buy more wall than
+# the job has. Reported as a standing NOTE in the summary only: it is true of
+# the suite's shape rather than newly wrong, and a permanent annotation is how
+# the annotation channel stops being read.
+OWN_JOB_FRACTION="${FERN_WEIGHT_OWN_JOB_FRACTION:-0.5}"
+# A whole shard at this share of its budget is one reshuffle from a timeout —
+# annotated, because that is the failure this whole check exists to predict.
+SHARD_LOAD_FRACTION="${FERN_WEIGHT_SHARD_LOAD_FRACTION:-0.85}"
+
+usage() {
+  echo "usage: ci-test-weights extract JSONFILE... | ci-test-weights check TIMINGS_DIR WEIGHTS" >&2
+  exit 2
+}
+
+# extract — pull top-level test durations out of `go tool test2json` output.
+#
+# Only `pass`/`fail` actions carry Elapsed; subtests (a `/` in the name) are
+# rolled up by their parent and dropped. An `output` action can echo arbitrary
+# test stdout, but its embedded quotes are backslash-escaped, so the literal
+# `"Action":"pass"` cannot appear inside one.
+extract() {
+  awk '
+    /"Action":"(pass|fail)"/ && /"Elapsed":/ {
+      if (!match($0, /"Test":"[^"]+"/)) next
+      name = substr($0, RSTART + 8, RLENGTH - 9)
+      if (index(name, "/")) next
+      if (!match($0, /"Elapsed":[0-9.eE+-]+/)) next
+      secs = substr($0, RSTART + 10, RLENGTH - 10) + 0
+      if (secs > max[name]) max[name] = secs
+    }
+    END { for (n in max) printf "%s\t%.2f\n", n, max[n] }
+  ' "$@" | sort
+}
+
+# check — compare every measured duration against its declared weight.
+#
+# awk emits tagged lines so the caller can route them: SUMMARY is the human
+# report (stdout + the job summary), ANNOTATE becomes a GitHub warning, and
+# FINDINGS is the count that decides the exit status under strict mode.
+check() {
+  local dir="${1:-}" weights="${2:-}"
+  [ -n "$dir" ] && [ -n "$weights" ] || usage
+  if [ ! -d "$dir" ]; then
+    echo "ci-test-weights: '$dir' is not a directory" >&2
+    exit 2
+  fi
+  if [ ! -f "$weights" ]; then
+    echo "ci-test-weights: weights file '$weights' not found" >&2
+    exit 2
+  fi
+
+  local -a timings=()
+  local f
+  for f in "$dir"/*.timings; do
+    if [ -f "$f" ]; then timings+=("$f"); fi
+  done
+
+  local routed
+  if [ ${#timings[@]} -eq 0 ]; then
+    routed="$(
+      printf 'SUMMARY\t### self-host shard weight audit\n'
+      printf 'SUMMARY\tNO TIMING FILES in %s — the per-shard duration plumbing produced nothing.\n' "$dir"
+      printf 'SUMMARY\tThis check is a no-op until that is fixed; a silent no-op gate is worse than none.\n'
+      printf 'ANNOTATE\tshard weight audit ran blind\tno *.timings artifacts in %s: the extract step or the artifact upload is broken\n' "$dir"
+      printf 'FINDINGS\t0\n'
+    )"
+  else
+    # Report order is first-seen order over sorted inputs (glob order, and
+    # `extract` sorts within a file), so the output is deterministic.
+    routed="$(awk -v W="$weights" \
+      -v minsecs="$MIN_SECONDS" \
+      -v factor="$UNDER_FACTOR" \
+      -v safety="$SAFETY" \
+      -v budget="$BUDGET" \
+      -v ownfrac="$OWN_JOB_FRACTION" \
+      -v loadfrac="$SHARD_LOAD_FRACTION" '
+      function ceil(x) { return (x == int(x)) ? x : int(x) + 1 }
+      BEGIN {
+        while ((getline line < W) > 0) {
+          if (line ~ /^[ \t]*(#|$)/) continue
+          if (split(line, fld, /[ \t]+/) < 2) continue
+          declared[fld[1]] = fld[2] + 0
+        }
+        close(W)
+      }
+      FNR == 1 {
+        nfiles++
+        shard = FILENAME
+        sub(/.*\//, "", shard)
+        sub(/\.timings$/, "", shard)
+        shardorder[++nshards] = shard
+      }
+      NF >= 2 {
+        if (!($1 in measured)) nameorder[++nnames] = $1
+        if ($2 + 0 > measured[$1]) measured[$1] = $2 + 0
+        shardload[shard] += $2 + 0
+        ntests++
+      }
+      END {
+        printf "SUMMARY\t### self-host shard weight audit\n"
+        printf "SUMMARY\t%d tests measured across %d shard timing file(s); budget %ds/shard.\n", ntests, nfiles, budget
+
+        for (i = 1; i <= nnames; i++) {
+          name = nameorder[i]
+          secs = measured[name]
+          have = (name in declared)
+          w = have ? declared[name] : 1
+          if (secs >= minsecs) {
+            if (!have) {
+              nfind++
+              printf "SUMMARY\tUNWEIGHTED: %s measured %ds with no entry (partitioned as 1s).\n", name, secs
+              printf "ANNOTATE\tunweighted heavy test: %s\tmeasured %ds but has no entry in .github/selfhost-test-weights.txt, so the LPT partition ranks it with the sub-second tests — add one (#6823)\n", name, secs
+              suggest[name] = ceil(secs * safety)
+            } else if (secs > w * factor) {
+              nfind++
+              printf "SUMMARY\tUNDER-WEIGHTED: %s measured %ds against entry %d (%.1fx).\n", name, secs, w, secs / w
+              printf "ANNOTATE\tunder-weighted test: %s\tmeasured %ds against a declared weight of %d (%.1fx) — the partition is balancing on a wrong number (#6823)\n", name, secs, w, secs / w
+              suggest[name] = ceil(secs * safety)
+            }
+          }
+          if (secs >= ownfrac * budget) {
+            printf "SUMMARY\tNOTE: %s measured %ds = %d%% of one shard budget; no weight can buy more wall than the job has, so the remedy if it grows is OWN_JOB_TESTS (#6667).\n", name, secs, 100 * secs / budget
+          }
+        }
+
+        for (i = 1; i <= nshards; i++) {
+          s = shardorder[i]
+          if (shardload[s] < loadfrac * budget) continue
+          nfind++
+          printf "SUMMARY\tSHARD NEAR BUDGET: %s measured %ds = %d%% of %ds.\n", s, shardload[s], 100 * shardload[s] / budget, budget
+          printf "ANNOTATE\tshard %s is at %d%% of its budget\tmeasured %ds of a %ds -test.timeout; one partition reshuffle from a timeout (#6823)\n", s, 100 * shardload[s] / budget, shardload[s], budget
+        }
+
+        for (i = 1; i <= nnames; i++) {
+          name = nameorder[i]
+          if (!(name in suggest)) continue
+          w = (name in declared) ? declared[name] : 1
+          if (suggest[name] <= w) continue
+          if (nsug++ == 0) printf "SUMMARY\tCorrected weights (raises only, %sx pessimism band) — paste into .github/selfhost-test-weights.txt:\n", safety
+          printf "SUMMARY\t    %s %d\n", name, suggest[name]
+        }
+
+        if (nfind == 0) printf "SUMMARY\tNo weight discrepancies: every test at or above %ds is declared within %sx of its measured cost.\n", minsecs, factor
+        printf "FINDINGS\t%d\n", nfind + 0
+      }
+    ' "${timings[@]}")"
+  fi
+
+  local findings=0 tag rest
+  while IFS=$'\t' read -r tag rest; do
+    if [ "$tag" = SUMMARY ]; then
+      printf '%s\n' "$rest"
+      if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
+    elif [ "$tag" = FINDINGS ]; then
+      findings="$rest"
+    fi
+  done < <(printf '%s\n' "$routed")
+
+  # Annotations after the report so the log reads top-to-bottom.
+  local title msg
+  while IFS=$'\t' read -r tag title msg; do
+    [ "$tag" = ANNOTATE ] || continue
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      printf '::warning title=%s::%s\n' "$title" "$msg"
+    else
+      printf 'WARNING: %s: %s\n' "$title" "$msg"
+    fi
+  done < <(printf '%s\n' "$routed")
+
+  if [ "${FERN_CI_WEIGHT_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+    echo "ci-test-weights: $findings finding(s) and FERN_CI_WEIGHT_GATE_STRICT=1" >&2
+    exit 1
+  fi
+}
+
+cmd="${1:-}"
+shift || usage
+case "$cmd" in
+  extract) extract "$@" ;;
+  check) check "$@" ;;
+  *) usage ;;
+esac
