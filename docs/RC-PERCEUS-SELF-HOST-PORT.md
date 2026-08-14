@@ -7240,3 +7240,77 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   end-to-end through the self-host compiler to a native arm64-darwin binary.
   `TestSelfHostBorrowedWithInPlaceIRX86_64` goes from 9 rows to 11 and its
   #6185 row flips from the pinned 77 to 7. Refs #6185 #6158 #6170 #5301 #4451.
+
+- 2026-08-14: **A COW'd Map shared its key and value columns with the buffer it
+  was copied from (#6242).** `__map_cow_inplace` and `__map_clone` build the
+  fresh kv buffer with one `__memcpy`, which is shallow over the pointer-shaped
+  columns. Both handles then reach rc==1 independently, so BOTH deep drops run,
+  and whichever fires first takes the other's memory. Measured before and after
+  on `635abf3`, 300 rounds, one COW copy each, `-sanitize`:
+
+  | | arm64-darwin | x86-64 |
+  |---|---|---|
+  | before | `allocs=4200 frees=4500` — 300 over-frees | `rc over-release (double free)` |
+  | after | `allocs=4500 frees=4200` — the pre-existing key leak, no over-free | clean |
+
+  The value read is the plainer signal: the #6242 repro returns the `get_or`
+  fallback (-1) on arm64-darwin before, 7 after, and 7 under `-interp` on both
+  sides. On native wasm the corrupted probe loop does not terminate at all, so
+  the before-picture there is a HANG rather than a wrong answer.
+
+  **The bug reads as ABI-specific and is not.** On a two-word-string target the
+  key slot is a `(data, len)` CELL that carries no refcount and
+  `__drop_map_str_keys` frees outright, so two maps sharing one cell free it
+  twice; on a single-word target the slot is the string data pointer and the two
+  drops double-dec it. x86-64 survived the second shape often enough to look
+  clean, which is why the issue recorded it as arm64-only — the sanitizer says
+  otherwise.
+
+  **`string as usize` is the portable rebox, and the one thing it does NOT do is
+  count.** The cast allocates a fresh cell on a two-word target and is the
+  identity on a single-word one, which is also how `__map_own_key` tells the two
+  apart at runtime with no new builtin and no tag: if the cast handed back the
+  same pointer, there is no cell and an inc is the whole claim. A first cut
+  relied on the rebox alone and segfaulted — the second cell's drop released
+  bytes nobody had counted — and it took a SECOND call to the churning function
+  to show, because nothing recycled the freed block until then. A first cut
+  before that copied the bytes with `"" + s` instead, which segfaulted straight
+  away: the concat temp is swept at scope exit and the slot kept the address.
+
+  **Two value columns stay shared, and the second is the more interesting
+  refusal.** A struct value (valKind 4) needs the same per-field walk in the inc
+  direction as its generated `__drop_map_struct_<T>`, not one `__fern_rc_inc`.
+  A STRING value is released by `__drop_map_str_values` — the same generated
+  body as the key column, one column over — and could not be claimed here even
+  if it needed to be: `mapValKindTag` files it under valKind **1** together with
+  every other unreclaimed pointer (tuple, generic enum, slice, runtime handle),
+  and the drop is emitted off the STATIC value type, so the copy side has no
+  runtime test the way `keyKind == 1` gives it one for a string key. Giving it a
+  kind of its own is an IR tag-space change and a separate slice.
+
+  Measured rather than assumed, `Map[string, string]` COW churn, 8 rounds:
+
+  | | arm64-darwin | wasm | x86-64 | interp |
+  |---|---|---|---|---|
+  | before | SIGSEGV | — | ok | ok |
+  | after | wrong value | wrong value | ok | ok |
+
+  So the key claim takes the two-word targets from a crash to a wrong read,
+  which is an improvement and NOT a fix, and the remaining half is the value
+  column exactly as described. The shape is deliberately absent from the new
+  suite rather than pinned to behaviour known to be wrong.
+
+  Nothing changes for the self-host, which emits no map drop at ALL (no
+  `__drop_map_str_keys`, no `__map_drop_values`): its `as usize` is the identity,
+  so the rebox allocates nothing, and the inc lands on a block nothing ever
+  frees. Measured identical before and after on the self-host wasm leg. That
+  also makes this a PREREQUISITE for the map string K/V slice this issue still
+  lists as open — #6242 is what "can be widened once the columns are retained"
+  refers to, and the self-host cannot start dropping map columns until the copy
+  side stops sharing them.
+
+  VERIFIED: new `TestMapCowColumnOwnership{Interp,X86_64,Wasm,Arm64}` (the
+  source outliving its copies, an array-value column, and copy-source
+  independence), `…NoUnderflow{X86_64,Wasm,Arm64}` and `…Bounded{…}`. The wasm
+  value leg FAILS on the parent commit and the wasm rc leg HANGS there;
+  `TestMapCowTempBinding*` stays green. Refs #6242 #4355 #4353 #2704 #6227 #4451.
