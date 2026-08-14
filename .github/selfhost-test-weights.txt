@@ -208,3 +208,8 @@ TestSelfHostArm64ProcExecRuns 15
 # same staleness in `test-e2e-arm64.yml` was load-bearing there (#6310).
 # `make testnames` now fails on a name in .github/ that matches no test, so
 # an entry cannot outlive its test again.
+
+# Builds no driver: it interprets the self-host front end once per case
+# through the native `-interp`, so its cost is the 14 cases, not a compile.
+# Measured 26 s locally (4-core, machine busy); weighted pessimistically.
+TestSelfHostFrontEndNumericLiteralCodes 60
