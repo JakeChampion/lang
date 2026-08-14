@@ -38970,10 +38970,10 @@ function trmc_variant_fields_ok(structs: parser.StructDecl[], vname: string): bo
     return true;
 }
 
-// trmc_eligible: fn is the canonical single-hole modulo-cons shape — returns
-// the (single) recursive-arm ctor variant name, or "" when ineligible. Gates
-// mirror native detectTrmc (trmc.go:84-192) plus the v1 same-ctor and width-0
-// restrictions documented above.
+// trmc_eligible: fn is the canonical single-hole modulo-cons shape — returns a
+// recursive-arm ctor variant name whose payload arity fixes the hole's tail
+// index, or "" when ineligible. Gates mirror native detectTrmc
+// (trmc.go:84-192) plus the width-0 restriction documented above.
 function trmc_eligible(fn: parser.FuncDecl, structs: parser.StructDecl[]): string {
     if (fn.receiver_type.len() > 0) { return ""; }
     if (fn.type_params.len() > 0) { return ""; }
@@ -39055,7 +39055,12 @@ function trmc_eligible(fn: parser.FuncDecl, structs: parser.StructDecl[]): strin
                                         if (trmc_count_self_calls(c.args[hi], fn.name) != 0) { return ""; }
                                         hi = hi + 1;
                                     }
-                                    if (ctor.len() > 0 && ctor != arm_ctor) { return ""; }   // v1: one ctor variant
+                                    // Recursive arms may build DIFFERENT variants, but the
+                                    // hole is filled by an op_struct_set at a compile-time
+                                    // field INDEX, so every node the loop can have produced
+                                    // must carry its tail at the same index — equal payload
+                                    // arity. Mixed arities still bail.
+                                    if (ctor.len() > 0 && decl_field_count(structs, ctor) != argc) { return ""; }
                                     ctor = arm_ctor;
                                     any_rec = true;
                                 },
@@ -39198,16 +39203,17 @@ function trmc_consume_safe(fn: parser.FuncDecl, structs: parser.StructDecl[]): b
 //     loop                 // br 1 = continue (next iteration)
 //       [per arm] block    // br 0 = skip arm (variant mismatch)
 //         variant_is test; payload binds;
-//         recursive: heads -> temps; node = struct_make(ctor, heads..., 0);
+//         recursive: heads -> temps; node = struct_make(arm ctor, heads..., 0);
 //                    hole-link(node); hole = node; rebind params; br 1
 //         base:      value -> temp; hole-link(value); br 2
 //       end
 //     end
 //   end
 //   load result; return
-// hole-link(v): if (hole == 0) { result = v } else { hole.tail = v } — the
-// tail index is the ctor's last field (compile-time constant, the v1
-// same-ctor gate), so the link is a plain struct_set.
+// hole-link(v): if (hole == 0) { result = v } else { hole.tail = v } — the tail
+// index is the last field of whichever ctor built the held node, a single
+// compile-time constant because the detector gates every recursive ctor to one
+// payload arity, so the link is a plain struct_set.
 function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerState {
     var s: LowerState = sin;
     var tail_idx: i32 = decl_field_count(s.structs, ctor) - 1;
@@ -39293,6 +39299,14 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
                             match (r.value) {
                                 parser.ExprCall(c) => {
                                     var argc: i32 = c.args.len();
+                                    // Each recursive arm builds its OWN variant; the
+                                    // detector only pins them to one payload arity.
+                                    var arm_ctor: string = ctor;
+                                    match (c.callee) {
+                                        parser.ExprIdent(cid) => { arm_ctor = trmc_variant_name(s.structs, cid.name); },
+                                        parser.ExprFieldAccess(cfa) => { arm_ctor = trmc_variant_name(s.structs, cfa.field); },
+                                        _ => {}
+                                    }
                                     // heads -> temps (evaluated BEFORE the node alloc,
                                     // reading the current bindings).
                                     var hslots: i32[] = [];
@@ -39307,11 +39321,11 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
                                         hslots = hslots.append(hs);
                                         hi = hi + 1;
                                     }
-                                    // node = struct_make(ctor, heads..., 0-tail).
+                                    // node = struct_make(arm_ctor, heads..., 0-tail).
                                     var li: i32 = 0;
                                     while (li < hslots.len()) { s = s.emit(ir.op_load_local(hslots[li])); li = li + 1; }
                                     s = s.emit(ir.op_const_i32(0));
-                                    s = s.emit(ir.op_struct_make(ctor, argc));
+                                    s = s.emit(ir.op_struct_make(arm_ctor, argc));
                                     var ntmp: string = "$trmc_n" + util.i32_to_string(ai);
                                     s = s.add_local(ntmp);
                                     var nslot: i32 = s.slot_of(ntmp);

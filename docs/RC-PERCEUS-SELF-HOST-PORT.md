@@ -3670,8 +3670,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   negative NOT rewritten), TestSelfHostTrmcWasmIR (value + 200k deep),
   TestSelfHostTrmcIRArm64 (200k deep under qemu via `asm_ir_run -target
   arm64`). Native reference: `detectTrmc` / `emitTrmc` (internal/trmc.go) —
-  the self-host detector is stricter (same-ctor restriction) but the emitted
-  loop shape matches.
+  the self-host detector was stricter (same-ctor restriction, lifted 2026-08-14
+  below) but the emitted loop shape matches.
 - 2026-07-05: **Landed defer/errdefer on the `?` failure path (#4334 part 1 —
   parse-pass markers + irlower replay, all three backends).** The self-host
   lowers defers at PARSE level by rewriting StmtReturn (parser.fern
@@ -7146,3 +7146,36 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   rows exiting 98 on the parent commit on both backends, two negatives that exit 0
   on both sides and are there to stay that way; cross-backend exit agreement on
   wasm. Refs #6758 #6491 #3457 #4451.
+
+- 2026-08-14: **TRMC detector admits mixed-variant recursive arms (#5334).**
+  `trmc_eligible` refused a second recursive arm that built a DIFFERENT ctor
+  (`Cons(h+1, self(t))` in one arm, `Neg(h-1, self(t))` in the next), so a list
+  enum with two cons-shaped variants kept the O(n)-stack recursion; native's
+  `detectTrmc` already carries `ctorVarIdx` per arm and admits it. The self-host
+  now does too, with one restriction native does not need: the hole is filled by
+  an `op_struct_set` at a compile-time field INDEX, not at a byte address, so all
+  recursive ctors must agree on payload arity for that index to be a single
+  constant. Mixed arities (`Cons(i32, List)` beside `Wrap(List)`) still bail.
+  `emit_trmc` reads the ctor per arm rather than reusing the detector's — without
+  that half, an admitted `Neg` arm would have stamped `Cons` on its nodes.
+
+  The new predicate is strictly weaker than the old one, and on a function every
+  recursive arm of which already shared a ctor the emitted bytes are unchanged:
+  same arity, and the per-arm ctor resolves to the same name.
+
+  **Deliberately NOT widened, both matching native:** `when`-guarded arms — a
+  guard makes arm coverage non-structural, so "every variant has an arm" stops
+  meaning "some arm runs"; an iteration where nothing matches falls out of the
+  loop with the last node's tail hole never filled. Admitting them needs a
+  coverage rule (an unguarded arm per variant) that native does not have either.
+  And multi-statement arm bodies — admitting leading statements means lowering
+  them inside a body that deliberately runs without the RC sweeps. Both wait on
+  native's sibling widening (#5344, under #4402).
+
+  VERIFIED: `TestSelfHostTrmcIRX86_64` (mixed-ctor value where a wrong-variant
+  rewrite scores 60 instead of 6; mixed-ctor 200k-deep; a narrow one-payload
+  scrutinee cell shallow-freed under a wider built node; plus asm self-call
+  witnesses pinning mixed arity, a guarded arm and a multi-statement arm to the
+  plain recursion) and `TestSelfHostTrmcWasmIR` (the three positives). The deep
+  case exits 134 on the parent commit, and 60 conformance fixtures emit
+  byte-identical wat across the change. Refs #5334 #4352 #5344 #4402 #4451.

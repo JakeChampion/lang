@@ -538,6 +538,12 @@ func New() *Interp {
 	// under -interp without erroring (the metric is only meaningful in
 	// codegen).
 	i.Builtins["__heap_bump_bytes"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __rc_underflow_count(): the runtime's over-release counter, for the same
+	// reason — the interpreter has no refcounts to underflow, so it reports the
+	// clean reading rather than erroring. Every self-host driver ends in
+	// util.rc_underflow_guard, so without this `fern -interp <driver>.fern`
+	// cannot reach its own exit.
+	i.Builtins["__rc_underflow_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	// Bit-counting intrinsics. The interpreter is the ORACLE these are
 	// differentialled against, so it uses math/bits rather than replicating
 	// the SWAR sequence — an independent implementation is the point, since a
