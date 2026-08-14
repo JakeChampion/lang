@@ -51419,13 +51419,14 @@ function cap_slot_ok(t: string): boolean {
 // backends, an `indirect call type mismatch` on wasm. Declining keeps such a
 // closure on its honest bail instead.
 //
-// Answers only what it can prove. An unrecoverable signature is NOT wide, so a
-// capture that admitted before keeps admitting; the three sources below are the
-// ones a fn value's signature actually survives in.
+// Answers only what it can prove, and only about a fn-valued LOCAL. An
+// unrecoverable signature is NOT wide, and a captured PARAMETER is left alone
+// (it reaches the env box by a route this file did not open — same defect,
+// tracked in #6862), so no capture that admitted before stops admitting.
 function cap_fn_sig_wide(name: string, fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
-        if (fd.params[pi].name == name) { return fn_sig_of(fd.params[pi], fd.type_params).len() > 0; }
+        if (fd.params[pi].name == name) { return false; }
         pi = pi + 1;
     }
     match (cap_local_init(fd.body, name)) {
