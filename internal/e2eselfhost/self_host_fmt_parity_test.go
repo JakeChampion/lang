@@ -767,12 +767,68 @@ func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 	}
 }
 
+// fmtNativeOnlyCases carry the type-check property but NOT byte-parity,
+// because the self-host cannot reproduce them yet. Keeping them out of
+// fmtParityCases is the point: adding a row there asserts the two formatters
+// agree, and asserting that before the self-host can would only redden the
+// parity leg without telling anyone anything new.
+//
+// Construction-site type arguments (#6812) are the first entry. The self-host
+// PARSES `Box[i32] { … }` — parser.fern:1721 counts the args into
+// `pending_type_argc` — but the struct-literal branch at :1728 never passes it
+// on and `ExprStructLit` has no field to receive it, so the self-host drops the
+// instantiation and would print `Box { val: 42 }`. Tracked on #6812. Move these
+// into fmtParityCases once the self-host grows the carrier.
+var fmtNativeOnlyCases = []struct {
+	name string
+	src  string
+}{
+	// Written type args must survive `-fmt`. Dropping them re-infers the
+	// literal: `Box[i64]` silently becomes `Box[i32]`, and
+	// `Stack[i32] { items: [] }` stops compiling altogether (E040) — the
+	// formatter deleting the syntax the diagnostic recommends.
+	{"struct-lit-type-args", `struct Box[T] {
+  val: T
+}
+
+struct Stack[T] {
+  items: T[]
+}
+
+function take(b: Box[i64]): i64 {
+  return b.val;
+}
+
+function main(): i32 {
+  var b = Box[i64] { val: 42 };
+  var s = Stack[i32] { items: [] };
+  return (take(b) as i32) + s.items.len();
+}
+`},
+	// The same property for the CALL form's type args, which no printer
+	// emitted either: `empty[i32]()` formatted to `empty()`, which is E040.
+	{"call-type-args", `function empty[T](): T[] {
+  return [];
+}
+
+function main(): i32 {
+  var xs = empty[i32]();
+  return xs.len();
+}
+`},
+}
+
 // TestFmtNativeOutputTypeChecks runs the type-check property over NATIVE's half
 // of every parity case. It needs no cross toolchain and no self-host build, so
 // unlike the parity test below it runs on every shard and on a dev machine —
 // which is where #6803's rows have to be caught, since those are native's.
 func TestFmtNativeOutputTypeChecks(t *testing.T) {
-	for _, tc := range fmtParityCases {
+	cases := fmtParityCases
+	cases = append(append([]struct {
+		name string
+		src  string
+	}{}, cases...), fmtNativeOnlyCases...)
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := goparser.Parse(tc.src)
 			if err != nil {

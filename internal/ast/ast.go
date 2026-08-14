@@ -1855,14 +1855,19 @@ type Call struct {
 	// data-first form). Like IsPipe, only the formatter reads it —
 	// to re-render `x |> f(a, _)` instead of the prepended form.
 	PipeHole int
-	// TypeArgs is filled by the checker when the callee resolves
-	// to a generic function (FuncDecl with non-empty TypeParams).
-	// Each entry is the inferred concrete type for the
-	// corresponding type parameter, in declaration order. Empty
-	// for non-generic calls. The monomorphisation pass uses it
-	// to pick the right cloned function and rewrite the callee
-	// name to the mangled form.
+	// TypeArgs holds the callee's instantiation when it resolves to
+	// a generic function (FuncDecl with non-empty TypeParams) — one
+	// entry per type parameter, in declaration order, empty for a
+	// non-generic call. The parser fills it from an explicit
+	// `f[i32](x)` type-argument list; otherwise the checker fills it
+	// with what it inferred. The monomorphisation pass uses it to
+	// pick the right cloned function and rewrite the callee name to
+	// the mangled form.
 	TypeArgs []Type
+	// TypeArgsWritten distinguishes parser-filled TypeArgs from
+	// checker-inferred ones, so the formatter reprints only what the
+	// source actually wrote. See StructLit.TypeArgsWritten.
+	TypeArgsWritten bool
 	// Method is set by the checker when this Call was rewritten
 	// from a `target.method(args)` source-level method call. The
 	// rest of the pipeline ignores it; the LSP reads it to answer

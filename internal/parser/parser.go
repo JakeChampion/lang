@@ -5445,7 +5445,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
-				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs}
+				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs, TypeArgsWritten: true}
 				continue
 			}
 			// Generic struct-literal type arguments:
