@@ -142,6 +142,28 @@ Also keep `/` from filling — stale `/tmp/selfhost-bincache-*` dirs (~1 GB each
 one per build) pile up; `rm -rf /tmp/selfhost-bincache-*` reclaims them (they
 are regenerable caches).
 
+## Checking a test is non-vacuous: `git checkout <parent> -- <file>`, never `git stash`
+
+A new test only proves something if it fails without the fix. To check that,
+restore one file to its pre-fix state:
+
+```sh
+git checkout <parent-sha> -- examples/self_host/irlower.fern
+go test ./internal/e2eselfhost/ -run TestYourNewCase > run.log 2>&1; echo "EXIT=$?"
+git checkout HEAD -- examples/self_host/irlower.fern
+```
+
+**Do not reach for `git stash push <file>`.** Once the fix is committed the file
+is clean, so `stash push` saves nothing and silently succeeds — and the paired
+`stash pop` then applies whatever entry was already on the stack, conflicting
+files nobody touched. Two changes hit this on the same day; both had to recover
+an unrelated stash entry, and one recorded a `rerere` resolution for a conflict
+that was never real (`.git/rr-cache`, which auto-applies to future merges — check
+it if a `stash pop` ever conflicts unexpectedly).
+
+Report the count, not the verdict: "15 of 16 fail, the sixteenth is the
+deliberate control" is checkable; "verified non-vacuous" is not.
+
 ## Arena exhaustion is exit 125; a host OOM-kill is 137
 
 Distinguishable by status alone, which is the point — they used to share 137,
