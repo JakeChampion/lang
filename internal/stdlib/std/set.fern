@@ -5,7 +5,11 @@
 // is value-semantic: `add` / `remove` / `union` / … return a NEW set
 // and leave the receiver untouched, matching the language's immutable-
 // data direction (see docs/LANGUAGE-DIRECTION.md). Element type only
-// needs `cmp.Eq` — membership is decided by `==`.
+// needs `cmp.Eq` — membership is decided through the bound's `eq`
+// method, so a `@derive(Eq)` struct or enum works as an element. Not the
+// `==` operator: it desugars through a `Type.eq` lookup that is not
+// visible from this module, so it would reject the caller's own type
+// (#6846).
 //
 // # Complexity — read before reaching for this at scale
 //
@@ -64,7 +68,7 @@ pub function set_of[T: cmp.Eq](xs: T[]): Set[T] {
 pub function (s: Set[T]) contains[T: cmp.Eq](x: T): boolean {
     var i: i32 = 0;
     while (i < s.xs.len()) {
-        if (s.xs[i] == x) { return true; }
+        if (s.xs[i].eq(x)) { return true; }
         i = i + 1;
     }
     return false;
@@ -110,7 +114,7 @@ pub function (s: Set[T]) remove[T: cmp.Eq](x: T): Set[T] {
     var ys: T[] = [];
     var i: i32 = 0;
     while (i < s.xs.len()) {
-        if (!(s.xs[i] == x)) { ys = ys.append(s.xs[i]); }
+        if (!s.xs[i].eq(x)) { ys = ys.append(s.xs[i]); }
         i = i + 1;
     }
     return Set { xs: ys };
