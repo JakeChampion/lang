@@ -49,7 +49,10 @@ BUDGET="${FERN_WEIGHT_SHARD_BUDGET_SECONDS:-1080}"
 # the annotation channel stops being read.
 OWN_JOB_FRACTION="${FERN_WEIGHT_OWN_JOB_FRACTION:-0.5}"
 # A whole shard at this share of its budget is one reshuffle from a timeout —
-# annotated, because that is the failure this whole check exists to predict.
+# annotated, because that is the failure this whole check exists to predict. The
+# per-shard total is the SUM of its top-level durations, which tracks wall-clock
+# only because no top-level TestSelfHost* calls t.Parallel() (subtests do, and
+# their time is already inside their parent's).
 SHARD_LOAD_FRACTION="${FERN_WEIGHT_SHARD_LOAD_FRACTION:-0.85}"
 
 usage() {
@@ -113,6 +116,7 @@ check() {
     # Report order is first-seen order over sorted inputs (glob order, and
     # `extract` sorts within a file), so the output is deterministic.
     routed="$(awk -v W="$weights" \
+      -v nfiles="${#timings[@]}" \
       -v minsecs="$MIN_SECONDS" \
       -v factor="$UNDER_FACTOR" \
       -v safety="$SAFETY" \
@@ -129,7 +133,6 @@ check() {
         close(W)
       }
       FNR == 1 {
-        nfiles++
         shard = FILENAME
         sub(/.*\//, "", shard)
         sub(/\.timings$/, "", shard)

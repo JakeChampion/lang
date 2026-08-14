@@ -966,11 +966,11 @@ jobs:
       # runs and no spurious verdict is produced.
       #
       # The same artifact carries this shard's per-test durations
-      # (`<host>-<shard>.timings`), extracted from the gotestsum jsonfile above,
+      # (`<host>-<shard>.timings`), extracted from the timing-events files above,
       # for the weight audit in `verify` (#6823). Riding along in the outcome
-      # artifact means no new upload, no new download and no new job. Missing
-      # jsonfiles are normal — the residual-package run does not happen when the
-      # selfhost-package run fails first — so the glob is filtered.
+      # artifact means no new upload, no new download and no new job. A missing
+      # timing-events file is normal — the residual-package run does not happen
+      # when the selfhost-package run fails first — so the glob is filtered.
       - name: record shard outcome
         if: ${{ !cancelled() }}
         run: |
