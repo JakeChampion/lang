@@ -287,3 +287,17 @@ linux/arm64 on purpose: the aarch64 leg then runs natively and only x86-64 pays
 emulation. This makes those legs **runnable for debugging**; it does not make
 them a gate — the section above still applies, and `docs/CI-SIGNOFF.md` records
 which lanes may be signed off locally as a result.
+
+Measured on the first full run (`scripts/devbox go test ./internal/e2e/`):
+31670 pass, 115 skip, 1 fail. The remaining skips are honest — 15 want a real
+amd64 host, 3 want Apple Silicon, and most of the rest are env-gated corpora
+(`FERN_SELFHOST_FIXTURES`, `FERN_SELFHOST_DIFF`, `RUN_SECCOMP_CORPUS`,
+`FERN_BENCH`).
+
+**Known emulation divergence: `TestX86_64TrmcDeepStack` fails under qemu here**
+("TRMC on: deep map should succeed, got -1") and passes in CI on native x86-64.
+It is a deep-recursion test, so the emulated stack is the suspect, not the
+compiler. Do not chase it as a product bug, and do not read the container's
+x86-64 result as authoritative — this failure is the concrete example of why
+qemu is not a gate. (CI's x86-64 lane prints only failures, via gotestsum
+`pkgname-and-test-fails`, so its silence on this test is a pass, not an absence.)
