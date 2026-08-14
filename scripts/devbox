@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# devbox — run a command against this repo inside the Linux toolchain image.
+#
+#   scripts/devbox go test ./internal/e2e/ -run TestSelfHostX86_64
+#   scripts/devbox                      # interactive shell
+#   scripts/devbox --build              # force an image rebuild, then exit
+#
+# WHY. Both native Fern targets emit Linux ELF, and the e2e harness looks for
+# `qemu-x86_64` / `qemu-aarch64` / `aarch64-linux-gnu-gcc` by name. A macOS host
+# has none of them and cannot get them (qemu user-mode is Linux-only, and
+# Homebrew's qemu is system emulation), so those legs skip — and a skipped test
+# reports `ok`. This image supplies them.
+#
+# On Apple Silicon the image is linux/arm64, so the aarch64 leg runs NATIVELY
+# and only x86-64 pays emulation. Set FERN_DEVBOX_PLATFORM=linux/amd64 to
+# invert that.
+#
+# The Go build and module caches live in named volumes, so a second run reuses
+# the first one's compilation instead of starting cold.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE=fern-devbox
+PLATFORM="${FERN_DEVBOX_PLATFORM:-linux/arm64}"
+
+if ! docker info >/dev/null 2>&1; then
+  echo "devbox: docker is not running (start Docker Desktop)" >&2
+  exit 1
+fi
+
+build() {
+  # Pins are READ from the repo, never restated here — see
+  # scripts/wasm-toolchain-pins for why a second copy is a bug.
+  eval "$("$ROOT/scripts/wasm-toolchain-pins")"
+  echo "devbox: building $IMAGE ($PLATFORM, wasmtime v$WASMTIME_VER, wasm-tools $WASMTOOLS_VER)" >&2
+  docker build \
+    --platform "$PLATFORM" \
+    --build-arg "WASMTIME_VER=$WASMTIME_VER" \
+    --build-arg "WASMTOOLS_VER=$WASMTOOLS_VER" \
+    -f "$ROOT/scripts/devbox.Dockerfile" \
+    -t "$IMAGE" \
+    "$ROOT/scripts"
+}
+
+if [ "${1:-}" = "--build" ]; then
+  build
+  exit 0
+fi
+
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  build
+fi
+
+# -t only when stdin is a terminal, so `devbox go test … > log` stays clean.
+tty_flags=(-i)
+[ -t 0 ] && tty_flags+=(-t)
+
+# --init so a hung test process stays reapable. The repo is mounted rather than
+# copied: edit on the host, run in here, no sync step.
+exec docker run --rm "${tty_flags[@]}" \
+  --platform "$PLATFORM" \
+  --init \
+  -v "$ROOT:/work" \
+  -v fern-devbox-gocache:/root/.cache/go-build \
+  -v fern-devbox-gomod:/go/pkg/mod \
+  -w /work \
+  "$IMAGE" \
+  "${@:-bash}"

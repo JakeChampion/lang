@@ -11,14 +11,13 @@
 # tests that guard the most dangerous code, so we install them up front.
 set -euo pipefail
 
-# Local dev machines bring their own toolchains; only provision in the
-# ephemeral remote container.
-if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
-  exit 0
-fi
-
 # --- arm64 cross-toolchain + qemu (arm64 e2e + RC differential gate) ---
-if ! command -v qemu-aarch64 >/dev/null 2>&1 || ! command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+# Linux only, and only in the ephemeral remote container: qemu's user-mode
+# emulation does not exist on macOS (Homebrew's qemu is system emulation), and
+# a local machine's packages are not ours to install. On a Mac these legs come
+# from scripts/devbox instead.
+if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && [ "$(uname -s)" = "Linux" ] \
+   && { ! command -v qemu-aarch64 >/dev/null 2>&1 || ! command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; }; then
   # The base image carries a couple of third-party PPAs (deadsnakes,
   # ondrej/php) that 403 and fail `apt-get update`; the packages we need
   # are in the main Ubuntu archive, so tolerate the PPA errors.
@@ -41,10 +40,15 @@ fi
 WT_DIR="$HOME/.fern-wasm"
 eval "$("$(dirname "${BASH_SOURCE[0]}")/../../scripts/wasm-toolchain-pins")"
 WASMTIME_VER="v$WASMTIME_VER"
-case "$(uname -m)" in
-  x86_64)  WT_ARCH="x86_64-linux" ;;
-  aarch64) WT_ARCH="aarch64-linux" ;;
-  *) echo "unsupported host arch $(uname -m)" >&2; exit 1 ;;
+# The wasm toolchain IS provisioned locally as well as remotely: wasm executes
+# host-independently, so a Mac runs those legs as faithfully as a runner does,
+# and without the pinned pair every wasm test SKIPs into a false `ok`.
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)   WT_ARCH="x86_64-linux" ;;
+  Linux/aarch64)  WT_ARCH="aarch64-linux" ;;
+  Darwin/arm64)   WT_ARCH="aarch64-macos" ;;
+  Darwin/x86_64)  WT_ARCH="x86_64-macos" ;;
+  *) echo "unsupported host $(uname -s)/$(uname -m)" >&2; exit 0 ;;
 esac
 mkdir -p "$WT_DIR"
 # Version-check the cached binaries, not just their existence — a container
@@ -63,7 +67,13 @@ fi
 
 # Persist for the session: tools on PATH + the adapter the e2e tests read
 # via FERN_WASI_ADAPTER (so the wasm e2e cases RUN instead of SKIP).
-{
-  echo "export PATH=\"$WT_DIR:\$PATH\""
-  echo "export FERN_WASI_ADAPTER=\"$WT_DIR/adapter.wasm\""
-} >> "$CLAUDE_ENV_FILE"
+# CLAUDE_ENV_FILE is not always set outside the managed container; the install
+# above is still worth doing there, so this is a guard rather than a hard need.
+if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+  {
+    echo "export PATH=\"$WT_DIR:\$PATH\""
+    echo "export FERN_WASI_ADAPTER=\"$WT_DIR/adapter.wasm\""
+  } >> "$CLAUDE_ENV_FILE"
+else
+  echo "session-start: wasm toolchain at $WT_DIR (add it to PATH and set FERN_WASI_ADAPTER=$WT_DIR/adapter.wasm)" >&2
+fi
