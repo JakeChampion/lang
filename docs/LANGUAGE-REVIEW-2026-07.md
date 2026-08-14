@@ -172,7 +172,7 @@ match (s) {
 }
 ```
 
-**Writeability and verbosity.** Middling. Three warts, all acknowledged in
+**Writeability and verbosity.** Middling. Two warts, both acknowledged in
 `IMPROVEMENTS.md`:
 
 - The `function` keyword is overloaded across top-level declarations, local
@@ -186,8 +186,6 @@ match (s) {
   var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
   ```
 
-- No type-ascription expression (#13): a bare `None` cannot be written as
-  `Option[i32]` inline; `as` is numeric-only. Users hit this constantly.
 - Enum variant names are globally unique (#15): `Color { Red }` and
   `Status { Red }` cannot coexist because the checker resolves variants by
   bare name. This is a namespacing defect most languages solved decades ago.
@@ -282,12 +280,12 @@ exceptions — `Result[T,E]` is the only error type.
 **Inference.** Local only, and modest: `var` initializers, generic call
 type-argument unification, and contextual settling of numeric literals
 (`var x: i64 = 1` works). Lambdas do not infer return types. There is no
-Hindley–Milner global inference. Explicit type-argument application works on
-calls (`f[i32](x)`) and `as`-ascription types an expression inline
-(`None as Option[i32]`), so an under-inferred call has two recourses. A
-generic struct LITERAL is the gap: `Box[i32] { val: 42 }` does not parse in
-native, though the grammar and the self-host both accept it (#6812), leaving
-a binding annotation as the only spelling there.
+Hindley–Milner global inference. The pressure valves are all in place, so
+under-inference is an annoyance rather than a wall: explicit type arguments
+on a call (`f[i32](x)`), on a method (`h.make[i32]()`), and on a struct
+literal (`Box[i32] { val: 42 }`, #6812), plus `as`-ascription to type an
+expression inline (`None as Option[i32]`) and an annotation on the binding.
+E040 names the applicable ones when inference fails.
 
 **Generics.** Bracket syntax, fully monomorphised (`internal/monomorph`,
 clone-then-recheck), Rust/Crystal-style: zero runtime cost, concrete code
@@ -573,9 +571,8 @@ themselves).
 - **Intermediate** users face the ownership vocabulary (`own`, borrows,
   views, `fip`) — much gentler than Rust's, with the runtime backstop
   meaning mistakes leak rather than crash.
-- **Experts** hit the real walls: no way to express type arguments
-  explicitly, no ascription, monomorphisation cliffs (the 8-round cap), and
-  the need to read `docs/` to know which features work on which
+- **Experts** hit the real walls: monomorphisation cliffs (the 8-round cap),
+  no HKTs, and the need to read `docs/` to know which features work on which
   compiler/backend combination.
 
 **Diagnostics deserve their own line:** 63 checker codes (E001–E064) + 3
@@ -685,9 +682,10 @@ only `Option`/`Result`/`IoError` ambient.
 Naming is uniformly `snake_case`/`PascalCase` and predictable. Three design
 debts are visible and self-diagnosed (`STDLIB-ROADMAP.md`):
 
-1. **Type-suffixed families** (`sort_i32_asc`, `sum_i64`,
-   `assert_is_some_i32`) stand in for missing numeric trait bounds; the
-   roadmap plans to collapse them once `Ord`-style bounds land.
+1. **Type-suffixed families** (`assert_is_some_i32` and its siblings) stand
+   in for trait bounds that now exist and go unused; the per-width sort zoo
+   was collapsed onto `T: cmp.Ord` in #5397, and `std/num` is waiting for
+   the same treatment (#6793).
 2. **Mixed error conventions** — `Option` returns, `Result` returns, and
    `-1`/`""` sentinels coexist; docs steer toward the Option-returning
    forms (`find` over `index_of`) but the sentinels remain.
@@ -1071,11 +1069,13 @@ Ordered by severity; each tagged fundamental vs. accidental.
    *Accidental*, actively worked, and honestly documented — but it means
    the flagship engineering claim ("self-hosting") currently rides on the
    legacy emitters scheduled for deletion.
-5. **Under-powered inference with no pressure valves.** No explicit type
-   arguments, no ascription expression, no lambda return inference. Each
-   is small; together they make generic-heavy code frustrating in a way
-   the trait system's quality doesn't deserve. *Accidental; fixes are
-   parser/checker work with known designs.*
+5. **Under-powered inference.** Local only, and lambdas still do not infer
+   return types, so generic-heavy code carries annotation noise the trait
+   system's quality doesn't deserve. The pressure valves have since landed
+   (explicit type arguments on calls / methods / struct literals,
+   `as`-ascription), which downgrades this from a wall to a tax.
+   *Accidental; the remaining fix is parser/checker work with a known
+   design.*
 6. **Soundness maintained empirically, not structurally.** The `usize`
    wormhole and width-blind constant folding were found by adversarial
    review, not prevented by architecture. The differential/fuzz machinery

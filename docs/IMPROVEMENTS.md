@@ -1,9 +1,7 @@
 # Improvements drawn from fernsmith work
 
-> **Status:** most items have landed (see the audit below). The still-open items
-> (#5, #11, #15, #16) are tracked in GitHub as
-> [#2852](https://github.com/JakeChampion/lang/issues/2852); #13 and #14 are
-> already tracked as #2669 and #2673.
+> **Status:** most items have landed (see the audit below). Still open: #5, #11,
+> #15, #16, and #14 (tracked as #2673).
 
 This list collects the compiler-correctness gaps, design rough edges,
 and test-infrastructure improvements surfaced while building the
@@ -31,7 +29,9 @@ never updated. Per-item current state:
   is documented as such), #9 (the `noFloats bool` was replaced
   with a structured field — comment at fernsmith.go:225), #10
   (`genericFuncs`/`genericStructs` are gone from the codebase), #12
-  (the `-short`-gated `diffOracleSeeds(t)` helper landed in #1622).
+  (the `-short`-gated `diffOracleSeeds(t)` helper landed in #1622),
+  #13 (`as` extends to all types — `None as Option[i32]` type-checks and
+  runs, #2669).
 - 🔧 **Partially done**: #5 — the small packages called out in the fix
   sketch (`closureconv` / `shadowrename` / `treeshake`) all have
   `_test.go` now; only the giant codegen packages
@@ -45,7 +45,7 @@ never updated. Per-item current state:
   — `gtype.String()` can't see generator state — is already
   mitigated by the `g.typeName(t)` helper that callers use. **Needs
   a design call before any code lands** (effectively 🎨 rather than
-  🛠), so grouped with the design-discussion bucket below), #13–16
+  🛠), so grouped with the design-discussion bucket below), #14–16
   (language-design discussions — by their nature they require
   explicit buy-in before any code lands).
 
@@ -261,16 +261,6 @@ inner loop gets the short one.
 The items below would change the language surface. Listed for
 completeness; not picked up by the work-through below without
 agreement.
-
-## 13. 🎨 No type-ascription expression form
-
-`bare None` can't be made into `Option[i32]` inline. `expr as
-Type` is numeric-only. Langsmith needed this constantly — every
-"typed Option" helper exists because of this gap. Users writing
-generic code with payload-less variants hit the same wall.
-
-**Sketch**: extend `as` to all types, or add `expr : Type` as a
-type-ascription expression.
 
 ## 14. 🎨 `function` keyword overloaded
 
