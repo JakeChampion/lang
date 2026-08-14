@@ -65,12 +65,12 @@ var interpStdlibModloadCases = []struct {
 	// std/float's shortest-round-trip formatter is written almost entirely in
 	// u64, so #6810's signed 64-bit carrier showed up here as a WRONG ANSWER:
 	// the significand went negative inside __db_shortest64 and `1.5` rendered
-	// starting with `-`. The values are ones both engines parse to the same
-	// f64: the self-host interpreter's decimal literal reader accumulates
-	// rounding error past ~1e22 and on negative exponents, which is a separate
-	// gap from the formatter's arithmetic and would make a wider set compare
-	// two different numbers rather than two renderings.
+	// starting with `-`. The far ends of the range are the interesting half:
+	// they only agree once both engines read the LITERAL to the same double
+	// (#6824), so what fails here first is the literal reader rather than the
+	// formatter — TestSelfHostInterpFloatLiteralBits separates the two.
 	{"float-to-string-shortest", "import \"std/float\";\nfunction main(): i32 {\n  if ((1.5).to_string() != \"1.5\") { return 1; }\n  if ((0.1).to_string() != \"0.1\") { return 2; }\n  if ((1234.5678).to_string() != \"1234.5678\") { return 3; }\n  if ((0.0 - 2.5).to_string() != \"-2.5\") { return 4; }\n  if ((1e21).to_string() != \"1e+21\") { return 5; }\n  if ((100.0).to_string() != \"100\") { return 6; }\n  if ((0.5).to_string() != \"0.5\") { return 8; }\n  return 7;\n}\n"},
+	{"float-to-string-wide-range", "import \"std/float\";\nfunction main(): i32 {\n  if ((1e30).to_string() != \"1e+30\") { return 1; }\n  if ((1e100).to_string() != \"1e+100\") { return 2; }\n  if ((1e-100).to_string() != \"1e-100\") { return 3; }\n  if ((2.5e-10).to_string() != \"2.5e-10\") { return 4; }\n  if ((1e-7).to_string() != \"1e-7\") { return 5; }\n  if ((8.98846567431158e307).to_string() != \"8.98846567431158e+307\") { return 6; }\n  if ((1.7976931348623157e308).to_string() != \"1.7976931348623157e+308\") { return 8; }\n  if ((5e-324).to_string() != \"5e-324\") { return 9; }\n  if ((1.2345678901234567e-5).to_string() != \"1.2345678901234568e-5\") { return 10; }\n  return 7;\n}\n"},
 	// core/int's u64 stringifier is the other u64-heavy stdlib body, and the
 	// two values here straddle the sign boundary the carrier was losing.
 	{"u64-to-string", "import \"std/u64\";\nfunction main(): i32 {\n  var big: u64 = 9223372036854775807;\n  big = big + (1 as u64);\n  if (big.to_string() != \"9223372036854775808\") { return 1; }\n  var maxv: u64 = (0 as u64) - (1 as u64);\n  if (maxv.to_string() != \"18446744073709551615\") { return 2; }\n  return 7;\n}\n"},
