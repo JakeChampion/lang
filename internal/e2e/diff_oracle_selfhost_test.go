@@ -156,7 +156,7 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
-			want := runInterpByte(t, src)
+			want := runInterpByteOrSkip(t, src)
 
 			diverged := false
 			failf := func(format string, args ...any) {

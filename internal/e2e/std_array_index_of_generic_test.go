@@ -4,46 +4,8 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/interp"
 	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
-
-// runInterpMono is runInterpByte plus the monomorphisation pass. The shared
-// helper skips on any interp error, and an Eq-bounded generic body calls
-// `x.eq(y)` — which the interpreter models only once monomorph has rewritten
-// it to a direct call, exactly as `fern -interp` and every codegen backend do.
-// Without the pass every case here would report a coverage-gap SKIP.
-func runInterpMono(t *testing.T, src string) int {
-	t.Helper()
-	prog, _, err := modload.LoadSource(src)
-	if err != nil {
-		t.Fatalf("load: %v\nsrc:\n%s", err, src)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v\nsrc:\n%s", err, src)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
-	}
-	i := interp.New()
-	for _, ed := range prog.Enums {
-		i.RegisterEnum(ed)
-	}
-	for _, fn := range prog.Funcs {
-		i.Register(fn)
-	}
-	v, err := i.CallByName("main", nil)
-	if err != nil {
-		t.Fatalf("interp: %v\nsrc:\n%s", err, src)
-	}
-	n, ok := v.(interp.Number)
-	if !ok {
-		t.Fatalf("interp: main returned %T, want a number\nsrc:\n%s", v, src)
-	}
-	return int(int64(n)) & 0xFF
-}
 
 // TestStdArrayIndexOfContainsGeneric pins `.index_of()` / `.contains()` as
 // element-generic Array receiver methods bound `T: cmp.Eq` (#6801). They used
@@ -221,15 +183,22 @@ function main(): i32 {
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			if got := runInterpMono(t, c.src); got != c.want {
+			// Each compiled backend gets its own sub-test so a missing
+			// toolchain skips that leg alone: a bare skip here would take
+			// the interp assertion down with it.
+			if got := runInterpByte(t, c.src); got != c.want {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}
-			if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
-				t.Errorf("wasm: got exit %d, want %d", got, c.want)
-			}
-			if _, got := compileAndRunX86Native(t, c.src); got != c.want {
-				t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
-			}
+			t.Run("wasm", func(t *testing.T) {
+				if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
+					t.Errorf("wasm: got exit %d, want %d", got, c.want)
+				}
+			})
+			t.Run("x86-64 native", func(t *testing.T) {
+				if _, got := compileAndRunX86Native(t, c.src); got != c.want {
+					t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
+				}
+			})
 		})
 	}
 }

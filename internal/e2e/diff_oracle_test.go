@@ -344,7 +344,7 @@ func TestDifferential_LangsmithMain(t *testing.T) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
-			expected := runInterpByte(t, src)
+			expected := runInterpByteOrSkip(t, src)
 
 			t.Run("arm64-linux", func(t *testing.T) {
 				d := runArm64Diag(t, src)
@@ -443,7 +443,7 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		src := fernsmith.GenMainBytes(data)
-		expected := runInterpByte(t, src)
+		expected := runInterpByteOrSkip(t, src)
 		t.Run("arm64-linux", func(t *testing.T) {
 			_, code := compileAndRunArm64(t, src)
 			if code != expected {
@@ -479,26 +479,83 @@ func FuzzGenerate_ExecutionAgrees(f *testing.F) {
 	})
 }
 
-// runInterpByte parses + checks + runs `main()` under the in-
-// process interpreter and returns the result masked to a byte.
-// Sources from `fernsmith.GenMain` already mask to a byte; the
-// extra `& 0xFF` here is defensive in case the harness is ever
-// fed a program that doesn't.
+// TestInterpOracleRunsGenericBodies pins the oracle's reach over generic
+// code. A body bound `T: cmp.Eq` compares with the bound's `eq` method, and
+// without monomorph that reaches the interpreter as a field access on a
+// number — which used to `t.Skipf`, so every generic-bodied case in the
+// differentials passed vacuously (#6840).
 //
-// Interp-side coverage gaps (closures, the `?` propagation
-// operator, etc.) `t.Skipf` rather than fail — the interpreter
-// isn't a feature-complete target, and the fernsmith corpus
-// regularly emits programs it doesn't model. Parser / checker
-// errors still Fatal because those would mean fernsmith
-// generated something the front end shouldn't have accepted.
+// The assertion is written as an inner sub-test whose completion is recorded,
+// so a reintroduced skip fails the parent instead of turning it green again.
+func TestInterpOracleRunsGenericBodies(t *testing.T) {
+	src := `import "core/cmp" as cmp;
+function same[T: cmp.Eq](a: T, b: T): boolean { return a.eq(b); }
+function main(): i32 {
+    var r: i32 = 0;
+    if (same(1, 1)) { r = r + 1; }
+    if (!same(2, 3)) { r = r + 2; }
+    if (same("a", "a")) { r = r + 4; }
+    if (!same("a", "b")) { r = r + 8; }
+    return r;
+}`
+	ran := false
+	t.Run("Eq-bounded body", func(t *testing.T) {
+		if got := runInterpByte(t, src); got != 15 {
+			t.Errorf("interp: got exit %d, want 15", got)
+		}
+		ran = true
+	})
+	if !ran {
+		t.Fatal("the interp oracle skipped a generic body: it is not running the differential suites' generic cases (#6840)")
+	}
+}
+
+// runInterpByte parses + checks + monomorphises + runs `main()`
+// under the in-process interpreter and returns the result masked
+// to a byte. Sources from `fernsmith.GenMain` already mask to a
+// byte; the extra `& 0xFF` here is defensive in case the harness
+// is ever fed a program that doesn't.
+//
+// An interpreter error FAILS the test. The interpreter is the
+// differential oracle's source of truth, so a program it cannot
+// run has to be visible: a skip here takes the compiled backends
+// down with it and leaves the parent reporting PASS with nothing
+// asserted (#6840). Hand-written cases therefore use this;
+// generator-driven corpora use runInterpByteOrSkip.
 func runInterpByte(t *testing.T, src string) int {
+	t.Helper()
+	return interpByte(t, src, false)
+}
+
+// runInterpByteOrSkip is runInterpByte for the fernsmith corpora,
+// where interp-side coverage gaps (closures, the `?` propagation
+// operator, etc.) `t.Skipf` rather than fail — the interpreter
+// isn't a feature-complete target, and the generator regularly
+// emits programs it doesn't model.
+func runInterpByteOrSkip(t *testing.T, src string) int {
+	t.Helper()
+	return interpByte(t, src, true)
+}
+
+// interpByte is the shared body. Parser / checker / monomorph
+// errors always Fatal: for a generated program those would mean
+// fernsmith produced something the front end shouldn't have
+// accepted, and for a hand-written one they are the bug.
+func interpByte(t *testing.T, src string, skipGaps bool) int {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v\nsrc:\n%s", err, src)
+	}
+	// Without monomorph a generic body reaches the interpreter with an
+	// unsubstituted bound, so a `T: cmp.Eq` call like `x.eq(y)` looks like a
+	// field access on a number. Every compiled backend runs this pass.
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
 	}
 	i := interp.New()
 	for _, ed := range prog.Enums {
@@ -531,11 +588,17 @@ func runInterpByte(t *testing.T, src string) int {
 		return exitCode & 0xFF
 	}
 	if err != nil {
-		t.Skipf("interp coverage gap: %v", err)
+		if skipGaps {
+			t.Skipf("interp coverage gap: %v", err)
+		}
+		t.Fatalf("interp: %v\nsrc:\n%s", err, src)
 	}
 	n, ok := v.(interp.Number)
 	if !ok {
-		t.Skipf("interp main returned non-number %T (coverage gap)", v)
+		if skipGaps {
+			t.Skipf("interp main returned non-number %T (coverage gap)", v)
+		}
+		t.Fatalf("interp: main returned %T, want a number\nsrc:\n%s", v, src)
 	}
 	return int(int64(n) & 0xFF)
 }
