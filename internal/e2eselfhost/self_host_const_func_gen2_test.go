@@ -18,10 +18,7 @@ import (
 // lifted wrapper, because make_wrap_named_func — run inside an IR-built
 // compiler — declared the wrapper under its BASE name (`main`) rather than
 // `main$wrap0` (the lowering defect behind that is #5674; irlower works around
-// it at the one known site). That mattered twice over: it made the #3425 flip
-// diverge, and per #5622 the AST emitter silently drops i32 wrapping, so
-// anything wrongly routed there is compiled by an emitter with a known
-// correctness defect.
+// it at the one known site). That is what made the #3425 flip diverge.
 //
 // The failure is self-referential — the IR path miscompiles the code that
 // decides IR eligibility — so it is invisible to every single-generation test.

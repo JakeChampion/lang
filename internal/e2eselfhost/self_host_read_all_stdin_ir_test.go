@@ -14,10 +14,7 @@ import (
 // irlower intercepts the neighbouring stdin builtins — print / read_int /
 // stdin — but had no case for read_all_stdin, so emit_module_ir_gated saw a
 // call_direct to a symbol that is not a __fern_* helper, not a C call and not a
-// module function, and bailed the WHOLE module to the AST emitter. That matters
-// beyond optimisation quality: per #5622 the AST emitter silently drops i32
-// wrapping, so every stdin-reading program was compiled by an emitter with a
-// known correctness defect.
+// module function, and made the WHOLE module IR-ineligible.
 //
 // The op lowers to each register backend's __fern_read_all_stdin
 // (__fern_read_all_stdin_rc on arm64). Both build the result with
