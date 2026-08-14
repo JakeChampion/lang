@@ -62,6 +62,30 @@ var interpStdlibModloadCases = []struct {
 	// A user enum through the CLI's module loader, which merges every imported
 	// module's decls before the interpreter sees them.
 	{"user-enum-with-stdlib", "import \"std/string\";\nenum Tok { Word(string), Num(i32) }\nfunction render(t: Tok): string {\n  match (t) { Word(w) => { return w.to_ascii_upper(); }, Num(_) => { return \"#\"; } }\n}\nfunction main(): i32 {\n  if (render(Word(\"ok\")) == \"OK\" && render(Num(3)) == \"#\") { return 7; }\n  return 1;\n}\n"},
+	// std/float's shortest-round-trip formatter is written almost entirely in
+	// u64, so #6810's signed 64-bit carrier showed up here as a WRONG ANSWER:
+	// the significand went negative inside __db_shortest64 and `1.5` rendered
+	// starting with `-`. The values are ones both engines parse to the same
+	// f64: the self-host interpreter's decimal literal reader accumulates
+	// rounding error past ~1e22 and on negative exponents, which is a separate
+	// gap from the formatter's arithmetic and would make a wider set compare
+	// two different numbers rather than two renderings.
+	{"float-to-string-shortest", "import \"std/float\";\nfunction main(): i32 {\n  if ((1.5).to_string() != \"1.5\") { return 1; }\n  if ((0.1).to_string() != \"0.1\") { return 2; }\n  if ((1234.5678).to_string() != \"1234.5678\") { return 3; }\n  if ((0.0 - 2.5).to_string() != \"-2.5\") { return 4; }\n  if ((1e21).to_string() != \"1e+21\") { return 5; }\n  if ((100.0).to_string() != \"100\") { return 6; }\n  if ((0.5).to_string() != \"0.5\") { return 8; }\n  return 7;\n}\n"},
+	// core/int's u64 stringifier is the other u64-heavy stdlib body, and the
+	// two values here straddle the sign boundary the carrier was losing.
+	{"u64-to-string", "import \"std/u64\";\nfunction main(): i32 {\n  var big: u64 = 9223372036854775807;\n  big = big + (1 as u64);\n  if (big.to_string() != \"9223372036854775808\") { return 1; }\n  var maxv: u64 = (0 as u64) - (1 as u64);\n  if (maxv.to_string() != \"18446744073709551615\") { return 2; }\n  return 7;\n}\n"},
+	// std/u64's methods, which only come within reach once a u64 value
+	// dispatches on `u64` rather than `i64`.
+	{"u64-receiver-methods", "import \"std/u64\";\nfunction main(): i32 {\n  var big: u64 = (0 as u64) - (2 as u64);\n  if (big.min(1 as u64) != (1 as u64)) { return 1; }\n  if (big.max(1 as u64) != big) { return 2; }\n  if (!big.is_even()) { return 3; }\n  if (big.saturating_add(9 as u64) != (0 as u64) - (1 as u64)) { return 4; }\n  if ((2 as u64).pow(63) != 9223372036854775808 as u64) { return 5; }\n  return 7;\n}\n"},
+	// The whole of std/array, which an array receiver type name puts in reach
+	// (#6809): the issue's own repro first, then the closure-taking generics —
+	// dispatch resolving is only half of it, the bodies have to run — then the
+	// concrete-element `__method_Array_<name>` helpers, which the bundler
+	// mangles on the way in.
+	{"array-sorted-asc", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  var ys: i32[] = xs.sorted_asc();\n  if (ys[0] == 1) { return 7; }\n  return 1;\n}\n"},
+	{"array-closure-methods", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  var ys: i32[] = xs.map(function (v: i32): i32 { return v * 2; });\n  if (ys.len() != 3 || ys[0] != 6) { return 1; }\n  var big: i32[] = ys.filter(function (v: i32): boolean { return v > 3; });\n  if (big.len() != 2) { return 2; }\n  var total: i32 = xs.fold(0, function (acc: i32, v: i32): i32 { return acc + v; });\n  if (total != 6) { return 3; }\n  return 7;\n}\n"},
+	{"array-predicate-methods", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.is_empty()) { return 1; }\n  if (!xs.any(function (v: i32): boolean { return v == 2; })) { return 2; }\n  if (xs.all(function (v: i32): boolean { return v > 2; })) { return 3; }\n  if (xs.count_where(function (v: i32): boolean { return v > 1; }) != 2) { return 4; }\n  match (xs.first()) { Some(v) => { if (v != 3) { return 5; } }, None => { return 6; } }\n  match (xs.find(function (v: i32): boolean { return v == 1; })) { Some(v) => { if (v != 1) { return 8; } }, None => { return 9; } }\n  return 7;\n}\n"},
+	{"array-concrete-helpers", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.sum() != 6) { return 1; }\n  if (xs.product() != 6) { return 2; }\n  match (xs.max()) { Some(v) => { if (v != 3) { return 3; } }, None => { return 4; } }\n  if (xs.sorted_desc()[0] != 3) { return 5; }\n  if (xs.cumsum()[2] != 6) { return 6; }\n  var ws: string[] = [\"a\", \"b\", \"a\"];\n  if (ws.join(\"-\") != \"a-b-a\") { return 8; }\n  if (!ws.contains(\"b\")) { return 9; }\n  if (ws.distinct().len() != 2) { return 10; }\n  return 7;\n}\n"},
 }
 
 // TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`

@@ -17,28 +17,26 @@ import (
 // nothing about ownership. A local bound from a struct field read has no local
 // alias at all, so it sailed through.
 //
-// SCOPE: the FIELD-READ shapes, plus (#6170) the bare-ident REBIND shapes —
+// SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
 // `var heap = heap_in; heap = heap.with(…)` over a borrowed param, and
-// `var b = a; b = b.with(…)` over a still-live local.
+// `var b = a; b = b.with(…)` over a still-live local — and the DIRECT form
+// (#6185), `function f(buf: i32[]) { buf = buf.with(…); }`.
 //
-// The DIRECT form — a borrowed array param self-reassigned in place,
-// `function f(buf: i32[]) { buf = buf.with(…); }` — remains deliberately
-// unfixed, and its case below asserts the divergence rather than leaving it
-// undescribed. Treating a borrowed array param as unsafe to write in place
-// collides with mutable captures: box_mutated_scalar_captures rewrites a
-// captured `x = v` into `x = x.with(0, v)` on a 1-element cell, and the
-// param-lift hands that cell to the lifted body as a plain array param, which
-// MUST write through it (#5301). Forbidding that strands the closure on a stale
-// by-value snapshot — measured, five CI shards' worth, and reproduced here
-// while developing #6170: crediting the param itself failed
-// TestSelfHostOuterMutCapture's `loop-accumulator` (32, want 42) and
-// `outer-and-inner-write` (38, want 42) on all three backends.
+// The direct form is the one that needed a representation change rather than a
+// gate tweak. A mutable capture is written the same way: box_mutated_scalar_-
+// captures rewrites a captured `x = v` into `x = x.with(0, v)` on a 1-element
+// cell, and the param-lift hands that cell to the lifted body as a plain array
+// param (#5301), which MUST write through it — that write-through IS the by-
+// reference capture semantics. Both arrive as a non-`own` array param and
+// demand opposite lowerings, so no aliasing analysis can separate them; a first
+// attempt that credited the param unconditionally cost five red CI shards,
+// failing `loop-accumulator` (32, want 42) and `outer-and-inner-write`
+// (38, want 42) on all three backends.
 //
-// The rebind shapes need no such judgement, which is why they can be fixed
-// while the direct one waits: the capture cell is only ever written by the
-// DIRECT form, so a non-`own` array param can serve as a rebind SOURCE without
-// being a member of the borrowed set. Telling "the caller's array" from "a
-// captured cell" at the param itself is still the open design question (#6185).
+// The cell now carries a `$cell$` name (box_rewrite_stmt), the same collision-
+// free marker `$wc$` uses for wide captures, so the mode rides on the name that
+// ParamDecl has no field for. `borrowed_names_of` credits every other non-`own`
+// array param as a member, and the two cases are distinguishable at the gate.
 //
 // Every expected value came from `bin/fern -interp`, and each failing case was
 // confirmed to diverge on the pre-fix compiler at the value named in its
@@ -217,11 +215,9 @@ function main(): i32 {
     return 7;
 }`, "own-param-rebind-loop-allocates-nothing", 7)
 
-	// The DIRECT borrowed-param self-reassign, pinned at its DIVERGENT value so
-	// the remaining scope is visible from the gate rather than only from #6185.
-	// A fix flips this to 7, which is the intended signal: re-measure the row
-	// and delist it deliberately. Do not "fix" it by crediting the param in
-	// borrowed_names_of — that is what breaks mutable captures; see the header.
+	// #6185: the DIRECT borrowed-param self-reassign. No rebind and no field
+	// read, so both prior gates are blind to it and only the param membership
+	// added with the `$cell$` marker catches it. Pre-fix: 77.
 	run(t, `function run(heap: i32[], at: i32, v: i32): i32[] {
     heap = heap.with(at, v);
     return heap;
@@ -230,5 +226,31 @@ function main(): i32 {
     var h: i32[] = [0, 0, 0, 0];
     var r: i32[] = run(h, 1, 7);
     return h[1] * 10 + r[1];
-}`, "direct-borrowed-param-still-writes-through", 77)
+}`, "direct-borrowed-param", 7)
+
+	// The same direct form on a LIFTED lambda's own DECLARED array param. This
+	// is why the fix distinguishes capture params from declared ones instead of
+	// exempting `__lam_*` bodies wholesale: `a` here is a borrow from the
+	// closure's caller and must clone, while `k` in the same body is a capture.
+	// Pre-fix: 104.
+	run(t, `function main(): i32 {
+    var k: i32 = 5;
+    var g: (i32[]) => i32 = function (a: i32[]): i32 { a = a.with(0, 9); return a[0] + k; };
+    var b: i32[] = [1, 2];
+    var r: i32 = g(b);
+    return b[0] * 10 + r;
+}`, "lifted-lambda-declared-array-param", 24)
+
+	// MUST NOT REGRESS, and the case the whole design turns on: the capture
+	// cell reaches the lifted body as a non-`own` array param exactly like
+	// `direct-borrowed-param` above, and must write THROUGH rather than clone.
+	// A fix that credits every array param without the `$cell$` exemption
+	// returns 38 here.
+	run(t, `function main(): i32 {
+    var x: i32 = 0;
+    var f: () => i32 = function (): i32 { x = x + 4; return 0; };
+    x = 3;
+    var r: i32 = f();
+    return x + 35;
+}`, "mut-capture-cell-param-writes-through", 42)
 }

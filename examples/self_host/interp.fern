@@ -24,14 +24,19 @@ import "./util";
 // =================== VALUES ====================
 
 pub struct VInt { v: i32 }
-// VInt64 holds an integer beyond i32 range (an i64 literal or the result
-// of i64 arithmetic). The value is stored as two i32 halves rather than a
+// VInt64 holds a 64-bit integer (an i64 literal or the result of 64-bit
+// arithmetic). The value is stored as two i32 halves rather than a
 // single i64 field on purpose: a union variant carrying a raw i64 payload
 // trips a native-backend codegen fault in the compiled interpreter (the
 // i64 slot is mishandled on the drop path), whereas two i32 fields are
 // laid out and dropped cleanly. The full i64 is reconstructed into a local
 // only for arithmetic (local i64s are fine); it never lives in the union.
-pub struct VInt64 { hi: i32, lo: i32 }
+//
+// `unsigned` tags the pattern as u64 rather than i64. A u64 rides the same
+// bits (native's `Number` does too, and takes signedness from the checker's
+// static type); only div / rem / compares / `>>` and the receiver type name
+// read it — the 64-bit twin of the split VUint makes at 32 bits.
+pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean }
 // VUint carries a u32 as its 32-bit pattern in an i32 field. Unsigned
 // semantics (div / rem / compares / logical `>>`, docs/INTEGER-SEMANTICS.md)
 // live in eval_binary's unsigned dispatch; `+ - * & | ^ <<` are
@@ -106,10 +111,13 @@ pub struct VTry { box: Value }
 pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr | VTry;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
-// v_int64 packs an i64 into a VInt64's two i32 halves; unpack_i64 rebuilds
-// the i64. `lo` keeps the low 32 bits (masked so a negative low half isn't
+// v_wide packs a 64-bit pattern into a VInt64's two i32 halves; unpack_i64
+// rebuilds it. `lo` keeps the low 32 bits (masked so a negative low half isn't
 // sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
-function v_int64(n: i64): Value { return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32 }; }
+// v_int64 / v_uint64 are the i64 / u64 spellings — same bits, different tag.
+function v_wide(n: i64, unsigned: boolean): Value { return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned }; }
+function v_int64(n: i64): Value { return v_wide(n, false); }
+function v_uint64(n: i64): Value { return v_wide(n, true); }
 function unpack_i64(x: VInt64): i64 {
     // The low-32 mask is held in a local, NOT written inline as
     // `& 4294967295`: the native backend mis-emits that i64 literal as a
@@ -120,6 +128,16 @@ function unpack_i64(x: VInt64): i64 {
     return ((x.hi as i64) << 32) | ((x.lo as i64) & lo_mask);
 }
 function v_uint(n: i32): Value { return VUint { v: n }; }
+// wide_as_f64 converts a 64-bit value to a float on the value plane its tag
+// selects: a u64 above 2^63 becomes its unsigned magnitude, not the negative
+// i64 the same bits spell (#6051 is the codegen half of this).
+function wide_as_f64(x: VInt64): f64 {
+    if (x.unsigned) {
+        var uw: u64 = unpack_i64(x) as u64;
+        return uw as f64;
+    }
+    return unpack_i64(x) as f64;
+}
 // uint_zext zero-extends a u32 bit pattern to i64 — the value plane for
 // unsigned div / rem / compares / logical shift. The mask lives in a local
 // for the same native-backend immediate reason as unpack_i64's.
@@ -142,8 +160,14 @@ function box_i64(n: i64): Value {
 // binding sites is where width intent enters.
 function coerce_int_width(val: Value, type_name: string): Value {
     if (type_name == "i64" || type_name == "u64") {
+        // A declared u64 also (re)tags the pattern unsigned — the value plane
+        // is untyped, so this and the `as u64` cast are the only two places
+        // the signedness of a 64-bit value can enter.
+        var uns64: boolean = type_name == "u64";
         match (val) {
-            VInt(i) => { return v_int64(i.v as i64); },
+            VInt(i) => { return v_wide(i.v as i64, uns64); },
+            VInt64(i) => { return v_wide(unpack_i64(i), uns64); },
+            VUint(u) => { return v_wide(uint_zext(u.v), uns64); },
             _ => { return val; }
         }
     }
@@ -161,7 +185,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
         match (val) {
             VFloat(f) => { return v_float32(f.v); },
             VInt(i) => { return v_float32(i.v as f64); },
-            VInt64(i) => { return v_float32(unpack_i64(i) as f64); },
+            VInt64(i) => { return v_float32(wide_as_f64(i)); },
             _ => { return val; }
         }
     }
@@ -175,6 +199,11 @@ function is_int_like(v: Value): boolean {
 }
 function is_vint64(v: Value): boolean {
     match (v) { VInt64(_) => { return true; }, _ => { return false; } }
+}
+// is_vuint64 reports a 64-bit value tagged u64, which selects the unsigned
+// dispatch in eval_binary's 64-bit block.
+function is_vuint64(v: Value): boolean {
+    match (v) { VInt64(i) => { return i.unsigned; }, _ => { return false; } }
 }
 function vint_as_i64(v: Value): i64 {
     match (v) { VInt(i) => { return i.v as i64; }, VInt64(i) => { return unpack_i64(i); }, VUint(u) => { return uint_zext(u.v); }, _ => { return 0; } }
@@ -948,6 +977,33 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     return prod;
 }
 
+// sat_u64 is sat_i64's unsigned twin: the floor is 0 rather than i64::MIN and
+// every overflow test is a wraparound check, since an unsigned result can only
+// leave the range at the top. Returns the saturated pattern as an i64.
+function sat_u64(op: string, a: u64, b: u64): i64 {
+    var one: u64 = 1 as u64;
+    var maxv: u64 = (0 as u64) - one;
+    if (op == "+|") {
+        var s: u64 = a + b;
+        if (s < a) { return maxv as i64; }
+        return s as i64;
+    }
+    if (op == "-|") {
+        if (a < b) { return 0; }
+        var d: u64 = a - b;
+        return d as i64;
+    }
+    if (op == "<<|") {
+        var sc: u64 = b & (63 as u64);
+        var sh: u64 = a << sc;
+        if ((sh >> sc) == a) { return sh as i64; }
+        return maxv as i64;
+    }
+    var prod: u64 = a * b;
+    if (a != (0 as u64) && prod / a != b) { return maxv as i64; }
+    return prod as i64;
+}
+
 // eval_binary applies a binary operator to two already-evaluated
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
@@ -962,15 +1018,39 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
     if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
         var a: i64 = vint_as_i64(lv);
         var b: i64 = vint_as_i64(rv);
-        // An i64-typed operation always yields a VInt64, even when the
+        // u64 semantics are sticky, like VUint's at 32 bits: the ops whose
+        // result depends on how the pattern is READ (div / rem / `>>` /
+        // ordering compares / saturation) take the unsigned branch, and the
+        // width-preserving ops carry the tag through unchanged.
+        var uns: boolean = is_vuint64(lv) || is_vuint64(rv);
+        // A 64-bit operation always yields a VInt64, even when the
         // result happens to fit i32: narrowing here would strip the width
         // from e.g. a running accumulator (`s = s + 1000000000` whose
         // partial sum dips into i32 range), so the next op would wrap on
         // the i32 path. Only literals narrow by magnitude (box_i64 in
         // ExprNumber); an explicit `as i32` is the way back to a VInt.
-        if (op == "+") { return v_int64(a + b); }
-        if (op == "-") { return v_int64(a - b); }
-        if (op == "*") { return v_int64(a * b); }
+        if (op == "+") { return v_wide(a + b, uns); }
+        if (op == "-") { return v_wide(a - b, uns); }
+        if (op == "*") { return v_wide(a * b, uns); }
+        if (op == "&") { return v_wide(a & b, uns); }
+        if (op == "|") { return v_wide(a | b, uns); }
+        if (op == "^") { return v_wide(a ^ b, uns); }
+        if (op == "<<") { return v_wide(a << b, uns); }
+        if (op == "==") { return v_bool(a == b); }
+        if (op == "!=") { return v_bool(a != b); }
+        if (uns) {
+            var ua: u64 = a as u64;
+            var ub: u64 = b as u64;
+            var uzero: u64 = 0 as u64;
+            if (is_sat_op_name(op)) { return v_uint64(sat_u64(op, ua, ub)); }
+            if (op == "/") { if (ub == uzero) { return v_uint64(0); } var uq: u64 = ua / ub; return v_uint64(uq as i64); }
+            if (op == "%") { if (ub == uzero) { return v_uint64(a); } var ur: u64 = ua % ub; return v_uint64(ur as i64); }
+            if (op == ">>") { var ush: u64 = ua >> ub; return v_uint64(ush as i64); }
+            if (op == "<") { return v_bool(ua < ub); }
+            if (op == "<=") { return v_bool(ua <= ub); }
+            if (op == ">") { return v_bool(ua > ub); }
+            if (op == ">=") { return v_bool(ua >= ub); }
+        }
         if (is_sat_op_name(op)) { return v_int64(sat_i64(op, a, b)); }
         if (op == "/") { if (b == 0) { return v_int64(0); } var q64: i64 = a / b; return v_int64(q64); }
         if (op == "%") { if (b == 0) { return v_int64(a); } var r64: i64 = a % b; return v_int64(r64); }
@@ -978,12 +1058,6 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
         if (op == "<=") { return v_bool(a <= b); }
         if (op == ">") { return v_bool(a > b); }
         if (op == ">=") { return v_bool(a >= b); }
-        if (op == "==") { return v_bool(a == b); }
-        if (op == "!=") { return v_bool(a != b); }
-        if (op == "&") { return v_int64(a & b); }
-        if (op == "|") { return v_int64(a | b); }
-        if (op == "^") { return v_int64(a ^ b); }
-        if (op == "<<") { return v_int64(a << b); }
         if (op == ">>") { return v_int64(a >> b); }
     }
     // Unsigned 32-bit dispatch (docs/INTEGER-SEMANTICS.md): when either
@@ -1211,7 +1285,7 @@ function eval_unary(op: string, ov: Value): Value {
     if (op == "-") {
         match (ov) {
             VInt(i) => { return v_int(0 - i.v); },
-            VInt64(i) => { return v_int64(0 - unpack_i64(i)); },
+            VInt64(i) => { return v_wide(0 - unpack_i64(i), i.unsigned); },
             VUint(u) => { return v_uint(0 - u.v); },
             VFloat(f) => { return v_float(0.0 - f.v); },
             VFloat32(f) => { return v_float32(0.0 - f.v); },
@@ -1273,23 +1347,27 @@ function eval_unary(op: string, ov: Value): Value {
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
-    // `as i64` / `as u64` keep 64-bit width: a VInt64 passes through, a
-    // small VInt stays a VInt (an in-range value round-trips identically),
-    // a VUint widens zero-extended, and a float widens to i64.
+    // `as i64` / `as u64` keep 64-bit width and set the signedness tag: the
+    // bits are unchanged, only how div / rem / compares / `>>` read them. An
+    // `as u64` therefore has to widen a compact VInt as well — a 32-bit
+    // carrier has nowhere to put the tag, so `(0 as u64) - (1 as u64)` would
+    // wrap on the i32 path instead of reaching u64::MAX. `as i64` leaves a
+    // small VInt compact, where the signed reading is identical either way.
     if (op == "as_i64" || op == "as_u64") {
+        var uns: boolean = op == "as_u64";
         match (ov) {
-            VInt(i) => { return v_int(i.v); },
-            VInt64(i) => { return ov; },
-            VUint(u) => { return box_i64(uint_zext(u.v)); },
-            VFloat(f) => { return v_int64(f.v as i64); },
-            VFloat32(f) => { return v_int64(f.v as i64); },
+            VInt(i) => { if (uns) { return v_uint64(i.v as i64); } return v_int(i.v); },
+            VInt64(i) => { return v_wide(unpack_i64(i), uns); },
+            VUint(u) => { if (uns) { return v_uint64(uint_zext(u.v)); } return box_i64(uint_zext(u.v)); },
+            VFloat(f) => { return v_wide(f.v as i64, uns); },
+            VFloat32(f) => { return v_wide(f.v as i64, uns); },
             _ => { return v_err("`as` integer cast operand not numeric"); }
         }
     }
     if (op == "as_f64") {
         match (ov) {
             VInt(i) => { return v_float(i.v as f64); },
-            VInt64(i) => { return v_float(unpack_i64(i) as f64); },
+            VInt64(i) => { return v_float(wide_as_f64(i)); },
             VUint(u) => { return v_float(uint_zext(u.v) as f64); },
             VFloat(f) => { return v_float(f.v); },
             VFloat32(f) => { return v_float(f.v); },
@@ -1301,7 +1379,7 @@ function eval_unary(op: string, ov: Value): Value {
     if (op == "as_f32") {
         match (ov) {
             VInt(i) => { return v_float32(i.v as f64); },
-            VInt64(i) => { return v_float32(unpack_i64(i) as f64); },
+            VInt64(i) => { return v_float32(wide_as_f64(i)); },
             VUint(u) => { return v_float32(uint_zext(u.v) as f64); },
             VFloat(f) => { return v_float32(f.v); },
             VFloat32(f) => { return ov; },
@@ -1816,6 +1894,26 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
     return false;
 }
 
+// is_array_recv_type reports an element-polymorphic array receiver spelling —
+// `T[]` for a single-uppercase-letter type variable, which is the ONLY array
+// receiver the language allows (a concrete `i32[]` receiver is E021). So one
+// untyped VArr can answer to all of them with nothing to disambiguate, which
+// is why the checker registers them under a single "Array" name too.
+function is_array_recv_type(t: string): boolean {
+    if (t.len() != 3) { return false; }
+    var c: i32 = t[0] as i32;
+    if (c < 65 || c > 90) { return false; }
+    return t[1] == 91 && t[2] == 93;
+}
+
+// name_ends_with reports whether `nm` is `suffix` or ends with it, which is
+// how a bundler-mangled `<mod>__<name>` is recognised as `<name>`.
+function name_ends_with(nm: string, suffix: string): boolean {
+    if (nm == suffix) { return true; }
+    if (nm.len() <= suffix.len()) { return false; }
+    return nm[nm.len() - suffix.len() : nm.len()] == suffix;
+}
+
 // variant_simple_name returns the final `.`-separated segment of a
 // (possibly qualified) variant name — `E.Red` → `Red`,
 // `lexer.TokIdent` → `TokIdent`, `Red` → `Red`. Used to match a
@@ -2044,11 +2142,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         VStruct(sv) => { recv_type = sv.type_name; },
         VString(_) => { recv_type = "string"; },
         VInt(_) => { recv_type = "i32"; },
-        VInt64(_) => { recv_type = "i64"; },
+        VInt64(iv64) => { recv_type = "i64"; if (iv64.unsigned) { recv_type = "u64"; } },
         VUint(_) => { recv_type = "u32"; },
         VBool(_) => { recv_type = "bool"; },
         VFloat(_) => { recv_type = "f64"; },
         VFloat32(_) => { recv_type = "f32"; },
+        VArr(_) => { recv_type = "Array"; },
         _ => { return v_err("method `" + name + "`: receiver has no type name to dispatch on"); }
     }
     var i: i32 = 0;
@@ -2064,6 +2163,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         // (`function (sh: Shape) area()`) matches when recv's
         // struct type_name is in the union's variant list.
         if (!rt_match && is_variant_of_alias_interp(recv_type, fd.receiver_type, aliases)) {
+            rt_match = true;
+        }
+        // Array-receiver methods, all of std/array: every array value answers
+        // to every `(xs: T[])` method, the single "Array" namespace the
+        // checker registers them under.
+        if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
             rt_match = true;
         }
         if (fd.name == name && fd.receiver_name.len() > 0 && rt_match) {
@@ -2084,6 +2189,28 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             return unwrap_try(step.ret);
         }
         i = i + 1;
+    }
+    // std/array's OTHER method convention: a concrete-element helper cannot be
+    // written as a `T[]` method, so it is a free `__method_Array_<name>(arr,
+    // …)` the front end dispatches `xs.<name>(…)` to. The bundler mangles the
+    // name with a `<mod>__` prefix, so an in-scope helper is the bare
+    // convention name or one ending in it — the suffix match
+    // checker.has_array_method makes.
+    if (recv_type == "Array") {
+        var conv: string = "__method_Array_" + name;
+        var ai: i32 = 0;
+        while (ai < funcs.len()) {
+            if (funcs[ai].receiver_name.len() == 0 && name_ends_with(funcs[ai].name, conv)) {
+                var conv_args: Value[] = [recv];
+                var aj: i32 = 0;
+                while (aj < args.len()) {
+                    conv_args = conv_args.append(args[aj]);
+                    aj = aj + 1;
+                }
+                return call_func(funcs[ai].name, conv_args, funcs, aliases, variants);
+            }
+            ai = ai + 1;
+        }
     }
     // No user method matched. Before erroring, try a FIELD holding a closure
     // (#6596): `h.f(3)` where `f: (i32) => i32` is a field, not a method. The

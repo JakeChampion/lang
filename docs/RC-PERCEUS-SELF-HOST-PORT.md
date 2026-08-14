@@ -5943,7 +5943,8 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   A rebind needs no such judgement, because the capture cell is only ever
   written by the direct form. Telling "the caller's array" from "a captured
-  cell" AT THE PARAM remains the open design question (#6185).
+  cell" AT THE PARAM was left open here; the 2026-08-14 #6185 entry below
+  closes it by naming the cell.
 
   **The other half is not cloning what it need not clone.** A rebind is credited
   only when its source is a non-`own` array param, is itself borrowed, or is
@@ -7179,6 +7180,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   plain recursion) and `TestSelfHostTrmcWasmIR` (the three positives). The deep
   case exits 134 on the parent commit, and 60 conformance fixtures emit
   byte-identical wat across the change. Refs #5334 #4352 #5344 #4402 #4451.
+
+- 2026-08-14: **A borrowed array PARAM self-reassigned with `.with` stops
+  writing through into the caller (#6185).** The last shape of #6158's family:
+  `function patch(buf: i32[], at, v) { buf = buf.with(at, v); return buf; }`
+  returned 77 where interp and native return 7, because the in-place `arr_set`
+  landed in the caller's buffer.
+
+  It stayed open through #6158 and #6170 because the gate cannot decide it from
+  aliasing. `box_mutated_scalar_captures` rewrites a captured `x = v` into
+  `x = x.with(0, v)` on a 1-element cell, and the param-lift threads that cell
+  to the lifted body as a plain array param (#5301). So the two cases arrive
+  identically — a non-`own` array param, self-reassigned with `.with` — and
+  demand OPPOSITE lowerings:
+
+  | | the caller's array | a capture cell |
+  |---|---|---|
+  | may the caller read it after? | yes | yes |
+  | required lowering | CLONE | in-place STORE |
+
+  Both answer "yes" to the only question an aliasing analysis asks, so no
+  sharpening of `aliased_names` or `borrowed_names_of` can separate them. What
+  differs is the MODE — a borrow versus a by-reference cell — and `ParamDecl`
+  carries no mode beyond `own`.
+
+  **Native never has to choose**, which is why it is right here. It distinguishes
+  the two structurally, twice over: a capture cell reaches a lifted body as a
+  slot in the heap `__env` block (`*ast.CaptureRef{Offset}`), never as a
+  parameter, and its write is spelled `cell[0] = v` — an index-assign that is
+  E056 in surface source and synthesizable only after the checker, so it can
+  never be confused with a value-semantics `.with`
+  (`internal/closureconv/boxcapture.go`, `internal/ir/ir.go` `b.assign`).
+  Porting either mechanism whole is a large change; porting the DISTINCTION is
+  not.
+
+  The fix carries the mode on the name, the one channel that survives to the
+  gate: `box_rewrite_stmt` now names its cell `$cell$x`, reusing the
+  collision-free `$` convention `$wc$` and `$lamret$` already rely on. The
+  lifted capture param inherits that name for free (the param takes the
+  capture's name verbatim), so `borrowed_names_of` can credit every OTHER
+  non-`own` array param as a member — which is what native's `borrowedParam`
+  set does — and exempt `$cell$` alone.
+
+  Two deletions come with it. `borrowed_rebind_closure`'s `borrow_srcs`
+  parameter is gone: a param is now a member, so the transitive "Y is itself
+  borrowed" arm subsumes it. And `box_rewrite_stmt` grew the `StmtDefer` arm it
+  was missing — a boxed read inside a defer was silently reading the cell
+  pointer as a scalar.
+
+  A second instance fell out: a LIFTED lambda's own DECLARED array param
+  (`function (a: i32[]) { a = a.with(0, 9); … }`) had the same bug, 104 vs 24.
+  It is why the fix distinguishes capture params from declared ones rather than
+  exempting `__lam_*` bodies wholesale.
+
+  VERIFIED: `TestSelfHostOuterMutCaptureWasmIR` all 17 rows green by name —
+  including `loop-accumulator` and `outer-and-inner-write`, the two the naive
+  fix broke — plus the six `mut_capture_*` parity programs and both `own`
+  allocation guards (which read 91 if any clone crept in, and read 7), each run
+  end-to-end through the self-host compiler to a native arm64-darwin binary.
+  `TestSelfHostBorrowedWithInPlaceIRX86_64` goes from 9 rows to 11 and its
+  #6185 row flips from the pinned 77 to 7. Refs #6185 #6158 #6170 #5301 #4451.
 
 - 2026-08-14: **A COW'd Map shared its key and value columns with the buffer it
   was copied from (#6242).** `__map_cow_inplace` and `__map_clone` build the
