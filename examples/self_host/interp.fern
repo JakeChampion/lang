@@ -188,6 +188,36 @@ function is_vuint(v: Value): boolean {
 function vint_bits(v: Value): i32 {
     match (v) { VInt(i) => { return i.v; }, VUint(u) => { return u.v; }, _ => { return 0; } }
 }
+// is_destructure_name / split_binding_names decode the comma-joined name the
+// parser gives a tuple-destructuring `var`. A binding name never contains a
+// comma itself, so a plain scan is enough.
+function is_destructure_name(name: string): boolean {
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == 44) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+function split_binding_names(csv: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i <= csv.len()) {
+        if (i == csv.len() || csv[i] == 44) {
+            out = out.append(csv[start : i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+// is_i32_arg guards a vint_bits read: the compact carriers are the only
+// shapes an i32-typed argument can arrive in, and vint_bits reports 0 for
+// everything else rather than failing.
+function is_i32_arg(v: Value): boolean {
+    match (v) { VInt(_) => { return true; }, VUint(_) => { return true; }, _ => { return false; } }
+}
 // is_float_like / is_vfloat32 / vfloat_as_f64 are the float-side bridges:
 // a VFloat32's payload is already rounded, so reading it as f64 is exact.
 function is_float_like(v: Value): boolean {
@@ -1795,12 +1825,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // Built-in VMap methods are dispatched ahead of the user
     // FuncDecl walk — set / get_or / has / delete / len /
     // keys / values are baked in rather than user-defined.
-    // String and array carry the two zero-import builtin
-    // methods the native compiler recognises — `.len()` on
-    // both and `.append(x)` on arrays (the method mirrors of
-    // the bare `len(x)` builtin in call_func). Unknown method
-    // names fall through to the user-method walk below rather
-    // than erroring, so user-declared string/array receivers
+    // String and array carry the zero-import builtin methods the
+    // native compiler recognises — `.len()` on both, `.bytes()` /
+    // `.as_bytes()` on strings, `.append(x)` / `.with(i, x)` on
+    // arrays (the method mirrors of the bare builtins in call_func).
+    // Unknown method names fall through to the user-method walk below
+    // rather than erroring, so user-declared string/array receivers
     // still dispatch.
     match (recv) {
         VString(sv) => {
@@ -1808,11 +1838,41 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 if (args.len() != 0) { return v_err("string.len: takes no arguments"); }
                 return v_int(sv.v.len());
             }
+            // `s.bytes()` / `s.as_bytes()` — one VInt per UTF-8 byte. The two
+            // diverge on aliasing under codegen (bytes copies, as_bytes shares
+            // the payload); a boxed Value tree has no aliasing to share, so
+            // both return an independent array, as the native interp does.
+            if (name == "bytes" || name == "as_bytes") {
+                if (args.len() != 0) { return v_err("string." + name + ": takes no arguments"); }
+                var bs: Value[] = [];
+                var bi: i32 = 0;
+                while (bi < sv.v.len()) {
+                    bs = bs.append(v_int(sv.v[bi] as i32));
+                    bi = bi + 1;
+                }
+                return v_arr(bs);
+            }
         },
         VArr(av) => {
             if (name == "len") {
                 if (args.len() != 0) { return v_err("array.len: takes no arguments"); }
                 return v_int(av.elements.len());
+            }
+            if (name == "with") {
+                if (args.len() != 2) { return v_err("array.with: need 2 args"); }
+                if (!is_i32_arg(args[0])) { return v_err("array.with: index must be an integer"); }
+                var wi: i32 = vint_bits(args[0]);
+                if (wi < 0 || wi >= av.elements.len()) {
+                    return v_err("array.with: index " + util.i32_to_string(wi) + " out of range [0, " + util.i32_to_string(av.elements.len()) + ")");
+                }
+                var wout: Value[] = [];
+                var wj: i32 = 0;
+                while (wj < av.elements.len()) {
+                    if (wj == wi) { wout = wout.append(args[1]); }
+                    else { wout = wout.append(av.elements[wj]); }
+                    wj = wj + 1;
+                }
+                return v_arr(wout);
             }
             if (name == "append") {
                 if (args.len() != 1) { return v_err("array.append: need 1 arg"); }
@@ -1918,11 +1978,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         VStruct(sv) => { recv_type = sv.type_name; },
         VString(_) => { recv_type = "string"; },
         VInt(_) => { recv_type = "i32"; },
+        VInt64(_) => { recv_type = "i64"; },
         VUint(_) => { recv_type = "u32"; },
         VBool(_) => { recv_type = "bool"; },
         VFloat(_) => { recv_type = "f64"; },
         VFloat32(_) => { recv_type = "f32"; },
-        _ => { return v_err("method dispatch: receiver not a typed value"); }
+        _ => { return v_err("method `" + name + "`: receiver has no type name to dispatch on"); }
     }
     var i: i32 = 0;
     while (i < funcs.len()) {
@@ -2002,6 +2063,110 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // since VMap uses dynamic parallel arrays.
     if (name == "map_new") {
         return v_map_new();
+    }
+    // `__alloc_u8(n)` — the stdlib's staging buffer for every
+    // byte-at-a-time string builder (`__string_case_fold`,
+    // `slice`, `repeat`, the base64 / hex / json encoders…).
+    // Codegen hands back raw zeroed bytes; the boxed model
+    // hands back n zero VInts, which `.with(i, b)` then fills
+    // and `string_from_bytes_unchecked` packs.
+    //
+    // The rest of the raw-memory family — `__load_i32`, `__store_ptr`,
+    // `__ptr_width`, `__memset`, `__memcpy` — is deliberately absent, as it
+    // is from internal/interp. Those pretend to a flat byte address space no
+    // boxed model has, and outside std/jni they are used only by
+    // core/map.fern, whose bodies neither engine runs: Map is a native value
+    // here (VMap) and in the native interpreter.
+    if (name == "__alloc_u8") {
+        if (args.len() != 1) { return v_err("__alloc_u8: expected 1 arg (n)"); }
+        if (!is_i32_arg(args[0])) { return v_err("__alloc_u8: arg must be an integer"); }
+        var an: i32 = vint_bits(args[0]);
+        if (an < 0) { return v_err("__alloc_u8: negative length " + util.i32_to_string(an)); }
+        var zs: Value[] = [];
+        var zi: i32 = 0;
+        while (zi < an) {
+            zs = zs.append(v_int(0));
+            zi = zi + 1;
+        }
+        return v_arr(zs);
+    }
+    if (name == "string_from_bytes_unchecked") {
+        if (args.len() != 1) { return v_err("string_from_bytes_unchecked: expected 1 arg (bs)"); }
+        match (args[0]) {
+            VArr(a) => {
+                // Each element is narrowed to its low 8 bits, so a caller-side
+                // width mismatch cannot leak a wider value into the result.
+                var raw: u8[] = [];
+                var ri: i32 = 0;
+                while (ri < a.elements.len()) {
+                    if (!is_i32_arg(a.elements[ri])) {
+                        return v_err("string_from_bytes_unchecked: element " + util.i32_to_string(ri) + " is not an integer");
+                    }
+                    raw = raw.append((vint_bits(a.elements[ri]) & 255) as u8);
+                    ri = ri + 1;
+                }
+                return v_string(string_from_bytes_unchecked(raw));
+            },
+            _ => { return v_err("string_from_bytes_unchecked: arg must be an array"); }
+        }
+    }
+    // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
+    // kernels the compiled backends vectorise, and the byte-search floor
+    // under std/string's find family. `from` clamps (negative behaves as 0)
+    // and a byte outside 0..255 cannot occur in the haystack, so both stay
+    // total; __ascii_run reports len(s) rather than -1 when the rest is
+    // ASCII, which is what lets a caller use it as a branchless skip.
+    if (name == "__memchr") {
+        if (args.len() != 3) { return v_err("__memchr: expected 3 args (s, byte, from)"); }
+        if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) { return v_err("__memchr: byte and start must be integers"); }
+        match (args[0]) {
+            VString(s) => {
+                var want: i32 = vint_bits(args[1]);
+                if (want < 0 || want > 255) { return v_int(-1); }
+                var mi: i32 = vint_bits(args[2]);
+                if (mi < 0) { mi = 0; }
+                while (mi < s.v.len()) {
+                    if ((s.v[mi] as i32) == want) { return v_int(mi); }
+                    mi = mi + 1;
+                }
+                return v_int(-1);
+            },
+            _ => { return v_err("__memchr: first arg must be a string"); }
+        }
+    }
+    if (name == "__ascii_run") {
+        if (args.len() != 2) { return v_err("__ascii_run: expected 2 args (s, from)"); }
+        if (!is_i32_arg(args[1])) { return v_err("__ascii_run: start must be an integer"); }
+        match (args[0]) {
+            VString(s) => {
+                var ai: i32 = vint_bits(args[1]);
+                if (ai < 0) { ai = 0; }
+                while (ai < s.v.len()) {
+                    if ((s.v[ai] as i32) >= 128) { return v_int(ai); }
+                    ai = ai + 1;
+                }
+                return v_int(s.v.len());
+            },
+            _ => { return v_err("__ascii_run: first arg must be a string"); }
+        }
+    }
+    // The float reinterpret quartet — `std/float`'s formatter takes a
+    // number apart through these, so every f-string on an f64 reaches them.
+    if (name == "f64_bits") {
+        if (args.len() != 1 || !is_float_like(args[0])) { return v_err("f64_bits: expected 1 float arg"); }
+        return box_i64(f64_bits(vfloat_as_f64(args[0])));
+    }
+    if (name == "f64_from_bits") {
+        if (args.len() != 1 || !is_int_like(args[0])) { return v_err("f64_from_bits: expected 1 integer arg"); }
+        return v_float(f64_from_bits(vint_as_i64(args[0])));
+    }
+    if (name == "f32_bits") {
+        if (args.len() != 1 || !is_float_like(args[0])) { return v_err("f32_bits: expected 1 float arg"); }
+        return v_int(f32_bits(vfloat_as_f64(args[0]) as f32));
+    }
+    if (name == "f32_from_bits") {
+        if (args.len() != 1 || !is_i32_arg(args[0])) { return v_err("f32_from_bits: expected 1 integer arg"); }
+        return v_float32(f32_from_bits(vint_bits(args[0])) as f64);
     }
     var i: i32 = 0;
     while (i < funcs.len()) {
@@ -2194,6 +2359,27 @@ function eval_stmt(st: parser.Stmt, env: Env): StepResult {
             // only ever yields VALUES (control signals are statement-level,
             // on the sig channel), so any VErr here is a real error to propagate.
             if (is_err(val)) { return step_stop(env, val); }
+            // `var (a, b) = t` arrives as ONE StmtVar whose name is the
+            // comma-joined binding list (see parser's tuple-destructure arm),
+            // so a name carrying a comma binds per tuple slot, not whole.
+            if (is_destructure_name(v.name)) {
+                var names: string[] = split_binding_names(v.name);
+                match (val) {
+                    VTuple(tv) => {
+                        if (tv.elements.len() != names.len()) {
+                            return step_stop(env, v_err("destructuring `" + v.name + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
+                        }
+                        var denv: Env = env;
+                        var di: i32 = 0;
+                        while (di < names.len()) {
+                            denv = denv.bind(names[di], tv.elements[di]);
+                            di = di + 1;
+                        }
+                        return step_none(denv);
+                    },
+                    _ => { return step_stop(env, v_err("destructuring `" + v.name + "`: initialiser is not a tuple")); }
+                }
+            }
             var env2: Env = env.bind(v.name, coerce_int_width(val, v.type_name));
             return step_none(env2);
         },
