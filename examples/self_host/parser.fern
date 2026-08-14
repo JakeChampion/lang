@@ -121,12 +121,29 @@ pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: 
 // (interp: a VErr; asmcore: P001/P002; checker: an unknown type). `kind` names
 // the reason and `line`/`col` locate it (0 when the producer has no position).
 pub struct ExprUnknown { kind: string, line: i32, col: i32 }
+// ExprMapLit is a `Map { k0: v0, … }` literal as WRITTEN, and reaches only the
+// printer: parse_map_lit desugars every other parse to the
+// `map_new[_i32](8).insert(k0, v0)…` chain the compile path is written against,
+// and `-fmt` (Par.verbatim) takes this instead. Printing the chain back is not a
+// style choice — the chain states no K/V, so a `var m: Map[string, i32] = Map {}`
+// came back as `map_new(8)` and stopped compiling (E043).
+pub struct ExprMapLit { keys: Expr[], vals: Expr[], line: i32, col: i32 }
+
+// ExprFString is an f-string `f"a {x} b"` as WRITTEN, and like ExprMapLit reaches
+// only the printer: every other parse desugars it into the `+`-chain of
+// `.to_string()` calls the compile path is written against, and printing that
+// chain back replaces the author's interpolation with its expansion. The three
+// arrays are parallel, one entry per part: `is_expr[i]` says whether the part is
+// an interpolant in `exprs[i]` or literal text in `lits[i]`. An interpolant is
+// held PARSED, not as source text, because the printer re-emits it through
+// print_expr — which is what native does, so the two agree on its spelling.
+pub struct ExprFString { lits: string[], exprs: Expr[], is_expr: boolean[], line: i32, col: i32 }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
               | ExprBinary | ExprUnary | ExprCall
               | ExprArray | ExprTuple | ExprIndex | ExprSlice
               | ExprStructLit | ExprFieldAccess | ExprLambda
-              | ExprUnknown;
+              | ExprMapLit | ExprFString | ExprUnknown;
 
 // Statement nodes.
 
@@ -154,7 +171,7 @@ pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32,
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
 // short-circuits an if-branch.
-pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32 }
+pub struct StmtWhile { cond: Expr, body: Stmt[], label: string, line: i32, is_loop: boolean }
 // StmtAssign models a re-assignment to an existing var: `x = expr;`.
 // The target is an ident name — full lvalue syntax (field /
 // index / tuple) is a later port milestone. The checker verifies
@@ -431,9 +448,21 @@ pub struct TraitDecl { name: string, type_params: string[], supertraits: string[
 // inherent `impl Type { … }`.
 pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32 }
 
+// FieldLines records the source line of each FIELD of one struct, or of each
+// VARIANT of one enum, for the formatter alone. Both formatters force the
+// multi-line block form when a comment sits inside the braces, and drain each
+// comment against the field it was written above; with no line per field the
+// self-host printed the one-liner instead and every such comment was re-emitted
+// above the NEXT declaration, where it documents the wrong thing (#6802).
+//
+// It rides beside Module for the reason TraitDecl does: 57 StructFieldDecl
+// literals across the self-host would each have to carry a line none of them
+// reads.
+pub struct FieldLines { name: string, decl_line: i32, lines: i32[] }
+
 // ParsedFmt is parse_module_verbatim's result: the module plus the decls kept
 // only for printing.
-pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[] }
+pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[] }
 
 // ResourceDecl records a `resource Name;` declaration (P5 — WIT resource-handle
 // types, docs/WIT-BRING-YOUR-OWN.md). `iface` / `wit` carry the WIT identity
@@ -589,7 +618,7 @@ function s_if_chained(cond: Expr, then_body: Stmt[], else_body: Stmt[], chained:
     return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: chained };
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
-    return StmtWhile { cond: cond, body: body, label: "", line: 0 };
+    return StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
 }
 function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
     return StmtFor { var_name: var_name, iter: iter, body: body, label: "", line: 0 };
@@ -600,7 +629,7 @@ function s_for(var_name: string, iter: Expr, body: Stmt[]): Stmt {
 function with_loop_label(st: Stmt, label: string): Stmt {
     if (label.len() == 0) { return st; }
     match (st) {
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line }; },
         StmtIf(f) => {
             // A C-style `for` desugars to `if (true) { INIT; var __forc_…;
@@ -614,7 +643,7 @@ function with_loop_label(st: Stmt, label: string): Stmt {
                     var relabelled: Stmt[] = [];
                     var i: i32 = 0;
                     while (i < n - 1) { relabelled = relabelled.append(f.then_body[i]); i = i + 1; }
-                    relabelled = relabelled.append(StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line });
+                    relabelled = relabelled.append(StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line, is_loop: w2.is_loop });
                     return StmtIf { cond: f.cond, then_body: relabelled, else_body: f.else_body, line: f.line, else_chained: f.else_chained };
                 },
                 _ => { return st; }
@@ -701,7 +730,7 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b), line: f.line, else_chained: f.else_chained };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line };
+            return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
             return StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label, line: fr.line };
@@ -908,7 +937,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtContinue { tag: d2, line: c.line, col: c.col, label: c.label };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line };
+            return StmtWhile { cond: w.cond, body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
             return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
@@ -1491,6 +1520,8 @@ function parse_map_lit(p: Par): (Expr, Par) {
     // literal must not inherit the outer key kind, which would reintroduce
     // this bug in a rarer shape.
     var want_kk: i32 = p.map_kind;
+    var mline: i32 = p.peek_line();
+    var mcol: i32 = p.peek_col();
     p = p.with_map_kind(0 - 1).advance();   // consume `{`
     var mlk: Expr[] = [];
     var mlv: Expr[] = [];
@@ -1508,6 +1539,7 @@ function parse_map_lit(p: Par): (Expr, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    if (p.verbatim) { return parse_postfix(p, ExprMapLit { keys: mlk, vals: mlv, line: mline, col: mcol }); }
     // The first key that CAN be classified decides, rather than the first key
     // full stop: keys are homogeneous, so a later decisive one describes the
     // map just as well as the first, and consulting it costs nothing. Only an
@@ -1622,11 +1654,53 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
 // the next token isn't one of these. Used by parse_primary
 // to share the loop across multiple base shapes — ident
 // chains, parenthesised exprs, tuple / array literals.
+// scan_written_type_args reconstructs a `[T1, T2, …]` instantiation as written.
+// The cursor sits just past the `[` and is left on the matching `]`. Each
+// argument goes through parse_type_name, so the spelling is the type grammar's
+// own — which under `-fmt` keeps `str`, `[T]` and fn types as the author wrote
+// them. A count of 0 means the brackets do not hold a type list; the cursor is
+// then wherever the attempt stopped and the caller must restore it.
+function scan_written_type_args(p: Par): (string, i32, Par) {
+    var out: string = "";
+    var n: i32 = 0;
+    while (true) {
+        var (tn, tn_arr, tn_fnret, tn_p) = parse_type_name(p);
+        if (tn.len() == 0) { return ("", 0, p); }
+        p = tn_p;
+        if (n > 0) { out = out + ", "; }
+        out = out + tn;
+        n = n + 1;
+        if (p.peek_punct() == ",") { p = p.advance(); continue; }
+        break;
+    }
+    if (p.peek_punct() != "]") { return ("", 0, p); }
+    return (out, n, p);
+}
+
+// with_written_type_args spells a call's explicit instantiation onto the callee's
+// written name — `empty` + `[i32]` for `empty[i32]()`, the method's field name
+// for a receiver call. Formatter-only: the compile parse erases type args to
+// their count, and no consumer reads a name back apart from the printer.
+function with_written_type_args(callee: Expr, args: string): Expr {
+    match (callee) {
+        ExprIdent(id) => { return ExprIdent { name: id.name + "[" + args + "]", line: id.line, col: id.col }; },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: fa.obj, field: fa.field + "[" + args + "]", line: fa.line, col: fa.col, ty: fa.ty }; },
+        _ => { return callee; }
+    }
+    return callee;
+}
+
 function parse_postfix(p: Par, base: Expr): (Expr, Par) {
     // Carries the explicit type-argument count from a `[...]` instantiation to
     // the call `(...)` that immediately follows (`f[i32](x)`), so the call node
     // records it for the E040 arity check. Reset after each call.
     var pending_type_argc: i32 = 0;
+    // The same instantiation AS WRITTEN, for `-fmt` only (Par.verbatim). The
+    // count alone cannot be printed, so a formatted `empty[i32]()` came back as
+    // `empty()` — E040, the formatter deleting the syntax the diagnostic asks
+    // for. Attached to the callee's written name rather than to a new ExprCall
+    // field, the way parse_type_name carries a bound's args on the type name.
+    var pending_type_args: string = "";
     while (true) {
         var pk: string = p.peek_punct();
         if (pk == "(") {
@@ -1671,10 +1745,12 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 return (e_unknown("missing ) in call"), p);
             }
             p = p.advance();
+            if (pending_type_args.len() > 0) { base = with_written_type_args(base, pending_type_args); }
             base = ExprCall { callee: base, args: args, line: oline, col: ocol, type_argc: pending_type_argc, ty: "" };
             base = maybe_desugar_array_build(base);
             base = maybe_desugar_map_build(base);
             pending_type_argc = 0;
+            pending_type_args = "";
         } else if (pk == "[") {
             p = p.advance();
             // Leading-colon slice `a[:hi]` (low implicitly 0), mirroring the
@@ -1709,6 +1785,22 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
             var idxStart: i32 = p.pos;
             var (idx_expr, idx_p) = parse_expr(p);
             if (idx_p.pos == idxStart) {
+                // `-fmt` reads the arguments back out as types before the skip
+                // loop erases them. On anything the type grammar does not accept
+                // the cursor is restored and the erasing walk below runs as it
+                // always did, so a shape only the compile path understands cannot
+                // desync the parse.
+                if (p.verbatim) {
+                    var ta_save: Par = p;
+                    var (wta_text, wta_n, wta_p) = scan_written_type_args(p);
+                    if (wta_n > 0) {
+                        pending_type_args = wta_text;
+                        pending_type_argc = wta_n;
+                        p = wta_p;
+                    } else {
+                        p = ta_save;
+                    }
+                }
                 // Count the top-level (comma-separated) type arguments while
                 // skipping them, tracking nested `[...]` depth so a comma
                 // inside `Map[K, V]` doesn't inflate the count.
@@ -1731,9 +1823,17 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
                 if (p.peek_punct() == "{") {
                     match (base) {
                         ExprIdent(bid) => {
-                            var (glit_expr, glit_p) = parse_struct_lit_body(p, bid.name, 0, 0);
+                            // The written instantiation rides on the literal's
+                            // type name under `-fmt`: dropping it re-infers the
+                            // literal, so `Box[i64] { val: 42 }` came back as
+                            // `Box { val: 42 }` and quietly became `Box[i32]`.
+                            var glit_name: string = bid.name;
+                            if (pending_type_args.len() > 0) { glit_name = glit_name + "[" + pending_type_args + "]"; }
+                            var (glit_expr, glit_p) = parse_struct_lit_body(p, glit_name, 0, 0);
                             p = glit_p;
                             base = glit_expr;
+                            pending_type_argc = 0;
+                            pending_type_args = "";
                         },
                         _ => {},
                     }
@@ -2220,6 +2320,25 @@ function parse_primary(p: Par): (Expr, Par) {
         lexer.TokError(x) => { return (e_unknown("lex error: " + x.msg), p); },
         lexer.TokFString(f) => {
             p = p.advance();
+            if (p.verbatim) {
+                var vlits: string[] = [];
+                var vexprs: Expr[] = [];
+                var vflags: boolean[] = [];
+                var vi: i32 = 0;
+                while (vi < f.parts.len()) {
+                    var vpart: lexer.FStringPart = f.parts[vi];
+                    vflags = vflags.append(vpart.is_expr);
+                    if (vpart.is_expr) {
+                        vlits = vlits.append("");
+                        vexprs = vexprs.append(parse_expr_from_text(vpart.expr));
+                    } else {
+                        vlits = vlits.append(vpart.lit);
+                        vexprs = vexprs.append(e_unknown("fstring-literal-part"));
+                    }
+                    vi = vi + 1;
+                }
+                return parse_postfix(p, ExprFString { lits: vlits, exprs: vexprs, is_expr: vflags, line: f.line, col: f.col });
+            }
             // Desugar to a `+`-chain, mirroring the Go checker's
             // FString lowering: literal parts → string literals,
             // interpolant parts → `(<sub-parsed expr>).to_string()`,
@@ -3427,6 +3546,12 @@ function parse_pipe(p: Par): (Expr, Par) {
         p = p.advance();
         var (right_expr, right_p) = parse_range(p);
         p = right_p;
+        // `-fmt` keeps the written pipe. The desugar folds the LHS into the
+        // call's argument list (or into its `_` hole), which is unrecoverable
+        // afterwards — a reformat rewrote `x |> f` as `f(x)`. Held as an
+        // ExprBinary rather than a new node: the RHS as written is exactly what
+        // the printer has to emit after the arrow.
+        if (p.verbatim) { acc = e_binary("|>", acc, right_expr); continue; }
         acc = pipe_desugar(acc, right_expr);
     }
     return (acc, p);
@@ -4103,7 +4228,10 @@ pub function stmts_mention(stmts: Stmt[], name: string): boolean {
 function parse_loop_stmt(p: Par): (Stmt, Par) {
     var p2: Par = p.advance();
     var (lb_body, lb_p) = parse_block_or_stmt(p2);
-    return (s_while(e_bool(true), lb_body), lb_p);
+    // `loop` and `while (true)` are the same loop to every consumer below the
+    // printer, which is why one node models both; is_loop records which was
+    // written so a reformat does not rewrite one into the other.
+    return (StmtWhile { cond: e_bool(true), body: lb_body, label: "", line: 0, is_loop: true }, lb_p);
 }
 
 // parse_for_stmt parses a `for` statement (`p` is positioned at the
@@ -4282,7 +4410,7 @@ function with_stmt_line(st: Stmt, line: i32): Stmt {
     match (st) {
         StmtExpr(x) => { return StmtExpr { value: x.value, line: line }; },
         StmtIf(f) => { return StmtIf { cond: f.cond, then_body: f.then_body, else_body: f.else_body, line: line, else_chained: f.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line, is_loop: w.is_loop }; },
         StmtFor(fo) => { return StmtFor { var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line }; },
         StmtDefer(d) => { return StmtDefer { action: d.action, on_error: d.on_error, line: line }; },
         _ => { return st; }
@@ -4444,6 +4572,11 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             return (s_var(fr_func.name, "", e_lambda(fr_func.params, fr_func.ret_type, fr_func.body)), p);
         }
         var lam: Expr = e_lambda(fr_func.params, fr_func.ret_type, fr_func.body);
+        // `-fmt` records which of the two spellings was written, the way a
+        // struct destructure rides on the same field ("@sd:…"): both parse to a
+        // lambda-valued local, so without the marker a nested declaration came
+        // back as `var f = function(…) { … };`.
+        if (p.verbatim) { return (s_var_at(fr_func.name, "@fndecl", lam, fr_func.line, fr_func.col), p); }
         return (s_var(fr_func.name, "", lam), p);
     }
     if (kw == "match") {
@@ -6076,15 +6209,19 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
 // surrounding parse_module recovers via the StructDecl with
 // empty name.
 
-function parse_struct_decl(p: Par): (StructDecl, Par) {
+// The i32[] result is the source line of each field, for the formatter
+// (FieldLines). Empty on every early return, since a decl the parser could not
+// read has no fields to place comments against.
+function parse_struct_decl(p: Par): (StructDecl, i32[], Par) {
     var sline: i32 = p.peek_line();
     var scol: i32 = p.peek_col();
+    var flines: i32[] = [];
     p = p.advance();  // consume `struct`
     var name: string = p.peek_ident();
     var notp0: string[] = [];
     if (name.len() == 0) {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+        return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, flines, p);
     }
     p = p.advance();
     // Optional generic type parameters: `struct Box[T] { … }`. Captured
@@ -6108,15 +6245,17 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
     }
     if (p.peek_punct() != "{") {
         var empty: StructFieldDecl[] = [];
-        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+        return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, flines, p);
     }
     p = p.advance();
     var fields: StructFieldDecl[] = [];
     if (p.peek_punct() != "}") {
         while (true) {
+            var fline: i32 = p.peek_line();
             var (fr_field, fr_p) = parse_struct_field(p);
             p = fr_p;
             fields = fields.append(fr_field);
+            flines = flines.append(fline);
             // A trailing comma before `}` must not start another (empty-named)
             // field — mirrors the struct-literal parser and the Go parser.
             if (p.peek_punct() == ",") {
@@ -6128,7 +6267,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
         }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, p);
+    return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true }, flines, p);
 }
 
 // parse_type_alias consumes `type Name = V1 | V2 | … ;` starting
@@ -6185,11 +6324,12 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
 // consumed. The enum's own name isn't recorded — variant names are
 // global, as with the existing union machinery.
 
-function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
+function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
     p = p.advance();  // consume `enum`
     var out: StructDecl[] = [];
+    var vlines: i32[] = [];
     var name: string = p.peek_ident();
-    if (name.len() == 0) { return ("", out, [], p); }
+    if (name.len() == 0) { return ("", out, [], vlines, p); }
     p = p.advance();
     // Optional generic type parameters: `enum Opt[T] { … }`. Captured so the
     // monomorphiser can clone a concrete enum per instantiation (the variant
@@ -6210,9 +6350,10 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             p = p.advance();
         }
     }
-    if (p.peek_punct() != "{") { return (name, out, tparams, p); }
+    if (p.peek_punct() != "{") { return (name, out, tparams, vlines, p); }
     p = p.advance();
     while (p.peek_punct() != "}" && !p.at_end()) {
+        var vline: i32 = p.peek_line();
         var vname: string = p.peek_ident();
         if (vname.len() == 0) { break; }
         p = p.advance();
@@ -6262,11 +6403,12 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], Par) {
             if (p.peek_punct() == ")") { p = p.advance(); }
         }
         out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: name, must_consume: false, variant_field_names: vfnames , is_pub: true });
+        vlines = vlines.append(vline);
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (name, out, tparams, p);
+    return (name, out, tparams, vlines, p);
 }
 
 // parse_import consumes `import "path";` starting from the
@@ -7867,7 +8009,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
             var wb: RStmts = mono_stmts(w.body, env, funcs, cv.rins, ret_ty);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
@@ -8067,7 +8209,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
             StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
             StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts), line: f.line, else_chained: f.else_chained }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line, is_loop: w.is_loop }); },
             StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
@@ -8147,7 +8289,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
             StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
             StmtIf(f) => { out = out.append(StmtIf { cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang), line: f.line, else_chained: f.else_chained }); },
-            StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label, line: w.line }); },
+            StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label, line: w.line, is_loop: w.is_loop }); },
             StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
                 var arms: MatchArm[] = [];
@@ -9112,7 +9254,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
             var wb: RStmts = ms_stmts(w.body, env, gstructs, funcs, cv.rins, ret_ty);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
@@ -10205,7 +10347,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
         StmtWhile(w) => {
             var cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
             var wb: RStmts = me_stmts(w.body, env, ret_ty, enums, structs, funcs, cv.rins);
-            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line }, renv: env, rins2: wb.rins3 };
+            return RStmtOne { rstmt: StmtWhile { cond: cv.rexpr, body: wb.rstmts, label: w.label, line: w.line, is_loop: w.is_loop }, renv: env, rins2: wb.rins3 };
         },
         StmtFor(fr) => {
             var it: RExpr = me_expr(fr.iter, "", env, enums, structs, funcs, ins);
@@ -10510,7 +10652,7 @@ struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 // label and line the plain s_while / s_for constructors drop — a
 // `break outer` inside a defer-using function has to still find its loop.
 function dl_while(w: StmtWhile, body: Stmt[]): Stmt {
-    return StmtWhile { cond: w.cond, body: body, label: w.label, line: w.line };
+    return StmtWhile { cond: w.cond, body: body, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 function dl_for(fr: StmtFor, body: Stmt[]): Stmt {
     return StmtFor { var_name: fr.var_name, iter: fr.iter, body: body, label: fr.label, line: fr.line };
@@ -11628,7 +11770,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
             return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body), line: f.line, else_chained: f.else_chained }];
         },
         StmtWhile(w) => {
-            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line }];
+            return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop }];
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -11833,7 +11975,7 @@ function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
         StmtReturn(r) => { return StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs), line: x.line }; },
         StmtIf(f) => { return StmtIf { cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs), line: f.line, else_chained: f.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line }; },
         StmtDefer(d) => { return StmtDefer { action: rvf_stmt(d.action, structs), on_error: d.on_error, line: d.line }; },
@@ -12915,7 +13057,7 @@ function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
         StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         StmtIf(fst) => { return StmtIf { cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target), line: fst.line, else_chained: fst.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -13007,7 +13149,7 @@ pub function elide_len_bounded_body(stmts: Stmt[]): Stmt[] {
 function elb_recurse_stmt(st: Stmt): Stmt {
     match (st) {
         StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body), line: f.line, else_chained: f.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -13030,11 +13172,11 @@ function elb_recurse_stmt(st: Stmt): Stmt {
 // statement immediately before the loop (the source of `i`'s start value).
 function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
     var m: LenLoopMatch = elb_loop_match(w.cond);
-    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
-    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
-    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
-    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
-    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line }; }
+    if (!m.ok) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop }; }
+    if (elb_assigns_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop }; }
+    if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, m.arr)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop }; }
+    if (!elb_idx_monotonic_stmts(w.body, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop }; }
+    if (!elb_starts_nonneg(prev, m.idx)) { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop }; }
     var nb: Stmt[] = [];
     var i: i32 = 0;
     var stop: boolean = false;
@@ -13045,7 +13187,7 @@ function elb_try_while(w: StmtWhile, prev: Stmt): Stmt {
         nb = nb.append(st);
         i = i + 1;
     }
-    return StmtWhile { cond: w.cond, body: nb, label: w.label, line: w.line };
+    return StmtWhile { cond: w.cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
 }
 
 // elb_loop_match matches `IDX < ARR.len()` (strict `<`, both operands bare
@@ -13241,7 +13383,7 @@ function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
         StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr), line: f.line, else_chained: f.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -13629,7 +13771,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
             return st;
         },
         StmtIf(f) => { return StmtIf { cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs), line: f.line, else_chained: f.else_chained }; },
-        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label, line: w.line }; },
+        StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fnv_rewrite_block(fr.body, whole, funcs, structs), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -15653,7 +15795,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
             return StmtIf { cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs), line: f.line, else_chained: f.else_chained };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line };
+            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
             return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label, line: fr.line };
@@ -15724,7 +15866,7 @@ pub function settle_module(mod: Module): Module {
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
-    var (m, t, im) = parse_module_flagged(toks, false);
+    var (m, t, im, fl) = parse_module_flagged(toks, false);
     return m;
 }
 
@@ -15735,11 +15877,19 @@ pub function parse_module(toks: lexer.Token[]): Module {
 // reach it spelled as written, which every compile-path `type_name == "string"`
 // / `== "fn"` dispatch would misread.
 pub function parse_module_verbatim(toks: lexer.Token[]): ParsedFmt {
-    var (m, t, im) = parse_module_flagged(toks, true);
-    return ParsedFmt { pmod: m, ptraits: t, pimpls: im };
+    var (m, t, im, fl) = parse_module_flagged(toks, true);
+    return ParsedFmt { pmod: m, ptraits: t, pimpls: im, pflines: fl };
 }
 
-function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[]) {
+// record_field_lines appends one FieldLines entry, and is a no-op outside a
+// verbatim parse: nothing but the formatter reads the list, and the compile path
+// runs on every module the compiler loads.
+function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, decl_line: i32, lines: i32[]): FieldLines[] {
+    if (!verbatim) { return acc; }
+    return acc.append(FieldLines { name: name, decl_line: decl_line, lines: lines });
+}
+
+function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[]) {
     var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
@@ -15754,6 +15904,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     var exports: ExportBinding[] = [];
     var traits: TraitDecl[] = [];
     var impl_decls: ImplDecl[] = [];
+    var flines: FieldLines[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
@@ -15842,16 +15993,18 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                 var mco_p: Par = skip_decl_modifier(p, "opaque", "struct");
                 if (mco_p.pos != p.pos) { p = mco_p; mck = "struct"; }
                 if (mck == "struct") {
-                    var (mcs_decl, mcs_p) = parse_struct_decl(p);
+                    var (mcs_decl, mcs_lines, mcs_p) = parse_struct_decl(p);
                     p = mcs_p;
+                    flines = record_field_lines(flines, verbatim, mcs_decl.name, mcs_decl.line, mcs_lines);
                     structs = structs.append(StructDecl { ...mcs_decl, must_consume: true, is_pub: decl_pub });
                     continue;
                 }
                 if (mck == "enum") {
                     var mceline: i32 = p.peek_line();
                     var mcecol: i32 = p.peek_col();
-                    var (mce_name, mce_variants, mce_type_params, mce_p) = parse_enum_decl(p);
+                    var (mce_name, mce_variants, mce_type_params, mce_vlines, mce_p) = parse_enum_decl(p);
                     p = mce_p;
+                    flines = record_field_lines(flines, verbatim, mce_name, mceline, mce_vlines);
                     enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true , is_pub: decl_pub });
                     var mcei: i32 = 0;
                     while (mcei < mce_variants.len()) {
@@ -15869,8 +16022,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             var do_p: Par = skip_decl_modifier(p, "opaque", "struct");
             if (do_p.pos != p.pos) { p = do_p; dk = "struct"; }
             if (dk == "struct") {
-                var (dsr_decl, dsr_p) = parse_struct_decl(p);
+                var (dsr_decl, dsr_lines, dsr_p) = parse_struct_decl(p);
                 p = dsr_p;
+                flines = record_field_lines(flines, verbatim, dsr_decl.name, dsr_decl.line, dsr_lines);
                 structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives, is_pub: decl_pub });
                 funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
                 continue;
@@ -15878,8 +16032,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             if (dk == "enum") {
                 var deline: i32 = p.peek_line();
                 var decol: i32 = p.peek_col();
-                var (denr_name, denr_variants, denr_type_params, denr_p) = parse_enum_decl(p);
+                var (denr_name, denr_variants, denr_type_params, denr_vlines, denr_p) = parse_enum_decl(p);
                 p = denr_p;
+                flines = record_field_lines(flines, verbatim, denr_name, deline, denr_vlines);
                 enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, is_pub: decl_pub });
                 var dei: i32 = 0;
                 while (dei < denr_variants.len()) {
@@ -15963,8 +16118,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             continue;
         }
         if (kw == "struct") {
-            var (sr_decl, sr_p) = parse_struct_decl(p);
+            var (sr_decl, sr_lines, sr_p) = parse_struct_decl(p);
             p = sr_p;
+            flines = record_field_lines(flines, verbatim, sr_decl.name, sr_decl.line, sr_lines);
             structs = structs.append(StructDecl { ...sr_decl, is_pub: decl_pub });
             continue;
         }
@@ -15977,8 +16133,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         if (kw == "enum") {
             var eline: i32 = p.peek_line();
             var ecol: i32 = p.peek_col();
-            var (enr_name, enr_variants, enr_type_params, enr_p) = parse_enum_decl(p);
+            var (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
             p = enr_p;
+            flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
             enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, is_pub: decl_pub });
             var ei: i32 = 0;
             while (ei < enr_variants.len()) {
@@ -16095,7 +16252,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits, impl_decls);
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits, impl_decls, flines);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:

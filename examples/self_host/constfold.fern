@@ -142,6 +142,26 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             while (i < a.elements.len()) { elems = elems.append(fold_expr(a.elements[i])); i = i + 1; }
             return parser.ExprArray { elements: elems };
         },
+        parser.ExprMapLit(ml) => {
+            var mks: parser.Expr[] = [];
+            var mvs: parser.Expr[] = [];
+            var mi: i32 = 0;
+            while (mi < ml.keys.len()) {
+                mks = mks.append(fold_expr(ml.keys[mi]));
+                mvs = mvs.append(fold_expr(ml.vals[mi]));
+                mi = mi + 1;
+            }
+            return parser.ExprMapLit { keys: mks, vals: mvs, line: ml.line, col: ml.col };
+        },
+        parser.ExprFString(fs) => {
+            var fes: parser.Expr[] = [];
+            var fi: i32 = 0;
+            while (fi < fs.exprs.len()) {
+                if (fs.is_expr[fi]) { fes = fes.append(fold_expr(fs.exprs[fi])); } else { fes = fes.append(fs.exprs[fi]); }
+                fi = fi + 1;
+            }
+            return parser.ExprFString { lits: fs.lits, exprs: fes, is_expr: fs.is_expr, line: fs.line, col: fs.col };
+        },
         parser.ExprIndex(x) => {
             return parser.ExprIndex { array: fold_expr(x.array), index: fold_expr(x.index), unchecked: x.unchecked, ty: x.ty };
         },
@@ -244,7 +264,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
                 line: ifs.line, else_chained: ifs.else_chained };
         },
         parser.StmtWhile(w) => {
-            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line };
+            return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         parser.StmtMatch(m) => {
             var arms: parser.MatchArm[] = [];

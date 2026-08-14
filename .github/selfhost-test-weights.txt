@@ -213,3 +213,16 @@ TestSelfHostArm64ProcExecRuns 15
 # through the native `-interp`, so its cost is the 14 cases, not a compile.
 # Measured 26 s locally (4-core, machine busy); weighted pessimistically.
 TestSelfHostFrontEndNumericLiteralCodes 60
+
+# The corpus formatter-parity leg: one `-fmt` of each of the 425 .fern files
+# under examples/ + internal/stdlib through the linked driver. MEASURED 16 s
+# locally for the whole sweep (the driver's fixed startup is ~12 ms; the cost is
+# the ten 15-50 kloc self_host modules), on top of the fern.fern driver the two
+# older fmt tests already warm. Weighted generously against a cold cache.
+TestSelfHostFmtCorpusParityX86_64 60
+
+# The two host-independent fmt legs: they drive fern.fern through the native
+# `-interp` rather than linking a driver, so no gcc and no x86-64 host. MEASURED
+# 28 s and 2.5 s locally over the 32 parity cases and the two -w / -d cases.
+TestSelfHostFmtWrittenFormViaInterp 60
+TestSelfHostFmtWriteAndDiffViaInterp 15

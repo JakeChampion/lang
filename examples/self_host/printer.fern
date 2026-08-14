@@ -41,6 +41,26 @@ function quote_string(s: string): string {
     return out + "\"";
 }
 
+// escape_fstring_lit re-escapes an f-string's literal segment: the plain string
+// rules plus `{` / `}` doubled, so the body re-lexes into the same parts.
+function escape_fstring_lit(s: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < s.len()) {
+        var b: i32 = s[i] as i32;
+        if (b == 34) { out = out + "\\\""; }
+        else if (b == 92) { out = out + "\\\\"; }
+        else if (b == 10) { out = out + "\\n"; }
+        else if (b == 9) { out = out + "\\t"; }
+        else if (b == 13) { out = out + "\\r"; }
+        else if (b == 123) { out = out + "{{"; }
+        else if (b == 125) { out = out + "}}"; }
+        else { out = out + s[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
+}
+
 // =================== PRECEDENCE ====================
 //
 // Levels mirror the parser's, and native's printer's: higher binds tighter, and
@@ -62,6 +82,10 @@ function prec_primary(): i32 { return 16; }
 // binary_prec is the level of `op`; an operator the table does not know sits at
 // the lowest level, so it keeps its parens.
 function binary_prec(op: string): i32 {
+    // `|>` is the loosest operator in the grammar (parse_pipe wraps parse_range
+    // wraps parse_binary), and only a `-fmt` parse produces one — the compile
+    // parse desugars a pipe into the call it means.
+    if (op == "|>") { return 2; }
     if (op == "||") { return 4; }
     if (op == "&&") { return 5; }
     if (op == "|") { return 6; }
@@ -251,16 +275,16 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             return print_expr_prec(sl.array, prec_primary()) + "[" + print_expr(sl.start) + ":" + print_expr(sl.end) + "]";
         },
         parser.ExprStructLit(sl) => {
-            var out: string = sl.type_name + " {";
+            var out: string = sl.type_name + " { ";
             var first: boolean = true;
             if (sl.has_base) {
-                out = out + " ..." + print_expr(sl.base);
+                out = out + "..." + print_expr(sl.base);
                 first = false;
             }
             var i: i32 = 0;
             while (i < sl.field_names.len()) {
-                if (!first) { out = out + ","; }
-                out = out + " " + sl.field_names[i] + ": " + print_expr(sl.field_values[i]);
+                if (!first) { out = out + ", "; }
+                out = out + sl.field_names[i] + ": " + print_expr(sl.field_values[i]);
                 first = false;
                 i = i + 1;
             }
@@ -294,6 +318,29 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             }
             var (lam_body, _) = print_block(lm.body, 0, empty_fmt());
             return out + " " + lam_body;
+        },
+        parser.ExprFString(fs) => {
+            var out: string = "f\"";
+            var i: i32 = 0;
+            while (i < fs.lits.len()) {
+                if (fs.is_expr[i]) {
+                    out = out + "{" + print_expr(fs.exprs[i]) + "}";
+                } else {
+                    out = out + escape_fstring_lit(fs.lits[i]);
+                }
+                i = i + 1;
+            }
+            return out + "\"";
+        },
+        parser.ExprMapLit(ml) => {
+            var out: string = "Map {";
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                if (i > 0) { out = out + ","; }
+                out = out + " " + print_expr(ml.keys[i]) + ": " + print_expr(ml.vals[i]);
+                i = i + 1;
+            }
+            return out + " }";
         },
         parser.ExprUnknown(u) => { return "/*unknown:" + u.kind + "*/"; }
     }
@@ -368,6 +415,35 @@ function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
         return ("  //" + f.comments[f.ci].text, Fmt { ...f, ci: f.ci + 1 });
     }
     return ("", f);
+}
+
+// inner_comment_pending: is a queued comment written INSIDE a declaration's
+// braces — below its first line, at or above the last field's? A struct or enum
+// carrying one has to print in the multi-line block form, since the one-liner
+// has nowhere to put it and the cursor would flush it above the NEXT
+// declaration instead.
+function inner_comment_pending(f: Fmt, decl_line: i32, last: i32): boolean {
+    var i: i32 = f.ci;
+    while (i < f.comments.len()) {
+        var ln: i32 = f.comments[i].line;
+        if (ln > last) { return false; }
+        if (ln > decl_line) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// field_lines_for returns the per-field source lines recorded for the named
+// declaration, or an empty list when the parse did not record any (every parse
+// but `-fmt`'s, and any decl the parser could not read).
+function field_lines_for(flines: parser.FieldLines[], name: string, decl_line: i32): i32[] {
+    var i: i32 = 0;
+    while (i < flines.len()) {
+        if (flines[i].name == name && flines[i].decl_line == decl_line) { return flines[i].lines; }
+        i = i + 1;
+    }
+    var none: i32[] = [];
+    return none;
 }
 
 // drain_all flushes every remaining comment at `depth` — end of file, and the
@@ -477,6 +553,33 @@ function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
         i = i + 1;
     }
     return (out + pad + "}", g);
+}
+
+// print_let_else reconstructs `let PAT = EXPR else { … };` plus the statements
+// that followed it, which the desugar moved inside the success arm. They re-emit
+// as the siblings they were written as, at the same depth.
+function print_let_else(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+    var g: Fmt = f;
+    var (els, g1) = print_block(m.arms[1].body, depth, g);
+    g = g1;
+    var out: string = "let " + print_pattern(m.arms[0].pattern) + " = " + print_expr(m.scrutinee) + " else " + els + ";";
+    var rest: parser.Stmt[] = m.arms[0].body;
+    var i: i32 = 0;
+    while (i < rest.len()) {
+        var ln: i32 = stmt_line(rest[i]);
+        out = out + "\n";
+        if (ln > 0 && g.blank_before(ln)) { out = out + "\n"; }
+        if (ln > 0) {
+            var (lead, gl) = drain_leading(g, ln, depth);
+            out = out + lead;
+            g = gl;
+        }
+        var (stext, g2) = print_stmt_line(rest[i], depth, g);
+        out = out + stext;
+        g = g2;
+        i = i + 1;
+    }
+    return (out, g);
 }
 
 // expr_is_missing reports an expression slot the parser never filled — a void
@@ -739,6 +842,13 @@ function print_for_iter(e: parser.Expr): string {
 // inline trailing comment, and the newline. Comments ABOVE it were already
 // drained by the block loop; a nested block drains its own.
 function print_stmt(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
+    var (text, g) = print_stmt_line(st, depth, f);
+    return (text + "\n", g);
+}
+
+// print_stmt_line is one statement indented at `depth` with NO trailing newline
+// — the form a caller that supplies its own separator needs.
+function print_stmt_line(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     var (text, g) = print_stmt_body(st, depth, f);
     var out: string = indent_str(depth) + text;
     // Only a single-line statement can carry a trailing comment: on a compound
@@ -748,10 +858,10 @@ function print_stmt(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         var ln: i32 = stmt_line(st);
         if (ln > 0) {
             var (tr, g2) = emit_trailing(g, ln);
-            return (out + tr + "\n", g2);
+            return (out + tr, g2);
         }
     }
-    return (out + "\n", g);
+    return (out, g);
 }
 
 // split_commas splits a comma-joined binding / field list. Destructure names
@@ -814,6 +924,21 @@ function print_struct_destructure(v: parser.StmtVar): string {
     return out + " } = " + print_expr(v.init) + ";";
 }
 
+// print_nested_func_decl respells a nested `function name(…): T { … }` from the
+// lambda-valued local the parser desugars it to (marked "@fndecl" on type_name).
+function print_nested_func_decl(v: parser.StmtVar, depth: i32, f: Fmt): (string, Fmt) {
+    match (v.init) {
+        parser.ExprLambda(lm) => {
+            var out: string = "function " + v.name + print_lambda_params(lm);
+            if (lm.ret_type.len() > 0) { out = out + ": " + lm.ret_type; }
+            var (body, g) = print_block(lm.body, depth, f);
+            return (out + " " + body, g);
+        },
+        _ => { }
+    }
+    return ("var " + v.name + " = " + print_expr(v.init) + ";", f);
+}
+
 // print_stmt_body is the statement text with no indent and no newline.
 function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     match (st) {
@@ -829,6 +954,7 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // Printed as a plain `var` they re-parse as something else — or, for
             // the tuple form, do not re-parse at all (#6773).
             if (is_struct_destructure(v.type_name)) { return (print_struct_destructure(v), f); }
+            if (v.type_name == "@fndecl") { return print_nested_func_decl(v, depth, f); }
             if (util.contains(v.name, ",")) {
                 return ("let (" + join_csv(v.name) + ") = " + print_expr(v.init) + ";", f);
             }
@@ -857,10 +983,19 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         },
         parser.StmtWhile(w) => {
             var (wb, wg) = print_block(w.body, depth, f);
+            if (w.is_loop) { return (loop_label(w.label) + "loop " + wb, wg); }
             return (loop_label(w.label) + "while (" + print_expr(w.cond) + ") " + wb, wg);
         },
         parser.StmtAssign(a) => { return (a.target + " = " + print_expr(a.value) + ";", f); },
-        parser.StmtMatch(m) => { return print_match(m, depth, f); },
+        parser.StmtMatch(m) => {
+            // `let … else` is parsed as a two-arm match whose FIRST arm holds the
+            // rest of the enclosing block (that is where the bindings are live),
+            // so printing the match rewrites the whole tail of the function into
+            // a nested one. StmtMatch.origin already records which form was
+            // written; the printer just had to read it.
+            if (m.origin == "let_else" && m.arms.len() == 2) { return print_let_else(m, depth, f); }
+            return print_match(m, depth, f);
+        },
         parser.StmtFor(fo) => {
             var (fb, fg) = print_block(fo.body, depth, f);
             return (loop_label(fo.label) + "for " + for_binder(fo.var_name) + " in " + print_for_iter(fo.iter) + " " + fb, fg);
@@ -979,7 +1114,7 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     return (out + " " + body_text + "\n", g);
 }
 
-function print_struct_decl(sd: parser.StructDecl): string {
+function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
     var out: string = "";
     // Attributes, on their own lines above the decl. Both change what the
     // program MEANS: `@derive` names methods the next parse synthesises, and
@@ -1009,15 +1144,35 @@ function print_struct_decl(sd: parser.StructDecl): string {
         }
         out = out + "]";
     }
-    out = out + " {";
+    // A comment inside the braces forces the multi-line form, one field per
+    // line, so each field drains its own leading and trailing comment. Printing
+    // the one-liner leaves those comments queued and the cursor then emits them
+    // above the NEXT declaration, which is where they stop describing the field
+    // they were written on.
+    var lns: i32[] = field_lines_for(flines, sd.name, sd.line);
+    if (lns.len() == sd.fields.len() && lns.len() > 0 && inner_comment_pending(f, sd.line, lns[lns.len() - 1])) {
+        out = out + " {\n";
+        var mi: i32 = 0;
+        while (mi < sd.fields.len()) {
+            var (lead, f1) = drain_leading(f, lns[mi], 1);
+            out = out + lead;
+            f = f1;
+            out = out + indent_str(1) + sd.fields[mi].name + ": " + sd.fields[mi].type_name + ",";
+            var (tr, f2) = emit_trailing(f, lns[mi]);
+            out = out + tr + "\n";
+            f = f2;
+            mi = mi + 1;
+        }
+        return (out + "}\n", f);
+    }
+    out = out + " { ";
     var i: i32 = 0;
     while (i < sd.fields.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + " " + sd.fields[i].name + ": " + sd.fields[i].type_name;
+        if (i > 0) { out = out + ", "; }
+        out = out + sd.fields[i].name + ": " + sd.fields[i].type_name;
         i = i + 1;
     }
-    if (sd.fields.len() > 0) { out = out + " "; }
-    return out + "}\n";
+    return (out + " }\n", f);
 }
 
 // print_const_decl re-spells a const from the zero-arg FuncDecl the parser
@@ -1070,7 +1225,7 @@ function variant_decl_index(structs: parser.StructDecl[], owner: string, name: s
 // the variant record's `__ev`, `__ev1`, … fields in declaration order, and the
 // enum's `@derive` is read back from a variant record because that is where the
 // parser stamps it — EnumDecl carries only `@must_consume`.
-function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): string {
+function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
     var out: string = "";
     var d0: i32 = 0 - 1;
     if (ed.variant_names.len() > 0) { d0 = variant_decl_index(structs, ed.name, ed.variant_names[0]); }
@@ -1097,37 +1252,62 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[]): str
         }
         out = out + "]";
     }
-    out = out + " {";
+    // One variant per line whenever a comment was written inside the braces,
+    // for the same reason print_struct_decl does it.
+    var lns: i32[] = field_lines_for(flines, ed.name, ed.line);
+    if (lns.len() == ed.variant_names.len() && lns.len() > 0 && inner_comment_pending(f, ed.line, lns[lns.len() - 1])) {
+        out = out + " {\n";
+        var mvi: i32 = 0;
+        while (mvi < ed.variant_names.len()) {
+            var (lead, f1) = drain_leading(f, lns[mvi], 1);
+            out = out + lead;
+            f = f1;
+            out = out + indent_str(1) + print_enum_variant(ed, structs, mvi) + ",";
+            var (tr, f2) = emit_trailing(f, lns[mvi]);
+            out = out + tr + "\n";
+            f = f2;
+            mvi = mvi + 1;
+        }
+        return (out + "}\n", f);
+    }
+    out = out + " { ";
     var vi: i32 = 0;
     while (vi < ed.variant_names.len()) {
-        if (vi > 0) { out = out + ","; }
-        out = out + " " + ed.variant_names[vi];
-        var si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
-        if (si >= 0 && structs[si].variant_field_names.len() > 0) {
-            // Record form — the payload fields carry positional `__ev` markers, so
-            // the written names come from variant_field_names, parallel to them.
-            out = out + " {";
-            var ri: i32 = 0;
-            while (ri < structs[si].fields.len()) {
-                if (ri > 0) { out = out + ","; }
-                out = out + " " + structs[si].variant_field_names[ri] + ": " + structs[si].fields[ri].type_name;
-                ri = ri + 1;
-            }
-            out = out + " }";
-        } else if (si >= 0 && structs[si].fields.len() > 0) {
-            out = out + "(";
-            var fi: i32 = 0;
-            while (fi < structs[si].fields.len()) {
-                if (fi > 0) { out = out + ", "; }
-                out = out + structs[si].fields[fi].type_name;
-                fi = fi + 1;
-            }
-            out = out + ")";
-        }
+        if (vi > 0) { out = out + ", "; }
+        out = out + print_enum_variant(ed, structs, vi);
         vi = vi + 1;
     }
-    if (ed.variant_names.len() > 0) { out = out + " "; }
-    return out + "}\n";
+    return (out + " }\n", f);
+}
+
+// print_enum_variant renders variant `vi` — bare, tuple-payload `V(A, B)`, or
+// record form `V { f: A }` — from the variant struct the parser desugared it to.
+function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], vi: i32): string {
+    var out: string = ed.variant_names[vi];
+    var si: i32 = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
+    if (si >= 0 && structs[si].variant_field_names.len() > 0) {
+        // Record form — the payload fields carry positional `__ev` markers, so
+        // the written names come from variant_field_names, parallel to them.
+        out = out + " {";
+        var ri: i32 = 0;
+        while (ri < structs[si].fields.len()) {
+            if (ri > 0) { out = out + ","; }
+            out = out + " " + structs[si].variant_field_names[ri] + ": " + structs[si].fields[ri].type_name;
+            ri = ri + 1;
+        }
+        return out + " }";
+    }
+    if (si >= 0 && structs[si].fields.len() > 0) {
+        out = out + "(";
+        var fi: i32 = 0;
+        while (fi < structs[si].fields.len()) {
+            if (fi > 0) { out = out + ", "; }
+            out = out + structs[si].fields[fi].type_name;
+            fi = fi + 1;
+        }
+        return out + ")";
+    }
+    return out;
 }
 
 // print_type_params_except renders a decl's type parameters minus `skip`, or ""
@@ -1321,7 +1501,7 @@ function decl_sep(out: string): string {
 }
 
 pub function print_module(mod: parser.Module): string {
-    return format_module(mod, [], [], [], []);
+    return format_module(mod, [], [], [], [], []);
 }
 
 // format_module is the `-fmt` entry point: the module, the comments the lexer
@@ -1333,7 +1513,7 @@ pub function print_module(mod: parser.Module): string {
 // cursor only moves forward, so a kind-grouped emit would drain a comment
 // against whichever declaration happened to be printed first and RELOCATE it
 // onto an unrelated one — the same reason native's Format orders by position.
-pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], comments: lexer.Comment[], blanks: boolean[]): string {
+pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], comments: lexer.Comment[], blanks: boolean[]): string {
     var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
     var out: string = "";
     // Imports cluster at the top with no blank between them.
@@ -1437,8 +1617,16 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls
             out = out + lead;
             f = fl;
         }
-        if (kinds[di] == 0) { out = out + print_struct_decl(mod.structs[idxs[di]]); }
-        else if (kinds[di] == 1) { out = out + print_enum_decl(mod.enums[idxs[di]], mod.structs); }
+        if (kinds[di] == 0) {
+            var (stext, sf2) = print_struct_decl(mod.structs[idxs[di]], flines, f);
+            out = out + stext;
+            f = sf2;
+        }
+        else if (kinds[di] == 1) {
+            var (etext, ef) = print_enum_decl(mod.enums[idxs[di]], mod.structs, flines, f);
+            out = out + etext;
+            f = ef;
+        }
         else if (kinds[di] == 2) { out = out + print_type_alias(mod.aliases[idxs[di]]); }
         else if (kinds[di] == 4) {
             var (ttext, tf) = print_trait_decl(traits[idxs[di]], f);
@@ -2095,7 +2283,7 @@ function main(): i32 {
     // come back is a declaration the reformat deleted.
     var srcTr: string = "pub trait Greet[T]: Display { function hi(self: Self, x: T): string; function loud(self: Self, x: T): string { return self.hi(x); } } function main(): i32 { return 0; }";
     var pfTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(srcTr));
-    var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, [], []);
+    var outTr: string = format_module(pfTr.pmod, pfTr.ptraits, pfTr.pimpls, pfTr.pflines, [], []);
     var rtTr: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outTr));
     if (rtTr.ptraits.len() != 1) { return 299; }
     if (rtTr.ptraits[0].name != "Greet") { return 300; }
@@ -2117,7 +2305,7 @@ function main(): i32 {
     if (pfQ.ptraits.len() != 1) { return 311; }
     if (pfQ.ptraits[0].supertraits.len() != 1) { return 312; }
     if (pfQ.ptraits[0].supertraits[0] != "cmp.Ord") { return 313; }
-    if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, [], []), "pub trait Sortable: cmp.Ord {}")) { return 314; }
+    if (!util.contains(format_module(pfQ.pmod, pfQ.ptraits, pfQ.pimpls, pfQ.pflines, [], []), "pub trait Sortable: cmp.Ord {}")) { return 314; }
 
     // #6783: an `impl` block is desugared into free-standing receiver methods on
     // the way in, so the block has to be retained beside the Module too. Under
@@ -2132,7 +2320,7 @@ function main(): i32 {
     if (pfIm.pimpls[1].methods.len() != 1) { return 319; }
     // The written method is NOT also a free function, or it would print twice.
     if (func_index(pfIm.pmod.funcs, "to_string") >= 0) { return 320; }
-    var outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, [], []);
+    var outIm: string = format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
     if (!util.contains(outIm, "impl Display for i32 {}")) { return 321; }
     // `Self` reads as the concrete type and the receiver goes back to being the
     // first parameter — the shape an impl block requires, and what native emits.
@@ -2146,15 +2334,15 @@ function main(): i32 {
         "struct Box { item: i32 } impl Box { function zero(): Box { return Box { item: 0 }; } } function main(): i32 { return 0; }"));
     if (pfIn.pimpls.len() != 1) { return 324; }
     if (pfIn.pimpls[0].trait_ref.len() != 0) { return 325; }
-    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, [], []), "impl Box {")) { return 326; }
-    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, [], []), "function zero(): Box {")) { return 327; }
+    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "impl Box {")) { return 326; }
+    if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "function zero(): Box {")) { return 327; }
 
     // A parametric impl states its bounds once, on the block: restating them on
     // each method is a program native rejects outright.
     var pfPa: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
         "import \"core/cmp\"; struct Box[T] { item: T } impl[T: cmp.Eq] cmp.Eq for Box[T] { function eq(self: Self, other: Self): boolean { return true; } } function main(): i32 { return 0; }"));
     if (pfPa.pimpls.len() != 1) { return 328; }
-    var outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, [], []);
+    var outPa: string = format_module(pfPa.pmod, pfPa.ptraits, pfPa.pimpls, pfPa.pflines, [], []);
     if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) { return 329; }
     if (!util.contains(outPa, "function eq(self: Box[T], other: Box[T]): boolean {")) { return 330; }
 
@@ -2164,7 +2352,7 @@ function main(): i32 {
     // unchanged. Printing the rejection instead loses the program's number.
     var pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
         "function main(): i32 { var x: f64 = 1e309; return 0; }"));
-    var outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, [], []);
+    var outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, pfOor.pflines, [], []);
     if (!util.contains(outOor, "var x: f64 = 1e309;")) { return 331; }
 
     return 0;
@@ -2188,4 +2376,162 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
         i = i + 1;
     }
     return 0 - 1;
+}
+
+// Unified-diff half of `-fmt -d`, mirroring internal/printer/diff.go op for op:
+// the two drivers' `-d` output is compared byte-for-byte, so the LCS tie-breaks
+// and the three-line context window here are the Go implementation's rather than
+// a re-derivation.
+
+// diff_split_lines breaks s on '\n' with the newline kept on each line, so the
+// hunk emitter reproduces a "no newline at end of file" tail verbatim. The
+// phantom empty entry a trailing '\n' would produce is dropped.
+function diff_split_lines(s: string): string[] {
+    var out: string[] = [];
+    if (s.len() == 0) { return out; }
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i:i + 1] == "\n") {
+            out = out.append(s[start:i + 1]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    if (start < s.len()) { out = out.append(s[start:s.len()]); }
+    return out;
+}
+
+// DiffScript is the edit script as two parallel arrays: `kinds[i]` is 0 for a
+// line both sides share, 1 for one only `a` has, 2 for one only `b` has.
+struct DiffScript { kinds: i32[], lines: string[] }
+
+// diff_edit_script runs the same LCS as internal/printer/diff.go's editScript,
+// including its tie-break (prefer the deletion when the two suffix scores are
+// equal), and merges the two sides into one script.
+function diff_edit_script(a: string[], b: string[]): DiffScript {
+    var m: i32 = a.len();
+    var n: i32 = b.len();
+    var w: i32 = n + 1;
+    var dp: i32[] = [];
+    var z: i32 = 0;
+    while (z < (m + 1) * w) { dp = dp.append(0); z = z + 1; }
+    var i: i32 = m - 1;
+    while (i >= 0) {
+        var j: i32 = n - 1;
+        while (j >= 0) {
+            if (a[i] == b[j]) {
+                dp = dp.with(i * w + j, dp[(i + 1) * w + (j + 1)] + 1);
+            } else if (dp[(i + 1) * w + j] >= dp[i * w + (j + 1)]) {
+                dp = dp.with(i * w + j, dp[(i + 1) * w + j]);
+            } else {
+                dp = dp.with(i * w + j, dp[i * w + (j + 1)]);
+            }
+            j = j - 1;
+        }
+        i = i - 1;
+    }
+    var kinds: i32[] = [];
+    var lines: string[] = [];
+    var p: i32 = 0;
+    var q: i32 = 0;
+    while (p < m && q < n) {
+        if (a[p] == b[q]) {
+            kinds = kinds.append(0);
+            lines = lines.append(a[p]);
+            p = p + 1;
+            q = q + 1;
+        } else if (dp[(p + 1) * w + q] >= dp[p * w + (q + 1)]) {
+            kinds = kinds.append(1);
+            lines = lines.append(a[p]);
+            p = p + 1;
+        } else {
+            kinds = kinds.append(2);
+            lines = lines.append(b[q]);
+            q = q + 1;
+        }
+    }
+    while (p < m) {
+        kinds = kinds.append(1);
+        lines = lines.append(a[p]);
+        p = p + 1;
+    }
+    while (q < n) {
+        kinds = kinds.append(2);
+        lines = lines.append(b[q]);
+        q = q + 1;
+    }
+    return DiffScript { kinds: kinds, lines: lines };
+}
+
+// unified_diff returns a unified diff of `before` against `after`, empty when
+// they are byte-identical. `-fmt -d` exits 1 exactly when the result is
+// non-empty, which is what makes it usable as a CI check.
+pub function unified_diff(before: string, after: string, path_before: string, path_after: string): string {
+    if (before == after) { return ""; }
+    var script: DiffScript = diff_edit_script(diff_split_lines(before), diff_split_lines(after));
+    var kinds: i32[] = script.kinds;
+    if (kinds.len() == 0) { return ""; }
+    var context: i32 = 3;
+
+    // Runs of changed lines, then merged wherever their context windows touch.
+    var lo: i32[] = [];
+    var hi: i32[] = [];
+    var i: i32 = 0;
+    while (i < kinds.len()) {
+        if (kinds[i] == 0) {
+            i = i + 1;
+        } else {
+            var s: i32 = i;
+            while (i < kinds.len() && kinds[i] != 0) { i = i + 1; }
+            if (lo.len() > 0 && s - hi[hi.len() - 1] <= 2 * context) {
+                hi = hi.with(hi.len() - 1, i);
+            } else {
+                lo = lo.append(s);
+                hi = hi.append(i);
+            }
+        }
+    }
+    if (lo.len() == 0) { return ""; }
+
+    var out: string = "--- " + path_before + "\n+++ " + path_after + "\n";
+    var h: i32 = 0;
+    while (h < lo.len()) {
+        var start: i32 = lo[h] - context;
+        if (start < 0) { start = 0; }
+        var end: i32 = hi[h] + context;
+        if (end > kinds.len()) { end = kinds.len(); }
+        var a_pos: i32 = 0;
+        var b_pos: i32 = 0;
+        var k: i32 = 0;
+        while (k < start) {
+            if (kinds[k] != 2) { a_pos = a_pos + 1; }
+            if (kinds[k] != 1) { b_pos = b_pos + 1; }
+            k = k + 1;
+        }
+        var a_len: i32 = 0;
+        var b_len: i32 = 0;
+        k = start;
+        while (k < end) {
+            if (kinds[k] != 2) { a_len = a_len + 1; }
+            if (kinds[k] != 1) { b_len = b_len + 1; }
+            k = k + 1;
+        }
+        out = out + "@@ -" + util.i32_to_string(a_pos + 1) + "," + util.i32_to_string(a_len)
+                  + " +" + util.i32_to_string(b_pos + 1) + "," + util.i32_to_string(b_len) + " @@\n";
+        k = start;
+        while (k < end) {
+            var mark: string = " ";
+            if (kinds[k] == 1) { mark = "-"; }
+            if (kinds[k] == 2) { mark = "+"; }
+            var line: string = script.lines[k];
+            out = out + mark + line;
+            // A final line with no newline still has to leave the diff itself
+            // well-formed.
+            if (line.len() == 0 || line[line.len() - 1:line.len()] != "\n") { out = out + "\n"; }
+            k = k + 1;
+        }
+        h = h + 1;
+    }
+    return out;
 }
