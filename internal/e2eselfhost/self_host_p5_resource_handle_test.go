@@ -125,7 +125,10 @@ func (f *pollableFixture) composeRun(t *testing.T, name string, wat []byte) []by
 	return out
 }
 
-// pollWant is the marker a ready pollable prints in every program below.
+// pollWant is the marker a ready pollable prints in every program below. Each
+// one blocks on the pollable first: under wasmtime 46 a 0ns subscribe-duration
+// timer that has not been blocked on reports NOT ready, so `ready` alone prints
+// poll-bad.
 const pollWant = "poll-ok"
 
 func wantStdout(t *testing.T, out []byte) {
@@ -322,6 +325,9 @@ resource Pollable;
 @import("wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration")
 function subscribe(ns: u64): own Pollable;
 
+@import("wasi:io/poll@0.2.0", "[method]pollable.block")
+function block(h: borrow Pollable);
+
 @import("wasi:io/poll@0.2.0", "[method]pollable.ready")
 function ready(h: borrow Pollable): boolean;
 
@@ -331,6 +337,7 @@ function drop_pollable(h: own Pollable): void;
 function main(): i32 {
     var p: own Pollable = subscribe(0 as u64);
     var q: own Pollable = p;
+    block(q);
     if (ready(q)) { write("` + pollWant + `"); } else { write("poll-bad"); }
     drop_pollable(q);
     return 0;
