@@ -18,9 +18,9 @@
 // self-host's value-semantics style, matching ssa.fern: a function body is
 // an `Op[]` flat stack-machine stream; structured control flow is the
 // block/loop/if/end/br/brif scope discipline, exactly as native and wasm).
-// Kinds are string-tagged (like ssa.fern's SInst) rather than an int enum:
-// printable, diff-friendly, and the native `OpKind` names map 1:1 to these
-// tags ("const_i32", "add", "call_direct", ...).
+// Kinds are stable 1-based integer ids (0 = KIND_INVALID), with `kind_id` /
+// `kind_name` converting to and from the printable tag the native `OpKind`
+// names map 1:1 onto ("const_i32", "add", "call_direct", ...).
 //
 import "./util";
 
@@ -36,7 +36,7 @@ import "./util";
 
 // Op is one stack-machine instruction. Field meanings mirror native's
 // `ir.Op` (internal/ir/ir.go:515):
-//   kind     — the opcode tag (see the constructors below).
+//   kind_tag — the opcode id (see kind_id and the constructors below).
 //   i32      — the immediate for "const_i32"; the local index for
 //              load_local / store_local / tee_local; the block-type for
 //              block / loop / if; the relative depth for br / brif; the
