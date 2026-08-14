@@ -5,14 +5,10 @@
 // exit dec sweep, drop specialization, reuse tokens are all emitted here as
 // `call_direct` to `__fern_rc_*` helpers during AST -> IR lowering).
 //
-// The self-host previously had NO equivalent of this layer — it lowered
-// AST -> asm directly in each backend, so every RC emission had to be
-// hand-written three times. This module is slice 0 of the IR rebuild
-// (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md): once the backends emit from
-// `Op[]` instead of the AST, RC is lowered to IR ONCE and each backend just
-// instruction-selects an opcode. (The existing ssa.fern mirrors the
-// DOWNSTREAM optimiser `internal/ssa`, which native lifts FROM this IR; it
-// is a different, higher layer.)
+// RC is lowered to IR once here and each backend instruction-selects an
+// opcode, rather than every backend hand-writing its own RC emission.
+// (ssa.fern mirrors the DOWNSTREAM optimiser `internal/ssa`, which native
+// lifts FROM this IR; it is a different, higher layer.)
 //
 // Representation (mirrors internal/ir/ir.go, but pointer-free — the
 // self-host's value-semantics style, matching ssa.fern: a function body is
@@ -24,13 +20,9 @@
 //
 import "./util";
 
-// SCOPE (slice 0): the `Op` value + its constructor helpers for a
-// representative spine of opcodes — constants, local load/store, integer
-// arithmetic / comparison, memory load/store, alloc, the call forms,
-// structured control flow, drop, and return. AST -> IR lowering
-// (mirroring the native `builder`), the AST-referencing fields
-// (Sig / ArgTypes / Pos), and the backend IR consumers land in later
-// slices. Nothing imports this yet, so it is additive and bootstrap-inert.
+// SCOPE: the `Op` value and its constructor helpers. AST -> IR lowering
+// lives in irlower.fern (mirroring the native `builder`); the backends
+// consume the resulting `Op[]` from their asm_*_ir modules.
 
 // ---- Op ----------------------------------------------------------------
 

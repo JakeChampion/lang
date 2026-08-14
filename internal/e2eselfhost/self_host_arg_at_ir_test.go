@@ -12,16 +12,13 @@ import (
 // `arg_at(i)` on the self-host IR path (#3457).
 //
 // irlower lowered `args()` and (since the args().len() desugar) `args_count()`,
-// but had no case for `arg_at`, so a program reading one argument bailed the
-// WHOLE module to the AST emitter. That is one of the `ineligible-fn` fallbacks
-// docs/SELFHOST-AST-RETIREMENT.md measures as gating the deletion of asm.fern,
-// and per #5622 the AST emitter silently drops i32 wrapping, so anything routed
-// there is compiled by an emitter with a known correctness defect.
+// but had no case for `arg_at`, so a program reading one argument made the
+// WHOLE module IR-ineligible.
 //
 // arg_at deliberately does NOT reuse the args().len() desugar that args_count
 // got: args() materialises the whole argv as a fresh string[] per call, so
-// `args()[i]` in a loop would allocate all of argv per iteration — O(n) where
-// the AST path is O(1). It gets a real op (kind 210) instead.
+// `args()[i]` in a loop would allocate all of argv per iteration. It gets a
+// real op (kind 210) instead, which is O(1).
 //
 // The register backends call __fern_arg_at_rc rather than the existing
 // __fern_arg_at. The latter builds a headerless __fern_alloc(16) box, which is
