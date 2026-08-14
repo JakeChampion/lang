@@ -1,49 +1,49 @@
 name: Lint
 
-# Independent fast jobs that catch the most common breakages before
-# any heavy test workflow even finishes setup:
+# Every cheap whole-repo gate, in ONE job.
 #
+# These were eight separate jobs. Each did well under a minute of work, and
+# together they did ~5 minutes — but they spent 165 job-minutes in the queue to
+# do it (measured on run 31819147972: `deadcode` was queued at +0.1 min and
+# started at +24.2 to run for 48 s). A GitHub-hosted runner pool is shared
+# across every SHA in flight, so eight slots held for a minute each are eight
+# slots the self-host lane could not have, and that lane's 54-second `build`
+# job gates 48 downstream jobs. Fewer, fuller jobs beat more, emptier ones
+# whenever the pool is the constraint.
+#
+# Each step carries `if: ${{ !cancelled() }}` so a failure in one still reports
+# the rest: collapsing the jobs must not cost the "which gates are red" signal
+# that eight separate check runs gave for free.
+#
+# The gates, in order:
+#
+#   build      — `go build ./...` so a compile-only failure surfaces here,
+#                not buried under a test failure.
 #   vet        — `go vet ./...` against the whole module.
-#   build      — `go build ./...` so a compile-only failure
-#                surfaces here, not buried under a test failure.
-#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every
-#                examples/*.fern). Fern sources only.
-#   gofmt      — `make gofmt-check`: the Go-side counterpart. Nothing
-#                gated Go formatting before, so 21 files across
-#                internal/ and cmd/ had drifted (trailing-comment and
-#                map-literal alignment goes stale when a longer entry
-#                lands beside an existing one).
-#   deadcode   — `make deadcode`: fails on any unreachable function
-#                not in tools/deadcode-allowlist.txt.
+#   gofmt      — `make gofmt-check`. Nothing gated Go formatting before, so 21
+#                files across internal/ and cmd/ had drifted.
+#   fmt-check  — `make fmt-check` (== `fern -fmt -d` on every examples/*.fern).
+#                Fern sources only.
+#   deadcode   — `make deadcode`: fails on any unreachable function not in
+#                tools/deadcode-allowlist.txt. A whole-program SSA reachability
+#                analysis, so it is the slowest of these by some way.
 #   actionlint — `make actionlint`: lints .github/workflows/*.yml and the
-#                composite actions. These files gated everything else in
-#                the repo while nothing gated them, so a bad `runs-on`, an
-#                expression naming a context the trigger doesn't provide,
-#                or a `permissions:` block missing a scope the job calls
-#                only showed up as a red run — or as a job doing the wrong
-#                thing quietly. Also runs shellcheck over `run:` blocks
-#                (preinstalled on the ubuntu runners).
-#   testnames  — `make testnames`: every `Test…` name in .github/ must be a
-#                test function or a prefix of one. `go test -run` exits 0
-#                for a name that matches nothing, so the arm64 cross-host
-#                lane ran 15 of the 17 tests it listed — including the one
-#                its 55-minute budget was sized for — and reported green
-#                the whole time (#6310).
-#   freeze     — `make freeze`: reports the live state of the native-
-#                convergence freeze preconditions, derived from the tree.
-#                Fails only when ground is LOST (an AST emitter returns, a
-#                backend loses IR-or-error routing, the checker-codes filter
-#                comes back). It runs here rather than nowhere because the
-#                preconditions previously lived only as prose on #4451, and
-#                an audit found every stale claim pointing the same way —
-#                more pessimistic than the code. Prose does not re-check
-#                itself; this does, on every push.
+#                composite actions, plus shellcheck over `run:` blocks. These
+#                files gated everything else in the repo while nothing gated
+#                them, so a bad `runs-on` or an expression naming a context the
+#                trigger does not provide only showed up as a red run.
+#   testnames  — `make testnames`: every `Test…` name in .github/ must be a test
+#                function or a prefix of one. `go test -run` exits 0 for a name
+#                that matches nothing, so the arm64 cross-host lane ran 15 of
+#                the 17 tests it listed — including the one its 55-minute budget
+#                was sized for — and reported green the whole time (#6310).
+#   freeze     — `make freeze`: reports the live state of the native-convergence
+#                freeze preconditions, derived from the tree. Fails only when
+#                ground is LOST (an AST emitter returns, a backend loses
+#                IR-or-error routing, the checker-codes filter comes back).
 #
-# vet/build/fmt are cheap (sub-30s on warm cache); deadcode runs a
-# whole-program SSA reachability analysis so it's a touch slower but
-# still well under the heavy test workflows. All run on x86 only —
-# covering both arches would double minutes for ~0 extra signal since
-# they're arch-agnostic.
+# x86 only: these are arch-agnostic, so a second arch would double minutes for
+# no extra signal.
 
 on:
   pull_request:
@@ -58,58 +58,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  vet:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
-      - run: go vet ./...
 
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: go build ./...
+      - name: go build ./...
+        if: ${{ !cancelled() }}
+        run: go build ./...
 
-  fmt-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make fmt-check
+      - name: go vet ./...
+        if: ${{ !cancelled() }}
+        run: go vet ./...
 
-  gofmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make gofmt-check
+      - name: gofmt
+        if: ${{ !cancelled() }}
+        run: make gofmt-check
 
-  deadcode:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make deadcode
+      - name: fern -fmt
+        if: ${{ !cancelled() }}
+        run: make fmt-check
 
-  actionlint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make actionlint
+      - name: deadcode
+        if: ${{ !cancelled() }}
+        run: make deadcode
 
-  testnames:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make testnames
+      - name: actionlint
+        if: ${{ !cancelled() }}
+        run: make actionlint
 
-  freeze:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-fern
-      - run: make freeze
+      - name: testnames
+        if: ${{ !cancelled() }}
+        run: make testnames
+
+      - name: freeze preconditions
+        if: ${{ !cancelled() }}
+        run: make freeze
