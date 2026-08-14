@@ -80,6 +80,15 @@ func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 		{"underflow-clean", prog("1e-400"), nil},
 		{"smallest-subnormal-clean", prog("5e-324"), nil},
 		{"ordinary-float-clean", prog("1.5e2"), nil},
+		// A parameter DEFAULT is the one position nothing evaluates unless a
+		// call site omits the argument, so it sits outside the checker's body
+		// walk. Native rejects the literal at parse time either way.
+		{"overflow-in-unused-param-default",
+			"function f(x: f64 = 1e309): i32 { return 0; }\nfunction main(): i32 { return 0; }\n",
+			[]string{"P002"}},
+		{"param-default-clean",
+			"function f(x: f64 = 1.5): i32 { return 0; }\nfunction main(): i32 { return 0; }\n",
+			nil},
 	}
 
 	for _, tc := range cases {

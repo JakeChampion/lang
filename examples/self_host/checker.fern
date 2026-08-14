@@ -2897,6 +2897,17 @@ function append_diags(a: Diag[], b: Diag[]): Diag[] {
     return a;
 }
 
+// keep_code filters a diagnostic list to one code.
+function keep_code(diags: Diag[], code: string): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (diags[i].code == code) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // ret_diags walks a function body (recursing through if / while / for /
 // match / defer sub-bodies, threading scope so a return can see locals
 // declared earlier in the same block) and emits E002 for each return
@@ -9105,6 +9116,19 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // E026 / E028: structural match-arm errors (wildcard order, dup
         // variant).
         body_diags = append_diags(body_diags, match_diags(dbody, structs));
+        // P002 in a parameter's DEFAULT value. Nothing evaluates a default
+        // until a call site omits the argument, so it sits outside the body
+        // walk above — but native rejects the literal at parse time whether
+        // the default is ever reached or not (#6842). Filtered to that code:
+        // the walk's other rules are written for a body, not for an
+        // un-called default expression.
+        var pdi: i32 = 0;
+        while (pdi < mod.funcs[i].params.len()) {
+            if (mod.funcs[i].params[pdi].has_default) {
+                body_diags = append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(sigs, structs, unions, methods), unions, mod.enums), "P002"));
+            }
+            pdi = pdi + 1;
+        }
         // E019: explicit type-argument arity on a generic-struct reference
         // in a parameter type.
         var pai2: i32 = 0;
