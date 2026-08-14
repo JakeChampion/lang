@@ -50,7 +50,7 @@ name: Test e2e self-host
 #     of call-sites; TestSelfHostWasmArityGate alone cold-built two of them for
 #     ~126s per shard before this), and asm_ir_elig_run (the lean
 #     front-end+asm_ir probe the six IR-eligibility tests share, in place of a
-#     whole-compiler driver whose 256 MB binary did not disk-cache).
+#     whole-compiler driver whose ~156 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
 #     IMPORTANT: artifacts are used instead of actions/cache here because the
 #     repo's 10 GB shared cache budget is routinely filled by other PRs/branches.
@@ -59,9 +59,11 @@ name: Test e2e self-host
 #     wall-clock into the runner-preemption window. Workflow artifacts are
 #     per-run and not subject to the shared cache eviction, so they remain
 #     available however long shards wait in queue.
-#   * the warm artifact stores ONLY the linked driver BINARY — NOT the ~680 MB
-#     emitted `.s`. Binary-only keeps each warmed driver ~4x smaller (~190 MB),
-#     so downloads fit on-runner disk and the emit (~47 s) is skipped.
+#   * the warm artifact stores ONLY the linked driver BINARY — NOT the emitted
+#     `.s`, ~371 MB for the whole compiler. Binary-only keeps each warmed driver
+#     several times smaller, so downloads fit on-runner disk and the emit (~47 s)
+#     is skipped. Per-driver linked sizes, and the check that keeps them true,
+#     are in .github/selfhost-driver-sizes.txt.
 #
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
@@ -144,7 +146,8 @@ concurrency:
 
 # ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
 # examples/self_host/fern.fern, the ENTIRE self-hosted compiler and the single
-# largest driver (~245 MB linked). A cold fern.fern build is ~236 s; when the
+# largest driver (~156 MB linked; .github/selfhost-driver-sizes.txt carries the
+# maintained figure). A cold fern.fern build is ~236 s; when the
 # `cli` warm cache is evicted/dropped on a shard (GitHub's 10 GB repo-cache
 # budget vs. the ~2 GB of decompressed driver binaries an x86 shard restores)
 # the shard re-emits fern.fern COLD mid-run — which is exactly when the long x86
@@ -282,6 +285,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "${{ matrix.drivers }}"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -291,6 +295,14 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
+      # SIZE OF WHAT WE JUST LINKED (#6826). The drivers were built above for
+      # their own reasons; this is one stat each plus an awk pass, and it is the
+      # only thing in the repo that records the number. Advisory — see
+      # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
+      # so a partial warm still reports the sizes it did produce.
+      - name: check linked driver sizes against the baseline
+        if: ${{ !cancelled() }}
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v4
         with:
@@ -351,6 +363,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "fern.fern"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -360,6 +373,12 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
+      # fern.fern is THE tracked artifact — the whole self-hosted compiler CLI,
+      # and the number to quote for "the self-host binary" (#6826). It is linked
+      # here and nowhere else in the lane, so this is where it gets recorded.
+      - name: check linked fern.fern size against the baseline
+        if: ${{ !cancelled() }}
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       - name: run isolated fern.fern driver tests (in-process, local cache)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -376,8 +395,8 @@ jobs:
     needs: build
     name: const-func-gen2-x86_64
     runs-on: ubuntu-latest
-    # The test builds an mmc1/mmc2 pair (a ~220 MB stage-1 binary and a heavy
-    # emit) — its own docs quote ~4 min, so 30 gives the runner room.
+    # The test builds an mmc1/mmc2 pair (a whole-compiler-scale stage-1 binary
+    # and a heavy emit) — its own docs quote ~4 min, so 30 gives the runner room.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

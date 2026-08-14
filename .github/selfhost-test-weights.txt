@@ -167,7 +167,7 @@ TestSelfHostTupleWideCallElem 3
 #
 # Recorded because the naive measurement is off by ~23x and I nearly wrote it
 # here: `go test` with no FERN_SELFHOST_BUILD_CACHE has NO disk cache at all
-# (diskCacheReadDirs returns nil), so it re-emits the ~245 MB driver every
+# (diskCacheReadDirs returns nil), so it re-emits the whole driver every
 # invocation and reports ~140-155 s. Almost all of that is the driver build the
 # warm artifact eliminates. To reproduce the real number, point the var at a dir
 # already holding `<hash>.driverbin` — note the suffix, `drv-<hash>` is the

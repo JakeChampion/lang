@@ -1,0 +1,42 @@
+# Linked sizes, in BYTES, of the self-host driver binaries CI already builds —
+# checked against every run by scripts/ci-check-driver-sizes (#6826).
+#
+# WHICH BINARY IS "THE SELF-HOST BINARY": fern.fern, named below as the tracked
+# artifact. It is examples/self_host/fern.fern, the whole self-hosted compiler
+# CLI, and it is the number to quote when talking about self-host binary size
+# (#4109's "well under half" target is against it). The others in this file are
+# smaller programs that link a SUBSET of the compiler: `asm_ir_run` is the
+# front-end plus the x86-64 IR backend, `wasm_ir_run` the front-end plus the
+# wasm one, and so on. They are recorded because they are free to record and
+# they localise a regression to a backend — NOT because they are
+# interchangeable. Quoting one against another is how #4109 acquired a bogus
+# "the epic is 4x off": a 245 MB CLI figure compared with a 59 MB wasm_ir_run
+# figure.
+#
+# tracked-artifact: fern.fern
+#
+# HOW THIS IS MEASURED. Nothing extra is built. Every driver here is linked by
+# the `warm` / `cli` jobs of test-e2e-selfhost.yml on their own account;
+# TestSelfHostWarmStockDriver stats each one it warms into
+# FERN_DRIVER_SIZE_REPORT, and the job compares that report against this file.
+# The emit and the link are in-process pure Go, so a given commit yields the
+# same byte count on any runner — a difference here is a real change in the
+# compiler's output, not runner noise.
+#
+# ADVISORY, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
+# default) is a job-summary line plus a warning annotation, never a failed job.
+# A SHRINK is flagged too: an un-updated baseline after a win silently raises
+# the ceiling the next regression is measured against, which is how 16% of
+# growth went unnoticed for eight days.
+#
+# WHEN A NUMBER MOVES ON PURPOSE, update it in the same PR — the job summary
+# prints the corrected lines ready to paste. Keep the reason in the PR, not
+# here; this file is a set of current facts.
+#
+# x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
+# driver builds), so there is one architecture to baseline and no per-arch split.
+# Seeded from the #6826 measurements at 84a54c85 (2026-08-14).
+
+fern.fern 155895596
+asm_ir_run.fern 146081148
+wasm_ir_run.fern 77378268

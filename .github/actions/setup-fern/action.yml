@@ -57,7 +57,7 @@ runs:
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-
 
-    # The self-host driver binaries link a ~680 MB freestanding `.s`. The GNU
+    # The self-host driver binaries link a ~371 MB freestanding `.s`. The GNU
     # bfd linker (gcc's default) is minutes-slow and memory-heavy on inputs that
     # size — the source of intermittent self-host shard link TIMEOUTS (a cold
     # driver link hanging past the job deadline). The e2e link path
