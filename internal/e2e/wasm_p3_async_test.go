@@ -182,9 +182,7 @@ func TestWasmP3AsyncExportU64FromFern(t *testing.T) {
 // component's `run: async func() -> u32` export under wasmtime's async
 // features — the user-facing surface for WASI Preview-3 async exports.
 func TestCmdLangAsyncExport(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
+	skipIfPreview2Missing(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "aexport.fern")
 	if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 7 * 6; }\n"), 0o644); err != nil {
@@ -213,9 +211,7 @@ func TestCmdLangAsyncExport(t *testing.T) {
 // lifted as the component's `<name>: async func() -> u32` export, run
 // under wasmtime's async features.
 func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
+	skipIfPreview2Missing(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "akw.fern")
 	src := "async function compute(): i32 { return 6 * 7; }\nfunction main(): i32 { return 0; }\n"
@@ -248,9 +244,7 @@ func TestCmdLangAsyncFunctionKeyword(t *testing.T) {
 // async features prints 3.5 — proving the async export width plumbing works end
 // to end from `fern -target wasm32-wasi -emit core-module`, not just the i32 default.
 func TestCmdLangAsyncFunctionKeywordF64(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
+	skipIfPreview2Missing(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "akwf.fern")
 	src := "async function half(): f64 { return 3.5; }\nfunction main(): i32 { return 0; }\n"
