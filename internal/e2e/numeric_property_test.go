@@ -223,13 +223,26 @@ func genIntToFloat(r *rand.Rand) string {
 
 // ---- oracle + comparison ----
 
-// interpStdout runs `src` through the interpreter and returns what
-// main() printed. An interp coverage gap `t.Skipf`s, matching
-// runInterpByteOrSkip: the generators feed this, so a program the
-// interpreter can't model is tolerated, but it has to be marked
-// skipped rather than returning a sentinel the caller turns into a
-// silent pass (#6840).
+// interpStdout runs `src` through the interpreter and returns what main()
+// printed. A coverage gap is a hard failure: this is the oracle, and a
+// hand-written case that stops reaching it is a lost assertion, not a
+// tolerable one (the `runInterpByte` half of #6840's rule).
 func interpStdout(t *testing.T, src string) string {
+	t.Helper()
+	return interpStdoutGap(t, src, false)
+}
+
+// interpStdoutOrSkip is interpStdout for GENERATOR-fed programs, where the
+// interpreter genuinely is not feature-complete: a gap skips the case instead
+// of failing. Every skip is counted against the floor in
+// TestNumericProperty_Differential, so a generator change that made most
+// programs unrunnable cannot read as a wall of skips nobody totals.
+func interpStdoutOrSkip(t *testing.T, src string) string {
+	t.Helper()
+	return interpStdoutGap(t, src, true)
+}
+
+func interpStdoutGap(t *testing.T, src string, skipOnGap bool) string {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
@@ -252,18 +265,28 @@ func interpStdout(t *testing.T, src string) string {
 		i.Register(fn)
 	}
 	if _, err := i.CallByName("main", nil); err != nil {
-		t.Skipf("interp coverage gap: %v\nsrc:\n%s", err, src)
+		if skipOnGap {
+			t.Skipf("interp coverage gap: %v\nsrc:\n%s", err, src)
+		}
+		t.Fatalf("interp coverage gap on a hand-written case: %v\nsrc:\n%s", err, src)
 	}
 	return strings.TrimRight(buf.String(), "\n")
 }
 
 func trimOut(s string) string { return strings.TrimRight(strings.TrimSpace(s), "\n") }
 
-// assertNumProgramAgrees runs one generated program through every
-// available backend and asserts they match the interp's output.
+// assertNumProgramAgrees runs one HAND-WRITTEN program through every available
+// backend and asserts they match the interp's output.
 func assertNumProgramAgrees(t *testing.T, src string) {
 	t.Helper()
 	assertNumProgramAgreesSkipping(t, src, nil)
+}
+
+// assertGeneratedNumProgramAgrees is assertNumProgramAgrees for a program the
+// generator produced, where an interp gap skips rather than fails.
+func assertGeneratedNumProgramAgrees(t *testing.T, src string) {
+	t.Helper()
+	runBackendsAgainst(t, src, interpStdoutOrSkip(t, src), nil)
 }
 
 // assertNumProgramAgreesSkipping is assertNumProgramAgrees with a set of
@@ -274,7 +297,13 @@ func assertNumProgramAgrees(t *testing.T, src string) {
 // invalid.
 func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]string) {
 	t.Helper()
-	want := interpStdout(t, src)
+	runBackendsAgainst(t, src, interpStdout(t, src), skip)
+}
+
+// runBackendsAgainst runs src on every backend and compares each against want,
+// one sub-test per backend so a missing toolchain skips only its own leg.
+func runBackendsAgainst(t *testing.T, src, want string, skip map[string]string) {
+	t.Helper()
 	known := func(t *testing.T, backend string) bool {
 		if issue, ok := skip[backend]; ok {
 			t.Skipf("known divergence, see %s — remove this entry when it is fixed", issue)
@@ -359,18 +388,39 @@ func buildNumComponent(t *testing.T, src string) string {
 // sweep — fast enough for `go test ./...`, with the fuzz target
 // below for deeper search. Each seed is its own sub-test so a
 // failure names the exact program.
+// minSeedsRunPct is the share of generated seeds whose program must actually
+// reach the oracle. Measured at 100% on the current generator, so the floor has
+// no tuning problem; it exists because a generator change that made most
+// programs unmodellable would otherwise read as a wall of skips nobody totals,
+// and the sweep would go on reporting PASS.
+const minSeedsRunPct = 80
+
 func TestNumericProperty_Differential(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping property sweep in -short mode")
 	}
 	const seeds = 60
+	ran := 0
 	for s := 0; s < seeds; s++ {
 		r := rand.New(rand.NewSource(int64(s)))
 		src := genNumProgram(r)
 		t.Run(fmt.Sprintf("seed%d", s), func(t *testing.T) {
-			assertNumProgramAgrees(t, src)
+			// The parent sub-test skips exactly when the interp oracle found a
+			// gap; a backend leg skipping for a missing toolchain is its own
+			// sub-test and does not count against the floor.
+			defer func() {
+				if !t.Skipped() {
+					ran++
+				}
+			}()
+			assertGeneratedNumProgramAgrees(t, src)
 		})
 	}
+	if ran*100 < seeds*minSeedsRunPct {
+		t.Errorf("only %d of %d generated programs reached the interp oracle (floor %d%%) — "+
+			"the sweep is mostly skips", ran, seeds, minSeedsRunPct)
+	}
+	t.Logf("%d of %d generated programs reached the oracle", ran, seeds)
 }
 
 // TestNumericProperty_Regressions pins the specific programs the
@@ -490,6 +540,6 @@ func FuzzNumericProperty(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, seed int64) {
 		r := rand.New(rand.NewSource(seed))
-		assertNumProgramAgrees(t, genNumProgram(r))
+		assertGeneratedNumProgramAgrees(t, genNumProgram(r))
 	})
 }

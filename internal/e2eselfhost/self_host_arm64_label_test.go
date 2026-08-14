@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -50,58 +47,9 @@ func TestSelfHostArm64Labels(t *testing.T) {
 //
 // — a forward `bl` (resolved by arm64_asm_resolve) and a backward loop
 // branch (patched immediately) — wraps it with macho.fern into an
-// ad-hoc-signed Mach-O. Asserts an arm64 MH_EXECUTE (structural, every
-// host) and, on Apple Silicon, executes it and checks exit 42 (= 6 × 7),
-// with no clang/ld64/codesign.
+// ad-hoc-signed Mach-O that exits 42 (= 6 × 7), with no clang/ld64/codesign.
 func TestSelfHostArm64DarwinMachOCallRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin call run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachOCallDriverMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin call driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_call_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "call42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin call exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "call42", main: arm64MachOCallDriverMain, wantExit: 42})
 }
 
 // arm64LabelsSelfTestMain byte-checks the named-label assembler: a forward

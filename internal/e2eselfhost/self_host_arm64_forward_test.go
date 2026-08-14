@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -48,58 +45,9 @@ func TestSelfHostArm64ForwardRefs(t *testing.T) {
 // forward branch emitted as a placeholder and patched once `done`'s offset
 // is known. With a (42) >= b (17) the branch is *taken*, skipping the
 // `mov a,b`, so a wrong target or a not-taken branch would exit 17 instead
-// of 42. macho.fern wraps the bytes into an ad-hoc-signed Mach-O; the test
-// asserts an arm64 MH_EXECUTE (structural, every host) and, on Apple
-// Silicon, executes it and checks exit 42.
+// of 42. macho.fern wraps the bytes into an ad-hoc-signed Mach-O.
 func TestSelfHostArm64DarwinMachOMaxRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin max run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachOMaxDriverMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin max driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_max_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "max42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin max exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "max42", main: arm64MachOMaxDriverMain, wantExit: 42})
 }
 
 // arm64ForwardSelfTestMain asserts arm64_rel and the patch splicers

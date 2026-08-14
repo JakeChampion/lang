@@ -112,7 +112,8 @@ import (
 // writing it down.
 // NOTE `backend` is a fixture SELECTOR, matched against the `backends` file each
 // conformance case carries on disk (interp / x86_64 / arm64 / wasm) — NOT a
-// target name. Renaming it silently ran zero fixtures. Since #6635 the
+// target name. Renaming it runs zero fixtures (the floor at the end of
+// runSelfHostFixtureLeg is what makes that a failure). Since #6635 the
 // self-host driver's -target values are cmd/fern's own `<isa>-<environment>`
 // spellings, so only this selector keeps a vocabulary of its own.
 func TestFernFixturesSelfHostWasm(t *testing.T) {
@@ -380,6 +381,14 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 	skipReasons := "compile-error / " + leg.backend + "-excluded"
 	if leg.skipStdin {
 		skipReasons += " / stdin"
+	}
+	// A leg that selected nothing reports PASS with no sub-tests at all, which
+	// is indistinguishable from a clean corpus run. It has already happened
+	// once: renaming the `backend` selector (a fixture-file token, not a target
+	// name — see the note on TestFernFixturesSelfHostWasm) silently ran zero.
+	if ran == 0 {
+		t.Fatalf("the self-host %s leg selected 0 of %d fixtures — the `backend` selector matches "+
+			"no fixture's `backends` file, so this leg asserted nothing", leg.backend, len(names))
 	}
 	t.Logf("self-host %s leg: %d fixtures run (%d of them known divergences), %d skipped (%s)",
 		leg.backend, ran, expectedFail, skipped, skipReasons)

@@ -86,6 +86,7 @@ rather than the IR path.
 | Self-host IR verifiers (`TestSelfHostIRVerify{Structure,Stack,Fip}` and their `*CorpusClean` sweeps) | The op stream the self-host backends are handed is WELL-FORMED: local indices inside the frame, balanced scopes, in-range branch depths, call arity (`irverify.fern`), and that every op finds its operands, every scope leaves the stack where it found it, and nothing is left dangling at the function's end (`irverifystack.fern`). Its distinguishing value is that it is not self-referential — it does not care whether the compiler reproduces itself, only whether what it emitted can be lowered at all | Whether the ops MEAN the program: a perfectly well-formed stream can compute the wrong answer. Operand KINDS and widths, which the IR does not carry. Any function that did not lower, which has no IR to verify. Any op outside the stack pass's arity table, which is skipped and COUNTED — the corpus gate holds coverage at 100%, so a new op shows up there rather than as an unchecked function |
 | `TestSelfHostFipCensusOnNativesShapes` | The self-host reuse layer's PAIRING state, measured against the exact shapes native's `internal/ir/fip_verify_test.go` pins: per function, how many constructor sites lowered fresh and how many paired into a donor box. Today R3 general pairing matches native and R1 self-overwrite / R4 consuming-match do not, so this is the gate that notices when either is ported | Whether the pairing is CORRECT — it counts sites, it does not check the donor is dead or uniquely owned. It also does not compare against native automatically: the expected counts are written down, so closing a gap fails the test and the numbers are updated by hand |
 | Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
+| `TestSelfHostArm64DarwinMachO*` (macos.yml) | That a Mach-O the SELF-HOST toolchain assembled and ad-hoc-signed actually LOADS and runs: `arm64_native.fern`'s encoders + `macho.fern`'s container, executed by the XNU kernel. The exec half needs Apple Silicon, and it needs a driver the host can run — on darwin the `wasm_run` driver is built for `arm64-darwin` rather than as an x86-64 ELF, which is what the Linux shards use. Until #6849 the exec half ran on NO lane and an `add Xd, Xn, Xm, lsl #N` whose shift the self-host assembler silently dropped read every array element as `a[0]` | The Linux shards reach only the structural half (parse the Mach-O); they cannot launch it. And a kernel rejection is a hard failure here, not a skip — that distinction is #6042 |
 | `TestSelfHostStage2FixpointArm64` (own CI job) | The arm64 emit is a fixed point of itself AND independent of the host arch: generation 2 is a real aarch64 compiler linked from generation 1's own asm, run under qemu, and the two must emit byte-identical output. Its distinguishing value is that generation 2 runs THROUGH the assembler's own output, which is what separates "the emitter is wrong" from "the assembler is wrong" — three arm64 assembler bugs were each mis-attributed to codegen first | Everything the two generations get wrong *identically*, which is the same blindness every fixpoint has. The `self` case (gen2 recompiling the whole compiler) is behind `FERN_STAGE2_SELF=1` and does not run in CI, so the span it actually gates is four inputs, not the compiler |
 | rc corpus (`rcCorpus`, all three backends) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |
 | Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
@@ -236,9 +237,26 @@ Worth knowing so you do not assume coverage you do not have:
    asserted nothing for its whole existence that way — the interp oracle
    skipped, which took the x86-64 and wasm legs with it (#6840). Two habits
    close it: an oracle helper for hand-written cases FAILS on a gap rather than
-   skipping (`runInterpByte`; only generator-fed corpora get
-   `runInterpByteOrSkip`), and each toolchain-gated backend leg goes in its own
-   sub-test so a missing tool cannot abort the legs after it.
+   skipping (`runInterpByte` / `interpStdout`; only generator-fed corpora get
+   `runInterpByteOrSkip` / `interpStdoutOrSkip`), and each toolchain-gated
+   backend leg goes in its own sub-test so a missing tool cannot abort the legs
+   after it.
+10. **A corpus walk that selects nothing PASSes with no sub-tests at all**, which
+   reads exactly like a clean run. Every fixture-driven walk needs a floor:
+   `runSelfHostFixtureLeg`, `forEachRunnableFixture`, `TestSeccompFixtureCorpus`,
+   `TestFernFixtures` and the diff-oracle legs all fail on zero now. The selector
+   is a token in each case's `backends` file, not a target name, so a rename
+   quietly empties the set (#6849). The generator-fed sweeps carry the same floor
+   as a RATIO — `TestNumericProperty_Differential` fails when under 80% of its
+   seeds reach the oracle, because a wall of skips nobody totals is the same
+   vacuum in slower motion.
+11. **A test that needs TWO backends on one host runs on neither single-backend
+   lane.** `TestF64TranscendentalBackendsAgree` had compared nothing since it was
+   written: the catch-all `test-e2e-other` lane owns its name, and each of that
+   lane's arches has one of the two toolchains. It now runs on
+   `test-e2e-arm64.yml`'s `cross-host` job (x86 host + aarch64 cross toolchain +
+   qemu-user), which sets `FERN_REQUIRE_CROSS_BACKENDS=1` so a lane that loses a
+   toolchain goes RED instead of quietly back to skipping.
 
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 

@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -54,57 +51,9 @@ func TestSelfHostArm64Gas(t *testing.T) {
 // wraps the resulting bytes with macho.fern into an ad-hoc-signed Mach-O,
 // and the binary exits 42 (= 6 × 7). This is the first time the
 // arm64-darwin path goes from *assembly text* to a runnable signed binary
-// with no external as/clang/ld64. Structural everywhere; executed on Apple
-// Silicon.
+// with no external as/clang/ld64.
 func TestSelfHostArm64DarwinMachOGasRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin gas run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachOGasDriverMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin gas driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_gas_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "gas42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin gas exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "gas42", main: arm64MachOGasDriverMain, wantExit: 42})
 }
 
 // arm64GasSelfTestMain assembles individual GAS-text statements and asserts
@@ -175,6 +124,27 @@ function main(): i32 {
     if (u2.unknown.len() != 1) { return 22; }
     var u3: Arm64GasProg = arm64_gas_program("add x0, x1, x2\nldr x0, [sp, #16]\n");
     if (u3.unknown.len() != 0) { return 23; }
+    // Shifted-register add/sub: the index-scaling form the backend emits for
+    // every array element past [0]. The shift used to be dropped (#6849).
+    // add x0, x1, x0, lsl #2 -> 0x8B000820 -> 20 08 00 8B
+    var s1: Arm64Asm = arm64_gas_assemble("add x0, x1, x0, lsl #2");
+    if (s1.code[0] != 32 || s1.code[1] != 8 || s1.code[2] != 0 || s1.code[3] != 139) { return 24; }
+    // sub x3, x4, x5, lsl #3 -> 0xCB050C83 -> 83 0C 05 CB
+    var s2: Arm64Asm = arm64_gas_assemble("sub x3, x4, x5, lsl #3");
+    if (s2.code[0] != 131 || s2.code[1] != 12 || s2.code[2] != 5 || s2.code[3] != 203) { return 25; }
+    // Extended-register add: the 32-bit-index widening form.
+    // add x2, x0, w1, uxtw -> 0x8B214002 -> 02 40 21 8B
+    var s3: Arm64Asm = arm64_gas_assemble("add x2, x0, w1, uxtw");
+    if (s3.code[0] != 2 || s3.code[1] != 64 || s3.code[2] != 33 || s3.code[3] != 139) { return 26; }
+    // add x2, x0, w1, sxtw #2 -> 0x8B21C802 -> 02 C8 21 8B
+    var s4: Arm64Asm = arm64_gas_assemble("add x2, x0, w1, sxtw #2");
+    if (s4.code[0] != 2 || s4.code[1] != 200 || s4.code[2] != 33 || s4.code[3] != 139) { return 27; }
+    // A fourth operand that names neither a shift nor an extend is RECORDED
+    // rather than dropped, and a shifted one is not.
+    var u4: Arm64GasProg = arm64_gas_program("add x0, x1, x2, banana #1\n");
+    if (u4.unknown.len() != 1) { return 28; }
+    var u5: Arm64GasProg = arm64_gas_program("add x0, x1, x2, lsl #2\nadd x2, x0, w1, uxtw\n");
+    if (u5.unknown.len() != 0) { return 29; }
     return 0;
 }
 `

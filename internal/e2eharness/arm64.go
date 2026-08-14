@@ -30,11 +30,23 @@ import (
 // the test SKIPs cleanly if neither path is available.
 func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 	t.Helper()
+	gcc, qemu, ok := LookupArm64Tooling()
+	if !ok {
+		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
+	}
+	return gcc, qemu
+}
+
+// LookupArm64Tooling is Arm64Tooling's discovery half without the skip, for a
+// caller that has to decide for itself what a missing toolchain means — a test
+// needing BOTH register backends at once has no lane where a skip is the honest
+// answer (#6849).
+func LookupArm64Tooling() (gcc, qemu string, ok bool) {
 	// Native arm64 Linux: plain `gcc` produces arm64 binaries,
 	// no emulator needed.
 	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
 		if p, err := exec.LookPath("gcc"); err == nil {
-			return p, ""
+			return p, "", true
 		}
 	}
 	for _, c := range []string{"aarch64-linux-gnu-gcc", "aarch64-unknown-linux-gnu-gcc"} {
@@ -49,10 +61,7 @@ func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 			break
 		}
 	}
-	if gcc == "" || qemu == "" {
-		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
-	}
-	return gcc, qemu
+	return gcc, qemu, gcc != "" && qemu != ""
 }
 
 // RunArm64Bin builds the exec.Cmd for running an arm64 Linux

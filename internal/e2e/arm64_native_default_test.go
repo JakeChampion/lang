@@ -42,7 +42,6 @@ func arm64QemuOrEmpty(t *testing.T) string {
 // executable), and the -cc opt-out to an external linker.
 func TestArm64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
-	qemu := arm64QemuOrEmpty(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
 	// Self-contained — no stdlib, so the only thing exercised is codegen
@@ -51,7 +50,11 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
+	// The emulator lookup belongs in the legs that RUN a binary. Hoisted to
+	// the top it skipped the whole test on an emulator-less host, taking the
+	// exec-bit and -cc checks — neither of which runs anything — with it.
 	t.Run("default_build_is_native", func(t *testing.T) {
+		qemu := arm64QemuOrEmpty(t)
 		out := filepath.Join(dir, "prog.bin")
 		// No -cc: must build with no external assembler/linker on PATH.
 		if o, err := exec.Command(bin, "-target", "arm64-linux", "-o", out, src).CombinedOutput(); err != nil {
@@ -72,14 +75,10 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 	})
 
 	t.Run("run_flag_native", func(t *testing.T) {
-		// --run links a temp binary (created 0600 by CreateTemp) and
-		// executes it; regression guard for the chmod-to-executable fix.
-		// No emulator check here: the CLI execs the binary DIRECTLY when
-		// the target matches the host arch (cmd/fern's runIt path) and only
-		// shells out to qemu-aarch64 for the cross case — and
-		// arm64QemuOrEmpty above already skipped a host that can do
-		// neither. The check this replaced tested `qemu == ""`, i.e. it
-		// skipped exactly the native host that needs no emulator at all.
+		// The CLI execs the binary DIRECTLY when the target matches the host
+		// arch (cmd/fern's runIt path) and only shells out to qemu-aarch64 for
+		// the cross case, so this needs the emulator to EXIST but not the path.
+		arm64QemuOrEmpty(t)
 		cmd := exec.Command(bin, "-target", "arm64-linux", "--run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {

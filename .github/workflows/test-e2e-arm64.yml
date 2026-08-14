@@ -102,3 +102,20 @@ jobs:
           gotestsum --format pkgname-and-test-fails -- -timeout 18m
           -run '^(TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64|TestSelfHostReturnClosureContainerIRArm64|TestSelfHostReturnMatchPayloadIRArm64|TestSelfHostReturnLambdaDispatchIRArm64|TestSelfHostReturnClosureNestedIRArm64|TestSelfHostTryOptionPayloadIRArm64)$'
           ./internal/e2eselfhost/
+
+      # internal/e2e tests that compare the two REGISTER backends against each
+      # other, so they need both toolchains on one host — the same reason this
+      # job exists. TestF64TranscendentalBackendsAgree had never compared
+      # anything: the catch-all `test-e2e-other` lane owns its name, and each of
+      # that lane's two arches is missing one of the two toolchains (#6849).
+      #
+      # FERN_REQUIRE_CROSS_BACKENDS makes a missing toolchain FAIL here rather
+      # than skip, so this job quietly losing a cross-compiler cannot put the
+      # comparison back to running nowhere.
+      - name: go test (cross-host backend agreement)
+        env:
+          FERN_REQUIRE_CROSS_BACKENDS: "1"
+        run: >-
+          gotestsum --format pkgname-and-test-fails -- -timeout 10m
+          -run '^TestF64TranscendentalBackendsAgree$'
+          ./internal/e2e/

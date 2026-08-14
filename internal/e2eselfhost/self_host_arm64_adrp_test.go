@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -50,61 +47,9 @@ func TestSelfHostArm64Adrp(t *testing.T) {
 // (the immediates computed from the fixed segment addresses macho.fern
 // uses), and exits with the loaded value. A wrong page delta / page off, or
 // a wrong __DATA base, would not exit 42. macho.fern wraps it into an
-// ad-hoc-signed Mach-O; the test asserts an arm64 MH_EXECUTE (structural,
-// every host) and, on Apple Silicon, runs it and checks exit 42 — no
-// clang/ld64/codesign.
+// ad-hoc-signed Mach-O — no clang/ld64/codesign.
 func TestSelfHostArm64DarwinMachODataRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin data run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachODataDriverMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin data driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_data_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-	if f.Segment("__DATA") == nil {
-		t.Fatalf("expected a __DATA segment")
-	}
-
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "data42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin data exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "data42", main: arm64MachODataDriverMain, wantExit: 42, wantData: true})
 }
 
 // arm64AdrpSelfTestMain asserts the adrp encoder, the page-delta/page-off

@@ -1498,9 +1498,10 @@ func TestRunnerProcessAssertionsExample(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	if strings.Contains(out, "# SKIP sh / echo / cat not on $PATH") {
-		// CI image without POSIX shell — accept the skip, no
-		// further assertions to make.
-		return
+		// CI image without POSIX shell. Report it: the assertions below are
+		// the whole test, and an accepted branch that says nothing is how a
+		// suite goes vacuous without anyone noticing.
+		t.Skip("fixture self-skipped: sh / echo / cat not on $PATH")
 	}
 	for _, w := range []string{
 		"ok 1 - echo stdout eq",

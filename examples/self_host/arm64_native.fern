@@ -136,13 +136,38 @@ function arm64_subimm(buf: i32[], rd: i32, rn: i32, imm12: i32, w: boolean): i32
 // extended-register form (option=011 UXTX, imm3=0) when an operand is SP.
 // Verified vs clang: add x0,sp,x0 = 0x8b2063e0, add x3,sp,x4 = 0x8b2463e3,
 // sub x0,sp,x1 = 0xcb2163e0.
-function arm64_addsub_ext_sp_word(is_sub: boolean, rd: i32, rn: i32, rm: i32): i64 {
+function arm64_addsub_ext_word(is_sub: boolean, rd: i32, rn: i32, rm: i32, option: i32, amount: i32): i64 {
     var base: i64 = 0x8b200000;
     if (is_sub) { base = 0xcb200000; }
-    return base | (((rm & 31) as i64) << 16) | 0x6000 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return base | (((rm & 31) as i64) << 16) | (((option & 7) as i64) << 13)
+        | (((amount & 7) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_addsub_ext(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32, option: i32, amount: i32): i32[] {
+    return arm64_le32(buf, arm64_addsub_ext_word(is_sub, rd, rn, rm, option, amount));
+}
+function arm64_addsub_ext_sp_word(is_sub: boolean, rd: i32, rn: i32, rm: i32): i64 {
+    return arm64_addsub_ext_word(is_sub, rd, rn, rm, 3, 0);   // UXTX, no shift
 }
 function arm64_addsub_ext_sp(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, arm64_addsub_ext_sp_word(is_sub, rd, rn, rm));
+}
+
+// arm64_addsubreg_shift_word encodes `add/sub Xd, Xn, Xm, <shift> #amount`:
+// shift type in bits 23:22 (0=LSL, 1=LSR, 2=ASR) and the 6-bit amount in
+// bits 15:10. The backend scales an array index by its element size with
+// `add Xd, Xn, Xm, lsl #N`, so dropping the shift corrupts every element
+// past [0] (verified vs llvm-mc: add x0,x1,x0,lsl #2 = 0x8b000820,
+// sub x3,x4,x5,lsl #3 = 0xcb050c83).
+function arm64_addsubreg_shift_word(is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32): i64 {
+    var base: i64 = 0x8b000000;
+    if (is_sub) { base = 0xcb000000; }
+    return base | (((st & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
+        | (((amount & 63) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+function arm64_addsubreg_shift(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32, w: boolean): i32[] {
+    var word: i64 = arm64_addsubreg_shift_word(is_sub, rd, rn, rm, st, amount);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 
 // arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
@@ -1943,6 +1968,47 @@ function arm64_gas_lsl_amount(tok: string): i32 {
     return arm64_gas_atoi(arm64_gas_trim(s[h + 1:s.len()]));
 }
 
+// arm64_gas_shift_type maps the shift keyword of a `<shift> #N` operand to
+// its 2-bit selector, or -1 when the token names no shift.
+function arm64_gas_shift_type(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (arm64_str_indexof(s, "lsl") == 0) { return 0; }
+    if (arm64_str_indexof(s, "lsr") == 0) { return 1; }
+    if (arm64_str_indexof(s, "asr") == 0) { return 2; }
+    if (arm64_str_indexof(s, "ror") == 0) { return 3; }
+    return 0 - 1;
+}
+
+// arm64_gas_extend_option maps the extend keyword of a `<extend> {#N}` operand
+// to its 3-bit selector, or -1 when the token names no extend. `sxt` is tested
+// before `uxt` only for symmetry; the two prefixes are disjoint.
+function arm64_gas_extend_option(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (arm64_str_indexof(s, "uxtb") == 0) { return 0; }
+    if (arm64_str_indexof(s, "uxth") == 0) { return 1; }
+    if (arm64_str_indexof(s, "uxtw") == 0) { return 2; }
+    if (arm64_str_indexof(s, "uxtx") == 0) { return 3; }
+    if (arm64_str_indexof(s, "sxtb") == 0) { return 4; }
+    if (arm64_str_indexof(s, "sxth") == 0) { return 5; }
+    if (arm64_str_indexof(s, "sxtw") == 0) { return 6; }
+    if (arm64_str_indexof(s, "sxtx") == 0) { return 7; }
+    return 0 - 1;
+}
+
+// arm64_gas_addsub_operand_unsupported reports whether an add/sub carries a
+// fourth operand this assembler cannot encode. The shifted and extended forms
+// below cover what the backend emits; anything else must refuse the line
+// rather than drop the operand, which is what made `add x0, x1, x0, lsl #2`
+// read element [0] for every index (#6849).
+function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boolean {
+    if (mnem != "add" && mnem != "sub") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() < 4) { return false; }
+    if (arm64_gas_shift_type(ops[3]) >= 0) { return false; }
+    if (arm64_gas_extend_option(ops[3]) >= 0) { return false; }
+    return true;
+}
+
 // ---- instruction dispatch ----
 
 // arm64_gas_is_bcond reports whether `mnem` is a conditional branch, in
@@ -2039,27 +2105,39 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_movn(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])) };
         return a;
     }
-    if (mnem == "add") {
+    if (mnem == "add" || mnem == "sub") {
+        var is_sub: boolean = (mnem == "sub");
         var ad: i32 = arm64_gas_reg(ops[0]);
         var an: i32 = arm64_gas_reg(ops[1]);
         if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
-        } else if (arm64_gas_trim(ops[1]) == "sp") {
-            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, false, ad, an, arm64_gas_reg(ops[2])) };
-        } else {
-            a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, arm64_gas_reg(ops[2])) };
+            if (is_sub) {
+                a = Arm64Asm { ...a, code: arm64_subimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+            } else {
+                a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
+            }
+            return a;
         }
-        return a;
-    }
-    if (mnem == "sub") {
-        var sd: i32 = arm64_gas_reg(ops[0]);
-        var sn: i32 = arm64_gas_reg(ops[1]);
-        if (ops[2].len() > 0 && ops[2][0] == 35) {
-            a = Arm64Asm { ...a, code: arm64_subimm(a.code, sd, sn, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
-        } else if (arm64_gas_trim(ops[1]) == "sp") {
-            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, true, sd, sn, arm64_gas_reg(ops[2])) };
+        var am: i32 = arm64_gas_reg(ops[2]);
+        // A fourth operand is a shift or an extend applied to Xm, and it is
+        // part of the VALUE: `add Xd, Xn, Xm, lsl #2` scales an array index by
+        // the element size. arm64_gas_addsub_operand_unsupported refuses any
+        // other spelling, so nothing reaches here silently unshifted.
+        if (ops.len() >= 4) {
+            var ext: i32 = arm64_gas_extend_option(ops[3]);
+            if (ext >= 0) {
+                a = Arm64Asm { ...a, code: arm64_addsub_ext(a.code, is_sub, ad, an, am, ext, arm64_gas_lsl_amount(ops[3])) };
+                return a;
+            }
+            a = Arm64Asm { ...a, code: arm64_addsubreg_shift(a.code, is_sub, ad, an, am,
+                arm64_gas_shift_type(ops[3]), arm64_gas_lsl_amount(ops[3]), arm64_gas_is_w(ops[0])) };
+            return a;
+        }
+        if (arm64_gas_trim(ops[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, is_sub, ad, an, am) };
+        } else if (is_sub) {
+            a = Arm64Asm { ...a, code: arm64_subreg(a.code, ad, an, am) };
         } else {
-            a = Arm64Asm { ...a, code: arm64_subreg(a.code, sd, sn, arm64_gas_reg(ops[2])) };
+            a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, am) };
         }
         return a;
     }
@@ -3289,6 +3367,12 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // way (#6083). Refuse the line.
         if (arm64_gas_writeback_unsupported(mnem, rest)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":writeback") };
+        }
+        // Same discipline for an add/sub shift or extend operand this
+        // assembler has no encoder for: dropping it emits a plausible
+        // instruction that computes the wrong address (#6849).
+        if (arm64_gas_addsub_operand_unsupported(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":shift") };
         }
         // A mov-wide immediate that does not fit imm16 (or whose complement does
         // not, for the MOVN path) would be silently TRUNCATED into a different

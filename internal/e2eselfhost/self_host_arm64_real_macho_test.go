@@ -2,11 +2,6 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"debug/macho"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -30,15 +25,6 @@ import (
 // the Mach-O. The result must be a valid arm64 MH_EXECUTE (every host) and,
 // on Apple Silicon, execute with the program's exit code.
 func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin real-asm e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
 	cases := []struct {
 		name     string
 		src      string
@@ -73,47 +59,11 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 				t.Fatalf("emit: %v", err)
 			}
 
-			source := arm64NativeSrc(t) + "\n" + asmToMachoDriver(asm)
-			wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-			if len(wat) == 0 {
-				t.Fatal("wasm emitter produced 0 bytes for the real-asm driver")
-			}
-			watPath := filepath.Join(dir, c.name+"_real.wat")
-			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			bin, err := exec.Command("wasmtime", "run", watPath).Output()
-			if err != nil {
-				t.Fatalf("wasmtime run (driver): %v", err)
-			}
+			bin := selfHostMachOBytes(t, c.name+"_real", arm64NativeSrc(t)+"\n"+asmToMachoDriver(asm))
 			if bytes.HasPrefix(bin, []byte("UNKNOWN:")) {
 				t.Fatalf("arm64_gas dropped unhandled mnemonic(s): %s\n--- asm ---\n%s", bin, asm)
 			}
-
-			f, err := macho.NewFile(bytes.NewReader(bin))
-			if err != nil {
-				t.Fatalf("self-host output is not a parseable Mach-O: %v\n--- asm ---\n%s", err, asm)
-			}
-			if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-				t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-			}
-
-			if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-				return
-			}
-			binPath := filepath.Join(dir, c.name)
-			if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-				t.Fatalf("write binary: %v", err)
-			}
-			cmd := exec.Command(binPath)
-			runErr := cmd.Run()
-			ps := cmd.ProcessState
-			if ps == nil || !ps.Exited() {
-				t.Skipf("Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-			}
-			if got := ps.ExitCode(); got != c.wantExit {
-				t.Errorf("real-asm %q exit = %d, want %d", c.name, got, c.wantExit)
-			}
+			assertMachOBytesRun(t, c.name, bin, c.wantExit, false)
 		})
 	}
 }

@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -69,65 +66,8 @@ func TestSelfHostArm64Encode(t *testing.T) {
 // exits 42. This exercises the whole chain (Fern instruction encoder ->
 // Mach-O writer + ad-hoc signature -> kernel load -> svc) with no clang,
 // ld64, or codesign.
-//
-// Off Apple Silicon (the Linux CI box) the produced Mach-O can't be run
-// (it's an arm64 Darwin binary), so the check is structural only:
-// debug/macho must parse it as an arm64 executable.
 func TestSelfHostArm64DarwinMachOExitRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin macho run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachOExitDriverMain
-
-	// Stage 1: compile the driver to WAT via the self-host emitter.
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin macho driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-
-	// Stage 2: run the WAT under wasmtime; its stdout is the raw Mach-O the
-	// Fern program assembled, signed, and wrote.
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	// Structural validation (every host): a parseable arm64 executable.
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-
-	// Decisive runtime check only on Apple Silicon.
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "exit42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "exit42", main: arm64MachOExitDriverMain, wantExit: 42})
 }
 
 // arm64EncodeSelfTestMain asserts each encoder against the ground-truth

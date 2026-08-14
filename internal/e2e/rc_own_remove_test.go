@@ -162,7 +162,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 253; }
     return total;
 }`
-	check := func(backend string, got int) {
+	check := func(t *testing.T, backend string, got int) {
 		t.Helper()
 		if got == 253 {
 			t.Errorf("%s: rc over-release on a pair-form-shaped return — the claim must not "+
@@ -173,14 +173,23 @@ function main(): i32 {
 			t.Errorf("%s: total = %d, want 60 (20 iterations x len 3)", backend, got)
 		}
 	}
-	_, x86 := compileAndRunX86_64FreeOn(t, src)
-	check("x86-64-linux", x86)
-	_, arm := compileAndRunArm64(t, src)
-	check("arm64-linux", arm)
-	prev := ast.RcFreeEnabled
-	ast.RcFreeEnabled = true
-	defer func() { ast.RcFreeEnabled = prev }()
-	check("wasm32-wasi", runWasm(t, src))
+	// One sub-test per backend, so a missing toolchain skips its own leg
+	// instead of ending the function: the arm64 and wasm legs (and the
+	// RcFreeEnabled toggle the wasm one needs) were unreachable in every lane.
+	t.Run("x86_64", func(t *testing.T) {
+		_, code := compileAndRunX86_64FreeOn(t, src)
+		check(t, "x86-64-linux", code)
+	})
+	t.Run("arm64-linux", func(t *testing.T) {
+		_, code := compileAndRunArm64(t, src)
+		check(t, "arm64-linux", code)
+	})
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		prev := ast.RcFreeEnabled
+		ast.RcFreeEnabled = true
+		defer func() { ast.RcFreeEnabled = prev }()
+		check(t, "wasm32-wasi", runWasm(t, src))
+	})
 }
 
 // The other direction: excluding a param from the sweep at a return that did
