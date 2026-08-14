@@ -38,8 +38,8 @@ var addrTakingIntrinsics = []string{
 	"__raw_addr",
 }
 
-// addrArgOK accepts the two safe spellings of an address argument: a bare
-// identifier, and a `__raw_addr(...)` call.
+// bareAddrArgRe matches a plain pointer name, one of the two safe spellings of
+// an address argument (the other being a `__raw_addr(...)` call).
 //
 // asmcore.fern builds helper bodies as Fern string literals, so a name can also
 // arrive as the generator's own interpolation — `__raw_store8(" + buf + ", 0,
@@ -72,7 +72,8 @@ func TestAsmcoreAddressesAvoidI32Arithmetic(t *testing.T) {
 			if strings.HasPrefix(arg, "__raw_addr(") || bareAddrArgRe.MatchString(arg) {
 				continue
 			}
-			t.Errorf("asmcore.fern:%d: %s(%s, …) does address arithmetic in i32 — "+
+			t.Errorf("asmcore.fern:%d: %s's address argument is `%s` — i32 arithmetic on a raw "+
+				"address truncates above 4 GiB (arm64-darwin faults, every Linux target does not); "+
 				"use __raw_addr(ptr, off), which adds at full pointer width (#6386)",
 				lineOf(src, open), name, arg)
 		}
