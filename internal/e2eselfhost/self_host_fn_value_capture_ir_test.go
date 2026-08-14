@@ -89,6 +89,16 @@ function main(): i32 {
     var f: (i32) => i32 = ((x: i32) => (x + n));
     return f(4i32) & 63i32;
 }`, 7},
+	// And the guard on the carve-out itself: a value-position if/match is an
+	// immediately-invoked 0-param lambda, so a name it only CALLS is still only
+	// called and must not be boxed. Counting it as a capture costs the i64 array
+	// element its representation — `did not lower: array literal`. Reduced from
+	// fernsmith seed s0489, which regressed on exactly this.
+	{"iife-call-only-fn-local-unchanged", `function main(): i32 {
+    function lf(p: i32): i64 { return 501i64; }
+    var v1: i64[] = (if (true) { [806i64, lf(1i32), 155i64] } else { [452i64] });
+    return (v1[1i32] as i32) & 63i32;
+}`, 53},
 }
 
 // TestSelfHostFnValueCaptureIRX86_64 drives the production x86-64 IR path.
