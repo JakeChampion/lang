@@ -342,9 +342,13 @@ pub function __map_cow_inplace(m: usize): usize {
 // inc each is the whole claim — __map_retain_val's own kind guard decides
 // which values get it.
 //
-// Struct values (valKind 4) are left shared: their deep drop is the IR-generated
-// __drop_map_struct_<T> at the map local, and matching it needs the same
-// per-field walk in the inc direction (#6242).
+// Two value columns are left shared, both for want of a way to recognise them
+// HERE (#6242): a struct value (valKind 4), whose deep drop is the IR-generated
+// __drop_map_struct_<T> and needs the same per-field walk in the inc direction;
+// and a STRING value, which __drop_map_str_values releases exactly like a key
+// but which shares valKind 1 with every other unreclaimed pointer (tuple,
+// generic enum, slice, runtime handle) — telling them apart needs a kind of its
+// own in mapValKindTag, not a runtime test.
 function __map_own_copied_cols(buf: usize): void {
     var ownKeys: boolean = __load_i32(buf + 8) == 1;
     var retainVals: boolean = __map_val_kind(buf) >= 2;

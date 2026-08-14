@@ -63,6 +63,14 @@ function main(): i32 {
     }
     if (v.get_or("vk-a-fairly-long-key", [0])[2] != 33) { return 6; }
 
+    // NOT covered, and deliberately absent: Map[string, string]. That column
+    // is released by __drop_map_str_values on the same terms, but valKind 1
+    // lumps a string value in with every other unreclaimed pointer, so the
+    // copy side has no runtime test for it — see __map_own_copied_cols. The
+    // key claim alone takes arm64 from SIGSEGV to a wrong value there, which
+    // is an improvement and not a fix; the shape stays out of this suite until
+    // the value half lands rather than pinning behaviour known to be wrong.
+
     // The copy is independent, not just intact: mutating it must not be
     // visible through the source.
     var s: Map[string, i32] = map_new(8);

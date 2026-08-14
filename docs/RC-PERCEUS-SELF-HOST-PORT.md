@@ -7216,9 +7216,28 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   before that copied the bytes with `"" + s` instead, which segfaulted straight
   away: the concat temp is swept at scope exit and the slot kept the address.
 
-  **Struct values (valKind 4) stay shared** — their deep drop is the
-  IR-generated `__drop_map_struct_<T>` at the map local, so claiming them needs
-  the same per-field walk in the inc direction, not one `__fern_rc_inc`.
+  **Two value columns stay shared, and the second is the more interesting
+  refusal.** A struct value (valKind 4) needs the same per-field walk in the inc
+  direction as its generated `__drop_map_struct_<T>`, not one `__fern_rc_inc`.
+  A STRING value is released by `__drop_map_str_values` — the same generated
+  body as the key column, one column over — and could not be claimed here even
+  if it needed to be: `mapValKindTag` files it under valKind **1** together with
+  every other unreclaimed pointer (tuple, generic enum, slice, runtime handle),
+  and the drop is emitted off the STATIC value type, so the copy side has no
+  runtime test the way `keyKind == 1` gives it one for a string key. Giving it a
+  kind of its own is an IR tag-space change and a separate slice.
+
+  Measured rather than assumed, `Map[string, string]` COW churn, 8 rounds:
+
+  | | arm64-darwin | wasm | x86-64 | interp |
+  |---|---|---|---|---|
+  | before | SIGSEGV | — | ok | ok |
+  | after | wrong value | wrong value | ok | ok |
+
+  So the key claim takes the two-word targets from a crash to a wrong read,
+  which is an improvement and NOT a fix, and the remaining half is the value
+  column exactly as described. The shape is deliberately absent from the new
+  suite rather than pinned to behaviour known to be wrong.
 
   Nothing changes for the self-host, which emits no map drop at ALL (no
   `__drop_map_str_keys`, no `__map_drop_values`): its `as usize` is the identity,
