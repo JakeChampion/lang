@@ -767,18 +767,20 @@ func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 	}
 }
 
-// fmtNativeOnlyCases carry the type-check property but NOT byte-parity,
-// because the self-host cannot reproduce them yet. Keeping them out of
-// fmtParityCases is the point: adding a row there asserts the two formatters
-// agree, and asserting that before the self-host can would only redden the
-// parity leg without telling anyone anything new.
+// fmtNativeOnlyCases carry the type-check property but NOT byte-parity.
 //
-// Construction-site type arguments (#6812) are the first entry. The self-host
-// PARSES `Box[i32] { … }` — parser.fern:1721 counts the args into
-// `pending_type_argc` — but the struct-literal branch at :1728 never passes it
-// on and `ExprStructLit` has no field to receive it, so the self-host drops the
-// instantiation and would print `Box { val: 42 }`. Tracked on #6812. Move these
-// into fmtParityCases once the self-host grows the carrier.
+// DO NOT merge these rows into fmtParityCases. That list is shared with
+// TestSelfHostFmtNativeParityX86_64, which asserts the two formatters emit
+// identical BYTES — so a row there is a claim the self-host can reproduce the
+// shape. It cannot, for these: the self-host PARSES `Box[i32] { … }`
+// (parser.fern:1721 counts the args into `pending_type_argc`) but the
+// struct-literal branch at :1728 never passes it on, and `ExprStructLit` has no
+// field to receive it, so the instantiation is dropped and the self-host prints
+// `Box { val: 42 }`. Moving a row across would redden the parity leg over a
+// divergence that is already tracked on #6812, which is the opposite of what a
+// gate is for.
+//
+// Move them across when the self-host grows the carrier, not before.
 var fmtNativeOnlyCases = []struct {
 	name string
 	src  string
@@ -822,6 +824,13 @@ function main(): i32 {
 // of every parity case. It needs no cross toolchain and no self-host build, so
 // unlike the parity test below it runs on every shard and on a dev machine —
 // which is where #6803's rows have to be caught, since those are native's.
+//
+// Its COVERAGE is fixture-driven, and that is a real limitation: the property
+// only holds over the rows below, so a newly added syntax is invisible here
+// until someone adds one. #6812 landed construction-site type args that neither
+// printer emitted, and this test passed throughout — the structural round-trip
+// in internal/printer/roundtrip_test.go (parse → print → parse → DeepEqual) is
+// what caught it. Adding syntax means adding a row.
 func TestFmtNativeOutputTypeChecks(t *testing.T) {
 	cases := fmtParityCases
 	cases = append(append([]struct {
