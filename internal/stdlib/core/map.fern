@@ -324,11 +324,66 @@ pub function __map_cow_inplace(m: usize): usize {
     var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
+    __map_own_copied_cols(newBuf);
     var base: usize = __alloc(16);
     __store_i32(base, 1);
     var nm: usize = base + 8;
     __store_ptr(nm, newBuf);
     return nm;
+}
+
+// __map_own_copied_cols gives a freshly-__memcpy'd kv buffer its own claim on
+// the pointer-shaped columns it would otherwise share with the buffer it came
+// from. Both copies reach rc==1 independently, so both deep drops run and the
+// first one to fire takes the other's memory with it.
+//
+// A string KEY slot means two different things across the two string ABIs, and
+// __map_own_key covers both. Array VALUES are counted on every target, so one
+// inc each is the whole claim — __map_retain_val's own kind guard decides
+// which values get it.
+//
+// Struct values (valKind 4) are left shared: their deep drop is the IR-generated
+// __drop_map_struct_<T> at the map local, and matching it needs the same
+// per-field walk in the inc direction (#6242).
+function __map_own_copied_cols(buf: usize): void {
+    var ownKeys: boolean = __load_i32(buf + 8) == 1;
+    var retainVals: boolean = __map_val_kind(buf) >= 2;
+    if (!ownKeys && !retainVals) { return; }
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var ptrW: i32 = __ptr_width();
+    var entryStride: i32 = 2 * ptrW;
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var i: i32 = 0;
+    while (i < len_) {
+        var slot: usize = entriesBase + i * entryStride;
+        if (ownKeys) { __store_ptr(slot, __map_own_key(__load_ptr(slot))); }
+        if (retainVals) { __map_retain_val(buf, __load_ptr(slot + ptrW)); }
+        i = i + 1;
+    }
+}
+
+// __map_own_key turns a shared string-key slot value into one this map owns.
+//
+// On a two-word-string target the slot holds a (data, len) cell that
+// __drop_map_str_keys frees OUTRIGHT — it carries no refcount of its own — so
+// a second owner needs a cell of its own. `as string` then `as usize` reboxes
+// into exactly that, but it copies the two words WITHOUT counting them, and
+// the drop behind each cell releases the bytes: the inc is what keeps the
+// second release from being an over-release.
+//
+// On a single-word target there is no cell at all — the slot is the string
+// data pointer, and the rebox hands back the very same pointer, which is what
+// tells the two ABIs apart at runtime. The inc alone is the whole claim there,
+// and it is the exact inverse of the __fern_rc_dec that column's drop emits.
+//
+// Both incs are the rc-guarded one: an inline (SSO) or static-sentinel key has
+// nothing to count, and its drop releases nothing either.
+function __map_own_key(slot: usize): usize {
+    var boxed: usize = (slot as string) as usize;
+    if (boxed == slot) { return __fern_rc_inc(slot); }
+    __fern_rc_inc(__load_ptr(boxed));
+    return boxed;
 }
 
 // __map_clone unconditionally deep-copies a Map handle — the rc>1 branch
@@ -341,9 +396,8 @@ pub function __map_cow_inplace(m: usize): usize {
 // mutates in place at rc==1). Storing it into the new container without copying
 // makes the two structs alias one buffer; dropping the old one then frees it
 // out from under the new one — a use-after-free. Cloning gives the new
-// container its own buffer so the lifetimes are independent. (The buffer copy
-// is shallow over pointer-shaped values, matching __map_cow_inplace; precise
-// per-value retain is the Perceus port's job — roadmap goal 2.)
+// container its own buffer so the lifetimes are independent. The columns are
+// claimed by __map_own_copied_cols, exactly as in __map_cow_inplace.
 pub function __map_clone(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
@@ -351,6 +405,7 @@ pub function __map_clone(m: usize): usize {
     var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
+    __map_own_copied_cols(newBuf);
     var base: usize = __alloc(16);
     __store_i32(base, 1);
     var nm: usize = base + 8;
