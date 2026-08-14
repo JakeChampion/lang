@@ -14991,12 +14991,14 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             // Name it while the then-body lowers, so a reference to a local whose
             // block has since been retired resolves through the recorded alias
             // (#6821). The cond itself lowered above, under the outer guard.
-            var dfg_prev: string = s1.defer_guard;
             var dfg: string = defer_replay_flag(iff.cond);
+            var dfg_prev: string = s1.defer_guard;
             if (dfg.len() > 0) { s1 = s1.with_defer_guard(dfg); }
             var s2: LowerState = lower_block(iff.then_body, s1);
             if (!s2.ok) { return s2; }
-            s2 = s2.with_defer_guard(dfg_prev);
+            // Restore only when it was set — an ordinary `if` must not pay a
+            // LowerState rebuild for a field it never touched.
+            if (dfg.len() > 0) { s2 = s2.with_defer_guard(dfg_prev); }
             if (iff.else_body.len() > 0) {
                 var s3: LowerState = s2.emit(ir.op_else());
                 var s4: LowerState = lower_block(iff.else_body, s3);
