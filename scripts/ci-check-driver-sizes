@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# ci-check-driver-sizes — record the linked size of the self-host drivers and
+# compare it against the checked-in baseline.
+#
+# Usage: ci-check-driver-sizes BASELINE REPORT
+#
+#   BASELINE  .github/selfhost-driver-sizes.txt — `driver bytes` per line, plus
+#             a `# tracked-artifact: <name>` directive naming the headline
+#             binary.
+#   REPORT    `driver<TAB>bytes` per line, written by TestSelfHostWarmStockDriver
+#             into FERN_DRIVER_SIZE_REPORT while the `warm` / `cli` jobs link the
+#             drivers they were going to link anyway.
+#
+# WHY THIS EXISTS (#6826). The self-host binary shrank hard and then grew 16%
+# back in eight days, and nothing in the repo would have told anyone: every
+# driver is linked in CI on every run, so the number was produced dozens of
+# times a day and never recorded, compared or asserted on.
+#
+# WARN, DO NOT FAIL (for now). Findings are a job-summary line plus a warning
+# annotation; the exit status is 0. Set FERN_CI_SIZE_GATE_STRICT=1 to make them
+# fatal — deliberately a one-variable escalation.
+#
+# BOTH DIRECTIONS. A shrink is reported as well as a growth. Leaving the
+# baseline high after a win means the next regression is measured against a
+# ceiling nobody holds, which is exactly how the 16% went unnoticed.
+
+set -euo pipefail
+
+# Percentage drift, in either direction, that is worth a warning. Sizes are
+# deterministic per commit (in-process pure-Go emit and link), so this is a
+# significance threshold, not a noise floor.
+TOLERANCE="${FERN_SIZE_TOLERANCE_PERCENT:-5}"
+
+BASELINE="${1:-}"
+REPORT="${2:-}"
+if [ -z "$BASELINE" ] || [ -z "$REPORT" ]; then
+  echo "usage: ci-check-driver-sizes BASELINE REPORT" >&2
+  exit 2
+fi
+if [ ! -f "$BASELINE" ]; then
+  echo "ci-check-driver-sizes: baseline '$BASELINE' not found" >&2
+  exit 2
+fi
+
+# A missing or empty report means the drivers were never stat'd — the job did
+# not export FERN_DRIVER_SIZE_REPORT, or the warm step died before linking
+# anything. Say so loudly: a size check that measures nothing is worse than no
+# size check, because it reports green.
+if [ ! -s "$REPORT" ]; then
+  echo "### self-host driver sizes"
+  echo "NO SIZE REPORT at $REPORT — nothing was measured, so nothing was compared."
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::warning title=driver size check ran blind::no driver sizes were recorded at $REPORT: the warm step exported no FERN_DRIVER_SIZE_REPORT, or it linked no driver"
+  else
+    echo "WARNING: driver size check ran blind: no driver sizes were recorded at $REPORT"
+  fi
+  exit 0
+fi
+
+routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
+  function mb(bytes) { return sprintf("%.1f MB", bytes / 1000000) }
+  BEGIN {
+    tracked = ""
+    while ((getline line < B) > 0) {
+      if (line ~ /^[ \t]*#[ \t]*tracked-artifact:/) {
+        sub(/^[ \t]*#[ \t]*tracked-artifact:[ \t]*/, "", line)
+        sub(/[ \t]+$/, "", line)
+        tracked = line
+        continue
+      }
+      if (line ~ /^[ \t]*(#|$)/) continue
+      if (split(line, fld, /[ \t]+/) < 2) continue
+      base[fld[1]] = fld[2] + 0
+    }
+    close(B)
+  }
+  NF >= 2 {
+    if (!($1 in measured)) order[++n] = $1
+    measured[$1] = $2 + 0
+  }
+  END {
+    printf "SUMMARY\t### self-host driver sizes\n"
+    printf "SUMMARY\t| driver | linked | baseline | delta |\n"
+    printf "SUMMARY\t| --- | --- | --- | --- |\n"
+    for (i = 1; i <= n; i++) {
+      d = order[i]
+      mark = (d == tracked) ? " (tracked artifact)" : ""
+      if (d in base) {
+        delta = 100 * (measured[d] - base[d]) / base[d]
+        printf "SUMMARY\t| %s%s | %s | %s | %+.1f%% |\n", d, mark, mb(measured[d]), mb(base[d]), delta
+      } else {
+        printf "SUMMARY\t| %s%s | %s | none | unbaselined |\n", d, mark, mb(measured[d])
+      }
+    }
+
+    nfind = 0
+    nunbased = 0
+    for (i = 1; i <= n; i++) {
+      d = order[i]
+      if (!(d in base)) {
+        nunbased++
+        paste[d] = measured[d]
+        continue
+      }
+      delta = 100 * (measured[d] - base[d]) / base[d]
+      if (delta > tol) {
+        nfind++
+        printf "SUMMARY\tGREW: %s %s -> %s (%+.1f%%, baseline %d -> %d bytes).\n", d, mb(base[d]), mb(measured[d]), delta, base[d], measured[d]
+        printf "ANNOTATE\t%s grew %+.1f%%\t%s linked at %s against a baseline of %s — over the %s%% tolerance (#6826)\n", d, delta, d, mb(measured[d]), mb(base[d]), tol
+        paste[d] = measured[d]
+      } else if (delta < -tol) {
+        nfind++
+        printf "SUMMARY\tSHRANK: %s %s -> %s (%+.1f%%, baseline %d -> %d bytes).\n", d, mb(base[d]), mb(measured[d]), delta, base[d], measured[d]
+        printf "ANNOTATE\t%s shrank %+.1f%%\t%s linked at %s against a baseline of %s — update the baseline so the win becomes the new ceiling (#6826)\n", d, delta, d, mb(measured[d]), mb(base[d])
+        paste[d] = measured[d]
+      }
+    }
+
+    if (nunbased > 0) {
+      printf "SUMMARY\tUNBASELINED: %d driver(s) have no entry in the baseline, so their size is recorded but not compared.\n", nunbased
+      printf "ANNOTATE\t%d driver(s) have no size baseline\tthey are linked and measured but nothing compares them; add the lines from the job summary to .github/selfhost-driver-sizes.txt (#6826)\n", nunbased
+    }
+
+    nsug = 0
+    for (i = 1; i <= n; i++) {
+      d = order[i]
+      if (!(d in paste)) continue
+      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — paste into .github/selfhost-driver-sizes.txt:\n"
+      printf "SUMMARY\t    %s %d\n", d, paste[d]
+    }
+
+    if (nfind == 0 && nunbased == 0) printf "SUMMARY\tEvery driver is within %s%% of its baseline.\n", tol
+    printf "FINDINGS\t%d\n", nfind + nunbased
+  }
+' "$REPORT")"
+
+findings=0
+while IFS=$'\t' read -r tag rest; do
+  if [ "$tag" = SUMMARY ]; then
+    printf '%s\n' "$rest"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
+  elif [ "$tag" = FINDINGS ]; then
+    findings="$rest"
+  fi
+done < <(printf '%s\n' "$routed")
+
+while IFS=$'\t' read -r tag title msg; do
+  [ "$tag" = ANNOTATE ] || continue
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    printf '::warning title=%s::%s\n' "$title" "$msg"
+  else
+    printf 'WARNING: %s: %s\n' "$title" "$msg"
+  fi
+done < <(printf '%s\n' "$routed")
+
+if [ "${FERN_CI_SIZE_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+  echo "ci-check-driver-sizes: $findings finding(s) and FERN_CI_SIZE_GATE_STRICT=1" >&2
+  exit 1
+fi

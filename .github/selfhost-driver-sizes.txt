@@ -1,0 +1,65 @@
+# Linked sizes, in BYTES, of the self-host driver binaries CI already builds —
+# checked against every run by scripts/ci-check-driver-sizes (#6826).
+#
+# WHICH BINARY IS "THE SELF-HOST BINARY": fern.fern, named below as the tracked
+# artifact. It is examples/self_host/fern.fern, the whole self-hosted compiler
+# CLI, and it is the number to quote when talking about self-host binary size
+# (#4109's "well under half" target is against it). The others in this file are
+# smaller programs that link a SUBSET of the compiler: `asm_ir_run` is the
+# front-end plus the x86-64 IR backend, `wasm_ir_run` the front-end plus the
+# wasm one, and so on. They are recorded because they are free to record and
+# they localise a regression to a backend — NOT because they are
+# interchangeable. Quoting one against another is how #4109 acquired a bogus
+# "the epic is 4x off": a 245 MB CLI figure compared with a 59 MB wasm_ir_run
+# figure.
+#
+# tracked-artifact: fern.fern
+#
+# HOW THIS IS MEASURED. Nothing extra is built. Every driver here is linked by
+# the `warm` / `cli` jobs of test-e2e-selfhost.yml on their own account;
+# TestSelfHostWarmStockDriver stats each one it warms into
+# FERN_DRIVER_SIZE_REPORT, and the job compares that report against this file.
+# The emit and the link are in-process pure Go, so a given commit yields the
+# same byte count on any runner — a difference here is a real change in the
+# compiler's output, not runner noise.
+#
+# ADVISORY, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
+# default) is a job-summary line plus a warning annotation, never a failed job.
+# A SHRINK is flagged too: an un-updated baseline after a win silently raises
+# the ceiling the next regression is measured against, which is how 16% of
+# growth went unnoticed for eight days.
+#
+# WHEN A NUMBER MOVES ON PURPOSE, update it in the same PR — the job summary
+# prints the corrected lines ready to paste. Keep the reason in the PR, not
+# here; this file is a set of current facts.
+#
+# x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
+# driver builds), so there is one architecture to baseline and no per-arch split.
+#
+# Every figure below is CI's own, from run 31782687541 (`cli` + the three `warm`
+# jobs), pasted from the blocks those jobs printed. The three that #6826 measured
+# off-CI independently agree to within 0.05% — fern.fern 155,895,596 vs
+# 155,973,500, asm_ir_run 146,081,148 vs 146,105,772, wasm_ir_run 77,378,268 vs
+# 77,402,892 — which is the evidence for the host-independence claim above.
+#
+# Note the two tiers: the six drivers at 6-7 MB link a front-end slice only,
+# while the whole-compiler drivers sit at 145-156 MB. A 6 MB driver moving 5% is
+# 300 KB and means something different from the tracked artifact moving 5%; the
+# percentage is what is compared, deliberately, so a small driver's regression is
+# not lost inside a big one's noise.
+
+fern.fern 155973500
+asm_load_run.fern 148545260
+asm_modload_run.fern 146565436
+asm_ir_run.fern 146105772
+asm_run.fern 145267212
+wasm_ir_run.fern 77402892
+wasm_run.fern 77377980
+wasm_runio_run.fern 77318796
+asm_pathprobe_run.fern 76480908
+ssa_lift_scan_run.fern 75512764
+asm_ir_elig_run.fern 75165500
+irlower_run.fern 74045084
+checker_modload_run.fern 6880820
+ssa_emit_run.fern 6243356
+ssa_run.fern 6004220

@@ -1,44 +1,45 @@
 # Duration weights (seconds) for the self-host e2e shard partition —
 # consumed by scripts/selfhost-shard-tests (greedy LPT). Only tests that
 # are meaningfully slower than the ~0.1-1s norm need an entry; everything
-# else defaults to weight 1. Staleness is benign: a wrong/missing/extra
-# entry only skews shard BALANCE (the partition always covers the real
-# -test.list output), so update opportunistically when a shard's log
-# shows a test dominating its wall-clock, not religiously.
+# else defaults to weight 1.
 #
 # Baseline heavy entries measured on the x86_64 ubuntu-latest lane with
 # all drivers warm (2026-07-11, run 29157258229); the IR / wasm mid-tier
 # and the wasmtime-gated entries added from run 29165757576 (the first
 # with wasmtime restored to the shards).
 #
-# STALENESS IS NOT ALWAYS BENIGN (2026-07-30, #5914). The note below is
-# right that a wrong entry cannot drop or double-run a test — but a
-# BADLY wrong one pushes its shard past the job timeout, which fails the
-# shard for real. TestSelfHostInterpDriverX86_64 sat at 7 while actually
-# costing ~166 s (three dedicated local runs: 169.3 / 165.0 / 169.3), a
-# ~24x underestimate. LPT ranked it with the sub-second tests instead of
-# giving it its own bucket, and the shard holding it hit the 18-minute
-# wall on three consecutive unrelated commits — deterministically, since
-# the partition is deterministic by construction.
+# STALENESS IS NOT BENIGN. A wrong/missing/extra entry cannot drop or
+# double-run a test — the partition always covers the real -test.list
+# output — but a BADLY wrong one pushes its shard past the job timeout,
+# which fails the shard for real, deterministically, on unrelated
+# commits. That has happened twice: TestSelfHostInterpDriverX86_64 at 7
+# against ~166 s (#5914) and TestSelfHostAssumeEligibleByteIdenticalX86_64
+# with no entry at all against 482-738 s (#6823).
 #
-# DO NOT TRUST A LOCALLY-COMPUTED SHARD INDEX. The failing job was shard
-# 11 and its log shows this test's subtests, so CI placed it there; but
-# reconstructing the partition locally from `go test -list` puts it in
-# shard 8, because that union does not exactly match the one CI derives
-# from its prebuilt binaries. The shard NUMBER is not reproducible
-# outside CI. The mis-weighting is, and giving the test its own bucket is
-# the remedy whichever bucket that turns out to be.
+# NOTHING USED TO MEASURE THIS, which is why "update opportunistically"
+# meant "update after a shard dies". The `verify` job now audits this file
+# against the durations the shards report (scripts/ci-test-weights) and
+# prints a corrected-weights block in its job summary. Paste from that
+# block rather than guessing — it only ever raises a weight, for the
+# reason in the next paragraph.
 #
-# What matters to LPT is RELATIVE order, so uniform drift is harmless and
-# NON-UNIFORM drift is what bites. Re-measured locally on 2026-07-30
-# (4-core, drivers warm), three entries were all under, by very different
-# factors: InterpDriver ~24x, LoadFixpoint ~4.4x (75 -> 330; from the
-# least-contended of six runs, others up to 746 s under load),
-# ModloadPerModuleWholeCompiler ~2.2x (210 -> 460). Those three are
-# updated; everything else still carries its 2026-07-11 figure, so treat
-# the rest as unverified rather than current. Local numbers, not CI ones
-# — CI has the warm-artifact restore — but the gap that mattered was
-# 7 vs 166, which no cache difference explains.
+# WEIGHT PESSIMISTICALLY. The same test measured 482 s and 738 s on
+# consecutive runs; its entry is the slower of the two. What matters to
+# LPT is RELATIVE order, so uniform drift is harmless and NON-UNIFORM
+# drift is what bites — which is why a single generous entry is safe and
+# a single mean one is not.
+#
+# Three entries (InterpDriver, LoadFixpoint, ModloadPerModuleWholeCompiler)
+# were re-measured locally on 2026-07-30; everything else still carries its
+# 2026-07-11 figure, so treat the rest as unverified rather than current
+# until an audit run reports on it.
+#
+# DO NOT TRUST A LOCALLY-COMPUTED SHARD INDEX. Reconstructing the
+# partition locally from `go test -list` disagrees with CI about which
+# bucket a test lands in, because that union does not exactly match the
+# one CI derives from its prebuilt binaries. The shard NUMBER is not
+# reproducible outside CI; the mis-weighting is, and giving a heavy test
+# its own bucket is the remedy whichever bucket that turns out to be.
 #
 # NOTE on the TestSelfHostExtern* family: those ~39 tests each build a
 # stdin driver that is byte-identical to the stock wasm_runio_run.fern,
@@ -65,21 +66,33 @@ TestSelfHostModloadPerModuleWholeCompilerX86_64 460
 # happened to pair it with a heavier complement. Weighted at the slower of the
 # two: it varies by ~50% run to run, so give it the pessimistic bucket.
 TestSelfHostAssumeEligibleByteIdenticalX86_64 738
-# Two whole-compiler emit-all passes at batch=4 (gen0 40 s + gen1 79 s),
-# measured on the x86_64 lane 2026-07-29 with the modload driver warm. Well
-# above the ~1 s norm, so LPT gives it its own bucket rather than stacking it
-# behind another fixpoint; still under the entry above, so it does not set the
-# max-shard wall.
-TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 130
+# Two whole-compiler emit-all passes at batch=4. MEASURED 424 s by the audit on
+# run 31782687541, against an entry of 130 — the same shape as the two incidents
+# above, caught this time before it failed anything. Still under the entry above,
+# so it does not set the max-shard wall.
+TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 638
 # Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
-TestSelfHostFieldReclaimIRX86_64 55
 TestSelfHostAsmIRPath 28
 TestSelfHostStdTestE2E 18
+# Not a driver-restore cost like the block above: MEASURED 128 s against an entry
+# of 55 (audit, run 31782687541).
+TestSelfHostFieldReclaimIRX86_64 193
+
+# Tests the first audit run (31782687541) found above the 60 s threshold with no
+# entry at all, weighted at its measurement plus the standard band. Each was
+# being partitioned as 1 s.
+TestSelfHostIRVerifyGateWholeCompiler 179
+TestSelfHostStage2Compiler 175
+TestSelfHostIRVerifyProvidedCorpusClean 144
+TestSelfHostArm64NativeMmcMatchesCrossHost 124
+TestSelfHostStage2Bootstrap 119
+TestSelfHostCapabilityCorpusAgreesWithNative 106
+TestSelfHostStdTestE2EArm64 103
 
 # The watbin / wit / component family, un-quarantined from #4801 (measured on
 # the x86-64 lane, qemu-x86_64 + wasmtime v46.0.1, drivers warm). Each runs a
@@ -166,7 +179,7 @@ TestSelfHostTupleWideCallElem 3
 #
 # Recorded because the naive measurement is off by ~23x and I nearly wrote it
 # here: `go test` with no FERN_SELFHOST_BUILD_CACHE has NO disk cache at all
-# (diskCacheReadDirs returns nil), so it re-emits the ~245 MB driver every
+# (diskCacheReadDirs returns nil), so it re-emits the whole driver every
 # invocation and reports ~140-155 s. Almost all of that is the driver build the
 # warm artifact eliminates. To reproduce the real number, point the var at a dir
 # already holding `<hash>.driverbin` — note the suffix, `drv-<hash>` is the

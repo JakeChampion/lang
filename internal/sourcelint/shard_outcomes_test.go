@@ -37,9 +37,12 @@ func runVerify(t *testing.T, markers map[string]string, tolerate bool, args ...s
 		}
 	}
 	cmd := exec.Command("bash", append([]string{scriptPath(t), dir}, args...)...)
-	cmd.Env = append(os.Environ(), "FERN_CI_TOLERATE_VANISHED_SHARDS=0")
+	// ciEnv, not os.Environ(): the ambient FERN_CI_TOLERATE_VANISHED_SHARDS
+	// would otherwise decide what this test asserts. See its doc comment.
 	if tolerate {
-		cmd.Env = append(os.Environ(), "FERN_CI_TOLERATE_VANISHED_SHARDS=1")
+		cmd.Env = ciEnv("FERN_CI_TOLERATE_VANISHED_SHARDS=1")
+	} else {
+		cmd.Env = ciEnv("FERN_CI_TOLERATE_VANISHED_SHARDS=0")
 	}
 	out, err := cmd.CombinedOutput()
 	code := 0
