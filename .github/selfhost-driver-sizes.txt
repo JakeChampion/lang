@@ -35,8 +35,14 @@
 #
 # x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
-# Seeded from the #6826 measurements at 84a54c85 (2026-08-14).
+#
+# fern.fern is CI's own figure, from the `cli` job of run 31781220854. It lands
+# within 0.05% of the 155,895,596 measured off-CI for #6826 at 84a54c85, which is
+# the evidence for the host-independence claim above. The other two are still the
+# #6826 figures; the remaining eleven warmed drivers have no published number, so
+# they come back `unbaselined` — recorded in the job summary with a paste-ready
+# line — rather than being guessed at here.
 
-fern.fern 155895596
+fern.fern 155973500
 asm_ir_run.fern 146081148
 wasm_ir_run.fern 77378268
