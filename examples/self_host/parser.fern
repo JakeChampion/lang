@@ -5141,7 +5141,16 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
                 // reconstructed spelling so coarsen_fn_elems below can
                 // collapse just the fn-typed SEGMENTS. (The `(T,…) => R`
                 // form, with `=>` *after* the parens, is handled below.)
-                if (tpk == "=>") { is_fn = true; tbuf = tbuf + "=>"; p = p.advance(); tprev_word = false; continue; }
+                if (tpk == "=>") {
+                    is_fn = true;
+                    // `-fmt` spells the arrow the way native prints it; the
+                    // compile parse's consumers were written against the
+                    // unspaced form coarsen_fn_elems scans.
+                    if (p.verbatim) { tbuf = tbuf + " => "; } else { tbuf = tbuf + "=>"; }
+                    p = p.advance();
+                    tprev_word = false;
+                    continue;
+                }
                 var tseg: string = p.peek_ident();
                 if (tseg.len() == 0) { tseg = p.peek_keyword(); }
                 if (tseg.len() == 0) { p = p.advance(); continue; }
@@ -5160,6 +5169,11 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             // belongs to an ELEMENT (unless a `=> R` follows the parens —
             // the fn-taking-a-tuple-param form the next branch handles).
             if (is_fn && !top_comma) {
+                // `-fmt` keeps the parenthesised signature: `fn[]` names neither
+                // what the element takes nor what it returns, and the parens are
+                // load-bearing — `(string) => string[]` re-parses as ONE function
+                // returning `string[]`, so `((string) => string)[]` must keep them.
+                if (p.verbatim) { return consume_array_suffix(p, tbuf); }
                 return consume_array_suffix(p, "fn");
             }
             // Function type `(T1, …) => R`. After the balanced param
@@ -5232,7 +5246,7 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             // ANY arrow inside the parens coarsened the WHOLE type to
             // "fn", so a tuple containing a function wasn't even a
             // tuple type to the self-host compiler.
-            if (is_fn) { tbuf = coarsen_fn_elems(tbuf); }
+            if (is_fn && !p.verbatim) { tbuf = coarsen_fn_elems(tbuf); }
             return consume_array_suffix(p, tbuf);
         }
         // Prefix-bracket type `[T]` (e.g. `var ab: [u8] = ...`).
@@ -5246,6 +5260,10 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
             var (bracketed_name, bracketed_ret_arr, bracketed_fn_ret, bracketed_p) = parse_type_name(p);
             p = bracketed_p;
             if (p.peek_punct() == "]") { p = p.advance(); }
+            // `-fmt` opts out (Par.verbatim), same reason the `str` erasure
+            // below does: `[T]` is a borrowed VIEW and `T[]` an owned array, so
+            // canonicalising on a reformat rewrites the program's ownership.
+            if (p.verbatim) { return ("[" + bracketed_name + "]", false, "", p); }
             return (bracketed_name + "[]", false, "", p);
         }
         return ("", false, "", p);
@@ -5316,6 +5334,12 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
         // `Option[()]` and leaving `=> i32` on the cursor — which then corrupts the
         // enclosing decl body into a StmtUnknown.
         if (pk == "=>") { inner = inner + " => "; p = p.advance(); prev_ident = false; continue; }
+        // A module-QUALIFIED generic arg, e.g. `Map[string, peg.Pattern]`. The
+        // loop used to break on the `.`, truncating the type to `Map[string,
+        // peg]` and leaving `.Pattern]` on the cursor — which corrupted the
+        // whole `var` into a StmtUnknown, and `-fmt` wrote that back as
+        // `/*unknown-stmt:missing = in var*/`.
+        if (pk == ".") { inner = inner + "."; p = p.advance(); prev_ident = false; continue; }
         var seg: string = p.peek_ident();
         if (seg.len() == 0) { seg = p.peek_keyword(); }
         if (seg.len() == 0) { break; }
@@ -5619,12 +5643,30 @@ function parse_type_param_list(p: Par): (TpList, Par) {
                 if (p.peek_punct() == "[") {
                     var depth: i32 = 0;
                     var bgo: boolean = true;
+                    // `-fmt` (Par.verbatim) keeps the args: dropping them turns
+                    // `I: Iterator[i32]` into `I: Iterator`, a weaker bound the
+                    // checker then rejects at the call site. Every other reader
+                    // wants the base name alone (the erased key the
+                    // monomorphiser and E040 use), so only verbatim rebuilds it.
+                    var bargs: string = "";
                     while (bgo && !p.at_end()) {
                         var bpk: string = p.peek_punct();
-                        if (bpk == "[") { depth = depth + 1; p = p.advance(); }
-                        else if (bpk == "]") { depth = depth - 1; p = p.advance(); if (depth == 0) { bgo = false; } }
-                        else { p = p.advance(); }
+                        if (bpk == "[") { depth = depth + 1; bargs = bargs + "["; p = p.advance(); }
+                        else if (bpk == "]") {
+                            depth = depth - 1;
+                            bargs = bargs + "]";
+                            p = p.advance();
+                            if (depth == 0) { bgo = false; }
+                        }
+                        else if (bpk == ",") { bargs = bargs + ", "; p = p.advance(); }
+                        else {
+                            var bseg: string = p.peek_ident();
+                            if (bseg.len() == 0) { bseg = p.peek_keyword(); }
+                            bargs = bargs + bseg;
+                            p = p.advance();
+                        }
                     }
+                    if (p.verbatim) { tname = tname + bargs; }
                 }
                 if (tname.len() > 0) {
                     if (this_bounds.len() > 0) { this_bounds = this_bounds + "+"; }

@@ -783,6 +783,12 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
+		// `own` is checked, not decorative: dropping it made E053 fire on the
+		// formatted `fip` sort helpers, which pass their array `own` precisely
+		// so `with` is in-place.
+		if p.Own {
+			f.b.WriteString("own ")
+		}
 		f.b.WriteString(writtenName(p.Name))
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
@@ -1868,6 +1874,11 @@ func formatType(t ast.Type) string {
 	case ast.ParamType:
 		return x.Name
 	case ast.ArrayType:
+		// A function-typed element needs its parens back: `((string) => string)[]`
+		// printed bare reads as one function RETURNING `string[]`.
+		if _, isFn := x.Elem.(*ast.FuncType); isFn {
+			return "(" + formatType(x.Elem) + ")[]"
+		}
 		return formatType(x.Elem) + "[]"
 	case ast.SliceType:
 		return "[" + formatType(x.Elem) + "]"
