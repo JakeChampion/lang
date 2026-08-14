@@ -1708,9 +1708,13 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // `T: cmp.Eq` — `i32` / `string` / the other primitives satisfy it out of the
 // box (their `impl Eq` lives in core/cmp), and a `@derive(Eq)` struct or enum
 // qualifies too. The `Eq` bound is also what lets these monomorphise (and so
-// dispatch `==` correctly per element type) on the self-host IR path, where an
-// UNBOUNDED `[T]` would erase to a single pointer-compare clone and silently
-// miscompare strings.
+// dispatch the compare correctly per element type) on the self-host IR path,
+// where an UNBOUNDED `[T]` would erase to a single pointer-compare clone and
+// silently miscompare strings.
+//
+// Every body compares through the bound's `eq` method, never the `==` operator:
+// `==` desugars through a `Type.eq` lookup that is not visible from this module,
+// so `==` here would reject a caller's `@derive(Eq)` element type (#6846).
 //
 // The free-function `contains` / `index_of` / `distinct` / `eq_arrays` verbs
 // live in core/cmp with the `Eq` trait they depend on (#5348 removed the
@@ -1722,14 +1726,14 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 // `all_equal(xs)` — true iff every element equals the first (i.e. the array has
 // at most one DISTINCT value). Vacuously true for an empty or single-element
 // array. Short-circuits on the first element that differs. The `T: cmp.Eq`
-// bound supplies the `==` (the type's structural equality). Useful for "is this
-// column constant" / "did every worker agree" checks.
+// bound supplies the compare (the type's structural equality). Useful for "is
+// this column constant" / "did every worker agree" checks.
 pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
     var n: i32 = xs.len();
     if (n < 2) { return true; }
     var i: i32 = 1;
     while (i < n) {
-        if (!(xs[i] == xs[0])) { return false; }
+        if (!xs[i].eq(xs[0])) { return false; }
         i = i + 1;
     }
     return true;
@@ -1745,7 +1749,7 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
     var out: T[] = [];
     var i: i32 = 0;
     while (i < xs.len()) {
-        if (i == 0 || !(xs[i] == xs[i - 1])) { out = out.append(xs[i]); }
+        if (i == 0 || !xs[i].eq(xs[i - 1])) { out = out.append(xs[i]); }
         i = i + 1;
     }
     return out;
@@ -1765,7 +1769,7 @@ pub function distinct[T: cmp.Eq](xs: T[]): T[] {
         var seen: boolean = false;
         var j: i32 = 0;
         while (j < out.len()) {
-            if (xs[i] == out[j]) { seen = true; }
+            if (xs[i].eq(out[j])) { seen = true; }
             j = j + 1;
         }
         if (!seen) { out = out.append(xs[i]); }
@@ -1781,7 +1785,7 @@ pub function distinct[T: cmp.Eq](xs: T[]): T[] {
 // monomorphisation on the self-host IR path) as core/cmp's `contains`. The
 // three set operations treat the inputs as multisets but return SET results —
 // each element appears at most once, in first-seen order — built on
-// `cmp.contains`, so the `==` they perform is the type's structural equality
+// `cmp.contains`, so the compare they perform is the type's structural equality
 // (`str_eq` for strings, the scalar compare for `i32`). O(n·m) membership
 // scans; fine for the small-n CLI / edge-handler workloads, reach for a
 // Map/Set at larger N.
@@ -1793,7 +1797,7 @@ pub function distinct[T: cmp.Eq](xs: T[]): T[] {
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
     var c: i32 = 0;
     for x in xs {
-        if (x == target) { c = c + 1; }
+        if (x.eq(target)) { c = c + 1; }
     }
     return c;
 }
@@ -1842,7 +1846,7 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
 pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
     var i: i32 = xs.len() - 1;
     while (i >= 0) {
-        if (xs[i] == target) { return Some(i); }
+        if (xs[i].eq(target)) { return Some(i); }
         i = i - 1;
     }
     return None;
@@ -1856,7 +1860,7 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
     if (prefix.len() > xs.len()) { return false; }
     var i: i32 = 0;
     while (i < prefix.len()) {
-        if (xs[i] != prefix[i]) { return false; }
+        if (!xs[i].eq(prefix[i])) { return false; }
         i = i + 1;
     }
     return true;
@@ -1871,7 +1875,7 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
     if (m > n) { return false; }
     var i: i32 = 0;
     while (i < m) {
-        if (xs[n - m + i] != suffix[i]) { return false; }
+        if (!xs[n - m + i].eq(suffix[i])) { return false; }
         i = i + 1;
     }
     return true;
