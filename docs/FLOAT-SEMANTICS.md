@@ -290,6 +290,11 @@ the same code from the checker and from the asm front end (#6842). Gated by
 `TestSelfHostFrontEndNumericLiteralCodes` (`internal/e2eselfhost`) and
 `TestNumericLiteralErrorsCarryCode` (`internal/parser`).
 
+The self-host's text-preserving modes are the exception, deliberately: `-fmt`
+and `ferndoc` parse with `Par.verbatim`, where the check is skipped so a
+reformat returns the literal it was handed rather than deleting it. Native has
+no verbatim parse, so `fern -fmt` there fails on the file instead.
+
 ## Generator + oracle implications
 
 `internal/fernsmith` has two generation profiles (see
