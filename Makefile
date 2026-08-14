@@ -8,7 +8,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode actionlint testnames freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check
+.PHONY: all build test vet deadcode actionlint testnames freeze selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
 
 all: build test
 
@@ -132,6 +132,21 @@ gofmt-check:
 		gofmt -d $$out; \
 		exit 1; \
 	fi
+
+# Every cheap whole-repo gate, in the order the Lint workflow runs them.
+# One target so a local run and CI cannot drift into checking different things,
+# and so `scripts/signoff lint` and the workflow share one definition.
+#
+# Keeps going after a failure and reports the set at the end: eight gates run
+# as one job must not hide the seventh failure behind the second.
+lint-all:
+	@status=0; \
+	for gate in "go build ./..." "go vet ./..." "$(MAKE) gofmt-check" "$(MAKE) fmt-check" \
+	            "$(MAKE) deadcode" "$(MAKE) actionlint" "$(MAKE) testnames" "$(MAKE) freeze"; do \
+		echo "==> $$gate"; \
+		if ! sh -c "$$gate"; then echo "FAILED: $$gate"; status=1; fi; \
+	done; \
+	exit $$status
 
 clean:
 	rm -rf bin build
