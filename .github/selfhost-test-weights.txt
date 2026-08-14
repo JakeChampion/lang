@@ -66,21 +66,33 @@ TestSelfHostModloadPerModuleWholeCompilerX86_64 460
 # happened to pair it with a heavier complement. Weighted at the slower of the
 # two: it varies by ~50% run to run, so give it the pessimistic bucket.
 TestSelfHostAssumeEligibleByteIdenticalX86_64 738
-# Two whole-compiler emit-all passes at batch=4 (gen0 40 s + gen1 79 s),
-# measured on the x86_64 lane 2026-07-29 with the modload driver warm. Well
-# above the ~1 s norm, so LPT gives it its own bucket rather than stacking it
-# behind another fixpoint; still under the entry above, so it does not set the
-# max-shard wall.
-TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 130
+# Two whole-compiler emit-all passes at batch=4. MEASURED 424 s by the audit on
+# run 31782687541, against an entry of 130 — the same shape as the two incidents
+# above, caught this time before it failed anything. Still under the entry above,
+# so it does not set the max-shard wall.
+TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 638
 # Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12
 TestSelfHostFnArrayFieldGateWasm 12
 TestSelfHostTupleFnZeroArgIRX86_64 12
 TestSelfHostTupleFnZeroArgIRWasm 12
-TestSelfHostFieldReclaimIRX86_64 55
 TestSelfHostAsmIRPath 28
 TestSelfHostStdTestE2E 18
+# Not a driver-restore cost like the block above: MEASURED 128 s against an entry
+# of 55 (audit, run 31782687541).
+TestSelfHostFieldReclaimIRX86_64 193
+
+# Tests the first audit run (31782687541) found above the 60 s threshold with no
+# entry at all, weighted at its measurement plus the standard band. Each was
+# being partitioned as 1 s.
+TestSelfHostIRVerifyGateWholeCompiler 179
+TestSelfHostStage2Compiler 175
+TestSelfHostIRVerifyProvidedCorpusClean 144
+TestSelfHostArm64NativeMmcMatchesCrossHost 124
+TestSelfHostStage2Bootstrap 119
+TestSelfHostCapabilityCorpusAgreesWithNative 106
+TestSelfHostStdTestE2EArm64 103
 
 # The watbin / wit / component family, un-quarantined from #4801 (measured on
 # the x86-64 lane, qemu-x86_64 + wasmtime v46.0.1, drivers warm). Each runs a
