@@ -294,11 +294,17 @@ nominal.
 | `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
 | `__raw_arr_box(n: i32): i32` | `mov n→%rdi; call __fern_arr_box` → data ptr | a fresh n-element array box, rc header + length + capacity already written — the array sibling of `__raw_alloc`, and the one array primitive that stays a call. Element i is at `[ptr + (i+1)*W]`, exactly what `__raw_store_ptr` addresses, so a helper fills it without naming the layout |
 | `__raw_array(ptr: i32): i32[]` | nothing | the type-only bridge back to a typed array, the array sibling of `__raw_string`. The data pointer already IS the array value, so this emits no op — only the checker needed convincing |
-| `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width, for an address that has to be **passed** somewhere (a syscall buffer arg). Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high heap address arrives truncated. The load/store intrinsics dodge this by folding the offset into the addressing mode; this is the form for everything else |
+| `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width. Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high address arrives truncated. Only the **two-argument** `__raw_load8` / `__raw_store8` / `__raw_load_ptr` / `__raw_store_ptr` dodge that by folding their own `off` into the addressing mode. Everything else needs this op: an address **passed** somewhere (a syscall buffer arg), and the one-argument loads below |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
 math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new
-op was added for that.
+op was added for that. It and its siblings `__load_i32` / `__load_ptr` take an
+address and nothing else, so there is no offset to fold: a field read spells its
+offset `__load_i64(__raw_addr(buf, 96))`, never `__load_i64(buf + 96)`. #6386 was
+the latter — `stat` faulting on arm64-darwin, the one target whose image sits
+above 4 GiB. `internal/sourcelint`'s
+`TestAsmcoreAddressesAvoidI32Arithmetic` holds the rule for every
+address-taking intrinsic in `asmcore.fern`.
 
 `__raw_string` is the key: it lets a helper allocate a byte buffer with
 `__raw_alloc`, fill it with `__raw_store8`, and hand back a real `string` the
