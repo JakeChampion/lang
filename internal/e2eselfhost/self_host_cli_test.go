@@ -568,6 +568,16 @@ function main(): i32 {
 				t.Errorf("%v: diagnostics = %q, want error[P002]", mode, out)
 			}
 		}
+		// `-fmt` is the mode that must NOT reject it: a reformat has to return
+		// the text it was handed, so the verbatim parse keeps the literal
+		// (printer.fern pins the round-trip directly).
+		fmtOut, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Errorf("-fmt exited %d, want 0 (out: %s)", code, fmtOut)
+		}
+		if !strings.Contains(string(fmtOut), "1e309") {
+			t.Errorf("-fmt lost the literal; got:\n%s", fmtOut)
+		}
 		// The accepted side of the same boundary: underflow is not a range
 		// error on either engine, so this compiles and runs.
 		okPath := filepath.Join(dir, "float_underflow.fern")

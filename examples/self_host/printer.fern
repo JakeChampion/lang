@@ -2158,6 +2158,15 @@ function main(): i32 {
     if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) { return 329; }
     if (!util.contains(outPa, "function eq(self: Box[T], other: Box[T]): boolean {")) { return 330; }
 
+    // A float literal too large for f64 is rejected by the compile parse
+    // (#6842) — but a reformat must return the text it was handed, so the
+    // verbatim parse keeps the literal and the printer writes it back
+    // unchanged. Printing the rejection instead loses the program's number.
+    var pfOor: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
+        "function main(): i32 { var x: f64 = 1e309; return 0; }"));
+    var outOor: string = format_module(pfOor.pmod, pfOor.ptraits, pfOor.pimpls, [], []);
+    if (!util.contains(outOor, "var x: f64 = 1e309;")) { return 331; }
+
     return 0;
 }
 

@@ -1913,7 +1913,10 @@ function parse_primary(p: Par): (Expr, Par) {
             // +Inf (#6842). The rejection rides an ExprUnknown, since the parser
             // has no error list, and still goes through parse_postfix so token
             // consumption is unchanged.
-            if (x.is_float && util.f64_lit_out_of_range(x.text)) {
+            // `-fmt` opts out (Par.verbatim): a reformat must return the text it
+            // was given, and the marker replaces the literal, so keeping the
+            // check here would print the program's number away.
+            if (!p.verbatim && x.is_float && util.f64_lit_out_of_range(x.text)) {
                 return parse_postfix(p, e_unknown_at(util.f64_range_kind(x.text), nline, ncol));
             }
             // Route through parse_postfix so a numeric primary can
