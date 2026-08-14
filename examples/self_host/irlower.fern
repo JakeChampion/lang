@@ -50208,7 +50208,7 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         // `<cur_fn>$clo` that hoist_escaping_closure never built (it only fires on
         // a body whose LAST statement is literally `return <ExprLambda>`, and a
         // match-EXPRESSION makes that `return <IIFE call>`). The module bailed off
-        // the IR path: 71 of the 249 remaining fernsmith compile gaps, #6256.
+        // the IR path (#6256).
         //
         // The if-expression sibling worked precisely because StmtIf was here, so
         // this is restoring symmetry rather than adding a rule.
@@ -52320,7 +52320,8 @@ function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: pa
 }
 
 // Returns the number of capturing lambda elements found, or -1 as soon as an arm
-// returns something that is not an array literal.
+// returns something that is neither an array literal nor a nested value-position
+// if/match whose own arms satisfy the same test.
 function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: parser.FuncDecl[]): i32 {
     var n: i32 = seen;
     var i: i32 = 0;
@@ -52333,6 +52334,20 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
                         while (e < arr.elements.len()) {
                             if (arr_elem_forces_box(arr.elements[e], fd, mfuncs)) { n = n + 1; }
                             e = e + 1;
+                        }
+                    },
+                    // A nested value-position if/match is the same construct one
+                    // level in: its own arms hold the arrays. The spine walk below
+                    // reaches a nested if/match written as a STATEMENT; an arm that
+                    // is an EXPRESSION carries the identical shape as an IIFE.
+                    parser.ExprCall(rc) => {
+                        match (rc.callee) {
+                            parser.ExprLambda(ril) => {
+                                if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
+                                n = iife_arm_arrays_capturing(ril.body, fd, n, mfuncs);
+                                if (n < 0) { return 0 - 1; }
+                            },
+                            _ => { return 0 - 1; }
                         }
                     },
                     _ => { return 0 - 1; }
@@ -52383,6 +52398,22 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                             e = e + 1;
                         }
                         nv = parser.ExprArray { elements: nelems };
+                    },
+                    // A nested value-position if/match arm: box the arrays its own
+                    // arms return, matching the gate's recursion through the same
+                    // shape (iife_arm_arrays_capturing).
+                    parser.ExprCall(rc) => {
+                        match (rc.callee) {
+                            parser.ExprLambda(ril) => {
+                                if (rc.args.len() == 0 && ril.params.len() == 0) {
+                                    var nb: InlineCloStmts = box_iife_arm_array_elems(ril.body, fd, fs, ct, gfns, structs, mfuncs);
+                                    fs = nb.funcs; ct = nb.counter;
+                                    var nlam: parser.Expr = parser.ExprLambda { params: ril.params, ret_type: ril.ret_type, body: nb.stmts, use_infer: ril.use_infer };
+                                    nv = parser.ExprCall { callee: nlam, args: rc.args, line: rc.line, col: rc.col, type_argc: rc.type_argc, ty: rc.ty };
+                                }
+                            },
+                            _ => {}
+                        }
                     },
                     _ => {}
                 }

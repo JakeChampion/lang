@@ -40,10 +40,28 @@ function main(): i32 {
     var fs: ((i32) => i32)[] = (if (true) { [((x0: i32) => 105i32), ((x1: i32) => 859i32)] } else { [((x3: i32) => (947i32 - x3))] });
     return (fs[0](7i32) + fs[1](7i32)) & 63i32;
 }`, 4},
+	// One arm yields the array literal directly, the other yields a NESTED
+	// value-position if whose own arms do. The arm walk reached a nested
+	// if/match written as a statement but not one written as an expression, so
+	// the "every arm is an array literal" gate answered no and the capturing
+	// lambda in the first arm never got its box. Reduced from seed s0017.
+	{"nested-iife-arm-yields-lambda-array", `enum Status { Active, Inactive }
+function main(): i32 {
+    var v1: Status = Active;
+    var fs: ((i32) => i32)[] = (match (v1) {
+        Active => [((x0: i32) => (match (v1) { Active => (x0 + 1i32), Inactive => 5i32 }))],
+        Inactive => (if (true) { [((x1: i32) => 1i32)] } else { [((x2: i32) => 2i32)] })
+    });
+    return fs[0](40i32) & 63i32;
+}`, 41},
 }
 
 // TestSelfHostIifeBodyLiftIRX86_64 drives the production x86-64 IR path and
 // asserts the ANSWER, not just that the module lowered.
+//
+// runCaptureStrictIR rather than runCapture: an unlifted arm lambda still
+// reaches the right answer through the per-function bail, so the exit code
+// alone cannot tell the two routes apart (#6602).
 func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -52,7 +70,7 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 
 	for _, tc := range iifeBodyLiftIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
@@ -134,7 +152,7 @@ func TestSelfHostIifeBodyLiftIRArm64(t *testing.T) {
 
 	for _, tc := range iifeBodyLiftIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
+			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
 			if len(asm) == 0 {
 				t.Fatal("self-host arm64 compiler emitted 0 bytes")
 			}
