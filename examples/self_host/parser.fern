@@ -11033,13 +11033,15 @@ pub function lower_defers_module(mod: Module): Module {
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
 // Mirrors the Go internal/ir/insert_resource_drops.go. For each owned `own R`
-// top-level local that is not moved (returned, or passed to an `own`
-// parameter), insert `defer __resource_drop_R(local);` right after the
-// declaration — the fused defer expansion then runs it on every exit path — and
-// synthesize one body-less `@import("<iface>","[resource-drop]<wit>")` drop
+// local that is not moved, insert `defer __resource_drop_R(slot);` right after
+// the declaration — the fused defer expansion then runs it on every exit path
+// (see drop_slot_name for the slot) — and synthesize one body-less
+// `@import("<iface>","[resource-drop]<wit>")` drop
 // function per dropped resource (which the world-driven composer wires).
-// Borrowed handles are never dropped. Sound over complete: a handle whose
-// escaping use isn't recognised is conservatively treated as moved.
+// Borrowed handles are never dropped. Sound over complete: the ONLY occurrence
+// that does not move a handle is a call argument bound to a `borrow` parameter;
+// everything else moves it and leaves the drop to the consumer, because leaking
+// is safe and a double drop is not.
 
 function resource_drop_fn_name(res: string): string { return "__resource_drop_" + res; }
 
@@ -11072,38 +11074,16 @@ function resource_binding_wit(resources: ResourceDecl[], name: string): string {
     return "";
 }
 
-// handle_returned reports whether `name` appears in any return value in stmts.
-function handle_returned(stmts: Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            StmtReturn(r) => { if (expr_mentions(r.value, name)) { return true; } },
-            StmtIf(f) => { if (handle_returned(f.then_body, name) || handle_returned(f.else_body, name)) { return true; } },
-            StmtWhile(w) => { if (handle_returned(w.body, name)) { return true; } },
-            StmtFor(fr) => { if (handle_returned(fr.body, name)) { return true; } },
-            StmtMatch(m) => {
-                var k: i32 = 0;
-                while (k < m.arms.len()) {
-                    if (handle_returned(m.arms[k].body, name)) { return true; }
-                    k = k + 1;
-                }
-            },
-            _ => {},
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
-// callee_param_is_own reports whether function `fname`'s parameter at position
-// `pos` is an owned-handle (`own …`) type — an argument there is moved.
-function callee_param_is_own(funcs: FuncDecl[], fname: string, pos: i32): boolean {
+// callee_param_is_borrow reports whether function `fname`'s parameter at
+// position `pos` is a borrowed handle (`borrow …`) — the one argument position
+// that does not move the handle passed to it.
+function callee_param_is_borrow(funcs: FuncDecl[], fname: string, pos: i32): boolean {
     var i: i32 = 0;
     while (i < funcs.len()) {
         if (funcs[i].name == fname) {
             if (pos < funcs[i].params.len()) {
                 var tn: string = funcs[i].params[pos].type_name;
-                return tn.len() >= 4 && tn[0:4] == "own ";
+                return tn.len() >= 7 && tn[0:7] == "borrow ";
             }
             return false;
         }
@@ -11112,58 +11092,212 @@ function callee_param_is_own(funcs: FuncDecl[], fname: string, pos: i32): boolea
     return false;
 }
 
-function expr_own_consumes(e: Expr, funcs: FuncDecl[], name: string): boolean {
+// expr_moves_handle / stmts_move_handle report whether `name` occurs anywhere
+// other than as a call argument bound to a `borrow` parameter — a return, an
+// alias, an assignment, a struct/array/tuple/closure capture, an argument to an
+// unresolvable callee. The traversal SKIPS the borrow-argument positions, so
+// reaching an ident at all is a move; that skip is what the Go movedHandles
+// expresses as *ast.Ident pointer identity.
+function expr_moves_handle(e: Expr, funcs: FuncDecl[], name: string): boolean {
     match (e) {
+        ExprIdent(id) => { return id.name == name; },
+        ExprBinary(b) => { return expr_moves_handle(b.left, funcs, name) || expr_moves_handle(b.right, funcs, name); },
+        ExprUnary(u) => { return expr_moves_handle(u.operand, funcs, name); },
         ExprCall(c) => {
+            if (expr_moves_handle(c.callee, funcs, name)) { return true; }
+            var cname: string = "";
             match (c.callee) {
-                ExprIdent(id) => {
-                    var i: i32 = 0;
-                    while (i < c.args.len()) {
-                        match (c.args[i]) {
-                            ExprIdent(aid) => {
-                                if (aid.name == name && callee_param_is_own(funcs, id.name, i)) { return true; }
-                            },
-                            _ => {},
-                        }
-                        i = i + 1;
-                    }
-                },
+                ExprIdent(cid) => { cname = cid.name; },
                 _ => {},
             }
-            if (expr_own_consumes(c.callee, funcs, name)) { return true; }
-            var j: i32 = 0;
-            while (j < c.args.len()) {
-                if (expr_own_consumes(c.args[j], funcs, name)) { return true; }
-                j = j + 1;
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var borrowed: boolean = false;
+                if (cname.len() > 0) {
+                    match (c.args[i]) {
+                        ExprIdent(aid) => {
+                            if (aid.name == name && callee_param_is_borrow(funcs, cname, i)) { borrowed = true; }
+                        },
+                        _ => {},
+                    }
+                }
+                if (!borrowed && expr_moves_handle(c.args[i], funcs, name)) { return true; }
+                i = i + 1;
             }
             return false;
         },
-        ExprBinary(b) => { return expr_own_consumes(b.left, funcs, name) || expr_own_consumes(b.right, funcs, name); },
-        ExprUnary(u) => { return expr_own_consumes(u.operand, funcs, name); },
+        ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (expr_moves_handle(a.elements[i], funcs, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                if (expr_moves_handle(t.elements[i], funcs, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprIndex(ix) => { return expr_moves_handle(ix.array, funcs, name) || expr_moves_handle(ix.index, funcs, name); },
+        ExprSlice(sl) => { return expr_moves_handle(sl.array, funcs, name) || expr_moves_handle(sl.start, funcs, name) || expr_moves_handle(sl.end, funcs, name); },
+        ExprFieldAccess(fa) => { return expr_moves_handle(fa.obj, funcs, name); },
+        ExprStructLit(sl2) => {
+            if (sl2.has_base && expr_moves_handle(sl2.base, funcs, name)) { return true; }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) {
+                if (expr_moves_handle(sl2.field_values[i], funcs, name)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        ExprLambda(lm) => { return stmts_move_handle(lm.body, funcs, name); },
         _ => { return false; }
     }
 }
 
-// handle_own_consumed reports whether `name` is passed as a call argument bound
-// to an owned-handle parameter anywhere in stmts (moved into the callee).
-function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): boolean {
+function stmt_moves_handle(st: Stmt, funcs: FuncDecl[], name: string): boolean {
+    match (st) {
+        StmtVar(v) => { return expr_moves_handle(v.init, funcs, name); },
+        StmtReturn(r) => { return expr_moves_handle(r.value, funcs, name); },
+        StmtExpr(e) => { return expr_moves_handle(e.value, funcs, name); },
+        StmtAssign(a) => { return a.target == name || expr_moves_handle(a.value, funcs, name); },
+        StmtDefer(d) => { return stmt_moves_handle(d.action, funcs, name); },
+        StmtIf(f) => { return expr_moves_handle(f.cond, funcs, name) || stmts_move_handle(f.then_body, funcs, name) || stmts_move_handle(f.else_body, funcs, name); },
+        StmtWhile(w) => { return expr_moves_handle(w.cond, funcs, name) || stmts_move_handle(w.body, funcs, name); },
+        StmtFor(fr) => { return expr_moves_handle(fr.iter, funcs, name) || stmts_move_handle(fr.body, funcs, name); },
+        StmtMatch(m) => {
+            if (expr_moves_handle(m.scrutinee, funcs, name)) { return true; }
+            var k: i32 = 0;
+            while (k < m.arms.len()) {
+                if (m.arms[k].has_guard && expr_moves_handle(m.arms[k].guard, funcs, name)) { return true; }
+                if (stmts_move_handle(m.arms[k].body, funcs, name)) { return true; }
+                k = k + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+}
+
+function stmts_move_handle(stmts: Stmt[], funcs: FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (stmt_moves_handle(stmts[i], funcs, name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// kept_handle_res returns the resource a declaration's owned handle is
+// auto-dropped through, or "" when it is not an owned handle, its resource has
+// no WIT binding to drop through, or the handle is moved. `body` is the WHOLE
+// enclosing function body — a nested declaration's uses can be anywhere.
+function kept_handle_res(v: StmtVar, body: Stmt[], resources: ResourceDecl[], funcs: FuncDecl[]): string {
+    var res: string = handle_resource_of(v.type_name);
+    if (res.len() == 0) { return ""; }
+    if (resource_binding_iface(resources, res).len() == 0) { return ""; }
+    if (stmts_move_handle(body, funcs, v.name)) { return ""; }
+    return res;
+}
+
+// drop_slot_name is the function-level i32 slot a kept handle is copied into so
+// the drop can name it from the function tail. irlower RETIRES a block-scoped
+// local when its block ends (irlower.retire_locals), so the defer's action —
+// which lower_defers_func replays at every exit — cannot refer to a handle
+// declared inside an `if` / loop / match arm. Native needs no slot: its locals
+// are function-scoped. Keyed by declaration site, so sibling blocks declaring
+// the same name get one slot each rather than sharing (and double-dropping) one.
+function drop_slot_name(v: StmtVar): string {
+    return "__rdh_" + v.name + "_" + dl_itoa(v.line) + "_" + dl_itoa(v.col);
+}
+
+// insert_drop_defers inserts `defer __resource_drop_R(slot);` after every kept
+// owned-handle declaration, recursing into nested blocks (the Go
+// insertDefersInStmt). The defer is armed where the declaration is, so a block
+// that never runs drops nothing.
+function insert_drop_defers(stmts: Stmt[], body: Stmt[], resources: ResourceDecl[], funcs: FuncDecl[]): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var s: Stmt = stmts[i];
+        var ns: Stmt = s;
+        match (s) {
+            StmtIf(f) => {
+                ns = StmtIf { ...f, then_body: insert_drop_defers(f.then_body, body, resources, funcs), else_body: insert_drop_defers(f.else_body, body, resources, funcs) };
+            },
+            StmtWhile(w) => { ns = StmtWhile { ...w, body: insert_drop_defers(w.body, body, resources, funcs) }; },
+            StmtFor(fr) => { ns = StmtFor { ...fr, body: insert_drop_defers(fr.body, body, resources, funcs) }; },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var k: i32 = 0;
+                while (k < m.arms.len()) {
+                    arms = arms.append(MatchArm { ...m.arms[k], body: insert_drop_defers(m.arms[k].body, body, resources, funcs) });
+                    k = k + 1;
+                }
+                ns = StmtMatch { ...m, arms: arms };
+            },
+            _ => {},
+        }
+        out = out.append(ns);
+        match (s) {
+            StmtVar(v) => {
+                var res: string = kept_handle_res(v, body, resources, funcs);
+                if (res.len() > 0) {
+                    var slot: string = drop_slot_name(v);
+                    out = out.append(s_assign(slot, e_ident(v.name)));
+                    out = out.append(s_defer(s_expr(e_call(e_ident(resource_drop_fn_name(res)), [e_ident(slot)]))));
+                }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// collect_drop_info gathers what the insertion needs declared up front: the
+// resources to drop through, in first-seen order (one synthesized
+// `[resource-drop]` import func each), and every handle's slot name (one
+// function-level `var` each).
+function collect_drop_info(stmts: Stmt[], body: Stmt[], resources: ResourceDecl[], funcs: FuncDecl[], res_acc: string[], slot_acc: string[]): (string[], string[]) {
+    var res_out: string[] = res_acc;
+    var slot_out: string[] = slot_acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            StmtVar(v) => { if (expr_own_consumes(v.init, funcs, name)) { return true; } },
-            StmtReturn(r) => { if (expr_own_consumes(r.value, funcs, name)) { return true; } },
-            StmtExpr(e) => { if (expr_own_consumes(e.value, funcs, name)) { return true; } },
-            StmtAssign(a) => { if (expr_own_consumes(a.value, funcs, name)) { return true; } },
-            StmtIf(f) => {
-                if (expr_own_consumes(f.cond, funcs, name) || handle_own_consumed(f.then_body, funcs, name) || handle_own_consumed(f.else_body, funcs, name)) { return true; }
+            StmtVar(v) => {
+                var res: string = kept_handle_res(v, body, resources, funcs);
+                if (res.len() > 0) {
+                    if (!util.has_str(res_out, res)) { res_out = res_out.append(res); }
+                    slot_out = slot_out.append(drop_slot_name(v));
+                }
             },
-            StmtWhile(w) => { if (expr_own_consumes(w.cond, funcs, name) || handle_own_consumed(w.body, funcs, name)) { return true; } },
-            StmtFor(fr) => { if (expr_own_consumes(fr.iter, funcs, name) || handle_own_consumed(fr.body, funcs, name)) { return true; } },
+            StmtIf(f) => {
+                var (tr_res, tr_slot) = collect_drop_info(f.then_body, body, resources, funcs, res_out, slot_out);
+                var (er_res, er_slot) = collect_drop_info(f.else_body, body, resources, funcs, tr_res, tr_slot);
+                res_out = er_res;
+                slot_out = er_slot;
+            },
+            StmtWhile(w) => {
+                var (wr_res, wr_slot) = collect_drop_info(w.body, body, resources, funcs, res_out, slot_out);
+                res_out = wr_res;
+                slot_out = wr_slot;
+            },
+            StmtFor(fr) => {
+                var (fr_res, fr_slot) = collect_drop_info(fr.body, body, resources, funcs, res_out, slot_out);
+                res_out = fr_res;
+                slot_out = fr_slot;
+            },
             StmtMatch(m) => {
-                if (expr_own_consumes(m.scrutinee, funcs, name)) { return true; }
                 var k: i32 = 0;
                 while (k < m.arms.len()) {
-                    if (handle_own_consumed(m.arms[k].body, funcs, name)) { return true; }
+                    var (ar_res, ar_slot) = collect_drop_info(m.arms[k].body, body, resources, funcs, res_out, slot_out);
+                    res_out = ar_res;
+                    slot_out = ar_slot;
                     k = k + 1;
                 }
             },
@@ -11171,7 +11305,7 @@ function handle_own_consumed(stmts: Stmt[], funcs: FuncDecl[], name: string): bo
         }
         i = i + 1;
     }
-    return false;
+    return (res_out, slot_out);
 }
 
 // lower_defers_prepass_module fuses ret-type inference + insert-resource-
@@ -11213,29 +11347,18 @@ pub function lower_defers_prepass_module(mod: Module): Module {
     while (i < funcs.len()) {
         var f: FuncDecl = funcs[i];
         if (!has_res || f.import_iface.len() > 0) { out_funcs = out_funcs.append(lower_defers_func(f)); i = i + 1; continue; }
+        var no_slots: string[] = [];
+        var (f_needed, f_slots) = collect_drop_info(f.body, f.body, mod.resources, funcs, needed, no_slots);
+        needed = f_needed;
         var nbody: Stmt[] = [];
-        var j: i32 = 0;
-        while (j < f.body.len()) {
-            var s: Stmt = f.body[j];
-            nbody = nbody.append(s);
-            match (s) {
-                StmtVar(v) => {
-                    var res: string = handle_resource_of(v.type_name);
-                    if (res.len() > 0) {
-                        var iface: string = resource_binding_iface(mod.resources, res);
-                        if (iface.len() > 0
-                            && !handle_returned(f.body, v.name)
-                            && !handle_own_consumed(f.body, funcs, v.name)) {
-                            var dropcall: Expr = e_call(e_ident(resource_drop_fn_name(res)), [e_ident(v.name)]);
-                            nbody = nbody.append(s_defer(s_expr(dropcall)));
-                            if (!util.has_str(needed, res)) { needed = needed.append(res); }
-                        }
-                    }
-                },
-                _ => {},
-            }
-            j = j + 1;
+        var si: i32 = 0;
+        while (si < f_slots.len()) {
+            nbody = nbody.append(s_var(f_slots[si], "", e_number("0", "", false)));
+            si = si + 1;
         }
+        var dbody: Stmt[] = insert_drop_defers(f.body, f.body, mod.resources, funcs);
+        var di: i32 = 0;
+        while (di < dbody.len()) { nbody = nbody.append(dbody[di]); di = di + 1; }
         out_funcs = out_funcs.append(lower_defers_func(FuncDecl { ...f, body: nbody }));
         i = i + 1;
     }
