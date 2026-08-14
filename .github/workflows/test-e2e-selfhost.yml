@@ -71,9 +71,9 @@ name: Test e2e self-host
 # toolchain rather than skipping for lack of qemu / cross-gcc. The
 # aarch64 runner skips the x86 self-host driver builds (and vice-versa),
 # so the x86 lane is the long pole; the aarch64 shards finish in well
-# under a minute — which is why the aarch64 lane runs 8 shards to the
-# x86 lane's 20 (its per-shard cost is dominated by job setup, so 20
-# near-empty shards were just 12 wasted runner slots delaying the x86
+# under a minute — which is why the aarch64 lane runs 2 shards to the
+# x86 lane's 16 (its per-shard cost is dominated by job setup, so
+# near-empty shards are just wasted runner slots delaying the x86
 # fan-out under the account-wide concurrent-job cap).
 #
 # SHARDED by weighted LPT partition (scripts/selfhost-shard-tests): the
@@ -240,7 +240,7 @@ jobs:
   # and 67 MB after the three-driver ssa job, against ~21 GB free on the runner.
   # What one-per-driver did cost was real: each job pays ~28s of fixed setup
   # (checkout + setup-fern + download-artifact) to do ~22s of warming, and
-  # `needs: warm` gates all 28 shards on the SLOWEST of them — where "slowest"
+  # `needs: warm` gates all 18 shards on the SLOWEST of them — where "slowest"
   # under a saturated runner pool is decided by queue wait, not by work. On that
   # same run the twelve jobs did 9.4 min of warming spread across a 14.6-min
   # barrier, each waiting separately for a runner. Three jobs draw three queue
@@ -301,7 +301,7 @@ jobs:
       # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
       # so a partial warm still reports the sizes it did produce.
       #
-      # continue-on-error because all 28 shards `needs: warm`: a measurement
+      # continue-on-error because all 18 shards `needs: warm`: a measurement
       # step must not be able to hold the lane. Unlike the #6164 case, this
       # hides nothing that was ever enforced — the findings ARE the annotations
       # and the job summary, and the script exits 0 on every finding by design.
@@ -502,8 +502,17 @@ jobs:
   # binary rather than the runner, that is arena exhaustion as the compiler
   # sources grow — see the __fern_alloc note in docs/LOCAL-DEV-LOOP.md, not an
   # infra flake. (Exit 137 is the host OOM-killing a build; different problem.)
+  #
+  # NO `needs: build`, and it compiles its own test binary — the one job in this
+  # workflow that pays ~55 s to skip the shared artifact. It is the critical path
+  # of the entire PR: at 27.4 min it is the longest job in the repo, and
+  # `needs: build` made it start twice-queued (measured on run 31819148053:
+  # `build` itself waited 13.4 min for a runner to do 54 s of work, then this job
+  # waited another 19.6 min, so a 27-minute test ended at +61 min while every
+  # other check was done by +56). A job with no `needs` is created at t=0 and
+  # queues ONCE. Do not re-add the dependency to save the compile; the compile is
+  # not what costs here.
   permodule-fixpoint:
-    needs: build
     name: permodule-fixpoint-x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -512,9 +521,8 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
-        with:
-          name: e2e-test-x86_64
+      - name: compile test binary (go test -c)
+        run: go test -c -o e2eselfhost.test ./internal/e2eselfhost/
       - name: per-module whole-compiler fixpoint (gen0 == gen1)
         env:
           RUN_PERMODULE_FIXPOINT: "1"
@@ -747,15 +755,19 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Two shards, not four: the whole lane is 12.4 min of work (measured on
+      # run 31819148053), so four buckets bought ~3 min each against a 45-min
+      # timeout while holding four slots in a pool that was the binding
+      # constraint on the run.
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-fern
       - name: run the fernsmith corpus through the self-host compiler
         env:
           FERN_SELFHOST_DIFF: "1"
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
 
   test:
@@ -763,39 +775,39 @@ jobs:
     strategy:
       fail-fast: false
       # Explicit include list instead of a host × shard cross-product: the
-      # aarch64 lane runs 8 shards to x86's 20 (see the matrix-per-arch note
+      # aarch64 lane runs 2 shards to x86's 16 (see the matrix-per-arch note
       # in the header). `nshard` rides along so the partition script agrees
       # with the number of jobs actually scheduled.
+      #
+      # SHARD COUNTS ARE BOUNDED BY THE RUNNER POOL, NOT BY THE WORK. Measured
+      # on run 31819148053: the x86 lane's 20 shards did 109 min of work with a
+      # 13.0-min longest shard, and the aarch64 lane's 8 shards did 5.8 min in
+      # total — 43 s each, dominated by job setup. Meanwhile 75% of the PR's
+      # whole CI time was queue, not compute. Below the heaviest single test a
+      # shard cannot get faster no matter how many buckets it is split into, so
+      # past that point extra shards only take slots from other lanes. x86 16
+      # keeps the mean at ~6.8 min against a 20-min timeout; aarch64 2 turns
+      # eight ~43 s jobs into two ~3 min ones.
       matrix:
         include:
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 0 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 1 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 2 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 3 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 4 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 5 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 6 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 7 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 8 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 9 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 10 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 11 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 12 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 13 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 14 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 15 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 16 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 17 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 18 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 20, shard: 19 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 0 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 1 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 2 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 3 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 4 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 5 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 6 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 8, shard: 7 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 0 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 2 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 3 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 4 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 5 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 6 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 7 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 8 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 9 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 10 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 11 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 12 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 13 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 14 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 15 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
@@ -1010,7 +1022,7 @@ jobs:
     needs: test
     # `needs.test.result != 'skipped'` keeps this quiet when `test` never ran at
     # all (a `build` failure cascades through `needs`): that is already red at
-    # its source, and reporting all 28 shards "vanished" on top of it would bury
+    # its source, and reporting all 18 shards "vanished" on top of it would bury
     # the real error. `!cancelled()` matches the recording steps' guard — see
     # the note there for why `always()` would manufacture false failures here.
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
@@ -1036,7 +1048,7 @@ jobs:
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=20 aarch64=8
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=16 aarch64=2
       # The verifier can only see that a marker is ABSENT, so it names all three
       # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
       # opposite responses, and #6038 has been read as the apt-stall for
