@@ -50,7 +50,7 @@ name: Test e2e self-host
 #     of call-sites; TestSelfHostWasmArityGate alone cold-built two of them for
 #     ~126s per shard before this), and asm_ir_elig_run (the lean
 #     front-end+asm_ir probe the six IR-eligibility tests share, in place of a
-#     whole-compiler driver whose 256 MB binary did not disk-cache).
+#     whole-compiler driver whose ~156 MB binary did not disk-cache).
 #     Un-warmed drivers still compile per shard, now at most once each.
 #     IMPORTANT: artifacts are used instead of actions/cache here because the
 #     repo's 10 GB shared cache budget is routinely filled by other PRs/branches.
@@ -59,9 +59,11 @@ name: Test e2e self-host
 #     wall-clock into the runner-preemption window. Workflow artifacts are
 #     per-run and not subject to the shared cache eviction, so they remain
 #     available however long shards wait in queue.
-#   * the warm artifact stores ONLY the linked driver BINARY — NOT the ~680 MB
-#     emitted `.s`. Binary-only keeps each warmed driver ~4x smaller (~190 MB),
-#     so downloads fit on-runner disk and the emit (~47 s) is skipped.
+#   * the warm artifact stores ONLY the linked driver BINARY — NOT the emitted
+#     `.s`, ~371 MB for the whole compiler. Binary-only keeps each warmed driver
+#     several times smaller, so downloads fit on-runner disk and the emit (~47 s)
+#     is skipped. Per-driver linked sizes, and the check that keeps them true,
+#     are in .github/selfhost-driver-sizes.txt.
 #
 # Matrix per arch because individual tests are split per backend
 # (TestSelfHostAsmX86_64, TestSelfHostAsmArm64, etc.) — running on
@@ -144,7 +146,8 @@ concurrency:
 
 # ISOLATED WHOLE-COMPILER DRIVER TESTS — the `^TestSelfHost*` tests that build
 # examples/self_host/fern.fern, the ENTIRE self-hosted compiler and the single
-# largest driver (~245 MB linked). A cold fern.fern build is ~236 s; when the
+# largest driver (~156 MB linked; .github/selfhost-driver-sizes.txt carries the
+# maintained figure). A cold fern.fern build is ~236 s; when the
 # `cli` warm cache is evicted/dropped on a shard (GitHub's 10 GB repo-cache
 # budget vs. the ~2 GB of decompressed driver binaries an x86 shard restores)
 # the shard re-emits fern.fern COLD mid-run — which is exactly when the long x86
@@ -282,6 +285,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "${{ matrix.drivers }}"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -291,6 +295,22 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
+      # SIZE OF WHAT WE JUST LINKED (#6826). The drivers were built above for
+      # their own reasons; this is one stat each plus an awk pass, and it is the
+      # only thing in the repo that records the number. Advisory — see
+      # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
+      # so a partial warm still reports the sizes it did produce.
+      #
+      # continue-on-error because all 28 shards `needs: warm`: a measurement
+      # step must not be able to hold the lane. Unlike the #6164 case, this
+      # hides nothing that was ever enforced — the findings ARE the annotations
+      # and the job summary, and the script exits 0 on every finding by design.
+      # Escalating to a real gate means dropping this flag AND setting
+      # FERN_CI_SIZE_GATE_STRICT.
+      - name: check linked driver sizes against the baseline
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v4
         with:
@@ -351,6 +371,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "fern.fern"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -360,6 +381,13 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
+      # fern.fern is THE tracked artifact — the whole self-hosted compiler CLI,
+      # and the number to quote for "the self-host binary" (#6826). It is linked
+      # here and nowhere else in the lane, so this is where it gets recorded.
+      - name: check linked fern.fern size against the baseline
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       - name: run isolated fern.fern driver tests (in-process, local cache)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -376,8 +404,8 @@ jobs:
     needs: build
     name: const-func-gen2-x86_64
     runs-on: ubuntu-latest
-    # The test builds an mmc1/mmc2 pair (a ~220 MB stage-1 binary and a heavy
-    # emit) — its own docs quote ~4 min, so 30 gives the runner room.
+    # The test builds an mmc1/mmc2 pair (a whole-compiler-scale stage-1 binary
+    # and a heavy emit) — its own docs quote ~4 min, so 30 gives the runner room.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -905,14 +933,22 @@ jobs:
           # RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min job
           # budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
+          #
+          # `--jsonfile-timing-events` keeps the same stream in machine-readable
+          # form for the weight audit in `verify` (#6823): the per-test
+          # wall-clock the shard already prints is the measurement nothing was
+          # reading. The timing-events variant records only pass/skip/fail (not
+          # every output line), so the file stays small enough to ride in the
+          # outcome artifact, and it is written incrementally — a shard that
+          # times out still leaves the durations of everything it did finish.
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
-            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --raw-command -- \
+            ( cd internal/e2eselfhost && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-selfhost.json" --raw-command -- \
                 go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
-            ( cd internal/e2e && gotestsum --format standard-verbose --raw-command -- \
+            ( cd internal/e2e && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-residual.json" --raw-command -- \
                 go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
           fi
       # RECORD THE SHARD'S VERDICT for the off-machine `verify` job. These steps
@@ -928,11 +964,30 @@ jobs:
       # `cancelled`, which `verify` would then report as a real test failure.
       # `verify` carries the matching guard, so on cancellation neither side
       # runs and no spurious verdict is produced.
+      #
+      # The same artifact carries this shard's per-test durations
+      # (`<host>-<shard>.timings`), extracted from the timing-events files above,
+      # for the weight audit in `verify` (#6823). Riding along in the outcome
+      # artifact means no new upload, no new download and no new job. A missing
+      # timing-events file is normal — the residual-package run does not happen
+      # when the selfhost-package run fails first — so the glob is filtered.
       - name: record shard outcome
         if: ${{ !cancelled() }}
         run: |
+          set -euo pipefail
           mkdir -p shard-outcome
           echo '${{ steps.run.outcome }}' > "shard-outcome/${{ matrix.host }}-${{ matrix.shard }}"
+          JSON=()
+          for j in "$RUNNER_TEMP"/shard-*.json; do
+            if [ -f "$j" ]; then JSON+=("$j"); fi
+          done
+          if [ ${#JSON[@]} -gt 0 ]; then
+            TIMINGS="shard-outcome/${{ matrix.host }}-${{ matrix.shard }}.timings"
+            scripts/ci-test-weights extract "${JSON[@]}" > "$TIMINGS"
+            echo "recorded durations for $(wc -l < "$TIMINGS") tests"
+          else
+            echo "no gotestsum timing events: no durations to record"
+          fi
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -996,3 +1051,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20
+      # AUDIT THE SHARD WEIGHTS against what the shards actually measured
+      # (#6823). The durations rode in with the outcome markers, so this costs
+      # one awk pass over ~28 small files and no build. Advisory: the findings
+      # are the job summary and the warning annotations, and the script exits 0
+      # on all of them by design; continue-on-error keeps a bug in the audit from
+      # reddening the job that ENFORCES the shard results, which is the one thing
+      # here that must stay trustworthy. Escalating to a real gate means dropping
+      # that flag AND setting FERN_CI_WEIGHT_GATE_STRICT.
+      #
+      # `!cancelled()` so a run where a shard DID blow its timeout still gets the
+      # audit, which is exactly when its numbers matter.
+      - name: audit shard weights against measured durations
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          FERN_CI_WEIGHT_GATE_STRICT: "0"
+        run: scripts/ci-test-weights check shard-outcomes .github/selfhost-test-weights.txt

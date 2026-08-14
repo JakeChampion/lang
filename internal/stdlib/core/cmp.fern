@@ -665,9 +665,9 @@ pub function sort_desc[T: Ord](arr: T[]): T[] {
 // on the self-host IR path too (#2689 / #2691). They live here with
 // the `Eq` trait they depend on — the single home for the generic
 // equality-driven sequence verbs (the std/array duplicates were removed
-// in #5348). They are element-type-generic, so unlike the i32[]/string[]-
-// specific `contains` / `index_of` Array receiver methods in std/array
-// they cover any `T: Eq`, including a `@derive(Eq)` struct or enum.
+// in #5348). They cover any `T: Eq`, including a `@derive(Eq)` struct or
+// enum; std/array's `.contains()` / `.index_of()` receiver methods are the
+// method-form surface over the same bound.
 
 // contains reports whether `xs` holds a value equal to `target`.
 pub function contains[T: Eq](xs: T[], target: T): boolean {

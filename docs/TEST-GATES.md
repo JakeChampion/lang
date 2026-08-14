@@ -205,7 +205,10 @@ Worth knowing so you do not assume coverage you do not have:
    ~50%. A single-shot check passes and tells you the bug is gone.
 4. **Verify which binary you are testing.** Building `fern.fern` proves nothing
    about a test that builds `asm_ir_run.fern`. Check what the test's
-   `copySelfHostDriver` / `buildSelfHostBin` call actually names.
+   `copySelfHostDriver` / `buildSelfHostBin` call actually names. Same trap when
+   quoting a SIZE: the three are tens of megabytes apart, and
+   `.github/selfhost-driver-sizes.txt` names `fern.fern` as the one meant by
+   "the self-host binary".
 5. **Never pipe a test run through `tail` / `head`.** You get the pipeline's
    exit status — `tail`'s, always 0 — so a failing suite is reported as a pass
    and the detail is discarded. Redirect to a file and grep `--- FAIL`.
@@ -220,6 +223,14 @@ Worth knowing so you do not assume coverage you do not have:
    `.github/selfhost-test-weights.txt` (#6310). `make testnames` now fails on
    a name in `.github/` that resolves to no test; when you retire a test, run
    it before assuming the workflows followed.
+8. **A wrong shard WEIGHT fails the shard, and only by timeout.** An entry that
+   badly understates a test pushes its bucket past the 18-minute
+   `-test.timeout`, so an unrelated PR goes red for a scheduling error — twice
+   so far (#5914, #6823). The `verify` job now audits the declared weights
+   against the durations the shards report and prints a corrected-weights block
+   in its job summary (`scripts/ci-test-weights`); it is advisory, so read the
+   summary rather than waiting for a red. Weight pessimistically — the same test
+   has measured 482 s and 738 s on consecutive runs.
 
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 

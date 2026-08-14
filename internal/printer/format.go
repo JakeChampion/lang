@@ -1536,6 +1536,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.formatExpr(x.Args[lhs], precPipe)
 				f.b.WriteString(" |> ")
 				f.formatExpr(x.Callee, precPrimary)
+				f.writeCallTypeArgs(x)
 				f.b.WriteByte('(')
 				for i, a := range x.Args {
 					if i > 0 {
@@ -1556,6 +1557,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.formatExpr(x.Args[0], precPipe)
 			f.b.WriteString(" |> ")
 			f.formatExpr(x.Callee, precPrimary)
+			f.writeCallTypeArgs(x)
 			if len(x.Args) > 1 {
 				f.b.WriteByte('(')
 				for i, a := range x.Args[1:] {
@@ -1572,6 +1574,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			return
 		}
 		f.formatExpr(x.Callee, precPrimary)
+		f.writeCallTypeArgs(x)
 		f.b.WriteByte('(')
 		for i, a := range x.Args {
 			if i > 0 {
@@ -1691,6 +1694,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString(" }")
 	case *ast.StructLit:
 		f.b.WriteString(x.TypeName)
+		if x.TypeArgsWritten {
+			f.writeTypeArgs(x.TypeArgs)
+		}
 		f.b.WriteString(" { ")
 		// Struct-update literal: leading `...base`, then overrides.
 		if x.Base != nil {
@@ -1830,6 +1836,30 @@ func writtenName(name string) string {
 
 // formatType returns the textual form of t. Unchanged from the
 // pre-comment-retention version.
+// writeTypeArgs emits a `[T1, T2]` type-argument list. Callers gate on
+// the node's TypeArgsWritten: reprinting checker-inferred args would put
+// an instantiation into source that never named one, and for a call it
+// would also turn every ordinary generic call into an explicit one.
+func (f *formatter) writeTypeArgs(args []ast.Type) {
+	if len(args) == 0 {
+		return
+	}
+	f.b.WriteByte('[')
+	for i, a := range args {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		f.b.WriteString(formatType(a))
+	}
+	f.b.WriteByte(']')
+}
+
+func (f *formatter) writeCallTypeArgs(c *ast.Call) {
+	if c.TypeArgsWritten {
+		f.writeTypeArgs(c.TypeArgs)
+	}
+}
+
 func formatType(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:

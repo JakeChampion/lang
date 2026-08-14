@@ -1855,14 +1855,19 @@ type Call struct {
 	// data-first form). Like IsPipe, only the formatter reads it —
 	// to re-render `x |> f(a, _)` instead of the prepended form.
 	PipeHole int
-	// TypeArgs is filled by the checker when the callee resolves
-	// to a generic function (FuncDecl with non-empty TypeParams).
-	// Each entry is the inferred concrete type for the
-	// corresponding type parameter, in declaration order. Empty
-	// for non-generic calls. The monomorphisation pass uses it
-	// to pick the right cloned function and rewrite the callee
-	// name to the mangled form.
+	// TypeArgs holds the callee's instantiation when it resolves to
+	// a generic function (FuncDecl with non-empty TypeParams) — one
+	// entry per type parameter, in declaration order, empty for a
+	// non-generic call. The parser fills it from an explicit
+	// `f[i32](x)` type-argument list; otherwise the checker fills it
+	// with what it inferred. The monomorphisation pass uses it to
+	// pick the right cloned function and rewrite the callee name to
+	// the mangled form.
 	TypeArgs []Type
+	// TypeArgsWritten distinguishes parser-filled TypeArgs from
+	// checker-inferred ones, so the formatter reprints only what the
+	// source actually wrote. See StructLit.TypeArgsWritten.
+	TypeArgsWritten bool
 	// Method is set by the checker when this Call was rewritten
 	// from a `target.method(args)` source-level method call. The
 	// rest of the pipeline ignores it; the LSP reads it to answer
@@ -2076,14 +2081,20 @@ type StructLit struct {
 	// ones. `base` must have the same struct type as TypeName. See
 	// docs/IMMUTABILITY-MIGRATION-PLAN.md.
 	Base Expr
-	// TypeArgs is filled by the checker when the literal
-	// instantiates a generic struct (StructDecl with non-empty
-	// TypeParams). Each entry is the inferred concrete type for
-	// the corresponding type parameter, in declaration order.
+	// TypeArgs holds the instantiation of a generic struct
+	// (StructDecl with non-empty TypeParams) — one entry per type
+	// parameter, in declaration order. The parser fills it from an
+	// explicit `Box[i32] { … }` type-argument list; otherwise the
+	// checker fills it with what it inferred from the field values.
 	// The monomorphisation pass uses it to mangle TypeName into
 	// `<base>__<arg1>__<arg2>` and clear the field. After
 	// monomorph runs, every StructLit has TypeArgs empty.
 	TypeArgs []Type
+	// TypeArgsWritten distinguishes the parser-filled TypeArgs
+	// above from the checker-inferred ones: a written instantiation
+	// is authoritative, so a destination type must not settle the
+	// literal's fields to a different one behind the user's back.
+	TypeArgsWritten bool
 }
 
 // TupleLit is `(e1, e2, …)`. Codegen lowers tuples to heap-allocated

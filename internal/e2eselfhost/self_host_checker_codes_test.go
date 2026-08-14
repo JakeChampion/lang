@@ -1607,6 +1607,25 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"array-sum-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
 		{"array-sum-squared-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum_squared(); }\n"},
 		{"array-bogus-import-e043", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.bogus(); }\n"},
+		// std/array's ARRAY-RECEIVER methods — `function (xs: T[]) <name>[T: cmp.Eq](…)`,
+		// which is how the whole Eq/Ord method surface is written. They are
+		// MethodSigs with a `T[]` receiver, not `__method_Array_*` free
+		// functions, so the E043 array-method-existence rule scanned the wrong
+		// table and reported "no method" for every one of them while the Go
+		// checker was clean. `index_of` / `contains` reach this shape as of
+		// #6801; `index_of_last` always had it and was silently diverging.
+		{"array-index-of-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.index_of(2); }\n"},
+		{"array-contains-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; if (a.contains(2)) { return 1; } return 0; }\n"},
+		{"array-index-of-string-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; return a.index_of(\"y\"); }\n"},
+		{"array-index-of-last-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 1]; match (a.index_of_last(1)) { Some(i) => { return i; }, None => { return 0; } } }\n"},
+		{"array-all-equal-import-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 1]; if (a.all_equal()) { return 1; } return 0; }\n"},
+		// The receiver-method table must not become a blanket "any method
+		// exists on an array" escape hatch. An unknown name is still E043 with
+		// std/array in scope (`array-bogus-import-e043` above), and the same
+		// receiver methods are still E043 with NOTHING imported — nothing
+		// declares them then.
+		{"array-index-of-no-import-e043", "function main(): i32 { var a: i32[] = [1, 2, 3]; return a.index_of(2); }\n"},
+		{"array-contains-no-import-e043", "function main(): i32 { var a: i32[] = [1, 2, 3]; if (a.contains(2)) { return 1; } return 0; }\n"},
 		// Array method RETURN-TYPING: `a.<m>()` resolves to the std/array
 		// helper's declared return type, not `unknown`. So a result used in a
 		// type-incompatible context surfaces the same E002/E003 the Go checker

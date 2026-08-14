@@ -298,6 +298,30 @@ func TestRoundtripStruct(t *testing.T) {
 		}`)
 }
 
+// Construction-site type arguments on a struct literal survive the
+// round-trip, and their ABSENCE survives too — printing them onto a
+// literal that never wrote them changes the program just as much as
+// dropping them from one that did. Both directions matter because the
+// dropped form re-infers: `Box[i64] { val: 42 }` printed as
+// `Box { val: 42 }` silently becomes `Box[i32]`.
+func TestRoundtripStructLitTypeArgs(t *testing.T) {
+	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Pair[A, B] { a: A, b: B }\n"
+	for _, body := range []string{
+		// Written — must survive.
+		`function main(): i32 { var b = Box[i32] { val: 1 }; return b.val; }`,
+		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { var p = Pair[i32, string] { a: 1, b: "x" }; return p.a; }`,
+		`function main(): i32 { var b = Box[i32[]] { val: [1] }; return b.val.len(); }`,
+		// Written, on a struct-update literal.
+		`function main(): i32 { var a = Box[i32] { val: 1 }; var b = Box[i32] { ...a, val: 2 }; return b.val; }`,
+		// Not written — must stay not written.
+		`function main(): i32 { var b = Box { val: 1 }; return b.val; }`,
+		`function main(): i32 { var a = Box { val: 1 }; var b = Box { ...a, val: 2 }; return b.val; }`,
+	} {
+		roundTrip(t, decls+body)
+	}
+}
+
 // Struct-update literals (`Foo { ...base, field: v }` and the pure
 // copy `Foo { ...base }`) round-trip through parse → print → parse
 // with the spread base preserved.

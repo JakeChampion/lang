@@ -495,6 +495,19 @@ pub struct LowerState {
     // Empty for functions without defers, making lower_try byte-identical
     // to the pre-#4334 lowering there.
     try_cleanup: parser.Stmt[],
+    // defer_slots / defer_guard let a REPLAYED defer action name a BLOCK-scoped
+    // local. lower_defers_func replays each action wherever the function can
+    // exit, including the tail, and by then the declaring block has retired its
+    // locals out of name resolution (retire_locals). Each block exit records its
+    // own live slots here as "<flag>|<name>|<slot>" (retire_locals_for_scope) —
+    // one entry per `__dfa<i>` flag the block's subtree ARMS — and defer_guard
+    // names the flag whose `if (__dfa<i>)` replay is currently being lowered, so
+    // slot_of resolves through the record.
+    // A record WINS over an outer same-named local, which is
+    // what makes a shadowed block local resolve to its own slot; the flag key is
+    // what keeps two sibling blocks declaring one name on two slots. #6821.
+    defer_slots: string[],
+    defer_guard: string,
     // grow_exempt (#4873 port): the ident args of the CURRENT statement's
     // direct call whose old value dies at the statement (the strict
     // self-reassign / return-position occurs-once shapes) — the call-site
@@ -762,6 +775,14 @@ pub function (s: LowerState) slot_of(name: string): i32 {
     // inner names with `!retired!` on exit, so after the block the outer `x` is
     // found again — the match here is exact, and no source identifier can start
     // with `!`. First-match here clobbered the outer slot on shadow (#3726).
+    // Inside a replayed defer action the declaring block's local has been
+    // retired, so the record retire_locals_for_scope left takes PRIORITY over the
+    // scan: an outer local of the same name is still findable and is not the one
+    // the action was written against (#6821).
+    if (s.defer_guard.len() > 0) {
+        var da: i32 = s.defer_alias_slot(name);
+        if (da >= 0) { return da; }
+    }
     var i: i32 = s.locals.len() - 1;
     while (i >= 0) {
         if (s.locals[i].slot_name == name) { return i; }
@@ -870,7 +891,10 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 // the frame size (n_locals), the exit dec-sweep (which keys off the per-index
 // type columns, not names), and the `$tmp + local_names.len()` unique-temp
 // scheme are all unaffected. For valid (non-colliding) programs this is a no-op:
-// nothing resolves a block-scoped name after its block.
+// nothing resolves a block-scoped name after its block — except a REPLAYED defer
+// action, which lower_defers_func emits at every function exit and which was
+// written against the name inside the block. Reach this through
+// retire_locals_for_scope, which records the slots for that one reader first.
 //
 // The original name is KEPT after the sentinel so reclaim_slot_name can recover
 // it (#6127). The reclaim credits are name-keyed, so a flat "!retired!" made
@@ -906,6 +930,124 @@ pub function (s: LowerState) retire_locals(from: i32): LowerState {
 // slot_name_retired: `n` already carries the retire sentinel.
 function slot_name_retired(n: string): boolean {
     return n.len() > 9 && n[0:9] == "!retired!";
+}
+
+// is_defer_flag_name: `n` is one of lower_defers_func's per-defer arming flags
+// (`__dfa0`, `__dfa1`, …). The two `?`-edge markers `__dfa_tryall` /
+// `__dfa_tryerr` are deliberately excluded — they wrap the per-flag guards, so
+// the inner `if (__dfa<i>)` is what identifies which defer is being replayed.
+function is_defer_flag_name(n: string): boolean {
+    if (n.len() <= 5) { return false; }
+    if (n[0:5] != "__dfa") { return false; }
+    var c: u8 = n[5];
+    return c >= 48 && c <= 57;
+}
+
+// defer_replay_flag returns the defer flag an `if` condition guards a replay
+// with, or "" when the `if` is ordinary user code.
+function defer_replay_flag(cond: parser.Expr): string {
+    match (cond) {
+        parser.ExprIdent(id) => {
+            if (is_defer_flag_name(id.name)) { return id.name; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// armed_defer_flags collects every defer flag `stmts` ARMS anywhere in its
+// subtree, so a block closing its scope knows which replays can still name the
+// locals it is about to retire. A flag is armed at exactly one `defer`
+// statement, hence in exactly one block, so every block that reports a flag is
+// an ancestor of that defer.
+function armed_defer_flags(stmts: parser.Stmt[], acc: string[]): string[] {
+    var out: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtAssign(a) => {
+                if (is_defer_flag_name(a.target) && util.index_of_str(out, a.target) < 0) { out = out.append(a.target); }
+            },
+            parser.StmtIf(f) => {
+                out = armed_defer_flags(f.then_body, out);
+                out = armed_defer_flags(f.else_body, out);
+            },
+            parser.StmtWhile(w) => { out = armed_defer_flags(w.body, out); },
+            parser.StmtFor(fr) => { out = armed_defer_flags(fr.body, out); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { out = armed_defer_flags(m.arms[k].body, out); k = k + 1; }
+            },
+            _ => {},
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// retire_locals_for_scope records what the defers in `scope` will need, then
+// retires slots [from, len). The two steps are ONE method because the recording
+// is only correct immediately before the retirement: two rules keep each entry
+// pointing at the binding that was in scope at the defer, and both read the
+// still-unretired names.
+//
+//   - a slot already carrying the retire sentinel is SKIPPED, so a sibling inner
+//     block's same-named local (out of scope at the defer) is not recorded;
+//   - the FIRST entry for a "<flag>|<name>" key wins, so when the recording
+//     blocks nest — every one of them an ancestor of the defer, innermost
+//     first — the innermost declaration of the name is the one kept.
+//
+// A function with no defers skips the subtree walk entirely (try_cleanup is
+// lower_defers_func's always-appended `?`-edge marker pair, so it is empty
+// exactly when the function registered no action) and retires as before.
+function (s: LowerState) retire_locals_for_scope(from: i32, scope: parser.Stmt[]): LowerState {
+    if (s.try_cleanup.len() == 0) { return s.retire_locals(from); }
+    var flags: string[] = armed_defer_flags(scope, []);
+    if (flags.len() == 0) { return s.retire_locals(from); }
+    var acc: string[] = s.defer_slots;
+    var i: i32 = from;
+    while (i < s.locals.len()) {
+        var nm: string = s.locals[i].slot_name;
+        if (!slot_name_retired(nm)) {
+            var f: i32 = 0;
+            while (f < flags.len()) {
+                var key: string = flags[f] + "|" + nm + "|";
+                if (defer_alias_find(acc, key) < 0) { acc = acc.append(key + util.i32_to_string(i)); }
+                f = f + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return LowerState { ...s, defer_slots: acc }.retire_locals(from);
+}
+
+// defer_alias_find returns the index of the entry binding the "<flag>|<name>|"
+// prefix `key`, or -1.
+function defer_alias_find(entries: string[], key: string): i32 {
+    var i: i32 = 0;
+    while (i < entries.len()) {
+        var e: string = entries[i];
+        if (e.len() > key.len() && e[0 : key.len()] == key) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// with_defer_guard names the defer flag whose replay is being lowered ("" once
+// the replay is left again).
+function (s: LowerState) with_defer_guard(flag: string): LowerState {
+    return LowerState { ...s, defer_guard: flag };
+}
+
+// defer_alias_slot resolves `name` for the replay currently being lowered, or
+// -1 when this replay's block recorded no such local.
+function (s: LowerState) defer_alias_slot(name: string): i32 {
+    var key: string = s.defer_guard + "|" + name + "|";
+    var at: i32 = defer_alias_find(s.defer_slots, key);
+    if (at < 0) { return 0 - 1; }
+    var e: string = s.defer_slots[at];
+    return util.digits_to_i32(e[key.len() : e.len()] + "");
 }
 
 // reclaim_slot_name: slot `i`'s name for a reclaim-CREDIT lookup — its source
@@ -14845,8 +14987,18 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
             var sc: LowerState = lower_expr(iff.cond, s);
             if (!sc.ok) { return sc; }
             var s1: LowerState = sc.emit(ir.op_if(0));
+            // `if (__dfa<i>)` is lower_defers_func's replay of one defer action.
+            // Name it while the then-body lowers, so a reference to a local whose
+            // block has since been retired resolves through the recorded alias
+            // (#6821). The cond itself lowered above, under the outer guard.
+            var dfg: string = defer_replay_flag(iff.cond);
+            var dfg_prev: string = s1.defer_guard;
+            if (dfg.len() > 0) { s1 = s1.with_defer_guard(dfg); }
             var s2: LowerState = lower_block(iff.then_body, s1);
             if (!s2.ok) { return s2; }
+            // Restore only when it was set — an ordinary `if` must not pay a
+            // LowerState rebuild for a field it never touched.
+            if (dfg.len() > 0) { s2 = s2.with_defer_guard(dfg_prev); }
             if (iff.else_body.len() > 0) {
                 var s3: LowerState = s2.emit(ir.op_else());
                 var s4: LowerState = lower_block(iff.else_body, s3);
@@ -22662,10 +22814,10 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
             }
             ref2 = ref2 + 1;
         }
-        if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals(sbase); }
+        if (stmt_scopes_bindings(stmts[i])) { st = st.retire_locals_for_scope(sbase, [stmts[i]]); }
         i = i + 1;
     }
-    return st.retire_locals(base);
+    return st.retire_locals_for_scope(base, stmts);
 }
 
 // LowerResult is lower_func's output: the lowered op stream, the local-slot
@@ -40123,7 +40275,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -40644,7 +40796,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // var / arm bindings) now — after the precise-drop / enum-free passes
         // above, which resolve their own (function-level) names by slot. Runs
         // only for those statement kinds; a plain `var` persists.
-        if (stmt_scopes_bindings(fn.body[j])) { s = s.retire_locals(stmt_sbase); }
+        if (stmt_scopes_bindings(fn.body[j])) { s = s.retire_locals_for_scope(stmt_sbase, [fn.body[j]]); }
         j = j + 1;
     }
     // Tail-call optimisation (#4328): rewrite self-tail recursion into a loop +
@@ -48133,7 +48285,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
