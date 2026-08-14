@@ -2589,7 +2589,11 @@ type deferEntry struct {
 }
 
 // runDefers evaluates the LIFO list of expressions a callee
-// accumulated via `defer` / `errdefer` statements. Each one runs
+// accumulated via `defer` / `errdefer` statements and still has
+// pending at function exit — a loop body's entries are run and
+// dropped by runIterDefers when their iteration ends, so what
+// reaches here is the function body's own plus whatever the
+// iteration that exited was holding. Each one runs
 // against the scope it was REGISTERED in (deferEntry.env), which
 // still holds the bindings the expression names even though the
 // block has exited — releaseScope drops COW references but
@@ -2619,6 +2623,45 @@ func (i *Interp) runDefers(defers []deferEntry, errorExit bool) {
 		}
 		_, _ = i.evalExpr(defers[k].expr, defers[k].env)
 	}
+}
+
+// deferMark returns the current length of the innermost defer frame —
+// the watermark a loop body's registrations start above.
+func (i *Interp) deferMark() int {
+	if len(i.deferStack) == 0 {
+		return 0
+	}
+	return len(i.deferStack[len(i.deferStack)-1])
+}
+
+// runIterDefers runs the defers one loop-body iteration registered and
+// drops them from the frame. A `defer` inside a loop body is scoped to
+// the iteration that executed it: each iteration schedules its own run,
+// which fires when that iteration ends and reads that iteration's
+// values. `mark` is deferMark() from before the body ran.
+//
+// An errdefer is dropped without running — leaving the body normally is
+// not an error exit, and a rollback armed in an earlier iteration must
+// not fire for a later iteration's failure. Nothing runs when the body
+// exited by `return` or by propagating an error: the frame keeps those
+// entries and the function-exit replay (which is the same exit) fires
+// them there, errdefers included.
+func (i *Interp) runIterDefers(mark int) {
+	if len(i.deferStack) == 0 {
+		return
+	}
+	top := len(i.deferStack) - 1
+	pending := i.deferStack[top]
+	if len(pending) <= mark {
+		return
+	}
+	for k := len(pending) - 1; k >= mark; k-- {
+		if pending[k].onError {
+			continue
+		}
+		_, _ = i.evalExpr(pending[k].expr, pending[k].env)
+	}
+	i.deferStack[top] = pending[:mark]
 }
 
 // isErrReturnValue reports whether a returned value is the
@@ -2686,6 +2729,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if !asBool(c) {
 				break
 			}
+			mark := i.deferMark()
 			r, err := i.execStmt(x.Body, e)
 			if err != nil {
 				return result{}, err
@@ -2693,6 +2737,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if r.flow == flowReturn {
 				return r, nil
 			}
+			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
 					return r, nil // targets an outer labeled loop
@@ -2707,6 +2752,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		return result{flow: flowNormal}, nil
 	case *ast.Loop:
 		for {
+			mark := i.deferMark()
 			r, err := i.execStmt(x.Body, e)
 			if err != nil {
 				return result{}, err
@@ -2714,6 +2760,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if r.flow == flowReturn {
 				return r, nil
 			}
+			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
 					return r, nil // targets an outer labeled loop
@@ -2741,6 +2788,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if !asBool(c) {
 				break
 			}
+			mark := i.deferMark()
 			r, err := i.execStmt(x.Body, inner)
 			if err != nil {
 				return result{}, err
@@ -2748,6 +2796,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			if r.flow == flowReturn {
 				return r, nil
 			}
+			// Before the step, so the action reads this iteration's values —
+			// the same edge the compiled backends replay on.
+			i.runIterDefers(mark)
 			if r.flow == flowBreak {
 				if r.label != "" && r.label != x.Label {
 					return r, nil // targets an outer labeled loop
@@ -3041,9 +3092,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 	case *ast.Defer:
 		// Push onto the enclosing call's defer frame. The frame
 		// is unwound LIFO at function exit by callFunc /
-		// callClosure. No frame = `defer` outside any function
-		// call (REPL top level) — treat as a no-op since
-		// there's no exit point to run the deferred expr at.
+		// callClosure, or at the end of the iteration that
+		// pushed this entry when the `defer` sits in a loop body
+		// (runIterDefers). No frame = `defer` outside any
+		// function call (REPL top level) — treat as a no-op
+		// since there's no exit point to run the deferred expr at.
 		if n := len(i.deferStack); n > 0 {
 			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError, env: e})
 		}

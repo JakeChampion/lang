@@ -3,12 +3,12 @@
 // Interaction is where these bite, so this one runs them together.
 //
 // The contract being pinned:
-//   - defers run LIFO at FUNCTION exit, not at scope or loop exit, so a
-//     `defer` inside a loop body still fires once per execution of the
-//     statement but only when the function returns;
+//   - defers run LIFO when the scope that registered them finishes: at
+//     function exit for a defer in the function body, and at the end of the
+//     iteration that executed it for a defer in a loop body;
 //   - a defer fires on an early return;
-//   - a labelled `continue` skips the rest of the body without disturbing
-//     any pending defer;
+//   - a labelled `continue` ends its iteration, so the iteration's pending
+//     defer runs there;
 //   - `let … else` binds for the rest of the block and its else diverges;
 //   - `|>` feeds its left-hand value in as the FIRST argument.
 
@@ -33,20 +33,18 @@ function checked(n: i32): Option[i32] {
     return Some(n * 2);
 }
 
-// Defers are LIFO and fire at function exit, after the body.
-//
-// NOTE: this deliberately does NOT put a `defer` inside the loop body.
-// The interpreter registers one deferred call per EXECUTION of the
-// statement (four, here) and all three compiled backends fire it ONCE,
-// because IR lowering gives each defer statement a single boolean
-// "active" flag. That divergence is filed separately; pinning either
-// answer here would pick a winner this case is not entitled to pick.
+// The function-body defer is LIFO at function exit, after the body. The
+// loop-body defer belongs to its iteration: four executions, four runs, each
+// at the end of its own iteration — so all four print BEFORE `body-end`, and
+// the one whose iteration leaves through the labelled `continue` still runs
+// (#6379, #6836).
 function run(): i32 {
     defer print("outer-last");
     var i: i32 = 0;
     var seen: i32 = 0;
     sweep: while (i < 4) {
         i = i + 1;
+        defer print("it" + i.to_string());
         if (i == 2) { continue sweep; }
         seen = seen + i;
     }

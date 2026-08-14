@@ -213,9 +213,10 @@ pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 pub struct StmtUnknown { kind: string }
 
-// StmtDefer holds an action statement to run when the enclosing function
-// exits (LIFO, every return path + falloff). It exists only between the
-// parser and the lower_defers pass (module_with_builtins) — that pass
+// StmtDefer holds an action statement to run when the scope that executed it
+// finishes: the enclosing loop iteration for a defer in a loop body, else the
+// enclosing function (LIFO, every return path + falloff). It exists only
+// between the parser and the lower_defers pass (module_with_builtins) — that pass
 // eliminates every StmtDefer before any backend emits, so the emitters
 // never lower one at runtime (their arms are there for exhaustiveness).
 //
@@ -10488,11 +10489,113 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 
+// dl_while / dl_for rebuild a loop around a rewritten body, keeping the
+// label and line the plain s_while / s_for constructors drop — a
+// `break outer` inside a defer-using function has to still find its loop.
+function dl_while(w: StmtWhile, body: Stmt[]): Stmt {
+    return StmtWhile { cond: w.cond, body: body, label: w.label, line: w.line };
+}
+function dl_for(fr: StmtFor, body: Stmt[]): Stmt {
+    return StmtFor { var_name: fr.var_name, iter: fr.iter, body: body, label: fr.label, line: fr.line };
+}
+
+// dl_iter_cleanup builds one loop body's per-iteration cleanup: for the
+// actions that body registered (indices [start, end)), in reverse source
+// order, `if (__dfa<i>) { ACTION; __dfa<i> = 0; }`. Clearing the flag is
+// what makes the run count per iteration — the next iteration re-arms, and
+// the function-exit replay skips an iteration that already ended. An
+// errdefer only clears: leaving the body normally is not an error exit, and
+// a rollback armed in an earlier iteration must not fire for a later
+// iteration's failure.
+function dl_iter_cleanup(actions: Stmt[], flags: i32[], start: i32, end: i32): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = end - 1;
+    while (i >= start) {
+        var name: string = "__dfa" + dl_itoa(i);
+        var body1: Stmt[] = [];
+        if (flags[i] == 0) { body1 = body1.append(actions[i]); }
+        body1 = body1.append(s_assign(name, e_number("0", "", false)));
+        var noelse: Stmt[] = [];
+        out = out.append(s_if(e_ident(name), body1, noelse));
+        i = i - 1;
+    }
+    return out;
+}
+
+// dl_expand_loop_edges inserts `cleanup` before every `break` / `continue`
+// that leaves this loop body — the body's other exit edges, next to the
+// tail. An unlabelled edge at this level targets this loop; a labelled one
+// targets it from anywhere inside, nested loops included. Nested loops are
+// only entered when this loop is labelled, since an unlabelled edge in
+// there leaves the nested body, which ran its own cleanup already.
+function dl_expand_loop_edges(stmts: Stmt[], cleanup: Stmt[], label: string, own_level: boolean): Stmt[] {
+    var out: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            StmtBreak(b) => {
+                if ((own_level && b.label.len() == 0) || (label.len() > 0 && b.label == label)) {
+                    var kb: i32 = 0;
+                    while (kb < cleanup.len()) { out = out.append(cleanup[kb]); kb = kb + 1; }
+                }
+                out = out.append(stmts[i]);
+            },
+            StmtContinue(c) => {
+                if ((own_level && c.label.len() == 0) || (label.len() > 0 && c.label == label)) {
+                    var kc: i32 = 0;
+                    while (kc < cleanup.len()) { out = out.append(cleanup[kc]); kc = kc + 1; }
+                }
+                out = out.append(stmts[i]);
+            },
+            StmtIf(f) => {
+                out = out.append(s_if(f.cond,
+                    dl_expand_loop_edges(f.then_body, cleanup, label, own_level),
+                    dl_expand_loop_edges(f.else_body, cleanup, label, own_level)));
+            },
+            StmtMatch(m) => {
+                var arms: MatchArm[] = [];
+                var ai: i32 = 0;
+                while (ai < m.arms.len()) {
+                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: dl_expand_loop_edges(m.arms[ai].body, cleanup, label, own_level), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                    ai = ai + 1;
+                }
+                out = out.append(s_match(m.scrutinee, arms));
+            },
+            StmtWhile(w) => {
+                if (label.len() == 0) { out = out.append(stmts[i]); }
+                else { out = out.append(dl_while(w, dl_expand_loop_edges(w.body, cleanup, label, false))); }
+            },
+            StmtFor(fr) => {
+                if (label.len() == 0) { out = out.append(stmts[i]); }
+                else { out = out.append(dl_for(fr, dl_expand_loop_edges(fr.body, cleanup, label, false))); }
+            },
+            _ => { out = out.append(stmts[i]); },
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// dl_loop_body wires one loop body up for per-iteration cleanup: the
+// actions it registered are indices [start, end), and every edge out of
+// the body — the tail, a `break`, a `continue` — replays them.
+function dl_loop_body(body: Stmt[], actions: Stmt[], flags: i32[], start: i32, label: string): Stmt[] {
+    var end: i32 = actions.len();
+    if (end <= start) { return body; }
+    var cleanup: Stmt[] = dl_iter_cleanup(actions, flags, start, end);
+    var out: Stmt[] = dl_expand_loop_edges(body, cleanup, label, true);
+    var i: i32 = 0;
+    while (i < cleanup.len()) { out = out.append(cleanup[i]); i = i + 1; }
+    return out;
+}
+
 // dl_collect_stmt(s) rebuild the body with each `defer ACTION` replaced by
 // `__dfa<i> = 1`, accumulating the actions (index = position in the list)
 // and a parallel `flags` list (0 = plain defer, 1 = errdefer). Recurses
 // through nested blocks so a conditional defer gets its flag set only when
-// its branch runs.
+// its branch runs. A loop body additionally gets its own defers replayed on
+// every edge out of the body (dl_loop_body), so each iteration's action runs
+// at the end of that iteration.
 function dl_collect_stmts(stmts: Stmt[], actions: Stmt[], flags: i32[]): DeferAcc {
     var out: Stmt[] = [];
     var acc: Stmt[] = actions;
@@ -10523,13 +10626,15 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
             return DeferAcc { stmts: one, actions: er.actions, flags: er.flags };
         },
         StmtWhile(w) => {
+            var wstart: i32 = actions.len();
             var br: DeferAcc = dl_collect_stmts(w.body, actions, flags);
-            var one: Stmt[] = [s_while(w.cond, br.stmts)];
+            var one: Stmt[] = [dl_while(w, dl_loop_body(br.stmts, br.actions, br.flags, wstart, w.label))];
             return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtFor(fr) => {
+            var fstart: i32 = actions.len();
             var br: DeferAcc = dl_collect_stmts(fr.body, actions, flags);
-            var one: Stmt[] = [s_for(fr.var_name, fr.iter, br.stmts)];
+            var one: Stmt[] = [dl_for(fr, dl_loop_body(br.stmts, br.actions, br.flags, fstart, fr.label))];
             return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtMatch(m) => {
@@ -10633,11 +10738,11 @@ function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[
             return one;
         },
         StmtWhile(w) => {
-            var one: Stmt[] = [s_while(w.cond, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
+            var one: Stmt[] = [dl_while(w, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtFor(fr) => {
-            var one: Stmt[] = [s_for(fr.var_name, fr.iter, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
+            var one: Stmt[] = [dl_for(fr, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtMatch(m) => {
