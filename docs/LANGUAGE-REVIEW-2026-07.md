@@ -282,11 +282,12 @@ exceptions — `Result[T,E]` is the only error type.
 **Inference.** Local only, and modest: `var` initializers, generic call
 type-argument unification, and contextual settling of numeric literals
 (`var x: i64 = 1` works). Lambdas do not infer return types. There is no
-Hindley–Milner global inference, and — notably — no explicit type-argument
-application syntax either (`f[i32](x)` conflicts with indexing and is
-rejected, E040), so when inference fails the only recourse is restructuring.
-Combined with the missing ascription expression, under-inference is the
-type system's main ergonomic tax.
+Hindley–Milner global inference. Explicit type-argument application works on
+calls (`f[i32](x)`) and `as`-ascription types an expression inline
+(`None as Option[i32]`), so an under-inferred call has two recourses. A
+generic struct LITERAL is the gap: `Box[i32] { val: 42 }` does not parse in
+native, though the grammar and the self-host both accept it (#6812), leaving
+a binding annotation as the only spelling there.
 
 **Generics.** Bracket syntax, fully monomorphised (`internal/monomorph`,
 clone-then-recheck), Rust/Crystal-style: zero runtime cost, concrete code
@@ -309,9 +310,10 @@ young (`TRAITS.md`, `DYN-TRAITS.md`, `ASSOCIATED-TYPES.md`):
   are correctly excluded from object safety.
 
 This is a coherent, Rust-minus-lifetimes design. What's missing: no
-higher-kinded types, no GADTs, no const generics, and no numeric trait
-hierarchy yet (which is why the stdlib still has `sort_i32_asc` /
-`sum_i64` type-suffixed families — see Part II).
+higher-kinded types, no GADTs, and no const generics. A numeric trait
+hierarchy does exist — `std/num` ships `Num: Add + Sub + Mul + Div` plus
+`Neg` / `Zero` / `One` — but nothing in the stdlib consumes it, so the
+type-suffixed families it was meant to collapse are still there (#6793).
 
 **Ownership without a borrow checker.** Fern's most interesting typing
 choice. Instead of lifetimes, it has: borrowed-by-default parameters,
@@ -537,9 +539,10 @@ handling with `json_pointer` and typed accessors, HTTP handlers as pure
 plumbing-ergonomics than its size suggests.
 
 The expressiveness ceiling is set by the missing pieces already noted:
-no HKTs (so no generic `Functor`-style abstractions), no numeric trait
-bounds yet (type-suffixed stdlib families), no or-patterns or nested
-tuple patterns in some positions, under-powered inference. Fern expresses
+no HKTs (so no generic `Functor`-style abstractions), numeric trait bounds
+that exist but are unused by the stdlib (type-suffixed families persist,
+#6793), no or-patterns or nested tuple patterns in some positions,
+under-powered inference. Fern expresses
 *programs* well; it expresses *libraries over abstract structure* only
 moderately.
 
