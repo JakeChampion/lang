@@ -61,6 +61,15 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); var b: Cell[i32] = cell_n
 	{"try_edge_mid_iteration", `function step(x: i32): Result[i32, i32] { if (x == 2) { return Err(9); } return Ok(x); }
 function f(a: Cell[i32], n: i32): Result[i32, i32] { var i: i32 = 0; while (i < n) { defer a.set(a.get() + 1); var v: i32 = step(i)?; i = i + 1; } return Ok(i); }
 function main(): i32 { var a: Cell[i32] = cell_new(0); match (f(a, 5)) { Ok(v) => { return 92; }, Err(e) => { if (e != 9) { return 91; } } } return a.get(); }`, 3},
+	// A defer in a match ARM inside a loop belongs to the same iteration —
+	// dl_expand_loop_edges has to reach into the arm bodies: 0 -> 1 -> 13, with
+	// i == 1 taking the None arm.
+	{"match_arm_in_loop", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var o: Option[i32] = if (i == 1) { None } else { Some(i) }; match (o) { Some(v) => { defer a.set(a.get() * 10 + v + 1); }, None => { } } i = i + 1; } return a.get(); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 13},
+	// A labelled `continue` ends the inner iteration AND the outer one, so both
+	// run, innermost first: 0 -> 1 -> 5, then 16 -> 50.
+	{"labelled_continue_ends_both_iterations", `function f(a: Cell[i32]): i32 { var i: i32 = 0; outer: while (i < 2) { defer a.set(a.get() * 3 + 2); i = i + 1; var j: i32 = 0; while (j < 3) { defer a.set(a.get() * 3 + 1); if (j == 0) { continue outer; } j = j + 1; } } return a.get(); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 50},
 	// Two defers in one body run LIFO within each iteration: 0 -> 2 -> 7, then
 	// 23 -> 70. First-in-first-out would leave 50.
 	{"lifo_within_one_iteration", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 2) { defer a.set(a.get() * 3 + 1); defer a.set(a.get() * 3 + 2); i = i + 1; } return a.get(); }

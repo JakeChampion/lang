@@ -218,6 +218,67 @@ function main(): i32 {
     return a.get();
 }
 function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 6},
+		// A `loop { … }` body is a loop body too, and `break` is its only edge.
+		{"unconditional_loop_per_iteration", `function f(a: Cell[i32]): i32 {
+    var i: i32 = 0;
+    loop {
+        defer a.set(a.get() + 1);
+        i = i + 1;
+        if (i == 3) { break; }
+    }
+    return a.get();
+}
+function main(): i32 {
+    var a: Cell[i32] = cell_new(0);
+    var inside: i32 = f(a);
+    return inside * 10 + a.get();
+}`, 33},
+		// A defer in a match ARM inside a loop belongs to the same iteration:
+		// 0 -> 1 (i == 0) -> 13 (i == 2), with i == 1 taking the None arm.
+		{"match_arm_in_loop", `function f(a: Cell[i32]): i32 {
+    var i: i32 = 0;
+    while (i < 3) {
+        var o: Option[i32] = if (i == 1) { None } else { Some(i) };
+        match (o) {
+            Some(v) => { defer a.set(a.get() * 10 + v + 1); },
+            None => { }
+        }
+        i = i + 1;
+    }
+    return a.get();
+}
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 13},
+		// A labelled `continue` ends the inner iteration AND the outer one, so
+		// both actions run, innermost first: 0 -> 1 -> 5, then 16 -> 50.
+		{"labelled_continue_ends_both_iterations", `function f(a: Cell[i32]): i32 {
+    var i: i32 = 0;
+    outer: while (i < 2) {
+        defer a.set(a.get() * 3 + 2);
+        i = i + 1;
+        var j: i32 = 0;
+        while (j < 3) {
+            defer a.set(a.get() * 3 + 1);
+            if (j == 0) { continue outer; }
+            j = j + 1;
+        }
+    }
+    return a.get();
+}
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 50},
+		// Iterating a map is a loop like any other: one run per entry.
+		{"map_for_in_per_entry", `import "core/map";
+function f(a: Cell[i32]): i32 {
+    var m: Map[string, i32] = Map { "a": 1, "b": 2 };
+    for (k, v) in m {
+        defer a.set(a.get() + v);
+    }
+    return a.get();
+}
+function main(): i32 {
+    var a: Cell[i32] = cell_new(0);
+    var inside: i32 = f(a);
+    return inside * 10 + a.get();
+}`, 33},
 		// Two defers in one body run LIFO within each iteration: 0 -> 2 -> 7,
 		// then 23 -> 70. First-in-first-out would leave 50.
 		{"lifo_within_one_iteration", `function f(a: Cell[i32]): i32 {
