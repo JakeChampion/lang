@@ -1790,7 +1790,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 captured_values: env.values
             };
         },
-        parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
+        parser.ExprUnknown(u) => {
+            // A float literal too large for f64 names its code, like the
+            // checker and the asm front end report it (#6842).
+            if (util.is_f64_range_kind(u.kind)) { return v_err("error[P002]: " + util.f64_range_message(u.kind)); }
+            return v_err("parser-side unknown: " + u.kind);
+        }
     }
     return v_err("unhandled Expr variant");
 }

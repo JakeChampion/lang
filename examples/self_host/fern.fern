@@ -1973,23 +1973,24 @@ function run(): i32 {
         return 254;
     }
 
-    // Immutability gate: reject the immutable-data cycle rules (E048 field
+    // Build gate: reject the immutable-data cycle rules (E048 field
     // assign / E049 reference-capture write-back / E055 discarded pure-
     // collection result / E056 subscript assign / E057 Cell[composite]
-    // element) BEFORE codegen, so the compiler is not MORE permissive than
+    // element) and the front end's P002 (a float literal too large for f64,
+    // #6842) BEFORE codegen, so the compiler is not MORE permissive than
     // the native compiler / `-check`
     // (issue #2825 — the SSA / IR / AST codegen paths previously compiled
     // forbidden field mutation like `p.x = v` straight to a working binary).
     // Native always type-checks ahead of codegen; this is the matching gate
-    // for the self-host CLI's compile path. Filtered to the cycle rules so
-    // the partial checker's other rules can't false-positive-reject a valid
-    // program (or this very source under fixpoint), and reported with the
-    // same `line:col: error[CODE]: message` shape as `-check`.
-    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
-    if (imm.len() > 0) {
+    // for the self-host CLI's compile path. Filtered to the codes that cannot
+    // false-positive-reject a valid program (or this very source under
+    // fixpoint), since the rest of the checker is a partial port, and reported
+    // with the same `line:col: error[CODE]: message` shape as `-check`.
+    var gated: checker.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
+    if (gated.len() > 0) {
         var ii: i32 = 0;
-        while (ii < imm.len()) {
-            var idg: checker.Diag = imm[ii];
+        while (ii < gated.len()) {
+            var idg: checker.Diag = gated[ii];
             if (idg.line > 0) {
                 eprint(checker.itoa_nn(idg.line) + ":" + checker.itoa_nn(idg.col) + ": error[" + idg.code + "]: " + idg.message + "\n");
             } else {

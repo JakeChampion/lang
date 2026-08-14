@@ -544,6 +544,62 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("float-literal-out-of-range", func(t *testing.T) {
+		// #6842: a float literal too large for f64 is rejected by the front
+		// end, as native's parser does, instead of compiling to +Inf. All
+		// three channels have to agree, because they gate independently:
+		// `-check` (the checker's P002), COMPILE (the pre-codegen build gate,
+		// which used to filter the diagnostic set down to the immutability
+		// rules and let this through on every target), and `-interp`.
+		srcPath := filepath.Join(dir, "float_oor.fern")
+		src := "function main(): i32 { var x: f64 = 1e309; if (x > 1.0e308) { return 7; } return 0; }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		for _, mode := range [][]string{{"-check"}, {"-interp"}, {"-target", "x86-64-linux", "-emit", "asm"}} {
+			cmd := exec.Command(fernBin, append(append([]string{}, mode...), srcPath)...)
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code == 0 {
+				t.Errorf("%v: exited 0, want a rejection (out: %s)", mode, out)
+			}
+			// The interp reports the parser-side rejection as a bottom value,
+			// not a coded diagnostic; the two gating modes name P002.
+			if mode[0] != "-interp" && !strings.Contains(string(out), "error[P002]") {
+				t.Errorf("%v: diagnostics = %q, want error[P002]", mode, out)
+			}
+		}
+		// `-fmt` is the mode that must NOT reject it: a reformat has to return
+		// the text it was handed, so the verbatim parse keeps the literal
+		// (printer.fern pins the round-trip directly).
+		fmtOut, code := runDriver(t, "-fmt", srcPath)
+		if code != 0 {
+			t.Errorf("-fmt exited %d, want 0 (out: %s)", code, fmtOut)
+		}
+		if !strings.Contains(string(fmtOut), "1e309") {
+			t.Errorf("-fmt lost the literal; got:\n%s", fmtOut)
+		}
+		// The accepted side of the same boundary: underflow is not a range
+		// error on either engine, so this compiles and runs.
+		okPath := filepath.Join(dir, "float_underflow.fern")
+		okSrc := "function main(): i32 { var x: f64 = 1e-400; if (x == 0.0) { return 7; } return 0; }\n"
+		if err := os.WriteFile(okPath, []byte(okSrc), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", okPath); code != 0 {
+			t.Errorf("-check on an underflowing literal exited %d, want 0", code)
+		}
+		asm, code := runDriver(t, okPath)
+		if code != 0 {
+			t.Fatalf("emit on an underflowing literal exited %d, want 0", code)
+		}
+		progBin := buildBin(t, gcc, dir, "float_underflow", string(asm))
+		cmd := exec.Command(progBin)
+		_ = cmd.Run()
+		if c := cmd.ProcessState.ExitCode(); c != 7 {
+			t.Errorf("underflowing-literal program exited %d, want 7", c)
+		}
+	})
+
 	t.Run("check-enum-value-ok", func(t *testing.T) {
 		// #4346 piece 2 (enum-value slice): a bare no-payload enum variant used
 		// as a value (`var c: Color = Red;`) types to its enum's union, so this

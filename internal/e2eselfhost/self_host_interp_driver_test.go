@@ -46,6 +46,13 @@ var interpProgs = []struct {
 	{"sci-float-exp", "function main(): i32 { if (1e3 == 1000.0) { return 7; } return 0; }", 7},
 	{"sci-float-frac", "function main(): i32 { if (1.5e2 == 150.0) { return 7; } return 0; }", 7},
 	{"sci-float-neg-exp", "function main(): i32 { var b: f64 = 1e-2; if (b > 0.009 && b < 0.011) { return 7; } return 0; }", 7},
+	// A float literal too large for f64 is P002 in the front end, not +Inf
+	// (#6842): native rejects the program, so the self-host front end plants a
+	// parser-side unknown, which the interp surfaces as a VErr → 254. Before
+	// the fix this program scored 7 through the self-host and 1 through native.
+	// Underflow is the accepted side of the same boundary on both engines.
+	{"float-lit-overflow-rejected", "function main(): i32 { var x: f64 = 1e309; if (x > 1.0e308) { return 7; } return 0; }", 254},
+	{"float-lit-underflow-accepted", "function main(): i32 { var x: f64 = 1e-400; if (x == 0.0) { return 7; } return 0; }", 7},
 	// Postfix chains on a bool literal (#4338): parse_primary's true/false
 	// arms returned the bare bool ExprResult without threading it through
 	// parse_postfix (unlike the number / string arms), so `true.to_i()` was

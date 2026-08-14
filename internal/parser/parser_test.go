@@ -37,6 +37,31 @@ func TestNumericLiteralErrorsCarryCode(t *testing.T) {
 	if c := codeOf(`function main(): i32 { return 0xFFFFFFFFFFFFFFFFFFFF; }`); c != "P002" {
 		t.Errorf("out-of-range hex literal: code = %q, want P002", c)
 	}
+	// Float literals are range-checked at f64 width, whatever the suffix says
+	// a magnitude no double can hold is P002, not a silent +Inf. The
+	// self-host front end has to agree, which is what #6842 was about, so both
+	// sides of the boundary are pinned here as well as there.
+	if c := codeOf(`function main(): i32 { var x: f64 = 1e309; return 0; }`); c != "P002" {
+		t.Errorf("out-of-range float literal: code = %q, want P002", c)
+	}
+	if c := codeOf(`function main(): i32 { var x: f32 = 1e400f32; return 0; }`); c != "P002" {
+		t.Errorf("out-of-range suffixed float literal: code = %q, want P002", c)
+	}
+	// The accepted side. The boundary is decided by round-to-nearest, so the
+	// largest finite double and the spelling just below the tie above it are
+	// both valid; UNDERFLOW is not a range error at all (strconv returns a
+	// subnormal / ±0 with no error); and f32's range does not gate a literal.
+	for _, src := range []string{
+		`function main(): i32 { var x: f64 = 1.7976931348623157e308; return 0; }`,
+		`function main(): i32 { var x: f64 = 1.7976931348623158e308; return 0; }`,
+		`function main(): i32 { var x: f64 = 1e-400; return 0; }`,
+		`function main(): i32 { var x: f64 = 5e-324; return 0; }`,
+		`function main(): i32 { var x: f32 = 3.5e38; return 0; }`,
+	} {
+		if _, err := Parse(src); err != nil {
+			t.Errorf("%s: unexpected parse error: %v", src, err)
+		}
+	}
 }
 
 func TestEmptyFunction(t *testing.T) {

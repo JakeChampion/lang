@@ -187,6 +187,86 @@ func TestSelfHostParseF64Arm64(t *testing.T) {
 	runParseF64Driver(t, gcc, runner, dir, "pf64_arm64", prog)
 }
 
+const f64RangeDriverBody = `
+function main(): i32 {
+  var src: string = io.read_all_stdin();
+  var lines: string[] = src.split("\n");
+  var i: i32 = 0;
+  while (i < lines.len()) {
+    if (lines[i].len() > 0) {
+      if (f64_lit_out_of_range(lines[i]) ) { print("1"); } else { print("0"); }
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+`
+
+// TestSelfHostF64LitOutOfRangeX86_64 pins `util.f64_lit_out_of_range`, the
+// predicate the self-host front end rejects a float literal with (#6842),
+// against the same oracle as the kernel above: a literal is out of range
+// exactly when a correctly-rounding strtod answers ±Inf, which is when
+// strconv.ParseFloat reports ErrRange and native's parser reports P002.
+//
+// It runs the whole parse_f64 corpus, so it covers the rounding boundary the
+// 14 hand-written cases in self_host_front_end_codes_test.go only sample: the
+// exact ULP tie above the largest finite double (which rounds to +Inf, ties to
+// even), the spelling one below it (which does not), 1100-digit exact midpoints
+// and 300 random doubles. The added exponent sweep straddles the threshold the
+// allocation-free pre-filter uses, so a pre-filter that returns early one
+// decade too soon fails here rather than silently accepting `1e309`.
+func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	util := mustRead(t, "../../examples/self_host/util.fern")
+	prog := "import \"std/io\";\n" + string(util) + "\n" + f64RangeDriverBody
+	path := filepath.Join(dir, "f64range.fern")
+	if err := os.WriteFile(path, []byte(prog), 0o644); err != nil {
+		t.Fatalf("write driver: %v", err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "f64range.fern", "f64range")
+
+	lits, wantBits := parseF64Corpus()
+	for e := 300; e <= 320; e++ {
+		for _, m := range []string{"1", "1.5", "9.99", "0.5"} {
+			lits = append(lits, fmt.Sprintf("%se%d", m, e))
+			v, _ := strconv.ParseFloat(lits[len(lits)-1], 64)
+			wantBits = append(wantBits, int64(math.Float64bits(v)))
+		}
+	}
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	cmd.Stdin = strings.NewReader(strings.Join(lits, "\n") + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("driver run: %v", err)
+	}
+	got := strings.Fields(string(bytes.TrimSpace(out)))
+	if len(got) != len(lits) {
+		t.Fatalf("driver printed %d answers for %d literals", len(got), len(lits))
+	}
+	bad := 0
+	for i := range lits {
+		want := "0"
+		if math.IsInf(math.Float64frombits(uint64(wantBits[i])), 0) {
+			want = "1"
+		}
+		if got[i] != want {
+			bad++
+			if bad <= 10 {
+				t.Errorf("%q: out-of-range = %s, want %s", lits[i], got[i], want)
+			}
+		}
+	}
+	if bad > 10 {
+		t.Errorf("... and %d more mismatches", bad-10)
+	}
+}
+
 // pf64Mirrors are the four copies of the decimal->f64 kernel: util's, which
 // every IR emitter and the interpreter reach through an import, and the three
 // standalone ones the assemblers keep so they need no import at all.

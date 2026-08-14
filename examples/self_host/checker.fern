@@ -2897,6 +2897,17 @@ function append_diags(a: Diag[], b: Diag[]): Diag[] {
     return a;
 }
 
+// keep_code filters a diagnostic list to one code.
+function keep_code(diags: Diag[], code: string): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (diags[i].code == code) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // ret_diags walks a function body (recursing through if / while / for /
 // match / defer sub-bodies, threading scope so a return can see locals
 // declared earlier in the same block) and emits E002 for each return
@@ -3928,9 +3939,9 @@ function mx_if_branch_types(f: parser.StmtIf, s: Scope): Type[] {
 }
 
 // mx_expr walks an expression, emitting E031 for any value match/if-
-// expression IIFE it finds and recursing into sub-expressions (so nested
-// match/if-expressions, and ones inside calls / operators / literals, are
-// all covered).
+// expression IIFE it finds and P002 for an out-of-range float literal, and
+// recursing into sub-expressions (so nested match/if-expressions, and ones
+// inside calls / operators / literals, are all covered).
 function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): Diag[] {
     var out: Diag[] = [];
     match (e) {
@@ -3992,6 +4003,15 @@ function mx_expr(e: parser.Expr, s: Scope, unions: UnionSig[], enums: parser.Enu
             var fv: i32 = 0;
             while (fv < sl.field_values.len()) { out = append_diags(out, mx_expr(sl.field_values[fv], s, unions, enums)); fv = fv + 1; }
             if (sl.has_base) { out = append_diags(out, mx_expr(sl.base, s, unions, enums)); }
+        },
+        parser.ExprUnknown(u) => {
+            // P002: a float literal whose magnitude f64 cannot hold. The
+            // parser plants this marker where the token becomes a value
+            // (util.f64_range_kind), because it has no error list of its own;
+            // native reports the same code from its parser (#6842).
+            if (util.is_f64_range_kind(u.kind)) {
+                out = out.append(dg_at("P002", util.f64_range_message(u.kind), u.line, u.col));
+            }
         },
         _ => { }
     }
@@ -6305,12 +6325,13 @@ pub struct Diag { code: string, message: string, line: i32, col: i32 }
 // cycle rules — E048 (field assign), E049 (reference-capture write-back),
 // E055 (discarded pure-collection result), E056 (subscript assign), E057
 // (Cell[T] element must be cycle-free — a composite/reference element could
-// reconstruct a cycle). These are the diagnostics the self-host compiler
-// enforces at the build gate (the rest of the checker is a partial port and
-// may false-positive, so the gate filters to this set). E057 belongs here
-// for the same cycle-freedom reason as the others, and matches the native
-// compiler, which rejects a Cell[composite] before codegen via its full
-// pre-codegen check. See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
+// reconstruct a cycle). They are the cycle-rule half of what the self-host
+// compiler enforces before codegen; is_build_gate_code below is the whole set,
+// and it stays narrow because the rest of the checker is a partial port and may
+// false-positive. E057 belongs here for the same cycle-freedom reason as the
+// others, and matches the native compiler, which rejects a Cell[composite]
+// before codegen via its full pre-codegen check.
+// See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
 pub function is_immutability_code(code: string): boolean {
     return code == "E048" || code == "E049" || code == "E055" || code == "E056" || code == "E057";
 }
@@ -6321,6 +6342,27 @@ pub function filter_immutability(diags: Diag[]): Diag[] {
     var i: i32 = 0;
     while (i < diags.len()) {
         if (is_immutability_code(diags[i].code)) { out = out.append(diags[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// is_build_gate_code reports whether `code` must reject a program before
+// codegen: the immutability cycle rules above, plus the front end's P002 (a
+// float literal too large for f64, #6842). P002 belongs on this side of the
+// false-positive line for the same reason the cycle rules do: it is decided by
+// the literal's own spelling, so it cannot mistake a valid program for an
+// invalid one, and native rejects the same source in its parser.
+pub function is_build_gate_code(code: string): boolean {
+    return is_immutability_code(code) || code == "P002";
+}
+
+// filter_build_gate keeps the diagnostics the compile path enforces.
+pub function filter_build_gate(diags: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < diags.len()) {
+        if (is_build_gate_code(diags[i].code)) { out = out.append(diags[i]); }
         i = i + 1;
     }
     return out;
@@ -9074,6 +9116,19 @@ pub function check_module(mod: parser.Module): ModuleTypes {
         // E026 / E028: structural match-arm errors (wildcard order, dup
         // variant).
         body_diags = append_diags(body_diags, match_diags(dbody, structs));
+        // P002 in a parameter's DEFAULT value. Nothing evaluates a default
+        // until a call site omits the argument, so it sits outside the body
+        // walk above — but native rejects the literal at parse time whether
+        // the default is ever reached or not (#6842). Filtered to that code:
+        // the walk's other rules are written for a body, not for an
+        // un-called default expression.
+        var pdi: i32 = 0;
+        while (pdi < mod.funcs[i].params.len()) {
+            if (mod.funcs[i].params[pdi].has_default) {
+                body_diags = append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(sigs, structs, unions, methods), unions, mod.enums), "P002"));
+            }
+            pdi = pdi + 1;
+        }
         // E019: explicit type-argument arity on a generic-struct reference
         // in a parameter type.
         var pai2: i32 = 0;
