@@ -473,10 +473,10 @@ pub struct LowerState {
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
-    // param that is neither `own` nor inferred-moved, or a local bound from a
-    // field read whose source is still live (#6158). ONLY the `.with`
-    // self-reassign consults it; see borrowed_names_of for why it is not
-    // folded into aliased_names.
+    // param that is neither `own`, inferred-moved, nor a `$cell$` capture cell,
+    // or a local bound from a field read whose source is still live (#6158).
+    // ONLY the `.with` self-reassign consults it; see borrowed_names_of for why
+    // it is not folded into aliased_names.
     borrowed_names: string[],
     // xblock_pending: cross-block reuse pairings available to a construction
     // NESTED in the statement currently being lowered — encoded "recip|donor"
@@ -23326,46 +23326,34 @@ function aliased_array_names_of(body: parser.Stmt[]): string[] {
 //
 // X is credited when ANY of these holds:
 //
-//   - Y is a non-`own` array PARAM (`borrow_srcs`) — the caller holds the
-//     buffer and reads it after the call returns. Y being dead in THIS body
-//     proves nothing, because the other reader is not in this body.
-//   - Y is itself borrowed — the transitive case.
+//   - Y is itself borrowed — the transitive case, which covers a non-`own` array
+//     PARAM because borrowed_names_of seeds those as members. Y being dead in
+//     THIS body proves nothing there, because the other reader is the caller.
 //   - Y is used again after the binding — the aliasing case, `var b = a` with a
 //     live `a`. `alias_idents_in_value` credits only the source, the name that
 //     ACQUIRED an alias, so nothing marked `b` and `b = b.with(…)` wrote
 //     through into `a`.
 //
-// None holding means the rebind is the buffer's only remaining name and the
+// Neither holding means the rebind is the buffer's only remaining name and the
 // in-place store is sound — which is what keeps `own heap_in` fast: the caller
 // transferred the buffer, and after `var heap = heap_in;` nothing reads
 // `heap_in` again, so a const-eval-VM-shaped loop keeps its stores in place.
 //
-// **The param is a SOURCE, never a member.** Crediting the param itself would
-// also forbid the DIRECT `p = p.with(…)` self-reassign, and that is how a
-// mutable closure capture is written: box_mutated_scalar_captures rewrites
-// `x = v` into `x = x.with(0, v)` on a 1-element cell, and the param-lift hands
-// that cell to the lifted body as a plain array param, which MUST write through
-// it. Making the param borrowed strands the closure on a stale by-value
-// snapshot (#5301) — a wrong answer, not a leak. Telling a caller's array from
-// a captured cell at the param itself is the open design question in #6185; a
-// rebind needs no such judgement, because the cell is only ever written by the
-// direct form.
-//
 // A rebind inside a nested block is credited unconditionally: the liveness test
 // is positional within one statement list and cannot see uses in the enclosing
 // tail. Conservative, so it clones rather than mis-stores.
-function borrowed_rebind_closure(body: parser.Stmt[], acc: string[], borrow_srcs: string[]): string[] {
+function borrowed_rebind_closure(body: parser.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     var grew: boolean = true;
     while (grew) {
         var before: i32 = a.len();
-        a = borrowed_rebinds(body, a, borrow_srcs, true);
+        a = borrowed_rebinds(body, a, true);
         grew = a.len() > before;
     }
     return a;
 }
 
-function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], borrow_srcs: string[], top: boolean): string[] {
+function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], top: boolean): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -23374,7 +23362,6 @@ function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], borrow_srcs: stri
                 match (v.init) {
                     parser.ExprIdent(id) => {
                         if (!top || util.index_of_str(a, id.name) >= 0
-                                || util.index_of_str(borrow_srcs, id.name) >= 0
                                 || name_used_after(stmts, id.name, i)) {
                             a = push_str_unique(a, v.name);
                         }
@@ -23383,14 +23370,14 @@ function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], borrow_srcs: stri
                 }
             },
             parser.StmtIf(iff) => {
-                a = borrowed_rebinds(iff.then_body, a, borrow_srcs, false);
-                a = borrowed_rebinds(iff.else_body, a, borrow_srcs, false);
+                a = borrowed_rebinds(iff.then_body, a, false);
+                a = borrowed_rebinds(iff.else_body, a, false);
             },
-            parser.StmtWhile(w) => { a = borrowed_rebinds(w.body, a, borrow_srcs, false); },
-            parser.StmtFor(f) => { a = borrowed_rebinds(f.body, a, borrow_srcs, false); },
+            parser.StmtWhile(w) => { a = borrowed_rebinds(w.body, a, false); },
+            parser.StmtFor(f) => { a = borrowed_rebinds(f.body, a, false); },
             parser.StmtMatch(m) => {
                 var k: i32 = 0;
-                while (k < m.arms.len()) { a = borrowed_rebinds(m.arms[k].body, a, borrow_srcs, false); k = k + 1; }
+                while (k < m.arms.len()) { a = borrowed_rebinds(m.arms[k].body, a, false); k = k + 1; }
             },
             _ => {},
         }
@@ -23409,29 +23396,35 @@ function borrowed_rebinds(stmts: parser.Stmt[], acc: string[], borrow_srcs: stri
 // (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
 // different questions; they get different sets.
 //
-// Two kinds of binding are members, and each is a buffer some OTHER name still
+// Three kinds of binding are members, and each is a buffer some OTHER name still
 // reaches at the point the in-place store would happen:
 //
+//   - a non-`own` ARRAY PARAM — the caller holds the buffer and reads it after
+//     the call returns, so `.with` on it must produce a value, not a store;
 //   - a `var X = OBJ.field` binding whose OBJ is not cleared first;
 //   - a `var X = Y` bare-ident rebind that borrowed_rebind_closure credits.
 //
-// The non-`own` ARRAY PARAMS are passed in as rebind SOURCES rather than added
-// as members — see borrowed_rebind_closure for why crediting the param itself
-// would break mutable closure captures. `own` params are not even sources: the
-// caller TRANSFERRED the buffer, so the in-place store is the point of the
-// annotation. `own_names` carries the declared ones plus the ones
-// move_arr_params_of inferred.
+// `own` params are excluded: the caller TRANSFERRED the buffer, so the in-place
+// store is the point of the annotation. `own_names` carries the declared ones
+// plus the ones move_arr_params_of inferred.
+//
+// A `$cell$` param is excluded too, and is the one param that is neither owned
+// nor borrowed: it is a mutable capture's shared cell, handed to the lifted body
+// as a plain array param (#5301), and writing THROUGH it is the by-reference
+// capture semantics. Nothing in ParamDecl distinguishes it from a caller's
+// array, so box_rewrite_stmt names it (#6185).
 function borrowed_names_of(fn: parser.FuncDecl, own_names: string[]): string[] {
-    var srcs: string[] = [];
+    var a: string[] = borrowed_field_bindings(fn.body, []);
     var i: i32 = 0;
     while (i < fn.params.len()) {
-        if (is_array_type_name(fn.params[i].type_name) && util.index_of_str(own_names, fn.params[i].name) < 0) {
-            srcs = push_str_unique(srcs, fn.params[i].name);
+        if (is_array_type_name(fn.params[i].type_name)
+            && util.index_of_str(own_names, fn.params[i].name) < 0
+            && !is_mcap_cell_name(fn.params[i].name)) {
+            a = push_str_unique(a, fn.params[i].name);
         }
         i = i + 1;
     }
-    var a: string[] = borrowed_field_bindings(fn.body, []);
-    return borrowed_rebind_closure(fn.body, a, srcs);
+    return borrowed_rebind_closure(fn.body, a);
 }
 
 // is_fresh_struct_init: an init producing a SOLE-OWNER (rc=1) struct value — a
@@ -53434,9 +53427,9 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: pars
 // VALUE (the env box holds the capture's value), so the write is lost. Fix:
 // before lifting, rewrite each captured-AND-mutated local into a 1-element
 // array CELL, so the existing array-pointer capture is by-reference:
-//   var x = E         ->  var x: T[] = [E]
-//   <read x>          ->  x[0]
-//   x = v             ->  x = x.with(0, v)        (in-place arr_set on the cell)
+//   var x = E         ->  var $cell$x: T[] = [E]
+//   <read x>          ->  $cell$x[0]
+//   x = v             ->  $cell$x = $cell$x.with(0, v)   (in-place arr_set)
 // The lambda then captures the cell pointer (cap_type sees `T[]`,
 // try_lift_binding passes the pointer); its in-place `.with` mutates the shared
 // cell. Two rules select what boxes:
@@ -53450,14 +53443,27 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: pars
 //      bindings don't need this: the param-lift passes captures at each call
 //      site (#5301), which is already by-reference for reads.
 
-// box_rewrite_expr rewrites every READ of a boxed var `x` to `x[0]`, recursing
-// all expression forms (including into lambda bodies). The decl name and assign
-// target are handled by box_rewrite_stmt, not here.
+// mcap_cell_name is the cell local for a mutated capture. The `$` prefix cannot
+// collide with a user ident (the guarantee `$lamret$` and `$wc$` already rely
+// on), which is what lets the `.with` gate tell a by-reference capture cell from
+// a caller's array once the lift has turned both into plain array params
+// (#6185): the mode rides on the name, because ParamDecl carries no mode beyond
+// `own` and a cell is neither owned nor borrowed.
+function mcap_cell_name(c: string): string { return "$cell$" + c; }
+
+// is_mcap_cell_name reports whether `n` names such a cell.
+function is_mcap_cell_name(n: string): boolean {
+    return n.len() > 6 && n[0:6] == "$cell$";
+}
+
+// box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x[0]`,
+// recursing all expression forms (including into lambda bodies). The decl name
+// and assign target are handled by box_rewrite_stmt, not here.
 function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): parser.Expr {
     match (e) {
         parser.ExprIdent(id) => {
             if (util.index_of_str(boxed, id.name) >= 0) {
-                return parser.ExprIndex { array: parser.ExprIdent { name: id.name, line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
+                return parser.ExprIndex { array: parser.ExprIdent { name: mcap_cell_name(id.name), line: id.line, col: id.col }, index: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
             }
             return e;
         },
@@ -53506,16 +53512,17 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
             var bxi: i32 = util.index_of_str(boxed, v.name);
             if (bxi >= 0) {
                 var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)] };
-                return parser.StmtVar { name: v.name, type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false };
+                return parser.StmtVar { name: mcap_cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false };
             }
             return parser.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes), line: v.line, col: v.col, is_str: v.is_str };
         },
         parser.StmtAssign(a) => {
             if (util.index_of_str(boxed, a.target) >= 0) {
-                // x = v  ->  x = x.with(0, v)   (receiver stays the raw cell ident)
-                var recv: parser.Expr = parser.ExprIdent { name: a.target, line: a.target_line, col: a.target_col };
+                // x = v  ->  $cell$x = $cell$x.with(0, v)   (receiver stays the raw cell ident)
+                var cnm: string = mcap_cell_name(a.target);
+                var recv: parser.Expr = parser.ExprIdent { name: cnm, line: a.target_line, col: a.target_col };
                 var wcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [parser.ExprNumber { text: "0", suffix: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0, ty: "" };
-                return parser.StmtAssign { target: a.target, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+                return parser.StmtAssign { target: cnm, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
             }
             return parser.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
@@ -53539,6 +53546,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
             }
             return parser.StmtMatch { scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na, line: m.line, col: m.col, origin: m.origin };
         },
+        parser.StmtDefer(d) => { return parser.StmtDefer { action: box_rewrite_stmt(d.action, boxed, btypes), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
     }
     return st;
