@@ -555,7 +555,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 		if p.Own {
 			f.b.WriteString("own ")
 		}
-		f.b.WriteString(p.Name)
+		f.b.WriteString(writtenName(p.Name))
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
 	}
@@ -657,7 +657,7 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		if p.Own {
 			f.b.WriteString("own ")
 		}
-		f.b.WriteString(p.Name)
+		f.b.WriteString(writtenName(p.Name))
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
 		wrote = true
@@ -783,7 +783,13 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		f.b.WriteString(p.Name)
+		// `own` is checked, not decorative: dropping it made E053 fire on the
+		// formatted `fip` sort helpers, which pass their array `own` precisely
+		// so `with` is in-place.
+		if p.Own {
+			f.b.WriteString("own ")
+		}
+		f.b.WriteString(writtenName(p.Name))
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
 	}
@@ -1045,7 +1051,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteByte(';')
 	case *ast.Var:
 		f.b.WriteString("var ")
-		f.b.WriteString(x.Name)
+		f.b.WriteString(writtenName(x.Name))
 		if x.Type != nil {
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(x.Type))
@@ -1067,7 +1073,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				f.b.WriteString(field)
 				if i < len(x.Names) && x.Names[i] != field {
 					f.b.WriteString(": ")
-					f.b.WriteString(x.Names[i])
+					f.b.WriteString(writtenName(x.Names[i]))
 				}
 			}
 			f.b.WriteString(" } = ")
@@ -1080,7 +1086,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.b.WriteString(n)
+			f.b.WriteString(writtenName(n))
 		}
 		f.b.WriteString(") = ")
 		f.formatExpr(x.Init, precLowest)
@@ -1177,7 +1183,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.b.WriteString(p.Name)
+			f.b.WriteString(writtenName(p.Name))
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
 		}
@@ -1363,7 +1369,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				suffix = fmt.Sprintf("i%d", x.Width)
 			}
 		}
-		if x.Value < 0 {
+		if x.Raw != "" {
+			// A base the author chose is part of what they wrote: the arm64
+			// and x86 encoders spell every literal as the instruction
+			// encoding it is, and decimal makes those unreadable.
+			f.b.WriteString(x.Raw)
+			f.b.WriteString(suffix)
+		} else if x.Value < 0 {
 			// A negative Value in formatter input can only be an unsigned
 			// literal whose magnitude exceeds i64::MAX: the parser stored the
 			// bit pattern via `int64(strconv.ParseUint(...))`. (Source
@@ -1697,6 +1709,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.formatExpr(fld.Value, precLowest)
 		}
 		f.b.WriteString(" }")
+	case *ast.MapLit:
+		f.b.WriteString("Map {")
+		for i, ent := range x.Entries {
+			if i > 0 {
+				f.b.WriteByte(',')
+			}
+			f.b.WriteByte(' ')
+			f.formatExpr(ent.Key, precLowest)
+			f.b.WriteString(": ")
+			f.formatExpr(ent.Value, precLowest)
+		}
+		f.b.WriteString(" }")
 	case *ast.TupleLit:
 		f.b.WriteByte('(')
 		for i, e := range x.Elems {
@@ -1724,12 +1748,49 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// statement body renders inline so short predicate lambdas
 		// stay on one line; anything longer uses the normal
 		// multi-line block.
+		//
+		// An arrow lambda parses to this same node with its expression
+		// wrapped in a one-statement `return`, so the arrow form is
+		// reconstructed whenever that shape is intact. The `function`
+		// rendering has to invent a return type for it, and `void` is a
+		// lie for every arrow whose expression has a value.
+		if x.Arrow && x.Body != nil && len(x.Body.Stmts) == 1 {
+			if ret, ok := x.Body.Stmts[0].(*ast.Return); ok && ret.Value != nil {
+				// The body runs as far right as it can, so any context
+				// that continues with a tighter operator needs parens.
+				// An assignment's RHS is terminal, hence `>` not `>=`.
+				needsParens := parentPrec > precAssign
+				if needsParens {
+					f.b.WriteByte('(')
+				}
+				f.b.WriteByte('(')
+				for i, p := range x.Params {
+					if i > 0 {
+						f.b.WriteString(", ")
+					}
+					f.b.WriteString(writtenName(p.Name))
+					f.b.WriteString(": ")
+					f.b.WriteString(formatType(p.Type))
+				}
+				f.b.WriteByte(')')
+				if !x.ReturnUnannotated && x.ReturnType != nil {
+					f.b.WriteString(": ")
+					f.b.WriteString(formatType(x.ReturnType))
+				}
+				f.b.WriteString(" => ")
+				f.formatExpr(ret.Value, precLowest)
+				if needsParens {
+					f.b.WriteByte(')')
+				}
+				break
+			}
+		}
 		f.b.WriteString("function(")
 		for i, p := range x.Params {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			f.b.WriteString(p.Name)
+			f.b.WriteString(writtenName(p.Name))
 			f.b.WriteString(": ")
 			f.b.WriteString(formatType(p.Type))
 		}
@@ -1753,6 +1814,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// formatter never silently drops the node.
 		f.formatBlockExpr(x)
 	}
+}
+
+// writtenName undoes the parser's `_` renaming, so a discarded binding
+// prints as the `_` the author typed rather than the internal
+// `__discard_<line>_<col>_<n>` the parser substituted (parser.discardName).
+// The renaming is total over `_` and its output is reserved, so this is its
+// exact inverse — nothing else can produce a name of that shape.
+func writtenName(name string) string {
+	if strings.HasPrefix(name, "__discard_") {
+		return "_"
+	}
+	return name
 }
 
 // formatType returns the textual form of t. Unchanged from the
@@ -1801,6 +1874,11 @@ func formatType(t ast.Type) string {
 	case ast.ParamType:
 		return x.Name
 	case ast.ArrayType:
+		// A function-typed element needs its parens back: `((string) => string)[]`
+		// printed bare reads as one function RETURNING `string[]`.
+		if _, isFn := x.Elem.(*ast.FuncType); isFn {
+			return "(" + formatType(x.Elem) + ")[]"
+		}
 		return formatType(x.Elem) + "[]"
 	case ast.SliceType:
 		return "[" + formatType(x.Elem) + "]"

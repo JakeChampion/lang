@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/modload"
 	goparser "github.com/jakechampion/lang/internal/parser"
 	goprinter "github.com/jakechampion/lang/internal/printer"
 )
@@ -562,6 +565,222 @@ break;
 return acc;
 }
 `},
+	// #6802 / #6803: the rows where a formatter emitted source that no longer
+	// COMPILES, which is why fmtOutputTypeChecks below exists. Each was a live
+	// divergence: the self-host dropped a `when` guard (two arms then collide,
+	// E028), printed `?` as a prefix `try_` (E001), and wrote a match/if
+	// expression back as its IIFE desugar carrying the return-type TAG the
+	// desugar guessed; native dropped a `Map { … }` value outright
+	// (unparseable), leaked its internal `__discard_` name, invented `: void`
+	// over an arrow lambda, and canonicalised hex to decimal. `own` and
+	// `((string) => string)[]` were found by the type-check property itself —
+	// one drops a checked modifier (E053), the other loses parens the grammar
+	// needs, since `(string) => string[]` is ONE function returning an array.
+	{"guard-try-slice-own-fnarray-hex-discard-ifexpr", `enum Shape { Circle(f64), Square(f64) }
+
+function area(s: Shape): Result[f64, string] {
+  match (s) {
+    Circle(r) when r <= 0.0 => {
+      return Err("non-positive radius");
+    },
+    Circle(r) => {
+      return Ok(3.14159 * r * r);
+    },
+    Square(side) => {
+      return Ok(side * side);
+    }
+  }
+  return Err("unreachable");
+}
+
+function first(xs: i32[]): Result[i32, string] {
+  if (xs.len() == 0) {
+    return Err("empty");
+  }
+  return Ok(xs[0]);
+}
+
+function head_plus_one(xs: i32[]): Result[i32, string] {
+  var v: i32 = first(xs)?;
+  return Ok(v + 1);
+}
+
+function byte_count(s: string): i32 {
+  var bs: [u8] = s.as_bytes();
+  return bs.len();
+}
+
+fip function consume(own arr: i32[]): i32[] {
+  arr = arr.with(0, 1);
+  return arr;
+}
+
+function apply_all(fs: ((string) => string)[], seed: string): string {
+  var acc: string = seed;
+  for i in 0..fs.len() {
+    acc = fs[i](acc);
+  }
+  return acc;
+}
+
+function mask(): i32 {
+  return 0xFF00 | 0xdead;
+}
+
+function drop_first(): i32 {
+  let (_, b) = (1, 2);
+  return b;
+}
+
+function widen(kk: i32): string {
+  var ctor: string = if (kk == 1) { "wide" } else { "narrow" };
+  return ctor;
+}
+
+function main(): i32 {
+  var fs: ((string) => string)[] = [(s: string) => s + "!"];
+  if (apply_all(fs, "x") != "x!") {
+    return 1;
+  }
+  if (byte_count("hello") != 5) {
+    return 2;
+  }
+  if (consume([0, 0]).len() != 2) {
+    return 3;
+  }
+  if (widen(1) != "wide") {
+    return 4;
+  }
+  if (drop_first() != 2) {
+    return 5;
+  }
+  if (mask() == 0) {
+    return 6;
+  }
+  match (head_plus_one([7])) {
+    Ok(v) => {
+      if (v != 8) {
+        return 7;
+      }
+    },
+    Err(_) => {
+      return 8;
+    }
+  }
+  match (area(Circle(0.0))) {
+    Ok(_) => {
+      return 9;
+    },
+    Err(_) => {}
+  }
+  return 0;
+}
+`},
+	{"match-expression-in-value-position", `function pick(o: Option[string]): string {
+  var s: string = match (o) { Some(v) => v, None => "none" };
+  return s;
+}
+
+function main(): i32 {
+  if (pick(Some("hi")) != "hi") {
+    return 1;
+  }
+  if (pick(None) != "none") {
+    return 2;
+  }
+  return 0;
+}
+`},
+	// A parametrised trait bound: the self-host's type-param scan consumed the
+	// `[i32]` and kept only the base name, so `I: iter.Iterator[i32]` came back
+	// as `I: iter.Iterator` — a weaker bound the checker then refuses.
+	{"parametrised-trait-bound", `import "core/iter";
+
+pub function total[I: iter.Iterator[i32]](it: I): i32 {
+  return iter.sum(it);
+}
+
+function main(): i32 {
+  return 0;
+}
+`},
+	// A module-QUALIFIED generic argument. The self-host's generic-arg
+	// reconstruction broke on the `.`, truncating the type and corrupting the
+	// whole `var` into a StmtUnknown — which `-fmt` wrote back as
+	// `/*unknown-stmt:missing = in var*/`, destroying the statement.
+	{"qualified-type-in-generic-args", `import "std/test";
+
+function tally(): i32 {
+  var seen: Map[string, test.TestOutcome] = map_new(4);
+  seen = seen.insert("a", test.pass());
+  return seen.len();
+}
+
+function main(): i32 {
+  if (tally() != 1) {
+    return 1;
+  }
+  return 0;
+}
+`},
+}
+
+// typeChecks reports whether src is a program the checker accepts, running the
+// same load → constfold → check chain `fern -check` does.
+func typeChecks(src string) error {
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		return err
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		return err
+	}
+	_, err = checker.Check(prog)
+	return err
+}
+
+// fmtOutputTypeChecks is the parity gate's third property, beside byte-parity
+// against native and self-host idempotence: formatting a program that compiles
+// must yield a program that still compiles.
+//
+// The two older properties are both blind to a desugar leak. Byte-parity only
+// catches one where native happens to be right, and #6803 is the list of shapes
+// where it was not. Idempotence catches nothing at all here — the self-host
+// formatter is perfectly stable on its own broken output, re-emitting the same
+// unparseable `Layer { writes: , … }` or the same `try_first(xs)` every pass.
+//
+// Every correctness row in #6802 and #6803 fails this directly, and two more
+// were found by adding it: a dropped `own` (E053 on the `fip` sort helpers) and
+// a function-typed array element losing its parens.
+//
+// Conditional on the INPUT compiling, because many cases above are printer
+// fixtures rather than programs — `precedence-bitwise-vs-compare` is `n & 1 ==
+// 0` precisely so a lost paren shows up, and that is `i32 & boolean`. Those
+// still carry their byte-parity and idempotence assertions.
+func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
+	t.Helper()
+	if typeChecks(src) != nil {
+		return
+	}
+	if err := typeChecks(formatted); err != nil {
+		t.Errorf("%s: input compiles but its formatted output does not: %v\n%s", label, err, formatted)
+	}
+}
+
+// TestFmtNativeOutputTypeChecks runs the type-check property over NATIVE's half
+// of every parity case. It needs no cross toolchain and no self-host build, so
+// unlike the parity test below it runs on every shard and on a dev machine —
+// which is where #6803's rows have to be caught, since those are native's.
+func TestFmtNativeOutputTypeChecks(t *testing.T) {
+	for _, tc := range fmtParityCases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := goparser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			fmtOutputTypeChecks(t, "native -fmt", tc.src, goprinter.Format(prog))
+		})
+	}
 }
 
 // TestSelfHostFmtNativeParityX86_64 formats each case with BOTH formatters and
@@ -609,6 +828,12 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 			if string(got) != want {
 				t.Errorf("self-host -fmt differs from native -fmt\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 			}
+
+			// Both outputs must still be programs. Stated per-formatter rather
+			// than only on `got`, so a case where the two AGREE on something
+			// broken still fails.
+			fmtOutputTypeChecks(t, "native -fmt", tc.src, want)
+			fmtOutputTypeChecks(t, "self-host -fmt", tc.src, string(got))
 
 			// Idempotence: formatting the formatted output is a fixed point.
 			outPath := filepath.Join(dir, tc.name+"_fmt.fern")

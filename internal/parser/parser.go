@@ -2717,7 +2717,7 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	}
 	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
 	prependParamDestructures(body, paramDestrs)
-	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Body: body}, nil
+	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Arrow: true, Body: body}, nil
 }
 
 func (p *parser) parseLambda() (ast.Expr, error) {
@@ -5908,6 +5908,9 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			n = v
 		}
 		lit := &ast.NumberLit{P: t.Pos, Value: n}
+		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
+			lit.Raw = t.Text
+		}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned
 		// at parse time so the checker sees a non-polymorphic
 		// type immediately, bypassing settle-from-context flow.

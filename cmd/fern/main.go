@@ -969,6 +969,15 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 		return 1, err
 	}
 	if writeBack {
+		// The only irreversible path: refuse to overwrite the input with
+		// output the parser rejects. A printer that drops a node it has no
+		// case for (#6803) produces exactly that, and a file is not
+		// recoverable from a diagnostic printed after the write.
+		if !isLiterate(srcPath) {
+			if _, err := parser.Parse(formatted); err != nil {
+				return 1, fmt.Errorf("%s: refusing to write back — the formatted output does not parse; this is a formatter bug, please report it:\n%s", srcPath, diag.Format(srcPath, formatted, err))
+			}
+		}
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			return 1, err

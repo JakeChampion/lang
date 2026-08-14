@@ -1590,6 +1590,12 @@ type Expr interface {
 type NumberLit struct {
 	P     Position
 	Value int64
+	// Raw is the literal exactly as the source spelled it, suffix
+	// excluded, and is set only when that spelling is not the decimal
+	// rendering of Value — today, a `0x…` hex literal. Only the
+	// formatter reads it, so a literal's base survives `-fmt`; every
+	// other consumer works from Value.
+	Raw string
 	// Width is set by the checker once the literal's type has
 	// been resolved. 0 means "default i32" for backwards
 	// compatibility (the ir's NumberLit lowering treats 0 the
@@ -2176,7 +2182,12 @@ type Lambda struct {
 	// from the body expression instead of defaulting to void. Mirrors
 	// FuncDecl.ReturnUnannotated; see checker.inferReturns.
 	ReturnUnannotated bool
-	Body              *Block
+	// Arrow records that the source wrote the arrow form `(x) => expr`
+	// rather than `function(x) { … }`. Both parse to the same node, so
+	// only the formatter reads this — without it a formatted arrow lambda
+	// comes back as a `function` whose return type had to be invented.
+	Arrow bool
+	Body  *Block
 	// Captures gets filled by the checker, same shape as
 	// FuncDecl.Captures. closureconv reads it to size the env
 	// block.
