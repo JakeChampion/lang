@@ -199,7 +199,10 @@ function f(Point { x, y }: i32): i32 { return x + y; }
 function main(): i32 { return f(1); }`
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
-		return // a parse-level rejection is an acceptable outcome too
+		// A parse-level rejection is an acceptable outcome too, but it makes
+		// the checker assertion below unreachable — say so, or the test goes
+		// vacuous the day the parser starts refusing this program.
+		t.Skipf("the parser rejected the program, so the checker rule below is untested here: %v", err)
 	}
 	if _, cerr := checker.Check(prog); cerr == nil {
 		t.Error("expected a type error for a struct pattern over an i32 parameter")

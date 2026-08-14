@@ -69,6 +69,11 @@ func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
 
 // forEachRunnableFixture walks conformance/cases and invokes fn for
 // every non-compile-error fixture that targets `backend`.
+//
+// `backend` is the token in a fixture's `backends` file, not a target name, so
+// a typo or a rename selects nothing — and a corpus walk that selected nothing
+// reports PASS with no sub-tests. The floor at the end is what separates that
+// from a clean run.
 func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, f *fixtureSpec)) {
 	t.Helper()
 	root := conformanceCases
@@ -76,6 +81,7 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 	if err != nil {
 		t.Fatalf("read %s: %v", root, err)
 	}
+	ran := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -91,7 +97,11 @@ func forEachRunnableFixture(t *testing.T, backend string, fn func(t *testing.T, 
 		if f.rejectionCase() || !f.backends[backend] {
 			continue
 		}
+		ran++
 		t.Run(f.name, func(t *testing.T) { fn(t, f) })
+	}
+	if ran == 0 {
+		t.Fatalf("no fixture in %s opts into backend %q — this gate asserted nothing", root, backend)
 	}
 }
 

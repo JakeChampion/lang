@@ -45,9 +45,6 @@ const wideToStringProg = `function main(): i32 {
 // halves of the change: the module no longer defers to the AST emitter, and the
 // WAT formatters render the same digits the native interpreter does.
 func TestSelfHostWideToStringWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host wide to_string wasm IR e2e")
-	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	for _, name := range []string{
@@ -88,8 +85,15 @@ func TestSelfHostWideToStringWasmIR(t *testing.T) {
 		return string(wat)
 	}
 
+	// wasmtime is what the `digits` legs need; `routing` reads the emitted WAT
+	// and needs only the driver. Gating the whole test on wasmtime made the
+	// routing assertion — the half that says the module still reaches the IR
+	// emitter — unreachable in every lane without it.
 	runWAT := func(t *testing.T, name, wat string) string {
 		t.Helper()
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH")
+		}
 		watFile := filepath.Join(dir, "wide_"+name+".wat")
 		if err := os.WriteFile(watFile, []byte(wat), 0o644); err != nil {
 			t.Fatalf("write wat: %v", err)

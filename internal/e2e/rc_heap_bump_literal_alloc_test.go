@@ -86,10 +86,17 @@ function main(): i32 {
 }`
 
 func TestToRgbHexNoOverRelease(t *testing.T) {
-	if _, code := compileAndRunX86_64FreeOn(t, toRgbHexOverRelease); code != 0 {
-		t.Errorf("x86_64: to_rgb_hex over-release/value error, code=%d", code)
-	}
-	if _, code := compileAndRunArm64FreeOn(t, toRgbHexOverRelease); code != 0 {
-		t.Errorf("arm64: to_rgb_hex over-release/value error, code=%d", code)
-	}
+	// Per-backend sub-tests: the arm64 leg is unreachable behind the x86 one
+	// on any host missing a toolchain, because the gate inside each runner is
+	// a t.Skip that ends the whole function.
+	t.Run("x86_64", func(t *testing.T) {
+		if _, code := compileAndRunX86_64FreeOn(t, toRgbHexOverRelease); code != 0 {
+			t.Errorf("x86_64: to_rgb_hex over-release/value error, code=%d", code)
+		}
+	})
+	t.Run("arm64-linux", func(t *testing.T) {
+		if _, code := compileAndRunArm64FreeOn(t, toRgbHexOverRelease); code != 0 {
+			t.Errorf("arm64: to_rgb_hex over-release/value error, code=%d", code)
+		}
+	})
 }

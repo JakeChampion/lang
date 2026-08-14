@@ -36,14 +36,17 @@ func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {
 // full default path, the --run temp-binary path, and the -cc opt-out.
 func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
-	qemu := x86QemuOrEmpty(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 
+	// The emulator lookup belongs in the legs that RUN a binary. Hoisted to
+	// the top it skipped the whole test on an emulator-less host, taking the
+	// exec-bit and -cc checks — neither of which runs anything — with it.
 	t.Run("default_build_is_native", func(t *testing.T) {
+		qemu := x86QemuOrEmpty(t)
 		out := filepath.Join(dir, "prog.bin")
 		// No -cc: must build with no external assembler/linker.
 		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {

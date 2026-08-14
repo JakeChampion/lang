@@ -1,12 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -46,57 +43,9 @@ func TestSelfHostArm64BitOpsGas(t *testing.T) {
 // TestSelfHostArm64DarwinMachOBitOpsRuns exercises the new ops end-to-end:
 // a Fern program assembles `ubfx`/`neg`/`tbz` into a value computation
 // (extract -> negate twice -> add -> test-bit branch) that exits 42, wraps
-// it with macho.fern, and the signed Mach-O runs. Structural everywhere;
-// executed on Apple Silicon. No external tool.
+// it with macho.fern, and the signed Mach-O runs — no external tool.
 func TestSelfHostArm64DarwinMachOBitOpsRuns(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host arm64-darwin bitops run")
-	}
-	gcc, runner := x86_64Tooling(t)
-
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	source := arm64NativeSrc(t) + "\n" + arm64MachOBitOpsDriverMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the arm64-darwin bitops driver")
-	}
-	watPath := filepath.Join(dir, "arm64_macho_bitops_driver.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
-	bin, err := exec.Command("wasmtime", "run", watPath).Output()
-	if err != nil {
-		t.Fatalf("wasmtime run (driver): %v", err)
-	}
-
-	f, err := macho.NewFile(bytes.NewReader(bin))
-	if err != nil {
-		t.Fatalf("self-host output is not a parseable Mach-O: %v", err)
-	}
-	if f.Type != macho.TypeExec || f.Cpu != macho.CpuArm64 {
-		t.Fatalf("got type=%v cpu=%v, want EXECUTE/arm64", f.Type, f.Cpu)
-	}
-
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return
-	}
-	binPath := filepath.Join(dir, "bitops42")
-	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
-		t.Fatalf("write binary: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	runErr := cmd.Run()
-	ps := cmd.ProcessState
-	if ps == nil || !ps.Exited() {
-		t.Skipf("self-host Mach-O did not run to a normal exit (err=%v, state=%v)", runErr, ps)
-	}
-	if got := ps.ExitCode(); got != 42 {
-		t.Errorf("self-host arm64-darwin bitops exit = %d, want 42", got)
-	}
+	assertMachORuns(t, machoRun{name: "bitops42", main: arm64MachOBitOpsDriverMain, wantExit: 42})
 }
 
 // arm64BitOpsGasSelfTestMain asserts the new encoders against their

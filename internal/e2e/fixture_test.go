@@ -192,6 +192,13 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 				t.Fatalf("%s: unknown backend %q in backends file", f.name, b)
 			}
 		}
+		// A `backends` file of only blanks and comments selects no backend, so
+		// the fixture's sub-test runs zero legs and PASSes. Omitting the file
+		// is how a case says "every backend"; an empty one says nothing.
+		if len(f.backends) == 0 {
+			t.Fatalf("%s: backends file names no backend, so the case would run on none of them "+
+				"(delete the file to opt into all of %v)", f.name, allBackends)
+		}
 	} else {
 		for _, b := range allBackends {
 			f.backends[b] = true

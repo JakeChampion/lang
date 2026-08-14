@@ -24,6 +24,19 @@ import (
 // the binary executor command line (qemu prefix or empty).
 func X86_64Tooling(t *testing.T) (gcc string, exec_ []string) {
 	t.Helper()
+	gcc, exec_, ok := LookupX86_64Tooling()
+	if !ok {
+		if gcc == "" {
+			t.Skip("no x86_64-linux-gnu-gcc / gcc on PATH; skipping x86-64 e2e")
+		}
+		t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
+	}
+	return gcc, exec_
+}
+
+// LookupX86_64Tooling is X86_64Tooling's discovery half without the skip. See
+// LookupArm64Tooling for why a caller would want it.
+func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
 	for _, c := range []string{"x86_64-linux-gnu-gcc", "gcc"} {
 		if p, err := exec.LookPath(c); err == nil {
 			gcc = p
@@ -31,17 +44,17 @@ func X86_64Tooling(t *testing.T) (gcc string, exec_ []string) {
 		}
 	}
 	if gcc == "" {
-		t.Skip("no x86_64-linux-gnu-gcc / gcc on PATH; skipping x86-64 e2e")
+		return "", nil, false
 	}
 	// Pick the runner. Native exec is preferred — no qemu
 	// transition overhead — but we'll fall back to
 	// qemu-x86_64 on non-x86_64 hosts so the same test suite
 	// passes on aarch64 dev boxes.
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		return gcc, nil
+		return gcc, nil, true
 	}
 	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
-		return gcc, []string{p}
+		return gcc, []string{p}, true
 	}
 	if InterpDriverMode() {
 		// Interpret-the-driver mode: the caller only wants a driver's STDOUT
@@ -49,10 +62,9 @@ func X86_64Tooling(t *testing.T) (gcc string, exec_ []string) {
 		// linking or executing an x86-64 binary. No runner, and gcc is unused
 		// downstream. A test that also execs a compiled x86 binary will fail
 		// loudly on the missing runner rather than silently skipping.
-		return gcc, nil
+		return gcc, nil, true
 	}
-	t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
-	return "", nil
+	return gcc, nil, false
 }
 
 // CompileAndRunX86_64 compiles `src`, links it as a static

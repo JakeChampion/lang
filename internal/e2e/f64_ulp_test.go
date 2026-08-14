@@ -35,6 +35,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // maxULP is the bound each finite case must meet. The kernels are fdlibm's,
@@ -332,11 +334,45 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
 }
 
+// requireBothRegisterBackends resolves the tooling for BOTH register backends
+// on this one host.
+//
+// That combination exists on exactly one lane — test-e2e-arm64.yml's cross-host
+// job (x86 host + aarch64 cross toolchain + qemu-user) — and until #6849 no lane
+// ran this file at all: the catch-all `test-e2e-other` lane owns the name, its
+// x86 leg has no aarch64 cross toolchain and its aarch64 leg has no qemu-x86_64,
+// so whichever runner it landed on skipped before the first assertion. A test
+// that compares two backends cannot report a one-backend host as coverage.
+//
+// FERN_REQUIRE_CROSS_BACKENDS is set by that job, and turns a missing toolchain
+// from a skip into a failure — otherwise the lane losing a toolchain would put
+// the comparison straight back where it was, silently.
+func requireBothRegisterBackends(t *testing.T) {
+	t.Helper()
+	var missing []string
+	if _, _, ok := e2eharness.LookupX86_64Tooling(); !ok {
+		missing = append(missing, "x86-64 (gcc, plus qemu-x86_64 off an amd64 Linux host)")
+	}
+	if _, _, ok := e2eharness.LookupArm64Tooling(); !ok {
+		missing = append(missing, "aarch64 (aarch64-linux-gnu-gcc + qemu-aarch64)")
+	}
+	if len(missing) == 0 {
+		return
+	}
+	if os.Getenv("FERN_REQUIRE_CROSS_BACKENDS") != "" {
+		t.Fatalf("FERN_REQUIRE_CROSS_BACKENDS is set, so this lane is meant to have both register "+
+			"toolchains, but these are missing: %s", strings.Join(missing, "; "))
+	}
+	t.Skipf("needs both register backends on one host; missing: %s "+
+		"(the lane that has both is test-e2e-arm64.yml's cross-host job)", strings.Join(missing, "; "))
+}
+
 // TestF64TranscendentalBackendsAgree pins the two register backends to each
 // other bit for bit. They share an algorithm deliberately — down to arm64's
 // `frintn` being chosen over the more familiar `frinta` so both round ties to
 // even — and a divergence here means one of them has drifted.
 func TestF64TranscendentalBackendsAgree(t *testing.T) {
+	requireBothRegisterBackends(t)
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	prog := f64UlpProg(cs)
 	xOut, xCode := compileAndRunX86_64(t, prog)
@@ -348,7 +384,15 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 	if len(xl) != len(al) {
 		t.Fatalf("line count differs: x86-64 %d, arm64 %d", len(xl), len(al))
 	}
+	// Against len(cs), not just against each other: two EMPTY outputs have equal
+	// length, so the check above passes and the loop below iterates nothing —
+	// the test would report a clean comparison having compared nothing.
+	if len(xl) != len(cs) {
+		t.Fatalf("each backend printed %d values, want one per case (%d)", len(xl), len(cs))
+	}
+	compared := 0
 	for i, c := range cs {
+		compared++
 		if xl[i] == al[i] {
 			continue
 		}
@@ -362,4 +406,12 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 		t.Errorf("%s: x86-64 %v, arm64 %v",
 			c.call, math.Float64frombits(uint64(xv)), math.Float64frombits(uint64(av)))
 	}
+	// The corpus is built from package-level input tables, so a shrunken one
+	// means the case builders stopped producing rather than that the backends
+	// agree. Measured at 118; the floor leaves room to add inputs, not to lose
+	// most of them.
+	if compared < 100 {
+		t.Fatalf("compared %d cases, want the full corpus (measured 118)", compared)
+	}
+	t.Logf("compared %d transcendental results bit for bit across both register backends", compared)
 }

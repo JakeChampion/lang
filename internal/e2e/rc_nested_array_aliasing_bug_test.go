@@ -29,13 +29,23 @@ func TestRCNestedArrayAliasingBug(t *testing.T) {
 	}
 	const want = 12 // len("fn main() {}")
 
-	if _, code := compileAndRunX86_64(t, string(src)); code != want {
-		t.Errorf("x86-64 exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
-	}
-	if _, code := compileAndRunArm64(t, string(src)); code != want {
-		t.Errorf("arm64 exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
-	}
-	if code := compileAndRunWasmbinMain(t, string(src)); code != want {
-		t.Errorf("wasm exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
-	}
+	// One sub-test per backend: a toolchain gate inside any runner is a
+	// t.Skip, which ends the whole test function and takes the legs after it
+	// with it. Only the x86-64 leg had ever run, for a bug that reproduced
+	// differently on each backend (x86 255 / arm64 137 / wasm trap).
+	t.Run("x86_64", func(t *testing.T) {
+		if _, code := compileAndRunX86_64(t, string(src)); code != want {
+			t.Errorf("x86-64 exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
+		}
+	})
+	t.Run("arm64-linux", func(t *testing.T) {
+		if _, code := compileAndRunArm64(t, string(src)); code != want {
+			t.Errorf("arm64 exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
+		}
+	})
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		if code := compileAndRunWasmbinMain(t, string(src)); code != want {
+			t.Errorf("wasm exit = %d, want %d (interp result) — RC use-after-free regressed", code, want)
+		}
+	})
 }
