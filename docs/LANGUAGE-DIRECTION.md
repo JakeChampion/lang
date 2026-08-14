@@ -691,8 +691,11 @@ Deferred to a follow-up:
   the count is one run per iteration with no pending list to
   allocate — a `return`/`?` from mid-iteration still exits
   through the function-level replay, which the cleared flags
-  make a no-op for the iterations that already ended. That
-  narrow scoping is deliberate: Go's model (N registrations
+  make a no-op for the iterations that already ended. An edge
+  AHEAD of a `defer` replays nothing: the clearing means every
+  iteration reaches the top of the body with all its flags at
+  0, and the action names locals such an edge has not reached
+  (#6860). That narrow scoping is deliberate: Go's model (N registrations
   pending at function exit) needs unbounded per-frame
   storage, which the freestanding targets rule out, and only
   a loop can execute one defer statement more than once. The
