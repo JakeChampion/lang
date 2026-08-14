@@ -415,7 +415,9 @@ What landed:
   EnumType).
 - Checker infers Args from struct-literal field values via
   the same `unifyType` machinery. `StructLit.TypeArgs []Type`
-  carries the inference result for the monomorphiser.
+  carries the instantiation for the monomorphiser — written
+  at the construction site (`Box[i32] { val: 1 }`, which
+  outranks any destination annotation) or inferred.
 - Monomorphiser clones generic StructDecls per unique
   instantiation. After cloning + substitution, a fixed-point
   loop walks every Type slot in surviving (monomorphic)

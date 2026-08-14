@@ -21,6 +21,95 @@ func checkSource(t *testing.T, src string) error {
 	return err
 }
 
+// A generic struct literal no field value pins is an ordinary
+// under-inference, reported as E040 by the checker (#6813). Unification
+// binds the parameter to ITSELF in that case, so the arg looks inferred
+// and the failure used to survive to monomorph's re-check as a
+// "compiler bug" naming the mangled `Stack__T`.
+func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
+	const decls = "struct Stack[T] { items: T[] }\nstruct Tagged[T] { n: i32 }\n"
+	bad := []string{
+		// `[]` pins nothing.
+		`function main(): i32 { var s = Stack { items: [] }; return 0; }`,
+		// A phantom parameter no field mentions at all.
+		`function main(): i32 { var t = Tagged { n: 1 }; return t.n; }`,
+	}
+	for _, body := range bad {
+		err := checkSource(t, decls+body)
+		if err == nil {
+			t.Errorf("expected E040 for %s, got none", body)
+			continue
+		}
+		if !strings.Contains(err.Error(), "could not infer type parameter T for struct") {
+			t.Errorf("error %q is not the E040 inference message\nsrc: %s", err.Error(), body)
+		}
+		// The mangled name is monomorph's business and must never appear.
+		if strings.Contains(err.Error(), "Stack__") || strings.Contains(err.Error(), "Tagged__") {
+			t.Errorf("error %q leaks a mangled name\nsrc: %s", err.Error(), body)
+		}
+	}
+
+	// A parameter an ENCLOSING generic declaration binds is a real
+	// instantiation, left for the eventual monomorphic clone.
+	ok := []string{
+		`function wrap[T](x: T): i32 { var s = Stack { items: [x] }; return s.items.len(); }
+function main(): i32 { return wrap(7); }`,
+		`function wrap[U](x: U): i32 { var s: Stack[U] = Stack { items: [x] }; return s.items.len(); }
+function main(): i32 { return wrap(7); }`,
+		// Both remedies E040 names must actually work.
+		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		`function main(): i32 { var s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
+// Construction-site type arguments on a struct literal (#6812): the
+// written instantiation seeds the field checks and outranks any
+// destination annotation, and its arity is validated against the decl.
+func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
+	const decls = "struct Box[T] { val: T }\nstruct Stack[T] { items: T[] }\nstruct Point { x: i32 }\n"
+	ok := []string{
+		// The plain case inference would also have reached.
+		`function main(): i32 { var b = Box[i32] { val: 1 }; return b.val; }`,
+		// The case inference cannot reach: no field value pins T.
+		`function main(): i32 { var s = Stack[i32] { items: [] }; return s.items.len(); }`,
+		// Agreeing with the destination is fine.
+		`function main(): i32 { var b: Box[i64] = Box[i64] { val: 1 }; return 0; }`,
+	}
+	for _, body := range ok {
+		if err := checkSource(t, decls+body); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, body)
+		}
+	}
+
+	bad := []struct{ body, want string }{
+		{`function main(): i32 { var b = Box[i32, string] { val: 1 }; return 0; }`,
+			"Box expects 1 type argument(s), got 2"},
+		{`function main(): i32 { var p = Point[i32] { x: 1 }; return 0; }`,
+			"Point expects 0 type argument(s), got 1"},
+		// The written args, not the destination, drive the literal — so a
+		// disagreement is a plain assignment error rather than a silent retype.
+		{`function main(): i32 { var b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
+			"cannot assign Box[i32] to variable of type Box[i64]"},
+		{`function main(): i32 { var b = Box[i32] { val: "x" }; return 0; }`,
+			`field "val": expected i32, got string`},
+	}
+	for _, tc := range bad {
+		err := checkSource(t, decls+tc.body)
+		if err == nil {
+			t.Errorf("expected an error for %s, got none", tc.body)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("error %q does not contain %q\nsrc: %s", err.Error(), tc.want, tc.body)
+		}
+	}
+}
+
 // TestGenericStructLitFieldCheckedAgainstDestination covers a generic struct
 // literal whose field value conflicts with an explicit destination
 // instantiation — `var b: Box[i32] = Box { v: "x" }`. Checking the field only

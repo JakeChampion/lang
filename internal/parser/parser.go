@@ -3435,16 +3435,17 @@ func (p *parser) parseForEachMapTuple(kw lexer.Token, label string) (ast.Stmt, e
 // with `if` / `for` / `while` and to keep the parser context-light.
 // Arms are separated by commas; a trailing comma is allowed.
 // peekTypeArgs reports whether the `[` at p.peek() opens a
-// generic call-site type-args list (`f[i32](args)`) as opposed
-// to an indexing / slicing `[...]`. The cheap-and-correct
-// disambiguator: the first token AFTER the `[` must be a
-// type-keyword (i32, u32, string, boolean, void, f32, f64,
-// usize, ...) — those tokens can't appear in an indexing
-// expression. The closing `]` followed by `(` is required for
-// the type-args interpretation; if either condition fails the
-// caller falls through to the regular Index / Slice handling.
+// generic type-args list as opposed to an indexing / slicing
+// `[...]`. The cheap-and-correct disambiguator: the first token
+// AFTER the `[` must be a type-keyword (i32, u32, string,
+// boolean, void, f32, f64, usize, ...) — those tokens can't
+// appear in an indexing expression. The closing `]` must be
+// followed by `opener`: `(` for a call's type args
+// (`f[i32](args)`), `{` for a struct literal's
+// (`Box[i32] { … }`). If either condition fails the caller
+// falls through to the regular Index / Slice handling.
 // Doesn't consume tokens.
-func (p *parser) peekTypeArgs() bool {
+func (p *parser) peekTypeArgs(opener string) bool {
 	if !p.match(lexer.Punct, "[") {
 		return false
 	}
@@ -3460,12 +3461,12 @@ func (p *parser) peekTypeArgs() bool {
 		"u8", "u32", "u64",
 		"usize", "f32", "f64",
 		"string", "boolean", "void":
-		// fallthrough — keep walking to find `]` followed by `(`
+		// fallthrough — keep walking to find `]` followed by `opener`
 	default:
 		return false
 	}
 	// Walk forward looking for the matching `]` at the same
-	// bracket depth. Then check the token after is `(`.
+	// bracket depth. Then check the token after is `opener`.
 	depth := 1
 	for j := p.i + 1; j < len(p.tokens); j++ {
 		t := p.tokens[j]
@@ -3478,7 +3479,7 @@ func (p *parser) peekTypeArgs() bool {
 				if depth == 0 {
 					if j+1 < len(p.tokens) {
 						nt := p.tokens[j+1]
-						return nt.Kind == lexer.Punct && nt.Text == "("
+						return nt.Kind == lexer.Punct && nt.Text == opener
 					}
 					return false
 				}
@@ -3486,6 +3487,27 @@ func (p *parser) peekTypeArgs() bool {
 		}
 	}
 	return false
+}
+
+// parseTypeArgList parses the comma-separated types of a
+// `[T1, T2]` type-argument list, the `[` already consumed, and
+// consumes the closing `]`. A trailing comma is accepted.
+func (p *parser) parseTypeArgList() ([]ast.Type, error) {
+	var args []ast.Type
+	for {
+		t, err := p.parseType()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, t)
+		if !p.moreElems("]") {
+			break
+		}
+	}
+	if _, err := p.expect(lexer.Punct, "]"); err != nil {
+		return nil, err
+	}
+	return args, nil
 }
 
 // isLiteralPatternStart reports whether the token at hand opens
@@ -5407,20 +5429,10 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// `arr[i]` working unchanged while unlocking the
 			// generic-instantiation syntax for the inference
 			// cases that don't get help from arguments alone.
-			if p.peekTypeArgs() {
+			if p.peekTypeArgs("(") {
 				open := p.advance() // [
-				var typeArgs []ast.Type
-				for {
-					t, err := p.parseType()
-					if err != nil {
-						return nil, err
-					}
-					typeArgs = append(typeArgs, t)
-					if !p.moreElems("]") {
-						break
-					}
-				}
-				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				typeArgs, err := p.parseTypeArgList()
+				if err != nil {
 					return nil, err
 				}
 				if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -5433,8 +5445,24 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err
 				}
-				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs}
+				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs, TypeArgsWritten: true}
 				continue
+			}
+			// Generic struct-literal type arguments:
+			// `Box[i32] { val: 42 }` — the grammar's
+			// `StructLit = QualName [ TypeArgs ] '{' … '}'`.
+			// Same keyword-plus-terminator disambiguator as the
+			// call form, so `arr[i] { … }` stays an index. Gated
+			// on !noStructLit exactly like the `Ident { … }` and
+			// `mod.Foo { … }` forms: in an `if let` / loop-header
+			// source position the `{` opens the body.
+			if name, pos, ok := structLitTypeName(expr); ok && !p.noStructLit && p.peekTypeArgs("{") {
+				p.advance() // [
+				typeArgs, err := p.parseTypeArgList()
+				if err != nil {
+					return nil, err
+				}
+				return p.parseStructLit(pos, name, typeArgs)
 			}
 			open := p.advance()
 			// Slicing distinguishes from indexing by the `:`
@@ -5512,7 +5540,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// reads `b.items` as a field access, not `b.items { … }`.
 			// Mirrors the bare-`Ident { … }` guard below.
 			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
-				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
+				return p.parseStructLit(id.P, id.Name+"."+fname.Text, nil)
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
 		case p.match(lexer.Punct, "::"):
@@ -5531,7 +5559,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// `mod::Foo { … }` is a path-qualified struct literal, mirroring
 			// the `mod.Foo { … }` form (suppressed in noStructLit positions).
 			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
-				return p.parseStructLit(id.P, id.Name+"."+fname.Text)
+				return p.parseStructLit(id.P, id.Name+"."+fname.Text, nil)
 			}
 			expr = &ast.FieldAccess{P: colons.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos, PathSep: true}
 		case p.match(lexer.Punct, "?"):
@@ -5548,11 +5576,43 @@ func (p *parser) parseCall() (ast.Expr, error) {
 	}
 }
 
+// structLitTypeName recovers the QualName a `Name[TypeArgs] { … }`
+// literal constructs, from the expression parsed before the `[`.
+// A bare `Ident` is the unqualified form; a one-level `FieldAccess`
+// off an Ident is the `mod.Foo` / `mod::Foo` form, whose dotted name
+// modload rewrites to `mod__Foo`. Anything deeper is not a type name.
+func structLitTypeName(e ast.Expr) (string, ast.Position, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name, x.P, true
+	case *ast.FieldAccess:
+		if id, ok := x.Target.(*ast.Ident); ok && !isNumericSelector(x.Field) {
+			return id.Name + "." + x.Field, id.P, true
+		}
+	}
+	return "", ast.Position{}, false
+}
+
+// isNumericSelector reports whether a FieldAccess selector is a tuple
+// index (`pair.0`) rather than a field name.
+func isNumericSelector(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, r := range field {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // parseStructLit parses the `{ field: value, ... }` part of a struct
-// literal, having already consumed the type-name identifier. Trailing
-// commas are accepted; the checker enforces field-set completeness
-// against the struct declaration.
-func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, error) {
+// literal, having already consumed the type-name identifier and any
+// `[TypeArgs]` after it (typeArgs is nil when none were written).
+// Trailing commas are accepted; the checker enforces field-set
+// completeness against the struct declaration.
+func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []ast.Type) (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
@@ -5573,7 +5633,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 			if _, err := p.expect(lexer.Punct, "}"); err != nil {
 				return nil, err
 			}
-			return &ast.StructLit{P: pos, TypeName: typeName, Base: base}, nil
+			return &ast.StructLit{P: pos, TypeName: typeName, Base: base, TypeArgs: typeArgs, TypeArgsWritten: typeArgs != nil}, nil
 		}
 	}
 	if !p.match(lexer.Punct, "}") {
@@ -5602,7 +5662,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string) (ast.Expr, er
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields, Base: base}, nil
+	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields, Base: base, TypeArgs: typeArgs, TypeArgsWritten: typeArgs != nil}, nil
 }
 
 // parseMapLit parses `Map { key: value, key: value, ... }`. Both
@@ -6047,7 +6107,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			if t.Text == "Map" {
 				return p.parseMapLit(t.Pos)
 			}
-			return p.parseStructLit(t.Pos, t.Text)
+			return p.parseStructLit(t.Pos, t.Text, nil)
 		}
 		return &ast.Ident{P: t.Pos, Name: t.Text}, nil
 	case lexer.Punct:

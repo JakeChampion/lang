@@ -60,6 +60,10 @@ var diagnosticGoldenCases = []struct {
 	{"E019_generic_arity", "struct Box[T] { v: T }\nfunction f(b: Box[i32, i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 	{"E020_empty_array_annot", "function main(): i32 { var a = []; return 0; }\n"},
 	{"E040_typearg_arity", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32, i32](1); }\n"},
+	// E040 under-inferred generic struct literal (#6813): `[]` cannot pin T.
+	// Reported by the checker, so it renders with a code, an excerpt, and a
+	// caret — it used to escape as a bare-coordinate monomorph "compiler bug".
+	{"E040_struct_inference", "struct Stack[T] { items: T[] }\nfunction main(): i32 { var s = Stack { items: [] }; return 0; }\n"},
 	{"E043_unknown_field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; return p.y; }\n"},
 	{"E048_immutable_field", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; p.x = 2; return p.x; }\n"},
 	{"E063_slice_escape", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; return xs[0:2]; }\nfunction main(): i32 { return 0; }\n"},

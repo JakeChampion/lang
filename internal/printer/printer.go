@@ -68,6 +68,7 @@ func printStructDecl(b *strings.Builder, sd *ast.StructDecl) {
 	}
 	b.WriteString("struct ")
 	b.WriteString(sd.Name)
+	writeDeclTypeParams(b, sd.TypeParams)
 	b.WriteString(" { ")
 	for i, f := range sd.Fields {
 		if i > 0 {
@@ -365,6 +366,9 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte(')')
 	case *ast.Call:
 		printExpr(b, x.Callee)
+		if x.TypeArgsWritten {
+			writeTypeArgs(b, x.TypeArgs)
+		}
 		b.WriteByte('(')
 		for i, a := range x.Args {
 			if i > 0 {
@@ -463,6 +467,9 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte('}')
 	case *ast.StructLit:
 		b.WriteString(x.TypeName)
+		if x.TypeArgsWritten {
+			writeTypeArgs(b, x.TypeArgs)
+		}
 		b.WriteString(" { ")
 		if x.Base != nil {
 			b.WriteString("...")
@@ -516,6 +523,40 @@ func printForStep(b *strings.Builder, s ast.Stmt) {
 		return
 	}
 	printStmt(b, s)
+}
+
+// writeDeclTypeParams emits a declaration's generic parameter list
+// `[A, B]`. Bounds are not rendered here — this printer is the plain
+// AST dump, not the formatter.
+func writeDeclTypeParams(b *strings.Builder, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	b.WriteByte('[')
+	for i, n := range names {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(n)
+	}
+	b.WriteByte(']')
+}
+
+// writeTypeArgs emits a `[T1, T2]` type-argument list. Callers gate on
+// the node's TypeArgsWritten: reprinting checker-inferred args would put
+// an instantiation into source that never named one.
+func writeTypeArgs(b *strings.Builder, args []ast.Type) {
+	if len(args) == 0 {
+		return
+	}
+	b.WriteByte('[')
+	for i, a := range args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(printType(a))
+	}
+	b.WriteByte(']')
 }
 
 func printType(t ast.Type) string {
