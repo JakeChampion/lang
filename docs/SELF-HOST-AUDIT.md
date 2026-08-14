@@ -101,19 +101,25 @@ These are not just smells — they can produce wrong output today.
   ret-struct-field, streq-helper, and arm64-builds suites.
 
 - [x] **SH-004 — `parse_f64` does not round-trip to nearest double.** _Done:_
-  all three assembler parsers (`watbin.parse_f64`, `x86_gas_parse_f64`,
-  `arm64_parse_f64`) replaced with a correctly-rounding decimal parser —
-  the classic exact decimal-shift algorithm (digit buffer + movable point,
-  grade-school ÷2/×2 to binary-normalize, bit extraction, round-to-nearest
-  ties-to-even, with subnormal/±inf/±0 handling). The reference copy +
-  commentary live in `watbin.fern` (`pf64_*` / `parse_f64_bits`); the other
-  two mirror it verbatim (the assemblers are deliberately import-free).
+  every decimal→f64 reader in the self-host is the same correctly-rounding
+  kernel — the classic exact decimal-shift algorithm (digit buffer + movable
+  point, grade-school ÷2/×2 to binary-normalize, bit extraction,
+  round-to-nearest ties-to-even, with subnormal/±inf/±0 handling). It exists in
+  FOUR copies: `util.parse_f64_bits`, which the IR emitters and the
+  interpreter's literal reader import, and the three the assemblers keep
+  standalone (`watbin.parse_f64`, `x86_gas_parse_f64`, `arm64_parse_f64` — they
+  are deliberately import-free). The reference commentary lives in `util.fern`.
   Pinned bit-exact against `strconv.ParseFloat` by
-  `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` on a corpus of the compiler's
+  `TestSelfHostParseF64{Watbin,X86Gas,Arm64}` and
+  `TestSelfHostInterpFloatLiteralBits` on a shared corpus of the compiler's
   libm constant spellings, the hard subnormal/overflow boundary literals
-  (`2.4703282292062327e-324` et al.), and 17-digit round-trip spellings of
-  seeded random doubles. This closes the in-process-vs-GNU-as float-bit
-  parity gap (the `.Lfc_*` tables assembled ULPs off in-process before).
+  (`2.4703282292062327e-324` et al.), exact ULP ties written out in full, and
+  17-digit round-trip spellings of seeded random doubles;
+  `TestSelfHostParseF64MirrorsAgree` holds the four copies to identical code,
+  since three of them only run behind a Linux x86-64 toolchain. This closes the
+  in-process-vs-GNU-as float-bit parity gap (the `.Lfc_*` tables assembled ULPs
+  off in-process before) and, with #6824, the reader divergence between the
+  interpreter and the native oracle.
 
 - [x] **SH-005 — `x86_gas` silently drops unsupported mnemonics.** _Done:_
   `X86Asm` grew an `unknown: string[]` list; the three silent-skip sites in
