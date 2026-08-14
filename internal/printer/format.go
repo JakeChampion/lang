@@ -1408,6 +1408,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if !strings.ContainsAny(s, ".eE") {
 			s += ".0"
 		}
+		// The written spelling wins where the parser recorded one: %g is a
+		// re-rendering, not the author's text.
+		if x.Raw != "" && !neg {
+			s = x.Raw
+		}
 		// Preserve typed-suffix authorship the parser stamped:
 		// non-zero Width on input means the user wrote `1.5f64`
 		// (or `42f32` — float-suffixed integer text) and we

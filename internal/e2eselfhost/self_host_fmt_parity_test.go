@@ -723,6 +723,94 @@ function main(): i32 {
   return 0;
 }
 `},
+	// #6812's two construction-site forms. Written type args must survive
+	// `-fmt`: dropping them re-infers the literal, so `Box[i64]` silently
+	// becomes `Box[i32]`, `Stack[i32] { items: [] }` stops compiling
+	// altogether (E040), and `empty[i32]()` formatted to `empty()` — the
+	// formatter deleting the syntax the diagnostic recommends. These were a
+	// native-only list until the self-host grew a written-form carrier for
+	// both (#6802): the type args ride on the literal's type name and on the
+	// callee's written name, which is where its printer already reads from.
+	{"struct-lit-type-args", `struct Box[T] {
+  val: T
+}
+
+struct Stack[T] {
+  items: T[]
+}
+
+function take(b: Box[i64]): i64 {
+  return b.val;
+}
+
+function main(): i32 {
+  var b = Box[i64] { val: 42 };
+  var s = Stack[i32] { items: [] };
+  return (take(b) as i32) + s.items.len();
+}
+`},
+	{"call-type-args", `function empty[T](): T[] {
+  return [];
+}
+
+function main(): i32 {
+  var xs = empty[i32]();
+  return xs.len();
+}
+`},
+	// #6802's remaining rows. A `Map { … }` literal desugars to
+	// `map_new(8).insert(…)`, which states no K/V — so a formatted
+	// `var m: Map[string, i32] = Map { }` came back as `map_new(8)` and
+	// stopped compiling (E043). A comment written INSIDE a struct or enum
+	// forces the multi-line block form in both formatters; printing the
+	// one-liner instead left every such comment queued and re-emitted it
+	// above the NEXT declaration, where it documents the wrong thing.
+	{"map-literal-and-inner-comments", `import "core/map";
+
+struct Layer {
+  writes: Map[string, i32],  // only the keys THIS layer changed
+  parent: i32,
+}
+
+enum Verdict {
+  Balanced,
+  Unclosed(i32),  // opener at pos never closed
+}
+
+struct Empty {}
+
+function store(): Layer {
+  return Layer { writes: Map { }, parent: -1 };
+}
+
+function two(): Map[string, i32] {
+  return Map { "a": 1, "b": 2 };
+}
+
+function verdict(n: i32): Verdict {
+  if (n == 0) {
+    return Balanced;
+  }
+  return Unclosed(n);
+}
+
+function main(): i32 {
+  if (store().parent != -1) {
+    return 1;
+  }
+  if (two().len() != 2) {
+    return 2;
+  }
+  match (verdict(1)) {
+    Balanced => {
+      return 3;
+    },
+    Unclosed(_) => {}
+  }
+  var e: Empty = Empty {};
+  return 0;
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the
@@ -764,87 +852,6 @@ func fmtOutputTypeChecks(t *testing.T, label, src, formatted string) {
 	}
 	if err := typeChecks(formatted); err != nil {
 		t.Errorf("%s: input compiles but its formatted output does not: %v\n%s", label, err, formatted)
-	}
-}
-
-// fmtNativeOnlyCases carry the type-check property but NOT byte-parity.
-//
-// DO NOT merge these rows into fmtParityCases. That list is shared with
-// TestSelfHostFmtNativeParityX86_64, which asserts the two formatters emit
-// identical BYTES — so a row there is a claim the self-host can reproduce the
-// shape. It cannot, for these: the self-host PARSES `Box[i32] { … }`
-// (parser.fern:1721 counts the args into `pending_type_argc`) but the
-// struct-literal branch at :1728 never passes it on, and `ExprStructLit` has no
-// field to receive it, so the instantiation is dropped and the self-host prints
-// `Box { val: 42 }`. Moving a row across would redden the parity leg over a
-// divergence that is already tracked on #6812, which is the opposite of what a
-// gate is for.
-//
-// Move them across when the self-host grows the carrier, not before.
-var fmtNativeOnlyCases = []struct {
-	name string
-	src  string
-}{
-	// Written type args must survive `-fmt`. Dropping them re-infers the
-	// literal: `Box[i64]` silently becomes `Box[i32]`, and
-	// `Stack[i32] { items: [] }` stops compiling altogether (E040) — the
-	// formatter deleting the syntax the diagnostic recommends.
-	{"struct-lit-type-args", `struct Box[T] {
-  val: T
-}
-
-struct Stack[T] {
-  items: T[]
-}
-
-function take(b: Box[i64]): i64 {
-  return b.val;
-}
-
-function main(): i32 {
-  var b = Box[i64] { val: 42 };
-  var s = Stack[i32] { items: [] };
-  return (take(b) as i32) + s.items.len();
-}
-`},
-	// The same property for the CALL form's type args, which no printer
-	// emitted either: `empty[i32]()` formatted to `empty()`, which is E040.
-	{"call-type-args", `function empty[T](): T[] {
-  return [];
-}
-
-function main(): i32 {
-  var xs = empty[i32]();
-  return xs.len();
-}
-`},
-}
-
-// TestFmtNativeOutputTypeChecks runs the type-check property over NATIVE's half
-// of every parity case. It needs no cross toolchain and no self-host build, so
-// unlike the parity test below it runs on every shard and on a dev machine —
-// which is where #6803's rows have to be caught, since those are native's.
-//
-// Its COVERAGE is fixture-driven, and that is a real limitation: the property
-// only holds over the rows below, so a newly added syntax is invisible here
-// until someone adds one. #6812 landed construction-site type args that neither
-// printer emitted, and this test passed throughout — the structural round-trip
-// in internal/printer/roundtrip_test.go (parse → print → parse → DeepEqual) is
-// what caught it. Adding syntax means adding a row.
-func TestFmtNativeOutputTypeChecks(t *testing.T) {
-	cases := fmtParityCases
-	cases = append(append([]struct {
-		name string
-		src  string
-	}{}, cases...), fmtNativeOnlyCases...)
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			prog, err := goparser.Parse(tc.src)
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			fmtOutputTypeChecks(t, "native -fmt", tc.src, goprinter.Format(prog))
-		})
 	}
 }
 
@@ -963,4 +970,157 @@ func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
 	if got != src {
 		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", src, got)
 	}
+}
+
+// selfHostFmtKnownDivergences is every corpus file the self-host formatter is
+// known to print differently from native. The list is EXACT in both directions:
+// a file that diverges without being here fails, and a file here that no longer
+// diverges fails too, so it shrinks as fixes land instead of outliving them.
+//
+// It is EMPTY, and that is the state to defend. #6802 started at 40 divergent
+// files of 425 and #6832 had already taken it from 71; the last ten classes went
+// with a written-form carrier each (`Map { … }` and construction-site type args
+// as new/reused nodes, `let … else` and `loop` and `|>` and the nested
+// `function` decl and the f-string from data the nodes now carry) plus one fix on
+// NATIVE's side, where `-fmt` was re-rendering every float literal from its value
+// and rewriting `1e-6` into `1e-06`.
+//
+// Add a row only with the reason and the issue, never to make a red build green.
+var selfHostFmtKnownDivergences = map[string]string{}
+
+// TestSelfHostFmtCorpusParityX86_64 runs the byte-parity property over the whole
+// corpus rather than over fmtParityCases.
+//
+// The fixture list is what a formatter bug hides behind: #6802 was found by a
+// hand-run 425-file sweep, not by this suite, and every row it produced had to
+// be transcribed into a fixture before anything gated it. A corpus run gates the
+// files themselves, so the next divergence is a red build rather than an issue
+// somebody has to notice and write up.
+//
+// Cheap enough to belong here: 425 `-fmt` invocations of the linked driver take
+// ~16 s in total (the driver's fixed startup is ~12 ms; the cost is the ten
+// 15-50 kloc self_host modules), against the driver build the parity test above
+// already pays for and caches.
+func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("CLI driver test runs only natively (argv paths)")
+	}
+	root := repoRootFromTest(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	files := corpusFernFiles(t, root)
+	diverged := map[string]bool{}
+	for _, rel := range files {
+		src, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		prog, err := goparser.Parse(string(src))
+		if err != nil {
+			// Not a parseable program: nothing for the two formatters to agree on.
+			continue
+		}
+		want := goprinter.Format(prog)
+		cmd := exec.Command(fernBin, "-fmt", filepath.Join(root, rel))
+		got, err := cmd.Output()
+		if err != nil {
+			t.Errorf("%s: self-host -fmt failed: %v", rel, err)
+			continue
+		}
+		if string(got) == want {
+			continue
+		}
+		diverged[rel] = true
+		if _, known := selfHostFmtKnownDivergences[rel]; !known {
+			t.Errorf("%s: self-host -fmt differs from native and is not a known divergence\n%s",
+				rel, firstDiffLines(want, string(got)))
+		}
+	}
+	for rel, why := range selfHostFmtKnownDivergences {
+		if !diverged[rel] {
+			t.Errorf("%s is listed as a known divergence (%s) but the two formatters now agree — delete the row", rel, why)
+		}
+	}
+}
+
+// repoRootFromTest finds the repository root by walking up to the go.mod.
+func repoRootFromTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("go.mod not found above the test's working directory")
+		}
+		dir = parent
+	}
+}
+
+// corpusFernFiles lists every `.fern` file under examples/ + internal/stdlib,
+// repo-relative and sorted, with slash separators so the allowlist keys read the
+// same on every platform.
+func corpusFernFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	for _, sub := range []string{"examples", "internal/stdlib"} {
+		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || filepath.Ext(path) != ".fern" {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			out = append(out, filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(out) < 400 {
+		t.Fatalf("corpus walk found only %d files; the tree moved and this gate stopped covering it", len(out))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// firstDiffLines reports the first differing line of two formatter outputs, with
+// its neighbours — a whole 50 kloc module is not a test failure message.
+func firstDiffLines(want, got string) string {
+	w := strings.Split(want, "\n")
+	g := strings.Split(got, "\n")
+	for i := 0; i < len(w) && i < len(g); i++ {
+		if w[i] == g[i] {
+			continue
+		}
+		lo := i - 2
+		if lo < 0 {
+			lo = 0
+		}
+		hi := i + 3
+		var b strings.Builder
+		b.WriteString("--- native ---\n")
+		for j := lo; j < hi && j < len(w); j++ {
+			b.WriteString(w[j] + "\n")
+		}
+		b.WriteString("--- self-host ---\n")
+		for j := lo; j < hi && j < len(g); j++ {
+			b.WriteString(g[j] + "\n")
+		}
+		return b.String()
+	}
+	return "outputs differ only in length"
 }

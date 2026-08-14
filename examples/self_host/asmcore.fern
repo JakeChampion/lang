@@ -2546,6 +2546,8 @@ pub function infer_expr_type(e: parser.Expr, s: EmitState): Ty {
             return ty_array();
         },
         parser.ExprTuple(_) => { return ty_tuple(); },
+        parser.ExprMapLit(_) => { return ty_map_any(); },
+        parser.ExprFString(_) => { return ty_string(); },
         parser.ExprStructLit(_) => { return ty_struct(); },
         parser.ExprLambda(lm) => {
             // Encode the return type in the tag so a later
@@ -3588,6 +3590,23 @@ function collect_expr_unknown_errors(e: parser.Expr, where: string, errs: string
             var i: i32 = 0;
             while (i < t.elements.len()) {
                 errs = collect_expr_unknown_errors(t.elements[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                errs = collect_expr_unknown_errors(ml.keys[i], where, errs);
+                errs = collect_expr_unknown_errors(ml.vals[i], where, errs);
+                i = i + 1;
+            }
+            return errs;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { errs = collect_expr_unknown_errors(fs.exprs[i], where, errs); }
                 i = i + 1;
             }
             return errs;

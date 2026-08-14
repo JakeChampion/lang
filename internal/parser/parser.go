@@ -6002,7 +6002,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		if err != nil {
 			return nil, p.errorfCode(t.Pos, "P002", "invalid float literal %q: %v", t.Text, err)
 		}
-		lit := &ast.FloatLit{P: t.Pos, Value: f}
+		lit := &ast.FloatLit{P: t.Pos, Value: f, Raw: t.Text}
 		switch t.Suffix {
 		case "", "f32":
 			lit.Width = 32
