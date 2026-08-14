@@ -231,6 +231,14 @@ Worth knowing so you do not assume coverage you do not have:
    in its job summary (`scripts/ci-test-weights`); it is advisory, so read the
    summary rather than waiting for a red. Weight pessimistically — the same test
    has measured 482 s and 738 s on consecutive runs.
+9. **A parent reports PASS when every one of its subtests SKIPs.** So rule 6
+   does not save you: there is nothing in the log to read. `TestStdArrayEqual`
+   asserted nothing for its whole existence that way — the interp oracle
+   skipped, which took the x86-64 and wasm legs with it (#6840). Two habits
+   close it: an oracle helper for hand-written cases FAILS on a gap rather than
+   skipping (`runInterpByte`; only generator-fed corpora get
+   `runInterpByteOrSkip`), and each toolchain-gated backend leg goes in its own
+   sub-test so a missing tool cannot abort the legs after it.
 
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 

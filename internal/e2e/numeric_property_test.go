@@ -224,17 +224,23 @@ func genIntToFloat(r *rand.Rand) string {
 // ---- oracle + comparison ----
 
 // interpStdout runs `src` through the interpreter and returns what
-// main() printed. A nil error with ok=false means an interp
-// coverage gap (skip), matching the diff-oracle's policy of
-// treating the interp as the source of truth where it runs.
-func interpStdout(t *testing.T, src string) (string, bool) {
+// main() printed. An interp coverage gap `t.Skipf`s, matching
+// runInterpByteOrSkip: the generators feed this, so a program the
+// interpreter can't model is tolerated, but it has to be marked
+// skipped rather than returning a sentinel the caller turns into a
+// silent pass (#6840).
+func interpStdout(t *testing.T, src string) string {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v\nsrc:\n%s", err, src)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
 	}
 	i := interp.New()
 	var buf bytes.Buffer
@@ -246,9 +252,9 @@ func interpStdout(t *testing.T, src string) (string, bool) {
 		i.Register(fn)
 	}
 	if _, err := i.CallByName("main", nil); err != nil {
-		return "", false
+		t.Skipf("interp coverage gap: %v\nsrc:\n%s", err, src)
 	}
-	return strings.TrimRight(buf.String(), "\n"), true
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func trimOut(s string) string { return strings.TrimRight(strings.TrimSpace(s), "\n") }
@@ -268,10 +274,7 @@ func assertNumProgramAgrees(t *testing.T, src string) {
 // invalid.
 func assertNumProgramAgreesSkipping(t *testing.T, src string, skip map[string]string) {
 	t.Helper()
-	want, ok := interpStdout(t, src)
-	if !ok {
-		return
-	}
+	want := interpStdout(t, src)
 	known := func(t *testing.T, backend string) bool {
 		if issue, ok := skip[backend]; ok {
 			t.Skipf("known divergence, see %s — remove this entry when it is fixed", issue)

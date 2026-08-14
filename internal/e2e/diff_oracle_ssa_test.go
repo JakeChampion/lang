@@ -97,10 +97,7 @@ func TestDifferential_Arm64SSAStdout(t *testing.T) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenPrintableMain(seed)
-			want, ok := interpStdout(t, src)
-			if !ok {
-				return // interp coverage gap; already reported by the helper
-			}
+			want := interpStdout(t, src)
 
 			r := runArm64SSAOrSkip(t, bin, qemu, src)
 			atomic.AddInt64(&ran, 1)
@@ -153,7 +150,7 @@ func TestDifferential_Arm64SSAExitByte(t *testing.T) {
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			t.Parallel()
 			src := fernsmith.GenMain(seed)
-			want := runInterpByte(t, src)
+			want := runInterpByteOrSkip(t, src)
 
 			r := runArm64SSAOrSkip(t, bin, qemu, src)
 			atomic.AddInt64(&ran, 1)

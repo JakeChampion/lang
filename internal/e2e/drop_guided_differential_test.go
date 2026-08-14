@@ -33,7 +33,7 @@ func TestDropGuidedDifferential(t *testing.T) {
 		seed := seed
 		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
 			src := fernsmith.GenMain(seed)
-			expected := runInterpByte(t, src) // skips on interp coverage gaps
+			expected := runInterpByteOrSkip(t, src)
 
 			offOut, offCode := compileAndRunX86_64(t, src)
 			var onOut string

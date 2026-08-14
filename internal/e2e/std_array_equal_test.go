@@ -11,9 +11,9 @@ import "testing"
 //     wise equality without importing core/cmp directly;
 //   - `array.index_of_last` — the reverse-scan Eq verb that stays in std/array.
 //
-// All are bound `[T: Eq]` and compare elements with `==`, so `i32` keeps the
-// scalar compare and `string` dispatches byte equality, on interp + x86-64 +
-// wasm.
+// All are bound `[T: Eq]` and compare elements through the bound's `eq`, so
+// `i32` keeps the scalar compare and `string` dispatches byte equality, on
+// interp + x86-64 + wasm.
 func TestStdArrayEqual(t *testing.T) {
 	cases := []struct {
 		name string
@@ -85,15 +85,22 @@ function main(): i32 {
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
+			// Each compiled backend gets its own sub-test so a missing
+			// toolchain skips that leg alone: a bare skip here would take
+			// the interp assertion down with it.
 			if got := runInterpByte(t, c.src); got != c.want {
 				t.Errorf("interp: got exit %d, want %d", got, c.want)
 			}
-			if _, got := compileAndRunX86Native(t, c.src); got != c.want {
-				t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
-			}
-			if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
-				t.Errorf("wasm: got exit %d, want %d", got, c.want)
-			}
+			t.Run("x86-64 native", func(t *testing.T) {
+				if _, got := compileAndRunX86Native(t, c.src); got != c.want {
+					t.Errorf("x86-64 native: got exit %d, want %d", got, c.want)
+				}
+			})
+			t.Run("wasm", func(t *testing.T) {
+				if got := compileAndRunWasmbinMain(t, c.src); got != c.want {
+					t.Errorf("wasm: got exit %d, want %d", got, c.want)
+				}
+			})
 		})
 	}
 }
