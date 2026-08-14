@@ -314,10 +314,11 @@ pub function contains(haystack: string, needle: string): boolean {
 // tie and rounding up off the round bit is correct. A smaller cap decides
 // long ties by truncation instead, which loses them by 1 ULP.
 //
-// This is a verbatim mirror of watbin.parse_f64_bits and the
-// three assemblers' parsers (x86_gas_parse_f64 / arm64_parse_f64) — those
-// stay standalone (deliberately import-free); this copy is the reachable-
-// from-the-emitters one (asm_ir / asm_arm64_ir already import util).
+// This is the copy reached by an import: the IR emitters (asm_ir /
+// asm_arm64_ir) and the interpreter's float literal reader. The three
+// assemblers keep standalone copies (watbin.parse_f64_bits,
+// x86_gas_parse_f64, arm64_parse_f64) because they are deliberately
+// import-free; TestSelfHostParseF64MirrorsAgree holds all four identical.
 pub function parse_f64_bits(s: string): i64 {
     var i: i32 = 0;
     var neg: boolean = false;
