@@ -10535,6 +10535,26 @@ func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
 		tp, name, name, name)
 }
 
+// callSiteName renders a callee for a diagnostic the way source spells it.
+// A method call arrives here rewritten onto the mangled
+// `__method_<Type>_<method>` free function, so the raw name would name a
+// symbol no program can write. spelling is what type arguments attach to:
+// `.make[i32](...)` for a method, `empty[i32](...)` for a free function.
+func callSiteName(name string) (display, spelling string) {
+	rest, ok := strings.CutPrefix(name, "__method_")
+	if !ok {
+		return name, name
+	}
+	// Type names cannot contain underscores by parser rule, so the first
+	// underscore splits the owner from a multi-word method name.
+	idx := strings.Index(rest, "_")
+	if idx <= 0 {
+		return name, name
+	}
+	method := rest[idx+1:]
+	return rest[:idx] + "." + method, "." + method
+}
+
 // containsParamType reports whether t (or any of its component
 // types) is a still-unresolved generic ParamType. Used to flag
 // failed `use`-callback inference: a substitution that leaves a
@@ -11788,8 +11808,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
 					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
 					if tooMany || (tooFew && n.Method == nil) {
+						display, _ := callSiteName(fn.Name)
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
-							fn.Name, len(fn.TypeParams), len(n.TypeArgs))
+							display, len(fn.TypeParams), len(n.TypeArgs))
 					}
 					for i, tp := range fn.TypeParams {
 						if i < len(n.TypeArgs) {
@@ -11952,7 +11973,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, genericFn.Name, genericFn.Name)
+					display, spelling := callSiteName(genericFn.Name)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
 					complete = false
 				}
 			}

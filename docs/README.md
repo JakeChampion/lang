@@ -41,7 +41,7 @@ freeze tracker is [#4451](https://github.com/JakeChampion/lang/issues/4451).
 | `TRAIT-USAGE-AUDIT.md` | [record] | Where our own code should use traits; feeds epic #2691. |
 | `ADVERSARIAL-REVIEW-2026-06.md` | [record] | 2026-06 break-the-compiler review; all 17 findings fixed. |
 | `LANGUAGE-REVIEW-2026-07.md` | [record] | 2026-07 whole-language critical review snapshot. |
-| `IMPROVEMENTS.md` | [record] | fernsmith-era improvement backlog; mostly landed, residue in #2852/#2669/#2673. |
+| `IMPROVEMENTS.md` | [record] | fernsmith-era improvement backlog; mostly landed, residue in #2673. |
 | `GENERIC-VARIANT-FN-PAYLOAD-INFERENCE-GAP.md` | [record] | Generic-variant fn-payload inference gap — fixed. |
 
 The specification itself lives OUTSIDE `docs/`, at `spec/` (the syntactic

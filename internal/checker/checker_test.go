@@ -67,6 +67,70 @@ function main(): i32 { return wrap(7); }`,
 	}
 }
 
+// E040 at a call site must name a spelling the user can write (#6796). A
+// method call reaches the check rewritten onto `__method_<Type>_<method>`,
+// and the diagnostic used to advise `__method_Holder_make[i32](...)` — a
+// symbol no program can name — for a failure whose real one-line fix is
+// `h.make[i32]()`.
+func TestE040CallSiteAdvisesAWritableSpelling(t *testing.T) {
+	const decls = `struct Holder { n: i32 }
+enum Wrap { A, B }
+function (h: Holder) make[T](): T[] { return []; }
+function (h: Holder) read_all[T](): T[] { return []; }
+function (w: Wrap) pick[T](): T[] { return []; }
+function empty[T](): T[] { return []; }
+`
+	bad := []struct{ body, want string }{
+		// A free function is named as written, unchanged.
+		{`function main(): i32 { var xs = empty(); return 0; }`,
+			"could not infer type parameter T for empty — supply it explicitly at the call site (e.g. empty[i32](...))"},
+		// A method is named `Type.method`, and the suggested spelling
+		// attaches the type args to the method name.
+		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make(); return 0; }`,
+			"could not infer type parameter T for Holder.make — supply it explicitly at the call site (e.g. .make[i32](...))"},
+		// The owner/method split is at the FIRST underscore, so a
+		// multi-word method name survives intact.
+		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.read_all(); return 0; }`,
+			"for Holder.read_all — supply it explicitly at the call site (e.g. .read_all[i32](...))"},
+		// An enum receiver mangles the same way.
+		{`function main(): i32 { var w = A; var xs = w.pick(); return 0; }`,
+			"for Wrap.pick — supply it explicitly at the call site (e.g. .pick[i32](...))"},
+		// The arity half of E040 shares the rendering.
+		{`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make[i32, i32](); return 0; }`,
+			"Holder.make expects 1 type argument(s), got 2"},
+		{`function main(): i32 { return empty[i32, i32]().len(); }`,
+			"empty expects 1 type argument(s), got 2"},
+	}
+	for _, tc := range bad {
+		err := checkSource(t, decls+tc.body)
+		if err == nil {
+			t.Errorf("expected E040 for %s, got none", tc.body)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("error %q does not contain %q\nsrc: %s", err.Error(), tc.want, tc.body)
+		}
+		// The mangled name is the checker's own bookkeeping.
+		if strings.Contains(err.Error(), "__method_") {
+			t.Errorf("error %q leaks a mangled name\nsrc: %s", err.Error(), tc.body)
+		}
+	}
+
+	// Both remedies E040 names must actually work, on a method as well as
+	// on a free function.
+	ok := []string{
+		`function main(): i32 { var h = Holder { n: 1 }; var xs = h.make[i32](); return xs.len(); }`,
+		`function main(): i32 { var h = Holder { n: 1 }; var xs: i32[] = h.make(); return xs.len(); }`,
+		`function main(): i32 { var xs = empty[i32](); return xs.len(); }`,
+		`function main(): i32 { var xs: i32[] = empty(); return xs.len(); }`,
+	}
+	for _, src := range ok {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, src)
+		}
+	}
+}
+
 // Construction-site type arguments on a struct literal (#6812): the
 // written instantiation seeds the field checks and outranks any
 // destination annotation, and its arity is validated against the decl.

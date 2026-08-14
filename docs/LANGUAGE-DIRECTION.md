@@ -431,10 +431,12 @@ What landed:
   (`Pair[i32, string].first` → `i32`, not `A`).
 
 Deferred to a follow-up:
-- Explicit type args at call / type sites (`f[i32](x)` /
-  `Pair[i32, string] { … }`). Needs lookahead to
-  disambiguate from `arr[i]`. Inference covers the
-  ergonomic baseline.
+- ~~Explicit type args at call / type sites (`f[i32](x)` /
+  `Pair[i32, string] { … }`). Needs lookahead to disambiguate
+  from `arr[i]`.~~ **Shipped.** The lookahead landed for calls
+  and methods in #2668 and for struct literals in #6812, so
+  `f[i32](x)`, `h.make[i32]()`, and `Pair[i32, string] { … }`
+  all parse.
 - ~~Generic constraints (`T: Eq`, `T: Hash`). Probably never —
   the Fern doesn't have a trait system.~~ **Reversed — shipped.**
   Fern now has a real trait system (`trait` / `impl Trait for
@@ -442,10 +444,8 @@ Deferred to a follow-up:
   see `docs/TRAITS.md`). Bounded generics `[T: Display + Eq]`
   are in (`FuncDecl.Bounds`), `core/cmp.fern` defines
   `Display` / `Eq` / `Ord`, and `@derive(Eq | Ord | Display)`
-  synthesizes the methods. Explicit type args at call sites
-  are still deferred (`E040`); inference covers the baseline.
-  Users can still pass functions explicitly (Gleam's posture)
-  where a trait would be overkill.
+  synthesizes the methods. Users can still pass functions
+  explicitly (Gleam's posture) where a trait would be overkill.
 
 ### PR 4 — Built-in `Map<K, V>` + ergonomics layer
 
