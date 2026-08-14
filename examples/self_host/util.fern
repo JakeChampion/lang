@@ -438,8 +438,39 @@ pub function parse_f64_bits(s: string): i64 {
 // Underflow is NOT out of range on either side: strconv returns a subnormal or
 // ±0 with no error there, so `1e-400` is accepted by both engines.
 pub function f64_lit_out_of_range(s: string): boolean {
+    if (!f64_lit_reaches_1e309(s)) { return false; }
     var expmask: i64 = 2047;
     return ((parse_f64_bits(s) >> 52) & expmask) == expmask;
+}
+
+// f64_lit_reaches_1e309 is an allocation-free pre-filter for the above: the
+// value is below 10^(integer digits + exponent), so a literal whose sum falls
+// short of 309 is inside f64's range without asking the exact parser, which
+// builds digit arrays. Every float literal in every parsed module runs this
+// one, and only the handful that could actually overflow run that one.
+function f64_lit_reaches_1e309(s: string): boolean {
+    var i: i32 = 0;
+    if (i < s.len() && (s[i] == 45 || s[i] == 43)) { i = i + 1; }
+    while (i < s.len() && s[i] == 48) { i = i + 1; }         // leading zeros add no magnitude
+    var intdigits: i32 = 0;
+    while (i < s.len() && s[i] >= 48 && s[i] <= 57) { intdigits = intdigits + 1; i = i + 1; }
+    if (i < s.len() && s[i] == 46) {                          // '.'
+        i = i + 1;
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) { i = i + 1; }
+    }
+    var exp: i32 = 0;
+    if (i < s.len() && (s[i] == 101 || s[i] == 69)) {          // 'e' / 'E'
+        i = i + 1;
+        var eneg: boolean = false;
+        if (i < s.len() && s[i] == 45) { eneg = true; i = i + 1; }
+        else if (i < s.len() && s[i] == 43) { i = i + 1; }
+        while (i < s.len() && s[i] >= 48 && s[i] <= 57) {
+            if (exp < 100000) { exp = exp * 10 + ((s[i] as i32) - 48); }
+            i = i + 1;
+        }
+        if (eneg) { exp = 0 - exp; }
+    }
+    return intdigits + exp >= 309;
 }
 
 // f64_range_kind / is_f64_range_kind / f64_range_message are the marker
