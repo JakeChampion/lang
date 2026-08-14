@@ -112,10 +112,15 @@ jobs:
       # FERN_REQUIRE_CROSS_BACKENDS makes a missing toolchain FAIL here rather
       # than skip, so this job quietly losing a cross-compiler cannot put the
       # comparison back to running nowhere.
+      # standard-verbose and -count=1 are load-bearing, not taste. The default
+      # format prints one `✓ internal/e2e` line whether the test compared two
+      # backends or skipped in 64 ms, and a cached PASS would replay without
+      # running the binary at all — so the lane could not report the very thing
+      # it exists to establish.
       - name: go test (cross-host backend agreement)
         env:
           FERN_REQUIRE_CROSS_BACKENDS: "1"
         run: >-
-          gotestsum --format pkgname-and-test-fails -- -timeout 10m
+          gotestsum --format standard-verbose -- -timeout 10m -count=1
           -run '^TestF64TranscendentalBackendsAgree$'
           ./internal/e2e/
