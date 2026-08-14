@@ -92,6 +92,29 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(
 function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 0 - 1)) { Ok(v) => { r = v; }, Err(e) => { r = e; } } return a.get() * 10 + r; }`, 61},
 	{"errdefer_block_local_ok_path", `function f(a: Cell[i32], x: i32): Result[i32, i32] { var n: i32 = 1; if (n > 0) { var k: i32 = 6; errdefer a.set(a.get() + k); } if (x < 0) { return Err(1); } return Ok(x); }
 function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = 0; match (f(a, 3)) { Ok(v) => { r = v; }, Err(e) => { r = e; } } return a.get() * 10 + r; }`, 3},
+	// An edge AHEAD of the defer in the body (#6860). Nothing can be pending
+	// there — every edge out of the body clears the iteration's flags — and the
+	// action names a local the edge has not reached, so replaying it there both
+	// runs nothing and refuses to lower. `for_block_local` above is this shape
+	// too: the range desugar opens every loop it builds with `if (i >= $hi)
+	// break;`, ahead of the whole body.
+	// Two iterations reach the defer, each reading its own `k`: 2 + 4 = 6.
+	{"break_before_defer_block_local", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (true) { i = i + 1; if (i >= 3) { break; } var k: i32 = i * 2; defer a.set(a.get() + k); } return 9; }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 69},
+	// The same for `continue`, and the accumulator is order-sensitive so a run
+	// on the skipping iteration would show: 0 -> 1 -> 5 -> 14.
+	{"continue_before_defer_block_local", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 4) { i = i + 1; if (i == 2) { continue; } var k: i32 = i; defer a.set(a.get() * 2 + k); } return a.get(); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 14},
+	// A labelled edge reaches the outer body from inside a NESTED loop, and this
+	// one is ahead of the outer defer as well. Only the first iteration reaches
+	// it, so the cell holds one run (3) and f returns 7.
+	{"labelled_break_before_defer", `function f(a: Cell[i32]): i32 { var i: i32 = 0; outer: while (i < 3) { var j: i32 = 0; while (j < 2) { if (i == 1) { break outer; } j = j + 1; } var k: i32 = i + 3; defer a.set(a.get() * 4 + k); i = i + 1; } return 7; }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 37},
+	// The counterpart: an edge BEHIND the defer still replays it, and in a `for`
+	// body, where it shares the loop with the desugar's own leading edge.
+	// 0 -> 1 (tail) -> 5 (the `break`), and f returns 8.
+	{"for_break_after_defer_block_local", `function f(a: Cell[i32]): i32 { for i in 0..5 { var k: i32 = i + 1; defer a.set(a.get() * 3 + k); if (i == 1) { break; } } return 8; }
+function main(): i32 { var a: Cell[i32] = cell_new(0); var r: i32 = f(a); return a.get() * 10 + r; }`, 58},
 }
 
 // TestSelfHostDeferBlockLocalIRX86_64 runs the cases through the self-hosted

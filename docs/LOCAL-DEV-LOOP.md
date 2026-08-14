@@ -262,3 +262,28 @@ functype tag `0x43`; non-reentrant component instances → the async-import
 composer emits a sibling-nested structure). Under an older wasmtime (e.g. a
 system v37/v39) they fail with `invalid leading byte (0x43)` or `cannot enter
 component instance`. Use the pinned v46.
+
+## On macOS: what runs natively, and what needs a container
+
+Both native targets emit Linux ELF, and the e2e harness looks for `qemu-x86_64`
+/ `qemu-aarch64` / `aarch64-linux-gnu-gcc` by name. macOS has none of them and
+cannot: qemu's user-mode emulation is Linux-only, and Homebrew's qemu is system
+emulation. So on a Mac those legs SKIP, and a SKIP reports `ok`.
+
+Runs natively on Apple Silicon: the wasm suite (once the pinned toolchain is on
+`PATH`), the `arm64-darwin` target, `-interp`, and every host-independent Go
+package. Measured: `go test ./internal/e2e/ -run TestWasm` goes from 12 skips to
+0 once the pinned pair is installed.
+
+Everything else goes through **`scripts/devbox`**, a linux/arm64 container
+carrying qemu-user, both cross compilers and the pinned wasm tools:
+
+```
+scripts/devbox go test ./internal/e2e/ -run TestSelfHostX86_64
+scripts/devbox                 # interactive shell
+```
+
+linux/arm64 on purpose: the aarch64 leg then runs natively and only x86-64 pays
+emulation. This makes those legs **runnable for debugging**; it does not make
+them a gate — the section above still applies, and `docs/CI-SIGNOFF.md` records
+which lanes may be signed off locally as a result.

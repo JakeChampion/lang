@@ -69,6 +69,24 @@ function nested(): i32 {
     return 0;
 }
 
+// An edge that sits AHEAD of the `defer` in the body cannot have anything
+// pending: every edge out of the body clears the iteration's flags, so each
+// iteration reaches the top with none armed. The `continue` and the `break`
+// here must therefore run nothing, and the two iterations that reach the defer
+// must each run their own.
+function ahead(): i32 {
+    var i: i32 = 0;
+    while (i < 4) {
+        i = i + 1;
+        if (i == 2) { continue; }
+        if (i == 4) { break; }
+        var k: i32 = i * 10;
+        defer print("a" + k.to_string());
+    }
+    print("a-done");
+    return 0;
+}
+
 // A `return` from mid-iteration is a function exit: the iteration's pending
 // action runs there, LIFO with the function-body defer, and the iterations
 // that already ended do not run a second time.
@@ -92,6 +110,7 @@ function main(): i32 {
     if (e != 0) { return 3; }
     var n: i32 = nested();
     if (n != 0) { return 4; }
+    if (ahead() != 0) { return 6; }
     if (early() != 7) { return 5; }
     return 0;
 }
