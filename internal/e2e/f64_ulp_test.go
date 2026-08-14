@@ -384,7 +384,15 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 	if len(xl) != len(al) {
 		t.Fatalf("line count differs: x86-64 %d, arm64 %d", len(xl), len(al))
 	}
+	// Against len(cs), not just against each other: two EMPTY outputs have equal
+	// length, so the check above passes and the loop below iterates nothing —
+	// the test would report a clean comparison having compared nothing.
+	if len(xl) != len(cs) {
+		t.Fatalf("each backend printed %d values, want one per case (%d)", len(xl), len(cs))
+	}
+	compared := 0
 	for i, c := range cs {
+		compared++
 		if xl[i] == al[i] {
 			continue
 		}
@@ -398,4 +406,12 @@ func TestF64TranscendentalBackendsAgree(t *testing.T) {
 		t.Errorf("%s: x86-64 %v, arm64 %v",
 			c.call, math.Float64frombits(uint64(xv)), math.Float64frombits(uint64(av)))
 	}
+	// The corpus is built from package-level input tables, so a shrunken one
+	// means the case builders stopped producing rather than that the backends
+	// agree. Measured at 118; the floor leaves room to add inputs, not to lose
+	// most of them.
+	if compared < 100 {
+		t.Fatalf("compared %d cases, want the full corpus (measured 118)", compared)
+	}
+	t.Logf("compared %d transcendental results bit for bit across both register backends", compared)
 }
