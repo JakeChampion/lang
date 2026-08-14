@@ -76,6 +76,23 @@ function ts_names_expr(e: parser.Expr, acc: string[]): string[] {
             while (i < t.elements.len()) { acc = ts_names_expr(t.elements[i], acc); i = i + 1; }
             return acc;
         },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                acc = ts_names_expr(ml.keys[i], acc);
+                acc = ts_names_expr(ml.vals[i], acc);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { acc = ts_names_expr(fs.exprs[i], acc); }
+                i = i + 1;
+            }
+            return acc;
+        },
         parser.ExprIndex(x) => {
             acc = ts_names_expr(x.array, acc);
             return ts_names_expr(x.index, acc);

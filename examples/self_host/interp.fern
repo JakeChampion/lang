@@ -1790,6 +1790,8 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                 captured_values: env.values
             };
         },
+        parser.ExprMapLit(_) => { return v_err("Map literal: formatter-only node"); },
+        parser.ExprFString(_) => { return v_err("f-string: formatter-only node"); },
         parser.ExprUnknown(u) => { return v_err("parser-side unknown: " + u.kind); }
     }
     return v_err("unhandled Expr variant");

@@ -208,3 +208,9 @@ TestSelfHostArm64ProcExecRuns 15
 # same staleness in `test-e2e-arm64.yml` was load-bearing there (#6310).
 # `make testnames` now fails on a name in .github/ that matches no test, so
 # an entry cannot outlive its test again.
+# The corpus formatter-parity leg: one `-fmt` of each of the 427 .fern files
+# under examples/ + internal/stdlib through the linked driver. MEASURED 16 s
+# locally for the whole sweep (the driver's fixed startup is ~12 ms; the cost is
+# the ten 15-50 kloc self_host modules), on top of the fern.fern driver the two
+# older fmt tests already warm. Weighted generously against a cold cache.
+TestSelfHostFmtCorpusParityX86_64 60
