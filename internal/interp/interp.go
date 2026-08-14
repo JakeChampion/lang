@@ -2560,13 +2560,13 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		// call wrapper here catches it. That's an error exit, so
 		// errdefers fire.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
-			i.runDefers(defers, e, true)
+			i.runDefers(defers, true)
 			return early.val, nil
 		}
-		i.runDefers(defers, e, false)
+		i.runDefers(defers, false)
 		return nil, err
 	}
-	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
+	i.runDefers(defers, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
@@ -2580,27 +2580,35 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 type deferEntry struct {
 	expr    ast.Expr
 	onError bool
+	// env is the scope the `defer` statement was executed in — where the
+	// expression's free names resolve. It has to be captured here because a
+	// function's locals do NOT live in the env callFunc holds: execBlock opens a
+	// child scope for the body, and every nested block another, so evaluating
+	// against the call's own env resolves parameters and nothing else.
+	env *env
 }
 
 // runDefers evaluates the LIFO list of expressions a callee
 // accumulated via `defer` / `errdefer` statements. Each one runs
-// against the env at function exit — closures already capture
-// any local bindings they read; deferred expressions just read
-// the same env. Errors from a deferred expression are dropped
-// (defer is "fire and forget" at function exit) — matching
-// codegen which doesn't propagate them either.
+// against the scope it was REGISTERED in (deferEntry.env), which
+// still holds the bindings the expression names even though the
+// block has exited — releaseScope drops COW references but
+// nothing is freed, and the codegen backends likewise read the
+// local's frame slot at exit. Errors from a deferred expression
+// are dropped (defer is "fire and forget" at function exit) —
+// matching codegen which doesn't propagate them either.
 //
 // Plain defers run on every exit. errdefers run only when
 // errorExit is set (the `?` operator propagating, or a `return`
 // of a None/Err value), and after the plain defers — matching
 // the codegen emit order (emitDeferCleanup then
 // emitErrDeferCleanup).
-func (i *Interp) runDefers(defers []deferEntry, e *env, errorExit bool) {
+func (i *Interp) runDefers(defers []deferEntry, errorExit bool) {
 	for k := len(defers) - 1; k >= 0; k-- {
 		if defers[k].onError {
 			continue
 		}
-		_, _ = i.evalExpr(defers[k].expr, e)
+		_, _ = i.evalExpr(defers[k].expr, defers[k].env)
 	}
 	if !errorExit {
 		return
@@ -2609,7 +2617,7 @@ func (i *Interp) runDefers(defers []deferEntry, e *env, errorExit bool) {
 		if !defers[k].onError {
 			continue
 		}
-		_, _ = i.evalExpr(defers[k].expr, e)
+		_, _ = i.evalExpr(defers[k].expr, defers[k].env)
 	}
 }
 
@@ -3037,7 +3045,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		// call (REPL top level) — treat as a no-op since
 		// there's no exit point to run the deferred expr at.
 		if n := len(i.deferStack); n > 0 {
-			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError})
+			i.deferStack[n-1] = append(i.deferStack[n-1], deferEntry{expr: x.Expr, onError: x.OnError, env: e})
 		}
 		return result{flow: flowNormal}, nil
 	}
@@ -3977,13 +3985,13 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 		// self-host engines against (docs/NATIVE-CONVERGENCE.md §3), so a
 		// divergence here scores every other engine wrong.
 		if early, ok := err.(*tryOpEarlyReturn); ok {
-			i.runDefers(defers, e, true)
+			i.runDefers(defers, true)
 			return early.val, nil
 		}
-		i.runDefers(defers, e, false)
+		i.runDefers(defers, false)
 		return nil, err
 	}
-	i.runDefers(defers, e, r.flow == flowReturn && isErrReturnValue(r.val))
+	i.runDefers(defers, r.flow == flowReturn && isErrReturnValue(r.val))
 	if r.flow == flowReturn {
 		return r.val, nil
 	}
