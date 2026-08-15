@@ -3240,13 +3240,6 @@ func (b *builder) preciseDroppableType(name string) bool {
 	return false
 }
 
-// isOwnedRcLocal reports whether `name` is a declared rc-tracked local
-// (array / struct incl. Map / enum / closure) that the exit sweep would
-// dec. Params are borrowed (not in info.Locals, never swept) so they're
-// excluded. FuncType (closure) locals now free their env/pair block at
-// the last reference (__fern_closure_drop), so they participate in
-// move-on-return / move-on-alias like the other owned types — the
-// transfer and the sweep-dec genuinely cancel.
 // paramNamed returns the current function's parameter called `name`, or nil.
 func (b *builder) paramNamed(name string) *ast.Param {
 	for i := range b.fn.Params {
@@ -3257,6 +3250,13 @@ func (b *builder) paramNamed(name string) *ast.Param {
 	return nil
 }
 
+// isOwnedRcLocal reports whether `name` is a declared rc-tracked local
+// (array / struct incl. Map / enum / closure) that the exit sweep would
+// dec. Params are borrowed (not in info.Locals, never swept) so they're
+// excluded. FuncType (closure) locals now free their env/pair block at
+// the last reference (__fern_closure_drop), so they participate in
+// move-on-return / move-on-alias like the other owned types — the
+// transfer and the sweep-dec genuinely cancel.
 func (b *builder) isOwnedRcLocal(name string) bool {
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name != name {
