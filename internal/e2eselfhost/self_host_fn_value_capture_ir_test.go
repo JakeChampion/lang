@@ -99,6 +99,66 @@ function main(): i32 {
     var v1: i64[] = (if (true) { [806i64, lf(1i32), 155i64] } else { [452i64] });
     return (v1[1i32] as i32) & 63i32;
 }`, 53},
+	// #6862 — a WIDE fn signature, i.e. one with an i64 / u64 / f64 / f32
+	// position. A wasm funcref type is STRUCTURAL, so such a value dispatched
+	// through the arity-keyed all-i32 `$fn<N>` type is a trap, and its
+	// arguments have to be pushed at the declared widths or the module does
+	// not even load. Both facts come from the signature, which the flat "fn"
+	// tag drops; the capture read carries the full `(P) => R` spelling so
+	// lower_func can seed FNSIG / FNRET for the local the way it does for a
+	// param. The register backends answered these correctly all along — the
+	// wasm leg is the one that decides them.
+	//
+	// A direct call through a wide fn-typed PARAM, no closure involved: the
+	// arg-width half on its own. `lf(4i64)` pushed an i32 against a funcref
+	// declaring i64, which wasmtime rejects at load.
+	{"wide-fn-param-called-directly", `function mk(lf: (i64) => boolean): i32 {
+    return (if (lf(4i64)) { 7i32 } else { 34i32 });
+}
+function main(): i32 { return mk(((y: i64) => (y > 3i64))) & 63i32; }`, 7},
+	// The issue's own repro: the wide param is CAPTURED by the escaping
+	// closure, so the read inside the hoisted body is a local.
+	{"wide-fn-param-captured", `function mk(lf: (i64) => boolean): (i32) => i32 {
+    return ((x0: i32) => (if (lf(4i64)) { x0 } else { 34i32 }));
+}
+function main(): i32 { return mk(((y: i64) => (y > 9i64)))(3i32) & 63i32; }`, 34},
+	// The RETURN position is wide rather than a parameter.
+	{"wide-fn-ret-captured", `function mk(lf: (i32) => i64): (i32) => i32 {
+    return ((x0: i32) => ((lf(x0) + 5i64) as i32));
+}
+function main(): i32 { return mk(((y: i32) => ((y * 3i32) as i64)))(7i32) & 63i32; }`, 26},
+	// A wide position among narrow ones, so the tag has to be positional
+	// rather than a single "is it wide" flag.
+	{"wide-fn-local-multi-param-captured", `function mk(): (i32) => i32 {
+    var lf: (i64, i32) => i32 = ((a: i64, b: i32) => ((a as i32) + b));
+    return ((x0: i32) => (lf(11i64, x0) * 2i32));
+}
+function main(): i32 { return mk()(4i32) & 63i32; }`, 30},
+	// f64 is wide for the same structural reason i64 is.
+	{"f64-fn-param-captured", `function mk(lf: (f64) => i32): (i32) => i32 {
+    return ((x0: i32) => (lf(2.5) + x0));
+}
+function main(): i32 { return mk(((y: f64) => ((y * 4.0) as i32)))(1i32) & 63i32; }`, 11},
+	// f32 is wide too, but it is 'd' rather than an f32 of its own: the wasm
+	// backend carries every float in an f64, so an f32 param is emitted
+	// `(param f64)` and a funcref type naming it f32 matches nothing. Both
+	// this and the direct call below were an unloadable module.
+	{"f32-fn-param-captured", `function mk(lf: (f32) => i32): (i32) => i32 {
+    return ((x0: i32) => (lf(2.5f32) + x0));
+}
+function main(): i32 { return mk(((y: f32) => ((y * 4.0f32) as i32)))(1i32) & 63i32; }`, 11},
+	{"f32-fn-param-called-directly", `function mk(lf: (f32) => i32): i32 {
+    return lf(2.5f32) + 1i32;
+}
+function main(): i32 { return mk(((y: f32) => ((y * 4.0f32) as i32))) & 63i32; }`, 11},
+	// A nested `function` declaration with a wide signature: the binding it
+	// desugars to carries no annotation, so the spelling has to come from the
+	// lambda the lift replaces with an env box.
+	{"nested-wide-fn-local-captured", `function mk(): (i32) => i32 {
+    function lf(p: i64): boolean { return p > 3i64; }
+    return ((x0: i32) => (if (lf(4i64)) { x0 * 5i32 } else { 34i32 }));
+}
+function main(): i32 { return mk()(3i32) & 63i32; }`, 15},
 }
 
 // TestSelfHostFnValueCaptureIRX86_64 drives the production x86-64 IR path.
@@ -134,10 +194,11 @@ func TestSelfHostFnValueCaptureIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostFnValueCaptureWasmIR — the wasm leg, which is the one that
-// decides the admission. A wasm funcref type is STRUCTURAL, so a captured fn
-// value whose signature the flat "fn" tag cannot carry is an `indirect call
-// type mismatch` rather than a slow path; cap_fn_sig_wide keeps those on their
-// bail, and every case here is inside what the arity-keyed type describes.
+// decides these. A wasm funcref type is STRUCTURAL, so a captured fn value
+// dispatched through a type its signature does not match is an `indirect call
+// type mismatch` rather than a slow path, and an argument pushed at the wrong
+// width is a module that will not load. Both are invisible to the register
+// backends, which answer the wide cases correctly either way.
 func TestSelfHostFnValueCaptureWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fn-value-capture wasm IR e2e")

@@ -91,6 +91,18 @@ var closureCallsClosureIRCases = []struct {
     var combo = function(a: i32): i32 { return add(a) + x; };
     return combo(10);
 }`, 20},
+	// The called closure's binding SPELLS ITS TYPE OUT. That spelling is what
+	// cap_type reports for the capture, and the injected param it becomes
+	// carries no signature sidecars — so lower_func's "mark every fn param a
+	// closure local" test, which reads the flat "fn" tag, did not fire and
+	// `add` was dispatched as a raw table index instead of env-first. wasm
+	// trapped (`undefined element`) and the register backends took a bus
+	// error, both with the compiler reporting success.
+	{"annotated_inner_called", `function main(): i32 {
+    var add: (i32) => i32 = function(a: i32): i32 { return a + 10; };
+    var twice = function(a: i32): i32 { return add(add(a)); };
+    return twice(1);
+}`, 21},
 }
 
 // TestSelfHostClosureCallsClosureX86IR builds the self-host asm_run driver and

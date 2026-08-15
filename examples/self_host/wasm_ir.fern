@@ -2984,7 +2984,6 @@ pub function indirect_fn_sigs(cache: irlower.LowerResult[]): string[] {
 function wasm_type_of_char(c: string): string {
     if (c == "l") { return "i64"; }
     if (c == "d") { return "f64"; }
-    if (c == "f") { return "f32"; }
     return "i32";
 }
 
