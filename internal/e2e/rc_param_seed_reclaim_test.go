@@ -153,6 +153,20 @@ function thread(src: P, n: i32): i32 {
     return acc % 7;
 }
 
+// The seed binding INSIDE the loop, so the slot is re-init'd every iteration
+// and the transfer inc and the re-init drop each run n times rather than once.
+function loop_seed(src: P, n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var s: P = src;
+        s = P { a: s.a + i, b: s.b, pulls: s.pulls };
+        acc = acc + s.a;
+        i = i + 1;
+    }
+    return acc % 7;
+}
+
 function main(): i32 {
     if (thread(P { a: 0, b: 0, pulls: 0 }, 100) < 0) { return 1; }
     var b1: i64 = __heap_bump_bytes();
@@ -161,25 +175,36 @@ function main(): i32 {
     if (thread(P { a: 0, b: 0, pulls: 0 }, 400) < 0) { return 3; }
     var b3: i64 = __heap_bump_bytes();
     if ((b3 - b2) > (b2 - b1) * 3 / 2) { return 4; }
-    if (__rc_underflow_count() != 0) { return 5; }
+
+    var seed: P = P { a: 1, b: 2, pulls: 0 };
+    if (loop_seed(seed, 100) < 0) { return 5; }
+    var c1: i64 = __heap_bump_bytes();
+    if (loop_seed(seed, 200) < 0) { return 6; }
+    var c2: i64 = __heap_bump_bytes();
+    if (loop_seed(seed, 400) < 0) { return 7; }
+    var c3: i64 = __heap_bump_bytes();
+    if ((c3 - c2) > (c2 - c1) * 3 / 2) { return 8; }
+    if (seed.a * 10 + seed.b != 12) { return 9; }
+
+    if (__rc_underflow_count() != 0) { return 10; }
     return 42;
 }
 `
 
 func TestRcParamSeedBoundedX86_64(t *testing.T) {
 	if _, got := compileAndRunX86_64(t, rcParamSeedBoundedProg); got != 42 {
-		t.Fatalf("x86-64 got %d, want 42 (4 = the seed's borrow verdict is still governing the reassigned slot)", got)
+		t.Fatalf("x86-64 got %d, want 42 (4 / 8 = the seed's borrow verdict is still governing the reassigned slot)", got)
 	}
 }
 
 func TestRcParamSeedBoundedWasm(t *testing.T) {
 	if got := compileAndRunWasmbinMain(t, rcParamSeedBoundedProg); got != 42 {
-		t.Fatalf("wasm got %d, want 42 (4 = the seed's borrow verdict is still governing the reassigned slot)", got)
+		t.Fatalf("wasm got %d, want 42 (4 / 8 = the seed's borrow verdict is still governing the reassigned slot)", got)
 	}
 }
 
 func TestRcParamSeedBoundedArm64(t *testing.T) {
 	if _, got := compileAndRunArm64(t, rcParamSeedBoundedProg); got != 42 {
-		t.Fatalf("arm64 got %d, want 42 (4 = the seed's borrow verdict is still governing the reassigned slot)", got)
+		t.Fatalf("arm64 got %d, want 42 (4 / 8 = the seed's borrow verdict is still governing the reassigned slot)", got)
 	}
 }
