@@ -1027,6 +1027,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	}
 	// assigns[name] = list of RHS expressions ever written to it.
 	assigns := map[string][]ast.Expr{}
+	// seedParamInit[L] is the `var L = <param>` initialiser of a local seeded
+	// from a borrow-tainted PARAMETER, and reassignedIdent records the locals an
+	// *ast.Assign later overwrites. countedSeed below combines them.
+	seedParamInit := map[string]ast.Expr{}
+	reassignedIdent := map[string]bool{}
 	markBindings := func(names []string) {
 		for _, n := range names {
 			tainted[n] = true
@@ -1109,10 +1114,15 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		case *ast.Var:
 			if s.Init != nil {
 				assigns[s.Name] = append(assigns[s.Name], s.Init)
+				if id, ok := s.Init.(*ast.Ident); ok && b.paramNamed(id.Name) != nil &&
+					needsRcIncOnAlias(id, b) {
+					seedParamInit[s.Name] = s.Init
+				}
 			}
 		case *ast.Assign:
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
+				reassignedIdent[id.Name] = true
 			} else {
 				// Storing into an existing capture cell (`cap = v`)
 				// retains the value without an inc, so the source
@@ -1344,11 +1354,27 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		}
 		return true
 	})
+	// `var L = <param>` where L is REASSIGNED later: the binding is a COUNTED
+	// alias, not a borrow. needsRcIncOnAlias holds for the initialiser and the
+	// source is a parameter, so no move site or borrowed-alias cancellation can
+	// reach it (both require an owned rc LOCAL source) and the *ast.Var lowering
+	// therefore emits the transfer inc — L owns a reference of its own, and every
+	// drop of it is is_unique-gated, so it can never release the caller's value.
+	// Only the SEED is skipped: every other taint source still reaches L, and a
+	// local that is never reassigned holds nothing but the seed and keeps the
+	// borrow verdict. One verdict per local governed every later value the slot
+	// held, and each of those leaked (#6403).
+	countedSeed := map[ast.Expr]bool{}
+	for name, init := range seedParamInit {
+		if reassignedIdent[name] && b.localNameUnique(name) {
+			countedSeed[init] = true
+		}
+	}
 	for {
 		changed := false
 		for name, rhss := range assigns {
 			for _, rhs := range rhss {
-				if !tainted[name] && b.rhsTainted(rhs, tainted) {
+				if !tainted[name] && !countedSeed[rhs] && b.rhsTainted(rhs, tainted) {
 					tainted[name] = true
 					changed = true
 				}
@@ -3212,6 +3238,16 @@ func (b *builder) preciseDroppableType(name string) bool {
 		return true
 	}
 	return false
+}
+
+// paramNamed returns the current function's parameter called `name`, or nil.
+func (b *builder) paramNamed(name string) *ast.Param {
+	for i := range b.fn.Params {
+		if b.fn.Params[i].Name == name {
+			return &b.fn.Params[i]
+		}
+	}
+	return nil
 }
 
 // isOwnedRcLocal reports whether `name` is a declared rc-tracked local
