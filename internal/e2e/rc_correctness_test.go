@@ -4203,6 +4203,151 @@ function main(): i32 {
     return (t - 680) + __rc_underflow_count();
 }`,
 	},
+	{
+		// The four shapes the loop-body push move must NOT fire on (#6533).
+		// Widening its dominance guard trades a leak for a use-after-free when
+		// it is wrong, and every one of these would free an element something
+		// still reads: only the leak direction is recoverable, so each shape
+		// gets a value check that a freed-and-recycled box would fail.
+		//
+		// The element is loop-carried, so it outlives the buffer's drop.
+		// 4 pushes + kind 7 + the stored element's kind 7 = 18.
+		name: "loop_push_outer_local_element_survives",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var v: Val = Val { kind: 7, kids: [1] };
+    var i: i32 = 0;
+    while (i < n) {
+        if (i == 9999) { continue; }
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    return vals.len() + v.kind + vals[0].kind;
+}
+function main(): i32 { return (build(4) - 18) + __rc_underflow_count(); }`,
+	},
+	{
+		// The element is stored into TWO buffers. Only the second push is its
+		// last use, so only that one may move; the first must retain, or both
+		// buffers' drops release the one reference. 4 + 4 + 1 + 1 = 10.
+		name: "loop_push_element_aliased_into_two_buffers",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var a: Val[] = [];
+    var b: Val[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i == 9999) { break; }
+        var v: Val = Val { kind: i, kids: [i] };
+        a = a.append(v);
+        b = b.append(v);
+        i = i + 1;
+    }
+    return a.len() + b.len() + a[0].kids.len() + b[0].kids.len();
+}
+function main(): i32 { return (build(4) - 10) + __rc_underflow_count(); }`,
+	},
+	{
+		// An early exit that carries the element OUT. The push is no longer the
+		// element's last use, so it must retain — a move would let the buffer's
+		// drop free the value the caller is handed. kind 2 + kids[0] 2 = 4.
+		name: "loop_push_early_exit_returns_the_element",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): Val {
+    var vals: Val[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        var v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        if (i == 2) { return v; }
+        i = i + 1;
+    }
+    return Val { kind: -1, kids: [] };
+}
+function main(): i32 {
+    var got: Val = build(5);
+    return (got.kind + got.kids[0] - 4) + __rc_underflow_count();
+}`,
+	},
+	{
+		// An early exit BETWEEN the declaration and the push: the exiting
+		// iteration builds an element it never stores, so the move is refused
+		// and the element keeps its retain. 3 stored + stop 1 + kids[0] 0 = 4.
+		name: "loop_push_exit_between_decl_and_push",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var stop: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var v: Val = Val { kind: i, kids: [i] };
+        if (i == 3) { stop = 1; break; }
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    return vals.len() + stop + vals[0].kids[0];
+}
+function main(): i32 { return (build(5) - 4) + __rc_underflow_count(); }`,
+	},
+	{
+		// A LIVE `continue` before the element's declaration, so the declaration
+		// is genuinely skipped on half the iterations. That is the path the
+		// widened guard rests on: the element's slot then still holds the
+		// previous iteration's pointer, which the buffer already owns, and the
+		// suppressed drop must leave it alone. i = 1, 3, 5 are stored, so
+		// (1+1) + (2+3) + (3+5) = 15.
+		name: "loop_push_live_continue_before_decl",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }
+        var v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        total = total + vals.len() + vals[vals.len() - 1].kids[0];
+    }
+    return total;
+}
+function main(): i32 { return (build(6) - 15) + __rc_underflow_count(); }`,
+	},
+	{
+		// A LIVE `break` before the declaration: the loop leaves with the slot
+		// holding the last stored element, which the buffer owns. 3 stored,
+		// kinds 0 + 1 + 2 = 3, so 3 + 3 = 6.
+		name: "loop_push_live_break_before_decl",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i == 3) { break; }
+        var v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    var sum: i32 = 0;
+    var k: i32 = 0;
+    while (k < vals.len()) { sum = sum + vals[k].kids[0]; k = k + 1; }
+    return vals.len() + sum;
+}
+function main(): i32 { return (build(9) - 6) + __rc_underflow_count(); }`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

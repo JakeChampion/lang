@@ -2289,12 +2289,22 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 //     OUTSIDE the loop lives across iterations: moving it would let the first
 //     iteration's container drop free a buffer the second iteration still
 //     reads (a use-after-free, not a leak).
-//   - The body must contain no `return` / `break` / `continue`. Those make the
-//     construction conditional, so the exit sweep suppression `moved` implies
-//     could outlive a path on which no construction ran.
+//   - No `return` / `break` / `continue` / `?` may sit BETWEEN the var's
+//     declaration and the construction. That interval is what makes the
+//     construction unconditional. `moved` is function-wide, so a path that
+//     creates the box and then leaves without reaching the construction leaks
+//     it — nothing ever releases what the container was supposed to own.
 //   - The name must be declared exactly once in the function (localNameUnique).
 //     `moved` is name-keyed, so a shadowed name would suppress the exit-sweep
 //     dec of an unrelated same-name local.
+//
+// An early exit outside that interval is harmless, which is what makes the
+// guard-clause shape every parser is built out of eligible (#6533). Before the
+// var's own declaration no box exists yet on the exiting path, so the
+// suppressed drop had nothing to release — the slot is either null from the
+// prologue zero-init or holds an earlier iteration's already-moved pointer.
+// After the construction the value belongs to the container, whose drop
+// releases it once.
 //
 // Nested loops are covered: ast.Walk visits every loop, and each body is
 // judged against the vars declared in THAT body.
@@ -2314,22 +2324,35 @@ func (b *builder) markLoopBodyConstructionMoves(order identOrder, moved map[stri
 			return true
 		}
 		blk, ok := body.(*ast.Block)
-		if !ok || blockHasEarlyExit(blk) {
+		if !ok {
 			return true
 		}
-		// Vars declared so far in THIS body — the only names a construction
-		// here may move, and only once their declaration precedes it.
-		declared := map[string]bool{}
-		allow := func(name string) bool {
-			return declared[name] && b.localNameUnique(name)
+		// exitsBefore[i] counts the body's top-level statements in [0, i) that
+		// carry an early exit, so "nothing exits between statements d and i" is
+		// exitsBefore[i] == exitsBefore[d].
+		exitsBefore := make([]int, len(blk.Stmts)+1)
+		for i, st := range blk.Stmts {
+			exitsBefore[i+1] = exitsBefore[i]
+			if stmtHasEarlyExit(st) {
+				exitsBefore[i+1]++
+			}
 		}
-		for _, st := range blk.Stmts {
+		// Vars declared so far in THIS body — the only names a construction
+		// here may move, and only from a declaration that reaches it.
+		declAt := map[string]int{}
+		at := 0
+		allow := func(name string) bool {
+			d, ok := declAt[name]
+			return ok && b.localNameUnique(name) && exitsBefore[at] == exitsBefore[d]
+		}
+		for i, st := range blk.Stmts {
+			at = i
 			switch s := st.(type) {
 			case *ast.Var:
 				if s.Init != nil {
 					b.markConstructionMoves(s.Init, order, moved, allow)
 				}
-				declared[s.Name] = true
+				declAt[s.Name] = i
 			case *ast.ExprStmt:
 				if a, ok := s.Expr.(*ast.Assign); ok {
 					b.markConstructionMoves(a.Value, order, moved, allow)
@@ -2340,16 +2363,17 @@ func (b *builder) markLoopBodyConstructionMoves(order identOrder, moved map[stri
 	})
 }
 
-// blockHasEarlyExit reports whether `blk` contains a `return`, `break` or
-// `continue` anywhere within it, including nested statements. Used as the
-// loop-body dominance guard: with any of them present a construction later in
-// the body is conditional, so its move cannot be assumed to happen on every
-// iteration.
-func blockHasEarlyExit(blk *ast.Block) bool {
+// stmtHasEarlyExit reports whether `st` can leave the enclosing loop body early:
+// a `return`, `break`, `continue`, or a `?` (TryOp), which returns the failure
+// variant from the function.
+//
+// Coarse in two directions, both of which only forgo a move: a `break` belonging
+// to a nested loop counts, and so does a `return` inside a nested lambda.
+func stmtHasEarlyExit(st ast.Stmt) bool {
 	found := false
-	ast.Walk(blk, func(n ast.Node) bool {
+	ast.Walk(st, func(n ast.Node) bool {
 		switch n.(type) {
-		case *ast.Return, *ast.Break, *ast.Continue:
+		case *ast.Return, *ast.Break, *ast.Continue, *ast.TryOp:
 			found = true
 			return false
 		}
