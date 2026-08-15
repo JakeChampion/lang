@@ -1363,16 +1363,86 @@ pub function fn_spelling_of(p: parser.ParamDecl): string {
     return "(" + p.fn_param_types + ") => " + p.fn_ret;
 }
 
-// fn_local_type_name is the declared type a fn-valued local keeps once the lift
-// has replaced its initialiser with an env-box constructor. The box carries no
-// signature, so an unannotated binding (`function lf(x: i64): boolean { … }`
-// desugars to one) would lose it entirely — the declaration is where it survives
-// into lower_func's FNSIG seeding (#6862). An annotation that already spells the
-// signature out is left exactly as written.
-function fn_local_type_name(declared: string, recovered: parser.ParamDecl): string {
-    if (fn_param_from_spelling("", declared).type_name == "fn") { return declared; }
-    if (recovered.type_name != "fn") { return declared; }
-    return fn_spelling_of(recovered);
+// fn_local_spelling_for names the `(P) => R` type of a fn-valued local whose
+// initialiser the lift has replaced with a `__mkclo$<target>` env-box
+// constructor. The box carries no signature, so an UNANNOTATED binding — which
+// is what a nested `function lf(x: i64): boolean { … }` declaration desugars to
+// — would otherwise lose it, and lower_func's FNSIG seeding has nothing to read
+// (#6862). "" when the binding is not that shape or already spells its type out.
+//
+// The hoisted target's params are `__env` followed by the lambda's own, so its
+// signature after that first param is the fn value's.
+function fn_local_spelling_for(v: parser.StmtVar, funcs: parser.FuncDecl[]): string {
+    if (fn_param_from_spelling("", v.type_name).type_name == "fn") { return ""; }
+    match (v.init) {
+        parser.ExprCall(mk) => {
+            match (mk.callee) {
+                parser.ExprIdent(mkid) => {
+                    if (mkid.name.len() <= 8 || mkid.name[0:8] != "__mkclo$") { return ""; }
+                    var tgt: string = mkid.name[8 : mkid.name.len()] + "";
+                    var fi: i32 = 0;
+                    while (fi < funcs.len()) {
+                        if (funcs[fi].name == tgt) {
+                            var p: parser.ParamDecl = fn_param_from_func(v.name, funcs[fi], 1);
+                            if (p.type_name != "fn") { return ""; }
+                            return fn_spelling_of(p);
+                        }
+                        fi = fi + 1;
+                    }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// stamp_fn_local_types writes that spelling onto every such binding across the
+// lifted module.
+//
+// It runs AFTER the whole lift, and that ordering is the point rather than a
+// detail: cap_type answers "what type is this capture" from exactly this field,
+// and several lift consumers test its answer against the flat "fn" tag
+// (try_lift_binding's injected param, iife_arms_hold_fn_value). Stamping while
+// the lift is still running turns those tests false and a captured closure stops
+// being dispatched env-first — a raw box pointer used as a table index.
+function stamp_fn_local_types(funcs: parser.FuncDecl[]): parser.FuncDecl[] {
+    var out: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        out = out.append(parser.FuncDecl { ...funcs[i], body: stamp_fn_local_types_stmts(funcs[i].body, funcs) });
+        i = i + 1;
+    }
+    return out;
+}
+
+function stamp_fn_local_types_stmts(body: parser.Stmt[], funcs: parser.FuncDecl[]): parser.Stmt[] {
+    var out: parser.Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        match (body[i]) {
+            parser.StmtVar(v) => {
+                var sp: string = fn_local_spelling_for(v, funcs);
+                if (sp.len() > 0) { out = out.append(parser.StmtVar { ...v, type_name: sp }); }
+                else { out = out.append(body[i]); }
+            },
+            parser.StmtIf(f) => { out = out.append(parser.StmtIf { ...f, then_body: stamp_fn_local_types_stmts(f.then_body, funcs), else_body: stamp_fn_local_types_stmts(f.else_body, funcs) }); },
+            parser.StmtWhile(w) => { out = out.append(parser.StmtWhile { ...w, body: stamp_fn_local_types_stmts(w.body, funcs) }); },
+            parser.StmtFor(fr) => { out = out.append(parser.StmtFor { ...fr, body: stamp_fn_local_types_stmts(fr.body, funcs) }); },
+            parser.StmtMatch(m) => {
+                var na: parser.MatchArm[] = [];
+                var a: i32 = 0;
+                while (a < m.arms.len()) { na = na.append(parser.MatchArm { ...m.arms[a], body: stamp_fn_local_types_stmts(m.arms[a].body, funcs) }); a = a + 1; }
+                out = out.append(parser.StmtMatch { ...m, arms: na });
+            },
+            _ => { out = out.append(body[i]); }
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // fn_param_from_spelling rebuilds the fn-signature sidecars parse_param records
@@ -51482,7 +51552,18 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     var pj: i32 = 0;
     while (pj < lam.params.len()) { lparams = lparams.append(lam.params[pj]); pj = pj + 1; }
     var cj: i32 = 0;
-    while (cj < caps.len()) { lparams = lparams.append(parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }); cj = cj + 1; }
+    while (cj < caps.len()) {
+        // A capture whose type is spelled out as a fn (`var f: (i32) => i32`, or
+        // a capture read make_clo_func typed) becomes the flat "fn" tag plus the
+        // sidecars a fn-typed PARAM carries: lower_func marks a "fn" param a
+        // closure local, and the spelling on its own does not, so the call
+        // inside the lifted body would dispatch the env box as a raw table
+        // index.
+        var lcp: parser.ParamDecl = fn_param_from_spelling(caps[cj], ctypes[cj]);
+        if (lcp.type_name != "fn") { lcp = parser.ParamDecl { name: caps[cj], type_name: ctypes[cj], own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }; }
+        lparams = lparams.append(lcp);
+        cj = cj + 1;
+    }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: true };
@@ -53637,12 +53718,12 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                             if (hr.ok) {
                                 var marker: parser.Expr = parser.ExprCall { callee: parser.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0 }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
                                 fs = fs.append(hr.func); ct = ct + 1;
-                                out = out.append(parser.StmtVar { name: bn, type_name: fn_local_type_name(bty, fn_param_from_func(bn, hr.func, 1)), init: marker, line: bln, col: bco, is_str: false });
+                                out = out.append(parser.StmtVar { name: bn, type_name: bty, init: marker, line: bln, col: bco, is_str: false });
                                 boxed = true;
                             }
                         }
                     },
-                    parser.ExprLambda(vlam) => {
+                    parser.ExprLambda(_) => {
                         // A var-bound lambda USED AS A VALUE (passed, returned,
                         // stored, captured) — not merely called — is env-boxed so
                         // its slot holds the uniform env box every fn-value carries;
@@ -53660,7 +53741,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                             match (lr.expr) {
                                 parser.ExprCall(_) => {
                                     fs = lr.funcs; ct = lr.counter;
-                                    out = out.append(parser.StmtVar { name: bn, type_name: fn_local_type_name(bty, fn_param_from_lambda(bn, vlam)), init: lr.expr, line: bln, col: bco, is_str: false });
+                                    out = out.append(parser.StmtVar { name: bn, type_name: bty, init: lr.expr, line: bln, col: bco, is_str: false });
                                     boxed = true;
                                 },
                                 _ => {}
@@ -54987,7 +55068,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     // own defer handling is unchanged.
     var result: parser.Module = mod;
     if (acc.counter != 0) {
-        result = parser.Module { funcs: newfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+        result = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
     }
     // Infer return types on the FINAL lifted module so a lifted lambda with an
     // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
