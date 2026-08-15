@@ -23,11 +23,20 @@
 # same byte count on any runner — a difference here is a real change in the
 # compiler's output, not runner noise.
 #
-# ADVISORY, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
-# default) is a job-summary line plus a warning annotation, never a failed job.
-# A SHRINK is flagged too: an un-updated baseline after a win silently raises
-# the ceiling the next regression is measured against, which is how 16% of
-# growth went unnoticed for eight days.
+# TWO THRESHOLDS, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT
+# (5%) is a job-summary line plus a warning annotation; drift past
+# FERN_SIZE_FAIL_PERCENT (15%) FAILS the `driver-sizes` job, which is where the
+# check runs as a gate rather than as a report. A SHRINK counts as drift too: an
+# un-updated baseline after a win silently raises the ceiling the next
+# regression is measured against, which is how 16% of growth went unnoticed for
+# eight days.
+#
+# The two numbers are far apart because ordinary work moves these binaries more
+# than one might guess. Between the 2026-08-14 baseline below and 08-15 — one
+# day, ~60 commits, nothing about it unusual — every driver grew, the
+# whole-compiler ones by ~3.0% and the 6 MB front-end slices by ~7%. A 5% gate
+# would have reddened twelve of fifteen on an ordinary day; a 15% one is still
+# well under the +16.1% / +31.4% event this file exists for.
 #
 # WHEN A NUMBER MOVES ON PURPOSE, update it in the same PR — the job summary
 # prints the corrected lines ready to paste. Keep the reason in the PR, not
@@ -36,30 +45,32 @@
 # x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
 #
-# Every figure below is CI's own, from run 31782687541 (`cli` + the three `warm`
-# jobs), pasted from the blocks those jobs printed. The three that #6826 measured
-# off-CI independently agree to within 0.05% — fern.fern 155,895,596 vs
-# 155,973,500, asm_ir_run 146,081,148 vs 146,105,772, wasm_ir_run 77,378,268 vs
-# 77,402,892 — which is the evidence for the host-independence claim above.
+# Measured 2026-08-15 on origin/main 83391754e, off-CI, through the same
+# in-process emit + assemble + link the `warm` / `cli` jobs use. The previous
+# figures were CI's own (run 31782687541) and the three #6826 measured off-CI
+# agreed with them to within 0.05% — fern.fern 155,895,596 vs 155,973,500,
+# asm_ir_run 146,081,148 vs 146,105,772, wasm_ir_run 77,378,268 vs 77,402,892 —
+# which is the evidence for the host-independence claim above, and why an
+# off-CI re-baseline is comparable at all.
 #
-# Note the two tiers: the six drivers at 6-7 MB link a front-end slice only,
-# while the whole-compiler drivers sit at 145-156 MB. A 6 MB driver moving 5% is
+# Note the two tiers: the three drivers at 6-7 MB link a front-end slice only,
+# while the rest sit at 78-161 MB. A 6 MB driver moving 5% is
 # 300 KB and means something different from the tracked artifact moving 5%; the
 # percentage is what is compared, deliberately, so a small driver's regression is
 # not lost inside a big one's noise.
 
-fern.fern 155973500
-asm_load_run.fern 148545260
-asm_modload_run.fern 146565436
-asm_ir_run.fern 146105772
-asm_run.fern 145267212
-wasm_ir_run.fern 77402892
-wasm_run.fern 77377980
-wasm_runio_run.fern 77318796
-asm_pathprobe_run.fern 76480908
-ssa_lift_scan_run.fern 75512764
-asm_ir_elig_run.fern 75165500
-irlower_run.fern 74045084
-checker_modload_run.fern 6880820
-ssa_emit_run.fern 6243356
-ssa_run.fern 6004220
+fern.fern 160697188
+asm_load_run.fern 152977452
+asm_modload_run.fern 150927860
+asm_ir_run.fern 150468204
+asm_run.fern 149625532
+wasm_ir_run.fern 81769324
+wasm_run.fern 81744412
+wasm_runio_run.fern 81685228
+asm_pathprobe_run.fern 80847340
+ssa_lift_scan_run.fern 79854652
+asm_ir_elig_run.fern 79490972
+irlower_run.fern 78173964
+checker_modload_run.fern 7356244
+ssa_emit_run.fern 6677628
+ssa_run.fern 6434380

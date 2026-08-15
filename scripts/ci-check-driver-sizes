@@ -16,13 +16,29 @@
 # driver is linked in CI on every run, so the number was produced dozens of
 # times a day and never recorded, compared or asserted on.
 #
-# WARN, DO NOT FAIL (for now). Findings are a job-summary line plus a warning
-# annotation; the exit status is 0. Set FERN_CI_SIZE_GATE_STRICT=1 to make them
-# fatal — deliberately a one-variable escalation.
+# TWO THRESHOLDS, because one cannot be both. A gate that reds on every ordinary
+# day gets disabled and a gate that never reds is theatre, and the measured drift
+# says those are different numbers: one day of ordinary main (2026-08-14 ->
+# 08-15, ~60 commits) moved the whole-compiler drivers +3.0% and the 6 MB
+# front-end slices +7%, while the incident this exists for was +16.1% on the
+# tracked artifact and +31.4% on wasm_ir_run.
+#
+#   FERN_SIZE_TOLERANCE_PERCENT (5)  drift worth a warning annotation and a
+#                                    "update the baseline" nudge.
+#   FERN_SIZE_FAIL_PERCENT (15)      drift that FAILS, where FERN_CI_SIZE_GATE_STRICT=1
+#                                    says this invocation is the gate rather than
+#                                    a report.
+#
+# The per-driver table is printed on every run either way, so the number is
+# recorded whether or not anything crossed.
 #
 # BOTH DIRECTIONS. A shrink is reported as well as a growth. Leaving the
 # baseline high after a win means the next regression is measured against a
 # ceiling nobody holds, which is exactly how the 16% went unnoticed.
+#
+# FERN_SIZE_EXPECT_COMPLETE=1 additionally requires every baselined driver to
+# appear in the report. Set it only where the report is assembled from every job
+# that links one: a per-job invocation sees its own drivers and nothing else.
 
 set -euo pipefail
 
@@ -30,6 +46,9 @@ set -euo pipefail
 # deterministic per commit (in-process pure-Go emit and link), so this is a
 # significance threshold, not a noise floor.
 TOLERANCE="${FERN_SIZE_TOLERANCE_PERCENT:-5}"
+FAIL_AT="${FERN_SIZE_FAIL_PERCENT:-15}"
+EXPECT_COMPLETE="${FERN_SIZE_EXPECT_COMPLETE:-0}"
+STRICT="${FERN_CI_SIZE_GATE_STRICT:-0}"
 
 BASELINE="${1:-}"
 REPORT="${2:-}"
@@ -54,10 +73,15 @@ if [ ! -s "$REPORT" ]; then
   else
     echo "WARNING: driver size check ran blind: no driver sizes were recorded at $REPORT"
   fi
+  # Measuring nothing is the one outcome a gate must never call green.
+  if [ "$STRICT" = "1" ]; then
+    echo "ci-check-driver-sizes: no sizes were measured and FERN_CI_SIZE_GATE_STRICT=1" >&2
+    exit 1
+  fi
   exit 0
 fi
 
-routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
+routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" -v failat="$FAIL_AT" -v complete="$EXPECT_COMPLETE" '
   function mb(bytes) { return sprintf("%.1f MB", bytes / 1000000) }
   BEGIN {
     tracked = ""
@@ -70,6 +94,7 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       }
       if (line ~ /^[ \t]*(#|$)/) continue
       if (split(line, fld, /[ \t]+/) < 2) continue
+      if (!(fld[1] in base)) baseorder[++nbase] = fld[1]
       base[fld[1]] = fld[2] + 0
     }
     close(B)
@@ -114,6 +139,23 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
         printf "ANNOTATE\t%s shrank %+.1f%%\t%s linked at %s against a baseline of %s — update the baseline so the win becomes the new ceiling (#6826)\n", d, delta, d, mb(measured[d]), mb(base[d])
         paste[d] = measured[d]
       }
+      if (delta > failat || delta < -failat) {
+        nfatal++
+        printf "SUMMARY\tOVER THE FAIL THRESHOLD: %s is %+.1f%% from its baseline, past %s%%.\n", d, delta, failat
+      }
+    }
+
+    # A driver the baseline names but the report never mentions is not compared,
+    # and nothing else would say so: the gate would narrow silently as jobs drop
+    # out of the run that assembles the report.
+    if (complete == 1) {
+      for (i = 1; i <= nbase; i++) {
+        d = baseorder[i]
+        if (d in measured) continue
+        nmissing++
+        printf "SUMMARY\tMISSING: %s is baselined at %s but no job reported a size for it.\n", d, mb(base[d])
+        printf "ANNOTATE\tno size reported for %s\t%s is in .github/selfhost-driver-sizes.txt but no job measured it this run, so its size was not compared (#6826)\n", d, d
+      }
     }
 
     if (nunbased > 0) {
@@ -129,19 +171,26 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" '
       printf "SUMMARY\t    %s %d\n", d, paste[d]
     }
 
-    if (nfind == 0 && nunbased == 0) printf "SUMMARY\tEvery driver is within %s%% of its baseline.\n", tol
-    printf "FINDINGS\t%d\n", nfind + nunbased
+    if (nfind == 0 && nunbased == 0 && nmissing == 0) printf "SUMMARY\tEvery driver is within %s%% of its baseline.\n", tol
+    printf "FINDINGS\t%d\n", nfind + nunbased + nmissing
+    printf "OVERFAIL\t%d\n", nfatal
+    printf "NOTMEASURED\t%d\n", nmissing
   }
 ' "$REPORT")"
 
 findings=0
+overfail=0
+notmeasured=0
 while IFS=$'\t' read -r tag rest; do
-  if [ "$tag" = SUMMARY ]; then
-    printf '%s\n' "$rest"
-    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
-  elif [ "$tag" = FINDINGS ]; then
-    findings="$rest"
-  fi
+  case "$tag" in
+    SUMMARY)
+      printf '%s\n' "$rest"
+      if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
+      ;;
+    FINDINGS) findings="$rest" ;;
+    OVERFAIL) overfail="$rest" ;;
+    NOTMEASURED) notmeasured="$rest" ;;
+  esac
 done < <(printf '%s\n' "$routed")
 
 while IFS=$'\t' read -r tag title msg; do
@@ -153,7 +202,8 @@ while IFS=$'\t' read -r tag title msg; do
   fi
 done < <(printf '%s\n' "$routed")
 
-if [ "${FERN_CI_SIZE_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
-  echo "ci-check-driver-sizes: $findings finding(s) and FERN_CI_SIZE_GATE_STRICT=1" >&2
+if [ "$STRICT" = "1" ] && { [ "$overfail" -gt 0 ] || [ "$notmeasured" -gt 0 ]; }; then
+  echo "ci-check-driver-sizes: FAILED with $overfail driver(s) past the ${FAIL_AT}% fail threshold and $notmeasured baselined driver(s) nobody measured, out of $findings finding(s) total." >&2
+  echo "If the size change is intended, update .github/selfhost-driver-sizes.txt from the 'Corrected baseline' block above in the same PR." >&2
   exit 1
 fi

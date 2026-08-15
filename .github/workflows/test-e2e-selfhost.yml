@@ -285,7 +285,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "${{ matrix.drivers }}"
-          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes-${{ matrix.key }}.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -296,21 +296,18 @@ jobs:
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
           du -sh "$FERN_SELFHOST_BUILD_CACHE" || true
       # SIZE OF WHAT WE JUST LINKED (#6826). The drivers were built above for
-      # their own reasons; this is one stat each plus an awk pass, and it is the
-      # only thing in the repo that records the number. Advisory — see
-      # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
-      # so a partial warm still reports the sizes it did produce.
-      #
-      # continue-on-error because all 18 shards `needs: warm`: a measurement
-      # step must not be able to hold the lane. Unlike the #6164 case, this
-      # hides nothing that was ever enforced — the findings ARE the annotations
-      # and the job summary, and the script exits 0 on every finding by design.
-      # Escalating to a real gate means dropping this flag AND setting
-      # FERN_CI_SIZE_GATE_STRICT.
-      - name: check linked driver sizes against the baseline
+      # their own reasons, so this is one stat each. The comparison happens in
+      # the `driver-sizes` job, which sees every job's report at once: all 18
+      # shards `needs: warm`, so a size verdict must not be able to hold the
+      # lane. `!cancelled()` so a partial warm still hands over the sizes it did
+      # produce.
+      - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
+        with:
+          name: driver-size-report-${{ matrix.key }}
+          path: ${{ runner.temp }}/driver-sizes-${{ matrix.key }}.txt
+          retention-days: 1
+          if-no-files-found: warn
       # Publish each warmed driver for the `test` shards to download.
       - uses: actions/upload-artifact@v4
         with:
@@ -371,7 +368,7 @@ jobs:
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_WARM_DRIVER: "fern.fern"
-          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
+          FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes-cli.txt"
         run: |
           set -euo pipefail
           mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
@@ -384,10 +381,13 @@ jobs:
       # fern.fern is THE tracked artifact — the whole self-hosted compiler CLI,
       # and the number to quote for "the self-host binary" (#6826). It is linked
       # here and nowhere else in the lane, so this is where it gets recorded.
-      - name: check linked fern.fern size against the baseline
+      - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
-        continue-on-error: true
-        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
+        with:
+          name: driver-size-report-cli
+          path: ${{ runner.temp }}/driver-sizes-cli.txt
+          retention-days: 1
+          if-no-files-found: warn
       - name: run isolated fern.fern driver tests (in-process, local cache)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -399,6 +399,47 @@ jobs:
           echo "isolated driver tests: $ISOLATED_DRIVER_TESTS"
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run "^($ISOLATED_DRIVER_TESTS)\$" -test.v -test.timeout 13m
+
+  # THE SIZE GATE (#6826). A separate job for the same reason `verify` is one:
+  # the jobs that produce the measurement have 18 shards hanging off them and
+  # must not be able to go red over a size verdict, and a verdict nobody can see
+  # go red is not a gate. Nothing `needs` this job, so it fails loudly and holds
+  # up nothing.
+  #
+  # It is the ONLY place the report is complete — the drivers are linked across
+  # four jobs — which is why FERN_SIZE_EXPECT_COMPLETE lives here and not in
+  # them: a baselined driver nobody measured is a gate that quietly narrowed.
+  driver-sizes:
+    needs: [warm, cli]
+    # Skip rather than red when a producing job failed: it is already red at its
+    # source, and "no size reported for 12 drivers" on top of that buries the
+    # real error. `!cancelled()` matches the recording steps' guard.
+    if: ${{ !cancelled() && needs.warm.result == 'success' && needs.cli.result == 'success' }}
+    name: driver-size-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FERN_CI_SIZE_GATE_STRICT: "1"
+      FERN_SIZE_EXPECT_COMPLETE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # continue-on-error: download-artifact@v4 hard-fails when its pattern
+      # matches nothing, which would report as an opaque infra error rather than
+      # as the "measured nothing" the checker states plainly (and fails on).
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: driver-size-report-*
+          path: driver-sizes
+          merge-multiple: true
+      - name: collect every job's size report
+        run: |
+          set -euo pipefail
+          : >"${{ runner.temp }}/driver-sizes.txt"
+          cat driver-sizes/*.txt >>"${{ runner.temp }}/driver-sizes.txt" 2>/dev/null || true
+          wc -l "${{ runner.temp }}/driver-sizes.txt"
+      - name: check linked driver sizes against the baseline
+        run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
 
   gen2:
     needs: build

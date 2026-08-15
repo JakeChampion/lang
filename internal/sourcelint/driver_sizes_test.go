@@ -213,7 +213,9 @@ func TestCheckDriverSizesReportsWhenItRanBlind(t *testing.T) {
 	}
 }
 
-// The escalation to a hard failure is one variable.
+// The #6826 event is what the fail threshold is calibrated against: replayed
+// under the gate's own settings it must exit non-zero, naming the drivers that
+// crossed and how to move the baseline on purpose.
 func TestCheckDriverSizesStrictModeIsFatal(t *testing.T) {
 	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
 	report := writeTemp(t, "report.txt", sizeReport0814)
@@ -222,8 +224,83 @@ func TestCheckDriverSizesStrictModeIsFatal(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("want exit 1 under strict mode, got %d: %s", code, out)
 	}
-	if !strings.Contains(out, "3 finding(s) and FERN_CI_SIZE_GATE_STRICT=1") {
-		t.Errorf("missing the strict-mode reason:\n%s", out)
+	for _, want := range []string{
+		"OVER THE FAIL THRESHOLD: fern.fern is +16.1% from its baseline, past 15%.",
+		"OVER THE FAIL THRESHOLD: wasm_ir_run.fern is +31.4% from its baseline, past 15%.",
+		"FAILED with 2 driver(s) past the 15% fail threshold",
+		"update .github/selfhost-driver-sizes.txt from the 'Corrected baseline' block",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// asm_ir_run at +14.6% is a warning, not a failure: the two thresholds have
+	// to be separately observable or there is only one.
+	if strings.Contains(out, "OVER THE FAIL THRESHOLD: asm_ir_run.fern") {
+		t.Errorf("+14.6%% is under the 15%% fail threshold:\n%s", out)
+	}
+	if !strings.Contains(out, "GREW: asm_ir_run.fern") {
+		t.Errorf("+14.6%% is still over the 5%% warn tolerance:\n%s", out)
+	}
+}
+
+// The measured cost of an ordinary day (2026-08-14 -> 08-15): every driver grew,
+// the whole-compiler ones ~3% and the front-end slices ~7%. A gate that reds on
+// that gets turned off, so those must warn and pass.
+func TestCheckDriverSizesPassesOnOneOrdinaryDayOfGrowth(t *testing.T) {
+	base := writeTemp(t, "baseline.txt", "# tracked-artifact: fern.fern\nfern.fern 155973500\nssa_run.fern 6004220\n")
+	report := writeTemp(t, "report.txt", "fern.fern\t160697188\nssa_run.fern\t6434380\n")
+
+	code, out := runSizeCheck(t, []string{"FERN_CI_SIZE_GATE_STRICT=1"}, base, report)
+	if code != 0 {
+		t.Fatalf("a day of ordinary growth must not fail the gate, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "GREW: ssa_run.fern") {
+		t.Errorf("+7.2%% is over the 5%% warn tolerance and must still be reported:\n%s", out)
+	}
+	if strings.Contains(out, "OVER THE FAIL THRESHOLD") {
+		t.Errorf("nothing here is past 15%%:\n%s", out)
+	}
+}
+
+// The gate's report is assembled from four jobs' artifacts, so a job whose
+// artifact never arrived would narrow what is compared with nothing saying so.
+func TestCheckDriverSizesFailsOnADriverNobodyMeasured(t *testing.T) {
+	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
+	report := writeTemp(t, "report.txt", "fern.fern\t134243612\nasm_ir_run.fern\t127504604\n")
+
+	code, out := runSizeCheck(t, []string{"FERN_CI_SIZE_GATE_STRICT=1", "FERN_SIZE_EXPECT_COMPLETE=1"}, base, report)
+	if code != 1 {
+		t.Fatalf("want exit 1 for an incomplete report, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "MISSING: wasm_ir_run.fern is baselined at 58.9 MB") {
+		t.Errorf("the unmeasured driver must be named:\n%s", out)
+	}
+	if !strings.Contains(out, "1 baselined driver(s) nobody measured") {
+		t.Errorf("missing the reason:\n%s", out)
+	}
+	// Without the flag the same report is a per-job view, where seeing a subset
+	// is the normal case.
+	code, out = runSizeCheck(t, []string{"FERN_CI_SIZE_GATE_STRICT=1"}, base, report)
+	if code != 0 {
+		t.Fatalf("a per-job invocation must not require the whole baseline, got %d: %s", code, out)
+	}
+	if strings.Contains(out, "MISSING") {
+		t.Errorf("MISSING is opt-in:\n%s", out)
+	}
+}
+
+// A gate that measured nothing reporting green is the failure this whole check
+// exists to remove, so under strict mode blindness is fatal.
+func TestCheckDriverSizesStrictModeFailsWhenBlind(t *testing.T) {
+	base := writeTemp(t, "baseline.txt", sizeBaseline0806)
+
+	code, out := runSizeCheck(t, []string{"FERN_CI_SIZE_GATE_STRICT=1"}, base, filepath.Join(t.TempDir(), "never-written.txt"))
+	if code != 1 {
+		t.Fatalf("want exit 1 when the gate measured nothing, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "no sizes were measured and FERN_CI_SIZE_GATE_STRICT=1") {
+		t.Errorf("missing the reason:\n%s", out)
 	}
 }
 
@@ -277,21 +354,41 @@ func TestSelfHostDriverSizeBaselineIsWellFormed(t *testing.T) {
 	}
 }
 
-// The workflow must actually export the report path, or the check runs blind on
-// every run and says so forever.
-func TestSelfHostWorkflowExportsDriverSizeReport(t *testing.T) {
+// Every job that measures must hand its report on, and exactly one job must
+// compare — as the gate, not as a report. Each half of that is a way for the
+// check to go quiet without going red.
+func TestSelfHostWorkflowWiresTheDriverSizeGate(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
 	if err != nil {
 		t.Fatalf("read workflow: %v", err)
 	}
 	src := string(body)
+
 	exports := strings.Count(src, "FERN_DRIVER_SIZE_REPORT:")
-	checks := strings.Count(src, "scripts/ci-check-driver-sizes")
 	if exports == 0 {
 		t.Error("no job exports FERN_DRIVER_SIZE_REPORT, so nothing records a driver size")
 	}
-	if checks != exports {
-		t.Errorf("%d job(s) export FERN_DRIVER_SIZE_REPORT but %d invoke ci-check-driver-sizes — "+
-			"a job that measures without checking records nothing", exports, checks)
+	if uploads := strings.Count(src, "name: driver-size-report-"); uploads != exports {
+		t.Errorf("%d job(s) export FERN_DRIVER_SIZE_REPORT but %d upload it — "+
+			"a job that measures without publishing measures nothing the gate can see", exports, uploads)
+	}
+	if checks := strings.Count(src, "scripts/ci-check-driver-sizes"); checks != 1 {
+		t.Errorf("want exactly 1 invocation of ci-check-driver-sizes (the gate job), got %d", checks)
+	}
+	for _, want := range []string{
+		`FERN_CI_SIZE_GATE_STRICT: "1"`,
+		`FERN_SIZE_EXPECT_COMPLETE: "1"`,
+		"pattern: driver-size-report-*",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the gate job is missing %q", want)
+		}
+	}
+	// Nothing may depend on the gate: it exists to be able to fail, and a job
+	// that can hold up 18 shards is a job someone will make advisory again.
+	for _, line := range strings.Split(src, "\n") {
+		if strings.Contains(line, "needs:") && strings.Contains(line, "driver-sizes") {
+			t.Errorf("no job may `needs: driver-sizes` — the gate must block nothing: %q", strings.TrimSpace(line))
+		}
 	}
 }
