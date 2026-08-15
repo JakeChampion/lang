@@ -3072,6 +3072,60 @@ function branch_stmt_start(p: Par): boolean {
     return false;
 }
 
+// branch_stmts_diverge reports whether a value-branch body's statements exit
+// on every path, so the block never falls through to a trailing value. Mirrors
+// the Go checker's stmtsDiverge / stmtDiverges: only the LAST statement is
+// consulted, `loop { … }` counts as unconditional (breaks are ignored, the same
+// conservative stance the Go side takes), an `if` needs both arms, and a `match`
+// needs every arm.
+function branch_stmts_diverge(stmts: Stmt[]): boolean {
+    if (stmts.len() == 0) { return false; }
+    return branch_stmt_diverges(stmts[stmts.len() - 1]);
+}
+
+function branch_stmt_diverges(st: Stmt): boolean {
+    match (st) {
+        StmtReturn(_) => { return true; },
+        StmtBreak(_) => { return true; },
+        StmtContinue(_) => { return true; },
+        StmtWhile(w) => { return w.is_loop; },
+        StmtIf(f) => {
+            if (f.else_body.len() == 0) { return false; }
+            return branch_stmts_diverge(f.then_body) && branch_stmts_diverge(f.else_body);
+        },
+        StmtMatch(m) => {
+            if (m.arms.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (!branch_stmts_diverge(m.arms[i].body)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// branch_dead_tail picks the UNREACHABLE value a diverging branch is given so
+// its shape matches every other value branch (leading statements + a trailing
+// value). Reusing the `return E` the block leaves through keeps the tail's type
+// consistent with the enclosing function's; anything else — a `loop`, a bare
+// `break`, a void `return` — takes a zero, which no path can read.
+function branch_dead_tail(stmts: Stmt[]): Expr {
+    if (stmts.len() == 0) { return e_number("0", "", false); }
+    match (stmts[stmts.len() - 1]) {
+        StmtReturn(r) => {
+            match (r.value) {
+                ExprUnknown(_) => { return e_number("0", "", false); },
+                _ => { return r.value; }
+            }
+        },
+        _ => { return e_number("0", "", false); }
+    }
+    return e_number("0", "", false);
+}
+
 // parse_branch_body parses the `{ … }` body of an if/match value-branch
 // (block-expressions slice 1), mirroring the Go parser's parseBranchBody.
 // The body is a sequence of `;`-terminated statements run before an
@@ -3130,9 +3184,21 @@ function parse_branch_body(p: Par): (Stmt[], string, Par) {
     if (have_tail) { rt = if_expr_rt(tail); }
     // A value-less block (no trailing tail) in value position has no
     // result — yield a StmtUnknown so the branch surfaces an error rather
-    // than silently miscompiling (the Go checker reports E061).
+    // than silently miscompiling (the Go checker reports E061). A block
+    // whose statements ALWAYS exit early never reaches a trailing value:
+    // its type is `never`, not void, so it is admitted (#4522). Every one of
+    // its statements stays LEADING — the value-block lowering runs those inline,
+    // which is what lets their `return` / `break` leave the enclosing function
+    // or loop — and the block gets an unreachable tail so its shape is the one
+    // the lowering reads (leading statements + a trailing value).
     if (!have_tail) {
-        leading = leading.append(s_unknown("value branch has no trailing expression"));
+        if (!branch_stmts_diverge(leading)) {
+            leading = leading.append(s_unknown("value branch has no trailing expression"));
+            return (leading, rt, p);
+        }
+        var dead: Expr = branch_dead_tail(leading);
+        rt = if_expr_rt(dead);
+        leading = leading.append(s_return(dead));
         return (leading, rt, p);
     }
     leading = leading.append(s_return(tail));
@@ -10648,6 +10714,189 @@ function dl_itoa(n: i32): string {
 
 struct DeferAcc { stmts: Stmt[], actions: Stmt[], flags: i32[] }
 
+// dl_is_value_block reports whether `e` is a value-position `{ … }` block.
+// parse_primary builds one as an immediately-invoked zero-parameter lambda (the
+// general value-block form and the if- / match-expression desugars), and irlower
+// INLINES its statements into the enclosing function — so a `defer` inside one
+// is NOT in a scope of its own. That is also native's rule: a block expression
+// is neither a function nor a loop, so its defer belongs to the innermost
+// enclosing loop body if there is one and to the function otherwise (#6852).
+// Every other lambda is a boundary here: it owns its own defer scope and is
+// lowered after lambda lifting.
+function dl_is_value_block(c: ExprCall): boolean {
+    if (c.args.len() != 0) { return false; }
+    match (c.callee) {
+        ExprLambda(l) => { return l.params.len() == 0; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// dl_vb_rebuild puts `body` back into the value block `c` came from.
+function dl_vb_rebuild(c: ExprCall, body: Stmt[]): Expr {
+    match (c.callee) {
+        ExprLambda(l) => {
+            var lam: Expr = ExprLambda { params: l.params, ret_type: l.ret_type, body: body, use_infer: l.use_infer };
+            return ExprCall { callee: lam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+        },
+        _ => { return ExprCall { callee: c.callee, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }; }
+    }
+    return e_unknown("value block");
+}
+
+// dl_expr_kids / dl_expr_with_kids are the generic expression traversal the
+// three defer walks share: kids in EVALUATION order, and a rebuild from a
+// same-length, same-order replacement list. An ExprLambda has no kids — its body
+// is statements, and it is a defer-scope boundary — so a lambda callee is
+// visited only through the value-block check above.
+function dl_expr_kids(e: Expr): Expr[] {
+    match (e) {
+        ExprBinary(b) => { return [b.left, b.right]; },
+        ExprUnary(u) => { return [u.operand]; },
+        ExprCall(c) => {
+            var out: Expr[] = [c.callee];
+            var i: i32 = 0;
+            while (i < c.args.len()) { out = out.append(c.args[i]); i = i + 1; }
+            return out;
+        },
+        ExprArray(a) => { return a.elements; },
+        ExprTuple(t) => { return t.elements; },
+        ExprIndex(x) => { return [x.array, x.index]; },
+        ExprSlice(sl) => { return [sl.array, sl.start, sl.end]; },
+        ExprStructLit(s) => {
+            var out: Expr[] = [s.base];
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { out = out.append(s.field_values[i]); i = i + 1; }
+            return out;
+        },
+        ExprFieldAccess(fa) => { return [fa.obj]; },
+        ExprMapLit(m) => {
+            var out: Expr[] = [];
+            var i: i32 = 0;
+            while (i < m.keys.len()) { out = out.append(m.keys[i]); i = i + 1; }
+            var j: i32 = 0;
+            while (j < m.vals.len()) { out = out.append(m.vals[j]); j = j + 1; }
+            return out;
+        },
+        ExprFString(f) => { return f.exprs; },
+        _ => { var none: Expr[] = []; return none; }
+    }
+    var none2: Expr[] = [];
+    return none2;
+}
+
+// dl_stmts_have_defer reports whether `stmts` contain a `defer` anywhere the
+// defer pass would rewrite — including inside a value block, which is where the
+// statement-only walks used to miss one. Read-only and short-circuiting: it is
+// what keeps the rebuilding walks off a defer-free function.
+function dl_stmts_have_defer(stmts: Stmt[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if (dl_stmt_has_defer(stmts[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function dl_stmt_has_defer(st: Stmt): boolean {
+    match (st) {
+        StmtDefer(_) => { return true; },
+        StmtVar(v) => { return dl_expr_has_defer(v.init); },
+        StmtReturn(r) => { return dl_expr_has_defer(r.value); },
+        StmtExpr(x) => { return dl_expr_has_defer(x.value); },
+        StmtAssign(a) => { return dl_expr_has_defer(a.value); },
+        StmtIf(f) => {
+            return dl_expr_has_defer(f.cond) || dl_stmts_have_defer(f.then_body) || dl_stmts_have_defer(f.else_body);
+        },
+        StmtWhile(w) => { return dl_expr_has_defer(w.cond) || dl_stmts_have_defer(w.body); },
+        StmtFor(fr) => { return dl_expr_has_defer(fr.iter) || dl_stmts_have_defer(fr.body); },
+        StmtMatch(m) => {
+            if (dl_expr_has_defer(m.scrutinee)) { return true; }
+            var i: i32 = 0;
+            while (i < m.arms.len()) {
+                if (dl_expr_has_defer(m.arms[i].guard)) { return true; }
+                if (dl_stmts_have_defer(m.arms[i].body)) { return true; }
+                i = i + 1;
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function dl_exprs_have_defer(es: Expr[]): boolean {
+    var i: i32 = 0;
+    while (i < es.len()) {
+        if (dl_expr_has_defer(es[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function dl_expr_has_defer(e: Expr): boolean {
+    match (e) {
+        ExprCall(c) => {
+            if (dl_is_value_block(c)) {
+                match (c.callee) {
+                    ExprLambda(l) => { return dl_stmts_have_defer(l.body); },
+                    _ => {}
+                }
+            }
+            if (dl_expr_has_defer(c.callee)) { return true; }
+            return dl_exprs_have_defer(c.args);
+        },
+        ExprBinary(b) => { return dl_expr_has_defer(b.left) || dl_expr_has_defer(b.right); },
+        ExprUnary(u) => { return dl_expr_has_defer(u.operand); },
+        ExprArray(a) => { return dl_exprs_have_defer(a.elements); },
+        ExprTuple(t) => { return dl_exprs_have_defer(t.elements); },
+        ExprIndex(x) => { return dl_expr_has_defer(x.array) || dl_expr_has_defer(x.index); },
+        ExprSlice(sl) => { return dl_expr_has_defer(sl.array) || dl_expr_has_defer(sl.start) || dl_expr_has_defer(sl.end); },
+        ExprStructLit(s) => { return dl_expr_has_defer(s.base) || dl_exprs_have_defer(s.field_values); },
+        ExprFieldAccess(fa) => { return dl_expr_has_defer(fa.obj); },
+        ExprMapLit(m) => { return dl_exprs_have_defer(m.keys) || dl_exprs_have_defer(m.vals); },
+        ExprFString(f) => { return dl_exprs_have_defer(f.exprs); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function dl_expr_with_kids(e: Expr, kids: Expr[]): Expr {
+    match (e) {
+        ExprBinary(b) => { return ExprBinary { op: b.op, left: kids[0], right: kids[1], line: b.line, col: b.col }; },
+        ExprUnary(u) => { return ExprUnary { op: u.op, operand: kids[0], line: u.line, col: u.col }; },
+        ExprCall(c) => {
+            var args: Expr[] = [];
+            var i: i32 = 1;
+            while (i < kids.len()) { args = args.append(kids[i]); i = i + 1; }
+            return ExprCall { callee: kids[0], args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+        },
+        ExprArray(_) => { return ExprArray { elements: kids }; },
+        ExprTuple(t) => { return ExprTuple { elements: kids, line: t.line, col: t.col }; },
+        ExprIndex(x) => { return ExprIndex { array: kids[0], index: kids[1], unchecked: x.unchecked, ty: x.ty }; },
+        ExprSlice(sl) => { return ExprSlice { array: kids[0], start: kids[1], end: kids[2], ty: sl.ty }; },
+        ExprStructLit(s) => {
+            var vals: Expr[] = [];
+            var i: i32 = 1;
+            while (i < kids.len()) { vals = vals.append(kids[i]); i = i + 1; }
+            return ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: kids[0], line: s.line, col: s.col };
+        },
+        ExprFieldAccess(fa) => { return ExprFieldAccess { obj: kids[0], field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
+        ExprMapLit(m) => {
+            var ks: Expr[] = [];
+            var i: i32 = 0;
+            while (i < m.keys.len()) { ks = ks.append(kids[i]); i = i + 1; }
+            var vs: Expr[] = [];
+            var j: i32 = m.keys.len();
+            while (j < kids.len()) { vs = vs.append(kids[j]); j = j + 1; }
+            return ExprMapLit { keys: ks, vals: vs, line: m.line, col: m.col };
+        },
+        ExprFString(f) => { return ExprFString { lits: f.lits, exprs: kids, is_expr: f.is_expr, line: f.line, col: f.col }; },
+        _ => { return e; }
+    }
+    return e;
+}
+
 // dl_while / dl_for rebuild a loop around a rewritten body, keeping the
 // label and line the plain s_while / s_for constructors drop — a
 // `break outer` inside a defer-using function has to still find its loop.
@@ -10717,6 +10966,42 @@ function dl_arm_index(a: StmtAssign, from: i32, end: i32): i32 {
 // starts with all of them at 0 — and its action names locals that need not exist
 // at the edge. The range-for desugar puts exactly such an edge at the top of
 // every loop it builds (`if (i >= $hi) break;`), ahead of the whole body (#6860).
+// DeferEdgeExpr is dl_edges_expr's output: the rewritten expression and how far
+// the arming writes inside it have advanced.
+struct DeferEdgeExpr { expr: Expr, armed: i32 }
+
+// dl_edges_expr is dl_expand_loop_edges over the value blocks inside `e`. Their
+// statements run inline in this loop body, so an arming write there advances
+// `armed` and a `break` / `continue` there is an edge out of this iteration.
+function dl_edges_expr(e: Expr, actions: Stmt[], flags: i32[], start: i32, armed0: i32, label: string, own_level: boolean): DeferEdgeExpr {
+    match (e) {
+        ExprCall(c) => {
+            if (dl_is_value_block(c)) {
+                match (c.callee) {
+                    ExprLambda(l) => {
+                        var vb: DeferEdges = dl_expand_loop_edges(l.body, actions, flags, start, armed0, label, own_level);
+                        return DeferEdgeExpr { expr: dl_vb_rebuild(c, vb.stmts), armed: vb.armed };
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return DeferEdgeExpr { expr: e, armed: armed0 }; }
+    var out: Expr[] = [];
+    var armed: i32 = armed0;
+    var i: i32 = 0;
+    while (i < kids.len()) {
+        var r: DeferEdgeExpr = dl_edges_expr(kids[i], actions, flags, start, armed, label, own_level);
+        out = out.append(r.expr);
+        armed = r.armed;
+        i = i + 1;
+    }
+    return DeferEdgeExpr { expr: dl_expr_with_kids(e, out), armed: armed };
+}
+
 function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], start: i32, armed0: i32, label: string, own_level: boolean): DeferEdges {
     var out: Stmt[] = [];
     var armed: i32 = armed0;
@@ -10725,9 +11010,27 @@ function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], star
     while (i < stmts.len()) {
         match (stmts[i]) {
             StmtAssign(a) => {
-                var ax: i32 = dl_arm_index(a, armed, end);
+                var ave: DeferEdgeExpr = dl_edges_expr(a.value, actions, flags, start, armed, label, own_level);
+                armed = ave.armed;
+                var ast: StmtAssign = StmtAssign { target: a.target, value: ave.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+                var ax: i32 = dl_arm_index(ast, armed, end);
                 if (ax >= 0) { armed = ax + 1; }
-                out = out.append(stmts[i]);
+                out = out.append(ast);
+            },
+            StmtVar(v) => {
+                var vve: DeferEdgeExpr = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
+                armed = vve.armed;
+                out = out.append(StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_str: v.is_str });
+            },
+            StmtExpr(x) => {
+                var xve: DeferEdgeExpr = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
+                armed = xve.armed;
+                out = out.append(StmtExpr { value: xve.expr, line: x.line });
+            },
+            StmtReturn(r) => {
+                var rve: DeferEdgeExpr = dl_edges_expr(r.value, actions, flags, start, armed, label, own_level);
+                armed = rve.armed;
+                out = out.append(StmtReturn { value: rve.expr, line: r.line, col: r.col });
             },
             StmtBreak(b) => {
                 if ((own_level && b.label.len() == 0) || (label.len() > 0 && b.label == label)) {
@@ -10746,34 +11049,45 @@ function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], star
                 out = out.append(stmts[i]);
             },
             StmtIf(f) => {
+                var ce: DeferEdgeExpr = dl_edges_expr(f.cond, actions, flags, start, armed, label, own_level);
+                armed = ce.armed;
                 var tr: DeferEdges = dl_expand_loop_edges(f.then_body, actions, flags, start, armed, label, own_level);
                 var er: DeferEdges = dl_expand_loop_edges(f.else_body, actions, flags, start, armed, label, own_level);
                 if (tr.armed > armed) { armed = tr.armed; }
                 if (er.armed > armed) { armed = er.armed; }
-                out = out.append(s_if(f.cond, tr.stmts, er.stmts));
+                out = out.append(s_if(ce.expr, tr.stmts, er.stmts));
             },
             StmtMatch(m) => {
+                var se: DeferEdgeExpr = dl_edges_expr(m.scrutinee, actions, flags, start, armed, label, own_level);
+                armed = se.armed;
                 var arms: MatchArm[] = [];
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
-                    var ar: DeferEdges = dl_expand_loop_edges(m.arms[ai].body, actions, flags, start, armed, label, own_level);
+                    var ge: DeferEdgeExpr = dl_edges_expr(m.arms[ai].guard, actions, flags, start, armed, label, own_level);
+                    var ar: DeferEdges = dl_expand_loop_edges(m.arms[ai].body, actions, flags, start, ge.armed, label, own_level);
                     if (ar.armed > armed) { armed = ar.armed; }
-                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: ar.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: ar.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard });
                     ai = ai + 1;
                 }
-                out = out.append(s_match(m.scrutinee, arms));
+                out = out.append(s_match(se.expr, arms));
             },
             StmtWhile(w) => {
+                var wce: DeferEdgeExpr = dl_edges_expr(w.cond, actions, flags, start, armed, label, own_level);
+                armed = wce.armed;
+                var wl: StmtWhile = StmtWhile { cond: wce.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
                 var wr: DeferEdges = dl_expand_loop_edges(w.body, actions, flags, start, armed, label, false);
                 if (wr.armed > armed) { armed = wr.armed; }
-                if (label.len() == 0) { out = out.append(stmts[i]); }
-                else { out = out.append(dl_while(w, wr.stmts)); }
+                if (label.len() == 0) { out = out.append(dl_while(wl, w.body)); }
+                else { out = out.append(dl_while(wl, wr.stmts)); }
             },
             StmtFor(fr) => {
+                var fie: DeferEdgeExpr = dl_edges_expr(fr.iter, actions, flags, start, armed, label, own_level);
+                armed = fie.armed;
+                var fl: StmtFor = StmtFor { var_name: fr.var_name, iter: fie.expr, body: fr.body, label: fr.label, line: fr.line };
                 var fr2: DeferEdges = dl_expand_loop_edges(fr.body, actions, flags, start, armed, label, false);
                 if (fr2.armed > armed) { armed = fr2.armed; }
-                if (label.len() == 0) { out = out.append(stmts[i]); }
-                else { out = out.append(dl_for(fr, fr2.stmts)); }
+                if (label.len() == 0) { out = out.append(dl_for(fl, fr.body)); }
+                else { out = out.append(dl_for(fl, fr2.stmts)); }
             },
             _ => { out = out.append(stmts[i]); },
         }
@@ -10820,6 +11134,44 @@ function dl_collect_stmts(stmts: Stmt[], actions: Stmt[], flags: i32[]): DeferAc
     return DeferAcc { stmts: out, actions: acc, flags: afl };
 }
 
+// DeferExprAcc is dl_collect_expr's output: the rewritten expression and the
+// accumulator the value blocks inside it added to.
+struct DeferExprAcc { expr: Expr, actions: Stmt[], flags: i32[] }
+
+// dl_collect_expr registers the defers written inside `e`'s value blocks with
+// the ENCLOSING function's accumulator, replacing each with its arming write —
+// the expression half of dl_collect_stmt.
+function dl_collect_expr(e: Expr, actions: Stmt[], flags: i32[]): DeferExprAcc {
+    match (e) {
+        ExprCall(c) => {
+            if (dl_is_value_block(c)) {
+                match (c.callee) {
+                    ExprLambda(l) => {
+                        var vb: DeferAcc = dl_collect_stmts(l.body, actions, flags);
+                        return DeferExprAcc { expr: dl_vb_rebuild(c, vb.stmts), actions: vb.actions, flags: vb.flags };
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return DeferExprAcc { expr: e, actions: actions, flags: flags }; }
+    var out: Expr[] = [];
+    var acc: Stmt[] = actions;
+    var afl: i32[] = flags;
+    var i: i32 = 0;
+    while (i < kids.len()) {
+        var r: DeferExprAcc = dl_collect_expr(kids[i], acc, afl);
+        out = out.append(r.expr);
+        acc = r.actions;
+        afl = r.flags;
+        i = i + 1;
+    }
+    return DeferExprAcc { expr: dl_expr_with_kids(e, out), actions: acc, flags: afl };
+}
+
 function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
     match (st) {
         StmtDefer(d) => {
@@ -10827,37 +11179,67 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
             var one: Stmt[] = [setflag];
             return DeferAcc { stmts: one, actions: actions.append(d.action), flags: flags.append(d.on_error) };
         },
+        StmtVar(v) => {
+            var ir: DeferExprAcc = dl_collect_expr(v.init, actions, flags);
+            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_str: v.is_str }];
+            return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
+        },
+        StmtReturn(r) => {
+            var vr: DeferExprAcc = dl_collect_expr(r.value, actions, flags);
+            var one: Stmt[] = [StmtReturn { value: vr.expr, line: r.line, col: r.col }];
+            return DeferAcc { stmts: one, actions: vr.actions, flags: vr.flags };
+        },
+        StmtExpr(x) => {
+            var xr: DeferExprAcc = dl_collect_expr(x.value, actions, flags);
+            var one: Stmt[] = [StmtExpr { value: xr.expr, line: x.line }];
+            return DeferAcc { stmts: one, actions: xr.actions, flags: xr.flags };
+        },
+        StmtAssign(a) => {
+            var ar: DeferExprAcc = dl_collect_expr(a.value, actions, flags);
+            var one: Stmt[] = [StmtAssign { target: a.target, value: ar.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
+            return DeferAcc { stmts: one, actions: ar.actions, flags: ar.flags };
+        },
         StmtIf(f) => {
-            var tr: DeferAcc = dl_collect_stmts(f.then_body, actions, flags);
+            var cr: DeferExprAcc = dl_collect_expr(f.cond, actions, flags);
+            var tr: DeferAcc = dl_collect_stmts(f.then_body, cr.actions, cr.flags);
             var er: DeferAcc = dl_collect_stmts(f.else_body, tr.actions, tr.flags);
-            var one: Stmt[] = [s_if(f.cond, tr.stmts, er.stmts)];
+            var one: Stmt[] = [s_if(cr.expr, tr.stmts, er.stmts)];
             return DeferAcc { stmts: one, actions: er.actions, flags: er.flags };
         },
         StmtWhile(w) => {
-            var wstart: i32 = actions.len();
-            var br: DeferAcc = dl_collect_stmts(w.body, actions, flags);
-            var one: Stmt[] = [dl_while(w, dl_loop_body(br.stmts, br.actions, br.flags, wstart, w.label))];
+            // The condition is not part of the loop BODY, so a defer written in
+            // one belongs to the function, not to the iteration — it registers
+            // ahead of `wstart`, matching native's bodyDeferIdxs(n.Body).
+            var cw: DeferExprAcc = dl_collect_expr(w.cond, actions, flags);
+            var wstart: i32 = cw.actions.len();
+            var br: DeferAcc = dl_collect_stmts(w.body, cw.actions, cw.flags);
+            var wl: StmtWhile = StmtWhile { cond: cw.expr, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+            var one: Stmt[] = [dl_while(wl, dl_loop_body(br.stmts, br.actions, br.flags, wstart, w.label))];
             return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtFor(fr) => {
-            var fstart: i32 = actions.len();
-            var br: DeferAcc = dl_collect_stmts(fr.body, actions, flags);
-            var one: Stmt[] = [dl_for(fr, dl_loop_body(br.stmts, br.actions, br.flags, fstart, fr.label))];
+            var itr: DeferExprAcc = dl_collect_expr(fr.iter, actions, flags);
+            var fstart: i32 = itr.actions.len();
+            var br: DeferAcc = dl_collect_stmts(fr.body, itr.actions, itr.flags);
+            var fl: StmtFor = StmtFor { var_name: fr.var_name, iter: itr.expr, body: fr.body, label: fr.label, line: fr.line };
+            var one: Stmt[] = [dl_for(fl, dl_loop_body(br.stmts, br.actions, br.flags, fstart, fr.label))];
             return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
         },
         StmtMatch(m) => {
+            var sr: DeferExprAcc = dl_collect_expr(m.scrutinee, actions, flags);
             var arms: MatchArm[] = [];
-            var acc: Stmt[] = actions;
-            var afl: i32[] = flags;
+            var acc: Stmt[] = sr.actions;
+            var afl: i32[] = sr.flags;
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, acc, afl);
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                var gr: DeferExprAcc = dl_collect_expr(m.arms[i].guard, acc, afl);
+                var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, gr.actions, gr.flags);
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: gr.expr, has_guard: m.arms[i].has_guard });
                 acc = ar.actions;
                 afl = ar.flags;
                 i = i + 1;
             }
-            var one: Stmt[] = [s_match(m.scrutinee, arms)];
+            var one: Stmt[] = [s_match(sr.expr, arms)];
             return DeferAcc { stmts: one, actions: acc, flags: afl };
         },
         _ => {
@@ -10921,46 +11303,96 @@ function dl_expand_returns(stmts: Stmt[], cleanup_all: Stmt[], cleanup_err: Stmt
     return out;
 }
 
+// dl_expand_returns_vb expands the returns of a value block's body. Its LAST
+// statement is the block's VALUE, not an exit — lower_value_block rewrites that
+// `return tail` into a store — so only the leading statements, which the same
+// lowering runs inline, carry real function returns.
+function dl_expand_returns_vb(body: Stmt[], cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
+    if (body.len() == 0) { return body; }
+    var lead: Stmt[] = [];
+    var i: i32 = 0;
+    while (i < body.len() - 1) { lead = lead.append(body[i]); i = i + 1; }
+    return dl_expand_returns(lead, cleanup_all, cleanup_err).append(body[body.len() - 1]);
+}
+
+// dl_return_expr expands the `return`s written inside `e`'s value blocks: a
+// value block is inlined into the enclosing function, so a return there is a
+// real function return and needs the cleanup spliced in front of it.
+function dl_return_expr(e: Expr, cleanup_all: Stmt[], cleanup_err: Stmt[]): Expr {
+    match (e) {
+        ExprCall(c) => {
+            if (dl_is_value_block(c)) {
+                match (c.callee) {
+                    ExprLambda(l) => { return dl_vb_rebuild(c, dl_expand_returns_vb(l.body, cleanup_all, cleanup_err)); },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    var kids: Expr[] = dl_expr_kids(e);
+    if (kids.len() == 0) { return e; }
+    var out: Expr[] = [];
+    var i: i32 = 0;
+    while (i < kids.len()) { out = out.append(dl_return_expr(kids[i], cleanup_all, cleanup_err)); i = i + 1; }
+    return dl_expr_with_kids(e, out);
+}
+
 function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[]): Stmt[] {
     match (st) {
         StmtReturn(r) => {
+            var rv: Expr = dl_return_expr(r.value, cleanup_all, cleanup_err);
             var isvoid: boolean = false;
-            match (r.value) {
+            match (rv) {
                 ExprUnknown(_) => { isvoid = true; },
                 _ => {}
             }
             var out: Stmt[] = [];
-            if (!isvoid) { out = out.append(s_assign("__defret", r.value)); }
+            if (!isvoid) { out = out.append(s_assign("__defret", rv)); }
             var i: i32 = 0;
             while (i < cleanup_all.len()) { out = out.append(cleanup_all[i]); i = i + 1; }
-            if (!isvoid && dl_is_err_value(r.value)) {
+            if (!isvoid && dl_is_err_value(rv)) {
                 var k: i32 = 0;
                 while (k < cleanup_err.len()) { out = out.append(cleanup_err[k]); k = k + 1; }
             }
-            if (isvoid) { out = out.append(s_return(r.value)); }
+            if (isvoid) { out = out.append(s_return(rv)); }
             else { out = out.append(s_return(e_ident("__defret"))); }
             return out;
         },
+        StmtVar(v) => {
+            var one: Stmt[] = [StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_str: v.is_str }];
+            return one;
+        },
+        StmtExpr(x) => {
+            var one: Stmt[] = [StmtExpr { value: dl_return_expr(x.value, cleanup_all, cleanup_err), line: x.line }];
+            return one;
+        },
+        StmtAssign(a) => {
+            var one: Stmt[] = [StmtAssign { target: a.target, value: dl_return_expr(a.value, cleanup_all, cleanup_err), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
+            return one;
+        },
         StmtIf(f) => {
-            var one: Stmt[] = [s_if(f.cond, dl_expand_returns(f.then_body, cleanup_all, cleanup_err), dl_expand_returns(f.else_body, cleanup_all, cleanup_err))];
+            var one: Stmt[] = [s_if(dl_return_expr(f.cond, cleanup_all, cleanup_err), dl_expand_returns(f.then_body, cleanup_all, cleanup_err), dl_expand_returns(f.else_body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtWhile(w) => {
-            var one: Stmt[] = [dl_while(w, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
+            var wl: StmtWhile = StmtWhile { cond: dl_return_expr(w.cond, cleanup_all, cleanup_err), body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+            var one: Stmt[] = [dl_while(wl, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtFor(fr) => {
-            var one: Stmt[] = [dl_for(fr, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
+            var fl: StmtFor = StmtFor { var_name: fr.var_name, iter: dl_return_expr(fr.iter, cleanup_all, cleanup_err), body: fr.body, label: fr.label, line: fr.line };
+            var one: Stmt[] = [dl_for(fl, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
             return one;
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: dl_return_expr(m.arms[i].guard, cleanup_all, cleanup_err), has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            var one: Stmt[] = [s_match(m.scrutinee, arms)];
+            var one: Stmt[] = [s_match(dl_return_expr(m.scrutinee, cleanup_all, cleanup_err), arms)];
             return one;
         },
         _ => {
@@ -11330,6 +11762,10 @@ pub function hoist_local_funcs_module(mod: Module): Module {
 }
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
+    // The walks below REBUILD every expression they pass, and on a function with
+    // no `defer` they throw the copy away. This pre-scan allocates nothing, so
+    // the rebuild is confined to the functions that need it.
+    if (!dl_stmts_have_defer(fn.body)) { return fn; }
     var empty: Stmt[] = [];
     var emptyf: i32[] = [];
     var cr: DeferAcc = dl_collect_stmts(fn.body, empty, emptyf);
