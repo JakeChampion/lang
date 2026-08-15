@@ -1613,6 +1613,23 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			!isMapType(b.exprType(x)) {
 			return false
 		}
+		// An element read out of an array-typed LOCAL is the counted alias the
+		// struct/tuple field read above describes, one container over:
+		// needsRcIncOnAlias fires for a pointer-shaped element, so the binding
+		// site inc's it and the destination owns a reference of its own. The
+		// conservative taint instead pinned the destination for the whole
+		// function, so `var line = words[0]` followed by `line = line + …`
+		// stranded every intermediate concat (#6567) — a seed of `""` was flat
+		// all along, which is what made the shape easy to miss.
+		if !x.IsString && !x.IsSlice && !isMapType(b.exprType(x)) && needsRcIncOnAlias(x, b) {
+			if id, isIdent := x.Array.(*ast.Ident); isIdent {
+				if _, isLocal := b.locals[id.Name]; isLocal {
+					if _, isArr := b.exprType(id).(ast.ArrayType); isArr {
+						return false
+					}
+				}
+			}
+		}
 		return true
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer

@@ -4650,6 +4650,11 @@ type builder struct {
 	// default is NumberType (i32); float-typed bindings record
 	// FloatType so wasm declares the local as f32.
 	scratchType map[int32]ast.Type
+	// mapGetReboxSizes records, per `m.get(k)` call node, the data size of
+	// the `Option[V]` box emitMapGetRebox allocated for it. Written by the
+	// lowering and read by a consumer that can reclaim the box (the match
+	// scrutinee path), so the two cannot disagree about which calls got one.
+	mapGetReboxSizes map[*ast.Call]int32
 	// nextSlot is the index the next synthetic scratch slot
 	// will use. Starts at len(params)+len(user locals) and only
 	// ever grows, so reusing a binding name across two match
@@ -5082,6 +5087,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		out:                  out,
 		locals:               map[string]int32{},
 		scratchType:          map[int32]ast.Type{},
+		mapGetReboxSizes:     map[*ast.Call]int32{},
 		ptrW:                 ptrW,
 		dynRcSupported:       dynRcSupported,
 		emitLineMarkers:      emitLineMarkers,
@@ -7636,6 +7642,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 			reclaimScrut bool
 			scrutEnum    ast.EnumType
 		)
+		// A `m.get(k)` scrutinee's rebuilt Option box is reclaimed SHALLOW
+		// instead (reclaimableMapGetScrutinee): its payload belongs to the map,
+		// so the deep drop above would release a live value.
+		mapGetBox, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, anyArmAtBinding(n.Arms))
 		// Consuming match: the scrutinee is an OWN (consuming) parameter. The
 		// arms move its pointer payloads into bindings (reclaimed downstream),
 		// so after the match the box is freed SHALLOW (buffer only, no payload
@@ -7902,6 +7912,8 @@ func (b *builder) stmt(s ast.Stmt) error {
 		b.closeScope() // end of match
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
+		} else if reclaimMapGet && !pairFormScrutinee {
+			b.emitFreshBoxFreeSized(ptrSlot, mapGetBox)
 		}
 	default:
 		return fmt.Errorf("ir: unsupported statement %T", s)
@@ -8462,6 +8474,13 @@ func (b *builder) expr(e ast.Expr) error {
 			bts = append(bts, arm.BindingTypes)
 		}
 		scrutEnum, reclaimScrut := b.reclaimableMatchScrutinee(n.Tag, bns, bts, resultType)
+		atBinding := false
+		for _, arm := range n.Arms {
+			if arm.AtBinding != "" {
+				atBinding = true
+			}
+		}
+		mapGetBox, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, atBinding)
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
@@ -8549,6 +8568,8 @@ func (b *builder) expr(e ast.Expr) error {
 		// resultSlot; net-zero on the operand stack) before loading the result.
 		if reclaimScrut {
 			b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true)
+		} else if reclaimMapGet {
+			b.emitFreshBoxFreeSized(ptrSlot, mapGetBox)
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
 	case *ast.TryOp:
@@ -8661,7 +8682,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// leak); a PAIR-FORM inner's rebox is a real rc=1 heap box that
 			// leaked one allocation per failed `?` — free it.
 			if tryReboxFresh {
-				b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+				b.emitFreshBoxFreeSized(ptrSlot, tryReboxSize)
 			}
 			if b.thisIsPair {
 				b.emit(Op{Kind: OpMakeNoneI32})
@@ -8711,7 +8732,7 @@ func (b *builder) expr(e ast.Expr) error {
 				if reclaimTry {
 					b.emitTryBoxFreeVariant(ptrSlot, tryEnum, 1)
 				} else if tryReboxFresh {
-					b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+					b.emitFreshBoxFreeSized(ptrSlot, tryReboxSize)
 				}
 				if sweepFailurePath {
 					b.emitRcDecLocalsAtExitExcept(sweepExclude)
@@ -8754,7 +8775,7 @@ func (b *builder) expr(e ast.Expr) error {
 		if reclaimTry {
 			b.emitTryBoxFreeVariant(ptrSlot, tryEnum, 0)
 		} else if tryReboxFresh {
-			b.emitTryBoxFreeSized(ptrSlot, tryReboxSize)
+			b.emitFreshBoxFreeSized(ptrSlot, tryReboxSize)
 		}
 	case *ast.Index:
 		// Compile-time fold: `"literal"[const_idx]` collapses to
@@ -14634,13 +14655,18 @@ func (b *builder) emitTryBoxFreeVariant(slot int32, et ast.EnumType, varIdx int)
 		}
 	}
 	_, size := payloadLayout(ed.Variants[varIdx].Payloads, len(ed.Variants[varIdx].Payloads), b.ptrW)
-	b.emitTryBoxFreeSized(slot, size)
+	b.emitFreshBoxFreeSized(slot, size)
 }
 
-// emitTryBoxFreeSized is emitTryBoxFree's emission half, shared with the
-// pair-form rebox free (tryPairReboxSize) whose box size comes from the
-// repack layout instead of the enum decl.
-func (b *builder) emitTryBoxFreeSized(slot int32, size int32) {
+// emitFreshBoxFreeSized returns a compiler-built transient box of known data
+// size to the freelist. SHALLOW — payloads are not walked, so the caller owes
+// the argument that nothing outside the box owns them. The free is
+// is_unique-gated, which also makes it safe on a static enum sentinel and on a
+// box some other reference reached.
+//
+// Shared by emitTryBoxFree (enum-decl sizing), the pair-form rebox free
+// (tryPairReboxSize) and emitMapGetRebox's two boxes.
+func (b *builder) emitFreshBoxFreeSized(slot int32, size int32) {
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -18403,6 +18429,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		return err
 	}
 	b.emitMapCall("__method_Map_get", 2, kType)
+	optOffset, optSize := usizeOptionBoxLayout(b.ptrW)
 	optPtrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__map_get_optptr_%d", optPtrSlot)] = optPtrSlot
 	b.emit(Op{Kind: OpStoreLocal, I32: optPtrSlot})
@@ -18423,23 +18450,15 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	b.emit(Op{Kind: OpLoadLocal, I32: optPtrSlot})
 	b.emit(Op{Kind: OpLoad}) // tag at +0
 	b.emit(Op{Kind: OpIf, I32: int32(BlockTypeVoid)})
-	// --- tag != 0 (None on this side): 4-byte tag-only Option.
-	b.emit(Op{Kind: OpConstI32, I32: 4 + rcHeaderBytes})
-	b.emit(Op{Kind: OpAlloc})
-	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1}) // rc = 1
-	b.emit(Op{Kind: OpStore})
-	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
-	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
-	b.emit(Op{Kind: OpAdd})
+	// --- tag != 0 (None on this side): the payloadless variant 1 sentinel
+	// every other None producer uses (emitEnumNew), so a miss allocates
+	// nothing and leaves nothing to reclaim.
+	b.emit(Op{Kind: OpEnumSentinel, I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
-	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
-	b.emit(Op{Kind: OpConstI32, I32: 1}) // tag = None
-	b.emit(Op{Kind: OpStore})
 	b.emit(Op{Kind: OpElse})
 	// --- tag == 0 (Some): build the user-shaped Option<V>.
 	offsets, size := payloadLayout([]ast.Type{vType}, 1, b.ptrW)
+	b.mapGetReboxSizes[n] = size
 	b.emit(Op{Kind: OpConstI32, I32: size + rcHeaderBytes})
 	b.emit(Op{Kind: OpAlloc})
 	b.emit(Op{Kind: OpStoreLocal, I32: baseSlot})
@@ -18460,7 +18479,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// offset with a pointer-width load so the full value (cell
 	// pointer or pointer-shaped V) survives on natives.
 	b.emit(Op{Kind: OpLoadLocal, I32: optPtrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: usizeOptionPayloadOffset(b.ptrW)})
+	b.emit(Op{Kind: OpConstI32, I32: optOffset})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 	if boxedV {
@@ -18492,6 +18511,11 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// narrows / widens to the V slot correctly.
 	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpEnd})
+	// The helper's `Option[usize]` is a per-call transient: its payload has
+	// been copied into the rebuilt box and nothing else can reach it. Shallow,
+	// so the payload — the map's own value — is untouched; on a miss the slot
+	// holds the None sentinel, which the is_unique gate declines.
+	b.emitFreshBoxFreeSized(optPtrSlot, optSize)
 	// get doesn't retain the key cell — reclaim the transient (the
 	// operand stack is empty here, before the result is pushed).
 	b.freeLookupKeyCell(keyCell, n.Args[1], kType)
@@ -18499,15 +18523,15 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	return nil
 }
 
-// usizeOptionPayloadOffset returns the byte offset of the payload
-// slot in an `Option[usize]` heap box — the shape `__map_get_impl`
-// returns. The tag occupies offset 0; the pointer-width usize
-// payload follows, 8-aligned on natives (→ offset 8) and at
-// offset 4 on wasm32. Centralised so the wide-map get / get_or
-// readers stay in sync with payloadLayout's usize sizing.
-func usizeOptionPayloadOffset(ptrW int) int32 {
-	offs, _ := payloadLayout([]ast.Type{ast.NumberType{Width: ast.WidthPtr}}, 1, ptrW)
-	return offs[0]
+// usizeOptionBoxLayout returns the byte offset of the payload slot and the
+// data size of an `Option[usize]` heap box — the shape `__map_get_impl`
+// returns. The tag occupies offset 0; the pointer-width usize payload
+// follows, 8-aligned on natives (→ offset 8, size 16) and at offset 4 on
+// wasm32 (size 8). Centralised so the wide-map get / get_or readers and the
+// transient's free stay in sync with payloadLayout's usize sizing.
+func usizeOptionBoxLayout(ptrW int) (offset, size int32) {
+	offs, sz := payloadLayout([]ast.Type{ast.NumberType{Width: ast.WidthPtr}}, 1, ptrW)
+	return offs[0], sz
 }
 
 // emitStringKMapCall boxes a string K argument and emits a

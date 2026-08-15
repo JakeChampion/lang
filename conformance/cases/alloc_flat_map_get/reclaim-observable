@@ -1,0 +1,9 @@
+This case reports the SHAPE of the allocator's fresh-byte curve for a map
+lookup loop, so its output is deliberately different with reclamation off:
+"flat" with free on, "grows" with free off. That is the property it exists
+to assert, and the *FixturesFreeMatchesNoFree gates therefore invert for it
+— they require the two runs to DIFFER.
+
+Same contract as alloc_flat_under_reclaim; docs/ALLOCATION-OBSERVABLE.md
+states why the inversion is a claim being checked rather than a check being
+skipped.

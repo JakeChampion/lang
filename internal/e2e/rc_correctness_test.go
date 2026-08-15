@@ -4348,6 +4348,52 @@ function build(n: i32): i32 {
 }
 function main(): i32 { return (build(9) - 6) + __rc_underflow_count(); }`,
 	},
+	{
+		// A map value read out and back many times, with the map outliving
+		// every read (#6561). `m.get(k)` hands back a reference the MAP
+		// still owns, so the box reclaim added for the lookup leak must not
+		// reach the payload: a string value read 200 times and read once
+		// more afterwards is 200 * 28 + 28.
+		name: "map_get_string_value_borrowed_repeatedly",
+		src: `
+import "core/map";
+import "std/string";
+function main(): i32 {
+    var index: Map[string, string] = map_new(64);
+    index = index.insert("k", "a-heap-string-value-past-sso");
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) {
+        match (index.get("k")) { Some(s) => { acc = acc + s.len(); }, None => { return 998; } }
+        i = i + 1;
+    }
+    match (index.get("k")) { Some(s) => { acc = acc + s.len(); }, None => { return 997; } }
+    return (acc - 5628) + __rc_underflow_count();
+}`,
+	},
+	{
+		// An accumulator SEEDED from a container read, with the source array
+		// read again afterwards (#6567). The seed is a counted alias of the
+		// element, so reclaiming the accumulator's intermediates must leave
+		// every element intact: 200 * 25 for the lines, 19 for the elements.
+		name: "accumulator_seeded_from_array_element",
+		src: `
+function build(words: string[]): string {
+    var line: string = words[0];
+    var g: i32 = 1;
+    while (g < words.len()) { line = line + "  " + words[g]; g = g + 1; }
+    return line;
+}
+function main(): i32 {
+    var words: string[] = ["alpha", "beta", "gamma", "delta"];
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) { acc = acc + build(words).len(); i = i + 1; }
+    var j: i32 = 0;
+    while (j < words.len()) { acc = acc + words[j].len(); j = j + 1; }
+    return (acc - 5019) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
