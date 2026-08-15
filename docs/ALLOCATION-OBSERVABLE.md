@@ -92,6 +92,13 @@ All are stated over the *shape*, and all are pinned — see
   separate helper: #6423 was one stale constant duplicated across
   `__fern_str_dec` and `__fern_closure_drop`, and a case that only
   allocated strings would have left the second half silent.
+- **AL-04.** The AL-01 shape where the loop body only READS a container.
+  `m.get(k)` allocates on the caller's behalf — a box to carry the
+  `Option[V]` — so a read-only loop has a reclaim obligation even though
+  the program never constructed anything. Separate because the cost of
+  missing it scales with the read-heavy hot path rather than with the
+  data: #6561 stranded two blocks on every lookup, and both the HIT and
+  the MISS edge leaked, by different amounts and through different boxes.
 
 ## What it found immediately
 

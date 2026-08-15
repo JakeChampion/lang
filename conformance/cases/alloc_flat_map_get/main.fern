@@ -1,0 +1,58 @@
+// spec: AL-04
+//
+// A map LOOKUP is a reclaim shape: `m.get(k)` builds an `Option[V]`
+// that the match consumes and nothing else can reach, so however
+// many lookups a loop performs, the bump allocator hands out a
+// bounded number of FRESH bytes. Doubling the lookup count must not
+// increase what the second run consumes.
+//
+// The sibling of alloc_flat_under_reclaim, and worth its own case
+// because `get` is the operation maps exist for: the cost of a leak
+// here scales with the read-heavy hot path rather than with the data.
+// Every lookup stranded two blocks — the runtime helper's uniform
+// `Option[usize]` and the consumer-shaped box rebuilt from it (#6561).
+//
+// Both edges are covered: a HIT carries a payload out of the map, a
+// MISS does not, and they were separate leaks.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "core/map";
+import "std/i32";
+import "std/i64";
+
+function lookups(index: Map[string, i32], n: i32): i32 {
+    var i: i32 = 0;
+    var hits: i32 = 0;
+    while (i < n) {
+        match (index.get("alpha")) {
+            Some(g) => { hits = hits + g; },
+            None => { hits = hits - 1; }
+        }
+        match (index.get("absent")) {
+            Some(g) => { hits = hits + g; },
+            None => { hits = hits + 2; }
+        }
+        i = i + 1;
+    }
+    return hits;
+}
+
+function main(): i32 {
+    var index: Map[string, i32] = map_new(64);
+    index = index.insert("alpha", 1);
+
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = lookups(index, 50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = lookups(index, 100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the lookups must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    // The map still owns its value after all that reading.
+    match (index.get("alpha")) { Some(g) => { print(g.to_string()); }, None => { print("lost"); } }
+    return 0;
+}

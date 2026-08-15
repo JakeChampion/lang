@@ -16604,14 +16604,20 @@ func TestWASMRcAliasInc(t *testing.T) {
 
 // Phase 1d-ii (+ Phase 1d-viii): FieldAccess + Index alias
 // reads inc the rc; with Phase 1d-viii, the struct- / array-
-// lit constructor also inc's the captured array. End state:
-// rc=3 after alloc (1) + lit store (1) + alias read (1).
+// lit constructor also inc's the captured array. A LIVE alias
+// ends at rc=3 — alloc (1) + lit store (1) + alias read (1);
+// a DEAD one cancels the read's inc against its own exit dec
+// and ends at rc=2. Both are pinned, because dropping either
+// side of that pair alone is an over-release.
 func TestWASMRcAliasIncFieldAndIndex(t *testing.T) {
 	for _, c := range []struct {
 		name string
+		// want names the rc the case's arithmetic subtracts, so a failure
+		// says which expectation moved.
+		want string
 		src  string
 	}{
-		{"field_access", `struct Holder { items: u8[] }
+		{"field_access", "rc=3 (alloc + struct-lit store + live alias read)", `struct Holder { items: u8[] }
 function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var h: Holder = Holder { items: inner };
@@ -16623,21 +16629,36 @@ function main(): i32 {
     // unchanged.
     return __rc_get(inner) - 3 + h.items.len() - 8 + alias.len() - 8;
 }`},
-		{"index_load", `function main(): i32 {
+		{"index_load", "rc=3 (alloc + array-lit store + live alias read)", `function main(): i32 {
     var inner: u8[] = __alloc_u8(8);
     var matrix: u8[][] = [inner];
     var alias: u8[] = matrix[0];
-    // Precise drops (RC-Perceus) release the now-dead matrix at its last
-    // use; reference it in the return so it stays live through the check —
-    // this measures the fully-aliased rc (inner + the array element + alias),
-    // which is what the test asserts. matrix.len()-1 == 0, so the result is
-    // unchanged.
-    return __rc_get(inner) - 3 + matrix.len() - 1;
+    // Precise drops (RC-Perceus) release the now-dead matrix AND the now-dead
+    // alias at their last use; reference both in the return so they stay live
+    // through the check — this measures the fully-aliased rc (inner + the
+    // array element + alias), which is what the test asserts. An alias that is
+    // NOT read again cancels its inc against its own exit dec instead, which
+    // is a different rc and the case below. matrix.len()-1 and alias.len()-8
+    // are both 0, so the result is unchanged.
+    return __rc_get(inner) - 3 + matrix.len() - 1 + alias.len() - 8;
+}`},
+		{"index_load_dead_alias", "rc=2 (alloc + array-lit store; the dead alias inc/dec cancel)", `function main(): i32 {
+    var inner: u8[] = __alloc_u8(8);
+    var matrix: u8[][] = [inner];
+    var alias: u8[] = matrix[0];
+    // The alias is never read again, so it is a pure borrowed view: the
+    // transfer inc cancels against its own exit dec as a net-zero pair — the
+    // #4402 opt-1 shape RcAliasInc's dead case pins for a plain ident, which
+    // an element read reaches too now that it is not permanently borrow-
+    // tainted (#6567). rc is therefore 2 (alloc + the array-literal element
+    // store), and the underflow counter must still be 0: eliding ONE side of
+    // that pair is an over-release, not an optimisation.
+    return __rc_get(inner) - 2 + matrix.len() - 1 + __rc_underflow_count();
 }`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := runWasm(t, c.src); got != 0 {
-				t.Errorf("got exit %d, want 0 (lit + alias should bump rc to 3)", got)
+				t.Errorf("got exit %d, want 0 — expected %s", got, c.want)
 			}
 		})
 	}

@@ -339,6 +339,35 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	return et, true
 }
 
+// reclaimableMapGetScrutinee reports the data size of the `Option[V]` box a
+// just-lowered `m.get(k)` scrutinee allocated, and whether the match may free
+// it once dispatch is done.
+//
+// The box is emitMapGetRebox's own — allocated per call at rc=1, dead as soon
+// as the arms have read the payload, and dec'd by nothing, so `match
+// (m.get(k))` in a loop stranded one box per lookup. The size comes from
+// mapGetReboxSizes rather than from re-deriving the lowering's dispatch
+// condition, so a call that took some other route has no entry and is left
+// alone. On a miss the slot holds the shared None sentinel, which the free's
+// is_unique gate declines.
+//
+// The free must stay SHALLOW (emitFreshBoxFreeSized). A pointer payload here
+// is the MAP's value: only the kinds __map_retain_val covers, plus the string
+// retain emitMapGetRebox emits, hand the caller a counted reference, so a deep
+// drop would release a value the map still owns. An `@` binding is refused
+// outright — it binds the box pointer itself to a user name.
+func (b *builder) reclaimableMapGetScrutinee(tag ast.Expr, hasAtBinding bool) (int32, bool) {
+	if !ast.RcFreeEnabled || hasAtBinding {
+		return 0, false
+	}
+	call, ok := tag.(*ast.Call)
+	if !ok {
+		return 0, false
+	}
+	size, lowered := b.mapGetReboxSizes[call]
+	return size, lowered
+}
+
 // reclaimablePairFormPayload reports whether a PAIR-FORM match's payload
 // binding is a fresh owned heap value the arm can release once its body ends,
 // and returns the binding's type.
