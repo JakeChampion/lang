@@ -4298,6 +4298,56 @@ function build(n: i32): i32 {
 }
 function main(): i32 { return (build(5) - 4) + __rc_underflow_count(); }`,
 	},
+	{
+		// A LIVE `continue` before the element's declaration, so the declaration
+		// is genuinely skipped on half the iterations. That is the path the
+		// widened guard rests on: the element's slot then still holds the
+		// previous iteration's pointer, which the buffer already owns, and the
+		// suppressed drop must leave it alone. i = 1, 3, 5 are stored, so
+		// (1+1) + (2+3) + (3+5) = 15.
+		name: "loop_push_live_continue_before_decl",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }
+        var v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        total = total + vals.len() + vals[vals.len() - 1].kids[0];
+    }
+    return total;
+}
+function main(): i32 { return (build(6) - 15) + __rc_underflow_count(); }`,
+	},
+	{
+		// A LIVE `break` before the declaration: the loop leaves with the slot
+		// holding the last stored element, which the buffer owns. 3 stored,
+		// kinds 0 + 1 + 2 = 3, so 3 + 3 = 6.
+		name: "loop_push_live_break_before_decl",
+		src: `
+import "core/int";
+struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+    var vals: Val[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        if (i == 3) { break; }
+        var v: Val = Val { kind: i, kids: [i] };
+        vals = vals.append(v);
+        i = i + 1;
+    }
+    var sum: i32 = 0;
+    var k: i32 = 0;
+    while (k < vals.len()) { sum = sum + vals[k].kids[0]; k = k + 1; }
+    return vals.len() + sum;
+}
+function main(): i32 { return (build(9) - 6) + __rc_underflow_count(); }`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
