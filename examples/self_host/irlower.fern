@@ -1258,18 +1258,21 @@ function split_type_list(csv: string): string[] {
 }
 
 // wasm_width_char maps a type SPELLING to the wasm value type a value of that
-// type occupies: 'l' for the 8-byte integers, 'd' / 'f' for the floats, 'w' for
+// type occupies: 'l' for the 8-byte integers, 'd' for the floats, 'w' for
 // everything else — every pointer-shaped type (string, array, struct, enum,
 // tuple, Option, fn) is an i32 on wasm32. "" when the spelling is a bare type
 // VARIABLE of the enclosing function, which has no width until it is
 // instantiated; a type var NESTED in a container (`T[]`, `Option[T]`) is still a
 // pointer and so still 'w'.
+//
+// f32 is 'd': the wasm backend carries every float in an f64, so an f32 param
+// is emitted `(param f64)`. A funcref type naming it f32 would not match the
+// function it dispatches to.
 pub function wasm_width_char(ty: string, tps: string[]): string {
     if (ty.len() == 0) { return ""; }
     if (util.index_of_str(tps, ty) >= 0) { return ""; }
     if (ty == "i64" || ty == "u64") { return "l"; }
-    if (ty == "f64") { return "d"; }
-    if (ty == "f32") { return "f"; }
+    if (ty == "f64" || ty == "f32") { return "d"; }
     return "w";
 }
 
@@ -7978,7 +7981,7 @@ pub function lower_subprocess_call(c: parser.ExprCall, s: LowerState): LowerStat
 function lower_fn_value_arg(a: parser.Expr, fname: string, ai: i32, s: LowerState): LowerState {
     var wc: string = s.fn_arg_width_char(fname, ai);
     if (wc == "l") { return lower_i64(a, s); }
-    if (wc.len() > 0 && !expr_is_f64(a, s) && infer_expr_width(a, s) == 32) {
+    if (wc == "d" && !expr_is_f64(a, s) && infer_expr_width(a, s) == 32) {
         var fvs: LowerState = lower_expr(a, s);
         if (!fvs.ok) { return fvs; }
         return fvs.emit(ir.op_i32_to_f64());

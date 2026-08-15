@@ -139,6 +139,18 @@ function main(): i32 { return mk()(4i32) & 63i32; }`, 30},
     return ((x0: i32) => (lf(2.5) + x0));
 }
 function main(): i32 { return mk(((y: f64) => ((y * 4.0) as i32)))(1i32) & 63i32; }`, 11},
+	// f32 is wide too, but it is 'd' rather than an f32 of its own: the wasm
+	// backend carries every float in an f64, so an f32 param is emitted
+	// `(param f64)` and a funcref type naming it f32 matches nothing. Both
+	// this and the direct call below were an unloadable module.
+	{"f32-fn-param-captured", `function mk(lf: (f32) => i32): (i32) => i32 {
+    return ((x0: i32) => (lf(2.5f32) + x0));
+}
+function main(): i32 { return mk(((y: f32) => ((y * 4.0f32) as i32)))(1i32) & 63i32; }`, 11},
+	{"f32-fn-param-called-directly", `function mk(lf: (f32) => i32): i32 {
+    return lf(2.5f32) + 1i32;
+}
+function main(): i32 { return mk(((y: f32) => ((y * 4.0f32) as i32))) & 63i32; }`, 11},
 	// A nested `function` declaration with a wide signature: the binding it
 	// desugars to carries no annotation, so the spelling has to come from the
 	// lambda the lift replaces with an env box.
