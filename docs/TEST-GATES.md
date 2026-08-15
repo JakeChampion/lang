@@ -291,13 +291,14 @@ Most apparent "gaps" are invalid programs:
 - **Wrong keyword** — match guards are `when`, not `if`.
 - **Checker-rejected** — a bare-ident arm on a SCALAR match is E035; i32 matches
   accept only literals or `_`.
-- **Parse errors** — an arrow lambda takes an EXPRESSION body, not a block, and
-  **every parameter must be type-annotated**: `(x: i32) => x+1`. Both
-  `(x) => x+1` and `(x: i32) => { … }` are P001. The annotation is what tells the
+- **Parse errors** — **every arrow-lambda parameter must be type-annotated**:
+  `(x: i32) => x+1`, never `(x) => x+1` (P001). The annotation is what tells the
   parser it is looking at a lambda rather than a parenthesized expression or a
-  tuple literal, decided before the matching `)` is reached. `function(x: i32):
-  i32 { … }` is the block-bodied form. (`spec/grammar.ebnf` claimed the
-  annotation was optional until the grammar was corrected to match.)
+  tuple literal, decided before the matching `)` is reached. (`spec/grammar.ebnf`
+  claimed the annotation was optional until the grammar was corrected to match.)
+  The body is an EXPRESSION, but a `{ … }` block IS one — a value block
+  (`(x: i32) => { x + 1 }`, and `(x: i32): i32 => { return x; }` since #6858) —
+  so a block body is not itself the parse error this note used to call it.
 - **Missing imports** — the path-probe driver resolves no stdlib, so anything
   needing `std/iter` / `std/map` / … falsely reads `ast`.
 

@@ -53490,7 +53490,10 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 var bco: i32 = v.col;
                 match (v.init) {
                     parser.ExprIdent(vid) => {
-                        if (lift_module_fn_arity(mfuncs, vid.name) >= 1) {
+                        // A local binding of the same name SHADOWS the module
+                        // function, so the init is an ordinary value copy — see
+                        // lift_ident_is_param (#6191, and #6854 for this site).
+                        if (!lift_ident_is_param(fd, vid.name) && lift_module_fn_arity(mfuncs, vid.name) >= 1) {
                             var wn: string = fd.name + "$wrap" + util.i32_to_string(ct);
                             var hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
                             if (hr.ok) {
