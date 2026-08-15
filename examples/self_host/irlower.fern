@@ -47153,9 +47153,11 @@ function rc_ml_move_ok(name: string, allow: string[], restrict: boolean): boolea
 }
 
 // rc_ml_block_has_early_exit: `return` / `break` / `continue` anywhere in the
-// loop body, nested included. With one present a construction later in the body
-// is conditional, so its move cannot be assumed to happen on every iteration and
-// the whole body is refused (native blockHasEarlyExit).
+// loop body, nested included. With one present the whole body is refused.
+//
+// Native no longer refuses that widely — it asks only whether an exit sits
+// between the element's declaration and the construction — and it counts `?`
+// as an exit, which this scan does not. Porting both is #6869.
 function rc_ml_block_has_early_exit(stmts: parser.Stmt[]): boolean {
     return rc_ml_block_has_early_exit_from(stmts, 0);
 }
@@ -47301,7 +47303,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
 // refuse every range-for body — which is most of them. Only that exact two-
 // statement shape is skipped (an assign, then an if whose then-body is a lone
 // break and whose else-body is empty); a user `break` anywhere else still
-// disqualifies the body, exactly as native's blockHasEarlyExit does.
+// disqualifies the body.
 function rc_ml_loop_prologue_len(blk: parser.Stmt[]): i32 {
     if (blk.len() < 2) { return 0; }
     var is_assign: boolean = false;
