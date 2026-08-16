@@ -482,6 +482,42 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A struct literal consuming an owned STRING local at that local's
+		// last use. Every other rc-tracked field type moves into the
+		// container there — the field-init retain and the local's exit-sweep
+		// release cancel — but a string field was excluded from the move
+		// while the construction still suppressed the release, so the retain
+		// stood alone and one buffer per round was stranded.
+		//
+		// Constant in n: one string per struct, one struct per round.
+		name: "struct-string-field-move",
+		decls: `import "std/i32";
+struct W { name: string, n: i32 }
+struct Acc { last: string, total: i32 }
+function mk(k: i32): W {
+    var s: string = "payload-string-" + k.to_string();
+    return W { name: s, n: k };
+}
+function step(a: Acc, k: i32): Acc {
+    var s: string = "acc-payload-" + k.to_string();
+    return Acc { last: s, total: a.total + k };
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var a: Acc = Acc { last: "", total: 0 };
+    var i: i32 = 0;
+    while (i < n) {
+        var w: W = mk(i % 8);
+        a = step(a, i % 8);
+        t = t + w.name.len() + a.last.len();
+        i = i + 1;
+    }
+    return (t + a.total) % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// `string[][]`: the outer drop reclaims each inner `string[]` buffer
 		// but reached it through the pointer-element helper on the
 		// single-word string ABI, whose per-element `__fern_rc_dec` never

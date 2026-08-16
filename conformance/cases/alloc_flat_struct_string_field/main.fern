@@ -1,0 +1,66 @@
+// spec: AL-01
+//
+// A struct literal that consumes an owned STRING local at the local's
+// last use — `var s = …; W { name: s }` — moves the string into the
+// field, exactly as it already did for an array / struct / enum / tuple
+// / closure field. It did not: the move analysis excluded string fields,
+// so the field-init retained while the local's exit-sweep release was
+// suppressed by the same construction, and one buffer per round was
+// stranded.
+//
+// `keep` is the control on the move's last-use guard: its string is READ
+// after the literal, so nothing may be moved and both readings must
+// still see live characters. It is deliberately outside the measured
+// rounds — that shape has its own unfixed leak.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "core/int";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+struct W { name: string, n: i32 }
+struct Acc { last: string, total: i32 }
+
+function mk(k: i32): W {
+    var s: string = "payload-string-" + k.to_string();
+    return W { name: s, n: k };
+}
+
+function step(a: Acc, k: i32): Acc {
+    var s: string = "acc-payload-" + k.to_string();
+    return Acc { last: s, total: a.total + k };
+}
+
+function keep(k: i32): i32 {
+    var s: string = "kept-payload-" + k.to_string();
+    var w: W = W { name: s, n: k };
+    return w.name.len() + s.len();
+}
+
+function rounds(n: i32): i32 {
+    var acc: Acc = Acc { last: "", total: 0 };
+    var t: i32 = 0;
+    for i in 0..n {
+        var w: W = mk(i % 8);
+        acc = step(acc, i % 8);
+        t = t + w.name.len() + acc.last.len();
+    }
+    return t + acc.total;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    print(keep(3).to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

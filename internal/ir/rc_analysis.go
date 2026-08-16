@@ -1996,8 +1996,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 
 // markConstructionMoves implements the move-on-construction slice of
 // Phase 4 pair-cancellation: when a struct literal built at a
-// dominating top-level statement consumes an OWNED rc local in a
-// non-string rc-tracked field at the local's LAST use
+// dominating top-level statement consumes an OWNED rc local in an
+// rc-tracked field at the local's LAST use
 // (`var s = Wrap{ inner: x }`, `x` dead after), the field-init inc and
 // x's exit-sweep dec cancel — x's single reference is moved into the
 // struct's field. Skipping the inc (gated on b.rc.moveSites[fieldIdent] at
@@ -2006,9 +2006,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // (emitDec) releases it exactly once, so the net rc is unchanged.
 //
 // The eligibility mirrors the inc/drop sides exactly: the field must be
-// `arrElemIsRcTracked` (array / struct / enum / closure / tuple — the
-// fields the StructLit inc's AND emitDec dec's; strings are excluded,
-// their two-word retain/release diverges per backend), and the value
+// `rcTrackedSlotType` (string / array / struct / enum / closure / tuple —
+// the fields the StructLit inc's AND emitDec dec's), and the value
 // must be an owned rc local (isOwnedRcLocal) whose occurrence here is
 // its max pre-order index. The caller has already established the
 // dominance guards — for the top-level walk, a top-level statement with no
@@ -2051,9 +2050,8 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 				return
 			}
 			for _, f := range lit.Fields {
-				// Only fields the StructLit inc's AND emitDec dec's on drop
-				// (arrElemIsRcTracked; strings excluded).
-				if arrElemIsRcTracked(fieldType(sd.Fields, f.Name)) {
+				// Only fields the StructLit inc's AND emitDec dec's on drop.
+				if rcTrackedSlotType(fieldType(sd.Fields, f.Name)) {
 					mark(f.Value)
 				}
 				visit(f.Value)

@@ -4693,6 +4693,46 @@ function main(): i32 {
     return (acc + s.len() - 1604) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A struct literal consuming an owned string local at its last use
+		// moves the string into the field (no field-init inc, no exit-sweep
+		// dec). `keep` is the guard on that: its string is read AFTER the
+		// literal, so the move must not fire and both readings must still
+		// see live characters — a wrong move frees the buffer under the
+		// second read. 200 * (16 + 13) for the moved pair, 2 * 14 for keep.
+		name: "struct_string_field_move_and_alias",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct W { name: string, n: i32 }
+struct Acc { last: string, total: i32 }
+function mk(k: i32): W {
+    var s: string = "payload-string-" + k.to_string();
+    return W { name: s, n: k };
+}
+function step(a: Acc, k: i32): Acc {
+    var s: string = "acc-payload-" + k.to_string();
+    return Acc { last: s, total: a.total + k };
+}
+function keep(k: i32): i32 {
+    var s: string = "kept-payload-" + k.to_string();
+    var w: W = W { name: s, n: k };
+    return w.name.len() + s.len();
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var a: Acc = Acc { last: "", total: 0 };
+    var i: i32 = 0;
+    while (i < 200) {
+        var w: W = mk(i % 8);
+        a = step(a, i % 8);
+        acc = acc + w.name.len() + a.last.len();
+        i = i + 1;
+    }
+    return (acc + keep(3) - 5828) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
