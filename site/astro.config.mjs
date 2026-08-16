@@ -58,7 +58,7 @@ const STDLIB_GROUPS = [
     "semver", "url", "uuid"]],
   ["Collections & errors", ["array", "error", "iter", "map", "option",
     "result", "set", "sort"]],
-  ["Traits", ["cmp", "convert", "num"]],
+  ["Traits", ["cmp", "convert", "mem", "num"]],
   ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
     "u64"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "io", "io_buffered",
