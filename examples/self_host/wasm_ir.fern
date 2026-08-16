@@ -7205,9 +7205,11 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
     // Grow linear memory when the bump pointer passes the current capacity
     // (memory.size pages * 64KiB). Without this the bump allocator traps
-    // once a program allocates past the initial pages.
+    // once a program allocates past the initial pages. A refused grow
+    // returns -1, and taking that for success turns heap exhaustion into an
+    // out-of-bounds trap at some later, unrelated store.
     o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
-    o = o + "      (then (drop (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))))))\n";
+    o = o + "      (then (if (i32.eq (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))) (i32.const -1)) (then (unreachable)))))\n";
     o = o + "    (local.get $p))\n";
     // $__fern_arr_box(eb) -> a: allocate an rc-headered array block and
     // return the DATA pointer `a`. Block layout: [rc@0][bsz@4][len@8]
