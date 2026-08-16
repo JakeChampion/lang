@@ -4883,6 +4883,39 @@ function main(): i32 {
     return (flat - 9) + (acc - 36) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A vtable-dispatched method's parameters — the receiver AND a second
+		// owned-by-default struct handed to it. `OpCallDyn` jumps through a
+		// function pointer, so there is no callee name to hang a caller-side
+		// retain on; the impl method must therefore borrow both. The
+		// owned-model half of this lives in
+		// rc_dyn_vtable_param_test.go, which runs the same shape with borrow
+		// inference off. 4 × (9 + 15 + 5).
+		name: "dyn_vtable_dispatched_params_borrow",
+		src: `
+import "core/int";
+trait Shape {
+    function area(self: Self): i32;
+    function scaled(self: Self, by: Factor): i32;
+}
+struct Factor { k: i32 }
+struct Square { side: i32 }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side; }
+    function scaled(self: Self, by: Factor): i32 { return self.side * by.k; }
+}
+function main(): i32 {
+    var f: Factor = Factor { k: 5 };
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var d: dyn Shape = Square { side: 3 };
+        acc = acc + d.area() + d.scaled(f) + f.k;
+        i = i + 1;
+    }
+    return (acc - 116) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

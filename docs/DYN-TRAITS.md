@@ -649,6 +649,19 @@ destructor to the vtable and routes `dyn` drops through it.
    trait objects are dropped, not reused — but the boxed cell is a
    fixed-size 16-byte allocation, an ideal future reuse token.
 
+**The IMPL METHODS behind a vtable borrow every parameter, under every
+ownership model.** `OpCallDyn` jumps through a function pointer read out of
+the vtable, so the call site has no callee *name*:
+`calleeParamOwnedByDefault` is never consulted and no caller-side retain is
+emitted, for the receiver or for anything passed alongside it. A method a
+vtable slot can reach therefore cannot own its params — under the owned model
+its exit ran an `is_unique`-gated `__fern_box_free` on values nobody had
+retained, freeing the caller's object out from under it. `paramVerdict`'s
+`vtableDispatched` rung (fed by `vtableDispatchedMethods` over
+`prog.Vtables`) is what states this; unlike the rungs below it, it does not
+consult the escape facts, because an escaping param is just as unretained
+here. #6465.
+
 **Phasing.** Mirror 2b–2d: (a) wasm inline first (it has the simplest
 drop — no cell), (b) x86-64 boxed (adds the cell free), (c) arm64 boxed
 (structural mirror). Each slice ships e2e **leak/reclaim** tests in the

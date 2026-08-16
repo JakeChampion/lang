@@ -2260,6 +2260,29 @@ func collectVtables(prog *ast.Program, info *checker.Info) []VtableDecl {
 	return out
 }
 
+// vtableDispatchedMethods names every function a vtable slot can reach — the
+// impl methods `collectVtables` listed, plus the unboxing wrappers a
+// primitive concrete's slots point at and the real methods behind them.
+//
+// A function in this set has no static call site the caller can transfer
+// ownership at: `OpCallDyn` reads a function pointer out of the vtable, so
+// there is no callee name to consult `calleeParamOwnedByDefault` on and no
+// caller-side retain is emitted. That is what makes its parameters borrowed
+// under EVERY ownership model — see paramVerdict.
+func vtableDispatchedMethods(info *checker.Info, vts []VtableDecl) map[string]bool {
+	if len(vts) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, vt := range vts {
+		for _, m := range vt.Methods {
+			out[m.Func] = true
+			out[realImplMethodName(info, vt.Concrete, m.Method)] = true
+		}
+	}
+	return out
+}
+
 // realImplMethodName resolves the mangled receiver-method a (concrete,
 // method) slot dispatches to — `info.Methods[C.m]`, falling back to the
 // conventional `__method_<C>_<m>` (mirrors collectVtables' resolution).
@@ -2738,6 +2761,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info)
 	readOnlyComparators := computeReadOnlyComparators(info)
+	// Methods reachable through a vtable: their params borrow under every
+	// ownership model, since a call_indirect / call-through-pointer has no
+	// callee name to hang a caller-side retain on (paramVerdict).
+	vtableDispatched := vtableDispatchedMethods(info, out.Vtables)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
 	growParams := computeGrowParams(prog, info)
@@ -2795,7 +2822,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -4646,6 +4673,12 @@ type builder struct {
 	// would free the map's own key (corruption). Gated on the escape facts
 	// proving non-escape, so it never elides a real ownership transfer. #2671.
 	readOnlyComparators map[string]bool
+	// vtableDispatched is the set of methods a `dyn Trait` vtable slot can
+	// reach (vtableDispatchedMethods). They BORROW their params even under
+	// the owned model: OpCallDyn reads the target out of the vtable, so
+	// there is no callee name for calleeParamOwnedByDefault to consult and
+	// no caller-side retain is ever emitted. #6465.
+	vtableDispatched map[string]bool
 	// trmcFuncs is the set of functions lowered via TRMC (findTrmcFuncs); Slice 2
 	// excludes their params from owned-by-default (their exit bypasses the sweep).
 	trmcFuncs map[string]bool
@@ -5114,7 +5147,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5143,6 +5176,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		paramEscapes:         paramEscapes,
 		paramCountedRetain:   paramCountedRetain,
 		readOnlyComparators:  readOnlyComparators,
+		vtableDispatched:     vtableDispatched,
 		growParams:           growParams,
 		thisIsPair:           pairForm[fn.Name],
 		dynCoerceDone:        map[ast.Expr]bool{},
@@ -5673,6 +5707,18 @@ func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
 	}
 	if b.trmcFuncs[fnName] {
 		return paramVerdictTrmcExcluded
+	}
+	// A method a `dyn Trait` vtable slot can reach borrows unconditionally,
+	// and unlike the escape-driven rungs below this one does NOT consult
+	// paramEscapes: an ESCAPING param is just as unretained here, because
+	// the only call site is OpCallDyn — a jump through a function pointer,
+	// with no callee name for calleeParamOwnedByDefault to classify and so
+	// no caller-side retain. Under the owned model the callee's exit then
+	// ran an is_unique-gated `__fern_box_free(self, …)` on a receiver
+	// nobody had retained, freeing the caller's object out from under it.
+	// #6465.
+	if b.vtableDispatched[fnName] {
+		return paramVerdictBorrowed
 	}
 	if esc, ok := b.paramEscapes[fnName]; ok && i < len(esc) && !esc[i] {
 		if ast.BorrowInferEnabled {
