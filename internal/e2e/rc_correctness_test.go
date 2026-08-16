@@ -4771,6 +4771,32 @@ function main(): i32 {
     return (acc - 22000) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A struct element of an array bound to a local, whose string fields
+		// ALIAS a live local (#6499). The exit sweep's inline struct-box
+		// reclaim frees each string field with __fern_str_dec, so this is the
+		// case that says the free is guarded by the field's own count: `s`
+		// and the array element are read for their CONTENT after both the
+		// bound copy and the argument temp have been swept, which a premature
+		// free turns into wrong bytes rather than a wrong length.
+		name: "struct_array_element_binding_aliased",
+		src: `
+import "core/int";
+import "std/string";
+struct E { key: string, value: string }
+function cat(a: string, b: string): string { return a + b; }
+function take(e: E): i32 { return e.key.len(); }
+function main(): i32 {
+    var s: string = cat("abcd", "efgh");
+    var es: E[] = [E { key: s, value: s }];
+    var a: E = es[0];
+    var n: i32 = a.key.len() + a.value.len() + take(es[0]);
+    var ok: i32 = 0;
+    if (s == "abcdefgh") { ok = ok + 1; }
+    if (es[0].value == "abcdefgh") { ok = ok + 1; }
+    return (n - 24) + (2 - ok) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
