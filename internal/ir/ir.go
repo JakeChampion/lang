@@ -18118,11 +18118,6 @@ func (b *builder) curAppendOrder() identOrder {
 // occurrence) and outside the inPlacePushes exemptions (#4849's
 // return-position / borrowed-param self-reassign shapes), and a FIELD place
 // the container can still be read through (#6665, fieldPlaceAppendCopies).
-// Shared between emitArrayPush (which emits the rc bump that forces the grow
-// helper's copy path) and the stage-(b) arg-temp recognizer
-// appendCopyTempType (which reclaims the resulting fresh copy after a
-// borrowing call — the remaining forced-copy leak #4849's exemptions don't
-// cover).
 func (b *builder) appendForcesCopy(n *ast.Call) bool {
 	if ast.Expr(n) == b.selfPushMoveCall {
 		return false

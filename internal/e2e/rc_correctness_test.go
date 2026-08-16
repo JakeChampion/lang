@@ -4823,6 +4823,35 @@ function main(): i32 {
     return (t - 10) + (u - 11) + __rc_underflow_count();
 }`,
 	},
+	{
+		// An `.append` result consumed by a borrowing call (#6501), across
+		// both of __fern_arr_push_grow's outcomes — reclaiming one the way
+		// the other wants is a use-after-free.
+		//
+		// `full` has no spare capacity, so the grow COPIES and the post-call
+		// dec frees a buffer nobody else holds. `inplace`'s receiver is a
+		// BORROWED param at rc==1 with room, appearing once, so the grow
+		// mutates in place, sets the receiver's rc to 2 and hands the
+		// receiver back — the same dec has to net that bump away and free
+		// nothing, and `roomy` is read again after the call to say so.
+		// `xs[0]` is the element-receiver spelling, which is not an Ident and
+		// so could never reach the old forced-copy classifier at all.
+		name: "append_result_consumed_by_call",
+		src: `
+import "core/int";
+function sink(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }
+function inplace(path: i32[]): i32 { return sink(path.append(99)); }
+function main(): i32 {
+    var full: i32[] = [1, 2];
+    var roomy: i32[] = [];
+    roomy = roomy.append(3);
+    var xs: i32[][] = [[6], [7]];
+    var a: i32 = sink(full.append(10)) + inplace(roomy);
+    var b: i32 = sink(full) + sink(roomy) + sink(xs[0].append(30)) + sink(xs[1]);
+    var c: i32 = inplace(roomy) + sink(xs[0]) + full.len() + roomy.len() + xs[0].len();
+    return (a - 115) + (b - 49) + (c - 112) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

@@ -532,6 +532,66 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// `param.append(x)` CONSUMED — passed straight to a borrowing call
+		// rather than assigned back (#6501). Threading an immutable trail
+		// down a recursion is the shape: backtracking, DFS with a path,
+		// subset enumeration.
+		//
+		// The arg-temp recognizer for an append result only admitted the
+		// #4827 FORCED-COPY path, whose test is syntactic last-use — and a
+		// name that occurs once in the source reads as a last use even
+		// inside a loop that re-reads it every iteration, so the loop's
+		// appends were classified as in-place and left unreclaimed. Both
+		// grow outcomes are accounted for, so the classification was not
+		// carrying the safety it looked like it was.
+		//
+		// Constant in n: one seed and eight appends per round.
+		name: "param-append-consumed",
+		decls: `function sink(xs: i32[]): i32 { return xs.len(); }
+function walk(path: i32[]): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) { t = t + sink(path.append(i)); i = i + 1; }
+    return t;
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var seed: i32[] = [0];
+        t = t + walk(seed) + sink(seed.append(i));
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
+		// The element-receiver spelling of the same consumed append —
+		// `sink(xs[i].append(9))`. An Index receiver is not an Ident, so it
+		// could never satisfy the forced-copy test at all, and the row reads
+		// `xs[0]` back after both appends so a reclaim that freed the
+		// container's element instead of the fresh copy shows as a wrong
+		// answer here rather than only in the rc corpus.
+		//
+		// Constant in n: one array-of-arrays and two appends per round.
+		name: "array-element-append-consumed",
+		decls: `function sink(xs: i32[]): i32 { return xs.len(); }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var xs: i32[][] = [[0], [1]];
+        t = t + sink(xs[0].append(9)) + sink(xs[1].append(9)) + sink(xs[0]);
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// `.with` straight off a fresh container read. The read owns the
 		// array it produced, so the pre-call retain that makes a BORROWED
 		// projection copy is wrong here twice over: it buys the copy, and
