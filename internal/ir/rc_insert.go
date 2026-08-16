@@ -982,6 +982,15 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+				// A user `Drop` finalizer runs first, while the fields are
+				// still live — the same contract genStructDropFn's outlined
+				// form gives. This inline arm FREES the box, so skipping the
+				// call here would destroy the value without ever running its
+				// destructor, which is worse than leaking it.
+				if dropFn, hasUserDrop := userDropFnName(b.info, st.Name); hasUserDrop {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: dropFn, I32: 1})
+				}
 				// rc == 1: drop fields, then free the box. The struct is
 				// uniquely owned here, so each field is too — a string
 				// field's __fern_str_dec frees its buffer safely (inline /
@@ -1756,6 +1765,55 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 // closures, and generic enum instantiations (Args != nil; their
 // box-vs-pair-form shape needs the type args, handled inline for locals)
 // return ("", false) so the caller falls back to a flat one-level dec.
+// userDropFnName resolves the mangled `drop` of `typeName`'s
+// `core/mem.Drop` impl, or ("", false) when it has none. Trait names in
+// info.Impls are module-mangled (`mem__Drop`), so the match is on the
+// simple name — the same demangling deriveKind does for the derivable set.
+func userDropFnName(info *checker.Info, typeName string) (string, bool) {
+	if info == nil {
+		return "", false
+	}
+	for trait, types := range info.Impls {
+		if !types[typeName] {
+			continue
+		}
+		simple := trait
+		if i := strings.LastIndex(simple, "__"); i >= 0 {
+			simple = simple[i+2:]
+		}
+		if simple != "Drop" {
+			continue
+		}
+		if fn := info.Methods[typeName+".drop"]; fn != "" {
+			return fn, true
+		}
+		return "__method_" + typeName + "_drop", true
+	}
+	return "", false
+}
+
+// appendUserDrop emits the `Drop` finalizer call for `typeName`, if it has
+// one, against the drop fn's local 0 (the value pointer).
+//
+// It belongs at the TOP of the rc==1 branch: the body reads `self`, so it
+// has to run while every field is still live and the box still allocated.
+// The field releases and the box_free follow it, which is also Rust's
+// order (user drop, then fields). `drop` returns void, so the call leaves
+// nothing on the stack to discard.
+//
+// Deliberately NOT called from genStructFlatDropFn: the flat variant runs
+// for a value that escaped and is only being dec'd, never destroyed, so
+// the finalizer would fire on a value that is still alive.
+func appendUserDrop(ops []Op, info *checker.Info, typeName string) []Op {
+	fn, ok := userDropFnName(info, typeName)
+	if !ok {
+		return ops
+	}
+	return append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpCallDirect, Str: fn, I32: 1})
+}
+
 func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int, dynRcSupported bool) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
@@ -1806,7 +1864,10 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			reg[mangled] = sub
 			return "__drop_enum_" + mangled, true
 		}
-		if !enumNeedsDrop(ed) {
+		// A `Drop` impl needs glue even when nothing inside the enum does:
+		// the finalizer IS the reason to generate a drop fn, so an
+		// all-scalar enum that enumNeedsDrop would decline still routes.
+		if _, hasUserDrop := userDropFnName(info, v.Name); !hasUserDrop && !enumNeedsDrop(ed) {
 			return "", false
 		}
 		return "__drop_enum_" + v.Name, true
@@ -3079,6 +3140,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
 	}
+	ops = appendUserDrop(ops, info, name)
 	for _, f := range sd.Fields {
 		_, isTwoWordStr := f.Type.(ast.StringType)
 		isTwoWordStr = isTwoWordStr && ast.UseTwoWordStrings(ptrW)
@@ -3163,12 +3225,15 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
 		{Kind: OpIf, I32: BlockTypeVoid},
+	}
+	ops = appendUserDrop(ops, info, name)
+	ops = append(ops, []Op{
 		// tag = mem[ptr+0] → slot 1 (stashed so arms read it after a
 		// variant's box_free has freed the box).
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpLoad},
 		{Kind: OpStoreLocal, I32: 1},
-	}
+	}...)
 	for _, vd := range plan {
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 1},

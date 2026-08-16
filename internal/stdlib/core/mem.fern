@@ -1,0 +1,27 @@
+// core/mem — value-lifetime hooks.
+//
+// `Drop` is the one trait here: an `impl Drop for T` gives T a
+// finalizer that the reference-counting runtime runs when a value's
+// last reference goes away. It is the value-scoped counterpart to
+// `defer`, which is function-scoped — a `defer` fires when the
+// enclosing call returns no matter who still holds the value, while a
+// `drop` fires exactly when the value itself dies.
+//
+//     impl mem.Drop for FileWriter {
+//         function drop(self: Self) { self.handle.close(); }
+//     }
+//
+// The compiler calls `drop(self)` from the type's generated drop glue,
+// at the point the refcount reaches zero and BEFORE the value's fields
+// are reclaimed — so the body can still read every field. Nothing else
+// may call it: an explicit `v.drop()` is rejected (E074), because the
+// runtime is going to call it too and the body would run twice.
+//
+// Reliability tracks the RC implementation, not this trait. A value the
+// reclamation passes cannot yet prove dead — see the leak classes in
+// docs/RC-PERCEUS-SELF-HOST-PORT.md — simply never reaches rc-zero, and
+// its `drop` never runs. `Drop` is a cleanup hook, not a guarantee; do
+// not hang correctness on it firing.
+pub trait Drop {
+    function drop(self: Self): void;
+}
