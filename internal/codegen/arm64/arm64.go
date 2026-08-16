@@ -9808,8 +9808,8 @@ func (g *generator) flushPeep() {
 	g.peepWin = g.peepWin[:0]
 }
 
-// peepholeTail applies the two safe stack-machine rewrites at the tail of the
-// window. Both are purely local so they never touch a genuinely-live stack
+// peepholeTail applies the safe stack-machine rewrites at the tail of the
+// window. All are purely local so they never touch a genuinely-live stack
 // slot — those are left for the register allocator.
 func (g *generator) peepholeTail() {
 	w := g.peepWin
@@ -9832,6 +9832,23 @@ func (g *generator) peepholeTail() {
 				}
 				return
 			}
+		}
+	}
+
+	// P3 — dead push: a push whose slot is freed without ever being read.
+	// A statement-position expression still leaves its value on the operand
+	// stack, and the statement end simply pops it:
+	//   str x0, [sp, #-N]! / add sp, sp, #N   =>  nothing
+	// The store lands below the restored sp, so nothing can observe it —
+	// this backend never reads below sp. x0 is unchanged either way.
+	//
+	// Checked after P1 so the push/pop pair keeps its precedence; the two
+	// cannot both match (P1's second line is a pop, this one's is the stack
+	// restore).
+	if n >= 2 {
+		if k, ok := matchPushImm(w[n-2]); ok && w[n-1] == "\tadd sp, sp, #"+k {
+			g.peepWin = w[:n-2]
+			return
 		}
 	}
 

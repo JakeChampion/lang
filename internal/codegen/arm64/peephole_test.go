@@ -111,3 +111,74 @@ func TestPeepholeOptOutEmitsUncollapsed(t *testing.T) {
 		t.Error("NoPeephole should leave the adjacent push/pop pairs in place")
 	}
 }
+
+// deadPushProg has statement-position expressions whose values nobody reads:
+// each assignment leaves its result on the operand stack and the statement end
+// discards it. That is P3's shape.
+const deadPushProg = `
+function main(): i32 {
+  var t: i32 = 0;
+  var i: i32 = 0;
+  while (i < 4) { t = t + i; i = i + 1; }
+  return t;
+}`
+
+// hasDeadPush reports whether a push is immediately followed by the matching
+// stack restore, with nothing having read the slot.
+func hasDeadPush(asm string) bool {
+	lines := strings.Split(asm, "\n")
+	for i := 0; i+1 < len(lines); i++ {
+		cur := strings.TrimSpace(lines[i])
+		next := strings.TrimSpace(lines[i+1])
+		if !strings.HasPrefix(cur, "str x0, [sp, #-") || !strings.HasSuffix(cur, "]!") {
+			continue
+		}
+		n := strings.TrimSuffix(strings.TrimPrefix(cur, "str x0, [sp, #-"), "]!")
+		if next == "add sp, sp, #"+n {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPeepholeRemovesDeadPush(t *testing.T) {
+	off := compile(t, deadPushProg, Options{NoPeephole: true})
+	on := compile(t, deadPushProg, Options{})
+
+	if !hasDeadPush(off) {
+		t.Fatal("precondition: un-peepholed asm has no dead push to remove")
+	}
+	if hasDeadPush(on) {
+		t.Error("P3: a push whose slot is freed unread survived the peephole")
+	}
+	if instrCount(on) >= instrCount(off) {
+		t.Errorf("peephole did not reduce instruction count: off=%d on=%d",
+			instrCount(off), instrCount(on))
+	}
+}
+
+// P3 must not touch a push whose slot IS read before it is freed — that is a
+// live operand-stack slot, and removing it would drop the value.
+func TestPeepholePreservesReadBeforeFree(t *testing.T) {
+	on := compile(t, peepProg, Options{})
+	lines := strings.Split(on, "\n")
+	sawLive := false
+	for i, l := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(l), "str x0, [sp, #-") {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			cur := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(cur, "add sp, sp, #") {
+				break
+			}
+			if strings.Contains(cur, "[sp], #") {
+				sawLive = true
+				break
+			}
+		}
+	}
+	if !sawLive {
+		t.Error("no live push survived: P3 removed a slot that was read before release")
+	}
+}

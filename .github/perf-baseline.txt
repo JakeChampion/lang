@@ -8,7 +8,7 @@
 # WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
 # given commit EXCEPT `map_string.ir`: core/map draws a per-process
 # string-hash seed (#6194), which moves probe lengths. Measured spread over
-# five runs: 301,423,547 .. 302,800,153, i.e. 0.46%. That one line therefore
+# five runs: 291,105,501 .. 293,300,059, i.e. 0.75%. That one line therefore
 # carries an explicit 2% tolerance and is baselined at the middle of the
 # range rather than at a sample. `map_int.ir` is exact — the seed is consulted
 # for string keys only — and is deliberately left on the default so the two
@@ -28,19 +28,19 @@
 # aarch64 lane will report its metrics as unbaselined on its first run and
 # print the lines to paste here.
 
-x86_64/array_append.text	645
-x86_64/array_append.ir	104798111
-x86_64/array_index.text	606
-x86_64/array_index.ir	112484118
-x86_64/call_overhead.text	217
-x86_64/call_overhead.ir	69101700
-x86_64/int_loop.text	127
-x86_64/int_loop.ir	102000036
-x86_64/map_int.text	4160
-x86_64/map_int.ir	140201633
-x86_64/map_string.text	5547
-x86_64/map_string.ir	302100000	2
-x86_64/string_scan.text	1931
-x86_64/string_scan.ir	145639625
-x86_64/string_slice.text	535
-x86_64/string_slice.ir	204120107
+x86_64/array_append.text	618
+x86_64/array_append.ir	97597508
+x86_64/array_index.text	582
+x86_64/array_index.ir	100303812
+x86_64/call_overhead.text	211
+x86_64/call_overhead.ir	63101700
+x86_64/int_loop.text	121
+x86_64/int_loop.ir	84000036
+x86_64/map_int.text	4028
+x86_64/map_int.ir	136339727
+x86_64/map_string.text	5346
+x86_64/map_string.ir	292500000	2
+x86_64/string_scan.text	1841
+x86_64/string_scan.ir	140977346
+x86_64/string_slice.text	511
+x86_64/string_slice.ir	196020101

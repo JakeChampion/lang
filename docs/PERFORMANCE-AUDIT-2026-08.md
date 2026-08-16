@@ -75,13 +75,13 @@ Measured over the whole-compiler emit (22,420,063 emitted instructions):
 - **36.5% of emitted instructions are operand-stack traffic** — `sub rsp` /
   `mov [rsp], rax` / `mov REG, [rsp]` / `add rsp`. This is what a register
   allocator deletes. #4112.
-- **12.1% are a push whose value is immediately discarded**: the three-line
+- **12.1% were a push whose value is immediately discarded** — the three-line
   `sub rsp, N` / `mov [rsp], rax` / `add rsp, N` a statement-position
-  expression emits for a value nobody reads. 73,977 sites in the
-  `checker_run` emit alone. The existing streaming peephole
-  (`x86_64.go:peepholeTail`, a 6-line window) already has the shape to match
-  this and does not; its two rules cover push/pop pairs and dead jumps. This
-  is the cheapest win in the audit.
+  expression emits for a value nobody reads, 73,977 sites in the
+  `checker_run` emit alone. **Fixed**: the streaming peephole's P3 rule
+  (`x86_64.go:peepholeTail` and its arm64 twin) now drops it, worth −13.0% of
+  emitted instructions on that driver and −2.8% to −17.7% of retired
+  instructions across `examples/bench`.
 
 Neither native backend runs `ir.Inline` or IR dead-function elimination —
 those are wasm-only, blocked on the AST↔IR parallel-index walk. #4377.
@@ -214,15 +214,16 @@ contradict comments in the tree:
 | # | Fix | Where | Evidence |
 |---|---|---|---|
 | 1 | Share drop code between exits instead of duplicating the sweep | `internal/ir/rc_insert.go` | §3 — 589 k decrements in one function; 631× vs the self-host emitter |
-| 2 | Peephole the push-then-discard triple | `x86_64.go:peepholeTail`, arm64 twin | §2 — 12.1% of emitted instructions, existing window |
+| 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
 | 3 | Hash the self-host `Scope` tables; stop allocating on miss | `examples/self_host/checker.fern` | §4 — 17% self time, native already does this |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
 | 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4 — 20.5% in `strcmp` |
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | Replace the string-encoded borrow registry with a map | `irlower.fern` | §4 — 10.5% self time |
 
-1, 2, 3 and 7 are each a bounded change with a measurable outcome and no
-architectural prerequisite. 4 is the multi-PR track.
+1, 3 and 7 are each a bounded change with a measurable outcome and no
+architectural prerequisite — 2 was, and landing it took an afternoon. 4 is the
+multi-PR track.
 
 ## 8. Reproducing any of this
 
