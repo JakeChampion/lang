@@ -367,80 +367,8 @@ func TestWASMDynTraitPrimitiveReceiver(t *testing.T) {
 // (`__dynbox_<C>_<m>`). The hard cases are i64/f64 on wasm (wider than the
 // inline i32 data slot) and string on wasm + arm64 (a two-word value /
 // non-integer receiver ABI). These differential tests run each across ALL
-// THREE backends and assert the stdout matches the interpreter. ---
-
-// dynAllBackends runs src on all three compiled backends + the interpreter
-// and asserts each compiled stdout matches the interpreter's, and that the
-// interpreter's matches wantInterp.
-func dynAllBackends(t *testing.T, src, wantInterp string) {
-	t.Helper()
-	want := dynInterpStdout(t, src)
-	if want != wantInterp {
-		t.Fatalf("interp baseline = %q, want %q", want, wantInterp)
-	}
-	t.Run("wasm32-wasi", func(t *testing.T) {
-		got := runWasmCapturingStdout(t, src)
-		if got != want {
-			t.Errorf("wasm = %q, want %q (interp)", got, want)
-		}
-	})
-	t.Run("x86_64", func(t *testing.T) {
-		got, code := compileAndRunX86_64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("x86-64 = %q, want %q (interp)", got, want)
-		}
-	})
-	t.Run("arm64-linux", func(t *testing.T) {
-		got, code := compileAndRunArm64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("arm64 = %q, want %q (interp)", got, want)
-		}
-	})
-}
-
-// dynCompiledBackends runs src on all three compiled backends and asserts
-// each stdout equals want. Unlike dynAllBackends it does NOT differential
-// against the interpreter — used for `dyn` over i64, which the interpreter
-// cannot dispatch (its width-less Number tags every integer "i32", a
-// documented slice-1 limitation; see interp.valueTypeName / DYN-TRAITS.md
-// §4.1). The compiled backends carry the width, so they dispatch correctly.
-func dynCompiledBackends(t *testing.T, src, want string) {
-	t.Helper()
-	t.Run("wasm32-wasi", func(t *testing.T) {
-		got := runWasmCapturingStdout(t, src)
-		if got != want {
-			t.Errorf("wasm = %q, want %q", got, want)
-		}
-	})
-	t.Run("x86_64", func(t *testing.T) {
-		got, code := compileAndRunX86_64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("x86-64 = %q, want %q", got, want)
-		}
-	})
-	t.Run("arm64-linux", func(t *testing.T) {
-		got, code := compileAndRunArm64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("arm64 = %q, want %q", got, want)
-		}
-	})
-}
+// THREE backends and assert the stdout matches the interpreter
+// (backendsAgree + interpOracle). ---
 
 // dyn over i64 — the boxed `data` cell holds the full 8-byte value, which
 // wasm's inline i32 data slot would truncate.
@@ -461,7 +389,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynCompiledBackends(t, src, "v=9000001000")
+	backendsAgree(t, src, "v=9000001000")
 }
 
 // dyn over f64 — the boxed cell carries the 8-byte float and the wrapper
@@ -481,7 +409,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "v=10")
+	backendsAgree(t, src, interpOracle(t, src, "v=10"))
 }
 
 // dyn over string — the value-box holds the two-word `(data, len)` string
@@ -502,7 +430,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "len=5")
+	backendsAgree(t, src, interpOracle(t, src, "len=5"))
 }
 
 // Heterogeneous `dyn Show[]` mixing string + i32 concretes — each element's
@@ -530,7 +458,7 @@ function main(): i32 {
 }
 `
 	// "hi".len()=2, 7+100=107, "world".len()=5 → 114
-	dynAllBackends(t, src, "total=114")
+	backendsAgree(t, src, interpOracle(t, src, "total=114"))
 }
 
 // A trait method WITH an argument on a primitive receiver — proves the
@@ -550,7 +478,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "r=42")
+	backendsAgree(t, src, interpOracle(t, src, "r=42"))
 }
 
 // A trait method with a STRING argument on a string receiver — both the
@@ -571,7 +499,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "n=5")
+	backendsAgree(t, src, interpOracle(t, src, "n=5"))
 }
 
 // --- `e as? T` fallible downcast codegen (docs/DYN-TRAITS.md §9).
@@ -620,7 +548,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "circle r=5\nrect a=12")
+	backendsAgree(t, src, interpOracle(t, src, "circle r=5\nrect a=12"))
 }
 
 // TestDowncastHeterogeneousArrayCount: downcast each element of a
@@ -656,7 +584,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "circle_r_sum=3\nrects=2")
+	backendsAgree(t, src, interpOracle(t, src, "circle_r_sum=3\nrects=2"))
 }
 
 // TestDowncastEnumTarget: an enum concrete target. A payload-carrying enum
@@ -696,7 +624,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "a=7\nb=-1")
+	backendsAgree(t, src, interpOracle(t, src, "a=7\nb=-1"))
 }
 
 // TestDowncastOnlyTargetRooted: a downcast target T (Rect) that is NEVER
@@ -733,7 +661,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "not a rect\ncircle=25")
+	backendsAgree(t, src, interpOracle(t, src, "not a rect\ncircle=25"))
 }
 
 // --- Multi-trait `dyn A + B` dispatch through the MERGED vtable
@@ -763,7 +691,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "apple=150")
+	backendsAgree(t, src, interpOracle(t, src, "apple=150"))
 }
 
 // TestDynMultiTraitHeterogeneousArray: a `dyn Show + Weigh[]` holding two
@@ -794,7 +722,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "apple=120\nbrick=2000\ntotal=2120")
+	backendsAgree(t, src, interpOracle(t, src, "apple=120\nbrick=2000\ntotal=2120"))
 }
 
 // TestDynThreeTraitMiddleSegment: a THREE-trait `dyn A + B + C` calling a
@@ -822,7 +750,7 @@ function main(): i32 {
 }
 `
 	// a1=3, a2=4, b1=30, c1=300 → 337
-	dynAllBackends(t, src, "sum=337")
+	backendsAgree(t, src, interpOracle(t, src, "sum=337"))
 }
 
 // --- Multi-trait `dyn A + B` DOWNCAST (`e as? T`) through the MERGED
@@ -867,7 +795,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "apple g=150\nbrick kg=2")
+	backendsAgree(t, src, interpOracle(t, src, "apple g=150\nbrick kg=2"))
 }
 
 // TestDowncastMultiTraitOnlyTargetRooted: a multi-trait downcast target
@@ -903,7 +831,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "not a brick\napple=apple:7")
+	backendsAgree(t, src, interpOracle(t, src, "not a brick\napple=apple:7"))
 }
 
 // TestDowncastThreeTrait: a THREE-trait `dyn A + B + C` downcast — the
@@ -944,7 +872,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "d=3\ne=-9")
+	backendsAgree(t, src, interpOracle(t, src, "d=3\ne=-9"))
 }
 
 // `dyn` over the STDLIB `core/cmp.Display` — the trait every generic
@@ -984,7 +912,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "42, hi, true")
+	backendsAgree(t, src, interpOracle(t, src, "42, hi, true"))
 }
 
 // A u8 element actually coerced into the `dyn cmp.Display` set, so the u8
@@ -1002,5 +930,5 @@ function main(): i32 {
     return 0;
 }
 `
-	dynAllBackends(t, src, "65/7")
+	backendsAgree(t, src, interpOracle(t, src, "65/7"))
 }

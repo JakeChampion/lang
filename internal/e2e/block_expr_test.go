@@ -228,7 +228,7 @@ func TestBlockExprInterp(t *testing.T) {
 // backends (wasm / x86-64 / arm64), checked differentially against the
 // interpreter. This was the slice-1 reject test — flipped, like the `as?`
 // downcast codegen PR flipped its reject test, to assert correct
-// compilation + execution rather than a clean reject. `dynAllBackends`
+// compilation + execution rather than a clean reject. `backendsAgree`
 // (defined in dyn_trait_compiled_test.go) runs src on the interpreter and
 // every compiled backend and asserts each compiled stdout matches the
 // interpreter's, and that the interpreter's matches the expected string.
@@ -245,7 +245,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "x=6")
+	backendsAgree(t, src, interpOracle(t, src, "x=6"))
 }
 
 // #4521: a general value-position block-expression (the RHS of a `var`, not
@@ -261,7 +261,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "n=12 s=foobar")
+	backendsAgree(t, src, interpOracle(t, src, "n=12 s=foobar"))
 }
 
 // #4522: control-flow (return / break / continue) inside a value-position
@@ -279,7 +279,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "a=6 b=99 s=6")
+	backendsAgree(t, src, interpOracle(t, src, "a=6 b=99 s=6"))
 }
 
 // #4522: a NO-TAIL value-position block whose statements ALWAYS exit
@@ -300,7 +300,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "f-1=1 f5=2 g-1=10 g5=20 h0=100 h3=6")
+	backendsAgree(t, src, interpOracle(t, src, "f-1=1 f5=2 g-1=10 g5=20 h0=100 h3=6"))
 }
 
 // A `match`-arm block-expression: arm 0 runs `var v = t + 10; v * 2`.
@@ -314,7 +314,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "r=20")
+	backendsAgree(t, src, interpOracle(t, src, "r=20"))
 }
 
 // A STRING-producing block tail: `{ var s = a + b; s }`. The block-local
@@ -331,7 +331,7 @@ func TestBlockExprCompiledStringTail(t *testing.T) {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "s=foobar")
+	backendsAgree(t, src, interpOracle(t, src, "s=foobar"))
 }
 
 // Nested: a block-expr whose tail is itself an `if`-expression. The outer
@@ -348,7 +348,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "x=21")
+	backendsAgree(t, src, interpOracle(t, src, "x=21"))
 }
 
 // Nested: a block-expr whose tail is itself a `match`-expression, and
@@ -369,7 +369,7 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "r=105")
+	backendsAgree(t, src, interpOracle(t, src, "r=105"))
 }
 
 // Block-locals don't leak and each block gets its own scope: the same
@@ -385,5 +385,5 @@ function main(): i32 {
 	return 0;
 }
 `
-	dynAllBackends(t, src, "sum=30")
+	backendsAgree(t, src, interpOracle(t, src, "sum=30"))
 }
