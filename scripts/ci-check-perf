@@ -83,6 +83,13 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" '
   NF >= 2 {
     if (!($1 in measured)) order[++n] = $1
     measured[$1] = $2 + 0
+    # Record which <arch>/ namespaces this report covers. The baseline holds
+    # every arch, but a job measures exactly one, so the MISSING check below
+    # has to be scoped to what this host could have produced — otherwise the
+    # aarch64 job reports every x86_64 line as a dropped benchmark, and vice
+    # versa. Seen on the first CI run of this gate: 14 false MISSING warnings.
+    slash = index($1, "/")
+    if (slash > 0) covered[substr($1, 1, slash - 1)] = 1
   }
   END {
     printf "SUMMARY\t### performance (examples/bench)\n"
@@ -127,6 +134,9 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" '
     for (m in base) {
       if (m in measured) continue
       if (blind && m ~ /\.ir$/) continue
+      # A baseline entry for another arch is not this job to miss.
+      slash = index(m, "/")
+      if (slash > 0 && !(substr(m, 1, slash - 1) in covered)) continue
       nmissing++
       printf "SUMMARY\tMISSING: %s is in the baseline but was not measured.\n", m
       printf "ANNOTATE\t%s was not measured\tit is baselined at %d but the report has no line for it: a benchmark was dropped, renamed or failed to build\n", m, base[m]
