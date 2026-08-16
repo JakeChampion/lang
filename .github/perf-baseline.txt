@@ -22,9 +22,6 @@
 # moves on purpose, update it in the same PR; the job summary prints the
 # corrected lines ready to paste. Keep the reason in the PR, not here.
 #
-# struct_drop has no aarch64 entry yet: it was added on an x86-64 host and the
-# aarch64 leg will report it unbaselined once, printing the line to paste here.
-#
 # TWO ARCHITECTURES. An instruction count is not comparable across ISAs, so the
 # keys are namespaced by arch and compared independently — and each job compares
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
@@ -70,3 +67,5 @@ aarch64/string_scan.text	1543
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	497
 aarch64/string_slice.ir	167280114
+aarch64/struct_drop.text	1864
+aarch64/struct_drop.ir	692820288
