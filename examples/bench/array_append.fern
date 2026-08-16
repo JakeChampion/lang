@@ -1,0 +1,23 @@
+// array_append — grow-and-drop churn: the allocator, the geometric regrow and
+// the reference-counting traffic on an owned array, with nothing else in the
+// loop.
+function build(n: i32): i32[] {
+  var xs: i32[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(i * 7);
+    i = i + 1;
+  }
+  return xs;
+}
+
+function main(): i32 {
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 40) {
+    var xs: i32[] = build(20000);
+    total = total + xs[xs.len() - 1] as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

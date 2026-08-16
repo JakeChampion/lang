@@ -1,0 +1,29 @@
+import "core/map";
+import "std/i32";
+
+// map_string — string-keyed Map: build once, then look every key up
+// repeatedly. Each lookup re-hashes the whole key (keys carry no cached
+// hash) and confirms the hit with a byte compare, so this is the cost model
+// a symbol table pays.
+function main(): i32 {
+  var m: Map[string, i32] = Map { };
+  var keys: string[] = [];
+  var i: i32 = 0;
+  while (i < 4000) {
+    var k: string = "checker__symbol_" + i.to_string();
+    keys = keys.append(k);
+    m = m.insert(k, i);
+    i = i + 1;
+  }
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 40) {
+    var j: i32 = 0;
+    while (j < keys.len()) {
+      total = total + m.get_or(keys[j], 0) as i64;
+      j = j + 1;
+    }
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

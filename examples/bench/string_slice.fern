@@ -1,0 +1,25 @@
+// string_slice — substring extraction in a loop, in both forms the language
+// offers: the borrowed `str` view (which must stay allocation-free) and the
+// owned `string` copy that `__str_slice` materialises. Any change that makes
+// a view silently materialise shows up here as an instruction-count jump.
+function view_len(s: string): i64 {
+  var total: i64 = 0i64;
+  var i: i32 = 0;
+  while (i + 16 <= s.len()) {
+    var part: str = s[i:i + 16];
+    total = total + part.len() as i64;
+    i = i + 4;
+  }
+  return total;
+}
+
+function main(): i32 {
+  var src: string = "the quick brown fox jumps over the lazy dog, repeatedly and at length";
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 60000) {
+    total = total + view_len(src);
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

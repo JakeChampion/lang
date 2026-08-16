@@ -1,0 +1,23 @@
+// call_overhead — a small non-inlinable-today helper called in a hot loop,
+// plus a recursive one. Isolates the call sequence and the absence of
+// function inlining on the native backends.
+function step(acc: i64, i: i64): i64 {
+  return acc + i * 3i64 - 1i64;
+}
+
+function fib(n: i32): i32 {
+  if (n < 2) {
+    return n;
+  }
+  return fib(n - 1) + fib(n - 2);
+}
+
+function main(): i32 {
+  var acc: i64 = 0i64;
+  var i: i64 = 0i64;
+  while (i < 1000000i64) {
+    acc = step(acc, i);
+    i = i + 1i64;
+  }
+  return ((acc + fib(24) as i64) % 97i64) as i32;
+}

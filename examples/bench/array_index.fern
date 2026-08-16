@@ -1,0 +1,22 @@
+// array_index — build a fixed array once, then sum it repeatedly. The inner
+// loop is the `i < xs.len()` shape the syntactic bounds-check elision
+// recognises, so this measures indexed load lowering rather than the check.
+function main(): i32 {
+  var xs: i32[] = [];
+  var n: i32 = 0;
+  while (n < 20000) {
+    xs = xs.append(n);
+    n = n + 1;
+  }
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 100) {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+      total = total + xs[i] as i64;
+      i = i + 1;
+    }
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}
