@@ -1,0 +1,60 @@
+name: Perf
+
+# Instruction-count benchmarks over examples/bench, compared against
+# .github/perf-baseline.txt.
+#
+# WHY INSTRUCTION COUNTS AND NOT WALL TIME. A shared CI runner's wall time
+# varies by tens of percent between runs, so a threshold loose enough to avoid
+# false alarms is too loose to catch a real regression. An instruction count on
+# a static binary is identical to the digit across runs and hosts, so a 1%
+# change is signal. The one exception — the string-keyed map's per-process hash
+# seed — is documented and given its own tolerance in the baseline.
+#
+# ADVISORY. The check warns and annotates; it does not fail the job. Flip
+# FERN_CI_PERF_GATE_STRICT=1 below once the numbers have been stable for a
+# while and the corpus is trusted. This mirrors the size gate (#6826), which
+# took the same route.
+#
+# Cheap: the whole corpus is ~8 seconds of measurement on top of a Go build.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    name: perf-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      # valgrind carries the dynamic half. If it cannot be installed the run
+      # still reports the static half and says which half is missing, rather
+      # than reporting a green it did not earn.
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Benchmark
+        run: scripts/perf-bench "${{ runner.temp }}/perf-report.txt"
+
+      - name: Compare against the baseline
+        run: scripts/ci-check-perf .github/perf-baseline.txt "${{ runner.temp }}/perf-report.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-report-${{ matrix.host }}
+          path: ${{ runner.temp }}/perf-report.txt
+          if-no-files-found: warn

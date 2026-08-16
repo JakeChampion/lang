@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# perf-bench — measure the examples/bench corpus and write a metrics report.
+#
+# Usage: perf-bench [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout).
+#
+# Two metrics per benchmark, both DETERMINISTIC for a given commit — which is
+# the whole point. Wall time on a shared CI runner varies by tens of percent,
+# so a threshold loose enough not to false-alarm is too loose to catch
+# anything; these numbers are identical to the digit across runs, so a 1%
+# regression is a real signal.
+#
+#   <arch>/<name>.text   Static: instructions in the emitted assembly. Free —
+#                        it is a line count over output the compiler produced
+#                        anyway — and it moves when codegen density moves.
+#   <arch>/<name>.ir     Dynamic: retired instructions, counted by callgrind.
+#                        This is what actually runs, so it catches a runtime
+#                        helper getting slower, which .text cannot see.
+#
+# Keyed by architecture because an instruction count is not comparable across
+# ISAs. The two are recorded under separate keys and compared separately.
+#
+# WITHOUT VALGRIND the dynamic half is SKIPPED and said so, loudly, in the
+# report itself (a `# no-valgrind` directive scripts/ci-check-perf reads). A
+# measurement lane that quietly measures half of what it claims is worse than
+# no lane, because it reports green.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+REPORT="${1:-/dev/stdout}"
+BENCH_DIR="${FERN_BENCH_DIR:-examples/bench}"
+
+case "$(uname -m)" in
+  x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
+  aarch64 | arm64) ARCH=aarch64; TARGET=arm64-linux ;;
+  *) echo "perf-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
+esac
+
+if [ ! -x bin/fern ]; then
+  echo "perf-bench: building bin/fern" >&2
+  go build -o bin/fern ./cmd/fern
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+have_valgrind=0
+if command -v valgrind >/dev/null 2>&1; then have_valgrind=1; fi
+
+{
+  echo "# scripts/perf-bench report — arch $ARCH, target $TARGET"
+  if [ "$have_valgrind" = 0 ]; then
+    echo "# no-valgrind: the dynamic (.ir) half was not measured on this host"
+  fi
+} > "$work/report"
+
+benches=0
+for src in "$BENCH_DIR"/*.fern; do
+  [ -e "$src" ] || continue
+  name="$(basename "$src" .fern)"
+  benches=$((benches + 1))
+
+  # Static: emit assembly and count instruction lines. Every emitted
+  # instruction is indented; labels and directives are not.
+  ./bin/fern -target "$TARGET" "$src" > "$work/$name.s"
+  text="$(grep -c '^[[:space:]]' "$work/$name.s" || true)"
+  printf '%s/%s.text\t%s\n' "$ARCH" "$name" "$text" >> "$work/report"
+
+  [ "$have_valgrind" = 1 ] || continue
+
+  # Dynamic: link and count retired instructions. The benchmarks return a
+  # checksum as their exit status, so a nonzero exit is expected and only a
+  # missing count is a failure.
+  ./bin/fern -target "$TARGET" -o "$work/$name.bin" "$src"
+  valgrind --tool=callgrind --callgrind-out-file=/dev/null \
+    "$work/$name.bin" > /dev/null 2> "$work/$name.cg" || true
+  ir="$(sed -n 's/.*I *refs: *//p' "$work/$name.cg" | tr -d ', ' | head -1)"
+  if [ -z "$ir" ]; then
+    echo "perf-bench: callgrind produced no instruction count for $name" >&2
+    sed -n '1,20p' "$work/$name.cg" >&2
+    exit 1
+  fi
+  printf '%s/%s.ir\t%s\n' "$ARCH" "$name" "$ir" >> "$work/report"
+done
+
+if [ "$benches" = 0 ]; then
+  echo "perf-bench: no benchmarks found under $BENCH_DIR" >&2
+  exit 1
+fi
+
+cat "$work/report" > "$REPORT"

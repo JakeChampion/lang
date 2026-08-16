@@ -1,0 +1,46 @@
+# Retired- and static-instruction baselines for the examples/bench corpus,
+# checked against every run by scripts/ci-check-perf.
+#
+# FORMAT: metric  value  [tolerance%]. The metric key is
+# <arch>/<benchmark>.<text|ir> — .text is the count of instructions in the
+# emitted assembly, .ir the count of instructions actually retired.
+#
+# WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
+# given commit EXCEPT `map_string.ir`: core/map draws a per-process
+# string-hash seed (#6194), which moves probe lengths. Measured spread over
+# five runs: 301,423,547 .. 302,800,153, i.e. 0.46%. That one line therefore
+# carries an explicit 2% tolerance and is baselined at the middle of the
+# range rather than at a sample. `map_int.ir` is exact — the seed is consulted
+# for string keys only — and is deliberately left on the default so the two
+# together show which half of a map regression moved.
+#
+# Everything else uses the 1% default, which flags a change of one part in a
+# hundred. That is a significance threshold, not a noise floor: the numbers
+# have no noise.
+#
+# ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number
+# moves on purpose, update it in the same PR; the job summary prints the
+# corrected lines ready to paste. Keep the reason in the PR, not here.
+#
+# ONE ARCHITECTURE SO FAR. An instruction count is not comparable across ISAs,
+# so the keys are namespaced by arch and compared independently. Only x86_64
+# is seeded below, because that is the host these were measured on; the
+# aarch64 lane will report its metrics as unbaselined on its first run and
+# print the lines to paste here.
+
+x86_64/array_append.text	645
+x86_64/array_append.ir	104798111
+x86_64/array_index.text	606
+x86_64/array_index.ir	112484118
+x86_64/call_overhead.text	217
+x86_64/call_overhead.ir	69101700
+x86_64/int_loop.text	127
+x86_64/int_loop.ir	102000036
+x86_64/map_int.text	4160
+x86_64/map_int.ir	140201633
+x86_64/map_string.text	5547
+x86_64/map_string.ir	302100000	2
+x86_64/string_scan.text	1931
+x86_64/string_scan.ir	145639625
+x86_64/string_slice.text	535
+x86_64/string_slice.ir	204120107
