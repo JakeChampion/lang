@@ -141,6 +141,12 @@ that divergence.
 
 ## 4. Multiplier 3 — the self-host compiler's symbol tables are linear
 
+> **These shares are the ORIGINAL profile and three of the four are now wrong.**
+> They were sampled before #6894 (−71.3% whole-compiler emit) and #6899 (~16%
+> off the checker) landed, which moved the denominator and the mix underneath
+> them. §4b re-measures against current `main`; read it before choosing work.
+> The description of the *shapes* below is still accurate — only the shares moved.
+
 200-sample profile of `bin/fern-selfhost` compiling `checker_run.fern`
 (built with `-g`, sampled with `gdb -batch -ex "bt 40"`):
 
@@ -191,6 +197,59 @@ Three specific shapes:
   the whole key. The interning design already exists — #4394 lever 1,
   `docs/SELFHOST-SYMBOL-INTERNING.md` — and is unblocked.
 
+## 4b. Re-profiled against current `main` — the ranking inverted
+
+Same method and workload as §4, run after #6894, #6899, #6907 and #6909. Two
+runs, because one would have misled: leaf-frame shares are **not** as
+reproducible as the corpus's instruction counts, and §4's single run was
+presented as though they were.
+
+| leaf frame | run 1 (200 samples) | run 2 (150) | §4 said |
+|---|---|---|---|
+| `__fern_strcmp` | 18.0% | 18.0% | 20.5% |
+| `__fern_memcpy` | 27.0% | 15.3% | *unlisted* |
+| `__fern_rc_inc` | 6.0% | 3.3% | — |
+| `__str_slice` | 5.0% | 3.3% | — |
+| `Scope.*` cluster | 2.5% | 6.0% | **17.0%** |
+| `irlower.param_is_borrowable` | absent | absent | **10.5%** |
+
+**What is safe to act on** — the claims that hold in both runs:
+
+- **`param_is_borrowable` is gone.** #6909 bucketed its registry and measured
+  −0.18%, i.e. nothing; the profile agrees by not containing it. The fix was
+  right, the target had already evaporated.
+- **The `Scope` cluster is 2.5–6%, not 17%.** #6899 took most of it. The
+  ~4,600-entry linear scan described above is real, and it is no longer where
+  the time goes.
+- **`__fern_strcmp` is 18.0% in both runs, to the decimal.** Symbol interning
+  (#4394) is the only item from §7 still near its attributed size, and now the
+  best-evidenced one.
+- **Copying dominates and was never on the list.** Summing memcpy + rc + slice
+  + alloc gives **24%–51%** depending on the run, against the 7.5% §4 records.
+  The magnitude is genuinely unpinned — 200 gdb samples cannot settle it — but
+  every run puts it first.
+
+Direct callers of `__fern_memcpy` (run 2): `__fern_arr_cow_inplace` 6,
+`__str_slice` 5, `__fern_arr_push_grow` 5, `__fern_arr_push_grow_ptr` 4,
+`__fern_strcat` 2, `__fern_arr_push_grow_move_ptr` 1.
+
+Two of those contradict §6. `__fern_arr_cow_inplace` firing at all means arrays
+are being copied *because they are shared* — the rc==1 cliff §6 reports as not
+firing, which is true of `examples/bench/array_append.fern` and evidently false
+of the compiler. And `__str_slice` reaching `memcpy` sits badly with "string
+slicing does not allocate". Both were measured on benchmarks; neither
+generalised to a 46k-line module.
+
+**Instrument limit.** Frame #2 resolves to `??` above these helpers, so the
+Fern-level caller that chose to copy is not recoverable this way. Attributing
+copies to source sites needs `__heap_bump_bytes()` probes or the existing
+`FERN_CLIFF_REPORT` diagnostic, not gdb leaf sampling.
+
+**Lesson for this document.** A profile is a snapshot against one build. Three
+of §4's four rows decayed within days of being written, and two of the items
+ranked off them were aimed at costs that had already been removed. Re-measure
+before picking, and record the run count.
+
 ## 5. Multiplier 4 — repeated whole-program walks
 
 Not separately quantified, but visible in the profile's any-frame column:
@@ -232,25 +291,33 @@ contradict comments in the tree:
 |---|---|---|---|
 | 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
-| 3 | Hash the self-host `Scope` tables — the **miss-allocation half landed** in #6899 | `examples/self_host/checker.fern` | §4 — 17% self time, native already does this |
+| 3 | Hash the self-host `Scope` tables — miss-allocation half landed in #6899 | `examples/self_host/checker.fern` | **§4b — 2.5–6%, not §4's 17%** |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
-| 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4 — 20.5% in `strcmp` |
+| 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4b — **18.0% in `strcmp`, in both runs** |
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
-| 7 | Replace the string-encoded borrow registry with an index | `irlower.fern` | §4 — 10.5% self time |
+| 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
+| 8 | **Cut the copying** — `arr_cow_inplace`, `arr_push_grow*`, `str_slice`, `strcat` | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
 
-Two things about 7 that are easy to get wrong, both checked against the code
-rather than inferred. The registry is **not** recomputed per function — every
-emit-path caller already hoists `borrowable_params_of` to module scope — so
-there is no O(F²) to delete and the whole cost is the O(N) probe, over the
-1,359 free functions `irlower.fern` defines. And bucketing on the key's first
-byte would barely help, because the names are dominated by shared prefixes
-(`set_*`, `emit_*`, `is_*`, `lower_*`, `collect_*`): the worst bucket holds
-159 entries, 11.7% of the table, i.e. only ~8.5× better than the linear scan.
-A hash of the whole key is what makes it O(1)-ish.
+**The ordering to trust is 8, then 5, then 4** — not the numbering, which is
+historical. 8 is where the time is; 5 is the only pre-existing item still
+measuring near its original attribution; 4 is the multi-PR track.
 
-3 and 7 are each a bounded change with a measurable outcome and no
-architectural prerequisite — 1 and 2 were, and both landed the same day. 4 is
-the multi-PR track.
+**3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
+in §4b, because #6899 removed most of it. The linear scan is still real and
+still worth hashing eventually; it is no longer a headline.
+
+**7 is done and is the cautionary tale.** #6909 replaced the O(N) probe with a
+251-bucket index and measured −0.18% — nothing. Two facts had to be checked
+against the code first, and both held: the registry is not recomputed per
+function (every emit-path caller already hoists `borrowable_params_of` to module
+scope, so there was no O(F²) to delete), and first-byte bucketing would have
+been a poor index because the names are dominated by `set_*` / `emit_*` / `is_*`
+/ `lower_*` / `collect_*` prefixes — the worst first-byte bucket holds 159 of
+the 1,359. All correct, all irrelevant: the 10.5% it targeted had already been
+removed by #6894 and #6899. What that PR did land was a fix to
+`consume_safe_params_interproc`'s convergence test, which was comparing entry
+*counts* and stopping early; making it exact recovered a reclaim in
+`checker__e060_collect_dyn_locals`.
 
 **Do not mirror 1 into `irlower.fern`.** It reads like the obvious next step
 and it is not one: the self-host emitter has no drop-function machinery to
