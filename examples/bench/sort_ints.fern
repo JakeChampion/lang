@@ -1,0 +1,29 @@
+import "core/cmp";
+
+// sort_ints — `cmp.sort`, the generic `Ord` merge sort every caller with an
+// arbitrary array reaches for. Natural-run detection, the per-round merge and
+// the append loops that materialise each pass are all allocation-heavy, and
+// the comparator is monomorphised rather than a closure call: a regression in
+// any of those was previously invisible, since nothing in the corpus sorted.
+function main(): i32 {
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 24) {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    // A deterministic, poorly-ordered sequence: a linear congruential walk.
+    var seed: i32 = 12345 + r;
+    while (i < 2000) {
+      seed = (seed * 1103515 + 12345) % 100000;
+      if (seed < 0) {
+        seed = 0 - seed;
+      }
+      xs = xs.append(seed);
+      i = i + 1;
+    }
+    var sorted: i32[] = cmp.sort(xs);
+    total = total + sorted[0] as i64 + sorted[sorted.len() - 1] as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}
