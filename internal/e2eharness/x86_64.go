@@ -67,6 +67,19 @@ func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
 	return gcc, nil, false
 }
 
+// RunX86_64Bin builds the exec.Cmd for running an x86-64 Linux binary either
+// natively (when `runner` is empty — we're already on x86-64) or via the
+// qemu-x86_64 prefix X86_64Tooling returned. Centralises the "qemu prefix or
+// not" dispatch so callers don't sprinkle the same conditional through every
+// test. Mirrors RunArm64Bin.
+func RunX86_64Bin(runner []string, binPath string, args ...string) *exec.Cmd {
+	if len(runner) == 0 {
+		return exec.Command(binPath, args...)
+	}
+	argv := append(append(append([]string{}, runner[1:]...), binPath), args...)
+	return exec.Command(runner[0], argv...)
+}
+
 // CompileAndRunX86_64 compiles `src`, links it as a static
 // Linux x86-64 ELF, runs it, and returns (combined-output,
 // exit-code). Mirrors the arm64 helper's shape so the tests
@@ -121,12 +134,7 @@ func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 		t.Fatalf("gcc: %v\n%s\n--- asm ---\n%s", err, out, asm)
 	}
 
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(binPath)
-	} else {
-		cmd = exec.Command(runner[0], append(runner[1:], binPath)...)
-	}
+	cmd := RunX86_64Bin(runner, binPath)
 	out, _ := cmd.CombinedOutput()
 	return string(out), cmd.ProcessState.ExitCode()
 }

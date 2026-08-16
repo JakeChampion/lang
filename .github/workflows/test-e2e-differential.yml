@@ -55,7 +55,7 @@ jobs:
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload failing-seed artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Disambiguate per matrix cell so the upload doesn't
           # collide across the 4-job matrix on the same PR.

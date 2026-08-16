@@ -56,10 +56,10 @@ jobs:
     name: build-${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.24"
           # No go.sum (no external deps) → setup-go's default cache
@@ -83,7 +83,7 @@ jobs:
           shasum -a 256 "fern-${{ matrix.name }}.tar.gz" > "fern-${{ matrix.name }}.tar.gz.sha256"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fern-${{ matrix.name }}
           path: |
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -121,7 +121,7 @@ jobs:
           gh release delete nightly --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
 
       - name: Publish rolling nightly release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
           name: "Nightly build (${{ github.sha }})"

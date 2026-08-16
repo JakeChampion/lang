@@ -31,7 +31,7 @@ runs:
   using: composite
   steps:
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version: "1.24"
         # No go.sum (no external deps) → setup-go's default cache
@@ -50,7 +50,7 @@ runs:
     # No module cache step: the repo has no external module deps,
     # `~/go/pkg/mod` stays empty.
     - name: Cache Go build cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.cache/go-build
         key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-${{ hashFiles('go.mod') }}
@@ -93,7 +93,7 @@ runs:
     - name: Cache wasmtime + wasm-tools + adapter
       if: inputs.wasmtime == 'true'
       id: cache-wasm
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: |
           ~/.wasmtime
@@ -195,7 +195,7 @@ runs:
     - name: Cache gotestsum binary
       if: inputs.gotestsum == 'true'
       id: cache-gotestsum
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/go/bin/gotestsum
         key: gotestsum-${{ runner.os }}-${{ runner.arch }}-v1.13.0

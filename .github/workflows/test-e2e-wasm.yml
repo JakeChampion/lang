@@ -52,11 +52,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - name: compile test binary (go test -c)
         run: go test -c -o e2e.test ./internal/e2e/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: e2e-wasm-test-${{ matrix.host }}
           path: e2e.test
@@ -75,12 +75,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
+      - uses: actions/checkout@v7 # for the ../../examples + ../../internal/stdlib data files the tests read
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-wasm-test-${{ matrix.host }}
       # Run the wasm slice from the PREBUILT binary — the compile that used to

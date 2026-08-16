@@ -208,7 +208,7 @@ jobs:
     runs-on: ${{ matrix.host.runner }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       # Two binaries: the selfhost package plus the remainder package (for
       # the ~30 residual TestSelfHost tests in mixed fixture files — see
@@ -217,7 +217,7 @@ jobs:
         run: |
           go test -c -o e2eselfhost.test ./internal/e2eselfhost/
           go test -c -o e2e.test ./internal/e2e/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: e2e-test-${{ matrix.host.name }}
           path: |
@@ -274,11 +274,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       - name: warm ${{ matrix.key }} drivers (${{ matrix.drivers }})
@@ -312,7 +312,7 @@ jobs:
         continue-on-error: true
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/driver-sizes.txt"
       # Publish each warmed driver for the `test` shards to download.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: warm-x86_64-${{ matrix.key }}
           path: ${{ runner.temp }}/selfhost-unicache
@@ -340,7 +340,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the CLI tests' `-target wasm32-wasi` sub-legs run wasmtime
@@ -364,7 +364,7 @@ jobs:
         with:
           qemu-package: qemu-user
           cross-gcc: "false"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       - name: warm fern.fern (whole self-hosted compiler)
@@ -408,11 +408,11 @@ jobs:
     # and a heavy emit) — its own docs quote ~4 min, so 30 gives the runner room.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       # TestSelfHostConstFuncGen2 is the ONLY guard for a self-referential
@@ -464,7 +464,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
@@ -473,7 +473,7 @@ jobs:
         with:
           qemu-package: qemu-user
           cross-gcc: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
@@ -517,7 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
@@ -552,11 +552,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
@@ -597,12 +597,12 @@ jobs:
     # wall it is not shared with any other test.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true" # the test t.Skips without BOTH wasm-tools and wasmtime
           gotestsum: "true"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
       - name: whole-compiler wasm link (15 modules, function-windowed, then run)
@@ -642,7 +642,7 @@ jobs:
     # the wasm twin gets.
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
@@ -650,10 +650,10 @@ jobs:
       # so this needs both halves of the toolchain.
       - name: aarch64 cross-gcc + qemu
         uses: ./.github/actions/apt-cross-toolchain
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-x86_64
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: warm-x86_64-*
@@ -721,7 +721,7 @@ jobs:
           # budget the other two legs use is ample.
           - { leg: arm64, test: TestFernFixturesSelfHostArm64, wasmtime: "false", qemu: "true", job-minutes: 45, go-timeout: 43m }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: ${{ matrix.wasmtime }}
@@ -762,7 +762,7 @@ jobs:
       matrix:
         shard: [0, 1]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - name: run the fernsmith corpus through the self-host compiler
         env:
@@ -841,7 +841,7 @@ jobs:
     # failure: it only stops a reclaimed shard from failing the lane twice.
     continue-on-error: ${{ matrix.host == 'x86_64' }}
     steps:
-      - uses: actions/checkout@v4 # for the ../../examples + ../../internal/stdlib data files the tests read
+      - uses: actions/checkout@v7 # for the ../../examples + ../../internal/stdlib data files the tests read
       # Go + build cache (tests shell out to `go build` for the native oracle),
       # lld, AND the wasmtime/wasm-tools/adapter triple: the shards ran WITHOUT
       # wasmtime for a long stretch, which silently t.Skip()ped every
@@ -869,7 +869,7 @@ jobs:
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-${{ matrix.host }}
       # DOWNLOAD every driver artifact the `warm` jobs published (x86 only) in a
@@ -885,7 +885,7 @@ jobs:
       # per-shard (closure-cached, so at most once each). continue-on-error so
       # a missing artifact (shouldn't happen — warm is a prerequisite) falls
       # back to cold build rather than failing the shard before any test runs.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: matrix.host == 'x86_64'
         continue-on-error: true
         with:
@@ -1000,7 +1000,7 @@ jobs:
           else
             echo "no gotestsum timing events: no durations to record"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: shard-outcome-${{ matrix.host }}-${{ matrix.shard }}
@@ -1031,12 +1031,12 @@ jobs:
     env:
       FERN_CI_TOLERATE_VANISHED_SHARDS: "0"
     steps:
-      - uses: actions/checkout@v4
-      # continue-on-error: download-artifact@v4 hard-fails when its pattern
+      - uses: actions/checkout@v7
+      # continue-on-error: download-artifact hard-fails when its pattern
       # matches nothing (every shard reclaimed, say). Let it pass so the
       # verifier below reports the real, legible "VANISHED" list instead of an
       # opaque "unable to find any artifacts".
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: shard-outcome-*
