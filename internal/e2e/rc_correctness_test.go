@@ -4394,6 +4394,144 @@ function main(): i32 {
     return (acc - 5019) + __rc_underflow_count();
 }`,
 	},
+	// #6877 — a loop-body `var` whose LAST use is a consuming `.with`
+	// receiver. __fern_arr_cow_inplace takes that reference over, so the
+	// next iteration's re-declaration must not release the slot as well;
+	// it did, and the freed buffer was the one the RESULT still pointed at.
+	// The four shapes below all crashed or silently double-freed on both
+	// natives; the three after them were already correct and are the
+	// controls that catch a re-narrowing.
+	{
+		name: "with_loop_local_from_fresh_container_field",
+		src: `
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_box().items;
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// The container read is not the trigger: a call returning the array
+		// directly breaks identically (it aborted with "array index out of
+		// range" rather than SIGSEGV, which is the same corruption read
+		// through a recycled length word).
+		name: "with_loop_local_from_call_result",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Binding the container first, so the field read is a plain
+		// projection out of a live local rather than a fresh-temp read.
+		name: "with_loop_local_from_bound_container_field",
+		src: `
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var bx: Box = mk_box();
+        var it: P[] = bx.items;
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// A SCALAR element array double-freed too, without ever computing a
+		// wrong answer — FERN_LEAKCHECK reported allocs=20 frees=39 and
+		// live_bytes=-304 while the program exited 0. The struct-element
+		// shapes above are the same bug with something left to corrupt, so
+		// this row is what stops the fix being narrowed to pointer elements.
+		name: "with_loop_local_scalar_elements",
+		src: `
+function mk_ints(): i32[] { return [0, 1]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: i32[] = mk_ints();
+        var a: i32[] = it.with(0, i);
+        t = t + a[0];
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: a read of the receiver AFTER the `.with` makes the call a
+		// borrow, so the receiver keeps its own reference and BOTH releases
+		// are owed. The re-init drop must still fire here.
+		name: "with_loop_local_read_after_set",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a + it[1].b;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 210) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: `.append` is not a consuming receiver, so nothing is
+		// transferred and the re-init drop is the only release.
+		name: "append_loop_local_from_call_result",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.append(P{a:i,b:i});
+        t = t + a[2].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: the `.with` receiver is a fresh temp with no binding at
+		// all, so there is no slot to re-initialise.
+		name: "with_loop_no_intermediate_local",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var a: P[] = mk_arr().with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

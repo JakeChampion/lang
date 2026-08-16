@@ -127,6 +127,18 @@ type rcPlan struct {
 	// (`buf = buf.with(…)`) is NOT here: the result flows back into the same
 	// slot, which then genuinely owns a reference the sweep must release.
 	arraySetConsumed map[string]bool
+	// arraySetConsumedReinit is the per-ITERATION half of arraySetConsumed:
+	// the receiver is a `var` whose declaration and consuming `.with` sit in
+	// one block, the `.with` after the declaration with no early exit
+	// between, so every execution of that declaration is followed by the
+	// transfer. A loop re-runs the declaration, and its re-init drop
+	// (emitVarReinitDropOld) is a second release site for the same slot —
+	// with nothing left in it to release, that drop frees the buffer the
+	// RESULT still points at. arraySetConsumed alone cannot answer this: it
+	// only knows the occurrence was textually last, which for a `.with`
+	// nested in an `if` leaves the iterations that skipped it holding a
+	// reference the re-init drop is the only site to release.
+	arraySetConsumedReinit map[string]bool
 	// reuseSources pairs a construction site C (the *ast.StructLit or
 	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
@@ -269,6 +281,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	b.rc.arraySetInc = b.computeArraySetIncs()
+	b.rc.arraySetConsumedReinit = b.computeArraySetConsumedReinit()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
 	b.rc.dynBorrowedViews = b.computeDynBorrowedViews()
@@ -2270,6 +2283,82 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		return true
 	})
 	return incs
+}
+
+// computeArraySetConsumedReinit narrows arraySetConsumed to the receivers a
+// per-iteration re-declaration must ALSO leave alone (see the field comment).
+// A receiver qualifies when its `var` declaration and the consuming `.with`
+// are top-level statements of one block, in that order, with no `return` /
+// `break` / `continue` / `?` between them — the same dominance rule
+// markLoopBodyConstructionMoves uses to extend a move into a loop body, and
+// for the same reason: it is what makes the transfer unconditional between
+// one execution of the declaration and the next.
+//
+// Without it a loop-body `var it = mk(); var a = it.with(…)` released the
+// buffer twice — the `.with` moved it into `a`, the next iteration's re-init
+// drop freed it anyway, and `a`'s own release then landed on a recycled
+// block. Both natives SIGSEGV'd on a struct-element array and silently
+// double-freed a scalar one (#6877).
+func (b *builder) computeArraySetConsumedReinit() map[string]bool {
+	out := map[string]bool{}
+	if b.fn.Body == nil || len(b.rc.arraySetConsumed) == 0 {
+		return out
+	}
+	// Consuming `.with` receivers named by `e`, ignoring any nested inside a
+	// conditional (an if/match expression) or a lambda body — reaching the
+	// call from there is not guaranteed by reaching the statement.
+	consumedIn := func(e ast.Expr, hit func(string)) {
+		ast.Walk(e, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.IfExpr, *ast.MatchExpr, *ast.FuncDecl:
+				return false
+			case *ast.Call:
+				if isArraySetCall(x) {
+					if rid, ok := x.Args[0].(*ast.Ident); ok && b.rc.arraySetConsumed[rid.Name] {
+						hit(rid.Name)
+					}
+				}
+			}
+			return true
+		})
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		blk, ok := n.(*ast.Block)
+		if !ok {
+			return true
+		}
+		exitsBefore := make([]int, len(blk.Stmts)+1)
+		for i, st := range blk.Stmts {
+			exitsBefore[i+1] = exitsBefore[i]
+			if stmtHasEarlyExit(st) {
+				exitsBefore[i+1]++
+			}
+		}
+		declAt := map[string]int{}
+		for i, st := range blk.Stmts {
+			var val ast.Expr
+			switch s := st.(type) {
+			case *ast.Var:
+				val = s.Init
+			case *ast.ExprStmt:
+				if a, ok := s.Expr.(*ast.Assign); ok {
+					val = a.Value
+				}
+			}
+			if val != nil {
+				consumedIn(val, func(name string) {
+					if d, dok := declAt[name]; dok && exitsBefore[i] == exitsBefore[d] {
+						out[name] = true
+					}
+				})
+			}
+			if v, ok := st.(*ast.Var); ok {
+				declAt[v.Name] = i
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // computeReuseSources is the general-FBIP pairing analysis: it matches a

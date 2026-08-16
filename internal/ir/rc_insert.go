@@ -1257,10 +1257,13 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 //     Shadowed names (multiple distinct slots, one name-keyed zero) are
 //     skipped — dec-ing an un-zeroed slot would read garbage.
 //   - !movedLocals: a var whose reference was MOVED out (move-on-alias /
-//     -construction / -destructure / -return — all top-level, last-use)
-//     is excluded from the exit sweep; dec-ing its slot would over-
-//     release. Moves are top-level only, so a loop-body var is never
-//     marked; this guards the rare top-level re-declaration case.
+//     -construction / -destructure / -return) is excluded from the exit
+//     sweep; dec-ing its slot would over-release. Loop-body construction
+//     moves carry their own dominance rule, so the slot is empty on every
+//     path back round to this declaration.
+//   - !arraySetConsumedReinit: the same exclusion for a `.with` receiver
+//     __fern_arr_cow_inplace took the reference from, under the same
+//     dominance rule.
 func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	if !ast.RcFreeEnabled {
 		return
@@ -1274,7 +1277,7 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	// only a CONSTRUCTION alias-inc (rc.ctorAliasInced) leaves the local
 	// holding a counted reference it must give back. That case gets the flat
 	// dec below; every other ineligible local is still skipped entirely.
-	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
+	if !b.localNameUnique(name) || b.rc.movedLocals[name] || b.rc.arraySetConsumedReinit[name] {
 		return
 	}
 	if !b.rc.freeEligible[name] {
