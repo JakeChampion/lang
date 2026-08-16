@@ -2259,9 +2259,17 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 			// the inner buffer is still owned by its container, so an in-place
 			// cow would corrupt the container (`a[0].with(0,9)` must not mutate
 			// `a[0]`). Force the inc on a projection so cow copies instead.
+			//
+			// A read out of a FRESH owned container is the exception, and the
+			// same predicate the binding site uses says so: that lowering
+			// retains the value and deep-drops the container, so the
+			// expression holds the only reference and cow_inplace may take
+			// it. Forcing the inc there bought a copy AND leaked the
+			// original, since no slot holds it for anything to release —
+			// `mk_box().items.with(…)` cost 64 B a round, unbounded.
 			switch c.Args[0].(type) {
 			case *ast.Index, *ast.FieldAccess, *ast.SliceExpr:
-				incs[c] = true
+				incs[c] = !b.isOwnedContainerRead(c.Args[0])
 			default:
 				incs[c] = false
 			}

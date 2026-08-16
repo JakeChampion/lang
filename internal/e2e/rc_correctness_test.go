@@ -4532,6 +4532,42 @@ function f(n: i32): i32 {
 }
 function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 	},
+	{
+		// `.with` straight off a fresh container read. The read owns what it
+		// produced, so cow_inplace takes that reference; the borrow-shaped
+		// siblings — a field of a live struct, an element of a live array —
+		// must still copy, or the container is mutated through the receiver.
+		// This row is the guard on the borrow half — a classification that
+		// widens changes the answer here; the leak the fresh half used to
+		// pay is invisible to an exit code and is gated by
+		// TestX86_64AllocScaling instead.
+		name: "with_receiver_fresh_container_read_vs_borrowed",
+		src: `
+struct S { xs: i32[], tag: i32 }
+function mk(): S { return S { xs: [1, 2], tag: 0 }; }
+function borrowed_field(s: S): i32 {
+    var b: i32[] = s.xs.with(0, 99);
+    return b[0] + s.xs[0];
+}
+function borrowed_elem(a: i32[][]): i32 {
+    var b: i32[] = a[0].with(0, 99);
+    return b[0] + a[0][0];
+}
+function fresh_field(): i32 {
+    var b: i32[] = mk().xs.with(0, 99);
+    return b[0] + b[1];
+}
+function main(): i32 {
+    var s: S = mk();
+    var aa: i32[][] = [[1, 2], [3, 4]];
+    var t: i32 = 0;
+    t = t + borrowed_field(s) - 100;
+    t = t + borrowed_elem(aa) - 100;
+    t = t + fresh_field() - 101;
+    t = t + s.xs[0] + aa[0][0] - 2;
+    return t + __rc_underflow_count();
+}`,
+	},
 	// #6417 — the fresh-scrutinee box release sits at the post-match JOIN, so
 	// an arm that leaves the match early branches straight past it. These
 	// pin the release being emitted at each such exit as well; the leak they
