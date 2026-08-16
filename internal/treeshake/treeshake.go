@@ -18,6 +18,9 @@
 package treeshake
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 )
@@ -575,4 +578,48 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		}
 		walkExpr(x.Desugared, byName, enqueue)
 	}
+}
+
+// DropImplMethods names the `drop` method of every `core/mem.Drop` impl in
+// the program, so tree-shake keeps it alive as a root.
+//
+// A `Drop` finalizer has no call site in the source at all — the only
+// caller is the `__drop_struct_<C>` / `__drop_enum_<C>` glue, which IR
+// lowering synthesises long after tree-shake has run. Without this root the
+// method is pruned as unreachable and the natives fail to link on an
+// undefined `__method_<C>_drop`. Same shape as DynCoercionImplMethods: a
+// call edge no AST walk can see.
+//
+// Trait names in info.Impls are module-mangled (`mem__Drop`), so the match
+// is on the simple name.
+func DropImplMethods(info *checker.Info) []string {
+	if info == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for trait, types := range info.Impls {
+		simple := trait
+		if i := strings.LastIndex(simple, "__"); i >= 0 {
+			simple = simple[i+2:]
+		}
+		if simple != "Drop" {
+			continue
+		}
+		for typeName, impld := range types {
+			if !impld {
+				continue
+			}
+			fn := info.Methods[typeName+".drop"]
+			if fn == "" {
+				fn = "__method_" + typeName + "_drop"
+			}
+			if !seen[fn] {
+				seen[fn] = true
+				out = append(out, fn)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

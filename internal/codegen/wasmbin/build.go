@@ -150,6 +150,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// survives tree-shake and IR dead-function elimination. See
 	// docs/DYN-TRAITS.md §4.2.1.
 	dynImplMethods := treeshake.DynCoercionImplMethods(info)
+	dynImplMethods = append(dynImplMethods, treeshake.DropImplMethods(info)...)
 	treeshakeExtras = append(treeshakeExtras, dynImplMethods...)
 	// Same rooting for `e as? T` downcast targets: the (Trait,T) vtable
 	// the compare references holds those impl methods, and a downcast-only
