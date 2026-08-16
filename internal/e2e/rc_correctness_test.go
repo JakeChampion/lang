@@ -4916,6 +4916,44 @@ function main(): i32 {
     return (acc - 116) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A pair-form payload passed to a BORROWING call in the arm body
+		// (#6409). `x.len()` is `__method_Array_len(x)` after the checker's
+		// method rewrite, and `total(x)` is the user-function spelling of the
+		// same borrow; both now excuse the occurrence, so the payload is
+		// released when the arm ends.
+		//
+		// `ident` is the control: it returns its parameter, so the payload
+		// escapes the arm and must keep its prior leak. `alias` is read AFTER
+		// the match on every round — if the release admitted a pointer result
+		// the read would be a use-after-free rather than a wrong value, so
+		// this is the row that would fail loudly. 4 × (3 + 6) + 4 × (2 + 3).
+		name: "pair_form_payload_borrowing_call",
+		src: `
+import "core/int";
+function mk(n: i32): Option[i32[]] {
+    if (n == 0) { return None; }
+    return Some([n, n + 1, n + 2]);
+}
+function total(a: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
+function ident(a: i32[]): i32[] { return a; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        match (mk(1)) { Some(x) => { t = t + x.len() + total(x); }, None => { }, }
+        i = i + 1;
+    }
+    var alias: i32[] = [];
+    i = 0;
+    while (i < 4) {
+        match (mk(2)) { Some(x) => { alias = ident(x); }, None => { }, }
+        t = t + alias[0] + alias.len();
+        i = i + 1;
+    }
+    return (t - 56) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

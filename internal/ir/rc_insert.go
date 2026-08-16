@@ -405,22 +405,22 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if !b.returnsNoParamEscape[id.Name] {
 		return false
 	}
-	return pairFormPayloadConfined(body, name)
+	return b.pairFormPayloadConfined(body, name)
 }
 
 // pairFormPayloadConfined reports whether every mention of `name` in `body` is
-// a plain read THROUGH the value — the target of a field access or the base of
-// an index — and so cannot let the pointer outlive the arm.
+// a plain read THROUGH the value — the target of a field access, the base of
+// an index, or an argument to a call that provably neither retains it nor
+// hands it back — and so cannot let the pointer outlive the arm.
 //
 // It is a whitelist, not a blacklist: an occurrence the walk does not recognise
-// as one of those two shapes counts as an escape. That deliberately declines
-// shapes that are often fine (passing the binding to a function that only
-// reads it, printing it) in exchange for not having to enumerate the sinks —
-// a missed reclaim is the leak we already have, while a missed escape is a
-// use-after-free. A shadowing declaration inside the arm errs the same safe
-// way: its uses are attributed to the binding, so anything the shadow does
-// with the name suppresses the release.
-func pairFormPayloadConfined(body ast.Stmt, name string) bool {
+// as one of those shapes counts as an escape. That deliberately declines
+// shapes that are often fine (printing the binding, storing it) in exchange for
+// not having to enumerate the sinks — a missed reclaim is the leak we already
+// have, while a missed escape is a use-after-free. A shadowing declaration
+// inside the arm errs the same safe way: its uses are attributed to the
+// binding, so anything the shadow does with the name suppresses the release.
+func (b *builder) pairFormPayloadConfined(body ast.Stmt, name string) bool {
 	if body == nil {
 		return false
 	}
@@ -435,6 +435,16 @@ func pairFormPayloadConfined(body ast.Stmt, name string) bool {
 			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
 				excused[id] = true
 			}
+		case *ast.Call:
+			for i, a := range x.Args {
+				id, ok := a.(*ast.Ident)
+				if !ok || id.Name != name {
+					continue
+				}
+				if b.borrowingCallArg(x, i) {
+					excused[id] = true
+				}
+			}
 		}
 		return true
 	})
@@ -446,6 +456,63 @@ func pairFormPayloadConfined(body ast.Stmt, name string) bool {
 		return true
 	})
 	return confined
+}
+
+// borrowingCallArg reports whether argument `i` of direct call `call` is a
+// pure BORROW — the callee neither keeps a reference to it past the call nor
+// hands it back — so an occurrence there cannot let a pointer outlive the
+// caller's next statement. `x.len()` is the shape that motivates it: the
+// checker rewrites it to `__method_Array_len(x)`, so the receiver sits in an
+// argument list and matched none of pairFormPayloadConfined's read shapes.
+//
+// The gate is the stage-(b) arg-temp reclaim's, asked per argument: that path
+// decs a fresh temp immediately after the same call, which is sound exactly
+// when the callee cannot have retained or returned it.
+//
+//   - a CONCRETE SCALAR result (resultCannotAliasArg), so the result can
+//     neither be nor contain the argument. An unresolved generic result is
+//     rejected there too, which is what an identity return hides behind;
+//   - not a retain sink (calleeRetainsAnyArg — `push` / `set` MOVE the
+//     argument into a container), and not `map_new`, whose builtin injects
+//     arguments of its own;
+//   - the callee does not take OWNERSHIP of the parameter (an explicit `own`
+//     or an owned-by-default position frees it at the callee's exit);
+//   - the parameter provably does not escape the callee: the borrow oracle
+//     says so, or it is the receiver of a pure-read builtin
+//     (pureReadReceiverBuiltin), whose contract is the same fact for a helper
+//     that has no Fern body to analyse.
+//
+// A callee reached through a local (a closure value) is refused: nothing names
+// which body it holds, so no oracle can be consulted.
+func (b *builder) borrowingCallArg(call *ast.Call, i int) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	if _, isFunc := b.info.FuncSigs[id.Name]; !isFunc {
+		return false
+	}
+	if !resultCannotAliasArg(b.exprType(call)) {
+		return false
+	}
+	if calleeRetainsAnyArg(id.Name) || id.Name == "map_new" {
+		return false
+	}
+	if own := b.info.OwnFuncs[id.Name]; i < len(own) && own[i] {
+		return false
+	}
+	if sig := b.info.FuncSigs[id.Name]; sig != nil && i < len(sig.Params) &&
+		b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i) {
+		return false
+	}
+	if pureReadReceiverBuiltin(id.Name) && i == 0 {
+		return true
+	}
+	esc, known := b.paramEscapes[id.Name]
+	return known && i < len(esc) && !esc[i]
 }
 
 // reclaimableTryScrutinee reports whether a `?`'s source Option/Result box is
