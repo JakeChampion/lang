@@ -860,6 +860,24 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			// `structFieldLayout size + 8` rc header, so __fern_box_free
 			// frees base = data-8, size+8.
 			if sdOk && ast.RcFreeEnabled && eligible {
+				// Call the generated drop fn rather than inlining its body.
+				// genStructDropFn emits this exact sequence against local 0,
+				// so the two are equivalent — but the sweep runs once per
+				// function EXIT, and this struct arm was ~154 ops for a
+				// 29-field struct. At 112 struct locals and 259 exits in the
+				// self-host `lower_call_named` that is ~17k ops per sweep
+				// and 3.57M across the function; the call form is 3.
+				//
+				// Discovery is call-driven (ir.go enqueueCalls), so emitting
+				// the call is what causes the body to be generated. Shapes
+				// dropFnNameFor declines (Map / Cell / no StructDecl) keep
+				// the inline path below.
+				if name, ok := dropFnNameFor(st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					b.emit(Op{Kind: OpCallDirect, Str: name, I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					return
+				}
 				offs, size := structFieldLayout(sd.Fields, b.ptrW)
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
@@ -928,6 +946,23 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 				return
 			}
 			if sdOk {
+				// Outlined form, for the same reason as the eligible arm
+				// above: this shape is ~6 ops per rc-tracked field and the
+				// sweep repeats per function EXIT. It is the arm that
+				// dominates the self-host compiler — `LowerState` has 24
+				// rc-tracked fields, and `lower_call_named` holds 112 such
+				// locals across 259 exits, which is ~3.5M of its ~3.57M sweep
+				// ops. genStructFlatDropFn emits this body verbatim against
+				// local 0 and declines (keeping the inline path) for the one
+				// shape it cannot reproduce, a Cell field.
+				if ast.RcFreeEnabled {
+					if _, okGen := genStructFlatDropFn(st.Name, sd, b.ptrW); okGen {
+						b.emit(Op{Kind: OpLoadLocal, I32: slot})
+						b.emit(Op{Kind: OpCallDirect, Str: "__drop_struct_flat_" + st.Name, I32: 1})
+						b.emit(Op{Kind: OpDrop})
+						return
+					}
+				}
 				offs, _ := structFieldLayout(sd.Fields, b.ptrW)
 				var ptrFields []ast.Param
 				for _, f := range sd.Fields {
@@ -3270,4 +3305,63 @@ func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 		return p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name]
 	}
 	return false
+}
+
+// genStructFlatDropFn builds `__drop_struct_flat_<Name>`: the outlined form of
+// the exit sweep's OWNED-but-NOT-free-eligible struct drop. It mirrors that
+// arm exactly — at rc==1 each rc-tracked field gets a FLAT one-level dec (the
+// struct escaped, so a field may still be reachable through the escape and must
+// not be deep-freed), then the box itself is dec'd, never freed.
+//
+// It is deliberately a separate generator from genStructDropFn rather than a
+// flag on it: that one deep-drops its children and calls __fern_box_free, which
+// is exactly what this shape must not do.
+//
+// Returns false for a struct carrying a Cell field, whose drop needs the
+// instantiation element type only the builder has (emitCellDropOnStack); that
+// shape keeps the inline path.
+func genStructFlatDropFn(name string, sd *ast.StructDecl, ptrW int) (*Func, bool) {
+	offs, _ := structFieldLayout(sd.Fields, ptrW)
+	var ptrFields []ast.Param
+	for _, f := range sd.Fields {
+		if !arrElemIsRcTracked(f.Type) {
+			continue
+		}
+		if st, ok := f.Type.(ast.StructType); ok && st.Name == "Cell" {
+			return nil, false
+		}
+		ptrFields = append(ptrFields, f)
+	}
+	ops := []Op{}
+	if len(ptrFields) > 0 {
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+			Op{Kind: OpIf, I32: BlockTypeVoid})
+		for _, f := range ptrFields {
+			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
+			if off := offs[f.Name]; off != 0 {
+				ops = append(ops, Op{Kind: OpConstI32, I32: off}, Op{Kind: OpAdd})
+			}
+			ops = append(ops, Op{Kind: OpLoad, Width: WidthPtr})
+			// decValueOnStack(f.Type, false): with mayFree false every
+			// pointer-shaped field takes the flat __fern_rc_dec tail.
+			ops = append(ops,
+				Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+				Op{Kind: OpDrop})
+		}
+		ops = append(ops, Op{Kind: OpEnd})
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+		Op{Kind: OpDrop},
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpReturn})
+	return &Func{
+		Name:       "__drop_struct_flat_" + name,
+		Params:     []ast.Param{{Name: "__ds", Type: ast.NumberType{}}},
+		ReturnType: ast.NumberType{},
+		Ops:        ops,
+	}, true
 }

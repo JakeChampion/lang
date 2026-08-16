@@ -1,0 +1,50 @@
+import "std/i32";
+
+// struct_drop — the function-exit reference-counting sweep, which is the
+// shape the self-hosted compiler is built out of: several locals of a
+// multi-field rc-tracked struct, live across several early exits.
+//
+// Every exit drops every live local, so the emitted drop code scales as
+// locals x exits. Without a benchmark of this shape the gate cannot see a
+// change to how that drop is emitted — the outlining work in #6888 cut the
+// whole-compiler emit by 71% and moved no other benchmark here at all.
+struct Frame { name: string, tags: string[], slots: i32[], depth: i32 }
+
+function mk(k: i32): Frame {
+  var t: string[] = [];
+  t = t.append("tag_" + k.to_string());
+  var s: i32[] = [];
+  s = s.append(k);
+  return Frame { name: "frame_" + k.to_string(), tags: t, slots: s, depth: k };
+}
+
+// Four locals live across five exits: the sweep runs at each one.
+function pick(k: i32): i32 {
+  var a: Frame = mk(k);
+  if (k == 1) {
+    return a.depth;
+  }
+  var b: Frame = mk(k + 1);
+  if (k == 2) {
+    return a.depth + b.depth;
+  }
+  var c: Frame = mk(k + 2);
+  if (k == 3) {
+    return b.depth + c.depth;
+  }
+  var d: Frame = mk(k + 3);
+  if (k == 4) {
+    return c.depth + d.depth;
+  }
+  return a.depth + b.depth + c.depth + d.depth;
+}
+
+function main(): i32 {
+  var total: i64 = 0i64;
+  var i: i32 = 0;
+  while (i < 120000) {
+    total = total + pick(i % 6) as i64;
+    i = i + 1;
+  }
+  return (total % 97i64) as i32;
+}

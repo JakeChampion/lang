@@ -73,20 +73,55 @@ function from_local(n: i32): i32 {
     return t;
 }
 
-function main(): i32 { return from_call(2) + from_local(2); }
+function no_spread(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n { var r: R = R { tag: "x", n: i }; t = t + r.n; }
+    return t;
+}
+
+function main(): i32 { return from_call(2) + from_local(2) + no_spread(2); }
 `
 	ip := lowerForTest(t, src)
-	// The two functions release the same number of R values — one per loop
-	// iteration plus one base. They differ only in where the base comes
-	// from, and the Ident-base form was already right, so it is the yardstick.
-	call := dropStructCalls(funcByName(ip, "from_call"), "R")
-	local := dropStructCalls(funcByName(ip, "from_local"), "R")
-	if call != local {
-		t.Errorf("from_call releases %d R values and from_local %d — a fresh base is owned by the construction, so the counts must match", call, local)
+	// The yardstick is the SAME loop with no spread at all: `from_call`
+	// constructs the same `r` per iteration and additionally owns the
+	// temporary `mk()` base, so it must release exactly one more R.
+	//
+	// This replaces a from_call-vs-from_local equality that was never true.
+	// from_local carries an extra named local (`b`), so it genuinely
+	// releases one more R than from_call; the old assertion passed only
+	// because dropStructCalls matched the exact name "__drop_struct_R" and
+	// was blind to the releases the sweep emitted inline. Counting every
+	// form makes the real asymmetry visible, so the comparison moved to a
+	// control that does not have it.
+	call := allRReleases(funcByName(ip, "from_call"))
+	plain := allRReleases(funcByName(ip, "no_spread"))
+	if call != plain+1 {
+		t.Errorf("from_call releases %d R values and the spread-free control %d — the fresh mk() base must be released exactly once more (#4650)", call, plain)
 	}
-	if call == 0 {
-		t.Error("neither function releases anything; the test no longer measures what it claims")
+	if plain == 0 {
+		t.Error("the control releases nothing; the test no longer measures what it claims")
 	}
+}
+
+// allRReleases counts every form an R release can take, so the count does not
+// silently change meaning when the lowering moves a release between the inline
+// sweep and a generated drop fn.
+func allRReleases(fn *ir.Func) int {
+	if fn == nil {
+		return 0
+	}
+	n := 0
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCallDirect &&
+			(op.Str == "__drop_struct_R" || op.Str == "__drop_struct_flat_R") {
+			n++
+		}
+		// An inline sweep opens its release with the rc==1 guard.
+		if op.Kind == ir.OpRcIsUnique {
+			n++
+		}
+	}
+	return n
 }
 
 func dropStructCalls(fn *ir.Func, structName string) int {

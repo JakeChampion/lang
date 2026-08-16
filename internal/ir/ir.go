@@ -3057,6 +3057,21 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if fn == nil {
 					continue
 				}
+			} else if strings.HasPrefix(name, "__drop_struct_flat_") {
+				// Must be tested before the plain __drop_struct_ arm below,
+				// whose TrimPrefix would resolve "flat_<Name>" as a struct
+				// name and silently generate no body — which the exit sweep
+				// would then call into nothing.
+				sn := strings.TrimPrefix(name, "__drop_struct_flat_")
+				sd, ok := info.Structs[sn]
+				if !ok {
+					continue // routing only names structs it verified exist
+				}
+				var okGen bool
+				fn, okGen = genStructFlatDropFn(sn, sd, ptrW)
+				if !okGen {
+					continue
+				}
 			} else {
 				sn := strings.TrimPrefix(name, "__drop_struct_")
 				sd, ok := info.Structs[sn]
