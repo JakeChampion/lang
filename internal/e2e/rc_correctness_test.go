@@ -4797,6 +4797,32 @@ function main(): i32 {
     return (n - 24) + (2 - ok) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A fresh array passed to a constructor that STORES it (#6522), plus
+		// the aliased spelling of the same call. The per-argument stage-(b)
+		// reclaim decs the caller's temp right after the call, so this is the
+		// case that says the dec nets against the constructor's store rather
+		// than freeing what the struct now owns: the stored array is read
+		// back through the returned struct, and a LIVE local passed at the
+		// same position is read after the call too — the alias half, where
+		// the temp is not fresh and the caller must keep its reference.
+		name: "fresh_array_into_constructor_stored",
+		src: `
+import "core/int";
+struct Node { name: string, deps: i32[], mtime: i32 }
+function two(a: i32, b: i32): i32[] { return [a, b]; }
+function node(name: string, deps: i32[], mtime: i32): Node {
+    return Node { name: name, deps: deps, mtime: mtime };
+}
+function main(): i32 {
+    var fresh: Node = node("a", two(1, 2), 7);
+    var live: i32[] = two(3, 4);
+    var aliased: Node = node("b", live, 8);
+    var t: i32 = fresh.deps[0] + fresh.deps[1] + aliased.deps[0] + aliased.deps[1];
+    var u: i32 = live[0] + live[1] + fresh.deps.len() + aliased.deps.len();
+    return (t - 10) + (u - 11) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

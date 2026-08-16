@@ -500,6 +500,38 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A fresh array handed to a constructor that stores it (#6522) —
+		// `node(name, no_deps(), k)`, i.e. how every tree, graph and AST gets
+		// built. The stage-(b) arg-temp reclaim is gated per CALL, and one
+		// pointer-shaped result disqualifies every argument of that call at
+		// once, so the caller's reference to the fresh array was stranded
+		// while the callee took its own: 32 B per constructed node on all
+		// three backends. Writing the same struct literal INLINE was flat,
+		// because then there is no argument and no second reference.
+		//
+		// Constant in n: two nodes, each with one array, per round.
+		name: "fresh-array-into-constructor",
+		decls: `struct Node { name: string, deps: string[], mtime: i32, exists: boolean }
+function no_deps(): string[] { var e: string[] = []; return e; }
+function node(name: string, deps: string[], mtime: i32): Node {
+    return Node { name: name, deps: deps, mtime: mtime, exists: true };
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var out: Node[] = [];
+        out = out.append(node("alpha", no_deps(), i));
+        out = out.append(node("beta", no_deps(), i + 1));
+        t = t + out.len();
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// `.with` straight off a fresh container read. The read owns the
 		// array it produced, so the pre-call retain that makes a BORROWED
 		// projection copy is wrong here twice over: it buys the copy, and

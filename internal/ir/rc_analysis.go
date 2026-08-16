@@ -600,6 +600,8 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				switch pt := p.Type.(type) {
 				case ast.StringType:
 					flags[i] = stringParamCounted(fn, p.Name, out)
+				case ast.ArrayType:
+					flags[i] = arrayParamCounted(fn, p.Name, out)
 				case ast.StructType:
 					// Struct-param generalisation: credit `p` when every one of
 					// its appearances is a counted store, a non-retaining read,
@@ -732,6 +734,61 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 			// Sound by the same fixpoint argument as the struct case: the
 			// summary starts all-false and only ever gains credits, so a
 			// mutual-recursion cycle with no grounding stays uncredited.
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if cs, known := summary[id.Name]; known {
+					for ai, a := range x.Args {
+						if ai < len(cs) && cs[ai] {
+							mark(a)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return total > 0 && total == len(safe)
+}
+
+// arrayParamCounted is the array sibling of stringParamCounted: an array
+// parameter `pn` qualifies when every appearance is a bare-ident value of a
+// StructLit / TupleLit / ArrayLit slot, the receiver of a pure-read builtin
+// (`p.len()`), or an argument to a callee whose parameter in that position is
+// itself counted-retain.
+//
+// It deliberately does NOT credit `p[i]`, which stringParamCounted does: a
+// string's byte index yields a u8 value copy that references nothing, while an
+// array element may be a live reference the read hands out un-counted.
+// Similarly no SliceExpr arm — an array slice can share the buffer.
+func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
+	safe := map[*ast.Ident]bool{}
+	mark := func(e ast.Expr) {
+		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
+			safe[id] = true
+		}
+	}
+	total := 0
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if x.Name == pn {
+				total++
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				mark(f.Value)
+			}
+		case *ast.TupleLit:
+			for _, el := range x.Elems {
+				mark(el)
+			}
+		case *ast.ArrayLit:
+			for _, el := range x.Elems {
+				mark(el)
+			}
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
+				mark(x.Args[0])
+			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if cs, known := summary[id.Name]; known {
 					for ai, a := range x.Args {
