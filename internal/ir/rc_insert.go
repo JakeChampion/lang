@@ -890,10 +890,13 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 					}
 					// Native single-word string field (x86_64, !TwoWordOverride):
 					// the field is a single pointer at the field offset; load
-					// it as WidthPtr and __fern_rc_dec (SSO inline-tag low-bit
-					// guard + literal sentinel keep all sources safe). arm64
-					// boxed strings excluded — same gating as the rest of the
-					// native string-reclaim path.
+					// it as WidthPtr and __fern_str_dec, which FREES the buffer
+					// at the last reference where a bare __fern_rc_dec only
+					// decrements (SSO inline-tag low-bit guard + literal
+					// sentinel keep all sources safe). Same helper the
+					// generated drop fn uses. arm64 boxed strings excluded —
+					// same gating as the rest of the native string-reclaim
+					// path.
 					if _, isStr := f.Type.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 						b.emit(Op{Kind: OpLoadLocal, I32: slot})
 						if off := offs[f.Name]; off != 0 {
@@ -901,7 +904,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 							b.emit(Op{Kind: OpAdd})
 						}
 						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-						b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+						b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 						b.emit(Op{Kind: OpDrop})
 						continue
 					}
@@ -2736,7 +2739,7 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 			Op{Kind: OpDrop})
 	}
 	// Single-word string value (native single-word, x86_64): the caller
-	// loaded a ptr via payloadLoadOpFor; reclaim via __fern_rc_dec (SSO
+	// loaded a ptr via payloadLoadOpFor; reclaim via __fern_str_dec (SSO
 	// inline-tag low-bit guard + literal sentinel keep all sources safe).
 	// arm64 / wasm two-word ABIs take the WidthString + __fern_str_dec
 	// branch above.

@@ -458,6 +458,48 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// The array half of the family above — `var a: Entry = es[0]` on a
+		// struct-of-strings array (#6499). The binding's exit sweep reclaims
+		// the struct box inline rather than through the generated drop fn,
+		// and its native single-word string arm released each field with a
+		// bare rc-dec: that decrements and never frees, so the count went
+		// 1 -> 0 and both buffers were stranded, 128 B a round.
+		//
+		// The two spellings measured apart is what identified it: the same
+		// read used INLINE (`es.with(0, es[1])`) was flat, because that route
+		// goes through __drop_struct_Entry, which calls __fern_str_dec. Only
+		// the inline arm was short.
+		//
+		// The binding has to be in a callee, not the loop body: a
+		// loop-scoped local takes a different reclaim path and was flat
+		// throughout.
+		//
+		// Constant in n: one array, four entries and one binding per round.
+		name: "array-struct-element-binding",
+		decls: `import "std/i32";
+struct Entry { key: string, value: string }
+function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
+function mk(k: i32): Entry[] {
+    var es: Entry[] = [];
+    var i: i32 = 0;
+    while (i < 4) { es = es.append(Entry { key: wide(k + i), value: wide(k + i + 100) }); i = i + 1; }
+    return es;
+}
+function probe(k: i32): i32 {
+    var es: Entry[] = mk(k);
+    var a: Entry = es[0];
+    return es.len() + a.key.len();
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + probe(i); i = i + 1; }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// `.with` straight off a fresh container read. The read owns the
 		// array it produced, so the pre-call retain that makes a BORROWED
 		// projection copy is wrong here twice over: it buys the copy, and
