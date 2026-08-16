@@ -291,6 +291,9 @@ var ferndocPageDivergences = map[string]string{
 	"num":     "no TraitDecl",
 	"cmp":     "no TraitDecl",
 	"iter":    "no TraitDecl",
+	// core/mem is trait-ONLY, so the missing TraitDecl leaves nothing at
+	// all to render and the page comes out empty rather than merely short.
+	"mem": "no TraitDecl",
 	// `const` desugars to a zero-arg function, recoverable through
 	// FuncDecl.is_const but not as native's ConstDecl.
 	"time": "const desugars to a function",
