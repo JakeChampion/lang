@@ -13,6 +13,20 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
+> **Status update (2026-08, the stdout/stderr leaves.)** `print_str`,
+> `print_int`, `putchar` and `eprint_str` are Fern on all three native targets
+> (`asmcore.rt_src_print_str` / `rt_src_print_int` / `rt_src_putchar` /
+> `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
+> whose number `sysno` already carried for `tcp_send`, and the two that need a
+> scratch byte — `putchar`'s character, `eprint_str`'s newline — take it from the
+> `__raw_scratch` buffer the clocks added, which is why they join its gate.
+>
+> `print_int` takes an **i64**, so one helper serves both `op_print_int` and the
+> wider `op_print_i64`: an i32 reaches the stack slot already sign-extended. That
+> is what closes the gap where `op_print_i64` (kind 162) had no register-backend
+> handler and `print_int` on an i64 printed nothing. Taking the magnitude in
+> `u64` also makes INT64_MIN print, which neither hand-asm body managed.
+>
 > **Status update (2026-08, the syscall floor reaches arm64.)** `random_bytes`
 > is the first syscall leaf to be Fern on **both** register backends: the
 > `__syscall3` op now has an arm64 emitter, and the shared
@@ -165,8 +179,8 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > the gate `asm_ir` already used (`clocks || stat`).
 >
 > What remains hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is `read_dir` /
-> `remove_dir_all` on arm64, Darwin's `monotonic_ns`, the wasm bundles,
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the stdin /
+> Reader leaves, Darwin's `monotonic_ns` and `fork`, the wasm bundles,
 > `__fern_alloc` itself, and the map/array mutator core.
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
@@ -399,16 +413,24 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    `read_file`, `write_file`, `remove_file`, `create_dir_all`, `read_dir`,
    `remove_dir_all`, `temp_dir`, `env` — over a shared Fern `__fern_io_error`
    classifier.
-   **On arm64: `random_bytes` only, so far.** The blocker this doc used to name
-   here — "the syscall number is arch-specific and the `rt_src_*` sources are
-   shared, so parity needs an arch-parameterised source" — is now solved:
-   `rt_src_random_bytes(sysno)` takes the number as a parameter, and darwinize
-   rewrites the generic-syscall sequence for Mach-O (see the status block up
-   top). The remaining arm64 leaves are the ones where the *number* is not the
-   only difference: Darwin has no `clock_gettime` (gettimeofday with another
-   struct, or CNTVCT_EL0) and its `stat` layout differs from Linux's, so each
-   needs a per-platform source body rather than a substituted constant.
+   The blocker this doc used to name here — "the syscall number is arch-specific
+   and the `rt_src_*` sources are shared, so parity needs an arch-parameterised
+   source" — is solved: the number is a source parameter, and darwinize rewrites
+   the generic-syscall sequence for Mach-O (see the status block up top). The
+   whole family has since reached **all three native targets**; the one
+   hand-written body left in it is Darwin's `fork`, whose child marker arrives in
+   `x1` where a `__syscall*` returns one integer.
    wasm keeps its WASI bundles — it has no generic syscall.
+6. **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
+   `eprint_str`. **Done on all three native targets**, needing no new primitive.
+7. **The stdin / Reader leaves** — `read_int`, `read_line`, `read_all_stdin`
+   (+`_rc`), `reader_read_chunk`, `reader_close`. The syscall side is as cheap
+   as step 6; the work is the returned box. `read_line` and `reader_read_chunk`
+   hand-build an `Option[string]` over a **headerless** raw 16-byte strbox, where
+   `__raw_string` yields the rc-headered one, so a Fern rewrite changes what the
+   consumer sees. `read_int` also has a bug to fix on the way: its end pointer is
+   `buf + n` with no negative check, so a failed `read` walks uninitialised
+   memory on both targets.
 
 Each slice ships with IR lock-in tests (the helper compiles from Fern, the
 hand-asm label is gone) and reuses the existing behavioural coverage, and

@@ -402,17 +402,63 @@ all — a native socket's readiness token IS its fd.
 both backends for a raw trap (`syscall` on x86-64, `svc #0` on arm64) and the
 remainder splits three ways:
 
-- **Still-migratable leaves**, in the same shape as the ones above and not yet
-  attempted: `print_str`, `print_int`, `putchar`, `eprint_str`, `read_line`,
-  `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`, `reader_close`,
-  and `udp_send`. These are plain `read`/`write`/`close` calls; nothing in the
-  audit above suggests a floor gap, so they are the natural continuation
-  whenever #2649 is picked up again.
+- **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
+  `eprint_str` — **have since moved**, on all three native targets at once. They
+  are the cheapest family in the whole migration: one `write(2)` each, whose
+  number is the only per-target constant, and `sysno` already carried it because
+  `tcp_send` uses the same call. `print_str` is `tcp_send` with the fd fixed at 1.
 
-  `udp_send` is the odd one: its hand-asm exists **only on arm64**, and
-  `asm_ir.fern` has no `kind_tag == 208` case at all, so the op does not lower
-  on x86-64. That is a backend-parity gap rather than a migration one — worth
-  knowing before treating it as an ordinary next slice.
+  The two that need a scratch byte (`putchar`'s character, `eprint_str`'s
+  trailing newline) take it from the static `__fern_scratch` rather than the
+  stack, since a Fern helper has no way to name a stack slot. That is the whole
+  cost of the move, and it retires the `strb w1, [sp, #-16]!` hazard of #6083
+  along with the hand-asm that carried it.
+
+  `print_int` was the only one with real content, and migrating it fixed two
+  bugs the hand-asm had on **both** register backends. INT64_MIN printed
+  garbage: x86-64's `negq` overflowed the magnitude back to INT64_MIN and then
+  divided it unsigned, and arm64's `sdiv` produced negative digits. Taking the
+  magnitude in `u64` — the trick `rt_src_i64_to_string` already used — is
+  correct by construction. And because the Fern helper takes an `i64`, one body
+  now serves both print ops: `op_print_i64` (kind 162) had **no register-backend
+  handler at all**, so `print_int` on an i64 emitted `# ir: unsupported bin
+  print_i64` and printed nothing. Not a diagnostic — a silently dropped call,
+  which `FERN_STRICT_IR=1` did not catch either.
+
+- **Still-migratable leaves**, in the same shape and not yet attempted:
+  `read_line`, `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`,
+  `reader_close`, and `udp_send`. These are plain `read`/`close` calls and the
+  syscall side of each is as cheap as the write leaves just done.
+
+  What is NOT cheap about the first four is the box they return, and that is the
+  real content of the next slice rather than the syscall: `read_line` and
+  `reader_read_chunk` hand-build an `Option[string]` whose inner strbox is a
+  **headerless** raw `__fern_alloc(16)`, while `__raw_string` produces the
+  rc-headered box. A Fern rewrite goes through the normal enum + string lowering
+  and therefore changes the layout the consumer sees. `read_int` carries a
+  pre-existing bug to fix on the way: it computes its end pointer as
+  `buf + n` with no negative check, so a failed `read` walks uninitialised
+  memory on both targets.
+
+  `udp_send` is the odd one, and it is worse than recorded here before. The
+  entry said its hand-asm exists only on arm64 and that `asm_ir.fern` has no
+  `kind_tag == 208` case, implying arm64 lowers it. **Neither backend does.**
+  Measured: `udp_send("127.0.0.1", 9999, "hi")` emits `unsupported bin udp_send`
+  on x86-64 *and* on arm64; the arm64 hand-asm body is emitted and `.globl`-ed
+  with nothing anywhere calling it. So it is not a migration target at all until
+  it has an op handler — dead runtime on one target, a dropped call on both.
+
+  **The failure mode both `udp_send` and `print_i64` share is worth more than
+  either op.** An op with no case in the emitter's binary dispatch falls through
+  to `ir_bin_asm`'s last line, which returns `"    # ir: unsupported bin " +
+  kind_name(tag)` — a COMMENT where an instruction belongs. The call is silently
+  dropped and the program runs on. That path does not consult `strict_ir_on()`,
+  so `FERN_STRICT_IR=1` exits 0 and says nothing (measured, not inferred). Goal
+  1's guarantee — "a module outside the IR subset is a diagnostic naming the bail
+  site, not a silent fall-through" — has a hole exactly here, and it is what let
+  `print_i64` sit unnoticed. Closing it means making that fallback refuse, which
+  turns every currently-dropped op into a hard error and so needs its own change
+  rather than riding along with a migration slice.
 - **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
   exec, drain and reap in one body), `map_delete`, `strbuf_append`.
 - **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths

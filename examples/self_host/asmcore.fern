@@ -806,12 +806,59 @@ pub function rt_src_tcp_send(t: string): string {
 // string: the op has no error channel, so the hand-asm clamped a negative to
 // len 0 and this keeps that.
 //
-// The direction of the floor is why recv migrates and send does not:
-// `__raw_string` builds a string over a buffer we already own, so no copy. Going
-// the other way — reading a live string's data pointer back out — has no floor
-// primitive, which is what still blocks tcp_send.
+// It runs WITH the direction of the floor: `__raw_string` builds a string over a
+// buffer we already own, so nothing is copied.
 pub function rt_src_tcp_recv(t: string): string {
     return "function __fern_tcp_recv(fd: i32, max: i32): string { var p: i32 = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, p, max); if (n < 0) { n = 0; } return __raw_string(p, n); }";
+}
+
+// The stdout/stderr leaves (#2649). All four are plain write(2) calls, so unlike
+// the fs family they need no per-target constant beyond the syscall number: the
+// fd, the byte count and the buffer are the same three arguments everywhere.
+// Each returns write's result, which every op site drops — the value exists only
+// so the statement-level drop balances.
+
+// rt_src_print_str backs `print_str(s)` / `write(s)` → the string's bytes on fd 1,
+// no newline. `s` is read-only, so the borrow analysis keeps it borrowed and the
+// helper copies nothing: __raw_data(s) is slot 0 of the box the caller already
+// holds.
+pub function rt_src_print_str(t: string): string {
+    return "function __fern_print_str(s: string): i32 { return __syscall3(" + sysno(t, "write") + ", 1, __raw_data(s), s.len()); }";
+}
+
+// rt_src_eprint_str backs `eprint(s)` → the string's bytes on fd 2 followed by a
+// '\n'. eprint is the stderr LINE printer, so the trailing newline is part of the
+// contract (native and the interpreter both append it). Two writes rather than one
+// buffer build: the payload goes straight out of the caller's box, and the newline
+// is one byte of the shared static scratch, so the helper allocates nothing.
+pub function rt_src_eprint_str(t: string): string {
+    return "function __fern_eprint_str(s: string): i32 { __syscall3(" + sysno(t, "write") + ", 2, __raw_data(s), s.len()); var p: i32 = __raw_scratch(1); __raw_store8(p, 0, 10); return __syscall3(" + sysno(t, "write") + ", 2, p, 1); }";
+}
+
+// rt_src_putchar backs `putchar(c)` → c's low byte on fd 1, the byte-level twin of
+// print_str. The byte is materialised in the shared static scratch; the hand-asm
+// used a stack slot, which is the one thing a Fern helper cannot name.
+pub function rt_src_putchar(t: string): string {
+    return "function __fern_putchar(c: i32): i32 { var p: i32 = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p, 1); }";
+}
+
+// rt_src_print_int backs `print_int(n)` → n's decimal text on fd 1, no newline.
+//
+// It takes an i64 so ONE helper serves both print ops: an i32 arrives in the
+// stack slot already sign-extended, so op_print_int and the wider op_print_i64
+// both call this. That is also the fix for op_print_i64 having had no register-
+// backend handler at all — `print_int` on an i64 emitted `# ir: unsupported bin
+// print_i64` and dropped the call, printing nothing.
+//
+// The magnitude is taken in u64 so INT64_MIN prints: `0 - n` leaves it negative
+// in i64, but reinterpreted as u64 it is the right magnitude. Both hand-asm
+// bodies got that case wrong — x86-64's `negq` overflowed back to INT64_MIN and
+// then divided it unsigned, arm64's `sdiv` produced negative digits. Same trick
+// rt_src_i64_to_string uses.
+//
+// 24 scratch bytes hold the widest output: 20 digits plus a sign.
+pub function rt_src_print_int(t: string): string {
+    return "function __fern_print_int(n: i64): i32 { var p: i32 = __raw_scratch(24); var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { __raw_store8(p, 0, 48); return __syscall3(" + sysno(t, "write") + ", 1, p, 1); } var nd: i32 = 0; var t2: u64 = v; while (t2 != (0 as u64)) { nd = nd + 1; t2 = t2 / (10 as u64); } var total: i32 = nd + neg; if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __syscall3(" + sysno(t, "write") + ", 1, p, total); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL

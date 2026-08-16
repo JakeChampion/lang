@@ -10,11 +10,12 @@ import (
 
 // eprintIRCases exercise the `eprint(s)` / `eprint_int(n)` stderr builtins on the
 // IR path. They lower to an `eprint_str` IR op (not a call_direct, so they
-// sidestep the call eligibility gate) that each backend emits as a call into the
-// same __fern_eprint_str helper the AST path uses (write to fd 2, then a newline).
-// `eprint` is the stderr line-printer — it appends "\n", mirroring `print` and the
-// Go-backend / interp / wasm `eprint`, which all do. eprint_int desugars to
-// i32_to_string then eprint_str. stderr pins the bytes.
+// sidestep the call eligibility gate). The register backends emit a call to
+// __fn___fern_eprint_str, the Fern-compiled helper (asmcore.rt_src_eprint_str);
+// wasm calls its own WASI $__fern_eprint_str. Both write to fd 2, then a newline:
+// `eprint` is the stderr line-printer, mirroring `print` and the Go-backend /
+// interp / wasm `eprint`. eprint_int desugars to i32_to_string then eprint_str.
+// stderr pins the bytes.
 var eprintIRCases = []struct {
 	name, src, want string
 }{
@@ -38,8 +39,8 @@ func TestSelfHostEprintIRX86_64(t *testing.T) {
 	for _, tc := range eprintIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fern_eprint_str")) {
-				t.Fatalf("%s: no call to __fern_eprint_str — did not lower through the IR path", tc.name)
+			if !bytes.Contains(asm, []byte("call __fn___fern_eprint_str")) {
+				t.Fatalf("%s: no call to __fn___fern_eprint_str — did not lower through the IR path", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -89,8 +90,8 @@ func TestSelfHostEprintIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_eprint_str")) {
-				t.Fatalf("%s: no bl __fern_eprint_str — did not lower through the arm64 IR path", tc.name)
+			if !bytes.Contains(asm, []byte("bl __fn___fern_eprint_str")) {
+				t.Fatalf("%s: no bl __fn___fern_eprint_str — did not lower through the arm64 IR path", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "ep_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)
