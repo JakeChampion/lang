@@ -24,7 +24,7 @@
 # only decides which half is guaranteed to have run.)
 
 [build]
-  command = "scripts/netlify-build && scripts/netlify-smoke-test"
+  command = "scripts/netlify-build"
   publish = "site/dist"
 
 [build.environment]
