@@ -1,0 +1,12 @@
+// int_loop — the codegen floor: a counted i64 accumulate loop with no
+// allocation, no calls and no memory traffic beyond the two locals. What it
+// measures is how many instructions the backend spends per source operation.
+function main(): i32 {
+  var sum: i64 = 0i64;
+  var i: i64 = 0i64;
+  while (i < 3000000i64) {
+    sum = sum + i;
+    i = i + 1i64;
+  }
+  return (sum % 97i64) as i32;
+}

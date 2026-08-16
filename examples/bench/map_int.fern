@@ -1,0 +1,23 @@
+import "core/map";
+
+// map_int — the same shape as map_string with i32 keys, so the difference
+// between the two isolates what string keys cost over scalar ones.
+function main(): i32 {
+  var m: Map[i32, i32] = Map { };
+  var i: i32 = 0;
+  while (i < 4000) {
+    m = m.insert(i * 7, i);
+    i = i + 1;
+  }
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 40) {
+    var j: i32 = 0;
+    while (j < 4000) {
+      total = total + m.get_or(j * 7, 0) as i64;
+      j = j + 1;
+    }
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

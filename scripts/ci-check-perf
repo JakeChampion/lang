@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# ci-check-perf — compare a scripts/perf-bench report against the checked-in
+# baseline and report drift in both directions.
+#
+# Usage: ci-check-perf BASELINE REPORT
+#
+#   BASELINE  .github/perf-baseline.txt — `metric value [tolerance%]` per line.
+#   REPORT    written by scripts/perf-bench.
+#
+# WHY THIS EXISTS. Nothing in the repo measured how fast the language is. The
+# self-hosted compiler compiling itself is the project's own largest Fern
+# program and its slowest gate, and every claim about why was an estimate,
+# because no number was ever recorded twice. Sizes have had this since #6826
+# (scripts/ci-check-driver-sizes); this is the speed half, deliberately the
+# same shape so there is one thing to learn rather than two.
+#
+# WARN, DO NOT FAIL (for now). Findings are a job-summary line plus a warning
+# annotation; the exit status is 0. Set FERN_CI_PERF_GATE_STRICT=1 to make them
+# fatal — deliberately a one-variable escalation, the same lever the size gate
+# uses.
+#
+# BOTH DIRECTIONS. A win is reported too. Leaving the baseline high after an
+# improvement means the next regression is measured against a ceiling nobody
+# holds, which is exactly how 16% of binary growth went unnoticed for eight
+# days before the size gate existed.
+#
+# TOLERANCES. Most metrics are exact: a static instruction count is a property
+# of the emitted text, and a retired-instruction count on a static binary
+# repeats to the digit. The exceptions are the map benchmarks, whose per-
+# process string-hash seed (#6194) moves probe lengths — measured at ~0.5%
+# spread — so those lines carry their own wider tolerance in the baseline.
+
+set -euo pipefail
+
+# Default drift, in either direction, that is worth a warning. Per-entry
+# tolerances in the baseline's optional third column override it.
+TOLERANCE="${FERN_PERF_TOLERANCE_PERCENT:-1}"
+
+BASELINE="${1:-}"
+REPORT="${2:-}"
+if [ -z "$BASELINE" ] || [ -z "$REPORT" ]; then
+  echo "usage: ci-check-perf BASELINE REPORT" >&2
+  exit 2
+fi
+if [ ! -f "$BASELINE" ]; then
+  echo "ci-check-perf: baseline '$BASELINE' not found" >&2
+  exit 2
+fi
+
+# A missing or empty report means nothing was benchmarked. Say so loudly: a
+# perf check that measures nothing reports green, which is worse than no check.
+if [ ! -s "$REPORT" ]; then
+  echo "### performance"
+  echo "NO PERF REPORT at $REPORT — nothing was measured, so nothing was compared."
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::warning title=perf check ran blind::no benchmark results were recorded at $REPORT: scripts/perf-bench did not run, or died before writing"
+  else
+    echo "WARNING: perf check ran blind: no benchmark results were recorded at $REPORT"
+  fi
+  exit 0
+fi
+
+routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" '
+  function human(n) {
+    if (n >= 1000000000) return sprintf("%.2fG", n / 1000000000)
+    if (n >= 1000000)    return sprintf("%.1fM", n / 1000000)
+    if (n >= 1000)       return sprintf("%.1fk", n / 1000)
+    return sprintf("%d", n)
+  }
+  BEGIN {
+    while ((getline line < B) > 0) {
+      if (line ~ /^[ \t]*(#|$)/) continue
+      nf = split(line, fld, /[ \t]+/)
+      if (nf < 2) continue
+      base[fld[1]] = fld[2] + 0
+      tol[fld[1]] = (nf >= 3) ? fld[3] + 0 : deftol
+    }
+    close(B)
+    blind = 0
+  }
+  /^[ \t]*#[ \t]*no-valgrind:/ { blind = 1; next }
+  /^[ \t]*(#|$)/ { next }
+  NF >= 2 {
+    if (!($1 in measured)) order[++n] = $1
+    measured[$1] = $2 + 0
+  }
+  END {
+    printf "SUMMARY\t### performance (examples/bench)\n"
+    if (blind) printf "SUMMARY\tvalgrind was absent on this host: the dynamic (.ir) metrics were NOT measured.\n"
+    printf "SUMMARY\t| metric | measured | baseline | delta |\n"
+    printf "SUMMARY\t| --- | --- | --- | --- |\n"
+    for (i = 1; i <= n; i++) {
+      m = order[i]
+      if (m in base) {
+        delta = 100 * (measured[m] - base[m]) / base[m]
+        printf "SUMMARY\t| %s | %s | %s | %+.2f%% |\n", m, human(measured[m]), human(base[m]), delta
+      } else {
+        printf "SUMMARY\t| %s | %s | none | unbaselined |\n", m, human(measured[m])
+      }
+    }
+
+    nfind = 0
+    nunbased = 0
+    for (i = 1; i <= n; i++) {
+      m = order[i]
+      if (!(m in base)) {
+        nunbased++
+        paste[m] = measured[m]
+        continue
+      }
+      delta = 100 * (measured[m] - base[m]) / base[m]
+      t = tol[m]
+      if (delta > t) {
+        nfind++
+        printf "SUMMARY\tSLOWER: %s %s -> %s (%+.2f%%, tolerance %s%%).\n", m, human(base[m]), human(measured[m]), delta, t
+        printf "ANNOTATE\t%s %+.2f%%\t%s measured %d against a baseline of %d — over its %s%% tolerance\n", m, delta, m, measured[m], base[m], t
+        paste[m] = measured[m]
+      } else if (delta < -t) {
+        nfind++
+        printf "SUMMARY\tFASTER: %s %s -> %s (%+.2f%%, tolerance %s%%).\n", m, human(base[m]), human(measured[m]), delta, t
+        printf "ANNOTATE\t%s %+.2f%%\t%s measured %d against a baseline of %d — update the baseline so the win becomes the new ceiling\n", m, delta, m, measured[m], base[m]
+        paste[m] = measured[m]
+      }
+    }
+
+    nmissing = 0
+    for (m in base) {
+      if (m in measured) continue
+      if (blind && m ~ /\.ir$/) continue
+      nmissing++
+      printf "SUMMARY\tMISSING: %s is in the baseline but was not measured.\n", m
+      printf "ANNOTATE\t%s was not measured\tit is baselined at %d but the report has no line for it: a benchmark was dropped, renamed or failed to build\n", m, base[m]
+    }
+
+    if (nunbased > 0) {
+      printf "SUMMARY\tUNBASELINED: %d metric(s) have no baseline entry, so they are recorded but not compared.\n", nunbased
+      printf "ANNOTATE\t%d metric(s) have no baseline\tthey are measured but nothing compares them; add the lines from the job summary to the baseline\n", nunbased
+    }
+
+    nsug = 0
+    for (i = 1; i <= n; i++) {
+      m = order[i]
+      if (!(m in paste)) continue
+      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — paste into the baseline file:\n"
+      if (tol[m] != deftol && (m in base)) printf "SUMMARY\t    %s %d %s\n", m, paste[m], tol[m]
+      else printf "SUMMARY\t    %s %d\n", m, paste[m]
+    }
+
+    if (nfind == 0 && nunbased == 0 && nmissing == 0)
+      printf "SUMMARY\tEvery metric is within tolerance of its baseline.\n"
+    printf "FINDINGS\t%d\n", nfind + nunbased + nmissing
+  }
+' "$REPORT")"
+
+findings=0
+while IFS=$'\t' read -r tag rest; do
+  if [ "$tag" = SUMMARY ]; then
+    printf '%s\n' "$rest"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$rest" >>"$GITHUB_STEP_SUMMARY"; fi
+  elif [ "$tag" = FINDINGS ]; then
+    findings="$rest"
+  fi
+done < <(printf '%s\n' "$routed")
+
+while IFS=$'\t' read -r tag title msg; do
+  [ "$tag" = ANNOTATE ] || continue
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    printf '::warning title=%s::%s\n' "$title" "$msg"
+  else
+    printf 'WARNING: %s: %s\n' "$title" "$msg"
+  fi
+done < <(printf '%s\n' "$routed")
+
+if [ "${FERN_CI_PERF_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+  echo "ci-check-perf: $findings finding(s) and FERN_CI_PERF_GATE_STRICT=1" >&2
+  exit 1
+fi
