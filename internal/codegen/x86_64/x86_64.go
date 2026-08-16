@@ -1703,11 +1703,11 @@ var x86AsmReserved = func() map[string]bool {
 }()
 
 // asmFnName returns the asm symbol for a Fern function `name`, escaping
-// names the assembler reserves (the reserved set is case-insensitive to
-// the assembler, so the check folds case). The `$`
-// suffix is collision-proof: Fern identifiers cannot contain `$`, so no
-// real function name can equal an escaped one, and both assemblers accept
-// `$` in a symbol. Non-colliding names — the overwhelming majority,
+// names the assembler reserves (the reserved set is case-insensitive to the
+// assembler, so the check folds case). The `$` suffix is collision-proof:
+// Fern identifiers cannot contain `$`, so no real function name can equal an
+// escaped one, and both assemblers accept `$` in a symbol. Names the
+// assembler does not reserve — the overwhelming majority,
 // including every `__fern_*` runtime helper — pass through unchanged, so
 // applying it to any function symbol (user or runtime) is safe. It must be
 // used at EVERY site that emits a function name as an asm token
