@@ -86,45 +86,58 @@ Measured over the whole-compiler emit (22,420,063 emitted instructions):
 Neither native backend runs `ir.Inline` or IR dead-function elimination —
 those are wasm-only, blocked on the AST↔IR parallel-index walk. #4377.
 
-## 3. Multiplier 2 — drop code is duplicated per exit
+## 3. Multiplier 2 — the exit drop sweep — FIXED (#6894)
 
-This is the large one, and it was not on anyone's list.
+This was the large one, it was not on anyone's list, and the framing in the
+original audit was wrong in a way worth recording.
 
-`irlower__lower_call_named` is 1,432 lines of Fern. The Go emitter turns it
-into **8,214,279 lines of assembly**, of which **589,045 are
-`call __fern_rc_dec`** — 411 decrements per source line. Ten functions are
-75.9% of the entire 390 MB emit, all the same shape.
+The audit measured **589,045 `call __fern_rc_dec` in `irlower__lower_call_named`**
+and read that as duplication across exits, which implies sharing one epilogue
+between them. A per-sweep census said otherwise:
 
-The same function through the self-host emitter: **13,017 lines, zero
-`rc_dec`**. A 631× difference on identical source, because the self-host's
-Perceus port is incomplete (it leaks instead — roadmap goal 2).
+```
+funcs=4286  sweeps=16362  ops=7,056,385
+  irlower__lower_call_named    sweeps=259  ops=3,574,571  avg=13,801
+  irlower__lower_call_method   sweeps=177  ops=1,291,650  avg= 7,297
+  irlower__lower_expr_dispatch sweeps=133  ops=  752,430  avg= 5,657
+```
 
-The mechanism is that every scope exit emits its own full drop sweep over
-every live local, rather than branching to shared drop code. Reproduced
-synthetically with `bin/fern` — decrement count is linear in each dimension
-independently, so it grows as their product:
+259 sweeps is simply that function's return count. The pathology was
+**13,801 IR ops per sweep** — ~91 per rc-tracked local, because `emitDec`
+inlined a full deep-free for every local at every exit. Three functions held
+79% of all sweep code.
 
-| | decrements |
-|---|---|
-| 16 locals, 4 → 64 exits | 112 → 176 → 304 → 560 → 1,072 |
-| 4 → 64 locals, 16 exits | 76 → 152 → 304 → 608 → 1,216 |
+So the fix was to outline the per-local drop, not to share the sweep. Both
+struct arms now call a generated drop fn. The arm that dominates is the
+NOT-free-eligible one (the self-host `LowerState` locals are not eligible),
+whose semantics differ — flat one-level field decs, box dec'd and never
+freed — so it needed its own generator rather than a flag on the existing one.
 
-`lower_call_named` has 152 `var` declarations, 268 `return`s and 290 `if`
-blocks, each block being a scope with its own sweep.
+| | before | after |
+|---|---|---|
+| whole-compiler emitted asm | 18,601,039 lines | 5,343,328 (−71.3%) |
+| `irlower__lower_call_named` | 6,415,067 | 298,499 (−95.3%) |
+| `irlower__lower_call_method` | 2,289,116 | 297,783 (−87.0%) |
+| compiling the compiler | 39.4 s | 12.4 s (3.2×) |
+| self-host binary (`fern.fern`) | 155,973,500 B | 89,738,492 B (−42.5%) |
 
-Across the whole emit: 917,977 rc/drop call sites, 4.1% of emitted
-instructions as bare `call`s and roughly 16% once each one's surrounding
-load/spill sequence is counted.
+**The trade:** outlining costs a call per drop — measured at +0.78% retired
+instructions for −80% static code on `examples/bench/struct_drop.fern`. Code
+size dominates this workload, so it is the right trade, but it is a real cost
+on drop-heavy inner loops.
 
-**This is why the self-host binary is 160 MB** where the Go compiler is
-23 MB — and why `.text` + `.rodata` is 93.3 MB against Go's 16.4 MB.
+**Two things remain.** Sharing one sweep per function (259 → 1) still composes
+with this for a further ~259× on that function, but needs care: `OpBr` lowers
+to a bare `jmp` with no stack-pointer reconciliation on the natives, where the
+operand stack IS the machine stack, and `verifystack` is wasm-polymorphic and
+would not catch the misalignment. A shared epilogue must be reached with an
+empty operand stack.
 
-**The forward-looking part matters more than the current cost.** The
-self-host compiler is fast *relative to what it is about to become*: finishing
-the Perceus port (goal 2) imports this blowup into the self-host unless drop
-sharing lands first. A 631× per-function code increase arriving on the
-compiler's hottest functions is not a regression anyone will be able to
-bisect after the fact.
+And the self-host mirror — `examples/self_host/irlower.fern`'s
+`emit_dec_sweep_except` — still inlines. Nothing compares the two emitters'
+bytes or shape, so it was a safe follow-up, but the self-host stays ~4× slower
+than the Go compiler until it lands, and the fixpoint is structurally blind to
+that divergence.
 
 ## 4. Multiplier 3 — the self-host compiler's symbol tables are linear
 
@@ -213,7 +226,7 @@ contradict comments in the tree:
 
 | # | Fix | Where | Evidence |
 |---|---|---|---|
-| 1 | Share drop code between exits instead of duplicating the sweep | `internal/ir/rc_insert.go` | §3 — 589 k decrements in one function; 631× vs the self-host emitter |
+| 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
 | 3 | Hash the self-host `Scope` tables; stop allocating on miss | `examples/self_host/checker.fern` | §4 — 17% self time, native already does this |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
@@ -221,9 +234,11 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | Replace the string-encoded borrow registry with a map | `irlower.fern` | §4 — 10.5% self time |
 
-1, 3 and 7 are each a bounded change with a measurable outcome and no
-architectural prerequisite — 2 was, and landing it took an afternoon. 4 is the
-multi-PR track.
+3 and 7 are each a bounded change with a measurable outcome and no
+architectural prerequisite — 1 and 2 were, and both landed the same day. 4 is
+the multi-PR track. The mirror of 1 into `irlower.fern` is now the highest
+-value open item, because it is what makes the self-hosted compiler itself
+fast.
 
 ## 8. Reproducing any of this
 
