@@ -13407,11 +13407,12 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, resultType ast.Type) ([]
 }
 
 // stashOwnedArgTemp evaluates call argument `a` into a scratch slot when it is
-// a FRESH owned rc temp — a literal construction, a fresh-returning call, or
-// an `.append` copy — and leaves its value on the operand stack for the call.
-// Reports the slot and type so the caller can release it once the call has
-// consumed it; ok is false for any other argument shape, which is then left
-// for the caller to lower normally.
+// a FRESH owned rc temp — a literal construction, a fresh-returning call, a
+// pair-form enum result reboxed for this argument, or an `.append` copy — and
+// leaves its value on the operand stack for the call. Reports the slot and type
+// so the caller can release it once the call has consumed it; ok is false for
+// any other argument shape, which is then left for the caller to lower
+// normally.
 //
 // The slot is typed so a two-word string stores and reloads at the right
 // width. Shared by the direct-call arg loop and emitIndirectCallArgs — the
@@ -13421,6 +13422,15 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	tt, ok := b.freshOwnedRcTempType(a)
 	if !ok {
 		tt, ok = b.ownedCallResultType(a)
+	}
+	if !ok {
+		// A pair-form callee returns `(tag, payload)` in registers, so
+		// ownedCallResultType declines it and the box
+		// emitRepackPairAsHeapBox allocates for this argument had no owner
+		// at all — `f(mk())` stranded the box AND its payload every call
+		// (#6393). The gate is freshness-proven rather than is_unique-gated
+		// for the reason freshPairFormEnumResultType records.
+		tt, ok = b.freshPairFormEnumResultType(a)
 	}
 	if !ok {
 		tt, ok = b.appendCopyTempType(a)
