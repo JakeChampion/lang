@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# cliff-bench — measure how much the SELF-HOST COMPILER copies crossing the
+# rc==1 append cliff, and write a metrics report scripts/ci-check-perf can
+# compare against a baseline.
+#
+# Usage: cliff-bench [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout).
+#
+# WHY THIS EXISTS SEPARATELY FROM perf-bench. perf-bench measures programs in
+# examples/bench: small, fast, and compiled by the native compiler. This
+# measures the self-hosted compiler compiling a real module, which is the only
+# place a copy regression in the compiler's own data structures shows up.
+# #6911 is the case in point: docs/LOCAL-DEV-LOOP.md recorded this workload at
+# 188 crossings / 812 bytes on 2026-08-04, and it now copies over 21 GB. Nothing
+# noticed for twelve days, because nothing measured it outside a human typing
+# the env var.
+#
+# WEIGHT, NOT COUNT. Both metrics are emitted, but the BYTES are the ranking
+# key. docs/LOCAL-DEV-LOOP.md records two rounds of `own`-conversion work that
+# were scoped against unweighted crossings and aimed at sites that could not
+# have paid: 188 crossings copying 812 bytes is noise, while one threaded
+# accumulator over 20k appends copies gigabytes. A count that halves while the
+# bytes hold flat is not an improvement.
+#
+# The figures are deterministic for a given commit — they count bytes the
+# program copied, not time it took — so a 1% move is signal, not noise.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+REPORT="${1:-/dev/stdout}"
+
+# The module compiled to produce the numbers. checker.fern is the workload
+# docs/LOCAL-DEV-LOOP.md and #6911 both quote, so keep it unless the baseline
+# is regenerated in the same commit.
+SUBJECT="${FERN_CLIFF_SUBJECT:-examples/self_host/checker.fern}"
+
+case "$(uname -m)" in
+  x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
+  aarch64 | arm64) ARCH=aarch64; TARGET=arm64-linux ;;
+  *) echo "cliff-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
+esac
+
+if [ ! -x bin/fern ]; then
+  echo "cliff-bench: building bin/fern" >&2
+  go build -o bin/fern ./cmd/fern
+fi
+if [ ! -x bin/fern-selfhost ]; then
+  echo "cliff-bench: building bin/fern-selfhost" >&2
+  ./bin/fern -target "$TARGET" -o bin/fern-selfhost examples/self_host/fern.fern
+  chmod +x bin/fern-selfhost
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+FERN_CLIFF_REPORT=1 ./bin/fern-selfhost -target "$TARGET" "$SUBJECT" \
+  > /dev/null 2> "$work/cliff" || true
+
+# The line is `fern: arr_push_shared_count=N arr_push_shared_bytes=N`. A missing
+# line means the run died or the diagnostic was compiled out; either way the
+# gate must fail loudly rather than report a green zero.
+count="$(sed -n 's/.*arr_push_shared_count=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
+bytes="$(sed -n 's/.*arr_push_shared_bytes=\([0-9]*\).*/\1/p' "$work/cliff" | head -1)"
+if [ -z "$count" ] || [ -z "$bytes" ]; then
+  echo "cliff-bench: no cliff report from the self-host compiler on $SUBJECT" >&2
+  sed -n '1,20p' "$work/cliff" >&2
+  exit 1
+fi
+
+{
+  echo "# scripts/cliff-bench report — arch $ARCH, subject $SUBJECT"
+  printf '%s/checker.cliff_bytes\t%s\n' "$ARCH" "$bytes"
+  printf '%s/checker.cliff_count\t%s\n' "$ARCH" "$count"
+} > "$REPORT"
