@@ -37,18 +37,22 @@ import (
 
 func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 	var files []string
-	// examples/ and examples/tests/ ship as shipping programs the
-	// CLI -fmt flag promises to round-trip cleanly. internal/stdlib/{std,core}/
-	// ship as the standard library every program imports; a formatter
-	// regression there would silently rewrite library code on every
-	// `-fmt -w` pass against a module that uses these helpers. Coverage
-	// extension closed e.g. the dropped-lambda + UTF-8 lexer corruption
-	// already caught on examples; running the sweep over the stdlib
-	// nets a strictly larger surface (42 production files) for free.
+	// Every .fern directory under examples/ ships as a program the CLI
+	// -fmt flag promises to round-trip cleanly, so the sweep takes all of
+	// them rather than the three it used to name — proposals/ alone is 59
+	// files of deliberately unusual syntax, which is the corpus most likely
+	// to find a printer gap. internal/stdlib/{std,core}/ ship as the standard
+	// library every program imports; a formatter regression there would
+	// silently rewrite library code on every `-fmt -w` pass against a module
+	// that uses these helpers. Coverage extension closed e.g. the
+	// dropped-lambda + UTF-8 lexer corruption already caught on examples.
 	for _, dir := range []string{
 		"../../examples",
+		"../../examples/bench",
 		"../../examples/cli",
+		"../../examples/proposals",
 		"../../examples/tests",
+		"../../examples/wasm",
 		"../../internal/stdlib/std",
 		"../../internal/stdlib/core",
 	} {
