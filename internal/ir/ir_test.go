@@ -1883,6 +1883,43 @@ func TestLowerStringTupleElemReclaimOnNative(t *testing.T) {
 	}
 }
 
+// TestLowerCellStringDropFrees verifies a Cell[string] local reclaims its
+// slot buffer with the FREEING __fern_drop_arr_str on the native single-word
+// ABI too (#6885). __fern_drop_arr_ptr walks with __fern_rc_dec, which only
+// decrements, so the box came back and the element's buffer did not.
+func TestLowerCellStringDropFrees(t *testing.T) {
+	const src = `function build(s: string): i32 {
+    var c: Cell[string] = cell_new(s + "x");
+    return c.get().len();
+}`
+	for _, ptrW := range []int{4, 8} {
+		p := lowerSourceWith(t, src, ptrW)
+		if !callsDirect(p, "build", "__fern_drop_arr_str") {
+			t.Errorf("ptrW=%d: Cell[string] drop must reclaim its element via __fern_drop_arr_str:\n%s", ptrW, p)
+		}
+		if callsDirect(p, "build", "__fern_drop_arr_ptr") {
+			t.Errorf("ptrW=%d: Cell[string] drop must not use the dec-only __fern_drop_arr_ptr:\n%s", ptrW, p)
+		}
+	}
+}
+
+// TestLowerCellStringGetTempReclaimed verifies the reference `c.get()` retains
+// is released when the read is consumed as a TEMP rather than bound (#6885):
+// the receiver is stashed and dropped once the length is read, exactly as a
+// concat or a fresh call result is.
+func TestLowerCellStringGetTempReclaimed(t *testing.T) {
+	const src = `function build(s: string): i32 {
+    var c: Cell[string] = cell_new(s + "x");
+    return c.get().len();
+}`
+	for _, ptrW := range []int{4, 8} {
+		p := lowerSourceWith(t, src, ptrW)
+		if !callsDirect(p, "build", "__fern_str_dec") {
+			t.Errorf("ptrW=%d: a discarded c.get() must be released via __fern_str_dec:\n%s", ptrW, p)
+		}
+	}
+}
+
 // TestLowerStringArrayElemReclaim verifies a string[] local reclaims its
 // element strings: the array drop routes through __fern_drop_arr_str
 // (which walks the two-word elements calling __fern_str_dec, then frees

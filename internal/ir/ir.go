@@ -10595,6 +10595,9 @@ func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
 		if x.IsVariantCall {
 			return false
 		}
+		if isCellStringGet(x) {
+			return true
+		}
 		_, isStr := b.exprType(x).(ast.StringType)
 		return isStr
 	case *ast.FieldAccess, *ast.Index:
@@ -18065,9 +18068,12 @@ func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 			// __fern_str_dec each (data, len), then free the box.
 			helper = "__fern_drop_arr_str"
 		} else if b.ptrW == 8 {
-			// Native single-word string element (x86_64): each element is a
-			// single pointer; __fern_drop_arr_ptr walks + __fern_rc_dec's it.
-			helper = "__fern_drop_arr_ptr"
+			// Native single-word string element (x86-64, arm64): each element
+			// is a single pointer, reclaimed with __fern_str_dec — the same
+			// helper the exit sweep's string[] arm picks. __fern_drop_arr_ptr
+			// walks with __fern_rc_dec, which never frees, so the element
+			// buffer would be stranded while the box is recycled.
+			helper = "__fern_drop_arr_str"
 		}
 	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
@@ -18135,6 +18141,24 @@ func (b *builder) emitCellNew(n *ast.Call) error {
 	return nil
 }
 
+// isCellStringGet reports whether `e` is `c.get()` on a Cell[string].
+// emitCellGet RETAINS the slot's buffer, so the expression yields an owned
+// +1 reference that a binding balances with its exit-sweep dec and every
+// borrowing consumer must reclaim itself. The instantiation's element type
+// is on the call — the mangled builtin's own signature is generic.
+func isCellStringGet(e ast.Expr) bool {
+	c, ok := e.(*ast.Call)
+	if !ok || len(c.Args) != 1 || len(c.TypeArgs) != 1 {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Cell_get" {
+		return false
+	}
+	_, isStr := c.TypeArgs[0].(ast.StringType)
+	return isStr
+}
+
 // emitCellGet lowers `c.get()` to a load of slot 0 (the data pointer is
 // the slot address). A `string` element is returned BORROWED — the cell
 // still owns its slot copy — so retain the returned buffer (the caller's
@@ -18187,11 +18211,11 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 	if ast.RcFreeEnabled {
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(payloadLoadOpFor(elemType, b.ptrW))
-		if ast.UseTwoWordStrings(b.ptrW) {
-			b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
-		} else {
-			b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-		}
+		// __fern_str_dec on every ptrW: two-word ABIs consume the (data, len)
+		// pair, and native single-word frees the overwritten buffer at rc==1
+		// (deferring to __fern_rc_dec otherwise). A bare __fern_rc_dec never
+		// frees, so each overwrite would strand the old buffer.
+		b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
 	// Store the new value (addr, value), retaining an alias-shaped source.

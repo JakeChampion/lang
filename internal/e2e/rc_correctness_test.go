@@ -3363,8 +3363,8 @@ function main(): i32 {
 		// fresh concat in; set OVERWRITES (pre-drops the old heap buffer,
 		// moves the new one in); get RETAINS the returned string into a
 		// local that drops at scope exit; the cell's own drop reclaims its
-		// slot buffer + box via __fern_drop_arr_str (wasm/arm64) /
-		// __fern_drop_arr_ptr (x86_64). Churned 100x so any unbalanced
+		// slot buffer + box via __fern_drop_arr_str on every backend.
+		// Churned 100x so any unbalanced
 		// retain/release drifts the underflow counter (over-release) — a
 		// leak would read 0 too, but the buffers here are all reclaimed.
 		// "y0".."y9" len 2 (10) + "y10".."y99" len 3 (90) = 20 + 270 = 290.
@@ -3383,6 +3383,55 @@ function main(): i32 {
         i = i + 1;
     }
     return (n - 800) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The safety net for #6885's Cell[string] reclamation: `get` hands out
+		// a RETAINED reference, so every borrowing consumer now releases it
+		// and the cell's own drop / `set` pre-drop FREE the slot buffer rather
+		// than merely decrementing. This is the case that says each of those
+		// releases is guarded by the buffer's own count — the element aliases
+		// a live local, the read is returned, stored into an array that
+		// outlives the cell, and written back into the cell it came from, and
+		// every check is on CONTENT, which a premature free turns into wrong
+		// bytes rather than a wrong length. The literal / inline-SSO / empty
+		// sources cover what __fern_str_dec short-circuits on instead of
+		// freeing.
+		name: "cell_string_read_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function two(a: string, b: string): string { return a + b; }
+function eat(s: string): i32 { if (s == "abcdefgh") { return 1; } return 0; }
+function escapes(): string {
+    var c: Cell[string] = cell_new(two("abcd", "efgh"));
+    return c.get();
+}
+function main(): i32 {
+    var ok: i32 = 0;
+    var s: string = two("abcd", "efgh");
+    var c: Cell[string] = cell_new(s);
+    if (c.get() == "abcdefgh") { ok = ok + 1; }
+    ok = ok + eat(c.get());
+    if (c.get() + "!" == "abcdefgh!") { ok = ok + 1; }
+    if (s == "abcdefgh") { ok = ok + 1; }
+    if (escapes() == "abcdefgh") { ok = ok + 1; }
+    var arr: string[] = [c.get()];
+    if (arr[0] == "abcdefgh") { ok = ok + 1; }
+    var back: string = c.get();
+    c.set(back);
+    if (c.get() == "abcdefgh") { ok = ok + 1; }
+    if (back == "abcdefgh") { ok = ok + 1; }
+    var d: Cell[string] = c;
+    d.set(two("wxyz", "1234"));
+    if (c.get() == "wxyz1234") { ok = ok + 1; }
+    var lit: Cell[string] = cell_new("a-literal-past-the-inline-threshold");
+    if (lit.get().len() == 35) { ok = ok + 1; }
+    var sso: Cell[string] = cell_new("abc");
+    if (sso.get() == "abc") { ok = ok + 1; }
+    var mt: Cell[string] = cell_new("");
+    if (mt.get().len() == 0) { ok = ok + 1; }
+    return (12 - ok) + __rc_underflow_count();
 }`,
 	},
 	{
