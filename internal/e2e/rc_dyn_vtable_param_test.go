@@ -75,49 +75,57 @@ func TestDynVtableParamOwnership(t *testing.T) {
 	}
 }
 
-// TestDynVtableParamBoundedOwnedModel: the receiver is borrowed now, so the
-// caller is its only reclaimer — the loop must still be bump-bounded under the
-// owned model, i.e. borrowing did not turn the callee's free into a leak.
-func TestDynVtableParamBoundedOwnedModel(t *testing.T) {
-	src := func(n string) string {
-		return `import "std/i32";
-trait Shape { function area(self: Self): i32; }
-struct Boxed { tag: string }
-impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
-function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
-    while (i < ` + n + `) {
+// dynVtableParamBumpSrc reports a VERDICT — 0 when a churn four times as long
+// adds no fresh high-water, 1 when it grows. See dynAssignOverwriteBumpSrc for
+// why the verdict rather than the byte count (main()'s value is an exit code,
+// so a byte count is read modulo 256).
+func dynVtableParamBumpSrc(n, wider string) string {
+	churn := func(bound string) string {
+		return `    while (i < ` + bound + `) {
         var d: dyn Shape = Boxed { tag: "a heap string owned by a vtable-dispatched receiver" };
         sum = sum + d.area();
         i = i + 1;
     }
-    return (__heap_bump_bytes() as i32) - before;
-}`
+`
 	}
+	return `import "std/i32";
+trait Shape { function area(self: Self): i32; }
+struct Boxed { tag: string }
+impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
+function main(): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    var base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
+    var mid: i32 = (__heap_bump_bytes() as i32);
+    i = 0;
+` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+    if (second > first) { return 1; }
+    return sum - sum;
+}`
+}
+
+// TestDynVtableParamBoundedOwnedModel: the receiver is borrowed now, so the
+// caller is its only reclaimer — the loop must still be bump-bounded under the
+// owned model, i.e. borrowing did not turn the callee's free into a leak.
+func TestDynVtableParamBoundedOwnedModel(t *testing.T) {
+	src := dynVtableParamBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
 		defer withBorrowInfer(false)()
-		small := mustRunX86_64FreeOn(t, src("50"))
-		large := mustRunX86_64FreeOn(t, src("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("arm64", func(t *testing.T) {
 		defer withBorrowInfer(false)()
-		small := mustRunArm64FreeOn(t, src("50"))
-		large := mustRunArm64FreeOn(t, src("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("wasm", func(t *testing.T) {
 		defer withBorrowInfer(false)()
-		small := runWasm(t, src("50"))
-		large := runWasm(t, src("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if got := runWasm(t, src); got != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
 }

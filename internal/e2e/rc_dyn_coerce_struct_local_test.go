@@ -51,31 +51,51 @@ function main(): i32 {
 }`
 
 // dynCoerceLocalBumpSrc: the retain added at the coercion must be balanced by
-// the dyn drop, so the loop's heap high-water stays flat across n.
-func dynCoerceLocalBumpSrc(n string) string {
-	return `import "std/i32";
-trait Shape { function area(self: Self): i32; }
-struct Boxed { tag: string }
-impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
-function main(): i32 {
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
-    var sum: i32 = 0;
-    while (i < ` + n + `) {
+// the dyn drop, so the loop's heap high-water stays flat as the loop runs
+// longer.
+//
+// It returns a VERDICT (0 bounded / 1 growing) rather than the byte count two
+// separate processes measured. main()'s value becomes an exit code, so a byte
+// count is read modulo 256 — and a leak large enough to wrap can land on the
+// same residue as the bounded run and pass vacuously. Measured while writing
+// the sibling assign-overwrite gate: a leaking x86-64 run reported 64 at
+// n=50 and 0 at n=5000, so the two happening to agree was luck, not distance.
+// Comparing two churns INSIDE one process keeps the numbers whole: with
+// reclaim the second churn recycles the first's blocks and adds no
+// high-water at all, while a leak makes it grow with its own iteration count.
+func dynCoerceLocalBumpSrc(n, wider string) string {
+	churn := func(bound string) string {
+		return `    while (i < ` + bound + `) {
         var s: Boxed = Boxed { tag: "a heap string owned by the concrete behind dyn" };
         var d: dyn Shape = s;
         sum = sum + d.area() + s.tag.len();
         i = i + 1;
     }
-    return (__heap_bump_bytes() as i32) - before;
+`
+	}
+	return `import "std/i32";
+trait Shape { function area(self: Self): i32; }
+struct Boxed { tag: string }
+impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
+function main(): i32 {
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    var base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
+    var mid: i32 = (__heap_bump_bytes() as i32);
+    i = 0;
+` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+    if (second > first) { return 1; }
+    return sum - sum;
 }`
 }
 
 // TestDynCoerceFromStructLocalValue: one iteration already computed the WRONG
-// value (the stray inc bumped the four bytes preceding the cell, which is the
-// neighbouring concrete's payload), and two or more segfaulted once the
-// double-freed block was recycled. The no-loop control passed throughout, so
-// it separates the coercion itself from the loop-scope reclaim.
+// value (the stray inc bumped the eight bytes preceding the cell, which the
+// bump allocator had just handed to the neighbouring concrete), and two or
+// more segfaulted once the double-freed block was recycled. The no-loop
+// control passed throughout, so it separates the coercion itself from the
+// loop-scope reclaim.
 func TestDynCoerceFromStructLocalValue(t *testing.T) {
 	cases := []struct {
 		name string
@@ -108,27 +128,22 @@ func TestDynCoerceFromStructLocalValue(t *testing.T) {
 
 // TestDynCoerceFromStructLocalBounded: the coercion retain must not turn into
 // a leak — the concrete (and the String it owns) still reclaim once per
-// iteration, so the high-water is the same at n=50 and n=5000.
+// iteration, so a churn four times as long adds no fresh high-water.
 func TestDynCoerceFromStructLocalBounded(t *testing.T) {
+	src := dynCoerceLocalBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
-		small := mustRunX86_64FreeOn(t, dynCoerceLocalBumpSrc("50"))
-		large := mustRunX86_64FreeOn(t, dynCoerceLocalBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("arm64", func(t *testing.T) {
-		small := mustRunArm64FreeOn(t, dynCoerceLocalBumpSrc("50"))
-		large := mustRunArm64FreeOn(t, dynCoerceLocalBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("wasm", func(t *testing.T) {
-		small := runWasm(t, dynCoerceLocalBumpSrc("50"))
-		large := runWasm(t, dynCoerceLocalBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if got := runWasm(t, src); got != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
 }
