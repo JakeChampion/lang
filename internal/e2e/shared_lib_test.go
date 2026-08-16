@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
@@ -59,6 +60,147 @@ int main(int c, char**v){void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
 		t.Fatalf("dlopen+call = %d, want 42 (out=%q)", code, out)
 	}
+}
+
+// TestCLISharedReservedNameExport covers exporting a function whose name the
+// x86-64 assembler reserves as a token (`mod` is an Intel-syntax expression
+// operator). The x86-64 backend defines such a function as `mod$fn`, so the
+// .text lookup has to use the escaped symbol while .dynsym keeps the Fern
+// name a loader dlsyms. arm64 reserves nothing and must resolve the same
+// names unescaped.
+func TestCLISharedReservedNameExport(t *testing.T) {
+	// One name per reserved class widened in #6876, plus `mod`.
+	const src = `function mod(x: i32): i32 { return x + 1; }
+function near(x: i32): i32 { return x + 2; }
+function r16(x: i32): i32 { return x + 3; }
+function main(): i32 { return 0; }
+`
+	exports := []string{"mod", "near", "r16"}
+	bin := buildFernCLI(t)
+
+	t.Run("x86_64_dlopen", func(t *testing.T) {
+		gcc, err := exec.LookPath("gcc")
+		if err != nil {
+			t.Skip("gcc not on PATH")
+		}
+		if runtime.GOARCH != "amd64" {
+			t.Skip("host is not amd64")
+		}
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "prog.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		soPath := filepath.Join(dir, "libfern.so")
+		if o, err := exec.Command(bin, "-target", "x86-64-linux", "-shared",
+			"-export", strings.Join(exports, ","), "-o", soPath, srcPath).CombinedOutput(); err != nil {
+			t.Fatalf("-shared build failed: %v\n%s", err, o)
+		}
+		// mod(10)+near(10)+r16(10) = 11+12+13 = 36.
+		loader := `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char**v){
+  void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  int t=0;
+  for(int i=2;i<c;i++){
+    int(*f)(int)=(int(*)(int))dlsym(h,v[i]);
+    if(!f){fprintf(stderr,"dlsym %s: %s\n",v[i],dlerror());return 101;}
+    t+=f(10);
+  }
+  return t;
+}`
+		cPath := filepath.Join(dir, "ld.c")
+		if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ld := filepath.Join(dir, "ld")
+		if o, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+			t.Fatalf("gcc loader: %v\n%s", err, o)
+		}
+		cmd := exec.Command(ld, append([]string{soPath}, exports...)...)
+		out, _ := cmd.CombinedOutput()
+		if code := cmd.ProcessState.ExitCode(); code != 36 {
+			t.Fatalf("dlopen+call reserved-name exports = %d, want 36 (out=%q)", code, out)
+		}
+	})
+
+	t.Run("arm64_dynsym", func(t *testing.T) {
+		dir := t.TempDir()
+		srcPath := filepath.Join(dir, "prog.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		soPath := filepath.Join(dir, "libfern.so")
+		if o, err := exec.Command(bin, "-target", "arm64-linux", "-shared",
+			"-export", strings.Join(exports, ","), "-o", soPath, srcPath).CombinedOutput(); err != nil {
+			t.Fatalf("-shared build failed: %v\n%s", err, o)
+		}
+		got := dynsymExports(t, soPath)
+		for _, want := range exports {
+			if v, ok := got[want]; !ok {
+				t.Errorf("export %q missing from .dynsym (got %v)", want, got)
+			} else if v == 0 {
+				t.Errorf("export %q resolved to vaddr 0", want)
+			}
+		}
+	})
+}
+
+// dynsymExports reads a Fern .so's dynamic symbol table into name -> vaddr.
+// The emitter writes no section headers, so debug/elf's DynamicSymbols has
+// nothing to read: walk PT_DYNAMIC for DT_SYMTAB / DT_STRTAB / DT_HASH and
+// map each vaddr back through the PT_LOAD segments to a file offset.
+func dynsymExports(t *testing.T, soPath string) map[string]uint64 {
+	t.Helper()
+	raw, err := os.ReadFile(soPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := elf.NewFile(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("not a parseable ELF: %v", err)
+	}
+	off := func(vaddr uint64) uint64 {
+		for _, p := range f.Progs {
+			if p.Type == elf.PT_LOAD && vaddr >= p.Vaddr && vaddr < p.Vaddr+p.Filesz {
+				return p.Off + (vaddr - p.Vaddr)
+			}
+		}
+		t.Fatalf("vaddr %#x is in no PT_LOAD segment", vaddr)
+		return 0
+	}
+	var symtab, strtab, hash uint64
+	for _, p := range f.Progs {
+		if p.Type != elf.PT_DYNAMIC {
+			continue
+		}
+		d := raw[p.Off : p.Off+p.Filesz]
+		for i := 0; i+16 <= len(d); i += 16 {
+			tag := elf.DynTag(f.ByteOrder.Uint64(d[i:]))
+			val := f.ByteOrder.Uint64(d[i+8:])
+			switch tag {
+			case elf.DT_SYMTAB:
+				symtab = val
+			case elf.DT_STRTAB:
+				strtab = val
+			case elf.DT_HASH:
+				hash = val
+			}
+		}
+	}
+	if symtab == 0 || strtab == 0 || hash == 0 {
+		t.Fatalf("PT_DYNAMIC missing DT_SYMTAB/DT_STRTAB/DT_HASH (%#x/%#x/%#x)", symtab, strtab, hash)
+	}
+	nsym := f.ByteOrder.Uint32(raw[off(hash)+4:]) // .hash nchain == symbol count
+	out := map[string]uint64{}
+	for i := uint64(1); i < uint64(nsym); i++ { // index 0 is the null symbol
+		e := off(symtab) + i*24
+		nameOff := uint64(f.ByteOrder.Uint32(raw[e:]))
+		value := f.ByteOrder.Uint64(raw[e+8:])
+		s := raw[off(strtab)+nameOff:]
+		out[string(s[:bytes.IndexByte(s, 0)])] = value
+	}
+	return out
 }
 
 // TestCLISharedArm64Structure checks `fern -target arm64-android -shared`

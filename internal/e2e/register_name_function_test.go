@@ -9,13 +9,12 @@ import (
 )
 
 // A user function whose name is an x86 register mnemonic (`ch`, `al`, `si`,
-// `ax`, …) must compile and run correctly. On x86-64 the native assembler
-// used to resolve the `call ch` target to the register CH and emit an
-// indirect `call rbp` through garbage → SIGSEGV; the fix reinterprets a
-// sub-64-bit register operand in a call/jmp as the colliding symbol. This
-// exercises several such names, called and returning, so a regression
-// re-segfaults here on x86-64 (and stays correct on the other backends,
-// which were never affected).
+// `ax`, …) must compile and run correctly. The x86-64 backend escapes such a
+// name to `<name>$fn` so no assembler ever sees the bare token: without that,
+// `call ch` resolves to the register CH and encodes an indirect call through
+// garbage → SIGSEGV. This exercises several such names, called and returning,
+// so a regression re-segfaults here on x86-64 (and stays correct on the other
+// backends, which were never affected).
 //
 // ch(10)=11, al(20)=19, si(3)=9, ax(4)=5, cx(100)=50 → 11+19+9+5+50 = 94.
 const registerNameFnSrc = `function ch(x: i32): i32 { return x + 1; }
