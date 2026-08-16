@@ -1737,8 +1737,16 @@ function build(s: string): i32 {
     var h: Holder = Holder { name: s };
     return h.name.len();
 }`, 4)
-	if !callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("expected struct local reclamation to dec its string field via __fern_str_dec:\n%s", p)
+	// The reclamation is OUTLINED: `build` calls the generated drop fn and
+	// that fn dec's the field. Assert both halves — the pair is a stronger
+	// statement than the old single "build calls __fern_str_dec", which
+	// could not distinguish the field's dec from any other string dec in
+	// the function.
+	if !callsDirect(p, "build", "__drop_struct_Holder") {
+		t.Errorf("expected the struct local to reclaim via __drop_struct_Holder:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
+		t.Errorf("expected __drop_struct_Holder to dec its string field via __fern_str_dec:\n%s", p)
 	}
 	if !callsDirect(p, "build", "__fern_str_inc") {
 		t.Errorf("expected alias-shaped string field init to retain via __fern_str_inc:\n%s", p)
@@ -1794,8 +1802,11 @@ function build(s: string): i32 {
     var h: Holder = Holder { name: s };
     return h.name.len();
 }`, 8)
-	if !callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("arm64 two-word: expected struct local reclamation to dec its string field via __fern_str_dec:\n%s", p)
+	if !callsDirect(p, "build", "__drop_struct_Holder") {
+		t.Errorf("arm64 two-word: expected the struct local to reclaim via __drop_struct_Holder:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_struct_Holder", "__fern_str_dec") {
+		t.Errorf("arm64 two-word: expected __drop_struct_Holder to dec its string field via __fern_str_dec:\n%s", p)
 	}
 	if !callsDirect(p, "build", "__fern_str_inc") {
 		t.Errorf("arm64 two-word: expected alias-shaped string field init to retain via __fern_str_inc:\n%s", p)
@@ -1891,8 +1902,11 @@ function build(a: string): i32 {
     var t: Tags = Tags { items: [a] };
     return t.items[0].len();
 }`, 4)
-	if !callsDirect(p, "build", "__fern_drop_arr_str") {
-		t.Errorf("expected string[] struct field reclamation via __fern_drop_arr_str:\n%s", p)
+	if !callsDirect(p, "build", "__drop_struct_Tags") {
+		t.Errorf("expected the struct local to reclaim via __drop_struct_Tags:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_struct_Tags", "__fern_drop_arr_str") {
+		t.Errorf("expected __drop_struct_Tags to reclaim its string[] field via __fern_drop_arr_str:\n%s", p)
 	}
 }
 
@@ -1942,8 +1956,11 @@ function build(a: string): i32 {
     var t: Tags = Tags { items: [a] };
     return t.items[0].len();
 }`, 8)
-	if !callsDirect(p, "build", "__fern_drop_arr_str") {
-		t.Errorf("arm64 two-word: expected string[] struct field reclamation via __fern_drop_arr_str:\n%s", p)
+	if !callsDirect(p, "build", "__drop_struct_Tags") {
+		t.Errorf("arm64 two-word: expected the struct local to reclaim via __drop_struct_Tags:\n%s", p)
+	}
+	if !callsDirect(p, "__drop_struct_Tags", "__fern_drop_arr_str") {
+		t.Errorf("arm64 two-word: expected __drop_struct_Tags to reclaim its string[] field via __fern_drop_arr_str:\n%s", p)
 	}
 }
 

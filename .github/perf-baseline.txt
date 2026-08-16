@@ -22,6 +22,9 @@
 # moves on purpose, update it in the same PR; the job summary prints the
 # corrected lines ready to paste. Keep the reason in the PR, not here.
 #
+# struct_drop has no aarch64 entry yet: it was added on an x86-64 host and the
+# aarch64 leg will report it unbaselined once, printing the line to paste here.
+#
 # TWO ARCHITECTURES. An instruction count is not comparable across ISAs, so the
 # keys are namespaced by arch and compared independently — and each job compares
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
@@ -43,6 +46,8 @@ x86_64/string_scan.text	1841
 x86_64/string_scan.ir	140977346
 x86_64/string_slice.text	511
 x86_64/string_slice.ir	196020101
+x86_64/struct_drop.text	2348
+x86_64/struct_drop.ir	682100167
 
 # aarch64, from the Perf workflow's own perf-aarch64 job (run 31947059512) —
 # the arch this project defaults to. Seeded from CI rather than measured here,
