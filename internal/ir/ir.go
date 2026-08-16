@@ -2093,6 +2093,14 @@ func astTypeForConcreteName(name string) ast.Type {
 		return ast.NumberType{Width: 64, Signed: false}
 	case "usize":
 		return ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	case "u8":
+		// The byte type reached through `s[i]`. It has no scalar module,
+		// so `core/cmp` gives it a real `impl Display for u8` body —
+		// which means every `dyn cmp.Display` vtable set includes a u8
+		// concrete, and omitting the layout here rejected the whole set.
+		return ast.NumberType{Width: 8, Signed: false}
+	case "char":
+		return ast.CharType{}
 	case "f32":
 		return ast.FloatType{Width: 32}
 	case "f64":
@@ -2313,10 +2321,23 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 	if info == nil {
 		return nil, nil
 	}
+	// collectVtables over-approximates: it emits a vtable for every
+	// implementor of the trait, not only the concretes that actually reach
+	// a `dyn` value. An unused vtable is harmless dead data (no
+	// OpConstVtable names it, so no backend emits it), but a wrapper is
+	// dead CODE that still references `__method_<C>_<m>` — a symbol
+	// tree-shake dropped for an implementor nothing coerces, so the link
+	// fails on an undefined label. Only a coercion site can materialise a
+	// primitive vtable (a downcast target is always a struct/enum), so the
+	// recorded coercions are exactly the wrappers that can be reached.
+	coerced := map[string]bool{}
+	for _, dc := range info.DynCoercions {
+		coerced[dc.Concrete] = true
+	}
 	seen := map[string]bool{}
 	var out []*Func
 	for _, vt := range vtables {
-		if !isPrimitiveConcrete(info, vt.Concrete) {
+		if !isPrimitiveConcrete(info, vt.Concrete) || !coerced[vt.Concrete] {
 			continue
 		}
 		concreteType := astTypeForConcreteName(vt.Concrete)

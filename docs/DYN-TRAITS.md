@@ -475,30 +475,42 @@ heap-allocated — since that box alloc is the one that triggers heap
 init. (The struct cases never hit it: the struct is allocated, and the
 heap initialised, before its box.)
 
-#### 4.2.3 `dyn` over primitive receivers — partial
+#### 4.2.3 `dyn` over primitive receivers — uniform boxing
 
 A primitive/`string` value can `impl` a trait and coerce to `dyn` (the
-checker already allows it; the interpreter handles it by tag). On the
-compiled backends the data word holds the value directly (no separate
-heap box for the concrete), which works only while the value fits one
-slot and uses the integer-register receiver ABI:
+checker allows it; the interpreter handles it by tag). Holding the value
+directly in the `data` word only worked while it fit one slot and used
+the integer-register receiver ABI, which excluded `i64`/`f64` on wasm and
+`string` everywhere but x86-64. **Uniform boxing** removed that
+restriction: at a coercion site `boxPrimitiveDynValue` heap-boxes the
+value into a cell sized by the concrete's own layout, so `data` is always
+a one-word pointer, and the vtable method slot points at a synthesized
+unboxing wrapper `__dynbox_<C>_<m>` (`load value; call
+__method_<C>_<m>`), built by `buildDynboxWrappers`. Every primitive
+receiver — `i32`, `boolean`, `u8`, `i64`, `f64`, `string` — dispatches on
+all three backends, pinned by `Test*DynTraitPrimitive*`.
 
-| receiver | x86-64 | arm64 | wasm |
-|----------|:------:|:-----:|:----:|
-| `i32`, `boolean` | ✓ | ✓ | ✓ |
-| `i64`, `f64` | ✓ | ✓ | ✗ (wider than wasm's i32 data slot) |
-| `string` | ✓ | ✗ | ✗ |
+Two constraints follow from the wrapper being generated code rather than
+static data, both of which a STDLIB trait is the first thing to hit
+(`TestDynTraitStdlibDisplay`), because its implementor set is written by
+the stdlib rather than by the program under test:
 
-`i32`/`boolean` work on all three (pinned by `Test*DynTraitPrimitive
-Receiver`). The gaps share one root: the inline (wasm) / boxed `data`
-word can't carry a value wider than a single slot, nor route a non-
-integer (`f64`/`string`) receiver ABI. The proper fix is uniform
-**primitive boxing**: heap-box the value so `data` is always a one-word
-pointer, and point the vtable method slot at an unboxing wrapper
-(`load value; tail-call __method_<C>_<m>`) — anticipated by §4.1's "for
-primitives, a heap box". That, plus the self-host's parallel primitive
-gap (its `op_dyn_dispatch` reads a shape pointer a primitive lacks), is
-the next `dyn` slice.
+- **Every implementor's concrete name needs a value-box layout.**
+  `astTypeForConcreteName` has to cover every spelling
+  `ast.ReceiverTypeName` can produce, not just the ones a program is
+  likely to coerce — one missing entry rejects the whole `dyn` set at
+  lowering. `u8` was the gap, and `core/cmp` declares `impl Display for
+  u8` (the byte type has no scalar module, so its impl carries a real
+  body), which made `dyn cmp.Display` unlowerable on every backend.
+- **A wrapper is only built for a concrete some site COERCES.**
+  `collectVtables` deliberately over-approximates, emitting a vtable per
+  implementor; an unreferenced vtable is dead static data no backend
+  emits, but a wrapper is dead CODE calling `__method_<C>_<m>` — a symbol
+  tree-shake dropped, since `treeshake.DynCoercionImplMethods` roots only
+  the coerced concretes. `buildDynboxWrappers` therefore filters on
+  `info.DynCoercions`. That is complete: a primitive vtable can only be
+  materialised by a coercion, since an `as?` target is always a
+  struct/enum.
 
 ### 4.3 Self-host (x86-64 + arm64 — shipped)
 
@@ -541,6 +553,28 @@ the `lower_dyn_arg` helper drops straight into those two sites once their
 dyn-type detection is added. The self-host checker (`checker.fern`) still
 does not enforce object-safety or the coercion rule; the Go checker is
 the strict gate until it retires.
+
+**A third unwired coercion site: a `dyn Trait[]` array literal in ARGUMENT
+position.** The two wired sites detect a `dyn` destination from a scalar
+parameter's signature and from a `var xs: dyn Show[] = […]` annotation.
+`render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is
+neither: the destination is an ARRAY-typed parameter, so the elements are
+never boxed. With primitive/string elements they flow in as raw scalars
+and the dispatch chain reads a shape pointer out of one — the program
+compiles clean and segfaults at run time on x86-64 and arm64, and fails
+validation on wasm. Struct/enum elements are unaffected (they carry their
+own shape), which is why the existing self-host `dyn` tests pass; so is
+the same literal bound to a local first. The `lower_dyn_arg` helper drops
+into this site too once an array-typed parameter's element type is
+consulted for `dyn`-ness.
+
+This gap is why `std/format`'s Display-accepting entry points are
+`[T: cmp.Display]` bounds rather than `dyn cmp.Display[]` (#2684):
+`format(fmt, [40, 2, 42])` is exactly the unwired shape, and the stdlib
+is compiled by the self-host, so it cannot use one the self-host
+miscompiles. Bounded generics monomorphise and work on every backend and
+both compilers. Flipping the signature is the natural follow-up once this
+site is wired.
 
 The **wasm**
 self-host backend (static-dispatch, no runtime shape-compare) handles

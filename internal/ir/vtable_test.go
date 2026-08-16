@@ -234,3 +234,74 @@ function main(): i32 { return 0; }`
 		t.Errorf("single-trait prefix = %d, want 0", got)
 	}
 }
+
+// buildDynboxWrappers must emit an unboxing wrapper only for a primitive
+// concrete some site actually COERCES, not for every implementor
+// collectVtables listed.
+//
+// The over-approximation is deliberate for vtables — an unreferenced one is
+// dead static data no backend emits — but a wrapper is dead CODE whose body
+// calls `__method_<C>_<m>`. Tree-shake roots only the coerced concretes'
+// methods (treeshake.DynCoercionImplMethods), so a wrapper for an
+// implementor nothing coerces references a symbol that was dropped and the
+// native link fails on an undefined label. Only a coercion site can
+// materialise a primitive vtable (`as?` targets are struct/enum), so the
+// recorded coercions are the complete set of reachable wrappers.
+func TestBuildDynboxWrappersSkipsUncoercedImplementors(t *testing.T) {
+	src := `import "std/i32";
+trait Show {
+    function show(self: Self): i32;
+}
+impl Show for i32 { function show(self: Self): i32 { return self; } }
+impl Show for boolean { function show(self: Self): i32 { return 1; } }
+function main(): i32 {
+    var d: dyn Show = 7;
+    return d.show();
+}`
+	prog, info := checkSourceForVtable(t, src)
+	vts := collectVtables(prog, info)
+	// Both implementors get a vtable — that part is the over-approximation.
+	if len(vts) != 2 {
+		t.Fatalf("want vtables for both implementors, got %d: %+v", len(vts), vts)
+	}
+	wrappers, err := buildDynboxWrappers(info, 8, vts)
+	if err != nil {
+		t.Fatalf("buildDynboxWrappers: %v", err)
+	}
+	var names []string
+	for _, fn := range wrappers {
+		names = append(names, fn.Name)
+	}
+	if len(names) != 1 || names[0] != "__dynbox_i32_show" {
+		t.Errorf("wrappers = %v, want only [__dynbox_i32_show] (boolean is never coerced)", names)
+	}
+}
+
+// astTypeForConcreteName must cover every spelling ast.ReceiverTypeName can
+// produce for a non-struct/enum receiver, since that is what a `dyn` set's
+// primitive concretes are named by. `u8` was the gap: `core/cmp` declares
+// `impl Display for u8`, so the whole `dyn cmp.Display` set failed the
+// layout lookup and no compiled backend could lower it.
+func TestAstTypeForConcreteNameCoversReceiverSpellings(t *testing.T) {
+	spellings := []ast.Type{
+		ast.NumberType{Width: 32, Signed: true},
+		ast.NumberType{Width: 64, Signed: true},
+		ast.NumberType{Width: 32, Signed: false},
+		ast.NumberType{Width: 64, Signed: false},
+		ast.NumberType{Width: 8, Signed: false},
+		ast.FloatType{Width: 32},
+		ast.FloatType{Width: 64},
+		ast.BoolType{},
+		ast.StringType{},
+		ast.CharType{},
+	}
+	for _, ty := range spellings {
+		name, ok := ast.ReceiverTypeName(ty)
+		if !ok {
+			t.Fatalf("%T: ReceiverTypeName reported no name", ty)
+		}
+		if astTypeForConcreteName(name) == nil {
+			t.Errorf("astTypeForConcreteName(%q): no value-box layout", name)
+		}
+	}
+}

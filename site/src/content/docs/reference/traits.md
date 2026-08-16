@@ -154,19 +154,25 @@ type — conformance is global and unambiguous.
 
 ## Runtime dispatch — `dyn Trait`
 
-:::caution[Experimental]
-`dyn Trait` (runtime trait objects, for heterogeneous collections like
-`[dyn Shape]`) is **interpreter-only today** — it is not yet lowered by
-the compiled backends. Prefer bounded generics for code you compile. See
-[`docs/DYN-TRAITS.md`][dyn] for the design and current status.
-:::
-
 Everything above is *static* dispatch. When you genuinely need a
 heterogeneous collection — values of different concrete types behind one
-trait — `dyn Trait` is the planned runtime-dispatch counterpart, with a
-type stored alongside a method table. Until it lands on the compiled
-backends, model heterogeneous cases with an `enum` over the known
-variants and `match` on it.
+trait — `dyn Trait` is the runtime-dispatch counterpart: the value carries
+a method table alongside its data, and `d.m()` calls through the table.
+
+```fern
+import "core/cmp";
+
+var xs: dyn cmp.Display[] = [42, "hi", true];
+for x in xs { print(x.to_string()); }
+```
+
+It works on the interpreter and on all three compiled backends (x86-64,
+arm64, wasm), for struct, enum, string and primitive concretes, including
+the `e as? T` downcast back to a concrete type and multi-trait sets
+(`dyn A + B`). Bounded generics stay the better choice when the type IS
+known at each call site — they monomorphise, so there is no box and no
+indirect call. See [`docs/DYN-TRAITS.md`][dyn] for the design, the
+representation per backend, and the remaining gaps.
 
 ## See also
 
