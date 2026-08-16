@@ -22,11 +22,10 @@
 # moves on purpose, update it in the same PR; the job summary prints the
 # corrected lines ready to paste. Keep the reason in the PR, not here.
 #
-# ONE ARCHITECTURE SO FAR. An instruction count is not comparable across ISAs,
-# so the keys are namespaced by arch and compared independently. Only x86_64
-# is seeded below, because that is the host these were measured on; the
-# aarch64 lane will report its metrics as unbaselined on its first run and
-# print the lines to paste here.
+# TWO ARCHITECTURES. An instruction count is not comparable across ISAs, so the
+# keys are namespaced by arch and compared independently — and each job compares
+# only its OWN namespace, so an x86_64 entry is not a missing measurement on the
+# aarch64 runner.
 
 x86_64/array_append.text	618
 x86_64/array_append.ir	97597508
@@ -44,3 +43,25 @@ x86_64/string_scan.text	1841
 x86_64/string_scan.ir	140977346
 x86_64/string_slice.text	511
 x86_64/string_slice.ir	196020101
+
+# aarch64, from the Perf workflow's own perf-aarch64 job (run 31947059512) —
+# the arch this project defaults to. Seeded from CI rather than measured here,
+# because no aarch64 host is available to the dev container; the figures are
+# the job's paste block verbatim. map_string.ir carries the same 2% the x86_64
+# twin does, for the same per-process hash seed.
+aarch64/array_append.text	539
+aarch64/array_append.ir	71008054
+aarch64/array_index.text	510
+aarch64/array_index.ir	63698033
+aarch64/call_overhead.text	165
+aarch64/call_overhead.ir	45601201
+aarch64/int_loop.text	103
+aarch64/int_loop.ir	60000026
+aarch64/map_int.text	3095
+aarch64/map_int.ir	100592487
+aarch64/map_string.text	4171
+aarch64/map_string.ir	223648093	2
+aarch64/string_scan.text	1543
+aarch64/string_scan.ir	142229869
+aarch64/string_slice.text	497
+aarch64/string_slice.ir	167280114
