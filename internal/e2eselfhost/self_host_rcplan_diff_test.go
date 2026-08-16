@@ -250,6 +250,92 @@ function main(): i32 { return w(); }`,
 			anchor: map[string]map[string]string{"w": {"movedLocals": "v"}},
 		},
 		{
+			// LOOP-BODY MOVE, no early exit — the control the three rows below
+			// are read against. `v` is declared in the body and consumed by the
+			// push, so it moves on both sides.
+			name: "loop-body-move-no-early-exit",
+			src: `struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+	var vals: Val[] = [];
+	var total: i32 = 0;
+	for i in 0..n {
+		var v = Val { kind: i, kids: [] };
+		vals = vals.append(v);
+		total = total + vals.len();
+	}
+	return total;
+}
+function main(): i32 { return build(3); }`,
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
+		},
+		{
+			// The early exit sits AFTER the push, so it cannot leave the body
+			// with `v` built and unstored — the interval that matters is
+			// declaration-to-construction, not the whole body (#6533/#6869).
+			name: "loop-body-move-continue-after-push",
+			src: `struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+	var vals: Val[] = [];
+	var total: i32 = 0;
+	for i in 0..n {
+		var v = Val { kind: i, kids: [] };
+		vals = vals.append(v);
+		if (i == 9999) { continue; }
+		total = total + vals.len();
+	}
+	return total;
+}
+function main(): i32 { return build(3); }`,
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
+		},
+		{
+			// The guard clause every parser is built out of: the exit precedes
+			// `v`'s declaration, so on the exiting path no box exists yet.
+			name: "loop-body-move-guard-return-before-decl",
+			src: `struct Val { kind: i32, kids: i32[] }
+function build(n: i32): i32 {
+	var vals: Val[] = [];
+	var total: i32 = 0;
+	for i in 0..n {
+		if (i == 9999) { return 12345; }
+		var v = Val { kind: i, kids: [] };
+		vals = vals.append(v);
+		total = total + vals.len();
+	}
+	return total;
+}
+function main(): i32 { return build(3); }`,
+			anchor: map[string]map[string]string{"build": {"movedLocals": "v"}},
+		},
+		{
+			// The direction that is UNSOUND to get wrong: `?` returns the
+			// failure variant from the enclosing function, so it exits the body
+			// between `v`'s declaration and the push exactly as `return` would,
+			// leaving a path that builds `v` and never stores it. It is an
+			// EXPRESSION (the unary `try_`), so a scan over statement kinds
+			// alone does not see it and moves a value past an exit it cannot
+			// observe. Both sides must decline.
+			name: "loop-body-move-try-between-decl-and-push",
+			src: `struct Val { kind: i32, kids: i32[] }
+function step(i: i32): Option[i32] {
+	if (i < 0) { return None; }
+	return Some(i);
+}
+function build(n: i32): Option[i32] {
+	var vals: Val[] = [];
+	var total: i32 = 0;
+	for i in 0..n {
+		var v = Val { kind: i, kids: [] };
+		var w: i32 = step(i)?;
+		vals = vals.append(v);
+		total = total + vals.len() + w;
+	}
+	return Some(total);
+}
+function main(): i32 { match (build(3)) { Some(v) => { return v; }, None => { return 0; } } }`,
+			anchor: map[string]map[string]string{"build": {"movedLocals": ""}},
+		},
+		{
 			// DESTRUCTURE MOVE: `var (xs, n) = t` at the tuple LOCAL's last
 			// mention — the destructure's alias inc cancels t's sweep dec.
 			// (freeEligible carries the same native-only parse-time

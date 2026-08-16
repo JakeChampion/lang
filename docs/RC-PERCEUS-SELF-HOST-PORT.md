@@ -7407,3 +7407,51 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `alloc_flat_map_get` known-divergence rows deleted so the fixtures legs fail
   if it regresses, and the case run by hand on all three backends.
   Refs #6875 #6880 #6561 #6874 #4451.
+
+- 2026-08-16: **The loop-body construction move judges the DECLARATION-to-
+  CONSTRUCTION interval, and sees `?` (#6869).** The self-host mirror refused a
+  whole loop body on any `return` / `break` / `continue` anywhere in it, and
+  matched statement KINDS only — so `?`, which the parser desugars to the unary
+  `try_` and is therefore an expression, was invisible to it. Both halves are
+  gone. `rc_ml_one_loop_body` now keeps a per-statement early-exit PREFIX COUNT
+  and admits a name only when the count at the construction equals the count at
+  that name's declaration, which is native `markLoopBodyConstructionMoves`'
+  `exitsBefore[at] == exitsBefore[d]`. No signature changed: the filtered
+  `allow` set is rebuilt per statement, so `rc_ml_move_ok` and
+  `rc_ml_construction_moves` are untouched.
+
+  The over-refusal is the half the issue filed. The half it did not file is the
+  one that mattered: with a `?` between the declaration and the push, native
+  REFUSES the move and the self-host ALLOWED it — a value handed to a container
+  past an early exit the analysis could not see. That is the use-after-move
+  direction, not a leak.
+
+  Per-round `__heap_bump_bytes()`, x86-64, churn twice at n=200 and subtract:
+
+  | loop body | native | self-host before | self-host after |
+  |---|---|---|---|
+  | no early exit (control) | 0 | 0 | 0 |
+  | `continue` after the push | 0 | 72 | 0 |
+  | guard-clause `return` before the declaration | 0 | 72 | 0 |
+  | `?` between the declaration and the push | 48 | 0 | 72 |
+
+  The `?` row is non-zero on both sides afterwards, and that is the correct
+  reading: a refused move keeps a retain whose escape taint suppresses the
+  matching release, so the element leaks — on native too. Reclaiming it is a
+  separate question from seeing the exit.
+
+  `rc_ml_loop_prologue_len` left with the veto. It skipped the range-`for`
+  desugar's advance-assign + `if (done) { break; }` so that guard could not
+  disqualify the body; a prefix COUNT does not need the exemption, because the
+  guard precedes every declaration in the body and so shifts each name's count
+  and each construction's by the same one, and the test is an equality.
+
+  VERIFIED: four new `TestSelfHostRcPlanDiff` rows. Before the fix the two
+  over-refusals read native `v` / self-host empty and the `?` row native empty /
+  self-host `v`, so three of the four discriminate and the fourth is the
+  control. New `loop-push-behind-guard-clause` row in
+  `TestSelfHostAllocDifferentialX86_64`: native 0 KB / self-host 14 KB (14x,
+  bound 8x) before, 0 KB / 0 KB after. Plus the 151-test rc / move / loop /
+  reuse / drop subset of `internal/e2eselfhost`, both self-host fixture legs
+  (wasm + x86-64), and the per-module whole-compiler fixpoint.
+  Refs #6869 #6533 #4451.
