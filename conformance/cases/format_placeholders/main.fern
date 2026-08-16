@@ -1,6 +1,10 @@
 import "std/format";
-// format.format() substitutes positional `{}` placeholders from a string[].
+// format.format() substitutes positional `{}` placeholders from a
+// string[]; format_values / format1..format4 take the args raw and
+// render each through its own cmp.Display impl.
 function main(): i32 {
     print(format.format("{} + {} = {}", [(40).to_string(), (2).to_string(), (42).to_string()]));
+    print(format.format_values("{} + {} = {}", [40, 2, 42]));
+    print(format.format3("{} {} {}", 3, "cats", true));
     return 0;
 }

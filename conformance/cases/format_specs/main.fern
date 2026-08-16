@@ -2,12 +2,17 @@ import "core/int";
 import "std/format";
 import "std/float";
 
-// std/format Rust-style `{:fill|align|width.precision}` specs plus the
-// precision-controlled float formatter (std/float to_string_prec) — issue #2684.
+// std/format Rust-style `{:fill|align|width.precision}` specs, the
+// Display-accepting entry points that take args raw, and the
+// precision-controlled float formatter (std/float to_string_prec) — #2684.
 // Verified byte-for-byte across interp / x86-64 / arm64 / wasm.
 function main(): i32 {
-    // Plain `{}` substitution still works.
+    // Plain `{}` substitution.
     print(format.format("{} + {} = {}", [(40).to_string(), (2).to_string(), (42).to_string()]));
+    // The same, args not pre-stringified.
+    print(format.format_values("{} + {} = {}", [40, 2, 42]));
+    // Heterogeneous args in one call.
+    print(format.format3("{} {} {}", 3, "cats", true));
     // Alignment + width.
     print(format.format("[{:>8}]", ["hi"]));
     print(format.format("[{:<8}]", ["hi"]));
@@ -15,9 +20,13 @@ function main(): i32 {
     // Custom fill char.
     print(format.format("[{:*>6}]", ["ab"]));
     print(format.format("[{:0>5}]", ["42"]));
-    // Precision (string truncation), and precision + width together.
+    // Precision on a non-numeric value truncates bytes; on a numeral it is
+    // a fractional-digit count, rounded half-away-from-zero.
     print(format.format("[{:.3}]", ["hello"]));
     print(format.format("[{:>8.3}]", ["hello"]));
+    print(format.format1("[{:.2}]", 3.14159));
+    print(format.format1("[{:>8.2}]", 0.0 - 2.5));
+    print(format.format1("[{:.0}]", 9.9));
     // A `{...}` run that isn't a spec renders literally (no arg consumed).
     print(format.format("json {\"k\":1} ok", []));
     // Underflow emits the placeholder verbatim.
