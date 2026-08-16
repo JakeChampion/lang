@@ -36,6 +36,16 @@
 # x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
 #
+# REFRESHED after #6894 (exit-sweep drop outlining), which cut every driver:
+# the tracked artifact by 42.5%, the front-end-only drivers by over 80%.
+#
+# Five figures came from run 31959802603's warm-asm job. The other ten were
+# linked locally — which is sound BECAUSE the host-independence claim below was
+# checked rather than trusted: rebuilding four of CI's five reproduced its byte
+# counts exactly (asm_run 82275084, asm_pathprobe_run 13791740, irlower_run
+# 12318492, asm_ir_elig_run 12967852). That is the determinism this file
+# asserts, demonstrated on this commit.
+#
 # Every figure below is CI's own, from run 31782687541 (`cli` + the three `warm`
 # jobs), pasted from the blocks those jobs printed. The three that #6826 measured
 # off-CI independently agree to within 0.05% — fern.fern 155,895,596 vs
@@ -48,18 +58,18 @@
 # percentage is what is compared, deliberately, so a small driver's regression is
 # not lost inside a big one's noise.
 
-fern.fern 155973500
-asm_load_run.fern 148545260
-asm_modload_run.fern 146565436
-asm_ir_run.fern 146105772
-asm_run.fern 145267212
-wasm_ir_run.fern 77402892
-wasm_run.fern 77377980
-wasm_runio_run.fern 77318796
-asm_pathprobe_run.fern 76480908
-ssa_lift_scan_run.fern 75512764
-asm_ir_elig_run.fern 75165500
-irlower_run.fern 74045084
-checker_modload_run.fern 6880820
-ssa_emit_run.fern 6243356
-ssa_run.fern 6004220
+fern.fern 89738492
+asm_load_run.fern 84467932
+asm_modload_run.fern 83126948
+asm_ir_run.fern 82876188
+asm_run.fern 82275084
+wasm_ir_run.fern 14591068
+wasm_run.fern 14570236
+wasm_runio_run.fern 14519260
+asm_pathprobe_run.fern 13791740
+ssa_lift_scan_run.fern 13380684
+asm_ir_elig_run.fern 12967852
+irlower_run.fern 12318492
+checker_modload_run.fern 5128020
+ssa_emit_run.fern 4990076
+ssa_run.fern 4775500
