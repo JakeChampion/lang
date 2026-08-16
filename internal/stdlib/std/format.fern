@@ -2,8 +2,12 @@
 //
 // `format(fmt, args)` — runtime template substitution with `{}`
 // placeholders and Rust-style `{:fill|align|width.precision}`
-// format specs. `format_bytes(n)` / `format_duration_ms(ms)` —
-// pre-canned shapes for byte sizes and elapsed durations.
+// format specs. `format_values(fmt, args)` and
+// `format1(fmt, a)` … `format4(fmt, a, b, c, d)` are the same
+// substitution over args that are NOT pre-stringified — each is
+// rendered through its own `cmp.Display` impl.
+// `format_bytes(n)` / `format_duration_ms(ms)` — pre-canned shapes
+// for byte sizes and elapsed durations.
 //
 // No prelude: callers now `import "std/format";` explicitly
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
@@ -13,6 +17,9 @@
 // format_duration_ms). Declare std/i32 so those methods
 // register under no-prelude.
 import "std/i32";
+// The `Display` bound on format_values / format1..format4, and the
+// primitive impls that let an i32 / f64 / boolean be passed raw.
+import "core/cmp" as cmp;
 
 // `format(fmt, args)` — runtime template substitution. Walks
 // fmt byte-by-byte, replacing each `{}` / `{:spec}` placeholder
@@ -41,9 +48,14 @@ import "std/i32";
 //     Rust), so `{:<05}` of "42" is still "00042".
 //   - width: minimum field width; the value is padded (never
 //     truncated) up to it.
-//   - precision: `.N` truncates the string to at most N bytes
-//     (Rust's string-precision semantics), applied before
-//     padding — so `{:>8.3}` of "hello" is "     hel".
+//   - precision: `.N` on a decimal numeral (`-3.5`, `42`) is a
+//     count of FRACTIONAL DIGITS — the value is rounded
+//     half-away-from-zero and zero-padded to exactly N of them, so
+//     `{:.2}` of 3.14159 is "3.14", of 3.999 is "4.00", and of 3 is
+//     "3.00" (`{:.0}` of 3.7 is "4", no trailing dot). On anything
+//     else `.N` truncates to at most N bytes (Rust's
+//     string-precision semantics), so `{:>8.3}` of "hello" is
+//     "     hel". Precision is applied before padding.
 // A spec whose content doesn't start with `:` (e.g. `{abc}`) is
 // not a placeholder and renders literally, so JSON-ish braces
 // pass through untouched.
@@ -57,11 +69,9 @@ import "std/i32";
 //     call site.
 //   - Column-aligned CLI / table output via width + fill.
 //
-// Caller pre-stringifies args (`to_string()` for i32 / i64 /
-// f32 / f64 / boolean; `to_string_prec()` for fixed-precision
-// floats). A generic-`Display` overload story would need trait
-// dispatch which lang doesn't have yet; the string[] signature
-// keeps the type story trivial.
+// This is the pre-stringified form and the one every other entry point
+// delegates to. To pass values raw, reach for `format_values` (one
+// element type) or `format1`..`format4` (mixed) below.
 pub function format(fmt: string, args: string[]): string {
     var n: i32 = fmt.len();
     // Accumulate into a growable u8[] and materialise once (#4379): the old
@@ -131,6 +141,53 @@ pub function format(fmt: string, args: string[]): string {
     return string_from_bytes_unchecked(out);
 }
 
+// `format_values(fmt, args)` — `format` over args that are NOT
+// pre-stringified. Every element goes through its own `cmp.Display` impl,
+// so any type with one (`@derive(cmp.Display)` included) is a legal arg:
+//
+//     format_values("{} + {} = {}", [40, 2, 42])   // "40 + 2 = 42"
+//
+// The bound is monomorphised, so there is no boxing and no dispatch at
+// run time — but for the same reason the element type is uniform. Mixed
+// args want `format1`..`format4`.
+//
+// An empty literal cannot infer `T` (`format_values("hi", [])` is E040);
+// that call is just `format("hi", [])`.
+pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
+    var strs: string[] = [];
+    var i: i32 = 0;
+    while (i < args.len()) {
+        strs = strs.append(args[i].to_string());
+        i = i + 1;
+    }
+    return format(fmt, strs);
+}
+
+// `format1`..`format4` — `format` over a fixed number of args of
+// INDEPENDENT types, each rendered through its own `cmp.Display` impl:
+//
+//     format3("{} {} {}", 3, "cats", true)   // "3 cats true"
+//
+// One function per arity because Fern has no variadics; each type
+// parameter is separately bound, which is what makes the args
+// heterogeneous. Beyond four args, stringify into a `string[]` and call
+// `format` directly.
+pub function format1[A: cmp.Display](fmt: string, a: A): string {
+    return format(fmt, [a.to_string()]);
+}
+
+pub function format2[A: cmp.Display, B: cmp.Display](fmt: string, a: A, b: B): string {
+    return format(fmt, [a.to_string(), b.to_string()]);
+}
+
+pub function format3[A: cmp.Display, B: cmp.Display, C: cmp.Display](fmt: string, a: A, b: B, c: C): string {
+    return format(fmt, [a.to_string(), b.to_string(), c.to_string()]);
+}
+
+pub function format4[A: cmp.Display, B: cmp.Display, C: cmp.Display, D: cmp.Display](fmt: string, a: A, b: B, c: C, d: D): string {
+    return format(fmt, [a.to_string(), b.to_string(), c.to_string(), d.to_string()]);
+}
+
 // __format_apply_spec applies a `:`-prefixed format spec to an
 // already-stringified value. `spec` is either "" (plain `{}`,
 // returned unchanged) or starts with ':' followed by the
@@ -169,7 +226,10 @@ function __format_apply_spec(s: string, spec: string): string {
         width = width * 10 + ((spec[p] as i32) - 48);
         p = p + 1;
     }
-    // .precision — truncate the value to at most `prec` bytes.
+    // .precision — fractional digits on a decimal numeral, byte length on
+    // anything else. Same "does it look like a number" split the sign flag
+    // below uses: `format` sees only the stringified value, so the shape of
+    // the digits is the only signal for which meaning was intended.
     var val: string = s;
     if (p < m && spec[p] == 46) {
         p = p + 1;
@@ -178,7 +238,8 @@ function __format_apply_spec(s: string, spec: string): string {
             prec = prec * 10 + ((spec[p] as i32) - 48);
             p = p + 1;
         }
-        if (val.len() > prec) { val = val[0:prec].to_owned(); }
+        if (__is_decimal_numeral(val)) { val = __round_to_places(val, prec); }
+        else if (val.len() > prec) { val = val[0:prec].to_owned(); }
     }
     // sign flag — prefix `+` on a value that looks like a non-negative
     // number (first byte a digit). A value already carrying `-`/`+`,
@@ -206,6 +267,84 @@ function __format_apply_spec(s: string, spec: string): string {
         return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
     }
     return val + __repeat_char(fill, pad);
+}
+
+// __is_decimal_numeral reports whether `s` is `[+-]?digits[.digits]` —
+// the shape `.N` reads as a fractional-digit count. A trailing bare dot
+// ("3.") and an exponent form ("1e30") are not numerals here, so they keep
+// the byte-truncation meaning.
+function __is_decimal_numeral(s: string): boolean {
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    if (i < n && (s[i] == 43 || s[i] == 45)) { i = i + 1; }
+    var whole: i32 = 0;
+    while (i < n && s[i] >= 48 && s[i] <= 57) { i = i + 1; whole = whole + 1; }
+    if (whole == 0) { return false; }
+    if (i == n) { return true; }
+    if (s[i] != 46) { return false; }
+    i = i + 1;
+    var frac: i32 = 0;
+    while (i < n && s[i] >= 48 && s[i] <= 57) { i = i + 1; frac = frac + 1; }
+    return i == n && frac > 0;
+}
+
+// __round_to_places renders the decimal numeral `s` with EXACTLY `places`
+// fractional digits, rounding half-away-from-zero. It works on the digit
+// bytes rather than round-tripping through f64, so a numeral with more
+// significant digits than a double can hold keeps the ones it arrived with.
+function __round_to_places(s: string, places: i32): string {
+    var n: i32 = s.len();
+    var i: i32 = 0;
+    var sign: string = "";
+    if (s[0] == 43 || s[0] == 45) {
+        if (s[0] == 45) { sign = "-"; }
+        i = 1;
+    }
+    var dot: i32 = i;
+    while (dot < n && s[dot] != 46) { dot = dot + 1; }
+    var intLen: i32 = dot - i;
+    // One digit run: the integer digits followed by exactly `places`
+    // fractional ones, zero-filled where the value has fewer. Carry then
+    // propagates right-to-left across the whole run in one pass.
+    var digits: u8[] = [];
+    var k: i32 = i;
+    while (k < dot) { digits = digits.append(s[k] as u8); k = k + 1; }
+    var f: i32 = 0;
+    while (f < places) {
+        var src: i32 = dot + 1 + f;
+        if (src < n) { digits = digits.append(s[src] as u8); }
+        else { digits = digits.append(48 as u8); }   // '0'
+        f = f + 1;
+    }
+    var next: i32 = dot + 1 + places;
+    if (next < n && s[next] >= 53) {                 // first dropped digit >= '5'
+        var c: i32 = digits.len() - 1;
+        var carry: boolean = true;
+        while (carry && c >= 0) {
+            var d: i32 = (digits[c] as i32) + 1;
+            if (d > 57) { digits = digits.with(c, 48 as u8); c = c - 1; }
+            else { digits = digits.with(c, d as u8); carry = false; }
+        }
+        // Carry out of the leading digit widens the integer part: 9.9 at
+        // `.0` is "10", not "0".
+        if (carry) {
+            var grown: u8[] = [49 as u8];            // '1'
+            var g: i32 = 0;
+            while (g < digits.len()) { grown = grown.append(digits[g]); g = g + 1; }
+            digits = grown;
+            intLen = intLen + 1;
+        }
+    }
+    var head: u8[] = [];
+    var j: i32 = 0;
+    while (j < intLen) { head = head.append(digits[j]); j = j + 1; }
+    var out: string = sign + string_from_bytes_unchecked(head);
+    if (places > 0) {
+        var tail: u8[] = [];
+        while (j < digits.len()) { tail = tail.append(digits[j]); j = j + 1; }
+        out = out + "." + string_from_bytes_unchecked(tail);
+    }
+    return out;
 }
 
 function __is_align(c: i32): boolean {

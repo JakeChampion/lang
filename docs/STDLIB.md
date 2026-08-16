@@ -552,9 +552,19 @@ sets, not for large collections.
 
 ### `std/format`
 
-- `format(fmt, args)` — template substitution with `{}`
-  placeholders and Rust-style `{:[[fill]align][width][.precision]}`
-  specs (`{:>8}`, `{:*^10}`, `{:.3}`, `{:>8.2}`).
+- `format(fmt, args: string[])` — template substitution with `{}`
+  placeholders and Rust-style
+  `{:[[fill]align][sign]['0'][width][.precision]}` specs (`{:>8}`,
+  `{:*^10}`, `{:+06}`, `{:.3}`, `{:>8.2}`). `.N` counts fractional
+  digits on a decimal numeral (rounded half-away-from-zero) and bytes on
+  anything else.
+- `format_values(fmt, args: T[])` for `T: cmp.Display`, and
+  `format1(fmt, a)` … `format4(fmt, a, b, c, d)` — the same substitution
+  over args that are NOT pre-stringified, each rendered through its own
+  `Display` impl. `format_values` takes one element type; the arity
+  family binds each arg's type separately, so its args are heterogeneous
+  (`format3("{} {} {}", 3, "cats", true)`). Both monomorphise, so there
+  is no boxing and no runtime dispatch.
 - `format_bytes(n)` — `"1024 → 1 KiB"` shape (binary prefixes).
 - `format_duration_ms(ms)` — `"1h 23m 45s"` shape.
 - `parse_duration_ms(s)` — inverse of `format_duration_ms`: parse a

@@ -1,5 +1,7 @@
 import "std/test";
 import "std/format" as format;
+// For `@derive(cmp.Display)` on the user-type arg case below.
+import "core/cmp";
 
 // examples/tests/format_test.fern — exercise std/format's dynamic
 // template substitution and the human-readable byte / duration
@@ -8,6 +10,9 @@ import "std/format" as format;
 // the self-host IR path (TestSelfHostStdTestE2E) so the string-build /
 // integer-division lowering is proven end to end on the self-hosted
 // compiler.
+
+@derive(cmp.Display)
+struct Point { x: i32, y: i32 }
 
 // ---- format(fmt, args) — positional `{}` substitution ----
 
@@ -22,6 +27,48 @@ function test_format_no_placeholders(): test.TestOutcome {
 // `{{` / `}}` escape to literal braces (Python/Rust convention).
 function test_format_escaped_braces(): test.TestOutcome {
     return test.assert_eq(format.format("{{}} literal", []), "{} literal");
+}
+
+// ---- Display args, not pre-stringified (#2684) ----
+
+// format_values: one element type, rendered through its Display impl.
+function test_format_values_ints(): test.TestOutcome {
+    return test.assert_eq(format.format_values("{} + {} = {}", [40, 2, 42]), "40 + 2 = 42");
+}
+
+function test_format_values_floats(): test.TestOutcome {
+    return test.assert_eq(format.format_values("{} and {}", [0.5, 1.25]), "0.5 and 1.25");
+}
+
+// format1..format4 bind each arg's type separately, which is what makes
+// one call's args heterogeneous.
+function test_format1(): test.TestOutcome {
+    return test.assert_eq(format.format1("n={}", 7), "n=7");
+}
+
+function test_format2_mixed(): test.TestOutcome {
+    return test.assert_eq(format.format2("{} {}", 3, "cats"), "3 cats");
+}
+
+function test_format3_mixed(): test.TestOutcome {
+    return test.assert_eq(format.format3("{} {} {}", 3, "cats", true), "3 cats true");
+}
+
+function test_format4_mixed(): test.TestOutcome {
+    return test.assert_eq(format.format4("{}/{}/{}/{}", 1, "a", true, 0.5), "1/a/true/0.5");
+}
+
+// A user type is a legal arg as soon as it has a Display impl —
+// `@derive(cmp.Display)` here, rendered field-wise.
+function test_format_derived_struct(): test.TestOutcome {
+    return test.assert_eq(format.format1("at {}", Point { x: 1, y: 2 }),
+        "at Point { x: 1, y: 2 }");
+}
+
+// Specs apply to the Display output, so an alignment spec works on a raw
+// value exactly as it does on a pre-stringified one.
+function test_format_raw_with_spec(): test.TestOutcome {
+    return test.assert_eq(format.format1("[{:>5}]", 42), "[   42]");
 }
 
 // Width specs: `{:>w}` right-aligns, `{:<w}` left-aligns to width w.
@@ -81,6 +128,44 @@ function test_format_sign_zero_pad(): test.TestOutcome {
 // spec still right-pads with zeros.
 function test_format_zero_pad_overrides_align(): test.TestOutcome {
     return test.assert_eq(format.format("{:<05}", ["42"]), "00042");
+}
+
+// ---- `.N` precision ----
+// On a decimal numeral `.N` counts FRACTIONAL DIGITS, rounding
+// half-away-from-zero and zero-filling to exactly N of them. On anything
+// else it truncates to N bytes.
+
+function test_precision_float_truncating(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:.2}", 3.14159), "3.14");
+}
+
+function test_precision_float_rounds_up(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:.2}", 3.999), "4.00");
+}
+
+// Rounding that carries out of the leading digit widens the integer part.
+function test_precision_carry_widens(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:.0}", 9.9), "10");
+}
+
+// `.0` drops the fractional part entirely — no trailing dot.
+function test_precision_zero_places(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:.0}", 3.7), "4");
+}
+
+// Fewer fractional digits than asked for zero-fills, so an integer-valued
+// arg still renders to the requested width.
+function test_precision_pads_integer(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:.2}", 3), "3.00");
+}
+
+function test_precision_negative(): test.TestOutcome {
+    return test.assert_eq(format.format1("{:>8.2}", 0.0 - 2.5), "   -2.50");
+}
+
+// A non-numeral keeps Rust's string-precision meaning: at most N bytes.
+function test_precision_string_truncates(): test.TestOutcome {
+    return test.assert_eq(format.format("{:>8.3}", ["hello"]), "     hel");
 }
 
 // ---- format_bytes(n) — binary IEC units (B / KiB / MiB / GiB) ----
@@ -146,6 +231,14 @@ function main(): i32 {
     r = r.it("format positional", test_format_positional);
     r = r.it("format no placeholders", test_format_no_placeholders);
     r = r.it("format escaped braces", test_format_escaped_braces);
+    r = r.it("format_values ints", test_format_values_ints);
+    r = r.it("format_values floats", test_format_values_floats);
+    r = r.it("format1", test_format1);
+    r = r.it("format2 mixed", test_format2_mixed);
+    r = r.it("format3 mixed", test_format3_mixed);
+    r = r.it("format4 mixed", test_format4_mixed);
+    r = r.it("format derived struct arg", test_format_derived_struct);
+    r = r.it("format raw arg with spec", test_format_raw_with_spec);
     r = r.it("format right-align", test_format_right_align);
     r = r.it("format left-align", test_format_left_align);
     r = r.it("format center-align", test_format_center_align);
@@ -158,6 +251,13 @@ function main(): i32 {
     r = r.it("format zero-pad negative", test_format_zero_pad_negative);
     r = r.it("format sign + zero-pad", test_format_sign_zero_pad);
     r = r.it("format zero-pad overrides align", test_format_zero_pad_overrides_align);
+    r = r.it("precision truncates fraction", test_precision_float_truncating);
+    r = r.it("precision rounds up", test_precision_float_rounds_up);
+    r = r.it("precision carry widens integer", test_precision_carry_widens);
+    r = r.it("precision zero places", test_precision_zero_places);
+    r = r.it("precision pads integer", test_precision_pads_integer);
+    r = r.it("precision negative with width", test_precision_negative);
+    r = r.it("precision truncates string bytes", test_precision_string_truncates);
     r = r.it("bytes below KiB", test_bytes_below_kib);
     r = r.it("bytes just below KiB", test_bytes_just_below_kib);
     r = r.it("bytes one KiB", test_bytes_one_kib);

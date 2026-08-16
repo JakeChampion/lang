@@ -41,8 +41,8 @@ fall out, and the codebase already complains about all three:
   `assert_eq_string`, `assert_eq_f32_near`, … one per type. A comment at
   `internal/stdlib/std/test.fern:749` says verbatim: *"As soon as a
   `Display`/`ToString` trait lands, these collapse into one generic
-  helper per family."* `std/format.fern:35` and `time.fern:149` echo the
-  same wish.
+  helper per family."* `time.fern:149` echoed the same wish, as did
+  `std/format` until its `Display`-accepting entry points landed (#2684).
 - **Numeric methods are split by width/signedness by hand** — `i32`,
   `i64`, `u32`, `u64`, `f32`, `f64` each get their own `to_string`, with
   the receiver-hoist and the call-site dispatch kept "in lockstep" by
