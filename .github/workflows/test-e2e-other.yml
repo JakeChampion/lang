@@ -65,7 +65,7 @@ jobs:
     name: test-e2e-other-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"

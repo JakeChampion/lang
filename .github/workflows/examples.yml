@@ -37,7 +37,7 @@ jobs:
     name: examples-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - name: Compile every example (arm64 target)
         run: |

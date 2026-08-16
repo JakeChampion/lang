@@ -78,7 +78,7 @@ runs:
     # couple of weeks, which is the refresh signal — a cross toolchain pinned
     # forever would drift from the image's libc.
     - name: Restore cached cross-toolchain .debs
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/apt-cross-cache
         key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}

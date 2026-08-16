@@ -89,7 +89,7 @@ jobs:
       || github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           script: |
             // Each status comment is tagged with its status so we can tell when
