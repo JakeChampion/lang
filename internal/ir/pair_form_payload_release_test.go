@@ -125,3 +125,50 @@ function main(): i32 {
 		t.Error("consume: pick returns its own parameter, so the arm is releasing xs — the next iteration reads freed memory")
 	}
 }
+
+// `a.len()` is `__method_Array_len(a)` after the checker's method rewrite, so
+// the occurrence sits in an ARGUMENT list and matched neither read shape the
+// whitelist recognised (#6409). A borrowing call cannot let the pointer
+// outlive the arm, so it is excused and the payload is released.
+func TestPairFormPayloadReleasedThroughBorrowingCall(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function total(a: i32[]): i32 { var s: i32 = 0; for i in 0..a.len() { s = s + a[i]; } return s; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { t = t + a.len(); }, None => { }, }
+        match (mk(1)) { Some(a) => { t = t + total(a); }, None => { }, }
+        match (mk(1)) { Some(a) => { t = t + a[0] + a.len(); }, None => { }, }
+    }
+    return t;
+}
+`)
+	if !ip.PairForm["mk"] {
+		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: an arm body that only borrows the payload through a call never releases it — every iteration leaks the whole array")
+	}
+}
+
+// The other side of the same widening: a callee that hands the argument BACK
+// is not a borrow, so the occurrence stays unexcused. `resultCannotAliasArg`
+// is what rules it out, and it is the gate whose loosening segfaulted the
+// differential oracle when the stage-(b) arg reclaim tried the same move.
+func TestPairFormPayloadKeptWhenCallReturnsTheArgument(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function ident(a: i32[]): i32[] { return a; }
+
+function main(): i32 {
+    var kept: i32[] = [];
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { kept = ident(a); }, None => { }, }
+    }
+    return kept[0];
+}
+`)
+	if releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: ident hands the payload back into `kept`, but the arm releases it anyway — a use-after-free")
+	}
+}

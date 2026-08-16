@@ -421,6 +421,52 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// The pair-form payload release reads the arm body through a
+		// whitelist, and a method call on the binding matched none of its
+		// shapes: the checker rewrites `x.len()` to
+		// `__method_Array_len(x)`, so the occurrence sits in an argument
+		// list rather than under a FieldAccess or an Index (#6409). One
+		// unrecognised occurrence marks the whole payload unconfined, so
+		// adding an already-flat `.len()` ALONGSIDE an excused `x[0]` was
+		// enough to turn the round from flat into 32 B of growth.
+		//
+		// The four shapes separate the reason from the symptom. `.len()` on
+		// an array and a user function that only reads its parameter are the
+		// two oracles the widened whitelist consults; the struct field read
+		// through a borrowing call proves it is the ARGUMENT position and not
+		// the receiver spelling that matters; and `x[0] + x.len()` is the
+		// mixed body that regressed a working shape.
+		//
+		// Constant in n: one payload per round per shape, released when the
+		// arm ends.
+		name: "pair-form-payload-borrowing-call",
+		decls: `struct P { a: i32, b: i32 }
+function mkarr(k: i32): Option[i32[]] {
+    if (k == 0) { return None; }
+    return Some([k, k + 1, k + 2]);
+}
+function mkstruct(k: i32): Option[P] {
+    if (k == 0) { return None; }
+    return Some(P { a: k, b: k + 1 });
+}
+function total(a: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
+function pb(p: P): i32 { return p.b; }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        match (mkarr(1))    { Some(a) => { t = t + a.len(); }, None => { }, }
+        match (mkarr(1))    { Some(a) => { t = t + total(a); }, None => { }, }
+        match (mkarr(1))    { Some(a) => { t = t + a[0] + a.len(); }, None => { }, }
+        match (mkstruct(1)) { Some(p) => { t = t + pb(p); }, None => { }, }
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.
