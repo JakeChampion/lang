@@ -47439,34 +47439,111 @@ function rc_ml_move_ok(name: string, allow: string[], restrict: boolean): boolea
     return util.index_of_str(allow, name) >= 0;
 }
 
-// rc_ml_block_has_early_exit: `return` / `break` / `continue` anywhere in the
-// loop body, nested included. With one present the whole body is refused.
-//
-// Native no longer refuses that widely — it asks only whether an exit sits
-// between the element's declaration and the construction — and it counts `?`
-// as an exit, which this scan does not. Porting both is #6869.
-function rc_ml_block_has_early_exit(stmts: parser.Stmt[]): boolean {
-    return rc_ml_block_has_early_exit_from(stmts, 0);
+// rc_ml_expr_has_try: a `?` anywhere in `e`. The parser desugars `expr?` to the
+// unary op `try_`, so the operator is an EXPRESSION and a scan over statement
+// kinds alone cannot see it — which is what let a `?` sit between an element's
+// declaration and its push unnoticed.
+function rc_ml_expr_has_try(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprUnary(u) => { return u.op == "try_" || rc_ml_expr_has_try(u.operand); },
+        parser.ExprBinary(b) => { return rc_ml_expr_has_try(b.left) || rc_ml_expr_has_try(b.right); },
+        parser.ExprCall(c) => {
+            if (rc_ml_expr_has_try(c.callee)) { return true; }
+            var i: i32 = 0;
+            while (i < c.args.len()) { if (rc_ml_expr_has_try(c.args[i])) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (rc_ml_expr_has_try(a.elements[i])) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (rc_ml_expr_has_try(t.elements[i])) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprIndex(ix) => { return rc_ml_expr_has_try(ix.array) || rc_ml_expr_has_try(ix.index); },
+        parser.ExprSlice(sl) => { return rc_ml_expr_has_try(sl.array) || rc_ml_expr_has_try(sl.start) || rc_ml_expr_has_try(sl.end); },
+        parser.ExprFieldAccess(fa) => { return rc_ml_expr_has_try(fa.obj); },
+        parser.ExprStructLit(s) => {
+            if (s.has_base && rc_ml_expr_has_try(s.base)) { return true; }
+            var i: i32 = 0;
+            while (i < s.field_values.len()) { if (rc_ml_expr_has_try(s.field_values[i])) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) { if (rc_ml_expr_has_try(ml.keys[i])) { return true; } i = i + 1; }
+            var j: i32 = 0;
+            while (j < ml.vals.len()) { if (rc_ml_expr_has_try(ml.vals[j])) { return true; } j = j + 1; }
+            return false;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) { if (rc_ml_expr_has_try(fs.exprs[i])) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return rc_ml_stmts_have_early_exit(lm.body); },
+        _ => { return false; }
+    }
 }
-// rc_ml_block_has_early_exit_from is the same scan started past a desugared
-// loop prologue (rc_ml_loop_prologue_len).
-function rc_ml_block_has_early_exit_from(stmts: parser.Stmt[], from: i32): boolean {
-    var i: i32 = from;
+
+// rc_ml_stmt_has_early_exit: can `st` leave the enclosing loop body early — a
+// `return` / `break` / `continue`, or a `?`, which returns the failure variant
+// from the enclosing function and so exits the body exactly as `return` does.
+// Native stmtHasEarlyExit.
+//
+// Coarse in two directions, both of which only forgo a move: a `break`
+// belonging to a nested loop counts, and so does a `return` inside a nested
+// lambda.
+function rc_ml_stmt_has_early_exit(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtReturn(_) => { return true; },
+        parser.StmtBreak(_) => { return true; },
+        parser.StmtContinue(_) => { return true; },
+        parser.StmtVar(v) => { return rc_ml_expr_has_try(v.init); },
+        parser.StmtAssign(a) => { return rc_ml_expr_has_try(a.value); },
+        parser.StmtExpr(e) => { return rc_ml_expr_has_try(e.value); },
+        parser.StmtIf(f) => { return rc_ml_expr_has_try(f.cond) || rc_ml_stmts_have_early_exit(f.then_body) || rc_ml_stmts_have_early_exit(f.else_body); },
+        parser.StmtWhile(w) => { return rc_ml_expr_has_try(w.cond) || rc_ml_stmts_have_early_exit(w.body); },
+        parser.StmtFor(fo) => { return rc_ml_expr_has_try(fo.iter) || rc_ml_stmts_have_early_exit(fo.body); },
+        parser.StmtMatch(m) => {
+            if (rc_ml_expr_has_try(m.scrutinee)) { return true; }
+            var a: i32 = 0;
+            while (a < m.arms.len()) {
+                if (m.arms[a].has_guard && rc_ml_expr_has_try(m.arms[a].guard)) { return true; }
+                if (rc_ml_stmts_have_early_exit(m.arms[a].body)) { return true; }
+                a = a + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return rc_ml_stmt_has_early_exit(d.action); },
+        _ => { return false; }
+    }
+}
+
+function rc_ml_stmts_have_early_exit(stmts: parser.Stmt[]): boolean {
+    var i: i32 = 0;
     while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtReturn(_) => { return true; },
-            parser.StmtBreak(_) => { return true; },
-            parser.StmtContinue(_) => { return true; },
-            parser.StmtIf(f) => { if (rc_ml_block_has_early_exit(f.then_body) || rc_ml_block_has_early_exit(f.else_body)) { return true; } },
-            parser.StmtWhile(w) => { if (rc_ml_block_has_early_exit(w.body)) { return true; } },
-            parser.StmtFor(fo) => { if (rc_ml_block_has_early_exit(fo.body)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (rc_ml_block_has_early_exit(m.arms[a].body)) { return true; } a = a + 1; } },
-            parser.StmtDefer(d) => { if (rc_ml_block_has_early_exit([d.action])) { return true; } },
-            _ => {}
-        }
+        if (rc_ml_stmt_has_early_exit(stmts[i])) { return true; }
         i = i + 1;
     }
     return false;
+}
+
+// rc_ml_allow_at: of the names this loop body has declared so far, the ones no
+// early exit separates from the statement now being scanned — `exits` is the
+// count of exiting statements before it, and a name's recorded count is the one
+// before its own declaration, so equality means nothing exits in between.
+function rc_ml_allow_at(declared: string[], decl_exits: i32[], exits: i32): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < declared.len()) {
+        if (decl_exits[i] == exits) { out = out.append(declared[i]); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // rc_ml_decl_count: how many times `name` is declared as a local in the whole
@@ -47583,32 +47660,6 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
     return out;
 }
 
-// rc_ml_loop_prologue_len: the length of a range-`for`'s DESUGARED prologue —
-// the advance assign and the `if (done) { break; }` guard the desugar puts at the
-// top of the while body. This analysis runs after that desugar while native's
-// runs on the `for` node itself, so counting the guard as an early exit would
-// refuse every range-for body — which is most of them. Only that exact two-
-// statement shape is skipped (an assign, then an if whose then-body is a lone
-// break and whose else-body is empty); a user `break` anywhere else still
-// disqualifies the body.
-function rc_ml_loop_prologue_len(blk: parser.Stmt[]): i32 {
-    if (blk.len() < 2) { return 0; }
-    var is_assign: boolean = false;
-    match (blk[0]) { parser.StmtAssign(_) => { is_assign = true; }, _ => {} }
-    if (!is_assign) { return 0; }
-    var is_guard: boolean = false;
-    match (blk[1]) {
-        parser.StmtIf(f) => {
-            if (f.then_body.len() == 1 && f.else_body.len() == 0) {
-                match (f.then_body[0]) { parser.StmtBreak(_) => { is_guard = true; }, _ => {} }
-            }
-        },
-        _ => {}
-    }
-    if (!is_guard) { return 0; }
-    return 2;
-}
-
 // rc_ml_loop_body_moves extends the construction-move scan into LOOP BODIES —
 // native markLoopBodyConstructionMoves, the half #6569 did not port. The
 // top-level driver walks fn.body's own statements only, so `for i in 0..n { var
@@ -47653,23 +47704,41 @@ function rc_ml_loop_body_moves(stmts: parser.Stmt[], fn: parser.FuncDecl, types_
 // in the function, so the set identifies it unambiguously). Last use is measured
 // WITHIN the body, which is the right scope for a name that dies with the
 // iteration.
+//
+// An early exit disqualifies only the names whose DECLARATION it separates from
+// the construction: that interval is what makes the construction unconditional,
+// since `moved` is function-wide and a path that builds the box without reaching
+// the construction leaks it. Before the declaration no box exists yet, and after
+// the construction the container owns it — so the guard-clause shape every
+// parser is built out of stays eligible.
+//
+// This runs after the range-`for` desugar, so a range loop's body opens with
+// the advance assign and an `if (done) { break; }` guard. Counting that guard
+// is harmless: it precedes every declaration, so it shifts each name's exit
+// count and each construction's by the same one, and the comparison is an
+// equality.
 function rc_ml_one_loop_body(blk: parser.Stmt[], fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: parser.StructDecl[], moved: MlOut): MlOut {
-    var first: i32 = rc_ml_loop_prologue_len(blk);
-    if (rc_ml_block_has_early_exit_from(blk, first)) { return moved; }
     var out: MlOut = moved;
     var declared: string[] = [];
-    var i: i32 = first;
+    var decl_exits: i32[] = [];
+    var exits: i32 = 0;
+    var i: i32 = 0;
     while (i < blk.len()) {
+        var allow: string[] = rc_ml_allow_at(declared, decl_exits, exits);
         match (blk[i]) {
             parser.StmtVar(v) => {
-                out = rc_ml_construction_moves(v.init, blk, i, fn, types_n, types_t, structs, out, declared, true);
-                if (rc_ml_decl_count(fn.body, v.name) == 1) { declared = push_str_unique(declared, v.name); }
+                out = rc_ml_construction_moves(v.init, blk, i, fn, types_n, types_t, structs, out, allow, true);
+                if (rc_ml_decl_count(fn.body, v.name) == 1 && util.index_of_str(declared, v.name) < 0) {
+                    declared = declared.append(v.name);
+                    decl_exits = decl_exits.append(exits);
+                }
             },
             parser.StmtAssign(a) => {
-                out = rc_ml_construction_moves(a.value, blk, i, fn, types_n, types_t, structs, out, declared, true);
+                out = rc_ml_construction_moves(a.value, blk, i, fn, types_n, types_t, structs, out, allow, true);
             },
             _ => {}
         }
+        if (rc_ml_stmt_has_early_exit(blk[i])) { exits = exits + 1; }
         i = i + 1;
     }
     return out;

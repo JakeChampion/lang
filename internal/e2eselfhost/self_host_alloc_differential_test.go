@@ -146,6 +146,30 @@ function churn(n: i32): i32 {
 		n:        400,
 		maxRatio: 8,
 	},
+	{
+		// An element built in a loop body and pushed onto an accumulator, with
+		// a guard clause ahead of the declaration — the shape every parser and
+		// tokeniser is written in. The guard cannot leave the body with the
+		// element built and unstored, so the push MOVES it; a compiler that
+		// refuses the move on the mere presence of the exit keeps a retain
+		// whose escape taint suppresses the matching release, and leaks one
+		// element per round (#6869: 72 B/round self-host against 0 native).
+		name: "loop-push-behind-guard-clause",
+		decls: `struct Val { kind: i32, kids: i32[] }
+function churn(n: i32): i32 {
+    var vals: Val[] = [];
+    var total: i32 = 0;
+    for i in 0..n {
+        if (i == 9999) { return 12345; }
+        var v = Val { kind: i, kids: [] };
+        vals = vals.append(v);
+        total = (total + vals.len()) % 251;
+    }
+    return total;
+}`,
+		n:        200,
+		maxRatio: 8,
+	},
 }
 
 // bumpSrc returns a program whose EXIT CODE is the per-churn bump growth in
