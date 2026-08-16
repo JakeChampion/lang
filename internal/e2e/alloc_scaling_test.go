@@ -467,6 +467,58 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// An enum value that is only ever a TEMPORARY — handed straight to a
+		// call and never bound — had no owner at all (#6393). A pair-form
+		// callee returns `(tag, payload)` in registers, so the box a consumer
+		// wanting the heap form gets is minted by emitRepackPairAsHeapBox at
+		// the call site, and `ownedCallResultType` rejects pair-form callees
+		// outright, so the stage-(b) arg reclaim never stashed it.
+		//
+		// Both halves leaked, which is what the payload-size dimension shows:
+		// 3 elements measured 64 B/round (32 box + 32 buffer) and 20 elements
+		// 128 B, so the array is in the figure and not just the box. The
+		// struct payload is the third shape and the `var o = mk(1)` spelling
+		// is the control that was flat all along — one source line apart from
+		// the leaking one.
+		//
+		// Constant in n: one box and one payload per round per shape.
+		name: "pair-form-enum-temp-as-argument",
+		decls: `struct S2 { a: i32, b: i32 }
+function mk3(k: i32): Option[i32[]] {
+    if (k == 0) { return None; }
+    return Some([k, k + 1, k + 2]);
+}
+function mk20(k: i32): Option[i32[]] {
+    if (k == 0) { return None; }
+    return Some([k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k]);
+}
+function mkS(k: i32): Option[S2] {
+    if (k == 0) { return None; }
+    return Some(S2 { a: k, b: k + 1 });
+}
+function fac(o: Option[i32[]]): i32 {
+    match (o) { Some(a) => { return a[0]; }, None => { return 0; }, }
+}
+function facS(o: Option[S2]): i32 {
+    match (o) { Some(s) => { return s.a; }, None => { return 0; }, }
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        t = t + fac(mk3(1));
+        t = t + fac(mk20(1));
+        t = t + facS(mkS(1));
+        var o: Option[i32[]] = mk3(1);
+        t = t + fac(o);
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.

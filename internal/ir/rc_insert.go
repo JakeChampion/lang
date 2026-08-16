@@ -384,28 +384,46 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if !ast.RcFreeEnabled || bt == nil || !ast.IsPointerType(bt) {
 		return false
 	}
-	// Not ownedCallResultType: that gate rejects a pair-form callee outright
-	// (b.pairForm), which is exactly the set this one is for. The checks it
-	// shares are spelled out instead — a direct call to a user-declared,
-	// non-builtin function proven to return no parameter's heap.
-	call, ok := tag.(*ast.Call)
-	if !ok {
-		return false
-	}
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	if _, isLocal := b.locals[id.Name]; isLocal {
-		return false
-	}
-	if strings.HasPrefix(id.Name, "__") {
-		return false
-	}
-	if !b.returnsNoParamEscape[id.Name] {
+	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
 	return b.pairFormPayloadConfined(body, name)
+}
+
+// freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
+// result is provably fresh — a direct call to a user-declared, non-builtin
+// function the borrow analysis proved returns no parameter's heap.
+//
+// It is the shared freshness gate for the two pair-form reclaims, which own
+// different halves of the same value: the match-arm payload release
+// (reclaimablePairFormPayload) frees what the `(tag, payload)` register pair
+// points at, and the argument-position reclaim (stashOwnedArgTemp) frees the
+// heap box emitRepackPairAsHeapBox allocates when a consumer wants the
+// heap-form Option/Result instead.
+//
+// ownedCallResultType cannot serve either: it rejects a pair-form callee
+// outright, which is exactly the set this one is for. That rejection is also
+// why `returnsNoParamEscape` must be TRUE here rather than merely present.
+// ownedCallResultType's callers lean on "an aliased return is rc>=2 via the
+// return-transfer inc, and the free is is_unique-gated"; the pair-form ABI
+// hands back registers with no box and no such inc, so freshness has to be
+// proven outright.
+func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled || !b.isPairFormScrutinee(e) {
+		return nil, false
+	}
+	id := e.(*ast.Call).Callee.(*ast.Ident)
+	if strings.HasPrefix(id.Name, "__") {
+		return nil, false
+	}
+	if !b.returnsNoParamEscape[id.Name] {
+		return nil, false
+	}
+	et, ok := b.exprType(e).(ast.EnumType)
+	if !ok {
+		return nil, false
+	}
+	return et, true
 }
 
 // pairFormPayloadConfined reports whether every mention of `name` in `body` is

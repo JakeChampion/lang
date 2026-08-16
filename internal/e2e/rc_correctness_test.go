@@ -4954,6 +4954,65 @@ function main(): i32 {
     return (t - 56) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A pair-form enum handed straight to a call, never bound, is now
+		// released after the call (#6393) — a class that had no release at
+		// all before, so the controls are what carry this row.
+		//
+		// `wrap` returns its own parameter's array, so the box is not proven
+		// fresh and keeps its prior leak; `live` is read after the loop, and
+		// a release admitted there would have freed it. `keep` moves the
+		// payload into a container that outlives the call and `unwrap` hands
+		// it straight back — both read afterwards for the same reason.
+		// 8 + 40 + 56 + 10 + 24 + 32 + 5.
+		name: "pair_form_enum_temp_as_argument",
+		src: `
+import "core/int";
+struct S2 { a: i32, b: i32 }
+function mk(n: i32): Option[i32[]] {
+    if (n == 0) { return None; }
+    return Some([n, n + 1, n + 2]);
+}
+function wrap(xs: i32[], n: i32): Option[i32[]] {
+    if (n == 0) { return None; }
+    return Some(xs);
+}
+function mks(n: i32): Option[S2] {
+    if (n == 0) { return None; }
+    return Some(S2 { a: n, b: n + 1 });
+}
+function fac(o: Option[i32[]]): i32 {
+    match (o) { Some(a) => { return a[0]; }, None => { return 0; }, }
+}
+function facs(o: Option[S2]): i32 {
+    match (o) { Some(s) => { return s.a + s.b; }, None => { return 0; }, }
+}
+function keep(o: Option[i32[]], out: i32[][]): i32[][] {
+    match (o) { Some(a) => { return out.append(a); }, None => { return out; }, }
+}
+function unwrap(o: Option[i32[]]): i32[] {
+    match (o) { Some(a) => { return a; }, None => { return [0]; }, }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) { t = t + fac(mk(1)) + facs(mks(2)); i = i + 1; }
+    var live: i32[] = [7, 8, 9];
+    i = 0;
+    while (i < 8) { t = t + fac(wrap(live, 1)); i = i + 1; }
+    t = t + live[0] + live.len();
+    var out: i32[][] = [];
+    i = 0;
+    while (i < 8) { out = keep(mk(3), out); i = i + 1; }
+    i = 0;
+    while (i < out.len()) { t = t + out[i][0]; i = i + 1; }
+    var got: i32[] = [];
+    i = 0;
+    while (i < 8) { got = unwrap(mk(4)); t = t + got[0]; i = i + 1; }
+    t = t + got[1];
+    return (t - 175) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
