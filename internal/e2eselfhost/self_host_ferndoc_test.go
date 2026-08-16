@@ -282,8 +282,10 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 // closing one of these gaps also fails — and the fix is to delete the entry,
 // which is the point: the list can only shrink deliberately.
 var ferndocPageDivergences = map[string]string{
-	// `trait` reaches the self-host only as TraitReq, which carries no
-	// visibility, so `pub trait` has no representation to render.
+	// `trait` blocks are not reachable from a parser.Module. TraitDecl holds
+	// the written form including `is_pub`, but parse_trait_decl returns it
+	// separately and only the formatter takes it — it is not a Module field,
+	// and Module is what ferndoc.fern renders from. Plumbing, not erasure.
 	"async":   "no TraitDecl",
 	"convert": "no TraitDecl",
 	"error":   "no TraitDecl",
@@ -291,8 +293,8 @@ var ferndocPageDivergences = map[string]string{
 	"num":     "no TraitDecl",
 	"cmp":     "no TraitDecl",
 	"iter":    "no TraitDecl",
-	// core/mem is trait-ONLY, so the missing TraitDecl leaves nothing at
-	// all to render and the page comes out empty rather than merely short.
+	// core/mem is trait-ONLY, so with no trait reaching the page there is
+	// nothing at all to render — empty, rather than merely short.
 	"mem": "no TraitDecl",
 	// `const` desugars to a zero-arg function, recoverable through
 	// FuncDecl.is_const but not as native's ConstDecl.
