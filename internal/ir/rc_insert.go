@@ -1244,6 +1244,12 @@ func (b *builder) emitPreciseDrop(name string) {
 // (inc only fresh-owned bare idents) existed solely to avoid touching
 // view strings and is no longer needed.
 func (b *builder) emitAliasInc(e ast.Expr) {
+	if b.info != nil && b.info.DynCoercions != nil {
+		if dc, ok := b.info.DynCoercions[e]; ok {
+			b.emitDynConcreteInc(dc)
+			return
+		}
+	}
 	if _, isStr := b.exprType(e).(ast.StringType); isStr && b.twoWordStrings() {
 		// Two-word string ABI (wasm32 + arm64 TwoWordOverride): the
 		// value occupies two stack words (data, len), so the retain
@@ -1258,6 +1264,45 @@ func (b *builder) emitAliasInc(e ast.Expr) {
 		return
 	}
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+}
+
+// emitDynConcreteInc retains the CONCRETE object behind a `dyn Trait`
+// coercion whose fat pointer is on the operand stack.
+//
+// The stack value at a coercion site is the dyn representation, and neither
+// form carries an rc header: the natives' `{data, vtable}` cell comes from a
+// plain __fern_alloc, and wasm's inline top word is the static vtable
+// address. A plain __fern_rc_inc there increments the eight bytes preceding
+// the cell — the neighbouring heap object's payload — so the retain has to
+// reach the `data` word instead. `__drop_dyn_<set>` releases exactly that
+// word through the vtable's drop slot, so this is the inc it balances.
+//
+// Net-zero on the operand stack: the dyn value is left in place for the
+// store that follows.
+func (b *builder) emitDynConcreteInc(dc checker.DynCoercion) {
+	if isPrimitiveConcrete(b.info, dc.Concrete) {
+		// `data` is the fresh headerless value cell boxPrimitiveDynValue
+		// just allocated — no second owner exists to retain against.
+		return
+	}
+	if b.dynBoxed() {
+		cell := b.allocSlot()
+		b.scratchType[cell] = ast.NumberType{Width: 32}
+		b.emit(Op{Kind: OpStoreLocal, I32: cell})
+		b.emit(Op{Kind: OpLoadLocal, I32: cell})
+		b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		b.emit(Op{Kind: OpLoadLocal, I32: cell})
+		return
+	}
+	// Inline two-word (wasm): pop the vtable word, retain `data` (RcInc
+	// passes it through), push the vtable back.
+	vt := b.allocSlot()
+	b.scratchType[vt] = ast.NumberType{Width: 32}
+	b.emit(Op{Kind: OpStoreLocal, I32: vt})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpLoadLocal, I32: vt})
 }
 
 // emitVarReinitDropOld releases the value currently in a var's slot

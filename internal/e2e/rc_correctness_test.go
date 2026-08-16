@@ -4852,6 +4852,37 @@ function main(): i32 {
     return (a - 115) + (b - 49) + (c - 112) + __rc_underflow_count();
 }`,
 	},
+	{
+		// `dyn Trait` coerced from a struct LOCAL that stays live past the
+		// coercion. The retain the alias site owes belongs on the concrete
+		// `data` word: a plain __fern_rc_inc lands on the dyn representation
+		// (the natives' headerless {data,vtable} cell, wasm's static vtable
+		// word) instead. The top-level pair is the discriminator — the source
+		// is at its last use there, so the coercion is a MOVE and no retain is
+		// emitted at all — while the loop pair takes the retain and needs it:
+		// `s` and the aliasing `d` are both reclaimed at scope exit.
+		// 9 flat + 3 × (9 + 3) in the loop.
+		name: "dyn_coerced_from_live_struct_local",
+		src: `
+import "core/int";
+trait Shape { function area(self: Self): i32; }
+struct Square { side: i32 }
+impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
+function main(): i32 {
+    var s0: Square = Square { side: 3 };
+    var d0: dyn Shape = s0;
+    var flat: i32 = d0.area();
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var s: Square = Square { side: 3 };
+        var d: dyn Shape = s;
+        acc = acc + d.area() + s.side;
+        i = i + 1;
+    }
+    return (flat - 9) + (acc - 36) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
