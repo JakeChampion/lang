@@ -153,3 +153,76 @@ func TestPeepholeOptOutEmitsUncollapsed(t *testing.T) {
 		t.Error("opt-out emission lost the entry symbol")
 	}
 }
+
+// deadPushProg has statement-position expressions whose values nobody reads:
+// each assignment leaves its result on the operand stack and the statement end
+// discards it. That is P3's shape.
+const deadPushProg = `
+function main(): i32 {
+  var t: i32 = 0;
+  var i: i32 = 0;
+  while (i < 4) { t = t + i; i = i + 1; }
+  return t;
+}`
+
+// hasDeadPush reports whether a push/free triple survives: `sub rsp, N` then
+// `mov [rsp], rax` then `add rsp, N` with the same N.
+func hasDeadPush(asm string) bool {
+	lines := strings.Split(asm, "\n")
+	for i := 0; i+2 < len(lines); i++ {
+		a := strings.TrimSpace(lines[i])
+		b := strings.TrimSpace(lines[i+1])
+		c := strings.TrimSpace(lines[i+2])
+		if !strings.HasPrefix(a, "sub rsp, ") || b != "mov [rsp], rax" {
+			continue
+		}
+		if c == "add rsp, "+strings.TrimPrefix(a, "sub rsp, ") {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPeepholeRemovesDeadPush(t *testing.T) {
+	off := compileOpts(t, deadPushProg, Options{NoPeephole: true})
+	on := compileOpts(t, deadPushProg, Options{})
+
+	// Sanity: the pattern must exist un-peepholed, or the test proves nothing.
+	if !hasDeadPush(off) {
+		t.Fatal("precondition: un-peepholed asm has no dead push to remove")
+	}
+	if hasDeadPush(on) {
+		t.Error("P3: a push whose slot is freed unread survived the peephole")
+	}
+	if instrCount(on) >= instrCount(off) {
+		t.Errorf("peephole did not reduce instruction count: off=%d on=%d",
+			instrCount(off), instrCount(on))
+	}
+}
+
+// P3 must not touch a push whose slot IS read before it is freed — that is a
+// live operand-stack slot, and removing it would drop the value.
+func TestPeepholePreservesReadBeforeFree(t *testing.T) {
+	on := compileOpts(t, peepProg, Options{})
+	lines := strings.Split(on, "\n")
+	sawLive := false
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "mov [rsp], rax" {
+			continue
+		}
+		// Walk forward to the slot's release; a reload before it means live.
+		for j := i + 1; j < len(lines); j++ {
+			cur := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(cur, "add rsp, ") {
+				break
+			}
+			if strings.HasSuffix(cur, ", [rsp]") {
+				sawLive = true
+				break
+			}
+		}
+	}
+	if !sawLive {
+		t.Error("no live push survived: P3 removed a slot that was read before release")
+	}
+}
