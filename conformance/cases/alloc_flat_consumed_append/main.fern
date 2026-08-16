@@ -1,0 +1,69 @@
+// spec: AL-01
+//
+// The AL-01 shape for an `.append` result that is CONSUMED — handed straight
+// to a borrowing call rather than assigned back — which is how an immutable
+// trail is threaded down a recursion: backtracking, DFS with a path, subset
+// and permutation enumeration. Nothing outlives the statement to own the
+// appended array, so the only place it can be reclaimed is the call site
+// (#6501, one buffer per append, unbounded).
+//
+// Both of `__fern_arr_push_grow`'s outcomes are here, because reclaiming one
+// the way the other wants is a use-after-free. `full` has no spare capacity,
+// so the grow COPIES and the reclaim frees a buffer nobody else holds;
+// `roomy` has room at rc==1, so the grow mutates IN PLACE, bumps the
+// receiver's count and hands the receiver back — where the same reclaim must
+// net that bump away and free nothing. `xs[0]` is the element-receiver
+// spelling, where the container still owns what the append read.
+//
+// Every receiver is summed again after its append, so a reclaim that frees
+// the wrong buffer is a wrong number rather than a byte count.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "std/i32";
+import "std/i64";
+
+function sink(xs: i32[]): i32 {
+    var s: i32 = 0;
+    for i in 0..xs.len() { s = s + xs[i]; }
+    return s;
+}
+
+function walk(path: i32[]): i32 {
+    var t: i32 = 0;
+    for i in 0..8 { t = t + sink(path.append(i)); }
+    return t;
+}
+
+function round(n: i32): i32 {
+    var full: i32[] = [n, n + 1];
+    var roomy: i32[] = [];
+    for i in 0..3 { roomy = roomy.append(n + i); }
+    var xs: i32[][] = [[n], [n + 1]];
+
+    var a: i32 = sink(full.append(10)) + sink(roomy.append(20)) + sink(xs[0].append(30));
+    var b: i32 = sink(full) + sink(roomy) + sink(xs[0]) + sink(xs[1]);
+    return a + b + walk(full) + full.len() + roomy.len() + xs[0].len();
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

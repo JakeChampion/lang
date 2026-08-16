@@ -147,15 +147,12 @@ function main(): i32 {
 
 // appendCopyLeakBoundProgram pins the reclaim half of the #4827 fix: the
 // forced copy (#4838) must DIE when consumed by a borrowing call, not
-// leak. #4849's in-place exemptions removed the self-host compile's own
-// hot shapes (return-position accumulators, borrowed-param self-
-// reassigns), but a plain ARG-POSITION forced copy — `take(path.append(i))`
-// with `path` reused after — still leaked one whole buffer per call. The
-// stage-(b) appendCopyTempType recognizer stashes it and decs it after the
-// call (scalar-element arrays only; a pointer-element copy's elements
-// alias the original's and must not be deep-dropped). 5000 iterations must
-// stay heap-flat (< 512 B growth), the operand must be untouched (value
-// semantics), and no rc underflow may fire.
+// leak. `take(path.append(i))` with `path` reused after leaked one whole
+// buffer per call. The stage-(b) appendCopyTempType recognizer stashes it
+// and decs it after the call (scalar-element arrays only; a pointer-element
+// copy's elements alias the original's and must not be deep-dropped). 5000
+// iterations must stay heap-flat (< 512 B growth), the operand must be
+// untouched (value semantics), and no rc underflow may fire.
 const appendCopyLeakBoundProgram = `function take(xs: i32[]): i32 { return xs.len(); }
 
 function main(): i32 {
