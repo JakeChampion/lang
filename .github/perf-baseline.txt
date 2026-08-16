@@ -33,18 +33,30 @@ x86_64/array_index.text	582
 x86_64/array_index.ir	100303812
 x86_64/call_overhead.text	211
 x86_64/call_overhead.ir	63101700
+x86_64/closure_call.text	491
+x86_64/closure_call.ir	284520055
+x86_64/enum_match.text	820
+x86_64/enum_match.ir	261000071
 x86_64/int_loop.text	121
 x86_64/int_loop.ir	84000036
 x86_64/map_int.text	4028
 x86_64/map_int.ir	136339727
 x86_64/map_string.text	5346
 x86_64/map_string.ir	292500000	2
+x86_64/sort_inplace.text	1001
+x86_64/sort_inplace.ir	201915356
+x86_64/sort_ints.text	3321
+x86_64/sort_ints.ir	157651167
+x86_64/string_build.text	1467
+x86_64/string_build.ir	199336343
 x86_64/string_scan.text	1841
 x86_64/string_scan.ir	140977346
 x86_64/string_slice.text	511
 x86_64/string_slice.ir	196020101
 x86_64/struct_drop.text	2348
 x86_64/struct_drop.ir	682100167
+x86_64/tokenize.text	997
+x86_64/tokenize.ir	207560093
 
 # aarch64, from the Perf workflow's own perf-aarch64 job (run 31947059512) —
 # the arch this project defaults to. Seeded from CI rather than measured here,
@@ -69,3 +81,11 @@ aarch64/string_slice.text	497
 aarch64/string_slice.ir	167280114
 aarch64/struct_drop.text	1864
 aarch64/struct_drop.ir	692820288
+
+# closure_call / enum_match / sort_inplace / sort_ints / string_build /
+# tokenize have no aarch64 entry yet — they are new in this PR and this
+# container is x86_64, so their aarch64 figures come from the perf-aarch64
+# job's own paste block and land in a follow-up commit on the same branch.
+# Until then that job reports them as UNBASELINED, which is the gate working:
+# measured, recorded, not yet compared. Do NOT guess them from the x86_64
+# numbers — the ratio is not constant (int_loop 0.71, string_scan 1.01).

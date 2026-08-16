@@ -1,0 +1,29 @@
+import "std/sort";
+
+// sort_inplace — `sort_i32_inplace_asc`, the `fip` `own`-consuming sort. It is
+// an insertion sort, so it is only ever correct to call on a SMALL array; this
+// sorts many short ones, which is its intended shape. The property being
+// watched is that it stays allocation-free: if `.with` ever stops writing
+// through the unique owner and starts copying, the count jumps by an order of
+// magnitude here while `sort_ints` (which allocates by design) barely moves.
+function main(): i32 {
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 2500) {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    var seed: i32 = 12345 + r;
+    while (i < 48) {
+      seed = (seed * 1103515 + 12345) % 100000;
+      if (seed < 0) {
+        seed = 0 - seed;
+      }
+      xs = xs.append(seed);
+      i = i + 1;
+    }
+    xs = sort.sort_i32_inplace_asc(xs);
+    total = total + xs[0] as i64 + xs[xs.len() - 1] as i64;
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

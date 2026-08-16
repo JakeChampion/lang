@@ -1,0 +1,45 @@
+// enum_match — variant dispatch and the payload drop. The exit sweep's enum
+// arm was ~266 ops per local, the biggest inline shape after structs, and
+// nothing in the corpus exercised it: a change to enum drop or to match
+// lowering moved no benchmark at all.
+enum Node { Leaf(i32), Label(string), Pair(i32), Empty }
+
+function weigh(n: Node): i32 {
+  match (n) {
+    Leaf(v) => {
+      return v * 2;
+    },
+    Label(s) => {
+      return s.len();
+    },
+    Pair(v) => {
+      return v + 1;
+    },
+    Empty => {
+      return 0;
+    }
+  }
+}
+
+function make(k: i32): Node {
+  if (k % 4 == 0) {
+    return Leaf(k);
+  }
+  if (k % 4 == 1) {
+    return Label("node_label_" + "padding");
+  }
+  if (k % 4 == 2) {
+    return Pair(k);
+  }
+  return Empty;
+}
+
+function main(): i32 {
+  var total: i64 = 0i64;
+  var i: i32 = 0;
+  while (i < 900000) {
+    total = total + weigh(make(i)) as i64;
+    i = i + 1;
+  }
+  return (total % 97i64) as i32;
+}
