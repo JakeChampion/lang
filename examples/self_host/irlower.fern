@@ -46078,13 +46078,11 @@ function borrowable_key(fn: parser.FuncDecl): string {
     return fn.name;
 }
 // borrowable_params_interproc is the inter-procedural widening of
-// borrowable_params_of: a SINGLE forward pass with a GROWING registry, so when the
-// pass reaches function i, `reg` already holds the borrowable entries of funcs
-// 0..i-1 and a param that forwards to an EARLIER-defined borrowable callee is
-// itself recognised as a borrow (capturing the common "helper defined before its
-// user" forwarding, e.g. `inner` before `outer`). Forwarding to a later-defined /
-// mutually recursive callee degrades to the conservative answer — a SOUND
-// under-approximation.
+// borrowable_params_of: an ITERATED greatest fixpoint from above, re-running the
+// escape walker over every function until the registry stops changing (cap 64;
+// real call graphs converge in a handful of passes). The algorithm is described
+// in full inside the body — it replaced a single forward pass with a growing
+// registry, which could not bootstrap a mutually recursive borrow.
 //
 // COST: the growing registry makes the escape walker short-circuit less, so this
 // is materially heavier than the empty-registry conservative pass — recomputing it
@@ -46138,10 +46136,9 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     }
     var cap: i32 = 64;
     var iter: i32 = 0;
-    var prevsig: string = "";
-    var sig: string = borrowable_sig(reg);
-    while (iter < cap && sig != prevsig) {
-        prevsig = sig;
+    var prev: string[] = [];
+    while (iter < cap && !regs_equal(reg, prev)) {
+        prev = reg;
         var next: string[] = [];
         var i: i32 = 0;
         while (i < funcs.len()) {
@@ -46166,23 +46163,31 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
             }
             i = i + 1;
         }
-        // Monotone-DECREASING (flags only go 1->0), so the signature strictly
-        // shrinks until the fixpoint; equal signatures = truly converged.
+        // Monotone-DECREASING (flags only go 1->0), so the registry strictly
+        // shrinks until the fixpoint and the cap can never truncate a still-
+        // growing sequence.
         reg = next;
-        sig = borrowable_sig(reg);
         iter = iter + 1;
     }
     return reg;
 }
 
-// borrowable_sig serialises a borrowability registry to a single string for the
-// greatest-fixpoint convergence test — entries are produced in funcs order each
-// pass, so equal signatures across two passes means the registry is unchanged.
-function borrowable_sig(reg: string[]): string {
-    var s: string = "";
+// regs_equal compares two borrowability registries entry-for-entry. Entries are
+// produced in funcs order every pass, so positional equality is exactly "the
+// registry is unchanged" — the greatest fixpoint's convergence test.
+//
+// It stops at the first difference, which is the case on every pass but the
+// last. The serialised-signature form this replaced could not: it concatenated
+// all ~1,300 entries into one string per pass before comparing, so a registry
+// that differed in its first entry still paid for the whole ~32 KB build.
+function regs_equal(a: string[], b: string[]): boolean {
+    if (a.len() != b.len()) { return false; }
     var i: i32 = 0;
-    while (i < reg.len()) { s = s + reg[i] + ";"; i = i + 1; }
-    return s;
+    while (i < a.len()) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // consume_safe_params_interproc: the consume-safe (escape) registry — a param is
