@@ -2216,9 +2216,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 //	ptr  = mem[40]
 //	end  = ptr + size
 //	need = ((end + 65535) >> 16) - memory.size
-//	if need > 0 { memory.grow(need); drop }
+//	if need > 0 && memory.grow(need) == -1 { unreachable }
 //	mem[40] = end
 //	return ptr
+//
+// Heap exhaustion traps on `unreachable` inside this function, so the
+// backtrace names the allocator rather than whichever store first ran
+// off the end of linear memory. Status parity with the natives'
+// ExitArenaExhausted needs wasi_proc_exit, which would put a WASI import
+// into every allocating module including the zero-import core ones.
 //
 // Wasm locals (in order):
 //
@@ -2311,14 +2317,18 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = memInstMemorySize(body)
 	body = numeric.InstI32Sub(body)
 	body = inst.InstLocalSet(body, 3) // $need
-	// if need > 0 { memory.grow(need); drop }
+	// if need > 0 { if memory.grow(need) == -1 { unreachable } }
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32GtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 3)
 	body = memInstMemoryGrow(body)
-	body = inst.InstDrop(body)
+	body = inst.InstI32Const(body, -1)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
 	// mem[40] = end
 	body = inst.InstI32Const(body, allocCursorAddr)
