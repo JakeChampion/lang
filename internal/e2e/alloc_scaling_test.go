@@ -458,6 +458,51 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A heap-boxed `Result` matched with arms that RETURN. The box
+		// release the match owes sits at the post-match join, which an arm
+		// ending in a return branches straight past — so the box leaked once
+		// per round while the identical match with fall-through arms was
+		// flat (#6417). The map-get sibling below reaches the same join.
+		//
+		// Constant in n: one box per round, all of it reclaimed.
+		name: "match-returning-arms-boxed-result",
+		decls: `function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + pick(i as i64); i = i + 1; }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
+		// The `m.get(k)` rebox reaches the same join through
+		// reclaimableMapGetScrutinee, and had the same hole: 16 B a lookup,
+		// unbounded, whenever the arm returned rather than fell through.
+		name: "match-returning-arms-map-get",
+		decls: `import "core/map";
+function pick(m: Map[string, i32], k: string): i32 {
+    match (m.get(k)) { Some(v) => { return v + 1; }, None => { return 0; } }
+}
+function churn(n: i32): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("a", 1);
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + pick(m, "a"); i = i + 1; }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the

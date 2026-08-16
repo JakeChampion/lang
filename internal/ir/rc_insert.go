@@ -616,7 +616,12 @@ func (b *builder) emitRcDecLocalsAtExit() {
 // exit-sweep dec cancel (the inc exists only to survive the sweep), so
 // emitting neither leaves the returned value at the same rc — fewer rc
 // ops, identical result. `exclude == ""` decs every owned local.
+//
+// Every path that leaves the function funnels through here, which is what
+// makes it the place to replay the box releases an enclosing match's arms
+// would otherwise branch past (emitPendingScrutineeDrops).
 func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
+	b.emitPendingScrutineeDrops(0)
 	// Local aliases so existing call sites stay unchanged; the bodies were
 	// promoted to *builder methods (decValueOnStack / dropStructField) so the
 	// shared emitEnumSlotDrop can reuse them.

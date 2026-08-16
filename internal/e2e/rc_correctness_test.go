@@ -4532,6 +4532,106 @@ function f(n: i32): i32 {
 }
 function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
 	},
+	// #6417 — the fresh-scrutinee box release sits at the post-match JOIN, so
+	// an arm that leaves the match early branches straight past it. These
+	// pin the release being emitted at each such exit as well; the leak they
+	// cost is measured by TestX86_64AllocScaling, and what the corpus adds is
+	// that the extra release is not an OVER-release.
+	{
+		name: "match_boxed_result_returning_arms",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(i as i64); i = i + 1; }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		name: "match_boxed_result_continue_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (make(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { i = i + 1; continue; } }
+        i = i + 1;
+    }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Expression form: an arm body is an expression, but a value block
+		// can still `return`.
+		name: "match_expr_boxed_result_returning_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    var r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
+    return r;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(i as i64); i = i + 1; }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The `m.get(k)` rebox reaches the same join. Its free must stay
+		// SHALLOW wherever it is emitted — the payload belongs to the map.
+		name: "match_map_get_returning_arms",
+		src: `
+import "core/map";
+function pick(m: Map[string, string], k: string): i32 {
+    match (m.get(k)) { Some(v) => { return v.len(); }, None => { return 0; } }
+}
+function main(): i32 {
+    var m: Map[string, string] = map_new(8);
+    m = m.insert("a", "xy" + "zw");
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(m, "a"); i = i + 1; }
+    return (t - 800) + m.get_or("a", "").len() - 4 + __rc_underflow_count();
+}`,
+	},
+	{
+		// An `@` binding names the box itself and the arm hands it straight
+		// back, so the release emitted at that return must net against the
+		// return-transfer inc rather than freeing what the caller receives.
+		name: "match_at_binding_returned_from_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): Result[i64, i64] {
+    match (make(i)) { whole @ Ok(v) => { return whole; }, Err(_) => { return Err(0i64); } }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (pick(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { } }
+        i = i + 1;
+    }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

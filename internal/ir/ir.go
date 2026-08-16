@@ -4503,6 +4503,41 @@ type loopFrame struct {
 	deferIdxs []int
 }
 
+// pendingScrutineeDrop is one entry of builder.pendingScrutineeDrops.
+// loopDepth is the number of enclosing loops at the match, which is what
+// tells a `break` / `continue` which entries it is leaving.
+type pendingScrutineeDrop struct {
+	emit      func()
+	loopDepth int
+}
+
+// pushScrutineeDrop registers the box release a match owes for the extent of
+// its arms, and returns the pop.
+func (b *builder) pushScrutineeDrop(emit func()) func() {
+	b.pendingScrutineeDrops = append(b.pendingScrutineeDrops,
+		pendingScrutineeDrop{emit: emit, loopDepth: len(b.loopFrames)})
+	return func() {
+		b.pendingScrutineeDrops = b.pendingScrutineeDrops[:len(b.pendingScrutineeDrops)-1]
+	}
+}
+
+// emitPendingScrutineeDrops replays, innermost first, the release owed by
+// every match whose extent this exit leaves. `minLoopDepth` bounds it: 0 for a
+// return (which leaves every enclosing match), and for a `break` / `continue`
+// the depth of the outermost loop being left, so a match wrapping that loop
+// keeps its own join drop.
+//
+// Net-zero on the operand stack, like the exit sweep it runs beside, so a
+// return value already pushed survives.
+func (b *builder) emitPendingScrutineeDrops(minLoopDepth int) {
+	for i := len(b.pendingScrutineeDrops) - 1; i >= 0; i-- {
+		if b.pendingScrutineeDrops[i].loopDepth < minLoopDepth {
+			return
+		}
+		b.pendingScrutineeDrops[i].emit()
+	}
+}
+
 // findLoopFrame returns the innermost enclosing loop frame whose label
 // matches, or nil if none does.
 func (b *builder) findLoopFrame(label string) *loopFrame {
@@ -4685,6 +4720,13 @@ type builder struct {
 	// when unlabeled) and its break/continue target depths. A labeled
 	// `break`/`continue` resolves by scanning this for the named loop.
 	loopFrames []loopFrame
+	// pendingScrutineeDrops carries the fresh-scrutinee box release each
+	// match currently being lowered owes — the same emitOwnedEnumDrop /
+	// emitFreshBoxFreeSized its post-match join emits. An arm that leaves
+	// the match early branches straight past that join, so the release is
+	// replayed at the exit instead (emitPendingScrutineeDrops). Innermost
+	// last.
+	pendingScrutineeDrops []pendingScrutineeDrop
 	// curPos is the source position of the AST node currently being
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
@@ -7125,6 +7167,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
 				return err
 			}
+			b.emitPendingScrutineeDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
 			b.brTo(fr.breakD, false)
 			break
 		}
@@ -7134,6 +7177,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if err := b.emitIterDeferCleanupThrough(1); err != nil {
 			return err
 		}
+		b.emitPendingScrutineeDrops(len(b.loopFrames))
 		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
 		if n.Label != "" {
@@ -7144,6 +7188,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
 				return err
 			}
+			b.emitPendingScrutineeDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
 			b.brTo(fr.contD, false)
 			break
 		}
@@ -7153,6 +7198,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if err := b.emitIterDeferCleanupThrough(1); err != nil {
 			return err
 		}
+		b.emitPendingScrutineeDrops(len(b.loopFrames))
 		b.brTo(b.contStack[len(b.contStack)-1], false)
 	case *ast.Return:
 		// Cleanup-before-return: replay every active defer in
@@ -7683,6 +7729,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 				bts = append(bts, arm.BindingTypes)
 			}
 			scrutEnum, reclaimScrut = b.reclaimableMatchScrutinee(n.Tag, bns, bts, nil)
+		}
+		// The join release below is only reached by falling out of the
+		// match, so an arm that returns / breaks / continues has to emit it
+		// at its own exit instead.
+		if reclaimScrut {
+			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
+		} else if reclaimMapGet && !pairFormScrutinee {
+			defer b.pushScrutineeDrop(func() { b.emitFreshBoxFreeSized(ptrSlot, mapGetBox) })()
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -8481,6 +8535,13 @@ func (b *builder) expr(e ast.Expr) error {
 			}
 		}
 		mapGetBox, reclaimMapGet := b.reclaimableMapGetScrutinee(n.Tag, atBinding)
+		// An arm body is an expression, but a `{ … return … }` value block
+		// can still leave the function — see the statement form.
+		if reclaimScrut {
+			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
+		} else if reclaimMapGet {
+			defer b.pushScrutineeDrop(func() { b.emitFreshBoxFreeSized(ptrSlot, mapGetBox) })()
+		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
 		for _, arm := range n.Arms {
