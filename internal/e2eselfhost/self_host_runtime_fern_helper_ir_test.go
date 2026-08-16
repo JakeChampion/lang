@@ -292,6 +292,43 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_remove_dir_all",
 			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
 		},
+		{
+			// print_str — the first of the four stdout/stderr leaves (#2649), all
+			// plain write(2). The old register-ABI hand-asm body
+			// (__fern_print_str:) is gone; op_print_str calls the stack-ABI
+			// __fn___fern_print_str, whose body writes straight out of the
+			// caller's box via __raw_data.
+			"print_str",
+			`function main(): i32 { print_str("x"); return 0; }`,
+			"__fn___fern_print_str",
+			[]string{"\n__fern_print_str:"},
+		},
+		{
+			// print_int — takes an i64 so one helper serves op_print_int and
+			// op_print_i64. The old hand-asm body (__fern_print_int:) and its
+			// digit loop's local labels (.Lpi_*) are gone.
+			"print_int",
+			`function main(): i32 { print_int(1); return 0; }`,
+			"__fn___fern_print_int",
+			[]string{"\n__fern_print_int:", ".Lpi_div"},
+		},
+		{
+			// putchar — the byte-level twin of print_str. The hand-asm staged its
+			// byte in a stack slot, which a Fern helper cannot name; the migrated
+			// body uses __raw_scratch instead.
+			"putchar",
+			`function main(): i32 { putchar(65); return 0; }`,
+			"__fn___fern_putchar",
+			[]string{"\n__fern_putchar:"},
+		},
+		{
+			// eprint_str — fd 2 plus the trailing newline that is part of eprint's
+			// contract, as two writes rather than a buffer build.
+			"eprint_str",
+			`function main(): i32 { eprint("x"); return 0; }`,
+			"__fn___fern_eprint_str",
+			[]string{"\n__fern_eprint_str:"},
+		},
 	}
 
 	for _, tc := range cases {

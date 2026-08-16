@@ -1033,16 +1033,23 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // str_eq/arr_push/heap deps (close_needs in asm_ir_run's arm64 leg expands).
             s = s.need("maps");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_map_new\n    str x0, [sp, #-16]!\n");
-        } else if (o.kind_tag == 161) {  // print_int
-            // [n] -> write n's decimal text to stdout (the AST path's helper +
-            // symbol). Push x0 (the write return) so the statement-level drop balances.
+        } else if (o.kind_tag == 161 || o.kind_tag == 162) {  // print_int, print_i64
+            // [n] IS param[0]; call the Fern-compiled __fn___fern_print_int (#2649)
+            // via the stack ABI. Push x0 (the write return) so the statement-level
+            // drop balances.
+            //
+            // Both ops route here: the helper takes an i64, and an i32 reaches the
+            // stack slot already sign-extended. print_i64 had no case at all before,
+            // so `print_int` on an i64 emitted an unsupported-op comment and printed
+            // nothing.
             s = s.need("print_int");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_print_int\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_print_int\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 163) {  // print_str
-            // [strbox] -> write its bytes to stdout (asm_arm64.emit_runtime's
-            // __fern_print_str, reused via the str_print need). Push x0 for the drop.
+            // [strbox] IS param[0]; call the Fern-compiled __fn___fern_print_str
+            // (#2649) via the stack ABI — it borrows the box and copies nothing.
+            // Push x0 for the drop.
             s = s.need("str_print");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_print_str\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_print_str\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 167) {  // read_int
             // no args -> read an i32 from stdin (asm_arm64.emit_runtime's
             // __fern_read_int, reused via the read_int need). Push x0 (the value).
@@ -1155,19 +1162,19 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("args"); s = s.need("arg_at");
             s = s.write("    ldr x0, [sp], #16\n    bl __fern_arg_at_rc\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 164) {  // eprint_str
-            // [strbox] -> write its bytes to stderr (asm_arm64.emit_runtime's
-            // __fern_eprint_str, reused via the eprint need). Push x0 for the drop.
+            // [strbox] IS param[0]; call the Fern-compiled __fn___fern_eprint_str
+            // (#2649) via the stack ABI. Push x0 for the drop.
             s = s.need("eprint");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_eprint_str\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_eprint_str\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 166) {  // exit
             // [n] -> sys_exit(n) (#93 on aarch64). Never returns; the pushed dummy
             // keeps the operand-stack shape for the statement-level drop.
             s = s.write("    ldr x0, [sp], #16\n    mov x8, #93\n    svc #0\n    mov x0, #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 165) {  // putchar
-            // [byte] -> write the low byte to stdout (asm_arm64.emit_runtime's
-            // __fern_putchar, reused via the putchar need). Push x0 for the drop.
+            // [byte] IS param[0]; call the Fern-compiled __fn___fern_putchar (#2649)
+            // via the stack ABI. Push x0 for the drop.
             s = s.need("putchar");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_putchar\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_putchar\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 117) {  // strbuf_reset
             // no args -> clear the global string-builder length. The strbuf runtime
             // is emitted alongside the heap (mark_heap), so pull it in. Push x0 for
@@ -2469,57 +2476,13 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
 function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // FFI __c_call<n> shims (#4375): allocation-free arg-marshal + `blr fn`.
     s = emit_ccall_shims_arm64(s);
-    // __fern_print_int helper: converts the i64 in x0 to
-    // decimal text in a stack buffer and writes to stdout.
-    if (s.has_need("print_int")) {
-        s = s.write("__fern_print_int:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    sub sp, sp, #32\n");
-        s = s.write("    mov x9, x0\n");
-        s = s.write("    mov x10, #0\n");
-        s = s.write("    cmp x9, #0\n");
-        s = s.write("    bge .Lpi_pos\n");
-        s = s.write("    neg x9, x9\n");
-        s = s.write("    mov x10, #1\n");
-        s = s.write(".Lpi_pos:\n");
-        s = s.write("    sub x11, x29, #1\n");
-        s = s.write("    cbnz x9, .Lpi_loop\n");
-        s = s.write("    mov w12, #48\n");           // '0'
-        s = s.write("    strb w12, [x11]\n");
-        s = s.write("    sub x11, x11, #1\n");       // match loop's post-decrement
-        s = s.write("    mov x12, #1\n");
-        s = s.write("    b .Lpi_maybe_neg\n");
-        s = s.write(".Lpi_loop:\n");
-        s = s.write("    mov x12, #0\n");
-        s = s.write(".Lpi_div:\n");
-        s = s.write("    mov x13, #10\n");
-        s = s.write("    sdiv x14, x9, x13\n");
-        s = s.write("    msub x15, x14, x13, x9\n");
-        s = s.write("    add x15, x15, #48\n");
-        s = s.write("    strb w15, [x11]\n");
-        s = s.write("    sub x11, x11, #1\n");
-        s = s.write("    add x12, x12, #1\n");
-        s = s.write("    mov x9, x14\n");
-        s = s.write("    cbnz x9, .Lpi_div\n");
-        s = s.write(".Lpi_maybe_neg:\n");
-        s = s.write("    cmp x10, #0\n");
-        s = s.write("    beq .Lpi_no_neg\n");
-        s = s.write("    mov w15, #45\n");           // '-'
-        s = s.write("    strb w15, [x11]\n");
-        s = s.write("    sub x11, x11, #1\n");
-        s = s.write("    add x12, x12, #1\n");
-        s = s.write(".Lpi_no_neg:\n");
-        s = s.write("    add x11, x11, #1\n");
-        s = s.write("    mov x1, x11\n");
-        s = s.write("    mov x2, x12\n");
-        s = s.write("    mov x0, #1\n");
-        s = s.write("    mov x8, #64\n");            // sys_write
-        s = s.write("    svc #0\n");
-        s = s.write("    mov sp, x29\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_print_int, __fern_print_str, __fern_putchar and __fern_eprint_str are
+    // Fern runtime functions now (#2649): asmcore.rt_src_print_int /
+    // rt_src_print_str / rt_src_putchar / rt_src_eprint_str, lowered through the IR
+    // pipeline via emit_ir_runtime_fern_fn below. They are emitted HERE, with the
+    // clocks, rather than in emit_rt_io_and_string, because that function takes no
+    // `darwin` and the syscall number has to be baked per target — and because they
+    // allocate nothing, so a print-only program must link without the heap runtime.
     // The clocks are Fern runtime functions now (#2649):
     // asmcore.rt_src_clock, need-gated, lowered through the IR pipeline as
     // __fn___fern_{monotonic_ns,now_unix_ms,now_ns}. They are emitted HERE
@@ -2535,8 +2498,20 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
+    }
+    if (s.has_need("str_print")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
+    }
+    if (s.has_need("print_int")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_int(ctgt), s.struct_decls, s);
+    }
+    if (s.has_need("putchar")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar(ctgt), s.struct_decls, s);
+    }
+    if (s.has_need("eprint")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str(ctgt), s.struct_decls, s);
     }
     if (s.has_need("now_unix_ms")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock("now_unix_ms", ctgt), s.struct_decls, s);
@@ -2683,32 +2658,10 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
     }
-    // __fern_print_str: x0 = box ptr. write(1, box.data, box.len).
-    if (s.has_need("str_print")) {
-        s = s.write("__fern_print_str:\n");
-        s = s.write("    ldr x1, [x0]\n");      // data ptr
-        s = s.write("    ldr x2, [x0, #8]\n");  // len
-        s = s.write("    mov x0, #1\n");        // fd
-        s = s.write("    mov x8, #64\n");       // sys_write
-        s = s.write("    svc #0\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_putchar: x0 = i32 byte value → write(1, &byte, 1). Materialise the
-    // byte on the stack so the kernel has a real address to read (the byte-level
-    // twin of __fern_print_str). Gated on the putchar need the IR backend marks
-    // (issue #2839); the AST path doesn't mark it, so this is inert there.
-    if (s.has_need("putchar")) {
-        s = s.write("__fern_putchar:\n");
-        s = s.write("    sub sp, sp, #16\n");    // 16-byte slot (sp alignment)
-        s = s.write("    strb w0, [sp]\n");      // store the byte
-        s = s.write("    mov x1, sp\n");         // buf
-        s = s.write("    mov x2, #1\n");         // len
-        s = s.write("    mov x0, #1\n");         // fd = stdout
-        s = s.write("    mov x8, #64\n");        // sys_write
-        s = s.write("    svc #0\n");
-        s = s.write("    add sp, sp, #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_print_str and __fern_putchar are Fern runtime functions (#2649):
+    // asmcore.rt_src_print_str / rt_src_putchar, emitted with the clocks in
+    // emit_rt_clock_and_print, which is where the per-target syscall number is
+    // available.
     // __fern_str_concat is now a Fern runtime function (#2649, via the raw-memory
     // intrinsics): see asmcore.rt_src_str_concat. The single shared body serves
     // both arm64 AST + IR; called via the __fn_ stack convention. heap-only dep.
@@ -2911,34 +2864,12 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("str_repeat")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s.struct_decls, s);
     }
-    // __fern_eprint_str: x0 = string box. write(2, data, len), then a trailing
-    // newline (eprint is the stderr line-printer — mirrors `print` and the
-    // Go-backend / interp / wasm `eprint`, which all append "\n"). The newline
-    // byte is written from a stack scratch slot claimed with an explicit
-    // `sub sp` — the same shape __fern_putchar uses. It previously claimed the
-    // slot with `strb w1, [sp, #-16]!`, a pre-index writeback the in-process
-    // assembler has no byte-store encoder for: it dropped the `!`, left sp
-    // UNCHANGED, and the paired `add sp, sp, #16` then raised sp by 16. eprint's
-    // own output was correct, so the corruption only surfaced at the next call
-    // (#6083).
-    if (s.has_need("eprint")) {
-        s = s.write("__fern_eprint_str:\n");
-        s = s.write("    ldr x1, [x0]\n");
-        s = s.write("    ldr x2, [x0, #8]\n");
-        s = s.write("    mov x0, #2\n");
-        s = s.write("    mov x8, #64\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    sub sp, sp, #16\n");    // 16-byte scratch (sp alignment)
-        s = s.write("    mov w1, #10\n");
-        s = s.write("    strb w1, [sp]\n");
-        s = s.write("    mov x0, #2\n");
-        s = s.write("    mov x1, sp\n");
-        s = s.write("    mov x2, #1\n");
-        s = s.write("    mov x8, #64\n");
-        s = s.write("    svc #0\n");
-        s = s.write("    add sp, sp, #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_eprint_str is a Fern runtime function (#2649): asmcore.rt_src_eprint_str,
+    // emitted with the clocks in emit_rt_clock_and_print. Its newline byte comes from
+    // the static __fern_scratch rather than a stack slot — which also retires the
+    // `strb w1, [sp, #-16]!` hazard of #6083: the in-process assembler has no
+    // byte-store encoder for that pre-index writeback, so it dropped the `!`, left sp
+    // unchanged, and the paired `add sp, sp, #16` then raised sp by 16.
     // String search helpers. See asm.fern.
     if (s.has_need("str_search")) {
         // __fern_str_starts_with / _ends_with / _index_of are now Fern runtime

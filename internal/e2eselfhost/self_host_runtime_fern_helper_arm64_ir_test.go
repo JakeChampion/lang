@@ -69,6 +69,13 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
 		"    if (tcp_send(999, \"x\") >= 0) { return 23; }\n" +
+		// The four stdout/stderr leaves. Called for effect, not tested — the
+		// probe is emitted rather than run, and all this has to do is make the
+		// ops lower so the helpers are emitted.
+		"    print_str(\"x\");\n" +
+		"    print_int(1);\n" +
+		"    putchar(65);\n" +
+		"    eprint(\"x\");\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -134,7 +141,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// write(2) straight out of the string's own buffer. The last leaf, and
 		// the one whose blocker turned out not to exist: __raw_data needed no
 		// op of its own, since a string value already IS its box pointer.
-		"tcp_send"} {
+		"tcp_send",
+		// The stdout/stderr four (#2649): all plain write(2), so unlike the fs
+		// family they carry no per-target constant beyond the syscall number.
+		// print_int is the widest of them — one i64 helper serving both
+		// op_print_int and op_print_i64 — and the reason the group needed
+		// __raw_scratch: putchar and print_int staged their bytes in a stack
+		// slot, which is the one thing a Fern helper cannot name.
+		"print_str", "print_int", "putchar", "eprint_str"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -256,6 +270,12 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (tcp_connect(2130706433, 1) == 0) { return 15; }\n" +
 		"    if (tcp_recv(999, 4).len() != 0) { return 16; }\n" +
 		"    if (proc_fork() == 123456) { return 17; }\n" +
+		// The four stdout/stderr leaves, called for effect so the helpers are
+		// emitted and their write(2) number can be inspected below.
+		"    print_str(\"x\");\n" +
+		"    print_int(1);\n" +
+		"    putchar(65);\n" +
+		"    eprint(\"x\");\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -328,6 +348,30 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// for the wrong-flag case is the arm64 runtime leg (dirs-fern under qemu) —
 	// which is in fact what caught the 16384 bug, after this emission test had
 	// been green on it.
+
+	// The four stdout/stderr leaves (#2649) all trap through write(2), Darwin
+	// number 4. That number cannot join the table above: 4 is an ordinary literal
+	// this emit already holds fifteen of, so a file-wide search would pass whatever
+	// asmcore.sysno said. Scope it to each helper's own body instead. Like every
+	// migrated number it reaches the trap as a pushed operand rather than the
+	// `mov x8, #N` darwinize rewrites, so a wrong row is invisible everywhere else —
+	// Linux's 64 would simply be issued against the BSD vector.
+	for _, sym := range []string{"__fn___fern_print_str", "__fn___fern_print_int", "__fn___fern_putchar", "__fn___fern_eprint_str"} {
+		body := extractFuncBody(asm, sym)
+		if body == "" {
+			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
+			continue
+		}
+		if !strings.Contains(body, "    mov x0, #4\n    str x0, [sp, #-16]!\n") {
+			t.Errorf("%s does not push Darwin's write number (4)", sym)
+		}
+		if strings.Contains(body, "    mov x0, #64\n    str x0, [sp, #-16]!\n") {
+			t.Errorf("%s pushes Linux's write number (64) in Mach-O output", sym)
+		}
+		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
+			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
+		}
+	}
 	if strings.Contains(asm, "ldr x8, [sp], #16") {
 		t.Error("darwinize left the __syscall3 number load on x8 (Linux form) in Mach-O output")
 	}

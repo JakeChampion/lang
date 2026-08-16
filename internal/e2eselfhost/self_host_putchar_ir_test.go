@@ -8,35 +8,36 @@ import (
 	"testing"
 )
 
-// printIntIRCases exercise the `print_int(n)` builtin through the IR path on all
-// three backends: it lowers to a `print_int` IR op — or `print_i64` when the
-// argument is 64-bit — neither a call_direct, so both sidestep the call
-// eligibility gate. The register backends route both ops to
-// __fn___fern_print_int, the Fern-compiled i64 helper (asmcore.rt_src_print_int);
-// wasm splits them across its WASI $__fern_print_int / $__fern_print_int64.
-// stdout pins the exact decimal text (no newline), covering zero, negative,
-// multiple writes, and the 64-bit range.
-var printIntIRCases = []struct {
+// putcharIRCases exercise the `putchar(c)` byte-output builtin on the IR path.
+// It lowers to a putchar IR op (not a call_direct, so it sidesteps the call
+// eligibility gate). On x86-64 and arm64 the op calls __fn___fern_putchar, the
+// Fern-source runtime helper (asmcore.rt_src_putchar, #2649) lowered through the
+// same IR pipeline as user code; wasm keeps its own helper and inlines a scratch
+// iovec + fd_write instead. stdout pins the exact bytes: putchar writes the one
+// byte it is given and appends nothing.
+//
+// putchar(200) writes the raw byte 0xC8, not its UTF-8 encoding — all three
+// backends agree. (`fern -interp` writes 0xC3 0x88 for the same program.)
+var putcharIRCases = []struct {
 	name, src, want string
 }{
-	{"basic", `function main(): i32 { print_int(42); return 0; }`, "42"},
-	{"zero", `function main(): i32 { print_int(0); return 0; }`, "0"},
-	{"negative", `function main(): i32 { print_int(5 - 12); return 0; }`, "-7"},
-	{"multi", `function main(): i32 { print_int(1); print_int(2); print_int(3); return 0; }`, "123"},
-	{"computed", `function dbl(n: i32): i32 { return n * 2; } function main(): i32 { print_int(dbl(21)); return 0; }`, "42"},
-	// Beyond 2^53, so it also pins that no float rounding creeps in. On the
-	// register backends print_i64 had no handler and emitted
-	// `# ir: unsupported bin print_i64`, printing nothing.
-	{"i64", `function main(): i32 { var n: i64 = 9007199254740993 as i64; print_int(n); return 0; }`, "9007199254740993"},
-	// INT64_MIN has no positive magnitude in i64, so the helper takes it in
-	// u64. Built by subtraction because the literal itself would overflow.
-	{"i64-min", `function main(): i32 { var lo: i64 = (0 as i64) - 9223372036854775807 as i64; lo = lo - (1 as i64); print_int(lo); return 0; }`, "-9223372036854775808"},
+	{"ascii", `function main(): i32 { putchar(65); return 0; }`, "A"},
+	{"sequence", `function main(): i32 { putchar(70); putchar(101); putchar(114); putchar(110); return 0; }`, "Fern"},
+	{"newline", `function main(): i32 { putchar(10); return 0; }`, "\n"},
+	{"high-byte", `function main(): i32 { putchar(200); return 0; }`, "\xc8"},
+	{"const-expr", `function main(): i32 { putchar(60 + 5); return 0; }`, "A"},
+	{"computed", `function main(): i32 { var c: i32 = 60; putchar(c + 5); return 0; }`, "A"},
 }
 
-// TestSelfHostPrintIntIRX86_64 compiles each case through the self-hosted x86-64
-// driver (asm_run, IR default-on) and asserts the program's stdout, proving the
-// IR path lowered print_int and linked the helper.
-func TestSelfHostPrintIntIRX86_64(t *testing.T) {
+// The wasm backend emits no putchar symbol, so pin the inlined sequence: stash
+// the byte at scratch address 16, point the iovec (base@0, len@4) at it, write
+// fd 1.
+const wasmPutcharSeq = "    i32.store8\n" +
+	"    i32.const 0\n    i32.const 16\n    i32.store\n" +
+	"    i32.const 4\n    i32.const 1\n    i32.store\n" +
+	"    i32.const 1\n    i32.const 0\n    i32.const 1\n    i32.const 8\n    call $fd_write\n"
+
+func TestSelfHostPutcharIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
@@ -47,12 +48,11 @@ func TestSelfHostPrintIntIRX86_64(t *testing.T) {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
-	for _, tc := range printIntIRCases {
+	for _, tc := range putcharIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fn___fern_print_int")) {
-				t.Fatalf("%s: no call to __fn___fern_print_int — print_int did not lower through the IR path", tc.name)
+			if !bytes.Contains(asm, []byte("call __fn___fern_putchar")) {
+				t.Fatalf("%s: no call to __fn___fern_putchar — did not lower through the IR path", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -69,10 +69,7 @@ func TestSelfHostPrintIntIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostPrintIntIRArm64 runs the same cases through the arm64 IR backend
-// under qemu (CI-gated). The arm64 op handler calls __fn___fern_print_int, which
-// asm_arm64_ir emits from asmcore.rt_src_print_int via the print_int need.
-func TestSelfHostPrintIntIRArm64(t *testing.T) {
+func TestSelfHostPutcharIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -90,8 +87,7 @@ func TestSelfHostPrintIntIRArm64(t *testing.T) {
 		}
 	}
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range printIntIRCases {
+	for _, tc := range putcharIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(x86runner) == 0 {
@@ -104,22 +100,21 @@ func TestSelfHostPrintIntIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fn___fern_print_int")) {
-				t.Fatalf("%s: no bl __fn___fern_print_int — print_int did not lower through the arm64 IR path", tc.name)
+			if !bytes.Contains(asm, []byte("bl __fn___fern_putchar")) {
+				t.Fatalf("%s: no bl __fn___fern_putchar — did not lower through the arm64 IR path", tc.name)
 			}
-			bin := buildBinArm64(t, arm64gcc, dir, "pi_"+tc.name, string(asm))
+			bin := buildBinArm64(t, arm64gcc, dir, "pc_"+tc.name, string(asm))
 			out, _ := runArm64Bin(qemu, bin).Output()
 			if string(out) != tc.want {
-				t.Errorf("print_int arm64 IR %q: stdout %q, want %q", tc.name, string(out), tc.want)
+				t.Errorf("putchar arm64 IR %q: stdout %q, want %q", tc.name, string(out), tc.want)
 			}
 		})
 	}
 }
 
-// TestSelfHostPrintIntIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostPrintIntIRWasm(t *testing.T) {
+func TestSelfHostPutcharIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host print_int wasm IR e2e")
+		t.Skip("wasmtime not on PATH; skipping self-host putchar wasm IR e2e")
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -136,8 +131,7 @@ func TestSelfHostPrintIntIRWasm(t *testing.T) {
 		}
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range printIntIRCases {
+	for _, tc := range putcharIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
 			if len(runner) == 0 {
@@ -150,17 +144,16 @@ func TestSelfHostPrintIntIRWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(wat, []byte("$__fern_print_int")) {
-				t.Fatalf("%s: no $__fern_print_int in wat — print_int did not lower through the wasm IR path", tc.name)
+			if !bytes.Contains(wat, []byte(wasmPutcharSeq)) {
+				t.Fatalf("%s: no inlined putchar fd_write sequence in wat — did not lower through the wasm IR path", tc.name)
 			}
-			watFile := filepath.Join(dir, "pi_prog.wat")
+			watFile := filepath.Join(dir, "pc_prog.wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
 				t.Fatalf("write wat: %v", err)
 			}
-			run := exec.Command("wasmtime", "run", watFile)
-			out, _ := run.Output()
+			out, _ := exec.Command("wasmtime", "run", watFile).Output()
 			if string(out) != tc.want {
-				t.Errorf("print_int wasm IR %q: stdout %q, want %q", tc.name, string(out), tc.want)
+				t.Errorf("putchar wasm IR %q: stdout %q, want %q", tc.name, string(out), tc.want)
 			}
 		})
 	}

@@ -10,8 +10,9 @@ import (
 
 // printStrIRCases exercise the `write(s)` / `print(s)` string-output builtins on
 // the IR path. They lower to a `print_str` IR op (not a call_direct, so they
-// sidesteps the call eligibility gate) that each backend emits as a call into the
-// same __fern_print_str runtime helper the AST path uses. `print(s)` desugars to
+// sidestep the call eligibility gate). The register backends emit a call to
+// __fn___fern_print_str, the Fern-compiled helper (asmcore.rt_src_print_str);
+// wasm calls its own WASI $__fern_print_str. `print(s)` desugars to
 // `print_str(s + "\n")` via the existing str_concat op, so one op + helper serves
 // both. stdout pins the exact bytes: write is verbatim, print appends a newline.
 var printStrIRCases = []struct {
@@ -38,8 +39,8 @@ func TestSelfHostPrintStrIRX86_64(t *testing.T) {
 	for _, tc := range printStrIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fern_print_str")) {
-				t.Fatalf("%s: no call to __fern_print_str — did not lower through the IR path", tc.name)
+			if !bytes.Contains(asm, []byte("call __fn___fern_print_str")) {
+				t.Fatalf("%s: no call to __fn___fern_print_str — did not lower through the IR path", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -87,8 +88,8 @@ func TestSelfHostPrintStrIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_print_str")) {
-				t.Fatalf("%s: no bl __fern_print_str — did not lower through the arm64 IR path", tc.name)
+			if !bytes.Contains(asm, []byte("bl __fn___fern_print_str")) {
+				t.Fatalf("%s: no bl __fn___fern_print_str — did not lower through the arm64 IR path", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "ps_"+tc.name, string(asm))
 			out, _ := runArm64Bin(qemu, bin).Output()
