@@ -20,8 +20,9 @@ import (
 // IR for any `U`/`A` (incl. a width-changing one, e.g. i32 -> string). This
 // flipped `array_hof` from AST to IR.
 //
-// Single element type per program (the slice-1 ihas_other guard still applies).
-// Each case is checked against the interpreter oracle.
+// Each case uses a single element type; the same verb at several element types
+// in one program is covered by TestSelfHostArrayMethodMultiElemIR. Each case is
+// checked against the interpreter oracle.
 var arrayTyparamMethodIRCases = []struct {
 	name string
 	src  string

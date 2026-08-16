@@ -22,11 +22,9 @@ import (
 // the IR path and matches the interpreter. (This flipped
 // array_structural_verbs_test.fern from AST to IR.)
 //
-// The cases are single-element-type per program: a generic 2-param array helper
-// lowered at two element types hits a pre-existing self-host reuse-analysis
-// crash (a separate, documented follow-up), so the array-method path keeps a
-// method on one element type per program (a second leaves the call in method
-// form → AST). Each case is checked against the interpreter oracle.
+// The cases here are single-element-type per program; `concat` at two element
+// types is covered by TestSelfHostArrayMethodMultiElemIR. Each case is checked
+// against the interpreter oracle.
 var arrayConcatMethodIRCases = []struct {
 	name string
 	src  string

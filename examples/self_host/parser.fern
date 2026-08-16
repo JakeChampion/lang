@@ -6915,42 +6915,9 @@ function (a: Insts) iadd_arg(n: string, t: string, arg: string): Insts {
     if (a.ihas(n, t)) { return a; }
     return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(arg) };
 }
-// ihas_other reports whether `n` is already recorded at a DIFFERENT
-// concrete type than `t`. The array-method path uses this to keep a
-// generic array method on a single element type per program: a second
-// distinct element type leaves the `recv.m(args)` call in method form
-// (→ AST), avoiding a pre-existing self-host crash that lowering a
-// 2-param array helper (`concat`) at two element types triggers.
-function (a: Insts) ihas_other(n: string, t: string): boolean {
-    var i: i32 = 0;
-    while (i < a.inames.len()) {
-        if (a.inames[i] == n && a.itypes[i] != t) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
 struct RExpr { rexpr: Expr, rins: Insts }
 struct RStmtOne { rstmt: Stmt, renv: MEnv, rins2: Insts }
 struct RStmts { rstmts: Stmt[], rins3: Insts }
-
-// arrm_has_bare_elem_param reports whether a folded generic array method
-// `__arrm_m[T]` takes a BARE value param of the element type (`sep: T` in
-// `intersperse`, `x: T` in `push`) — its element var is type_params[0]. Such a
-// method's AST fallback miscompiles a 16-byte value (`string`), so unlike
-// `concat` / `reverse` (only `T[]` params) it must ride the per-element-type
-// free-generic clone at EVERY element type, not just the first. Gates the
-// ihas_other single-element-type restriction below.
-function arrm_has_bare_elem_param(fd: FuncDecl): boolean {
-    if (fd.type_params.len() == 0) { return false; }
-    var ev: string = fd.type_params[0];
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (fd.params[i].type_name == ev) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
 
 // bg_index returns the index in `funcs` of a bounded-generic function
 // named `name` (type_params non-empty, plain function), or -1.
@@ -7843,18 +7810,6 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                             var rk: i32 = 0;
                             while (rk < c.args.len()) { raw = raw.append(c.args[rk]); rk = rk + 1; }
                             var ct3: string = infer_inst(funcs[amg], raw, env, funcs);
-                            // Keep a generic array method with only `T[]` params
-                            // (`concat` / `reverse`) on ONE element type per program:
-                            // a second distinct element type leaves the call in method
-                            // form (→ AST), sidestepping a self-host crash lowering
-                            // such a helper at two element types. A method taking a
-                            // BARE element-typed value param (`intersperse(sep: T)` /
-                            // `push(x: T)`) is EXEMPT: its AST fallback miscompiles a
-                            // 16-byte `string` value, so it must clone per element type
-                            // at every element type — the free `intersperse[T]` it
-                            // delegates to is now monomorphised (bare-value-param
-                            // promotion), so both clones carry the concrete param ABI.
-                            if (ct3.len() > 0 && cur.ihas_other(amn, ct3) && !arrm_has_bare_elem_param(funcs[amg])) { ct3 = ""; }
                             if (ct3.len() > 0) {
                                 var ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                                 cur = ro.rins;

@@ -904,9 +904,7 @@ instantiation `T`, and the closure rides through as a fn value.
 `register_array_method_generics` folds e.g. `(xs: T[]) reduce(f)` into a free
 generic `__arrm_reduce[T](xs, f)` whose body delegates to the free `reduce`,
 which already lowers closures on the IR path (verified: free `reduce` / `sort_by`
-/ `filter` all route IR at a single element type). The slice-1 `ihas_other` guard
-still keeps each method on one element type per program, so the pre-existing
-multi-type reuse crash is not reached.
+/ `filter` all route IR).
 
 Methods carrying their OWN type params (`map[U]` / `flat_map[U]` / `fold[A]` /
 `zip[U]`) stay deferred: the result/extra type variable needs closure-return-type
@@ -1053,9 +1051,7 @@ was array-typed.
 register_array_method_generics) and the receiver infers to an array: it strips
 the receiver's element type and substitutes it into the method's return type
 (`__arrm_concat[T]: T[]` → `i32[]`). With the inner result typed, `mono_expr`'s
-array-method arm rewrites the outer call onto the IR path too. Single element
-type per program (the slice-1 guard still applies), so the pre-existing
-multi-element-type reuse-analysis crash is not reached.
+array-method arm rewrites the outer call onto the IR path too.
 
 Gated by `TestSelfHostArrayConcatMethodIR/chained` (added alongside i32 / string
 / literal-arg); the bootstrap fixpoint and the other array/generic self-host
@@ -1085,17 +1081,41 @@ sources call the free `concat(xs, ys)` form, never `xs.concat(ys)`).
 
 Scope (slice 1): closure-free, type-param-free array methods (`concat`) whose
 receiver is a bare array local/param, at a **single element type per program**. A
-generic 2-param array helper (`concat`) lowered at two element types triggers a
+generic 2-param array helper (`concat`) lowered at two element types triggered a
 **pre-existing** self-host reuse-analysis crash (`self_overwrite_reuse_sites` →
-runaway `__fern_alloc`) — confirmed reproducible on clean `main` via a plain user
-generic `cat2[T]` with two `for x in <param> { append }` loops at i32+string, so
-it is independent of this change. A guard (`Insts.ihas_other`) keeps a method on
-one element type per program (a second leaves the call in method form → AST), so
-the new IR path never reaches that crash. Closure methods (`map`/`filter`/`fold`/
-`flat_map`/`reduce`/`sort_by`), method-call receivers (chained
-`a.concat(b).concat(c)` — needs array-method return-type inference in
-`mono_infer`), multi-element-type support, and the underlying reuse-analysis crash
-are documented follow-ups.
+runaway `__fern_alloc`) — reproducible at the time on clean `main` via a plain
+user generic `cat2[T]` with two `for x in <param> { append }` loops at
+i32+string, so it was independent of this change. A guard (`Insts.ihas_other`)
+kept a method on one element type per program (a second left the call in method
+form → AST), so the new IR path never reached that crash. Closure methods
+(`map`/`filter`/`fold`/`flat_map`/`reduce`/`sort_by`) and method-call receivers
+(chained `a.concat(b).concat(c)` — needs array-method return-type inference in
+`mono_infer`) landed in the slices above.
+
+**The single-element-type guard is gone (#2663).** The reuse-analysis crash it
+shielded was fixed elsewhere and no longer reproduces — neither through the
+`cat2[T]` free generic above nor through `concat` / `dedup` / `map` at two
+element types, all of which now compile under `FERN_STRICT_IR=1` and match the
+interpreter. Meanwhile the guard had turned from a slow path into a hard error:
+it worked by leaving the second call in method form to fall back to the AST
+emitter, and the AST emitters were retired in #5972, so a program using one
+generic array method at two element types became **uncompilable** by the
+self-host compiler (`module is not IR-eligible`) while native compiled it fine.
+
+Worse, "falls back" was not even the failure mode when the mis-dispatch target
+happened to exist. An un-rewritten array-method call is dispatched by irlower as
+`<receiver-type>.<field>`, and `expr_scalar_type` falls through to `"i32"` for an
+array receiver — so `ss.rotate_left(1)` on a `string[]` resolved to std/i32's
+BITWISE `(n: i32) rotate_left`, silently handing it an array pointer. Strict-IR
+was satisfied because a symbol of that name existed. That the `i32` fall-through
+can turn an unresolved element type into wrong code rather than a diagnostic is a
+latent hazard independent of this guard, and wants its own fix.
+
+`Insts.ihas_other` and `arrm_has_bare_elem_param` (the exemption that let a
+method with a bare `T`-typed value param clone per element type after all) are
+deleted with it. Gated by `TestSelfHostArrayMethodMultiElemIR`, which pins both
+clones in the asm AND the answer against the interpreter for `map` / `concat` /
+`is_sorted` / `dedup` / `rotate_left` at two-to-four element types.
 
 Gated by `TestSelfHostArrayConcatMethodIR` (i32 / string / array-literal-arg, each
 `-decide == "ir"`, asm carries the `__arrm_concat__` clone, exit matches the

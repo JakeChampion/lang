@@ -17,8 +17,9 @@ import (
 // self-host IR path as well as native; the assertions below would catch both a
 // wrong result and an accidental AST fallback (the `-decide` check).
 //
-// One element type per program: the folded-method monomorphiser emits one clone
-// per generic name, the same contract `map`/`filter`/`fold` already ride.
+// One element type per program here; the folded-method monomorphiser emits one
+// clone per (generic name, element type), and the multi-element-type case is
+// covered by TestSelfHostArrayMethodMultiElemIR.
 var ordEqArrayMethodIRCases = []struct {
 	name string
 	src  string

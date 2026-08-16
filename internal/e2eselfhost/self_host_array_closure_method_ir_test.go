@@ -20,9 +20,10 @@ import (
 // zip[U] — stay deferred: the result type variable needs closure-return-type
 // inference the receiver does not supply.)
 //
-// Single element type per program (the slice-1 ihas_other guard still applies),
-// so the pre-existing multi-element-type reuse crash is not reached. Each case is
-// checked against the interpreter oracle.
+// Each case uses a single element type, which is what these cases are about;
+// the same verb at several element types in one program is covered by
+// TestSelfHostArrayMethodMultiElemIR. Each case is checked against the
+// interpreter oracle.
 var arrayClosureMethodIRCases = []struct {
 	name string
 	src  string
