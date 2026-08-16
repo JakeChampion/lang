@@ -89,8 +89,8 @@ the steps:
 The job still starts and takes a runner slot, but releases it in seconds instead
 of minutes, which is what the queue actually cares about. Guarding at the *job*
 level via `needs:` would be worse: it adds a dependency hop, and a job that waits
-on another job queues twice — the mistake that had `permodule-fixpoint` starting
-34 minutes into a run.
+on another job queues twice — the mistake that had the since-deleted
+`permodule-fixpoint` job starting 34 minutes into a run.
 
 The gate reads `github.event.pull_request.head.sha` on a `pull_request` event,
 not `github.sha`, because the latter is the ephemeral merge commit that nobody

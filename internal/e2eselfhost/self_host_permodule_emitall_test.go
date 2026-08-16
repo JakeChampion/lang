@@ -240,3 +240,23 @@ func TestSelfHostPerModuleEmitAllX86_64(t *testing.T) {
 	}
 	t.Logf("emit-all compiler links and compiles a program (%d bytes asm)", len(sout))
 }
+
+// firstDiffLine returns the 1-based line number of the first difference between
+// a and b, or 0 if they are equal.
+func firstDiffLine(a, b string) int {
+	la := strings.Split(a, "\n")
+	lb := strings.Split(b, "\n")
+	n := len(la)
+	if len(lb) < n {
+		n = len(lb)
+	}
+	for i := 0; i < n; i++ {
+		if la[i] != lb[i] {
+			return i + 1
+		}
+	}
+	if len(la) != len(lb) {
+		return n + 1
+	}
+	return 0
+}

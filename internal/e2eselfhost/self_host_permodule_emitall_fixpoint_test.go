@@ -61,22 +61,20 @@ func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
 // runs in its own job where its ~5 min does not lengthen a shard.
 //
 // WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits
-// every unit. It is NOT the PER-MODULE fixpoint
-// (TestSelfHostPerModuleFixpointX86_64), which drives 33 separate per-module
-// emits and is the only guard that exercises the per-module windowing end to
-// end.
+// a batch of units. It does not run the one-unit-per-process shape.
 //
-// That one is still env-gated (RUN_PERMODULE_FIXPOINT=1) because it runs
-// ~1050 s, past the 13-minute timeout on the sharded `test` job — but it now
-// has its OWN CI job (permodule-fixpoint-x86_64 in test-e2e-selfhost.yml,
-// timeout 45m), which sets the variable. The shard timeout never bound a
-// dedicated job, so the gate had been costing the coverage for no reason.
+// A separate TestSelfHostPerModuleFixpointX86_64 used to, at 28 minutes and its
+// own CI job — the longest job in the repo. It was deleted because what it
+// uniquely added was batch size ONE, the LEAST memory-stressful configuration,
+// while batch 4 (here) and batch 8 (the sibling above) — the sizes that
+// actually hit exit-137 before `-assume-eligible` — already run ungated in a
+// fraction of the time. Its own comment described it as a transitional
+// de-risking proof for #3457, which has shipped.
 //
-// Run it by hand when iterating locally on retain/release placement, drop
-// insertion or reuse:
-//
-//	RUN_PERMODULE_FIXPOINT=1 go test ./internal/e2eselfhost/ \
-//	    -run TestSelfHostPerModuleFixpointX86_64 -timeout 60m
+// gen0 == gen1 byte identity is covered here; emit-all == per-process byte
+// identity is covered by TestSelfHostPerModuleEmitAllX86_64. The residual gap
+// is that the latter establishes the two emit paths agree only for a GO-built
+// driver, not a self-host-built one — narrow, and recorded rather than hidden.
 func TestSelfHostPerModuleEmitAllFixpointBatch4X86_64(t *testing.T) {
 	runEmitAllFixpoint(t, 4, "eafix4")
 }
