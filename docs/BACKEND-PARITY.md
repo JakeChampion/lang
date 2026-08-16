@@ -269,6 +269,25 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
+### Heap exhaustion exits 125 on the natives, traps on wasm
+
+Both native backends exit `ExitArenaExhausted` (125) when the arena runs out.
+On wasm the equivalent event is `memory.grow` returning -1, and `__fern_alloc`
+raises `unreachable` there — so the failure is attributable to the allocator,
+with its caller chain, but the process dies as a trap rather than carrying a
+status. Both wasm emitters behave the same way (`internal/codegen/wasmbin`'s
+`buildAllocBody`, `examples/self_host/wasm_ir.fern`'s `$__fern_alloc`).
+
+Fix plan: call `wasi_proc_exit(125)` instead of trapping. The cost is the
+reason it has not been done — that import is reached only through
+`__fern_exit`, so wiring the allocator to it puts a WASI import into every
+allocating module, including the zero-import core modules and the `--invoke`
+bare-core path, and `internal/codegen/wasmbin/build_test.go` pins import shape
+in both directions. Scope: small in the emitter, wide in what it perturbs.
+
+`internal/codegen/wasmssa` never grows at all — one fixed page — which is a
+separate subset limitation of that relooper-era emitter, not this one.
+
 ### Tail-call optimisation — wired on every backend
 
 The `ir.TailCallOptimize` pass runs on x86-64, arm64, and wasm (the same

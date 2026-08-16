@@ -28,8 +28,15 @@ import (
 // prints the same stderr message, and only misleads the human reading the
 // exit code weeks later. Hence this test.
 //
-// wasm is deliberately absent: it grows linear memory rather than trapping at
-// a fixed arena, so it has no equivalent site.
+// wasm is absent from the status check but not from the behaviour: it grows
+// linear memory rather than trapping at a fixed arena, and a refused
+// memory.grow raises `unreachable` inside __fern_alloc so the backtrace names
+// the allocator. Status parity with the constant above needs wasi_proc_exit,
+// which would put a WASI import into every allocating module — including the
+// zero-import core ones — so it is deferred.
+// TestAllocGrowFailureTrapsSelfHostWasm below pins the self-host emitter's
+// half; the native emitter's is internal/codegen/wasmbin's
+// TestAllocGrowResultIsChecked.
 
 func TestArenaExhaustedExitCodeIsNot137(t *testing.T) {
 	// The whole point is that it cannot be confused with a signal death.
@@ -109,5 +116,34 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 				"one of them may be exiting with the wrong status",
 				c.file, n, marker, c.sites)
 		}
+	}
+}
+
+// TestAllocGrowFailureTrapsSelfHostWasm is the self-host mirror of
+// internal/codegen/wasmbin's TestAllocGrowResultIsChecked: $__fern_alloc has
+// to branch on memory.grow's result. Discarding it leaves heap exhaustion to
+// surface as an out-of-bounds trap at whichever store first ran past the end
+// of linear memory, with the allocator nowhere in the backtrace (#6160).
+//
+// A source scan for the same reason the lockstep test above is one — the
+// alternative costs a self-host driver build.
+func TestAllocGrowFailureTrapsSelfHostWasm(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "self_host", "wasm_ir.fern")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read wasm_ir.fern: %v", err)
+	}
+	text := string(src)
+	if strings.Contains(text, "(drop (memory.grow") {
+		t.Errorf("wasm_ir.fern still drops memory.grow's result; a refused grow " +
+			"reads as success and the trap lands at an unrelated store")
+	}
+	if !strings.Contains(text, "(if (i32.eq (memory.grow") {
+		t.Errorf("wasm_ir.fern's $__fern_alloc does not test memory.grow's result")
+	}
+	if !strings.Contains(text,
+		"(if (i32.lt_u (global.get $heap) (local.get $p)) (then (unreachable)))") {
+		t.Errorf("wasm_ir.fern's $__fern_alloc does not guard the bump against " +
+			"i32 wraparound")
 	}
 }
