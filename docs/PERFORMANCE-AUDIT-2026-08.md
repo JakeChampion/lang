@@ -173,11 +173,15 @@ different asymptotics for the same operation.
 
 Three specific shapes:
 
-- **Miss paths allocate.** `lookup_sig` builds a `FuncSig` plus two empty
-  arrays plus a concatenated `t_unknown("undefined function:" + name)` on
-  every miss — and callers use it as a predicate
-  (`s.lookup_sig(name).name.len() > 0`, `checker.fern:734`, `:759`).
-  `lookup_struct` and `array_recv_method` do the same.
+- **Miss paths allocated** — **fixed in #6899**. `lookup_sig` built a `FuncSig`
+  plus two empty arrays plus a concatenated `t_unknown("undefined function:" +
+  name)` on every miss, and its callers used it as a predicate; `lookup_method`
+  and `array_recv_method` did the same. The four predicate call sites now use
+  `has_sig` / `has_method` / `has_array_recv_method`, and `lookup_method` tests
+  the name before computing the receiver match (which parsed a type per
+  candidate). ~16% off the checker driver, with **byte-identical emitted asm**
+  either side of the change. The linear scan itself is untouched — that is the
+  hashing half, still open.
 - **Association lists encoded in strings.** The borrow registry is a
   `string[]` of `"callee|1011"` entries, linear-scanned by
   `param_is_borrowable` per call-arg, per body walk, per iteration of a
@@ -228,26 +232,46 @@ contradict comments in the tree:
 |---|---|---|---|
 | 1 | ~~Share drop code between exits~~ — **done as outlining**, #6894 | `internal/ir/rc_insert.go` | §3 — −71.3% whole-compiler emit, self-host binary −42.5% |
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
-| 3 | Hash the self-host `Scope` tables; stop allocating on miss | `examples/self_host/checker.fern` | §4 — 17% self time, native already does this |
+| 3 | Hash the self-host `Scope` tables — the **miss-allocation half landed** in #6899 | `examples/self_host/checker.fern` | §4 — 17% self time, native already does this |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
 | 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4 — 20.5% in `strcmp` |
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
-| 7 | Replace the string-encoded borrow registry with a map | `irlower.fern` | §4 — 10.5% self time |
+| 7 | Replace the string-encoded borrow registry with an index | `irlower.fern` | §4 — 10.5% self time |
+
+Two things about 7 that are easy to get wrong, both checked against the code
+rather than inferred. The registry is **not** recomputed per function — every
+emit-path caller already hoists `borrowable_params_of` to module scope — so
+there is no O(F²) to delete and the whole cost is the O(N) probe, over the
+1,359 free functions `irlower.fern` defines. And bucketing on the key's first
+byte would barely help, because the names are dominated by shared prefixes
+(`set_*`, `emit_*`, `is_*`, `lower_*`, `collect_*`): the worst bucket holds
+159 entries, 11.7% of the table, i.e. only ~8.5× better than the linear scan.
+A hash of the whole key is what makes it O(1)-ish.
 
 3 and 7 are each a bounded change with a measurable outcome and no
 architectural prerequisite — 1 and 2 were, and both landed the same day. 4 is
-the multi-PR track. The mirror of 1 into `irlower.fern` is now the highest
--value open item, because it is what makes the self-hosted compiler itself
-fast.
+the multi-PR track.
+
+**Do not mirror 1 into `irlower.fern`.** It reads like the obvious next step
+and it is not one: the self-host emitter has no drop-function machinery to
+outline *into*, and its emit is already 3.1× denser than the Go path's, so the
+duplication 1 deleted is not there to delete. Bringing the self-host to
+native's memory-management parity is roadmap goal 2, tracked in
+`docs/RC-PERCEUS-SELF-HOST-PORT.md`, not a performance item.
 
 ## 8. Reproducing any of this
 
 The corpus and the gate landed with this audit:
 
 ```
-scripts/perf-bench /tmp/report.txt          # ~8 s, whole corpus
+scripts/perf-bench /tmp/report.txt          # ~15 s, all 15 benchmarks
 scripts/ci-check-perf .github/perf-baseline.txt /tmp/report.txt
 ```
+
+The determinism the gate rests on is checked, not assumed: two full runs on
+one commit agreed on **29 of the 30 x86_64 metrics to the digit**, and the
+single exception was `map_string.ir` — the one metric the baseline flags as
+seed-dependent — 0.43% apart, inside its declared 2% tolerance.
 
 `examples/bench/README.md` covers what belongs in the corpus. For the
 compiler itself, `make selfhost-cli` then the commands in §1; for a profile,
