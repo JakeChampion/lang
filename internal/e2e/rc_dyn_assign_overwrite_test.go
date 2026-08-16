@@ -11,25 +11,40 @@ package e2e
 
 import "testing"
 
-// dynAssignOverwriteBumpSrc reassigns one `dyn` local n times, each RHS a
-// fresh concrete owning a heap String. Bounded only if the overwrite releases
-// the cell + concrete + String it replaces.
-func dynAssignOverwriteBumpSrc(n string) string {
+// dynAssignOverwriteBumpSrc reassigns one `dyn` local, each RHS a fresh
+// concrete owning a heap String, and reports a VERDICT: 0 when a churn four
+// times as long adds no fresh high-water (the overwrite released the cell +
+// concrete + String it replaced), 1 when it grows.
+//
+// The verdict, rather than the byte count, because main()'s value becomes an
+// exit code and a byte count is read modulo 256. Measured on the leaking
+// build: x86-64 reported 64 at n=50 and 0 at n=5000 — so a two-process
+// comparison of raw counts was one unlucky residue away from passing
+// vacuously. Two churns inside ONE process keep the numbers whole.
+func dynAssignOverwriteBumpSrc(n, wider string) string {
+	churn := func(bound string) string {
+		return `    while (i < ` + bound + `) {
+        d = Boxed { tag: "a heap string reachable only through the dyn cell" };
+        sum = sum + d.area();
+        i = i + 1;
+    }
+`
+	}
 	return `import "std/i32";
 trait Shape { function area(self: Self): i32; }
 struct Boxed { tag: string }
 impl Shape for Boxed { function area(self: Self): i32 { return self.tag.len(); } }
 function main(): i32 {
     var d: dyn Shape = Boxed { tag: "the initial value this loop replaces" };
-    var before: i32 = (__heap_bump_bytes() as i32);
-    var i: i32 = 0;
     var sum: i32 = 0;
-    while (i < ` + n + `) {
-        d = Boxed { tag: "a heap string reachable only through the dyn cell" };
-        sum = sum + d.area();
-        i = i + 1;
-    }
-    return (__heap_bump_bytes() as i32) - before;
+    var i: i32 = 0;
+    var base: i32 = (__heap_bump_bytes() as i32);
+` + churn(n) + `    var first: i32 = (__heap_bump_bytes() as i32) - base;
+    var mid: i32 = (__heap_bump_bytes() as i32);
+    i = 0;
+` + churn(wider) + `    var second: i32 = (__heap_bump_bytes() as i32) - mid;
+    if (second > first) { return 1; }
+    return sum - sum;
 }`
 }
 
@@ -55,25 +70,20 @@ function main(): i32 {
 }`
 
 func TestDynAssignOverwriteBounded(t *testing.T) {
+	src := dynAssignOverwriteBumpSrc("500", "2000")
 	t.Run("x86_64", func(t *testing.T) {
-		small := mustRunX86_64FreeOn(t, dynAssignOverwriteBumpSrc("50"))
-		large := mustRunX86_64FreeOn(t, dynAssignOverwriteBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunX86_64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("arm64", func(t *testing.T) {
-		small := mustRunArm64FreeOn(t, dynAssignOverwriteBumpSrc("50"))
-		large := mustRunArm64FreeOn(t, dynAssignOverwriteBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if _, code := compileAndRunArm64FreeOn(t, src); code != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", code)
 		}
 	})
 	t.Run("wasm", func(t *testing.T) {
-		small := runWasm(t, dynAssignOverwriteBumpSrc("50"))
-		large := runWasm(t, dynAssignOverwriteBumpSrc("5000"))
-		if small != large {
-			t.Errorf("bump growth should be bounded: n=50 -> %d, n=5000 -> %d", small, large)
+		if got := runWasm(t, src); got != 0 {
+			t.Errorf("heap high-water grew with the churn length (verdict %d, want 0)", got)
 		}
 	})
 }
