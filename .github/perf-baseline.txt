@@ -58,34 +58,45 @@ x86_64/struct_drop.ir	682100167
 x86_64/tokenize.text	997
 x86_64/tokenize.ir	207560093
 
-# aarch64, from the Perf workflow's own perf-aarch64 job (run 31947059512) —
-# the arch this project defaults to. Seeded from CI rather than measured here,
-# because no aarch64 host is available to the dev container; the figures are
-# the job's paste block verbatim. map_string.ir carries the same 2% the x86_64
-# twin does, for the same per-process hash seed.
+# aarch64, from the Perf workflow's own perf-aarch64 job — the arch this
+# project defaults to. Seeded from CI rather than measured here, because no
+# aarch64 host is available to the dev container; the figures are the job's
+# paste block verbatim (run 31947059512 for the original nine, 31964295961 for
+# closure_call / enum_match / sort_inplace / sort_ints / string_build /
+# tokenize). map_string.ir carries the same 2% the x86_64 twin does, for the
+# same per-process hash seed.
+#
+# Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
+# constant (int_loop 0.71, string_scan 1.01). A new benchmark reports as
+# UNBASELINED here for one CI run, which is the gate saying "measured,
+# recorded, not yet compared" — paste that run's block in rather than guessing.
 aarch64/array_append.text	539
 aarch64/array_append.ir	71008054
 aarch64/array_index.text	510
 aarch64/array_index.ir	63698033
 aarch64/call_overhead.text	165
 aarch64/call_overhead.ir	45601201
+aarch64/closure_call.text	444
+aarch64/closure_call.ir	209928045
+aarch64/enum_match.text	682
+aarch64/enum_match.ir	194175068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
 aarch64/map_int.text	3095
 aarch64/map_int.ir	100592487
 aarch64/map_string.text	4171
 aarch64/map_string.ir	223648093	2
+aarch64/sort_inplace.text	815
+aarch64/sort_inplace.ir	132740196
+aarch64/sort_ints.text	2631
+aarch64/sort_ints.ir	115263483
+aarch64/string_build.text	1214
+aarch64/string_build.ir	242431740
 aarch64/string_scan.text	1543
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	497
 aarch64/string_slice.ir	167280114
 aarch64/struct_drop.text	1864
 aarch64/struct_drop.ir	692820288
-
-# closure_call / enum_match / sort_inplace / sort_ints / string_build /
-# tokenize have no aarch64 entry yet — they are new in this PR and this
-# container is x86_64, so their aarch64 figures come from the perf-aarch64
-# job's own paste block and land in a follow-up commit on the same branch.
-# Until then that job reports them as UNBASELINED, which is the gate working:
-# measured, recorded, not yet compared. Do NOT guess them from the x86_64
-# numbers — the ratio is not constant (int_loop 0.71, string_scan 1.01).
+aarch64/tokenize.text	944
+aarch64/tokenize.ir	176490114
