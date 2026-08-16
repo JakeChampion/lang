@@ -519,6 +519,57 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A read out of a fresh container reclaims the container and hands
+		// the value on owning itself — but only when the read is the whole
+		// expression. CHAINED, the value it produced had no owner: no local
+		// for the exit sweep, and the three predicates that answer "did this
+		// arrive owning itself" were consulted at the binding sites and not
+		// at the sites that consume a transient (#6401).
+		//
+		// The five shapes are the five consuming positions, and they close in
+		// two steps rather than one: `sink(mk().f)` is the call argument,
+		// `mk().f[0].a` the chained index, `mk().qs[0].vals` a pointer field
+		// off a chained element, and the string rows the two-word ABI's
+		// version of the same reads. The last three needed the field-access
+		// lowering to admit a chained target as well — the argument arm alone
+		// left `mk().f[0].a` at 16 B a round where it had been 64.
+		//
+		// Constant in n: one container per round per shape, released once the
+		// value has been read out of it.
+		name: "fresh-container-read-chained",
+		decls: `struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+struct SBox { names: string[], tag: i32 }
+struct Q { vals: i32[], k: i32 }
+struct QBox { qs: Q[], tag: i32 }
+function mk_box(k: i32): Box {
+    return Box { items: [P { a: k, b: k + 1 }, P { a: k + 2, b: k + 3 }], tag: k };
+}
+function mk_sbox(k: i32): SBox {
+    return SBox { names: ["nn", "mm"], tag: k };
+}
+function mk_qbox(k: i32): QBox {
+    return QBox { qs: [Q { vals: [k, k + 1, k + 2], k: k }, Q { vals: [k], k: k }], tag: k };
+}
+function sink(ps: P[]): i32 { return ps.len(); }
+function sinks(ns: string[]): i32 { return ns.len(); }
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        t = t + sink(mk_box(1).items);
+        t = t + sinks(mk_sbox(1).names);
+        t = t + mk_box(2).items[0].a;
+        t = t + mk_sbox(3).names[1].len();
+        t = t + mk_qbox(4).qs[0].vals[1];
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// Binding a tuple's STRUCT element to a local — `var q: P = p.1` —
 		// incs at the binding site and was never credited with owning the
 		// reference, so the element leaked once per extraction, unbounded.
