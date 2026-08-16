@@ -71,6 +71,7 @@ so explicitly.
 | `BOOTSTRAP-RESEARCH.md` | [research] | Bootstrap/trust strategy survey (Rust, Zig, Go, …). |
 | `TOOLCHAIN-SELF-HOSTING.md` | [record] | Zero-external-toolchain builds — complete for all targets. |
 | `PERFORMANCE-RESEARCH.md` | [research] | Compiler/runtime perf survey; recommendations tracked in #4412. |
+| `PERFORMANCE-AUDIT-2026-08.md` | [record] | What the self-host compiler's 6.3× compile-time gap is actually made of, measured: codegen below `gcc -O0`, drop code duplicated per scope exit, linear symbol tables. Ranked fix list; tracked in #6888. |
 | `IDE-COMPILATION-RESEARCH.md` | [research] | Post-MVP incremental-compilation survey; tracked in #4415. |
 | `DIAGNOSTIC-UX-RESEARCH.md` | [research] | Elm/Rust-grade diagnostics survey; tracked in #4413. |
 | `PLATFORM-RESEARCH.md` | [research] | Handler/host seam survey for edge targets; tracked in #4414. |
