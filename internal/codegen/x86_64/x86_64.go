@@ -1639,34 +1639,72 @@ func (g *generator) emitStartRuntime() {
 // function; production never reassigns it.
 var rcInlineMaxOps = 1_000_000
 
-// emitFunc lowers one function to assembly. Per-function
-// scope-tracking state lives in `scope` (currently unused —
-// PR 1 has no block / loop / if ops to dispatch).
-// x86RegisterName is the set of tokens the assembler — both this project's
-// pure-Go one (internal/native/x86_64) and GNU as — resolves to a register.
-// A user function whose name matches one would be mis-assembled: `call ch`
-// reads `ch` as register CH and encodes an indirect `call rbp` through
-// garbage (SIGSEGV), and `.size ch, .-ch` / `.quad ch` fail to evaluate.
-var x86RegisterName = func() map[string]bool {
+// x86AsmReserved is the set of tokens GNU `as` refuses to read as a plain
+// symbol in Intel syntax. A user function whose name matches one is
+// mis-assembled: `call ch` reads `ch` as register CH and encodes an indirect
+// `call rbp` through garbage (SIGSEGV), `.size cs, .-cs` / `.quad cs` fail to
+// evaluate, and `call r16` encodes a REX2 indirect call with no diagnostic at
+// all. This project's own assembler (internal/native/x86_64) knows only the
+// registers this backend emits, so it reads every other entry here as the
+// symbol it is — the escape is what keeps the two toolchains agreeing.
+//
+// Membership is empirical: each entry was confirmed to break `as` (binutils
+// 2.42) in `call` or `.size` position. Deliberately absent because they do
+// NOT: `st0`..`st7` (`as` spells the x87 stack `st(0)`, so a bare `st0` is a
+// symbol — plain `st` does collide), `ip`, the test registers `tr0`..`tr7`,
+// the null index registers `riz`/`eiz` (recognised only inside `[]`), `ptr`
+// (only meaningful after a size keyword), and instruction mnemonics, which
+// are reserved in mnemonic position only.
+var x86AsmReserved = func() map[string]bool {
 	m := map[string]bool{}
-	for _, n := range []string{
+	add := func(names ...string) {
+		for _, n := range names {
+			m[n] = true
+		}
+	}
+	addNumbered := func(prefix, suffix string, lo, hi int) {
+		for i := lo; i <= hi; i++ {
+			m[fmt.Sprintf("%s%d%s", prefix, i, suffix)] = true
+		}
+	}
+	add(
 		"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
 		"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
 		"ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
 		"al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
-		"ah", "ch", "dh", "bh", "st",
-	} {
-		m[n] = true
+		"ah", "ch", "dh", "bh",
+	)
+	// APX extended GPRs, recognised since binutils 2.42. These are the
+	// dangerous ones: `call r16` assembles clean as an indirect call.
+	for _, width := range []string{"", "d", "w", "b"} {
+		addNumbered("r", width, 16, 31)
 	}
-	for i := 0; i < 16; i++ {
-		m[fmt.Sprintf("xmm%d", i)] = true
-	}
+	addNumbered("xmm", "", 0, 31)
+	addNumbered("ymm", "", 0, 31)
+	addNumbered("zmm", "", 0, 31)
+	addNumbered("mm", "", 0, 7)             // MMX
+	addNumbered("k", "", 0, 7)              // AVX-512 mask
+	addNumbered("bnd", "", 0, 3)            // MPX bounds
+	addNumbered("tmm", "", 0, 7)            // AMX tile
+	addNumbered("cr", "", 0, 15)            // control
+	addNumbered("dr", "", 0, 15)            // debug
+	add("cs", "ds", "es", "ss", "fs", "gs") // segment
+	add("st")                               // x87 stack top
+	add("rip", "eip")                       // instruction pointer
+	// Intel-syntax operand keywords: size overrides, and the address and
+	// branch-distance modifiers.
+	add("byte", "word", "dword", "qword", "tbyte", "fword", "oword",
+		"xmmword", "ymmword", "zmmword", "offset", "short", "near", "far", "flat")
+	// Intel-syntax expression operators. `as` rejects these with
+	// `invalid use of operator "and"` wherever a symbol was meant.
+	add("and", "or", "xor", "not", "shl", "shr", "mod",
+		"eq", "ne", "lt", "le", "gt", "ge")
 	return m
 }()
 
 // asmFnName returns the asm symbol for a Fern function `name`, escaping
-// names that collide with an x86 register mnemonic (register names are
-// case-insensitive to the assembler, so the check folds case). The `$`
+// names the assembler reserves (the reserved set is case-insensitive to
+// the assembler, so the check folds case). The `$`
 // suffix is collision-proof: Fern identifiers cannot contain `$`, so no
 // real function name can equal an escaped one, and both assemblers accept
 // `$` in a symbol. Non-colliding names — the overwhelming majority,
@@ -1676,12 +1714,15 @@ var x86RegisterName = func() map[string]bool {
 // (definition, call, and `.quad` pointer), or the definition and its
 // references disagree and the link fails with an undefined symbol.
 func asmFnName(name string) string {
-	if x86RegisterName[strings.ToLower(name)] {
+	if x86AsmReserved[strings.ToLower(name)] {
 		return name + "$fn"
 	}
 	return name
 }
 
+// emitFunc lowers one function to assembly. Per-function
+// scope-tracking state lives in `scope` (currently unused —
+// PR 1 has no block / loop / if ops to dispatch).
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// #4402 opt 2b: inline rc ops only when the function is small enough that
 	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
