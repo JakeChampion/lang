@@ -518,6 +518,38 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A source-declared receiver method whose result feeds another call.
+		// The caller owns that result, but the reclaim gate rejected any
+		// `__`-prefixed callee not proven to return a fresh value — and a
+		// source method mangles to `__method_<Type>_<name>`, so one identity
+		// return in the body (`if (n <= 0) { return s; }`) disqualified it
+		// and every materialised result was stranded. The same body as a
+		// free function was reclaimed.
+		//
+		// Constant in n: two materialised results per round.
+		name: "method-identity-return-result",
+		decls: `import "std/i32";
+import "std/string";
+function (s: string) tail(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var base: string = "long-enough-payload-" + (i % 8).to_string();
+        t = t + base.tail(2).len() + base.tail(3).to_owned().len();
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// `string[][]`: the outer drop reclaims each inner `string[]` buffer
 		// but reached it through the pointer-element helper on the
 		// single-word string ABI, whose per-element `__fern_rc_dec` never

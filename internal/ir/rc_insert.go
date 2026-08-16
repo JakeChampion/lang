@@ -204,9 +204,12 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 //
 // Excluded — the callees that hand back an UNCOUNTED rc==1 alias the
 // is_unique gate cannot distinguish from a fresh value:
-//   - `__`-prefixed builtins / method lowerings: `arr.push(x)` /
-//     `m.set(k, v)` return the receiver's buffer in place at rc==1 (no
-//     inc), so dec'ing would free a live container.
+//   - builtin method lowerings (`arr.push(x)` / `m.set(k, v)`): they return
+//     the receiver's buffer in place at rc==1 (no inc), so dec'ing would free
+//     a live container. They have a FuncSigs entry but no `prog.Funcs` decl,
+//     so the user-declared test below is what rules them out — a
+//     source-declared method mangled to `__method_<T>_<m>` IS user-declared
+//     and qualifies.
 //   - variant constructors (`Some(p)`): not in FuncSigs, and they store a
 //     borrowed payload uncounted.
 //   - pair-form callees: return a (tag, payload) pair, a different stack
@@ -240,18 +243,6 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	// reclaim's safety argument rests on.
 	if _, isUserFn := b.returnsNoParamEscape[id.Name]; !isUserFn {
 		return nil, false
-	}
-	if strings.HasPrefix(id.Name, "__") {
-		// `__`-prefixed callees are method lowerings. The builtin ones
-		// (`arr.push` / `m.set` / string / Reader / …) return the receiver's
-		// buffer in place at rc==1 (an uncounted alias), so reclaiming would free
-		// a live container. A USER method PROVEN to return a fresh value
-		// (returnsNoParamEscape — e.g. a recursive `map`/`dup` over an enum) is
-		// as safe to reclaim as a fresh free-function result; without this, a
-		// method-call result used as an arg (`sum(xs.dup())`) leaks every call.
-		if !b.returnsNoParamEscape[id.Name] {
-			return nil, false
-		}
 	}
 	if b.pairForm[id.Name] {
 		return nil, false

@@ -421,13 +421,33 @@ explicitly skipped.
 | Slice 7 — `Map[K, string]` VALUES + retains | DONE | DONE | DONE |
 | Slice 8 — `Map[string, V]` KEYS + retains | DONE | DONE | DONE |
 
-Every row across the matrix is now DONE — `string` participates in
-rc reclamation across LOCALS / fields / array elements / tuple
-elements / enum payloads / closure captures / Map values + keys on
-wasm + x86_64 + arm64-TwoWordOverride. The Map-key OVERWRITE path
-still accepts an aliased-overwrite-leak on every backend (safe, no
-double-free; the runtime keeps the existing key so the freshly-
-boxed key's inc has no balancing dec) — documented at the gate.
+Every row across the matrix is DONE in the sense the rows are scoped to:
+`string` participates in rc reclamation across LOCALS / fields / array
+elements / tuple elements / enum payloads / closure captures / Map
+values + keys on wasm + x86_64 + arm64-TwoWordOverride.
+
+A DONE row is not a claim that every SHAPE built out of that slice is
+leak-free — the matrix tracks whether the slice's retain/release wiring
+exists, and shapes that compose two slices have their own gaps. Known
+open ones, each with a conformance case pinning the fixed half:
+
+  - A struct literal consuming a string local that is READ AFTER the
+    literal leaks the buffer once per construction. The last-use
+    spelling moves the string into the field and is flat
+    (`alloc_flat_struct_string_field`'s `keep` control is the leaking
+    shape, deliberately outside that case's measured rounds).
+  - A FREE FUNCTION with an identity return (`if (…) { return s; }`)
+    whose materialised result is consumed by another call leaks that
+    result. The receiver-method spelling of the same body is reclaimed
+    (`alloc_flat_method_identity_return`).
+  - `Cell[string]` reclaims neither the cell box's string nor, on
+    x86_64, routes its element through the string-aware walk — 32 B per
+    construction on all three backends.
+
+The Map-key OVERWRITE path still accepts an aliased-overwrite-leak on
+every backend (safe, no double-free; the runtime keeps the existing key
+so the freshly-boxed key's inc has no balancing dec) — documented at the
+gate.
 
 The native Map work landed across these PRs (all merged): #1616 #1618
 #1621 #1625 (carrier prereqs), #1628 #1635 #1638 #1641 #1643 (Slice 7

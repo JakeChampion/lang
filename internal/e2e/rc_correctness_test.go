@@ -4733,6 +4733,44 @@ function main(): i32 {
     return (acc + keep(3) - 5828) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A source-declared receiver method with an identity return, whose
+		// result is consumed by another call. The caller reclaims that
+		// result under the is_unique gate, so the identity path — where the
+		// result aliases a receiver the caller still owns — is what the gate
+		// has to hold: `base` and `b` are both read after the aliasing call.
+		// 200 * (18 + 20 + 21 + 21) for the string half, 200 * (15 + 15) for
+		// the struct half.
+		name: "method_identity_return_result_reclaimed",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+struct Box { tag: string, n: i32 }
+function (s: string) tail(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var base: string = "long-enough-payload-" + (i % 8).to_string();
+        acc = acc + base.tail(3).len() + base.tail(1).to_owned().len();
+        acc = acc + base.tail(0).len() + base.len();
+        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        acc = acc + b.relabel("").tag.len() + b.tag.len();
+        i = i + 1;
+    }
+    return (acc - 22000) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
