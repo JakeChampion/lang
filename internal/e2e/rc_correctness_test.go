@@ -4394,6 +4394,280 @@ function main(): i32 {
     return (acc - 5019) + __rc_underflow_count();
 }`,
 	},
+	// #6877 — a loop-body `var` whose LAST use is a consuming `.with`
+	// receiver. __fern_arr_cow_inplace takes that reference over, so the
+	// next iteration's re-declaration must not release the slot as well;
+	// it did, and the freed buffer was the one the RESULT still pointed at.
+	// The four shapes below all crashed or silently double-freed on both
+	// natives; the three after them were already correct and are the
+	// controls that catch a re-narrowing.
+	{
+		name: "with_loop_local_from_fresh_container_field",
+		src: `
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_box().items;
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// The container read is not the trigger: a call returning the array
+		// directly breaks identically (it aborted with "array index out of
+		// range" rather than SIGSEGV, which is the same corruption read
+		// through a recycled length word).
+		name: "with_loop_local_from_call_result",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Binding the container first, so the field read is a plain
+		// projection out of a live local rather than a fresh-temp read.
+		name: "with_loop_local_from_bound_container_field",
+		src: `
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+function mk_box(): Box { return Box { items: [P{a:0,b:0}, P{a:1,b:1}], tag: 0 }; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var bx: Box = mk_box();
+        var it: P[] = bx.items;
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// A SCALAR element array double-freed too, without ever computing a
+		// wrong answer — FERN_LEAKCHECK reported allocs=20 frees=39 and
+		// live_bytes=-304 while the program exited 0. The struct-element
+		// shapes above are the same bug with something left to corrupt, so
+		// this row is what stops the fix being narrowed to pointer elements.
+		name: "with_loop_local_scalar_elements",
+		src: `
+function mk_ints(): i32[] { return [0, 1]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: i32[] = mk_ints();
+        var a: i32[] = it.with(0, i);
+        t = t + a[0];
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: a read of the receiver AFTER the `.with` makes the call a
+		// borrow, so the receiver keeps its own reference and BOTH releases
+		// are owed. The re-init drop must still fire here.
+		name: "with_loop_local_read_after_set",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.with(0, P{a:i,b:i});
+        t = t + a[0].a + it[1].b;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 210) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: `.append` is not a consuming receiver, so nothing is
+		// transferred and the re-init drop is the only release.
+		name: "append_loop_local_from_call_result",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var it: P[] = mk_arr();
+        var a: P[] = it.append(P{a:i,b:i});
+        t = t + a[2].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// Control: the `.with` receiver is a fresh temp with no binding at
+		// all, so there is no slot to re-initialise.
+		name: "with_loop_no_intermediate_local",
+		src: `
+struct P { a: i32, b: i32 }
+function mk_arr(): P[] { return [P{a:0,b:0}, P{a:1,b:1}]; }
+function f(n: i32): i32 {
+    var t: i32 = 0;
+    for i in 0..n {
+        var a: P[] = mk_arr().with(0, P{a:i,b:i});
+        t = t + a[0].a;
+    }
+    return t;
+}
+function main(): i32 { return (f(20) - 190) + __rc_underflow_count(); }`,
+	},
+	{
+		// `.with` straight off a fresh container read. The read owns what it
+		// produced, so cow_inplace takes that reference; the borrow-shaped
+		// siblings — a field of a live struct, an element of a live array —
+		// must still copy, or the container is mutated through the receiver.
+		// This row is the guard on the borrow half — a classification that
+		// widens changes the answer here; the leak the fresh half used to
+		// pay is invisible to an exit code and is gated by
+		// TestX86_64AllocScaling instead.
+		name: "with_receiver_fresh_container_read_vs_borrowed",
+		src: `
+struct S { xs: i32[], tag: i32 }
+function mk(): S { return S { xs: [1, 2], tag: 0 }; }
+function borrowed_field(s: S): i32 {
+    var b: i32[] = s.xs.with(0, 99);
+    return b[0] + s.xs[0];
+}
+function borrowed_elem(a: i32[][]): i32 {
+    var b: i32[] = a[0].with(0, 99);
+    return b[0] + a[0][0];
+}
+function fresh_field(): i32 {
+    var b: i32[] = mk().xs.with(0, 99);
+    return b[0] + b[1];
+}
+function main(): i32 {
+    var s: S = mk();
+    var aa: i32[][] = [[1, 2], [3, 4]];
+    var t: i32 = 0;
+    t = t + borrowed_field(s) - 100;
+    t = t + borrowed_elem(aa) - 100;
+    t = t + fresh_field() - 101;
+    t = t + s.xs[0] + aa[0][0] - 2;
+    return t + __rc_underflow_count();
+}`,
+	},
+	// #6417 — the fresh-scrutinee box release sits at the post-match JOIN, so
+	// an arm that leaves the match early branches straight past it. These
+	// pin the release being emitted at each such exit as well; the leak they
+	// cost is measured by TestX86_64AllocScaling, and what the corpus adds is
+	// that the extra release is not an OVER-release.
+	{
+		name: "match_boxed_result_returning_arms",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => { return 0; } }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(i as i64); i = i + 1; }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		name: "match_boxed_result_continue_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (make(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { i = i + 1; continue; } }
+        i = i + 1;
+    }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Expression form: an arm body is an expression, but a value block
+		// can still `return`.
+		name: "match_expr_boxed_result_returning_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): i32 {
+    var r: i32 = match (make(i)) { Ok(v) => { return (v as i32) + 1; }, Err(_) => 0 };
+    return r;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(i as i64); i = i + 1; }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The `m.get(k)` rebox reaches the same join. Its free must stay
+		// SHALLOW wherever it is emitted — the payload belongs to the map.
+		name: "match_map_get_returning_arms",
+		src: `
+import "core/map";
+function pick(m: Map[string, string], k: string): i32 {
+    match (m.get(k)) { Some(v) => { return v.len(); }, None => { return 0; } }
+}
+function main(): i32 {
+    var m: Map[string, string] = map_new(8);
+    m = m.insert("a", "xy" + "zw");
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + pick(m, "a"); i = i + 1; }
+    return (t - 800) + m.get_or("a", "").len() - 4 + __rc_underflow_count();
+}`,
+	},
+	{
+		// An `@` binding names the box itself and the arm hands it straight
+		// back, so the release emitted at that return must net against the
+		// return-transfer inc rather than freeing what the caller receives.
+		name: "match_at_binding_returned_from_arm",
+		src: `
+function make(i: i64): Result[i64, i64] {
+    if (i % 2i64 == 0i64) { return Ok(i); }
+    return Err(i);
+}
+function pick(i: i64): Result[i64, i64] {
+    match (make(i)) { whole @ Ok(v) => { return whole; }, Err(_) => { return Err(0i64); } }
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        match (pick(i as i64)) { Ok(v) => { t = t + (v as i32) + 1; }, Err(_) => { } }
+        i = i + 1;
+    }
+    return (t - 10000) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
