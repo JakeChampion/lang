@@ -14171,19 +14171,15 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		}
 		// string[]: each element is a heap string whose buffer must be
 		// reclaimed before the outer buffer — __fern_drop_arr_str walks +
-		// __fern_str_dec's each (data, len) on the two-word ABIs (wasm +
-		// arm64-TwoWord); native single-word x86_64 routes through
-		// __fern_drop_arr_ptr (per-element __fern_rc_dec). Mirrors the exit
-		// sweep so a precise / reinit drop reclaims the strings, not just the
-		// outer buffer (the plain __fern_arr_dec below would leak them).
+		// __fern_str_dec's each element. Every backend emits it (two-word
+		// (data, len) elements on wasm + arm64-TwoWord, single-word pointer
+		// elements on x86-64). Mirrors the exit sweep so a precise / reinit
+		// drop reclaims the strings, not just the outer buffer (the plain
+		// __fern_arr_dec below would leak them).
 		if _, isStr := ty.Elem.(ast.StringType); isStr {
-			helper := "__fern_drop_arr_str"
-			if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				helper = "__fern_drop_arr_str"
-			}
 			b.emit(Op{Kind: OpLoadLocal, I32: idx})
 			b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(ty.Elem, b.ptrW))})
-			b.emit(Op{Kind: OpCallDirect, Str: helper, I32: 2})
+			b.emit(Op{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2})
 			b.emit(Op{Kind: OpDrop})
 			break
 		}
@@ -14448,14 +14444,11 @@ func (b *builder) dropStructField(t ast.Type) {
 		helper := "__fern_arr_dec"
 		if arrElemIsRcTracked(at.Elem) {
 			helper = "__fern_drop_arr_ptr"
-		} else if _, isStr := at.Elem.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
-			// string[] on any two-word ABI (wasm + arm64-TwoWordOverride):
-			// walk + __fern_str_dec each (data, len) element, then free buffer.
-			helper = "__fern_drop_arr_str"
-		} else if _, isStr := at.Elem.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-			// string[] on native single-word (x86_64, !TwoWordOverride):
-			// elements are single pointers; __fern_drop_arr_ptr walks +
-			// __fern_rc_dec's each one (SSO inline-tag low-bit guard is safe).
+		} else if _, isStr := at.Elem.(ast.StringType); isStr {
+			// string[]: walk + __fern_str_dec each element, then free the
+			// buffer. Every backend emits the helper — two-word (data, len)
+			// elements on wasm + arm64-TwoWordOverride, single-word pointer
+			// elements on x86-64.
 			helper = "__fern_drop_arr_str"
 		}
 		b.emit(Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, b.ptrW))})

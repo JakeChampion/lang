@@ -2241,15 +2241,6 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 func genArrArrStrDropFn(ptrW int) *Func {
 	outerStride := int32(ptrW)
 	strStride := int32(ast.ElemSizeBytesFor(ast.StringType{}, ptrW))
-	// Inner string[] reclamation helper, matching the exit sweep's string[]
-	// routing: two-word ABIs (wasm + arm64-TwoWord) walk (data,len) pairs
-	// via __fern_drop_arr_str; native single-word (x86_64) elements are
-	// single pointers, so __fern_drop_arr_ptr (rc_dec each, SSO-safe) is the
-	// available helper (__fern_drop_arr_str isn't emitted there).
-	innerDrop := "__fern_drop_arr_str"
-	if !ast.UseTwoWordStrings(ptrW) {
-		innerDrop = "__fern_drop_arr_ptr"
-	}
 	ops := []Op{
 		{Kind: OpLoadLocal, I32: 0},
 		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
@@ -2275,7 +2266,7 @@ func genArrArrStrDropFn(ptrW int) *Func {
 		{Kind: OpAdd},
 		{Kind: OpLoad, Width: WidthPtr},
 		{Kind: OpConstI32, I32: strStride},
-		{Kind: OpCallDirect, Str: innerDrop, I32: 2},
+		{Kind: OpCallDirect, Str: "__fern_drop_arr_str", I32: 2},
 		{Kind: OpDrop},
 		{Kind: OpLoadLocal, I32: 1},
 		{Kind: OpConstI32, I32: 1},

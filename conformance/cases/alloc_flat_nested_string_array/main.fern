@@ -1,0 +1,51 @@
+// spec: AL-01
+//
+// A `string[][]` whose last reference dies must reclaim the element
+// strings, not just the two levels of buffer. The outer drop
+// (`__drop_arr_arr_str`) reclaimed each inner `string[]` through
+// `__fern_drop_arr_ptr` on the single-word string ABI, which dec's an
+// element with `__fern_rc_dec` and so never returns a heap string's
+// buffer to the freelist. Every round stranded one buffer per element.
+//
+// The single-level `string[]` next to it is the control: it selected the
+// string-aware helper already, so the two shapes disagreeing is what
+// isolated the nested drop rather than the string ABI.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "core/int";
+import "std/i32";
+import "std/i64";
+
+function nested(k: i32): i32 {
+    var inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
+    var outer: string[][] = [inner, ["gamma-payload-" + k.to_string()]];
+    return outer[0][0].len() + outer[1][0].len();
+}
+
+function single_level(k: i32): i32 {
+    var xs: string[] = ["delta-payload-" + k.to_string(), "epsilon-payload-" + k.to_string()];
+    return xs[0].len() + xs[1].len();
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + nested(i % 8) + single_level(i % 8);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}
