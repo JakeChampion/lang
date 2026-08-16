@@ -946,3 +946,61 @@ function main(): i32 {
 `
 	dynAllBackends(t, src, "d=3\ne=-9")
 }
+
+// `dyn` over the STDLIB `core/cmp.Display` — the trait every generic
+// "printable" bound names, and the first `dyn` set whose implementor list
+// is not written by the program under test. Two lowering gaps kept this
+// interpreter-only:
+//
+//   - `core/cmp` carries `impl Display for u8` (the byte type has no scalar
+//     module, so its Display impl has a real body). `u8` was absent from
+//     astTypeForConcreteName, so the value-box layout lookup failed and the
+//     whole `dyn cmp.Display` set was rejected before any code was emitted.
+//   - collectVtables over-approximates — a vtable per IMPLEMENTOR, not per
+//     coerced concrete. That is harmless for the vtables themselves (nothing
+//     names them, so no backend emits them) but not for the unboxing wrappers
+//     built from them: a wrapper for an implementor no site coerces is dead
+//     code still calling `__method_<C>_<m>`, which tree-shake dropped. The
+//     natives failed to link on the undefined label.
+//
+// Both are only reachable through a trait whose implementor set is wider
+// than the program's coercion sites, which is exactly what a stdlib trait is.
+func TestDynTraitStdlibDisplay(t *testing.T) {
+	src := `import "core/cmp";
+import "std/i32";
+function render(xs: dyn cmp.Display[]): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + xs[i].to_string();
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    var xs: dyn cmp.Display[] = [42, "hi", true];
+    print(render(xs));
+    return 0;
+}
+`
+	dynAllBackends(t, src, "42, hi, true")
+}
+
+// A u8 element actually coerced into the `dyn cmp.Display` set, so the u8
+// value-box layout is exercised rather than merely tolerated: the byte is
+// boxed at the coercion site and read back through
+// `__dynbox_u8_to_string`.
+func TestDynTraitStdlibDisplayByte(t *testing.T) {
+	src := `import "core/cmp";
+import "std/i32";
+function main(): i32 {
+    var s: string = "A";
+    var b: u8 = s[0];
+    var xs: dyn cmp.Display[] = [b, 7];
+    print(xs[0].to_string() + "/" + xs[1].to_string());
+    return 0;
+}
+`
+	dynAllBackends(t, src, "65/7")
+}
