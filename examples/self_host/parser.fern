@@ -405,7 +405,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // method names, and impls records every `impl Trait for Type` block with the
 // methods it explicitly provides. parse_module populates both; the
 // transformation passes propagate them unchanged.
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[] }
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[] }
 
 // TraitReq is one trait's required-method set: the abstract (body-less)
 // signatures an `impl` MUST provide. A defaulted (bodied) method is NOT
@@ -985,7 +985,7 @@ pub function resolve_labels_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: resolve_labels_block(fd.body, none), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: resolve_labels_block(mod.top_stmts, none), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 
@@ -8527,7 +8527,7 @@ pub function register_array_method_generics(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -8642,7 +8642,7 @@ pub function register_map_method_generics(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -8865,7 +8865,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -8949,7 +8949,7 @@ pub function monomorphize_module(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -9558,7 +9558,7 @@ pub function monomorphize_structs(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -10675,7 +10675,7 @@ pub function monomorphize_enums(mod: Module): Module {
         resources: mod.resources,
         exports: mod.exports,
         impls: mod.impls,
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -11758,7 +11758,7 @@ pub function hoist_local_funcs_module(mod: Module): Module {
     var top_body: Stmt[] = hl_apply_lifts(tr_stmts, tr_lifts);
     var j: i32 = 0;
     while (j < hoisted.len()) { funcs = funcs.append(hoisted[j]); j = j + 1; }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: top_body, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 function lower_defers_func(fn: FuncDecl): FuncDecl {
@@ -11819,7 +11819,7 @@ pub function lower_defers_module(mod: Module): Module {
         funcs = funcs.append(lower_defers_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ---- automatic resource-handle drop (P5 slice 3) --------------------
@@ -12128,7 +12128,7 @@ pub function lower_defers_prepass_module(mod: Module): Module {
        , is_const: false }));
         k = k + 1;
     }
-    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: out_funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ---------------------------------------------------------------------------
@@ -12238,7 +12238,7 @@ pub function desugar_ranges_module(mod: Module): Module {
         funcs = funcs.append(desugar_ranges_func(mod.funcs[i]));
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: desugar_ranges_block(mod.top_stmts), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // desugar_prepass_module fuses the three leading whole-module DESUGAR passes —
@@ -12458,7 +12458,7 @@ pub function resolve_variant_fields_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: rvf_block(fd.body, mod.structs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: rvf_block(mod.top_stmts, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: rvf_block(mod.top_stmts, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // or named args), so it is evaluated once on the incoming module and gates the
@@ -12479,7 +12479,7 @@ pub function desugar_prepass_module(mod: Module): Module {
     var tops: Stmt[] = resolve_labels_block(mod.top_stmts, none);
     if (need_fda) { tops = fda_stmts(tops, mod.funcs); }
     tops = desugar_ranges_block(tops);
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: tops, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ---------------------------------------------------------------------------
@@ -12845,7 +12845,7 @@ pub function fill_default_args_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: fda_stmts(fd.body, mod.funcs), line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: fda_stmts(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ---- return-type inference -----------------------------------------
@@ -13307,7 +13307,7 @@ pub function infer_ret_types_module(mod: Module): Module {
         }
         pass = pass + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ---- call-only 0-arg fn-value inlining ------------------------------
@@ -14067,7 +14067,7 @@ pub function inline_callonly_fn_values(mod: Module): Module {
        , is_const: fd.is_const });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: cf_inline_fn_body(mod.top_stmts, mod.funcs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // ===== #3640 slice B.2: use-directed struct-fn-value-local inference =====
@@ -14232,7 +14232,7 @@ pub function infer_fnvalue_locals_module(mod: Module): Module {
         funcs = funcs.append(FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: nbody, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub });
         i = i + 1;
     }
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 pub function module_with_builtins(mod: Module): Module {
@@ -14254,7 +14254,7 @@ pub function module_with_builtins(mod: Module): Module {
         resources: mono.resources,
         exports: mono.exports,
         impls: mono.impls,
-        trait_reqs: mono.trait_reqs
+        trait_reqs: mono.trait_reqs, trait_decls: mono.trait_decls
     };
 }
 
@@ -16298,7 +16298,7 @@ pub function settle_module(mod: Module): Module {
         i = i + 1;
     }
     var nonames: string[] = [];
-    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, mod.funcs, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return Module { funcs: funcs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, mod.funcs, mod.structs), enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 pub function parse_module(toks: lexer.Token[]): Module {
@@ -16688,7 +16688,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // settle_module rides the same reasoning: an integer literal in a float
     // destination is restamped here, at the one shared entry, so the checker and
     // every backend read a literal that already carries its settled type (#6654).
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs }))), traits, impl_decls, flines);
+    return (settle_module(resolve_variant_fields_module(resolve_labels_module(Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits }))), traits, impl_decls, flines);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
@@ -16718,6 +16718,9 @@ pub function merge_module(into: Module, from: Module): Module {
     var nimpls: ImplInfo[] = into.impls;
     var nii: i32 = 0;
     while (nii < from.impls.len()) { nimpls = nimpls.append(from.impls[nii]); nii = nii + 1; }
+    var ntdecls: TraitDecl[] = into.trait_decls;
+    var tdi2: i32 = 0;
+    while (tdi2 < from.trait_decls.len()) { ntdecls = ntdecls.append(from.trait_decls[tdi2]); tdi2 = tdi2 + 1; }
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
@@ -16731,7 +16734,7 @@ pub function merge_module(into: Module, from: Module): Module {
         resources: nresources,
         exports: nexports,
         impls: nimpls,
-        trait_reqs: ntreqs
+        trait_reqs: ntreqs, trait_decls: ntdecls
     };
 }
 
@@ -16789,6 +16792,9 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var nimpls: ImplInfo[] = into.impls;
     var nii: i32 = 0;
     while (nii < from.impls.len()) { nimpls = nimpls.append(from.impls[nii]); nii = nii + 1; }
+    var ntdecls: TraitDecl[] = into.trait_decls;
+    var tdi2: i32 = 0;
+    while (tdi2 < from.trait_decls.len()) { ntdecls = ntdecls.append(from.trait_decls[tdi2]); tdi2 = tdi2 + 1; }
     var ntreqs: TraitReq[] = into.trait_reqs;
     var nti: i32 = 0;
     while (nti < from.trait_reqs.len()) { ntreqs = ntreqs.append(from.trait_reqs[nti]); nti = nti + 1; }
@@ -16802,7 +16808,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
         resources: nresources,
         exports: nexports,
         impls: nimpls,
-        trait_reqs: ntreqs
+        trait_reqs: ntreqs, trait_decls: ntdecls
     };
 }
 

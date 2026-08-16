@@ -64,7 +64,7 @@ function sub_module(m: parser.Module, lo: i32, hi: i32): parser.Module {
     return parser.Module {
         funcs: fs, structs: m.structs, aliases: m.aliases, imports: m.imports,
         top_stmts: m.top_stmts, enums: m.enums, resources: m.resources,
-        exports: m.exports, impls: m.impls, trait_reqs: m.trait_reqs,
+        exports: m.exports, impls: m.impls, trait_reqs: m.trait_reqs, trait_decls: m.trait_decls,
     };
 }
 

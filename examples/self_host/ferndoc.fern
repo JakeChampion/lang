@@ -223,6 +223,14 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
         }
         ei = ei + 1;
     }
+    var di: i32 = 0;
+    while (di < mod.trait_decls.len()) {
+        var td: parser.TraitDecl = mod.trait_decls[di];
+        if (td.is_pub) {
+            out = insert_sorted(out, DocDecl { kind: "trait", name: td.name, line: td.line, col: td.col, doc: "" });
+        }
+        di = di + 1;
+    }
     // Type aliases are deliberately absent: cmd/ferndoc's renderModule unions
     // funcs, structs, enums, consts and traits, and never touches TypeAlias.
     // Collecting them here would not just add pages native does not have — it
@@ -270,6 +278,8 @@ pub function first_decl_line(mod: parser.Module): i32 {
     while (ei < mod.enums.len()) { min = min_line(min, mod.enums[ei].line); ei = ei + 1; }
     var ti: i32 = 0;
     while (ti < mod.aliases.len()) { min = min_line(min, mod.aliases[ti].line); ti = ti + 1; }
+    var tdi: i32 = 0;
+    while (tdi < mod.trait_decls.len()) { min = min_line(min, mod.trait_decls[tdi].line); tdi = tdi + 1; }
     return min;
 }
 
@@ -464,6 +474,43 @@ function render_enum(ed: parser.EnumDecl, structs: parser.StructDecl[], doc: str
     return out + "}\n```\n\n" + doc_block(doc);
 }
 
+// render_trait mirrors cmd/ferndoc's renderTrait. Two omissions are
+// deliberate and byte-load-bearing: native renders NEITHER the supertrait
+// clause NOR the type parameters, so `pub trait Num: Add + Sub + Mul + Div {}`
+// prints as an empty body and `pub trait From[T]` prints as `pub trait From`.
+// join_type_params — used by render_struct / render_enum / render_func — must
+// NOT be applied here.
+//
+// Params go through param_type_str, not type_str: the parser flattens a
+// function-typed param to the tag `fn` and keeps the spelling in a sidecar,
+// and a trait method can take one (std/iter).
+function render_trait(td: parser.TraitDecl, doc: string): string {
+    var out: string = "## `trait " + td.name + "`\n\n```fern\npub trait " + td.name + " {\n";
+    var m: i32 = 0;
+    while (m < td.methods.len()) {
+        var md: parser.FuncDecl = td.methods[m];
+        out = out + "    function " + md.name + "(";
+        var pi: i32 = 0;
+        while (pi < md.params.len()) {
+            if (pi > 0) { out = out + ", "; }
+            out = out + md.params[pi].name + ": " + param_type_str(md.params[pi]);
+            pi = pi + 1;
+        }
+        out = out + "): " + type_str(md.ret_type) + ";\n";
+        m = m + 1;
+    }
+    return out + "}\n```\n\n" + doc_block(doc);
+}
+
+function trait_named(mod: parser.Module, name: string, line: i32): parser.TraitDecl {
+    var i: i32 = 0;
+    while (i < mod.trait_decls.len()) {
+        if (mod.trait_decls[i].name == name && mod.trait_decls[i].line == line) { return mod.trait_decls[i]; }
+        i = i + 1;
+    }
+    return mod.trait_decls[0];
+}
+
 // render_impls is the trait to implementing-types table. Grouped by trait in
 // FIRST-SEEN order, not sorted: core/cmp alone carries ~30 primitive impls and
 // a section each would be unreadable, but the order still has to match native's
@@ -559,6 +606,7 @@ pub function render_page(src: string, mod_path: string): string {
         if (d.kind == "function") { out = out + render_func(func_named(mod, d.name, d.line), d.doc); }
         else if (d.kind == "struct") { out = out + render_struct(struct_named(mod, d.name, d.line), d.doc); }
         else if (d.kind == "enum") { out = out + render_enum(enum_named(mod, d.name, d.line), mod.structs, d.doc); }
+        else if (d.kind == "trait") { out = out + render_trait(trait_named(mod, d.name, d.line), d.doc); }
         i = i + 1;
     }
     return out + render_impls(mod.impls);

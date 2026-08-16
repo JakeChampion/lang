@@ -261,5 +261,5 @@ pub function treeshake(mod: parser.Module): parser.Module {
         if (ts_kept_name(mod.funcs[ki].name, refs)) { kept = kept.append(mod.funcs[ki]); }
         ki = ki + 1;
     }
-    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }

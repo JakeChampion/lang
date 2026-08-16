@@ -739,7 +739,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         resources: mod.resources,
         exports: mod.exports,
         impls: mangle_impls(mod.impls, ctx),
-        trait_reqs: mod.trait_reqs
+        trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls
     };
 }
 
@@ -915,6 +915,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var exports: parser.ExportBinding[] = [];
     var impls: parser.ImplInfo[] = [];
     var trait_reqs: parser.TraitReq[] = [];
+    var trait_decls: parser.TraitDecl[] = [];
     // Build the imported-enum-variant → mangled-name map once, from
     // every import's parsed (pre-mangle) variant structs. A variant is
     // an enum-member struct decl (`enum_owner != ""`); its bundled name
@@ -981,7 +982,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         resources: resources,
         exports: exports,
         impls: impls,
-        trait_reqs: trait_reqs
+        trait_reqs: trait_reqs,
+        trait_decls: trait_decls
     };
 }
 

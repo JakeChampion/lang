@@ -54,21 +54,19 @@ func TestSelfHostFerndocSelfChecks(t *testing.T) {
 // declarations never call take_doc and the cursor lands somewhere native's
 // does not.
 //
-// Both entries are the remaining decl-shape work on #6642, not association
-// bugs. `const` desugars to a zero-arg function here (recoverable through
-// FuncDecl.is_const); `trait` exists only as TraitReq and carries no
-// visibility at all, so `pub trait` has no representation.
+// One entry remains, and it is the last decl-shape work on #6642, not an
+// association bug: `const` desugars to a zero-arg function here (recoverable
+// through FuncDecl.is_const) rather than surviving as its own declaration.
+// `trait` used to be here too — it is not any more, now that trait_decls
+// reaches the Module and ferndoc renders traits.
 //
 // The list is DERIVED from the sources rather than written down, so a module
-// that grows a trait tomorrow leaves the differential automatically instead of
-// failing it — and the count assertion below is what stops that from quietly
-// hollowing the gate out.
+// that grows an unported shape tomorrow leaves the differential automatically
+// instead of failing it — and the count assertion below is what stops that
+// from quietly hollowing the gate out.
 func ferndocSkipShapes(src string) string {
 	for _, line := range strings.Split(src, "\n") {
 		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "pub trait ") || strings.HasPrefix(t, "trait ") {
-			return "trait"
-		}
 		if strings.HasPrefix(t, "pub const ") || strings.HasPrefix(t, "const ") {
 			return "const"
 		}
@@ -142,6 +140,8 @@ func selfHeading(kind, name string) string {
 		return "`struct " + name + "`"
 	case "enum":
 		return "`enum " + name + "`"
+	case "trait":
+		return "`trait " + name + "`"
 	default:
 		return "`" + name + "`"
 	}
@@ -282,20 +282,6 @@ func TestSelfHostFerndocMatchesNative(t *testing.T) {
 // closing one of these gaps also fails — and the fix is to delete the entry,
 // which is the point: the list can only shrink deliberately.
 var ferndocPageDivergences = map[string]string{
-	// `trait` blocks are not reachable from a parser.Module. TraitDecl holds
-	// the written form including `is_pub`, but parse_trait_decl returns it
-	// separately and only the formatter takes it — it is not a Module field,
-	// and Module is what ferndoc.fern renders from. Plumbing, not erasure.
-	"async":   "no TraitDecl",
-	"convert": "no TraitDecl",
-	"error":   "no TraitDecl",
-	"json":    "no TraitDecl",
-	"num":     "no TraitDecl",
-	"cmp":     "no TraitDecl",
-	"iter":    "no TraitDecl",
-	// core/mem is trait-ONLY, so with no trait reaching the page there is
-	// nothing at all to render — empty, rather than merely short.
-	"mem": "no TraitDecl",
 	// `const` desugars to a zero-arg function, recoverable through
 	// FuncDecl.is_const but not as native's ConstDecl.
 	"time": "const desugars to a function",

@@ -409,7 +409,7 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
                 resources: merged.resources,
                 exports: merged.exports,
                 impls: merged.impls,
-                trait_reqs: merged.trait_reqs
+                trait_reqs: merged.trait_reqs, trait_decls: merged.trait_decls
             };
         },
         Err(e) => { return merged; },
