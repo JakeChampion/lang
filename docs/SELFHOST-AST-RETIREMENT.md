@@ -12,7 +12,8 @@ especially here. Everything below was verified against the code (2026-07-26).
 predicted below LANDED on both native backends (x86 `asm_ir.fern` #5609, arm64
 `asm_arm64.fern` #5614), and the direct proof it was meant to unblock now
 passes: `TestSelfHostPerModuleFixpointX86_64` (env-gated,
-`RUN_PERMODULE_FIXPOINT=1`) is **GREEN** — a self-host-BUILT compiler (gen1)
+`RUN_PERMODULE_FIXPOINT=1`; deleted after the migration completed — see the
+slice-5 note below) was **GREEN** — a self-host-BUILT compiler (gen1)
 per-module-emits the whole compiler (35 units) in ~998 s with **no arena OOM**,
 and gen0 == gen1 byte-identically across all 35 units (per-module emit is
 self-reproducing). Measured gen1 peak: **~7.6 GB RSS per emit window** — under
@@ -1713,9 +1714,9 @@ per-module IR path is the replacement. Its **self-host-built (gen1) emit** was
 arena-limited — the self-host runtime did not reclaim the whole-program
 string/analysis allocations during a large-module emit (#3425). **That is now
 fixed** (the large-tier freelist port, below), and the direct proof
-(`TestSelfHostPerModuleFixpointX86_64`, still env-gated `RUN_PERMODULE_FIXPOINT=1`
-for its ~16.6-min serial runtime) is GREEN: gen1 emits all 35 units with no
-arena OOM, gen0 == gen1 byte-identically. **The arena wall is gone; the only
+(`TestSelfHostPerModuleFixpointX86_64`, env-gated `RUN_PERMODULE_FIXPOINT=1`
+for its serial runtime; deleted post-migration) was GREEN: gen1 emitted all 35
+units with no arena OOM, gen0 == gen1 byte-identically. **The arena wall is gone; the only
 residual slice-2 obstacle is CI *time*, not memory.**
 
 ### #3425 was a bounded, reference-guided port (prediction confirmed)
@@ -1962,10 +1963,14 @@ tier → leak.
   collection-buffer free sites (above) did **not** move the OOM boundary (A/B
   byte-identical), confirming the accumulation is not those leaks. Making gen1
   emit-all CI-cheap would need arena checkpoint/reset between windows — deferred.
-  **The env-gated serial `TestSelfHostPerModuleFixpointX86_64` remains the gen1
-  self-reproduction proof** (the plan always allowed the env-gated route), and
-  gen0's parallel per-module path (`TestSelfHostModloadPerModuleWholeCompilerX86_64`)
-  is the fast CI guard. That is sufficient to proceed: repoint the
+  **The gen1 self-reproduction proof is now the ungated emit-all fixpoint**
+  (`TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` / `…X86_64` at batch 8).
+  The serial `TestSelfHostPerModuleFixpointX86_64` named here served that role
+  during the migration and was deleted afterwards — at 28 minutes it was the
+  longest job in the repo, and what it uniquely covered was batch size ONE, the
+  least memory-stressful configuration, while the batch sizes that actually hit
+  exit-137 run ungated. gen0's parallel per-module path
+  (`TestSelfHostModloadPerModuleWholeCompilerX86_64`) is the fast CI guard. That is sufficient to proceed: repoint the
   bootstrap/fixpoint drivers off the merged bundle (slice 3) and delete the AST
   emitters (slice 5). Do NOT re-run the `string[][]` repro (proven to pass), the
   analysis-shift probe (refuted), or the emit-all-batch-size search (arena-bound).

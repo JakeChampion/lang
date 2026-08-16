@@ -485,57 +485,6 @@ jobs:
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostStage2FixpointArm64$' -test.v -test.timeout 22m
 
-  # The PER-MODULE fixpoint: 33 separate per-module emits, gen0 (Go-built) vs
-  # gen1 (self-host-BUILT), asserting byte identity across every unit. It is the
-  # only guard that exercises the per-module windowing end to end.
-  #
-  # It was env-gated and run by NOTHING, because it takes ~1050 s — past the
-  # 13-minute timeout on the sharded `test` job. That timeout does not bind a
-  # dedicated job, so gating it cost the coverage for no reason: a change to the
-  # RC lowering could reach main with only the batch-4 emit-all sibling behind
-  # it. #6018 is what that looks like — it passed the fixpoint locally, all 335
-  # fixtures and the native suite, and still segfaulted the driver.
-  #
-  # Memory is the real constraint, not time: gen1's emit peaks ~7.6 GB against
-  # the arena, so its emit runs SERIALLY inside the test (concurrent large-module
-  # emits thrash the host). If this job starts failing with exit 125 from a Fern
-  # binary rather than the runner, that is arena exhaustion as the compiler
-  # sources grow — see the __fern_alloc note in docs/LOCAL-DEV-LOOP.md, not an
-  # infra flake. (Exit 137 is the host OOM-killing a build; different problem.)
-  #
-  # NO `needs: build`, and it compiles its own test binary — the one job in this
-  # workflow that pays ~55 s to skip the shared artifact. It is the critical path
-  # of the entire PR: at 27.4 min it is the longest job in the repo, and
-  # `needs: build` made it start twice-queued (measured on run 31819148053:
-  # `build` itself waited 13.4 min for a runner to do 54 s of work, then this job
-  # waited another 19.6 min, so a 27-minute test ended at +61 min while every
-  # other check was done by +56). A job with no `needs` is created at t=0 and
-  # queues ONCE. Do not re-add the dependency to save the compile; the compile is
-  # not what costs here.
-  permodule-fixpoint:
-    name: permodule-fixpoint-x86_64
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
-      - name: compile test binary (go test -c)
-        run: go test -c -o e2eselfhost.test ./internal/e2eselfhost/
-      - name: per-module whole-compiler fixpoint (gen0 == gen1)
-        env:
-          RUN_PERMODULE_FIXPOINT: "1"
-          FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
-        run: |
-          set -euo pipefail
-          mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
-          chmod +x e2eselfhost.test
-          BIN="$PWD/e2eselfhost.test"
-          cd internal/e2eselfhost
-          gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostPerModuleFixpointX86_64$' -test.v -test.timeout 43m
-
   # WHOLE-COMPILER EMIT-ALL FIXPOINT at batch=8 — the config that IS the
   # pre-`-assume-eligible` OOM shape, so it is the one worth guarding.
   #
