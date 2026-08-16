@@ -1238,14 +1238,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = map_eqfn_x5(s, o.str);
             s = s.write("    mov x2, #" + util.i32_to_string(o.i32_imm) + "\n    bl __fern_map_get\n");
             s = s.write("    ldr x3, [sp], #16\n");      // restore default
-            // Free the Option box __fern_map_get allocated (raw 16-byte
-            // {tag@0, payload@8}) — it is consumed right here, so it goes
-            // back to the size-class-2 freelist like the x86-64 sibling
-            // (#4357's ~16 B/call get_or leak). Extract tag + payload FIRST,
-            // then thread the box onto freelist[2] (slot at base + 16).
+            // Release the Option box __fern_map_get allocated — it is consumed
+            // right here (#4357's ~16 B/call get_or leak). Extract tag +
+            // payload FIRST, then release through __fern_arr_dec: the box
+            // carries an rc header, and a headered block threaded straight onto
+            // the freelist corrupts it. x3/x4/x6 are caller-saved and live
+            // across the call; x6 is paired with itself to keep sp 16-byte
+            // aligned, so its partner pops into a scratch register.
             s = s.write("    ldr x4, [x0]\n    ldr x6, [x0, #8]\n");   // tag, payload
-            s = s.write("    adrp x7, __fern_freelist\n    add x7, x7, :lo12:__fern_freelist\n");
-            s = s.write("    ldr x8, [x7, #16]\n    str x8, [x0]\n    str x0, [x7, #16]\n");
+            s = s.write("    stp x3, x4, [sp, #-16]!\n    stp x6, x6, [sp, #-16]!\n");
+            s = s.write("    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n");
+            s = s.write("    ldp x6, x9, [sp], #16\n    ldp x3, x4, [sp], #16\n");
             s = s.write("    cbnz x4, " + golbl + "_d\n");   // tag != 0 -> default
             s = s.write("    mov x0, x6\n    b " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    mov x0, x3\n" + golbl + "_e:\n    str x0, [sp, #-16]!\n");
@@ -5338,17 +5341,18 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ldr x9, [x19, #8]\n");      // values arr
         s = s.write("    add x10, x22, #1\n");
         s = s.write("    ldr x20, [x9, x10, lsl #3]\n");  // values[i+1]
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");          // Some box
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    bl __fern_arr_box\n");        // Some box (rc-headered)
         s = s.write("    mov x9, #0\n");
         s = s.write("    str x9, [x0]\n");             // tag = Some
         s = s.write("    str x20, [x0, #8]\n");        // payload
         s = s.write("    b .Lmg_ret\n");
         s = s.write(".Lmg_none:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");          // None box
+        s = s.write("    mov x0, #2\n");
+        s = s.write("    bl __fern_arr_box\n");        // None box (rc-headered)
         s = s.write("    mov x9, #1\n");
         s = s.write("    str x9, [x0]\n");             // tag = None
+        s = s.write("    str xzr, [x0, #8]\n");
         s = s.write(".Lmg_ret:\n");
         s = s.write("    ldp x25, x26, [sp], #16\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");

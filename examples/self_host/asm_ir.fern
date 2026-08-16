@@ -3169,15 +3169,16 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rbx, %rdx\n");
     s = s.write("    incq %rdx\n");
     s = s.write("    movq (%rax,%rdx,8), %r13\n");   // values[i+1]
-    s = s.write("    movq $16, %rdi\n");
-    s = s.write("    call __fern_alloc\n");          // Some box
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    call __fern_arr_box\n");        // Some box (rc-headered)
     s = s.write("    movq $0, (%rax)\n");
     s = s.write("    movq %r13, 8(%rax)\n");
     s = s.write("    jmp .Lmg_ret\n");
     s = s.write(".Lmg_none:\n");
-    s = s.write("    movq $16, %rdi\n");
-    s = s.write("    call __fern_alloc\n");          // None box
+    s = s.write("    movq $2, %rdi\n");
+    s = s.write("    call __fern_arr_box\n");        // None box (rc-headered)
     s = s.write("    movq $1, (%rax)\n");
+    s = s.write("    movq $0, 8(%rax)\n");
     s = s.write(".Lmg_ret:\n");
     s = s.write("    addq $8, %rsp\n");             // discard saved eq fn ptr
     s = s.write("    popq %r15\n");
@@ -5323,26 +5324,22 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_delete\n    pushq %rax\n");
         } else if (o.kind_tag == 129) {  // map_get_or
             // [map, k, default] -> __fern_map_get, then Some payload or default.
-            // The Option box __fern_map_get allocates (a raw 16-byte
-            // __fern_alloc(16) {tag@0, payload@8}) is consumed RIGHT HERE —
-            // tag + payload extracted, nothing else ever sees it — so it goes
-            // straight back to the size-class-2 freelist (the same push
-            // __fern_map_free's tail does for the 16-byte mapbox). Without
-            // this every get_or leaked one box (#4357's dominant residual map
-            // leak on this path: ~16 B/call, unbounded in a loop). The
-            // payload was retained separately (__map_retain_val inside the
-            // helper's Fern twin; the asm helper hands out the raw value), so
-            // freeing the shell never touches the value.
+            // The Option box __fern_map_get allocates is consumed RIGHT HERE —
+            // tag + payload extracted, nothing else ever sees it — so it is
+            // released here. Without this every get_or leaked one box (#4357's
+            // dominant residual map leak on this path: ~16 B/call, unbounded in
+            // a loop). The payload was retained separately (__map_retain_val
+            // inside the helper's Fern twin; the asm helper hands out the raw
+            // value), so releasing the shell never touches the value.
             var golbl: string = lp + "go" + util.i32_to_string(i);
             s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n");
             if (o.str != "") { s = s.write("    leaq __fn_" + asmcore.sanitize_label(o.str) + "(%rip), %r8\n"); } else { s = s.write("    xorq %r8, %r8\n"); }
             s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rdx\n    call __fern_map_get\n    popq %rdx\n");
             s = s.write("    movq (%rax), %rcx\n    movq 8(%rax), %rsi\n");
-            // The one free site emitted into ORDINARY generated code rather
-            // than a runtime helper — hence the .globl on __fern_hev_f, which
-            // is defined in the entry unit while this op can be lowered in any.
-            s = hev_free(s, "%rax", "$2");
-            s = s.write("    leaq __fern_freelist(%rip), %r8\n    movq 16(%r8), %r9\n    movq %r9, (%rax)\n    movq %rax, 16(%r8)\n");
+            // The box carries an rc header, so the release has to go through
+            // __fern_arr_dec rather than a raw freelist push: a headered block
+            // threaded straight onto the freelist corrupts it.
+            s = s.write("    pushq %rdx\n    pushq %rcx\n    pushq %rsi\n    pushq %rax\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n    popq %rsi\n    popq %rcx\n    popq %rdx\n");
             s = s.write("    testq %rcx, %rcx\n    jnz " + golbl + "_d\n");
             s = s.write("    movq %rsi, %rax\n    jmp " + golbl + "_e\n");
             s = s.write(golbl + "_d:\n    movq %rdx, %rax\n" + golbl + "_e:\n    pushq %rax\n");
