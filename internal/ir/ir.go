@@ -9780,10 +9780,7 @@ func (b *builder) expr(e ast.Expr) error {
 		faContainerSlot := int32(-1)
 		faRetainField := ft != nil && rcTrackedSlotType(ft)
 		if ft != nil && (!ast.IsPointerType(ft) || faRetainField) {
-			ct, ok := b.freshOwnedRcTempType(n.Target)
-			if !ok {
-				ct, ok = b.ownedCallResultType(n.Target)
-			}
+			ct, ok := b.freshOwnedFieldContainerType(n.Target)
 			if ok && (!faRetainField || b.freshOwnedFieldContainer(n.Target)) {
 				if _, isStruct := ct.(ast.StructType); isStruct {
 					faContainerSlot = b.allocSlot()
@@ -13435,6 +13432,13 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	if !ok {
 		tt, ok = b.appendCopyTempType(a)
 	}
+	if !ok && b.isOwnedContainerRead(a) {
+		// `sink(mk_box().items)`. The read retained the value and deep-dropped
+		// the container, so what arrives here owns its single reference and is
+		// dead once the callee has borrowed it — the same dead-after-consume
+		// temp the `.len()` receiver site reclaims by this route (#6401).
+		tt, ok = b.exprType(a), true
+	}
 	if !ok {
 		return 0, nil, false, nil
 	}
@@ -15158,19 +15162,36 @@ func (b *builder) isOwnedContainerRead(e ast.Expr) bool {
 	return false
 }
 
-// freshOwnedFieldContainer reports whether `target` is a struct or tuple TEMP
-// this expression solely owns — a literal, or a call whose callee the borrow
-// analysis proved never returns one of its own parameters. It is the single
-// predicate behind the fresh-container field read (#6401): the FieldAccess
-// lowering consults it to decide whether to retain the loaded field and
-// deep-drop the container, and rhsTainted consults it to decide whether the
-// destination therefore owns what it received. They must agree, so they ask
-// here rather than each re-deriving it.
-func (b *builder) freshOwnedFieldContainer(target ast.Expr) bool {
+// freshOwnedFieldContainerType reports the type of a container `target` this
+// expression solely owns — a literal, a call whose callee the borrow analysis
+// proved never returns one of its own parameters, or a read out of one of
+// those. The last arm is what a CHAINED read needs: `mk_box().items[0].a` has
+// no local for the exit sweep to reclaim, so the reads themselves are the only
+// sites that can release what they project out of (#6401).
+//
+// The field-access lowering consults it for the container to stash;
+// freshOwnedFieldContainer narrows it to the struct / tuple shapes that
+// lowering can drop.
+func (b *builder) freshOwnedFieldContainerType(target ast.Expr) (ast.Type, bool) {
 	ct, ok := b.freshOwnedRcTempType(target)
 	if !ok {
 		ct, ok = b.ownedCallResultType(target)
 	}
+	if !ok && b.isOwnedContainerRead(target) {
+		ct, ok = b.exprType(target), true
+	}
+	return ct, ok
+}
+
+// freshOwnedFieldContainer reports whether `target` is a struct or tuple TEMP
+// this expression solely owns. It is the single predicate behind the
+// fresh-container field read (#6401): the FieldAccess lowering consults it to
+// decide whether to retain the loaded field and deep-drop the container, and
+// rhsTainted consults it to decide whether the destination therefore owns what
+// it received. They must agree, so they ask here rather than each re-deriving
+// it.
+func (b *builder) freshOwnedFieldContainer(target ast.Expr) bool {
+	ct, ok := b.freshOwnedFieldContainerType(target)
 	if !ok {
 		return false
 	}
@@ -15192,6 +15213,14 @@ func (b *builder) freshOwnedIndexContainerType(array ast.Expr) (ast.Type, bool) 
 	ct, ok := b.freshOwnedRcTempType(array)
 	if !ok {
 		ct, ok = b.ownedCallResultType(array)
+	}
+	if !ok && b.isOwnedContainerRead(array) {
+		// `mk_box().items[0]` — the container is itself a read out of a fresh
+		// container, so the field load already handed this expression the only
+		// reference to it (#6401). Chaining is what the transient form needs:
+		// there is no local for the exit sweep to reclaim, so the index is the
+		// last site that can.
+		ct, ok = b.exprType(array), true
 	}
 	if !ok {
 		return nil, false

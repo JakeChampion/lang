@@ -5013,6 +5013,54 @@ function main(): i32 {
     return (t - 175) + __rc_underflow_count();
 }`,
 	},
+	{
+		// A read out of a fresh container, consumed as a call argument or
+		// chained into another read, is now reclaimed (#6401). The reclaim
+		// retains what it hands on and deep-drops what it came out of, so an
+		// over-claim here frees a live container rather than leaking one.
+		//
+		// `passthru` returns its own parameter, so `live` is what the reads
+		// in the control loops project out of — nothing there may be freed,
+		// and `live` is read again afterwards to say so.
+		// 8 + 8 + 8 + 8 + 20 + 8 + 36 + 23.
+		name: "fresh_container_read_chained",
+		src: `
+import "core/int";
+import "std/string";
+struct P { a: i32, b: i32 }
+struct Box { items: P[], tag: i32 }
+struct SBox { names: string[], tag: i32 }
+struct Inner { vals: i32[] }
+struct Outer { inner: Inner, tag: i32 }
+function mk_box(k: i32): Box {
+    return Box { items: [P { a: k, b: k + 1 }, P { a: k + 2, b: k + 3 }], tag: k };
+}
+function mk_sbox(k: i32): SBox { return SBox { names: ["nn", "mm"], tag: k }; }
+function mk_outer(k: i32): Outer {
+    return Outer { inner: Inner { vals: [k, k + 1, k + 2] }, tag: k };
+}
+function passthru(b: Box): Box { return b; }
+function sink(ps: P[]): i32 { return ps.len(); }
+function sinks(ns: string[]): i32 { return ns.len(); }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t + sink(mk_box(1).items) + sinks(mk_sbox(1).names);
+        t = t + mk_box(2).items[0].a + mk_sbox(3).names[1].len();
+        t = t + mk_outer(4).inner.vals[1];
+        i = i + 1;
+    }
+    var live: Box = mk_box(9);
+    i = 0;
+    while (i < 4) {
+        t = t + sink(passthru(live).items) + passthru(live).items[0].a;
+        i = i + 1;
+    }
+    t = t + live.items[1].b + live.items.len() + live.tag;
+    return (t - 119) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
