@@ -147,3 +147,92 @@ function main(): i32 { return 0; }`)
 		t.Errorf("wide-scalar (i64) field self-overwrite should reuse in place, got %d", got)
 	}
 }
+
+// A `Drop` implementor must never reuse. Reuse hands the dying value's box
+// shell to the next same-shaped constructor instead of freeing it, so the
+// drop glue — and with it the user finalizer — never runs on the value
+// being displaced: a destructor silently skipped on a value that really
+// did die, which is worse than leaking it. `reuseClassOf` declines the
+// type outright (#2705).
+//
+// The trait is declared locally rather than imported from `core/mem`
+// because the gate matches on the trait's SIMPLE name after demangling,
+// so a local `trait Drop` exercises the same path without needing module
+// resolution in this test.
+func TestStructReuseSkipsDropImplementors(t *testing.T) {
+	const body = `function churn(n: i32): i32 {
+    var w: W = W { v: [0, 0] };
+    var i: i32 = 0;
+    while (i < n) {
+        w = W { v: [i, i] };
+        i = i + 1;
+    }
+    return 0;
+}
+function main(): i32 { return churn(3); }`
+
+	// Baseline: without the impl, this exact shape reuses.
+	base := lowerForTest(t, `struct W { v: i32[] }
+`+body)
+	bf := funcByName(base, "churn")
+	if bf == nil {
+		t.Fatal("no func churn in baseline")
+	}
+	if got := allocReuseCount(bf); got == 0 {
+		t.Fatalf("baseline should reuse (the test is meaningless otherwise), got %d", got)
+	}
+
+	withDrop := lowerForTest(t, `trait Drop { function drop(self: Self): void; }
+struct W { v: i32[] }
+impl Drop for W { function drop(self: Self): void { } }
+`+body)
+	df := funcByName(withDrop, "churn")
+	if df == nil {
+		t.Fatal("no func churn with the Drop impl")
+	}
+	if got := allocReuseCount(df); got != 0 {
+		t.Errorf("a Drop implementor must not reuse its box, got %d __alloc_reuse", got)
+	}
+}
+
+// The finalizer call lands in the generated glue, so every container that
+// releases a W through `__drop_struct_W` inherits it.
+func TestStructDropGlueCallsUserFinalizer(t *testing.T) {
+	ip := lowerForTest(t, `trait Drop { function drop(self: Self): void; }
+struct W { v: i32[] }
+impl Drop for W { function drop(self: Self): void { } }
+function main(): i32 {
+    var w: W = W { v: [1] };
+    return w.v.len();
+}`)
+	glue := funcByName(ip, "__drop_struct_W")
+	if glue == nil {
+		t.Fatal("no __drop_struct_W generated")
+	}
+	var calls int
+	for _, op := range glue.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == "__method_W_drop" {
+			calls++
+		}
+	}
+	if calls != 1 {
+		t.Errorf("__drop_struct_W should call __method_W_drop exactly once, got %d", calls)
+	}
+	// It must precede the box free — the body reads `self`.
+	freeAt, dropAt := -1, -1
+	for i, op := range glue.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == "__method_W_drop" && dropAt < 0 {
+			dropAt = i
+		}
+		if op.Kind == ir.OpCallDirect && op.Str == "__fern_box_free" && freeAt < 0 {
+			freeAt = i
+		}
+	}
+	if dropAt < 0 || freeAt < 0 || dropAt > freeAt {
+		t.Errorf("finalizer must run before __fern_box_free (drop at %d, free at %d)", dropAt, freeAt)
+	}
+}
+
+// `ast` is used by the sibling tests in this file; keep the import live if
+// this file is ever trimmed to only the tests above.
+var _ = ast.NumberType{}

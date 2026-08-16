@@ -1351,6 +1351,31 @@ allowed and resolve through modload's stdlib-cycle gate.
 End-to-end coverage on arm64 / x86-64 / wasm32 lands as
 the `Test*NoPreludeStdlibImports` suites in `internal/e2e`.
 
+### `core/mem`
+
+Value-lifetime hooks. One trait:
+
+- `Drop` — `function drop(self: Self): void`, a finalizer the RC runtime
+  runs when the value's last reference goes away. The value-scoped
+  counterpart to `defer` (which is function-scoped: it fires when the
+  enclosing call returns, no matter who still holds the value).
+
+The call is emitted into the type's generated drop glue
+(`__drop_struct_<C>` / `__drop_enum_<C>`), at the top of the rc==1 branch
+— before the field releases and the box free, so the body still reads
+every field. Three consequences worth knowing:
+
+- **A `Drop` type is excluded from Perceus reuse.** Reuse hands a dying
+  value's box straight to the next same-shaped constructor instead of
+  freeing it, which would skip the finalizer; the optimisation is declined
+  for these types.
+- **`drop` fires only on the compiled backends.** The interpreter has no
+  refcounts, so no value reaches rc-zero there and the finalizer never
+  runs. Its tests are compiled-only for that reason.
+- **It is a hook, not a guarantee.** A value the reclamation passes cannot
+  prove dead never reaches rc-zero, so its `drop` never runs. Do not hang
+  correctness on it firing.
+
 ### `core/map`
 
 Generic `Map[K, V]` runtime. Open-addressing core implementing

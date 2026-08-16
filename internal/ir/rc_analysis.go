@@ -2608,6 +2608,20 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		if !ok2 {
 			return "", "", 0, false
 		}
+		// A type with a `core/mem.Drop` impl never participates in reuse.
+		// Reuse hands the dying value's box shell straight to the next
+		// constructor rather than freeing it, so the drop glue — and with it
+		// the user finalizer — never runs on the value being displaced: a
+		// destructor silently skipped on a value that really did die, which
+		// is worse than leaking it. Running the finalizer first and then
+		// recycling the shell would also be sound; declining is the
+		// conservative form, and it costs the optimisation only on the types
+		// that declare one.
+		if tn, isNominal := ast.ReceiverTypeName(t); isNominal {
+			if _, hasDrop := userDropFnName(b.info, tn); hasDrop {
+				return "", "", 0, false
+			}
+		}
 		switch tt := t.(type) {
 		case ast.StructType:
 			sd, ok3 := b.info.Structs[tt.Name]
