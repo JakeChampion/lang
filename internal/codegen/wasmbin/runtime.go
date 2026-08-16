@@ -25,6 +25,19 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/simd"
 )
 
+// Bounds __fern_alloc's i32 bump arithmetic must respect. Both are compared
+// UNSIGNED; pageRoundCeil is spelled as the negative i32 whose two's
+// complement is the address meant.
+const (
+	// maxAllocRequest (0x7FFFFFFF) is the largest request the size
+	// rounding and the freelist's 3-significant-bit capacity round-up
+	// can both apply without overflowing i32.
+	maxAllocRequest = 0x7FFFFFFF
+	// pageRoundCeil (0xFFFF0000) is the highest end-of-block address
+	// whose page round-up (end + 65535) still fits in i32.
+	pageRoundCeil = -65536
+)
+
 // emitFreelistBin appends the size→(capacity, class) binning both
 // __fern_alloc and __fern_free must agree on. Emitting it from ONE
 // place is the point: alloc has to BUMP at the same capacity free
@@ -2213,8 +2226,10 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 //
 // Logical:
 //
+//	if size >u maxAllocRequest { unreachable }
 //	ptr  = mem[40]
 //	end  = ptr + size
+//	if end <u ptr || end >u pageRoundCeil { unreachable }
 //	need = ((end + 65535) >> 16) - memory.size
 //	if need > 0 && memory.grow(need) == -1 { unreachable }
 //	mem[40] = end
@@ -2234,6 +2249,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 //	3: $need
 func buildAllocBody(_ map[string]uint32) []byte {
 	var body []byte
+	// Reject a request too large for the downstream i32 arithmetic to
+	// round without wrapping. Nothing this big is satisfiable inside a
+	// 4 GiB linear memory anyway.
+	body = inst.InstLocalGet(body, 0) // $size
+	body = inst.InstI32Const(body, maxAllocRequest)
+	body = numeric.InstI32GtU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
 	// ptr = mem[40]
 	body = inst.InstI32Const(body, allocCursorAddr)
 	body = memInstI32Load(body)
@@ -2308,6 +2332,19 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // $size
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalSet(body, 2) // $end
+	// The bump is unsigned i32, so an end past the 4 GiB ceiling wraps to a
+	// low address: need would come out negative, no growth would be
+	// attempted, and mem[40] would be left pointing inside the data section.
+	body = inst.InstLocalGet(body, 2) // $end
+	body = inst.InstLocalGet(body, 1) // $ptr
+	body = numeric.InstI32LtU(body)
+	body = inst.InstLocalGet(body, 2) // $end
+	body = inst.InstI32Const(body, pageRoundCeil)
+	body = numeric.InstI32GtU(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstUnreachable(body)
+	body = inst.InstEnd(body)
 	// need = ((end + 65535) >> 16) - memory.size
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstI32Const(body, 65535)

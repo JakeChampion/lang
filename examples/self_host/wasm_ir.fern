@@ -7194,6 +7194,10 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     // than fl_cells*8 bytes are bump-only (never recycled).
     o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
     o = o + "    (local $p i32) (local $cls i32) (local $head i32)\n";
+    // A request past 2^31 wraps in the 8-round below, yielding a block far
+    // smaller than the caller asked for. Nothing that big fits a 4 GiB
+    // linear memory anyway.
+    o = o + "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
     o = o + "    (local.set $cls (i32.shr_u (local.get $n) (i32.const 3)))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
@@ -7203,6 +7207,10 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "        (return (local.get $head))))))\n";
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
+    // The bump is i32, so a heap that lands below the pointer it started
+    // from has wrapped past 4 GiB: the grow below would compute a tiny page
+    // count and $p would be handed out as a live block.
+    o = o + "    (if (i32.lt_u (global.get $heap) (local.get $p)) (then (unreachable)))\n";
     // Grow linear memory when the bump pointer passes the current capacity
     // (memory.size pages * 64KiB). Without this the bump allocator traps
     // once a program allocates past the initial pages. A refused grow

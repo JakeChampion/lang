@@ -71,6 +71,40 @@ func TestAllocGrowResultIsChecked(t *testing.T) {
 	}
 }
 
+// TestAllocBumpWraparoundIsGuarded — the bump arithmetic is i32, so a
+// request that carries `end` past the 4 GiB ceiling wraps: `need` comes out
+// negative, no growth is attempted, and the cursor is stored wrapped, which
+// hands the caller a pointer into the static data below the heap.
+func TestAllocBumpWraparoundIsGuarded(t *testing.T) {
+	body := buildAllocBody(nil)
+
+	var wrap []byte
+	wrap = inst.InstLocalGet(wrap, 2) // $end
+	wrap = inst.InstLocalGet(wrap, 1) // $ptr
+	wrap = numeric.InstI32LtU(wrap)
+	wrap = inst.InstLocalGet(wrap, 2) // $end
+	wrap = inst.InstI32Const(wrap, pageRoundCeil)
+	wrap = numeric.InstI32GtU(wrap)
+	wrap = numeric.InstI32Or(wrap)
+	wrap = inst.InstIfStart(wrap, inst.BlocktypeEmpty)
+	wrap = inst.InstUnreachable(wrap)
+	wrap = inst.InstEnd(wrap)
+	if !bytes.Contains(body, wrap) {
+		t.Errorf("__fern_alloc does not guard the bump against i32 wraparound")
+	}
+
+	var ceil []byte
+	ceil = inst.InstLocalGet(ceil, 0) // $size
+	ceil = inst.InstI32Const(ceil, maxAllocRequest)
+	ceil = numeric.InstI32GtU(ceil)
+	ceil = inst.InstIfStart(ceil, inst.BlocktypeEmpty)
+	ceil = inst.InstUnreachable(ceil)
+	ceil = inst.InstEnd(ceil)
+	if !bytes.Contains(body, ceil) {
+		t.Errorf("__fern_alloc does not reject a request too large to round")
+	}
+}
+
 // allocAfterCursor builds `main` as: poke `cursor` into the bump cursor
 // slot, allocate `size` bytes, return the pointer.
 func allocAfterCursor(cursor, size int32) *ir.Program {
@@ -85,6 +119,30 @@ func allocAfterCursor(cursor, size int32) *ir.Program {
 			{Kind: ir.OpAlloc},
 		},
 	}}}
+}
+
+// TestAllocTrapsOnCursorWraparound drives the wraparound branches for real:
+// a cursor 16 bytes below 2^32 makes `ptr + size` wrap to 0, one just under
+// the page-round ceiling makes `end + 65535` wrap, and a request bigger than
+// maxAllocRequest wraps in the size rounding itself. All three used to
+// return a pointer into low memory and store a wrapped cursor.
+func TestAllocTrapsOnCursorWraparound(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		cursor, size int32
+	}{
+		{"add wraps", -16, 16},                // 0xFFFFFFF0 + 16 == 0
+		{"page round wraps", -4096, 16},       // 0xFFFFF000 > pageRoundCeil
+		{"request too large to round", 0, -1}, // 0xFFFFFFFF > maxAllocRequest
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin, err := Emit(allocAfterCursor(c.cursor, c.size))
+			if err != nil {
+				t.Fatalf("Emit: %v", err)
+			}
+			trapUnderWasmtime(t, bin, "main")
+		})
+	}
 }
 
 // TestAllocTrapsInsideAllocOnHeapExhaustion caps linear memory below what

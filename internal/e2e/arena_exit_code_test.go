@@ -141,4 +141,9 @@ func TestAllocGrowFailureTrapsSelfHostWasm(t *testing.T) {
 	if !strings.Contains(text, "(if (i32.eq (memory.grow") {
 		t.Errorf("wasm_ir.fern's $__fern_alloc does not test memory.grow's result")
 	}
+	if !strings.Contains(text,
+		"(if (i32.lt_u (global.get $heap) (local.get $p)) (then (unreachable)))") {
+		t.Errorf("wasm_ir.fern's $__fern_alloc does not guard the bump against " +
+			"i32 wraparound")
+	}
 }
