@@ -1702,7 +1702,7 @@ var x86AsmReserved = func() map[string]bool {
 	return m
 }()
 
-// asmFnName returns the asm symbol for a Fern function `name`, escaping
+// AsmFnName returns the asm symbol for a Fern function `name`, escaping
 // names the assembler reserves (the reserved set is case-insensitive to the
 // assembler, so the check folds case). The `$` suffix is collision-proof:
 // Fern identifiers cannot contain `$`, so no real function name can equal an
@@ -1713,7 +1713,7 @@ var x86AsmReserved = func() map[string]bool {
 // used at EVERY site that emits a function name as an asm token
 // (definition, call, and `.quad` pointer), or the definition and its
 // references disagree and the link fails with an undefined symbol.
-func asmFnName(name string) string {
+func AsmFnName(name string) string {
 	if x86AsmReserved[strings.ToLower(name)] {
 		return name + "$fn"
 	}
@@ -1754,7 +1754,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		localsSize += 8
 	}
 
-	sym := asmFnName(fn.Name)
+	sym := AsmFnName(fn.Name)
 	g.line("")
 	g.line(fmt.Sprintf(".globl %s", sym))
 	g.line(fmt.Sprintf(".type %s, @function", sym))
@@ -2591,7 +2591,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
+		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.push()
 
@@ -2736,7 +2736,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
 			g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
+			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
 			g.push()
 			return nil
 		}
@@ -2781,7 +2781,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// recorded the "__fern_rc_is_unique" use, so the helper is
 			// emitted regardless of inline-vs-call.
 			g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
+			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
 			g.push()
 			return nil
 		}
@@ -2999,7 +2999,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", asmFnName(target)))
+		g.emit(fmt.Sprintf("call %s", AsmFnName(target)))
 		g.emitCallArgsCleanup(argc)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
@@ -3029,7 +3029,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// call" contract is now register-backed.
 		argc := int(op.I32)
 		g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", asmFnName(op.Str)))
+		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
 		g.emitCallArgsCleanup(argc)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
@@ -4304,7 +4304,7 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
-				g.line(fmt.Sprintf("\t.quad %s", asmFnName(m.Func)))
+				g.line(fmt.Sprintf("\t.quad %s", AsmFnName(m.Func)))
 			}
 			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
 			// §4.4, slice 4b): the concrete type's drop fn as an absolute
@@ -4314,7 +4314,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
 			if vt.Drop != "" {
-				g.line(fmt.Sprintf("\t.quad %s", asmFnName(vt.Drop)))
+				g.line(fmt.Sprintf("\t.quad %s", AsmFnName(vt.Drop)))
 			} else {
 				g.line("\t.quad 0")
 			}
@@ -4339,7 +4339,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
 			g.label(fmt.Sprintf("__closure_cell_%s", name))
-			g.line(fmt.Sprintf("\t.quad %s", asmFnName(name)))
+			g.line(fmt.Sprintf("\t.quad %s", AsmFnName(name)))
 			g.line("\t.quad 0")
 		}
 	}

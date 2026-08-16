@@ -2073,7 +2073,11 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 	soname := filepath.Base(outPath)
 	var so []byte
 	if target == "x86-64-linux" {
-		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
+		asmNames := make([]string, len(exportNames))
+		for i, n := range exportNames {
+			asmNames[i] = x86_64codegen.AsmFnName(n)
+		}
+		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2081,8 +2085,8 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		for i, r := range relocs {
 			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 		}
-		so = nativeelf.SharedLibraryX86(text, rodata, elfRelocs, sharedExports(exportNames, ev), soname)
-	} else { // arm64 / arm64-android
+		so = nativeelf.SharedLibraryX86(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
+	} else { // arm64 / arm64-android: the backend reserves no names, so the asm symbol is the Fern name
 		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
@@ -2091,7 +2095,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		for i, r := range relocs {
 			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 		}
-		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, ev), soname)
+		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, exportNames, ev), soname)
 	}
 	if err := os.WriteFile(outPath, so, 0o755); err != nil {
 		return err
@@ -2099,12 +2103,14 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 	return os.Chmod(outPath, 0o755)
 }
 
-// sharedExports pairs each export name with the vaddr the assembler
-// resolved for it, preserving the requested order.
-func sharedExports(names []string, vaddr map[string]uint64) []nativeelf.Export {
+// sharedExports pairs each export's Fern name with the vaddr the assembler
+// resolved for the asm symbol at asmNames[i], preserving the requested order.
+// The two differ wherever the backend escaped a name its assembler reserves;
+// .dynsym carries the Fern name, which is what a loader looks up.
+func sharedExports(names, asmNames []string, vaddr map[string]uint64) []nativeelf.Export {
 	out := make([]nativeelf.Export, len(names))
 	for i, n := range names {
-		out[i] = nativeelf.Export{Name: n, Value: vaddr[n]}
+		out[i] = nativeelf.Export{Name: n, Value: vaddr[asmNames[i]]}
 	}
 	return out
 }

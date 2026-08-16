@@ -2,7 +2,7 @@ package x86_64
 
 import "testing"
 
-// asmFnName escapes function names GNU `as` reserves in Intel syntax so the
+// AsmFnName escapes function names GNU `as` reserves in Intel syntax so the
 // emitted `.globl` / `call` / `.quad` tokens are not mis-parsed. Reserved
 // names (case-insensitively) get the collision-proof `$fn` suffix; everything
 // else — the vast majority, including every `__fern_*` runtime helper — passes
@@ -30,8 +30,8 @@ func TestAsmFnNameEscapesReservedNames(t *testing.T) {
 		"CH", "AX", "CS", "Qword", "MOD",
 	}
 	for _, n := range escaped {
-		if got := asmFnName(n); got != n+"$fn" {
-			t.Errorf("asmFnName(%q) = %q, want %q", n, got, n+"$fn")
+		if got := AsmFnName(n); got != n+"$fn" {
+			t.Errorf("AsmFnName(%q) = %q, want %q", n, got, n+"$fn")
 		}
 	}
 	unchanged := []string{"main", "chr", "len", "foo", "add", "sub", "mov",
@@ -43,8 +43,8 @@ func TestAsmFnNameEscapesReservedNames(t *testing.T) {
 		"cr16", "dr16", "rflags", "eflags",
 	}
 	for _, n := range unchanged {
-		if got := asmFnName(n); got != n {
-			t.Errorf("asmFnName(%q) = %q, want it unchanged", n, got)
+		if got := AsmFnName(n); got != n {
+			t.Errorf("AsmFnName(%q) = %q, want it unchanged", n, got)
 		}
 	}
 }
