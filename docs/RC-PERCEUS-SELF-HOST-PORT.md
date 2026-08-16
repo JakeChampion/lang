@@ -7455,3 +7455,127 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   reuse / drop subset of `internal/e2eselfhost`, both self-host fixture legs
   (wasm + x86-64), and the per-module whole-compiler fixpoint.
   Refs #6869 #6533 #4451.
+
+- 2026-08-16: **An expression-position `.append` mutated a receiver that is read
+  again (#6891) — a WRONG ANSWER, not a leak.** `op_arr_push` consumes its
+  receiver, and at rc==1 with spare capacity the grow helper appends into the
+  receiver's own buffer and returns that pointer. The self-host applied that to
+  every expression-position `.append` on a bare array ident, so
+  `sink(roomy.append(20)); sink(roomy);` read four elements where `-interp` and
+  native read three. rc is the wrong test — the receiver is uniquely referenced
+  and still read twice, and rc counts references, not uses.
+
+  Fixed the way native's `emitArrayPush` does since #4838: bracket the receiver
+  with a retain/release around the push (`append_copy_recv_slot`), which raises
+  its rc and sends the helper down its copy path. Two shapes stay in place
+  because no later intra-function read can observe the mutation — the
+  self-reassign `a = a.append(v)` and the accumulator tail
+  `return acc.append(v)` — and that exemption
+  (`append_inplace_names_of`) is load-bearing, not an optimisation: without it
+  the compiler's own AST walkers copy the whole accumulated array once per
+  visited node.
+
+  **The census the exemption counts against had two blind spots**, found by
+  auditing it rather than by a failing case: `collect_append_recvs_expr` had no
+  `ExprMapLit` and no `ExprFString` arm, so `Map { "k": f(xs.append(v)) }` was
+  invisible and a name whose every VISIBLE occurrence was exempt kept an
+  exemption it had not earned. The same census feeds the #4873 may-grow param
+  flags, where the same hole cost a caller-side bracket rather than a copy.
+
+  **The new bracket SUBSUMES the two statement-level ones #6008 added**, so
+  `append_alias_recv_slot` went with them. Checked rather than assumed: the
+  emitted asm for `var x = xs.append(v)` / `x = ys.append(v)` is byte-identical
+  before and after, and so is a whole-module compile of `checker.fern`.
+
+  **Wasm needed a second half nobody had looked at.** Its 8-byte-slot helpers
+  `$__fern_arr_push_i64` / `$__fern_arr_push_f64` carried NO rc gate — only the
+  4-byte `$__fern_arr_push` got one in #4873 — so a bracketed `i64[]` / `f64[]`
+  receiver was appended into anyway and those two cases stayed wrong on wasm
+  after the lowering was fixed. They now carry the same gate, the same same-cap
+  un-share copy and the same rc==1 cliff counters. The register backends route
+  every element width through the one gated `__fern_arr_push`.
+
+  Exit code of the minimal repro against the `-interp` oracle (41):
+
+  | | before | after |
+  |---|---|---|
+  | self-host x86-64 | 82 | 41 |
+  | self-host arm64 | 82 | 41 |
+  | self-host wasm | 82 | 41 |
+
+  VERIFIED: new `TestSelfHostAppendValueSemantics{X86_64,Arm64,WasmIR}`, every
+  expectation taken from `fern -interp` rather than written down — 15 of its 21
+  subtests FAIL on the parent commit (5 per leg) and the other 6 are the two
+  deliberate controls. `alloc_flat_consumed_append` STAYS listed in all three
+  `selfhost-*-known-divergences.txt`: it carried two divergences and only the
+  value half is closed, so the rows now say ALLOCATION only.
+  Refs #6891 #6501 #4838 #4827 #6008 #4451.
+
+- 2026-08-16: **The #6545 port is UNSOUND on the self-host and was reverted.**
+  Native's StructLit construction-move arm moved from `arrElemIsRcTracked` to
+  `rcTrackedSlotType` (adding `StringType`) in #6545, and mirroring that
+  predicate in the self-host makes a struct literal MOVE a bound string into
+  the field. It does close the leak — a fresh-concat field went 2152/4000 to
+  232/0 bytes per round against native's 64/0.
+
+  But the self-host's guard does not exclude a string that is still live for a
+  SECOND literal, and the failure direction is an over-release rather than a
+  leak:
+
+  ```fern
+  var s = "x";
+  var a = P { name: s };
+  var b = P { name: s };   // s moved by the first literal
+  ```
+
+  `__rc_underflow()` returns 1 where it must return 0
+  (`TestSelfHostRcPreciseDropX86IR/strdrop-two-alias-detector`). Both structs'
+  field drops release the same buffer.
+
+  The leak this closes is bounded; the over-release is a double free, so the
+  port stays out until the move is gated on the string being dead after the
+  literal — native's equivalent carries that guard through node identity, which
+  the self-host cannot reproduce positionally because desugared idents are
+  stamped 0/0.
+
+  The three `alloc_flat_struct_string_field` divergence rows therefore REMAIN
+  listed. Refs #6545 #6887 #4451.
+
+- 2026-08-16: **The other two string-reclaim rows are NOT what their issues say.
+  Measured, not reasoned.**
+
+  `alloc_flat_nested_string_array` (#6527) is filed as the self-host using the
+  pointer-element drop where a `string[][]` needs the string-aware walk. It does
+  not: `arrarr_free_helper_of` already picks `__fern_strarrarr_free` from the
+  slot's `arrarr_elem` kind, and a literal-rows `string[][]`
+  (`var outer = [["a"+k], ["b"+k]]`) measures **flat** on the self-host today.
+  What the conformance case actually hits is the CREDIT: `arrarr_lit_is_fresh`
+  requires every row to be an array LITERAL, and the case writes
+  `var outer: string[][] = [inner, [...]]` with `inner` a local. An ident row
+  earns no `ARRARR:` credit, so nothing is walked and the exit sweep shallow-decs
+  both slots. Closing it means admitting a row that is a bare owned local MOVED
+  into the literal, and then keeping that local out of the exit sweep — the sweep
+  runs in slot order, so `inner`'s dec currently precedes `outer`'s walk and a
+  naive credit is a use-after-free, not a leak. That is a construction-move
+  slice, not a drop-helper slice.
+
+  `alloc_flat_method_identity_return` (#6544) is filed as the receiver-method
+  spelling being excluded from owned-result reclaim. The self-host excludes
+  receiver methods from every fresh-return registry it has —
+  `str_fresh_ret_fns_of`, `tuple_fresh_ret_fns_of`, `map_fresh_ret_fns_of` and
+  `return_fresh_struct_ret_fns_of` each gate on
+  `funcs[k].receiver_type.len() == 0` — so
+  there is no gate to widen, there is a registry to extend to method keys
+  (`<Type>.<method>`) plus a reclaim site for a method result consumed by a
+  `.len()` or a field read. All three of the case's shapes leak, per 50/100
+  rounds, self-host vs native:
+
+  | shape | self-host | native |
+  |---|---|---|
+  | `base.drop(2).len()` | 2896 / 5648 | 64 / 0 |
+  | `base.tail(4).to_owned().len()` | 5272 / 10448 | 32 / 0 |
+  | `b.relabel("x").tag.len()` | 4848 / 9600 | 0 / 0 |
+
+  Both rows stay listed. Their divergence text is unchanged: it describes the
+  measured behaviour correctly even where the attributed CAUSE does not survive
+  contact with the code.
