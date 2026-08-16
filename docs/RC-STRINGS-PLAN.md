@@ -440,9 +440,6 @@ open ones, each with a conformance case pinning the fixed half:
     whose materialised result is consumed by another call leaks that
     result. The receiver-method spelling of the same body is reclaimed
     (`alloc_flat_method_identity_return`).
-  - `Cell[string]` reclaims neither the cell box's string nor, on
-    x86_64, routes its element through the string-aware walk — 32 B per
-    construction on all three backends.
 
 The Map-key OVERWRITE path still accepts an aliased-overwrite-leak on
 every backend (safe, no double-free; the runtime keeps the existing key

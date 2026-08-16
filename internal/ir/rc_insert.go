@@ -173,6 +173,18 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if t, ok := b.exprType(e).(ast.StringType); ok {
 			return t, true
 		}
+	case *ast.Call:
+		// `c.get()` on a Cell[string]: emitCellGet RETAINS the slot's buffer
+		// unconditionally, so the expression yields an owned +1 reference. A
+		// BINDING balances it with its exit-sweep dec; every borrowing
+		// consumer drops it on the floor, which is what leaked one buffer per
+		// `c.get().len()`. Unlike ownedCallResultType's builtin exclusion,
+		// the retain here is emitted by this compiler at the read, so the
+		// reference is known to exist rather than assumed from a return
+		// convention.
+		if isCellStringGet(x) {
+			return ast.StringType{}, true
+		}
 	}
 	return nil, false
 }
