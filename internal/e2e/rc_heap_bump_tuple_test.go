@@ -105,3 +105,61 @@ func TestWASMTupleHeapBumpBounded(t *testing.T) {
 		t.Errorf("tuple-of-array bump growth should be bounded (deep-drop): N=50 -> %d, N=5000 -> %d", asmall, alarge)
 	}
 }
+
+// The string-element sibling (#6879), and the tuple half of the struct fix in
+// #6499: the exit sweep's INLINE tuple arm released a native single-word
+// string element with a bare __fern_rc_dec, which decrements and never frees,
+// so the buffer's count went 1 -> 0 and it was stranded — 64 B a round on
+// x86-64 while arm64 and wasm (two-word ABIs, __fern_str_dec) were already
+// flat.
+//
+// The binding has to be in a CALLEE: a loop-scoped `var t` re-declared in the
+// body reclaims through emitVarReinitDropOld, which routes to the generated
+// __drop_tuple_<mangled> — and that body has always called __fern_str_dec, so
+// the loop spelling was flat throughout. Only the function-exit sweep was
+// short, which is why the two spellings measured apart is what identifies it.
+//
+// The program reports the per-round bytes as its exit code (64 pre-fix on
+// x86-64, 0 after) rather than a bound, so a partial regression is legible.
+const tupleStrElemChurnSrc = `import "std/i32";
+function wide(k: i32): string { return "a-value-well-past-the-inline-threshold-" + k.to_string(); }
+function probe(k: i32): i32 {
+    var t: (string, i32) = (wide(k), k);
+    return t.0.len();
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + probe(i); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var warm: i32 = churn(200);
+    var before: i64 = __heap_bump_bytes();
+    var again: i32 = churn(200);
+    var per: i64 = (__heap_bump_bytes() - before) / 200;
+    if (warm != again) { return 98; }
+    if (warm <= 0) { return 97; }
+    return (per as i32);
+}`
+
+func TestX86_64TupleStringElemReclaimed(t *testing.T) {
+	if _, code := compileAndRunX86_64FreeOn(t, tupleStrElemChurnSrc); code != 0 {
+		t.Errorf("tuple string-element churn leaked %d bytes/round on x86-64, want 0", code)
+	}
+}
+
+func TestArm64TupleStringElemReclaimed(t *testing.T) {
+	if _, code := compileAndRunArm64FreeOn(t, tupleStrElemChurnSrc); code != 0 {
+		t.Errorf("tuple string-element churn leaked %d bytes/round on arm64, want 0", code)
+	}
+}
+
+func TestWASMTupleStringElemReclaimed(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	if got := runWasm(t, tupleStrElemChurnSrc); got != 0 {
+		t.Errorf("tuple string-element churn leaked %d bytes/round on wasm, want 0", got)
+	}
+}

@@ -4798,6 +4798,53 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The tuple sibling of the entry above (#6879): the exit sweep's
+		// inline tuple arm frees a native single-word string element with
+		// __fern_str_dec, so this is the case that says the free is guarded
+		// by the element's own count rather than by the tuple box's. Every
+		// spelling that can outlive the sweep is here — the element aliases
+		// a live local, is bound out, is passed to a callee, is returned,
+		// fills both slots of one tuple, and escapes into an array — and
+		// each is checked for CONTENT, which a premature free turns into
+		// wrong bytes rather than a wrong length. Literal / inline-SSO /
+		// empty-sentinel elements cover the three sources __fern_str_dec
+		// short-circuits on instead of freeing.
+		name: "tuple_string_element_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function two(a: string, b: string): string { return a + b; }
+function take(s: string): i32 { if (s == "abcdefgh") { return 1; } return 0; }
+function escapes(): string {
+    var t: (string, i32) = (two("abcd", "efgh"), 1);
+    return t.0;
+}
+function main(): i32 {
+    var ok: i32 = 0;
+    var s: string = two("abcd", "efgh");
+    var t: (string, i32) = (s, 1);
+    var u: string = t.0;
+    if (t.0 == "abcdefgh") { ok = ok + 1; }
+    if (s == "abcdefgh") { ok = ok + 1; }
+    if (u == "abcdefgh") { ok = ok + 1; }
+    ok = ok + take(t.0);
+    if (escapes() == "abcdefgh") { ok = ok + 1; }
+    var d: (string, string) = (s, s);
+    if (d.0 == "abcdefgh") { ok = ok + 1; }
+    if (d.1 == "abcdefgh") { ok = ok + 1; }
+    var arr: (string, i32)[] = [t];
+    if (arr[0].0 == "abcdefgh") { ok = ok + 1; }
+    if (t.0 == "abcdefgh") { ok = ok + 1; }
+    var lit: (string, i32) = ("a-literal-past-the-inline-threshold", 2);
+    if (lit.0.len() == 35) { ok = ok + 1; }
+    var sso: (string, i32) = ("abc", 3);
+    if (sso.0 == "abc") { ok = ok + 1; }
+    var mt: (string, i32) = ("", 4);
+    if (mt.0.len() == 0) { ok = ok + 1; }
+    return (12 - ok) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A fresh array passed to a constructor that STORES it (#6522), plus
 		// the aliased spelling of the same call. The per-argument stage-(b)
 		// reclaim decs the caller's temp right after the call, so this is the

@@ -468,12 +468,12 @@ x86_64:
     `genStructDropFn`'s inline field loop, `decValueOnStack`,
     `dropStructField`, and `appendChildDrop` for native single-word.
   - Slice 3 follow-up (TUPLE elements): commit `5519258c` — tuple-
-    local deep-drop dec's string elements on native single-word
-    (`__fern_rc_dec`, rc==1 guard), the destructure projection dups
+    local deep-drop releases string elements on native single-word
+    (`__fern_str_dec`, rc==1 guard), the destructure projection dups
     them via `__fern_rc_inc` so the binding co-owns, and `tup.N`
     direct reads retain through `needsRcIncOnAlias`. Nested tuples
-    (tuple in a struct / array / tuple) have no generated drop fn
-    yet, so their strings still leak.
+    reach the same releases through the generated
+    `__drop_tuple_<mangled>` (see the TUPLE elements entry above).
   - Slice 4 (ARRAY elements): commit `78942f4d` — adds the
     single-word ptr → `__fern_rc_dec` branch to `arrElemDec` and
     the matching alias-inc path so `string[]` element overwrites
