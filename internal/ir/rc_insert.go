@@ -860,10 +860,13 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 					continue
 				}
 				// Native single-word string tuple element (x86_64,
-				// !TwoWordOverride): load WidthPtr + __fern_rc_dec. SSO
+				// !TwoWordOverride): load the single data pointer and
+				// __fern_str_dec, which FREES the buffer at the last
+				// reference where a bare __fern_rc_dec only decrements (SSO
 				// inline-tag guard + literal sentinel keep all sources
-				// safe. arm64 / wasm two-word ABIs take the WidthString
-				// + __fern_str_dec branch above.
+				// safe). Same helper genTupleDropFn and the struct arm use.
+				// arm64 / wasm two-word ABIs take the WidthString branch
+				// above.
 				if _, isStr := et.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 					b.emit(Op{Kind: OpLoadLocal, I32: slot})
 					if offs[i] != 0 {
@@ -871,7 +874,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 						b.emit(Op{Kind: OpAdd})
 					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
-					b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpCallDirect, Str: "__fern_str_dec", I32: 1})
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
@@ -3005,10 +3008,10 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 		}
 		if _, isStr := et.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
 			// Native single-word string element (x86_64,
-			// !TwoWordOverride): single ptr + __fern_rc_dec. SSO
+			// !TwoWordOverride): single ptr + __fern_str_dec. SSO
 			// inline-tag low-bit guard + literal sentinel keep all
 			// sources safe. arm64 / wasm two-word ABIs take the
-			// WidthString + __fern_str_dec branch above.
+			// WidthString branch above.
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if offs[i] != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: offs[i]}, Op{Kind: OpAdd})
@@ -3252,7 +3255,7 @@ func uniformEnumDropLoads(ed *ast.EnumDecl, ptrW int) ([]enumDropLoad, bool) {
 			return 3, true // two-word string dec (__fern_str_dec)
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
-			return 4, true // single-word native string dec (__fern_rc_dec)
+			return 4, true // single-word native string dec (__fern_str_dec)
 		}
 		return 0, false
 	}
@@ -3349,7 +3352,7 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]var
 			return 3, true // two-word string dec (__fern_str_dec)
 		}
 		if _, isStr := t.(ast.StringType); isStr && ptrW == 8 && !ast.UseTwoWordStrings(ptrW) {
-			return 4, true // single-word native string dec (__fern_rc_dec)
+			return 4, true // single-word native string dec (__fern_str_dec)
 		}
 		// `dyn Trait` payload (docs/DYN-TRAITS.md §7.8): the per-set
 		// __drop_dyn_<set> destructor reclaims the concrete + boxed cell.

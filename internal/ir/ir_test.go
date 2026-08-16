@@ -1868,15 +1868,18 @@ func TestLowerStringTupleDestructureDup(t *testing.T) {
 	}
 }
 
-// TestLowerStringTupleElemNoReclaimOnNative verifies the tuple string
-// element reclamation is wasm-only (ptrW=8 emits no __fern_str_dec).
-func TestLowerStringTupleElemNoReclaimOnNative(t *testing.T) {
+// TestLowerStringTupleElemReclaimOnNative is the single-word (ptrW=8)
+// sibling of the test above: the exit sweep's inline tuple arm frees the
+// element buffer with __fern_str_dec, matching what genTupleDropFn already
+// emits for a nested tuple of the same shape. A bare __fern_rc_dec only
+// decrements, so the buffer's count reaches 0 and nothing is reclaimed.
+func TestLowerStringTupleElemReclaimOnNative(t *testing.T) {
 	p := lowerSourceWith(t, `function build(s: string): i32 {
     var t: (string, i32) = (s, 1);
     return t.0.len();
 }`, 8)
-	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) tuple drop must not emit __fern_str_dec:\n%s", p)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native (ptrW=8) tuple drop must reclaim its string element via __fern_str_dec:\n%s", p)
 	}
 }
 
