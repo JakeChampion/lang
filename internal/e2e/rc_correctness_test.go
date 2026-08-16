@@ -4668,6 +4668,31 @@ function main(): i32 {
     return (t - 10000) + __rc_underflow_count();
 }`,
 	},
+	{
+		// string[][] whose inner arrays and their elements are aliased by
+		// live locals, dropped in a loop. The outer drop reclaims each inner
+		// string[] through __fern_drop_arr_str, so the element strings reach
+		// __fern_str_dec once per outer array — an over-release here would
+		// hit the shared local. 200 rounds * (4 + 4) for the reads, plus
+		// 4 for the local that outlives them.
+		name: "nested_string_array_element_aliased",
+		src: `
+import "core/int";
+import "std/string";
+function cat(a: string, b: string): string { return a + b; }
+function main(): i32 {
+    var s: string = cat("ab", "cd");
+    var inner: string[] = [s, s];
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 200) {
+        var outer: string[][] = [inner, [s]];
+        acc = acc + outer[0][1].len() + outer[1][0].len();
+        i = i + 1;
+    }
+    return (acc + s.len() - 1604) + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

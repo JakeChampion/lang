@@ -482,6 +482,35 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// `string[][]`: the outer drop reclaims each inner `string[]` buffer
+		// but reached it through the pointer-element helper on the
+		// single-word string ABI, whose per-element `__fern_rc_dec` never
+		// returns a heap string's buffer to the freelist. One buffer per
+		// element per round, x86-64 only — the two-word backends already
+		// selected the string-aware walk, so no cross-compiler gate could
+		// see it.
+		//
+		// Constant in n: one nested array per round, dropped at scope exit.
+		name: "nested-string-array-drop",
+		decls: `import "std/i32";
+function mk(k: i32): string[][] {
+    var inner: string[] = ["alpha-payload-" + k.to_string(), "beta-payload-" + k.to_string()];
+    return [inner, ["gamma-payload-" + k.to_string()]];
+}
+function churn(n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var a: string[][] = mk(i % 8);
+        t = t + a[0][0].len() + a[1][0].len();
+        i = i + 1;
+    }
+    return t % 7;
+}`,
+		n:        400,
+		maxRatio: 130,
+	},
+	{
 		// A heap-boxed `Result` matched with arms that RETURN. The box
 		// release the match owes sits at the post-match join, which an arm
 		// ending in a return branches straight past — so the box leaked once
