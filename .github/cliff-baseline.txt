@@ -1,0 +1,33 @@
+# rc==1 append-cliff baselines for the SELF-HOST COMPILER, checked against
+# every run by scripts/ci-check-perf (the same comparator the instruction-count
+# gate uses — one tool, two baselines).
+#
+# FORMAT: metric  value  [tolerance%]. The key is <arch>/checker.cliff_<bytes|count>,
+# produced by scripts/cliff-bench compiling examples/self_host/checker.fern with
+# the self-hosted compiler under FERN_CLIFF_REPORT=1.
+#
+# WHY THIS FILE EXISTS. docs/LOCAL-DEV-LOOP.md recorded this exact workload at
+# 188 crossings / 812 bytes on 2026-08-04 and called it noise. By 2026-08-16 it
+# was 77,985 crossings and 21.4 GB — a seven-order-of-magnitude regression that
+# went twelve days unnoticed because nothing measured it outside a human typing
+# an env var (#6911). The number below is that REGRESSED state, not a target:
+# it is a ceiling to ratchet down, and #6911 is the work to ratchet it.
+#
+# BYTES ARE THE RANKING KEY. The count is recorded too, but never scope work
+# against it alone — docs/LOCAL-DEV-LOOP.md has two rounds of `own`-conversion
+# aimed at sites that could not have paid, because 188 crossings of a 4-byte
+# loop-depth stack outnumber one accumulator copying gigabytes. A count that
+# halves while the bytes hold flat is not an improvement, and this gate will
+# say so by only flagging the bytes line.
+#
+# EXACT, so the 1% default tolerance is a significance threshold rather than a
+# noise floor: two runs on one commit reproduce these to the digit (verified
+# when the gate landed). ADVISORY IN BOTH DIRECTIONS, like the other gates —
+# when the number moves on purpose, update it in the same PR.
+#
+# Only x86_64 is measured today: cliff-bench runs on whichever host it is given,
+# and the aarch64 lane does not yet build a self-host compiler for it. An
+# unbaselined arch reports UNBASELINED rather than failing.
+
+x86_64/checker.cliff_bytes	21422322696
+x86_64/checker.cliff_count	77985

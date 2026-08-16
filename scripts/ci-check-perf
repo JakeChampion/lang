@@ -36,6 +36,11 @@ set -euo pipefail
 # tolerances in the baseline's optional third column override it.
 TOLERANCE="${FERN_PERF_TOLERANCE_PERCENT:-1}"
 
+# What the job summary calls this run. The comparator is shared between the
+# instruction-count gate and the append-cliff gate, so the heading has to say
+# which one produced the table.
+LABEL="${FERN_PERF_GATE_LABEL:-examples/bench}"
+
 BASELINE="${1:-}"
 REPORT="${2:-}"
 if [ -z "$BASELINE" ] || [ -z "$REPORT" ]; then
@@ -60,7 +65,7 @@ if [ ! -s "$REPORT" ]; then
   exit 0
 fi
 
-routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" '
+routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
   function human(n) {
     if (n >= 1000000000) return sprintf("%.2fG", n / 1000000000)
     if (n >= 1000000)    return sprintf("%.1fM", n / 1000000)
@@ -92,7 +97,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" '
     if (slash > 0) covered[substr($1, 1, slash - 1)] = 1
   }
   END {
-    printf "SUMMARY\t### performance (examples/bench)\n"
+    printf "SUMMARY\t### performance (%s)\n", label
     if (blind) printf "SUMMARY\tvalgrind was absent on this host: the dynamic (.ir) metrics were NOT measured.\n"
     printf "SUMMARY\t| metric | measured | baseline | delta |\n"
     printf "SUMMARY\t| --- | --- | --- | --- |\n"

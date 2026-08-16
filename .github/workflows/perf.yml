@@ -1,7 +1,10 @@
 name: Perf
 
-# Instruction-count benchmarks over examples/bench, compared against
-# .github/perf-baseline.txt.
+# Two gates, one comparator (scripts/ci-check-perf):
+#
+#   bench   instruction counts over examples/bench, vs .github/perf-baseline.txt
+#   cliff   how much the self-host compiler copies crossing the rc==1 append
+#           cliff, vs .github/cliff-baseline.txt
 #
 # WHY INSTRUCTION COUNTS AND NOT WALL TIME. A shared CI runner's wall time
 # varies by tens of percent between runs, so a threshold loose enough to avoid
@@ -57,4 +60,37 @@ jobs:
         with:
           name: perf-report-${{ matrix.host }}
           path: ${{ runner.temp }}/perf-report.txt
+          if-no-files-found: warn
+
+  # How much the SELF-HOST COMPILER copies crossing the rc==1 append cliff.
+  # Separate job because it is a different subject and a different cost: `bench`
+  # measures small programs the native compiler built, this builds the whole
+  # self-hosted compiler and runs it over a real module, so it takes minutes
+  # rather than seconds.
+  #
+  # It exists because nothing measured this. docs/LOCAL-DEV-LOOP.md recorded the
+  # workload at 188 crossings / 812 bytes on 2026-08-04; by 2026-08-16 it copied
+  # 21.4 GB, and twelve days of PRs went green over it (#6911). x86_64 only for
+  # now — the aarch64 lane does not build a self-host compiler.
+  cliff:
+    name: append-cliff-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: Measure the append cliff
+        run: scripts/cliff-bench "${{ runner.temp }}/cliff-report.txt"
+
+      - name: Compare against the baseline
+        env:
+          FERN_PERF_GATE_LABEL: self-host append cliff
+        run: scripts/ci-check-perf .github/cliff-baseline.txt "${{ runner.temp }}/cliff-report.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cliff-report-x86_64
+          path: ${{ runner.temp }}/cliff-report.txt
           if-no-files-found: warn
