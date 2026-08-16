@@ -514,6 +514,12 @@ pub struct LowerState {
     // grow bracket skips them so the in-place accumulator fast paths stay
     // O(n). Set/cleared around each statement by lower_stmt's wrapper.
     grow_exempt: string[],
+    // append_inplace: the receiver names whose EXPRESSION-position `.append`
+    // may stay on the consume-form in-place grow (#6891). Computed ONCE per
+    // function by append_inplace_names_of; every other receiver is bracketed
+    // at its push so the grow helper copies and the receiver keeps value
+    // semantics. See that function for the two sound shapes.
+    append_inplace: string[],
     // grow_sole: the #6043 sole-occurrence deaths, computed ONCE per function
     // (grow_sole_exempt_names_of) because the per-statement hook cannot see the
     // whole body. A name here occurs exactly once in the entire body, so the one
@@ -10386,25 +10392,36 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     }
     if (fa.field == "append" && c.args.len() == 1
         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s) || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s))) {
+        // Value semantics for a receiver this push may not mutate: bracket it so
+        // the grow helper's rc==1 in-place path cannot fire (append_copy_recv_slot).
+        var apcs: i32 = append_copy_recv_slot(fa.obj, s);
+        var aps0: LowerState = s;
+        if (apcs >= 0) { aps0 = emit_arr_share(aps0, apcs, "__fern_arr_share_inc"); }
         if (expr_is_f64arr(fa.obj, s)) {
-            var apf: LowerState = lower_expr(fa.obj, s);
+            var apf: LowerState = lower_expr(fa.obj, aps0);
             if (!apf.ok) { return apf; }
             apf = lower_expr(c.args[0], apf);
             if (!apf.ok) { return apf; }
-            return apf.emit(ir.op_arr_push_f64());
+            apf = apf.emit(ir.op_arr_push_f64());
+            if (apcs >= 0) { apf = emit_arr_share(apf, apcs, "__fern_arr_share_dec"); }
+            return apf;
         }
         if (expr_is_i64arr(fa.obj, s) || (expr_is_arr_src(fa.obj, s) && expr_is_u64(fa.obj, s))) {
-            var ap8: LowerState = lower_expr(fa.obj, s);
+            var ap8: LowerState = lower_expr(fa.obj, aps0);
             if (!ap8.ok) { return ap8; }
             ap8 = lower_i64(c.args[0], ap8);
             if (!ap8.ok) { return ap8; }
-            return ap8.emit(ir.op_arr_push_i64());
+            ap8 = ap8.emit(ir.op_arr_push_i64());
+            if (apcs >= 0) { ap8 = emit_arr_share(ap8, apcs, "__fern_arr_share_dec"); }
+            return ap8;
         }
-        var aps: LowerState = lower_expr(fa.obj, s);
+        var aps: LowerState = lower_expr(fa.obj, aps0);
         if (!aps.ok) { return aps; }
         aps = lower_expr(c.args[0], aps);
         if (!aps.ok) { return aps; }
-        return aps.emit(ir.op_arr_push());
+        aps = aps.emit(ir.op_arr_push());
+        if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
+        return aps;
     }
     // `arr.with(i, v)` as a general VALUE-PRODUCING EXPRESSION (a
     // var-init `var b = a.with(i, v)`, an argument, a struct-field
@@ -17250,20 +17267,14 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
-    // `var x = xs.append(v)`: bracket the receiver so arr_push cannot hand this
-    // binding the receiver's own buffer (append_alias_recv_slot, #6008).
-    var vaal: i32 = append_alias_recv_slot(v.init, s);
-    var vas: LowerState = s;
-    if (vaal >= 0) { vas = emit_arr_share(vas, vaal, "__fern_arr_share_inc"); }
-    var se: LowerState = vas;
+    var se: LowerState = s;
     // #6713: `var t = s[a:b]` where every use of `t` borrows the view takes the
     // 24-byte box from the frame instead of the heap. Only the storage changes —
     // same layout, same rc=-1 immortal sentinel — so the binding's own slot
     // marking below is untouched.
-    if (view_frame_binding_ok(v, vas)) { se = lower_str_slice_frame(v.init, vas); }
-    else { se = lower_expr(v.init, vas); }
+    if (view_frame_binding_ok(v, s)) { se = lower_str_slice_frame(v.init, s); }
+    else { se = lower_expr(v.init, s); }
     if (!se.ok) { return se; }
-    if (vaal >= 0) { se = emit_arr_share(se, vaal, "__fern_arr_share_dec"); }
     // Perceus alias-inc + array tracking: a fresh array literal is
     // owned at rc=1 (no inc); binding a new name to an EXISTING array
     // local creates a second reference, which must retain (inc) the
@@ -18463,11 +18474,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
         }
     }
     var target_is_arr: boolean = s.is_arr_slot(slot) && slot >= s.n_params;
-    // `x = xs.append(v)` with x != xs (the self form returned above): same
-    // receiver bracket as the `var` binding — see append_alias_recv_slot (#6008).
-    var aaal: i32 = append_alias_recv_slot(a.value, s);
     var aas: LowerState = s;
-    if (aaal >= 0 && aaal != slot) { aas = emit_arr_share(aas, aaal, "__fern_arr_share_inc"); }
     // Mark a struct-literal self-rebind (`o = S { … }`) for the duration of the
     // RHS, so its override path can drop the retain on a field aliased off `o`
     // (#6653). Only a DIRECT literal — anything else (a call, an if-expression)
@@ -18491,7 +18498,6 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     var se: LowerState = lower_expr(a.value, aas);
     se = se.with_selfrebind("");
     if (!se.ok) { return se; }
-    if (aaal >= 0 && aaal != slot) { se = emit_arr_share(se, aaal, "__fern_arr_share_dec"); }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
     // storing the fresh one — closes the register-backend per-reassign payload leak
@@ -20057,51 +20063,163 @@ pub function emit_arr_share(se: LowerState, slot: i32, helper: string): LowerSta
     return st.emit(ir.op_drop());
 }
 
-// append_alias_recv_slot returns the receiver's slot when `init` is the value
-// form `xs.append(v)` on a bare array IDENT — the shape whose result may ALIAS
-// the receiver's buffer — and -1 otherwise.
+// append_copy_recv_slot returns the receiver's slot when an EXPRESSION-position
+// `xs.append(v)` must leave `xs` untouched, and -1 when it may mutate in place.
 //
 // arr_push CONSUMES its receiver: on the in-place fast path (sole owner, spare
-// capacity) it appends into the receiver and returns that same pointer. Binding
-// a NEW name to the result is then two names for one buffer, each carrying its
-// own release obligation — the reassign-dec and the exit sweep — so the second
-// release frees a buffer the first name still holds, and the next allocation
-// recycles the cell out from under it. A struct-FIELD receiver already dodges
-// this by routing to the clone form (lower_arr_append_value); a bare ident had
-// no such gate, so the caller brackets the receiver instead, which raises its rc
-// and sends arr_push down its copy path — one geometric-growth copy rather than
-// the clone form's two.
+// capacity) it appends into the receiver's own buffer and returns that same
+// pointer. Two things then go wrong for a bare array IDENT receiver:
 //
-// Found via #6008: `var pg: RInst[] = prog.append(ISave(…))` in std/regex's
-// __rx_emit bound the caller frame's own buffer, and the two frames' cow-guarded
-// reassign-decs each freed it. The freed cell was handed to the next
-// `caps.with(slot, ti)`, so the Pike VM read an ISplit's targets out of a
-// capture-slot array and branched to prog[-1] — a wasm `unreachable`, and the
-// same double free (latent) on x86-64 and arm64.
-function append_alias_recv_slot(init: parser.Expr, s: LowerState): i32 {
-    match (init) {
-        parser.ExprCall(c) => {
-            if (c.args.len() != 1) { return 0 - 1; }
-            match (c.callee) {
-                parser.ExprFieldAccess(fa) => {
-                    if (fa.field != "append") { return 0 - 1; }
-                    match (fa.obj) {
-                        parser.ExprIdent(id) => {
-                            var sl: i32 = s.slot_of(id.name);
-                            if (sl < 0) { return 0 - 1; }
-                            if (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
-                                || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)) { return sl; }
-                            return 0 - 1;
-                        },
-                        _ => { return 0 - 1; }
-                    }
-                },
-                _ => { return 0 - 1; }
-            }
+//   - VALUE (#6891). `sink(roomy.append(20))` grew `roomy` itself, so the
+//     `sink(roomy)` under it read four elements where the interpreter and
+//     native read three. rc==1 is not the test the fast path needs: `roomy` is
+//     uniquely referenced and still READ AGAIN, and rc counts references, not
+//     uses.
+//   - ALIASING (#6008). Binding a NEW name to the result is two names for one
+//     buffer, each carrying its own release obligation — the reassign-dec and
+//     the exit sweep — so the second release frees a buffer the first name
+//     still holds. `var pg: RInst[] = prog.append(ISave(…))` in std/regex's
+//     __rx_emit bound the caller frame's own buffer; the freed cell was handed
+//     to the next `caps.with(slot, ti)`, so the Pike VM read an ISplit's
+//     targets out of a capture-slot array and branched to prog[-1].
+//
+// Both are closed by bracketing the receiver with a retain/release around the
+// push, which raises its rc and sends arr_push down its copy path — the callers
+// emit `emit_arr_share` either side. A struct-FIELD receiver dodges the whole
+// question by routing to the clone form (lower_arr_append_value).
+//
+// The exemption is s.append_inplace (append_inplace_names_of), so the two sound
+// in-place shapes keep the O(n) fast path.
+function append_copy_recv_slot(recv: parser.Expr, s: LowerState): i32 {
+    match (recv) {
+        parser.ExprIdent(id) => {
+            if (util.index_of_str(s.append_inplace, id.name) >= 0) { return 0 - 1; }
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < 0) { return 0 - 1; }
+            if (expr_is_arr_src(recv, s) || expr_is_strarr(recv, s)
+                || expr_is_f64arr(recv, s) || expr_is_i64arr(recv, s)) { return sl; }
+            return 0 - 1;
         },
-        _ => {}
+        _ => { return 0 - 1; }
     }
     return 0 - 1;
+}
+
+// append_inplace_names_of returns the receiver names whose expression-position
+// `.append` may stay on the in-place grow — the shapes no later intra-function
+// read can observe, mirroring native's inPlacePushes (#4838):
+//
+//   - the self-reassign `x = x.append(v)`, whose every later read of `x` sees
+//     the appended value either way (and which StmtAssign lowers itself);
+//   - the accumulator tail `return acc.append(v)`, where `acc` occurs exactly
+//     once in the returned expression and is not read from a lambda — after the
+//     return only a closure could still see the buffer.
+//
+// Name-keyed for the whole function, so one occurrence in any other position
+// withdraws the exemption for all of them. The return half is load-bearing:
+// without it the compiler's own AST walkers (`return acc.append(id.name)` once
+// per visited node) copy the whole accumulated array per append — O(n²) bytes
+// in an arena that never reclaims them, which is what OOM-killed native's CI
+// runners before #4838 carved the same exemption.
+pub function append_inplace_names_of(fn: parser.FuncDecl): string[] {
+    var total: string[] = [];
+    var ti: i32 = 0;
+    while (ti < fn.body.len()) { total = collect_append_recvs_stmt(fn.body[ti], total); ti = ti + 1; }
+    if (total.len() == 0) { return []; }
+    var esc: string[] = append_lambda_idents(fn.body, []);
+    var okc: string[] = append_inplace_recvs(fn.body, esc, []);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < total.len()) {
+        if (util.index_of_str(out, total[i]) < 0
+            && grow_count_in(total, total[i]) == grow_count_in(okc, total[i])) {
+            out = out.append(total[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// append_lambda_idents: every ident read from inside a lambda body. A closure
+// can run after the enclosing function returns, so a name it captured is still
+// readable past a `return acc.append(v)`.
+function append_lambda_idents(stmts: parser.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        a = grow_lambda_idents_stmt(stmts[i], a);
+        match (stmts[i]) {
+            parser.StmtIf(f) => {
+                a = append_lambda_idents(f.then_body, a);
+                a = append_lambda_idents(f.else_body, a);
+            },
+            parser.StmtWhile(w) => { a = append_lambda_idents(w.body, a); },
+            parser.StmtFor(f2) => { a = append_lambda_idents(f2.body, a); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = append_lambda_idents(m.arms[k].body, a); k = k + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// append_inplace_recvs collects the receiver OCCURRENCES of the two sound
+// shapes, one entry per site so append_inplace_names_of can compare the count
+// against collect_append_recvs_stmt's total for the same name.
+function append_inplace_recvs(stmts: parser.Stmt[], esc: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var recvs: string[] = collect_append_recvs_expr(r.value, []);
+                var j: i32 = 0;
+                while (j < recvs.len()) {
+                    if (grow_ident_count(r.value, recvs[j]) == 1
+                        && util.index_of_str(esc, recvs[j]) < 0) {
+                        a = a.append(recvs[j]);
+                    }
+                    j = j + 1;
+                }
+            },
+            parser.StmtAssign(asg) => {
+                match (asg.value) {
+                    parser.ExprCall(c) => {
+                        match (c.callee) {
+                            parser.ExprFieldAccess(fa) => {
+                                if (fa.field == "append" && c.args.len() == 1) {
+                                    match (fa.obj) {
+                                        parser.ExprIdent(id) => {
+                                            if (id.name == asg.target) { a = a.append(id.name); }
+                                        },
+                                        _ => {}
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            parser.StmtIf(f) => {
+                a = append_inplace_recvs(f.then_body, esc, a);
+                a = append_inplace_recvs(f.else_body, esc, a);
+            },
+            parser.StmtWhile(w) => { a = append_inplace_recvs(w.body, esc, a); },
+            parser.StmtFor(f2) => { a = append_inplace_recvs(f2.body, esc, a); },
+            parser.StmtMatch(m) => {
+                var k: i32 = 0;
+                while (k < m.arms.len()) { a = append_inplace_recvs(m.arms[k].body, esc, a); k = k + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
 }
 
 // emit_arr_store stores the new value (on top of the operand stack) into
@@ -40591,7 +40709,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -48672,7 +48790,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -55289,6 +55407,18 @@ function collect_append_recvs_expr(e: parser.Expr, acc: string[]): string[] {
             return acc;
         },
         parser.ExprFieldAccess(fa) => { return collect_append_recvs_expr(fa.obj, acc); },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) { acc = collect_append_recvs_expr(ml.keys[i], acc); i = i + 1; }
+            var j: i32 = 0;
+            while (j < ml.vals.len()) { acc = collect_append_recvs_expr(ml.vals[j], acc); j = j + 1; }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) { acc = collect_append_recvs_expr(fs.exprs[i], acc); i = i + 1; }
+            return acc;
+        },
         parser.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) {

@@ -7707,15 +7707,29 @@ pub function arr_push_f64_helper(): string {
 pub function arr_push_wide(vty: string, sop: string): string {
     var o: string = "";
     o = o + "  (func $__fern_arr_push_" + vty + " (param $a i32) (param $v " + vty + ") (result i32)\n";
-    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32)\n";
+    o = o + "    (local $len i32) (local $cap i32) (local $na i32) (local $ncap i32) (local $i i32) (local $rc i32)\n";
     o = o + "    (local.set $len (i32.load (local.get $a)))\n";
     o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
-    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    // The rc gate arr_push_helper carries, on the 8-byte slot: in-place only
+    // for a sole-owner (rc == 1) or immortal (bit-31) receiver. Without it a
+    // bracketed receiver — the caller raised its rc precisely so this push
+    // would copy — was still appended into, so an i64[] / f64[] read after an
+    // expression-position `.append` saw the extra element (#6891).
+    o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
+    o = o + "    (if (i32.and (i32.or (i32.eq (local.get $rc) (i32.const 1)) (i32.lt_s (local.get $rc) (i32.const 0))) (i32.lt_s (local.get $len) (local.get $cap))) (then\n";
     o = o + "      (" + sop + ".store (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $len) (i32.const 8))) (local.get $v))\n";
     o = o + "      (i32.store (local.get $a) (i32.add (local.get $len) (i32.const 1)))\n";
     o = o + "      (return (local.get $a))))\n";
-    o = o + "    (local.set $ncap (i32.const 4))\n";
-    o = o + "    (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))\n";
+    // A shared receiver with spare capacity is an UN-SHARE copy, not a growth:
+    // keep the same cap, and count the crossing weighted by the 8 bytes per
+    // element it copies (the rc==1 cliff counters).
+    o = o + "    (local.set $ncap (local.get $cap))\n";
+    o = o + "    (if (i32.lt_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (i32.store (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ") (i32.add (i32.load (i32.const " + util.i32_to_string(arr_push_shared_addr()) + ")) (i32.const 1)))\n";
+    o = o + "      (i64.store (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ") (i64.add (i64.load (i32.const " + util.i32_to_string(arr_push_copied_addr()) + ")) (i64.extend_i32_u (i32.mul (local.get $len) (i32.const 8)))))))\n";
+    o = o + "    (if (i32.ge_s (local.get $len) (local.get $cap)) (then\n";
+    o = o + "      (local.set $ncap (i32.const 4))\n";
+    o = o + "      (if (i32.gt_s (local.get $cap) (i32.const 0)) (then (local.set $ncap (i32.mul (local.get $cap) (i32.const 2)))))))\n";
     o = o + "    (local.set $na (call $__fern_arr_box (i32.mul (local.get $ncap) (i32.const 8))))\n";
     o = o + "    (i32.store (local.get $na) (i32.add (local.get $len) (i32.const 1)))\n";
     o = o + "    (i32.store (i32.add (local.get $na) (i32.const 4)) (local.get $ncap))\n";
