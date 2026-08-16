@@ -112,7 +112,7 @@ function prune_to_reachable(mod: parser.Module, reach: string[]): parser.Module 
         if (util.has_str(reach, mod.funcs[fi].name)) { kept = kept.append(mod.funcs[fi]); }
         fi = fi + 1;
     }
-    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+    return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
 
 // emit_per_module_concat compiles a program's modules SEPARATELY (per-module IR

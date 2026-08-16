@@ -5888,7 +5888,7 @@ pub function lift_lambdas(mod: parser.Module): parser.Module {
 // an empty view keeps the module-only behaviour every other caller has.
 pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     var lifted: parser.Module = irlower.lift_lambdas_view(mod, view);
-    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs };
+    return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls };
 }
 
 // emit_module_ir emits a full all-i32-eligible module via the IR path. The

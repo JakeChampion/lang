@@ -61,7 +61,7 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
         resources: m.resources,
         exports: m.exports,
         impls: m.impls,
-        trait_reqs: m.trait_reqs,
+        trait_reqs: m.trait_reqs, trait_decls: m.trait_decls,
     };
 }
 

@@ -12537,5 +12537,5 @@ pub function annotate_module(mod: parser.Module): parser.Module {
     i = i + 1;
   }
   var ntop: parser.Stmt[] = annotate_block(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods));
-  return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: ntop, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs };
+  return parser.Module { funcs: nfuncs, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: ntop, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
 }
