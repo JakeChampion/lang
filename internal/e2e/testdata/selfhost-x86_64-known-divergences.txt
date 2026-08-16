@@ -72,10 +72,10 @@
 # ALL THREE self-host targets identically: the gap is in the shared self-host
 # reclaim path, not in any one emitter.
 #
-# Shape only, EXCEPT where a row says otherwise: for most of these every ANSWER
-# matches native and only the allocation class diverges, which is what these
-# AL-01 cases exist to measure. `alloc_flat_consumed_append` is the exception —
-# it carries a genuine VALUE divergence too, and says so.
+# Shape only: every ANSWER matches native and only the allocation class
+# diverges, which is what these AL-01 cases exist to measure. A row that ever
+# carries a VALUE divergence as well has to say so — the answer being wrong is
+# a different order of bug from the memory being wrong.
 #
 # This is the RECLAIM half of goal 2 (docs/RC-PERCEUS-SELF-HOST-PORT.md §9),
 # the same category as `alloc_flat_map_get` before #6875 closed it, and it is
@@ -87,4 +87,4 @@ alloc_flat_nested_string_array #6527 self-host does not reclaim a string[][]'s e
 alloc_flat_struct_string_field #6545 self-host does not move a bound string into the struct literal that consumes it; native does since #6545. Shape only — every answer matches. All three self-host legs diverge identically.
 alloc_flat_method_identity_return #6544 self-host does not reclaim a receiver method's materialised result on an identity return; native does since #6544. Shape only — every answer matches. All three self-host legs diverge identically.
 alloc_flat_fresh_array_arg #6522 self-host prints "grows" where native prints "flat" — measured on all three targets (values agree: 6737 / 13504 both sides). The self-host RC layer has no equivalent of the per-ARGUMENT stage-(b) arg-temp admission native gained in #6522, so a fresh array handed to a constructor that stores it is never released. RECLAIM half of goal 2, docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
-alloc_flat_consumed_append #6501 TWO independent divergences — do not delete this row until BOTH are closed. (1) Allocation: self-host prints "grows" where native prints "flat" on all three targets; the self-host has no equivalent of the consumed-`.append` arg-temp reclaim native gained in #6501. (2) VALUE: self-host prints 42125 / 156750 where native and -interp both print 41075 / 154650, a fixed +21 per round. That half is #6891 — the self-host mutates an append receiver in place even though the receiver is READ AGAIN afterwards, so `roomy.append(20)` leaves roomy at len 4 summing 23 where interp and native leave it at len 3 summing 3 (minimal repro: three appends from empty, then `sink(roomy.append(20))` followed by `sink(roomy)`).
+alloc_flat_consumed_append #6501 ALLOCATION only: self-host prints "grows" where native prints "flat" on all three targets, and every value now agrees (41075 / 154650 both sides). The self-host has no equivalent of the consumed-`.append` arg-temp reclaim native gained in #6501. The VALUE half this row also carried was #6891 — an expression-position `.append` mutating a receiver that is read again — and is fixed; TestSelfHostAppendValueSemantics{X86_64,Arm64,WasmIR} is what keeps it fixed.
