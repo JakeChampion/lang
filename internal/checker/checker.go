@@ -2862,10 +2862,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// 64-bit value (#3581). Stamp the default i32 width here, AFTER
 		// all settling, so a genuine i64 context (which `settleInt`
 		// already set to 64) is untouched and only true defaults land at
-		// 32. Float ops carry their width on FloatWidth and evaluate
-		// through the interp's separate Float value, so the stamp is
-		// inert for them; string concatenation is flagged separately.
-		if b.IntWidth == 0 && b.FloatWidth == 0 && !b.IsStringConcat {
+		// 32. A FLOAT op is excluded on `IsFloat`, not on FloatWidth: a
+		// float binary whose operands never pinned a width (both
+		// polymorphic literals passed to a generic `[A](a: A)`, where no
+		// concrete type ever reached them) has FloatWidth == 0 too, and
+		// stamping IntWidth on it makes a re-check read the node back as
+		// an integer op — which is how monomorph's post-clone re-check
+		// came to reject `one(1.5 + 2.5)` with "expected f64, got i32".
+		// String concatenation is flagged separately.
+		if b.IntWidth == 0 && !b.IsFloat && !b.IsStringConcat {
 			switch b.Op {
 			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
 				b.IntWidth = 32

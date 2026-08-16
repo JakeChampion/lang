@@ -870,3 +870,57 @@ function main(): i32 { var b: %[1]s = zero[%[1]s](); return %[3]s; }`, s.ty, s.z
 		})
 	}
 }
+
+// TestRunAcceptsPolymorphicFloatBinaryArg — a float binary expression is
+// the only context where a `+`/`-`/`*`/`/` node can reach the end of
+// checking still float-typed AND width-less: passed to `[A](a: A)` whose
+// return type does not mention A, nothing ever pins its operands to a
+// concrete float type, so `commonFloatWidth` stays polymorphic and
+// `FloatWidth` is left at 0.
+//
+// The checker's trailing "default a leftover-polymorphic integer op to
+// i32" pass keyed on `FloatWidth == 0` and so stamped `IntWidth = 32` on
+// exactly those nodes. Monomorph's post-clone re-check then read the node
+// back as an integer op and rejected the argument against the concrete
+// `f64` parameter it had just inferred: "re-check failed (compiler bug):
+// argument 1: expected f64, got i32". The pass now excludes a float op on
+// `IsFloat`.
+func TestRunAcceptsPolymorphicFloatBinaryArg(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "unbounded param, non-generic return",
+			src: `function one[A](a: A): string { return "x"; }
+function main(): i32 { print(one(1.5 + 2.5)); return 0; }`,
+		},
+		{
+			name: "Display-bounded param",
+			src: `import "core/cmp";
+function one[A: cmp.Display](a: A): string { return a.to_string(); }
+function main(): i32 { print(one(1.5 * 2.0)); return 0; }`,
+		},
+		{
+			name: "float and integer instantiations together",
+			src: `import "core/cmp";
+function one[A: cmp.Display](a: A): string { return a.to_string(); }
+function main(): i32 { print(one(1 + 2)); print(one(1.5 - 0.25)); return 0; }`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(c.src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}
