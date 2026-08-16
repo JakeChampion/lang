@@ -34,7 +34,7 @@ Grounding sweep results that adjust the shortlist:
 ## Execution phases
 
 Each slice = one PR (branch → commit → push → PR → subscribe →
-green → squash-merge), with tests at the layer touched, per the
+green → rebase-merge), with tests at the layer touched, per the
 engineering bar. Native + self-host IR path both required for
 language-surface features; legacy AST→asm backend gaps are
 acceptable.

@@ -87,9 +87,10 @@ Follow this exactly, in order.
 git fetch origin main && git checkout -B proposal/<slug> origin/main
 ```
 
-Start from a **fresh** `origin/main` every time. PRs here are squash-merged, so
-building on a pre-squash commit gives git two independent creations of the same
-content and an add/add conflict on a branch that never really diverged.
+Start from a **fresh** `origin/main` every time. PRs here are rebase-merged, so
+your commits reach main under different SHAs; building on a pre-merge commit
+gives git two independent creations of the same content and an add/add conflict
+on a branch that never really diverged.
 
 Then check what is already known:
 
@@ -285,7 +286,7 @@ The ideal issue has exactly these components:
 
 Then ship it. The loop is fixed and you do not ask permission at any step:
 **branch → commit → push → PR → subscribe → watch CI and mergeability →
-squash-merge when green → next turn.**
+rebase-merge when green → next turn.**
 
 ```
 git commit -am "<one dense line>"

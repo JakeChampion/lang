@@ -94,7 +94,7 @@ This includes small follow-ups, doc-only fixes, and comment corrections. Opening
 it IS the expected action. The loop is:
 
 > branch → commit → push → PR → subscribe → watch CI **and mergeability** →
-> squash-merge when green → next task
+> rebase-merge when green → next task
 
 Do not stop at "pushed to the branch", do not wait after opening the PR, and do
 not ask whether to merge. If CI fails, diagnose and push fixes on the same branch
@@ -118,25 +118,35 @@ same way you would a red build: without being asked.
 
 - `dirty` = conflicts. Fix them yourself; only ask when both sides genuinely
   changed the same logic and picking one loses behaviour.
-- `behind` / stale base = merge or rebase main in and push.
+- `behind` / stale base = **rebase** onto main and force-with-lease push. Do not
+  merge main in: a merge commit makes the branch un-rebase-mergeable, so the fix
+  blocks the merge it was meant to unblock.
 - `unstable` = mergeable, checks still running or non-required ones failing.
   Keep waiting.
 
-**PRs here are SQUASH-merged, which is the usual cause of a conflict on these
-branches.** A squash gives main a *new* SHA for content your branch still carries
-under its original commit, so building further on the pre-squash commit makes git
-see two independent creations of the same file — an add/add conflict, though
-nothing really diverged. After any PR merges, start follow-up work from a fresh
-base:
+**PRs here are REBASE-merged.** Each commit lands on main individually, so every
+commit message is published — write them to be read, rather than leaning on a
+merge-time title and body that no longer exists. Keep the branch linear; nothing
+that introduces a merge commit can be rebase-merged.
+
+Rebasing still rewrites SHAs, so content that landed via your branch reaches main
+under a *different* commit than the one your branch holds. Building further on
+the pre-merge commit therefore still makes git see two independent creations of
+the same file — an add/add conflict, though nothing really diverged. After any
+PR merges, start follow-up work from a fresh base:
 
 ```
 git fetch origin main && git checkout -B <branch> origin/main
 ```
 
+GitHub deletes the head branch on merge, which leaves a stale `origin/<branch>`
+ref locally and makes the next `--force-with-lease` push fail with `stale info`.
+`git remote prune origin` before pushing again.
+
 If you only notice after committing, reset onto main and replay the new commits
 (`git checkout -B <branch> origin/main && git cherry-pick <sha>`) rather than
-hand-resolving conflict markers between a file and its own squashed copy — then
-force-with-lease push.
+hand-resolving conflict markers between a file and its own already-merged copy —
+then force-with-lease push.
 
 ## Project goal / roadmap (what "the next task" means)
 
