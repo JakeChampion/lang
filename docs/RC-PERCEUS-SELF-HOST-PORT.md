@@ -7361,3 +7361,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   string and struct value columns, a live alias, a `keys()` snapshot, scalar
   keys) and `TestMapCowChainBounded{X86_64,Wasm,Arm64}` (the ratio probe above
   plus `__rc_underflow_count()`). Refs #6828 #6242 #6227 #4451.
+
+- 2026-08-16: **Map `.get()` box reclaim, self-host — SHIPPED (#6875).** The
+  last conformance divergence on all three self-host legs. `alloc_flat_map_get`
+  now reads `flat` on x86-64, arm64 and wasm, and the ACTIVE section of every
+  `selfhost-*-known-divergences.txt` is empty.
+
+  Two things the issue got wrong, both worth keeping straight. There is no
+  rebox site to reclaim: `m.get(k)` lowers to ONE opaque `ir.op_map_get`, so
+  the box is allocated inside hand-written backend runtime text, not in the
+  lowering the way native's `emitMapGetRebox` does. And wasm needed no runtime
+  change at all — `__fern_rc_dec` already maps to `$__fern_arr_dec`
+  (`wasm_ir.fern:777`, `:7277`), a shallow rc-gated size-class release that
+  works on the `$__fern_str_box` blocks `$__fern_map_get` was already using.
+
+  The register backends were the gap, and only because their box had no rc
+  header: `__fern_map_get` built it with a raw `__fern_alloc(16)`, so a dec
+  would have read `rc` at `[box-8]` — the previous block's tail.
+  `__fern_map_get` was the last Option producer still on the raw alloc;
+  `opt_make` and `__fern_read_line` were migrated to `__fern_arr_box` earlier
+  for exactly this reason.
+
+  Four parts: `__fern_arr_box(2)` on both edges of both register backends;
+  `map_get_or`'s hand-written freelist push replaced by `__fn___fern_arr_dec`
+  (a headered block threaded onto the freelist corrupts it — a swap-rule
+  companion, not an optional tidy); a scrutinee reclaim in `lower_stmt_match`
+  via the existing `emit_scalar_enum_box_free`, refusing an `@` binding as
+  native does; and the fresh string-literal key freed through the
+  `is_fresh_str_temp` predicate `op_map_set`'s `kconsume` already uses, so a
+  live local is never freed.
+
+  **Do not size the box at `__fern_arr_box(1)`.** 32 B is the exact fit and
+  passes every rc probe, but `url_codec` then reads a `Map[string, string[]]`
+  value array as empty, with NO over-release reported — a stale uncounted alias
+  to a 32-byte block being recycled as the fresh box. That is #6880, a latent
+  defect this sizing merely avoids.
+
+  Still leaking the box afterwards, unchanged in complexity class and matching
+  native: a `return` out of an arm, `var o = m.get(k); match (o)`, and
+  `m.get(k)?`. The first wants the existing `optret_pending` machinery
+  (`irlower.fern:531-541`, consumed at `:21917`).
+
+  VERIFIED: new `map-get` row in `TestSelfHostHeapBumpFlatIRX86_64`
+  (mutation-checked — it FAILS with the lowering reverted), the three
+  `alloc_flat_map_get` known-divergence rows deleted so the fixtures legs fail
+  if it regresses, and the case run by hand on all three backends.
+  Refs #6875 #6880 #6561 #6874 #4451.

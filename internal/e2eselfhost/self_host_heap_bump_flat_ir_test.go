@@ -149,6 +149,27 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
+	// A map LOOKUP. The Option box `m.get(k)` builds is consumed by the match
+	// and nothing else can reach it, and the fresh string-literal key is not
+	// retained by the lookup. Both edges are covered because they were separate
+	// leaks: a HIT carries a payload out of the map, a MISS does not (#6875).
+	{"map-get", func(n string) string {
+		return `import "core/map";
+function main(): i32 {
+    var index: Map[string, i32] = map_new(64);
+    index = index.insert("alpha", 1);
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < ` + n + `) {
+        match (index.get("alpha")) { Some(g) => { acc = acc + g; }, None => { acc = acc - 1; } }
+        match (index.get("absent")) { Some(g) => { acc = acc + g; }, None => { acc = acc + 2; } }
+        i = i + 1;
+    }
+    if (acc < 0) { return 0 - 1; }
+    return (__heap_bump_bytes() as i32) - before;
+}`
+	}},
 	// A nested array: the outer buffer's drop has to walk its elements.
 	{"nested-array", func(n string) string {
 		return `function main(): i32 {

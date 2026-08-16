@@ -99,24 +99,8 @@
 
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
 
-
 # --- ACTIVE -----------------------------------------------------------------
-# `alloc_flat_map_get` (#6875): the case measures the ALLOCATION SHAPE of a map
-# lookup loop (AL-04, docs/ALLOCATION-OBSERVABLE.md) and prints flat / grows.
-# Every answer matches native — only the shape diverges: native reclaims the
-# boxes `m.get(k)` allocates (#6561, fixed in #6874) and the self-host still
-# strands one per lookup, so this leg reads `grows` where native reads `flat`.
+# (none)
 #
-# Not a gap in THIS backend. Measured at 5a194d9e7, the self-host arm64 and
-# wasm emitters both print `grows` for the same source, so the divergence is in
-# the shared self-host map-get path, and all three legs list it.
-#
-# It does not port across from the native diff. Native builds the result inline
-# in the lowering (emitMapGetRebox) and can therefore free it; the self-host
-# emits one opaque ir.op_map_get whose box is allocated inside hand-written
-# backend runtime text. Closing it needs a shallow uniqueness-gated box release
-# the self-host lowering can call — which wasm_ir.fern has no primitive for at
-# all — a non-allocating miss, and a scrutinee reclaim in irlower. That is the
-# RECLAIM half of goal 2 (docs/RC-PERCEUS-SELF-HOST-PORT.md §9), not a
-# follow-up to #6874.
-alloc_flat_map_get #6875 self-host strands one box per Map.get(); native reclaims it (#6561/#6874). Shape only — every answer matches. All three self-host legs diverge identically.
+# Every row here must be a live divergence: a listed case that comes back
+# matching native FAILS this leg, so an entry cannot outlive its bug.

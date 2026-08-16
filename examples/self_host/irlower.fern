@@ -9757,7 +9757,20 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             if (!mget.ok) { return mget; }
             mget = lower_expr(c.args[0], mget);
             if (!mget.ok) { return mget; }
-            return mget.emit(ir.op_map_get(mkk2, meqfn, map_value_widekind(map_value_of(mtype))));
+            var mgk: i32 = 0 - 1;
+            if (mkk2 == 0 && is_fresh_str_temp(c.args[0], s)) {
+                var mgkn: string = "$mgkey" + util.i32_to_string(mget.locals.len());
+                mget = mget.add_local(mgkn);
+                mgk = mget.slot_of(mgkn);
+                mget = mget.emit(ir.op_tee_local(mgk));
+            }
+            mget = mget.emit(ir.op_map_get(mkk2, meqfn, map_value_widekind(map_value_of(mtype))));
+            if (mgk >= 0) {
+                mget = mget.emit(ir.op_load_local(mgk));
+                mget = mget.emit(ir.op_call_direct("__fern_str_free", 1));
+                mget = mget.emit(ir.op_drop());
+            }
+            return mget;
         }
         if (fa.field == "has" && c.args.len() == 1) {
             var mhas: LowerState = lower_expr(fa.obj, s);
@@ -19827,8 +19840,35 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
         }
         mi = mi + 1;
     }
-    return ms.emit(ir.op_end());   // end outer block
+    ms = ms.emit(ir.op_end());   // end outer block
+    if (match_scrut_is_map_get(m, ms)) { ms = emit_scalar_enum_box_free(ms, scrut_slot); }
+    return ms;
     return s.fail();
+}
+
+function match_scrut_is_map_get(m: parser.StmtMatch, s: LowerState): boolean {
+    var ai: i32 = 0;
+    while (ai < m.arms.len()) {
+        match (m.arms[ai].pattern) {
+            parser.PatVariant(pv) => { if (pv.at_binding.len() > 0) { return false; } },
+            _ => {}
+        }
+        ai = ai + 1;
+    }
+    match (m.scrutinee) {
+        parser.ExprCall(c) => {
+            if (c.args.len() == 1) {
+                match (c.callee) {
+                    parser.ExprFieldAccess(fa) => {
+                        if (fa.field == "get") { return is_map_type_name(expr_map_type_tag(fa.obj, s)); }
+                    },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return false;
 }
 
 
