@@ -96,6 +96,24 @@ pub function hash_key(s: string): string {
     return i32_to_string(a) + "_" + i32_to_string(b);
 }
 
+// hash_bucket maps a string to a bucket index in [0, n). It is hash_key's first
+// polynomial roll, kept numeric: hash_key concatenates two rolls into a string,
+// which is right for a content fingerprint and wrong for an index — a caller
+// that only wants a bucket would pay a string build and a parse per probe.
+// Masking to 0x3FFFFFFF keeps the accumulator non-negative, so the `%` cannot
+// return a negative index.
+pub function hash_bucket(s: string, n: i32): i32 {
+    if (n <= 1) { return 0; }
+    var a: i32 = 208357;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        a = (a * 31 + (s[i] as i32) + 1) & 1073741823;
+        i = i + 1;
+    }
+    a = (a * 31 + s.len()) & 1073741823;
+    return a % n;
+}
+
 // digits_to_i32 parses a leading optional `-` then a run of decimal
 // digits, stopping at the first non-digit. The canonical sign-aware
 // version — several self-host copies were sign-naive (SH-010).
