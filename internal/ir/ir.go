@@ -13076,6 +13076,31 @@ func (b *builder) callBody(n *ast.Call) error {
 		(resultCannotAliasArg(b.exprType(n)) || b.returnsNoParamEscape[id.Name] ||
 			b.resultIsCountedStringAlias(id.Name, b.exprType(n))) &&
 		!b.pairForm[id.Name] && id.Name != "map_new" && !calleeRetainsAnyArg(id.Name)
+	// Per-ARGUMENT admission, where the call-level gate above says no. That
+	// gate is whole-call: one pointer-shaped result disqualifies every
+	// argument at once, so `node(name, no_deps(), k)` — a constructor whose
+	// result really can contain the array — left the caller's fresh
+	// `no_deps()` reference stranded, 32 B a call on all three backends
+	// (#6522).
+	//
+	// paramCountedRetain[C][ai] is the position-wise form of the argument
+	// resultIsCountedStringAlias makes for a string result: every appearance
+	// of C's parameter ai is a counted store or a non-retaining read, so if
+	// the argument reaches C's result it does so through a construction that
+	// inc'd it. The temp is therefore at rc 2 on the escaping path and rc 1
+	// on the non-escaping one, and the immediate post-call dec nets it to
+	// exactly one owner either way. The map is keyed by user declaration, so
+	// builtins — whose allocation contracts are per-helper — are absent and
+	// keep their prior safe-leak; the local / pair-form / map_new /
+	// retain-sink exclusions carry over from the call-level gate unchanged.
+	countedArgTemp := func(ai int) bool {
+		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
+			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
+			return false
+		}
+		counted := b.paramCountedRetain[id.Name]
+		return ai < len(counted) && counted[ai]
+	}
 	// The same reclaim for a call THROUGH a function-typed local or param
 	// (#6460). `h([1, 2])` leaked its argument outright — frees=0, not one
 	// short — where the identical literal handed to a named function is
@@ -13124,7 +13149,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
-		if (reclaimArgTemps || reclaimIndirectArgTemps) && !toOwnParam {
+		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai)) && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
 			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the
