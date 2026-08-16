@@ -1,49 +1,13 @@
 // `core/mem.Drop` — user finalizers hooked into the RC drop glue (#2705).
 //
-// These are COMPILED-BACKEND-ONLY, deliberately, and not differential
-// against the interpreter: the interpreter has no refcounts (see
-// interp.go's "the interpreter has no refcounts to underflow"), so a
-// value never reaches rc-zero there and `drop` never runs. Same shape as
-// dynCompiledBackends, which exists because the interpreter cannot
-// dispatch `dyn` over i64. Expectations here are literals, and the three
-// backends must agree with each other.
+// These pass backendsAgree a LITERAL rather than an interpOracle: the
+// interpreter has no refcounts (interp.go — "the interpreter has no
+// refcounts to underflow"), so no value reaches rc-zero there and `drop`
+// never runs. See backends_agree_test.go for when that exemption applies;
+// it is narrow, and this is one of the two cases.
 package e2e
 
-import (
-	"strings"
-	"testing"
-)
-
-// dropAllCompiled runs src on wasm, x86-64 and arm64 and asserts each
-// stdout equals want.
-func dropAllCompiled(t *testing.T, src, want string) {
-	t.Helper()
-	t.Run("wasm32-wasi", func(t *testing.T) {
-		if got := runWasmCapturingStdout(t, src); got != want {
-			t.Errorf("wasm = %q, want %q", got, want)
-		}
-	})
-	t.Run("x86_64", func(t *testing.T) {
-		got, code := compileAndRunX86_64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("x86-64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("x86-64 = %q, want %q", got, want)
-		}
-	})
-	t.Run("arm64-linux", func(t *testing.T) {
-		got, code := compileAndRunArm64(t, src)
-		got = strings.TrimSpace(got)
-		if code != 0 {
-			t.Fatalf("arm64 exit = %d, want 0; stdout:\n%s", code, got)
-		}
-		if got != want {
-			t.Errorf("arm64 = %q, want %q", got, want)
-		}
-	})
-}
+import "testing"
 
 const dropPrelude = `import "core/mem";
 import "std/i32";
@@ -63,7 +27,7 @@ func TestDropTraitRunsAndReadsFields(t *testing.T) {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "use 7\ndrop 7")
+	backendsAgree(t, src, "use 7\ndrop 7")
 }
 
 // Every container shape funnels its element/field/payload release through
@@ -85,7 +49,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dropAllCompiled(t, src,
+	backendsAgree(t, src,
 		"len 2\nfield 3\npayload 4\nreturned 5\ndrop 1\ndrop 2\ndrop 3\ndrop 4\ndrop 5")
 }
 
@@ -100,7 +64,7 @@ func TestDropTraitAliasFinalizesOnce(t *testing.T) {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "both 11\ndrop 1")
+	backendsAgree(t, src, "both 11\ndrop 1")
 }
 
 // A value moved into a callee is finalized there, once — the caller must
@@ -113,7 +77,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "consume 1\ndrop 1\nback 1")
+	backendsAgree(t, src, "consume 1\ndrop 1\nback 1")
 }
 
 // A loop body's temporary is finalized once per iteration, at the
@@ -130,7 +94,7 @@ func TestDropTraitLoopTemporary(t *testing.T) {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "iter 10\ndrop 10\niter 11\ndrop 11\niter 12\nend\ndrop 12")
+	backendsAgree(t, src, "iter 10\ndrop 10\niter 11\ndrop 11\niter 12\nend\ndrop 12")
 }
 
 // The reuse interaction, pinned. Drop-guided reuse hands a dying value's
@@ -154,7 +118,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "p 2\niter 10\ndrop 10\niter 11\nend\ndrop 2\ndrop 11")
+	backendsAgree(t, src, "p 2\niter 10\ndrop 10\niter 11\nend\ndrop 2\ndrop 11")
 }
 
 // An enum carries its own impl. `enumNeedsDrop` says an all-scalar enum
@@ -174,7 +138,7 @@ function main(): i32 {
     return 0;
 }
 `
-	dropAllCompiled(t, src, "v 7\ndrop Sig\nend")
+	backendsAgree(t, src, "v 7\ndrop Sig\nend")
 }
 
 // Self-overwrite is the other reuse shape: `w = W { … }` in a loop keeps
@@ -207,6 +171,6 @@ function main(): i32 {
 `
 	// Three W values (initial + two rebinds) and three B values, each
 	// finalized exactly once: two during each loop, the survivor at exit.
-	dropAllCompiled(t, src,
+	backendsAgree(t, src,
 		"drop W2\nwi\ndrop W1\nwi\ndrop B\nbj\ndrop B\nbj\nend\ndrop W1\ndrop B")
 }

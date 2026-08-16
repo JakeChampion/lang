@@ -639,7 +639,7 @@ function main(): i32 {
 	// Compiled backends now LOWER multi-trait `dyn A + B` dispatch through
 	// the merged vtable (docs/DYN-TRAITS.md §10) — codegen must succeed (no
 	// reject, no panic). The differential correctness tests against the
-	// interpreter live in dyn_trait_compiled_test.go (dynAllBackends).
+	// interpreter live in dyn_trait_compiled_test.go (backendsAgree).
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		gen := exec.Command(bin, "-target", target, "-o", filepath.Join(dir, "out_"+target), src)
 		var gerr bytes.Buffer
