@@ -100,7 +100,22 @@
 # --- arm64-self-host only (passes on interp AND the self-host x86-64 leg) ---
 
 # --- ACTIVE -----------------------------------------------------------------
-# (none)
+# The three string-reclaim shapes below (#6527, #6545, #6544) were fixed in
+# `internal/ir` — the NATIVE compiler — and the self-host compiler carries its
+# own RC implementation, which has not been ported. So each case measures
+# `flat` under native and `grows` here, on ALL THREE self-host targets
+# identically: the gap is in the shared self-host reclaim path, not in any one
+# emitter.
+#
+# Shape only. Every ANSWER matches native; it is the allocation class that
+# diverges, which is precisely what these AL-01 cases exist to measure.
+#
+# This is the RECLAIM half of goal 2 (docs/RC-PERCEUS-SELF-HOST-PORT.md §9),
+# the same category as `alloc_flat_map_get` before #6875 closed it, and it is
+# tracked as such. Each row goes when the corresponding rule is ported.
 #
 # Every row here must be a live divergence: a listed case that comes back
 # matching native FAILS this leg, so an entry cannot outlive its bug.
+alloc_flat_nested_string_array #6527 self-host does not reclaim a string[][]'s element strings; native does since #6527. Shape only — every answer matches. All three self-host legs diverge identically.
+alloc_flat_struct_string_field #6545 self-host does not move a bound string into the struct literal that consumes it; native does since #6545. Shape only — every answer matches. All three self-host legs diverge identically.
+alloc_flat_method_identity_return #6544 self-host does not reclaim a receiver method's materialised result on an identity return; native does since #6544. Shape only — every answer matches. All three self-host legs diverge identically.
