@@ -13823,6 +13823,12 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	if !ok || !structReuseEligible(sd) {
 		return false, nil
 	}
+	// A `Drop` implementor never reuses: the self-overwrite keeps the OLD
+	// box and overwrites its fields, so the displaced value's drop glue —
+	// and with it the user finalizer — never runs (#2705).
+	if _, hasDrop := userDropFnName(b.info, st.Name); hasDrop {
+		return false, nil
+	}
 	if !b.rc.freeEligible[t.Name] {
 		return false, nil
 	}
@@ -14060,6 +14066,11 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 	size, sizeOk := uniformEnumBoxSize(ed, b.ptrW)
 	if !sizeOk {
 		return false, nil // variants disagree on box size — can't reuse
+	}
+	// Same exclusion as the struct self-overwrite: reusing the box in place
+	// would displace a value whose finalizer never got to run (#2705).
+	if _, hasDrop := userDropFnName(b.info, et.Name); hasDrop {
+		return false, nil
 	}
 	const rcHeaderBytes = 8
 
@@ -15011,6 +15022,20 @@ func (b *builder) ownParamEnumScrutinee(tag ast.Expr) (ast.EnumType, bool) {
 //
 // Net-zero on the operand stack, so a value sitting underneath is untouched.
 func (b *builder) emitEnumSlotDrop(slot int32, et ast.EnumType, eligible bool) {
+	// An enum with a `core/mem.Drop` impl routes to the generated
+	// __drop_enum_<Name> instead of the inline variant plan below (#2705).
+	// The inline plan frees the box itself and knows nothing about the user
+	// finalizer, so the exit sweep — which calls this directly rather than
+	// going through emitOwnedEnumDrop — would destroy the value without
+	// running its destructor. Non-Drop enums are untouched, so the golden
+	// codegen shape this path is pinned on is unchanged.
+	if eligible {
+		if _, hasDrop := userDropFnName(b.info, et.Name); hasDrop {
+			if b.emitEnumDropViaGenFn(slot, et) {
+				return
+			}
+		}
+	}
 	ed, edOk := b.info.Enums[et.Name]
 	if edOk && ast.RcFreeEnabled && eligible {
 		// Generic-enum reclamation: a heap-boxed instantiation like

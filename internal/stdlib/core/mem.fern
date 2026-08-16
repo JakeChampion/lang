@@ -13,9 +13,16 @@
 //
 // The compiler calls `drop(self)` from the type's generated drop glue,
 // at the point the refcount reaches zero and BEFORE the value's fields
-// are reclaimed — so the body can still read every field. Nothing else
-// may call it: an explicit `v.drop()` is rejected (E074), because the
-// runtime is going to call it too and the body would run twice.
+// are reclaimed — so the body can still read every field.
+//
+// Do not call it yourself. An explicit `v.drop()` is currently accepted
+// and runs the body a SECOND time, on a value the runtime is still going
+// to finalize; rejecting it at check time is a follow-up.
+//
+// A `Drop` type does not participate in Perceus reuse. Reuse hands a
+// dying value's box straight to the next constructor of the same shape
+// instead of freeing it, which would skip the finalizer entirely, so the
+// optimisation is declined for these types — the cost of declaring one.
 //
 // Reliability tracks the RC implementation, not this trait. A value the
 // reclamation passes cannot yet prove dead — see the leak classes in
