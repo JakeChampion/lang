@@ -209,6 +209,15 @@ suites, so the debt stays visible in one place.
 - **Every new feature ships with tests.** Parser-time desugar → parser test.
   Checker rule → checker test. Runtime behaviour → e2e test. No "the next PR will
   add coverage."
+- **Fix the cause, in the right place — never a side channel.** No workaround,
+  no special case shielding a symptom, no threading a value to one caller as an
+  extra parameter when it belongs on the shared structure. If the coherent fix
+  is wider than the bug, the wider change is the fix; give it its own PR when it
+  is broad, but never ship the narrow version *instead*. A tracking list, a
+  known-divergence entry, or a TODO records a gap someone else owns — reaching
+  for one to get your own change green is the workaround this rule forbids. When
+  something genuinely blocks the correct fix, say so and stop rather than
+  routing around it.
 - **Fix bugs you find on the way.** If exploring for one feature surfaces a
   separate bug, fix it in the same PR with its own test rather than leaving it.
 

@@ -47,10 +47,15 @@
 //
 // # What is not here yet
 //
-// Two things the self-host FRONT END does not carry, neither fixable here:
+// Two gaps, neither fixable here:
 //
-//   - `trait` reaches the parser only as `TraitReq`, which has no visibility,
-//     so `pub trait` cannot be rendered;
+//   - `trait` blocks are not reachable from a Module. `parser.TraitDecl` holds
+//     everything a page needs — name, type params, supertraits, methods in
+//     source order, and `is_pub` — but `parse_trait_decl` hands it out
+//     separately and only the formatter takes it (`format_module`'s `traits`
+//     parameter). It is not a field on `Module`, which is what this generator
+//     renders from, so `pub trait` cannot be reached. Plumbing, not erasure:
+//     putting `trait_decls` on `Module` closes it.
 //   - `const` desugars to a zero-arg function (`FuncDecl.is_const`) rather than
 //     surviving as its own declaration.
 //
