@@ -15825,6 +15825,17 @@ func (b *builder) assign(n *ast.Assign) error {
 			// zero on the operand stack, so the new RHS value underneath is
 			// left in place for the store below.
 			b.emitTupleSlotDrop(idx, tt)
+		} else if b.dynReclaim() && b.localIsDynTrait(t.Name) {
+			// `d = <dyn>` reassignment-overwrite. A `dyn` local sits outside
+			// every arm above (its cell carries no rc header, so it is neither
+			// an array nor a struct/enum/string/tuple by these predicates), so
+			// nothing released the old cell + concrete and a reassigning loop
+			// orphaned one of each per iteration. Reuses the loop-body
+			// re-declaration drop, which carries the gating a `dyn` slot needs
+			// — dynBorrowedViews / dynAliasElemArrays hold no cell of their own
+			// — and is net-zero on the operand stack, so the new value
+			// underneath survives for the store below.
+			b.emitVarReinitDropOld(t.Name, idx)
 		}
 		// Tee semantics: leave a copy on the stack for callers that
 		// use the assignment as an expression. Plain ExprStmts drop it
