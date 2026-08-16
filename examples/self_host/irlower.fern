@@ -21292,32 +21292,41 @@ function expr_unsafe_for(e: parser.Expr, name: string, borrowable: string[]): bo
 }
 
 // param_is_borrowable reports whether param `idx` of free function `name` is
-// borrowable per the `borrowable` registry ("callee|flags", flag i = '1' iff
-// param i is borrowable). Defaults false (unknown callee / out-of-range index →
-// conservative escape). Mirrors the "name|flags" lookup of callee_param_is_fn.
+// borrowable per a borrowability registry (see borrow_reg_new for the layout).
+// Defaults false (unknown callee / out-of-range index → conservative escape).
+//
+// One bucket is scanned, not the whole registry. This runs for every call-arg on
+// every body walk of every pass of both interproc fixpoints, over a table with
+// an entry per function in the module — 1,359 of them for irlower.fern itself —
+// so the probe length is what this costs, and bucketing is what bounds it.
+//
+// Keys are matched by byte comparison, NOT by slicing out `e[p:bar]` and
+// comparing strings: the slice allocated a fresh string per record examined, and
+// that churn was ~800 MB of the whole-program emit floor (#3457 step 2). The
+// length guard rejects a mismatched record before looking at any byte.
 function param_is_borrowable(borrowable: string[], name: string, idx: i32): boolean {
+    var nb: i32 = borrowable.len();
+    // An empty registry is the conservative caller (`none`): nothing borrowable.
+    if (nb == 0) { return false; }
+    var e: string = borrowable[util.hash_bucket(name, nb)];
     var nl: i32 = name.len();
-    var i: i32 = 0;
-    while (i < borrowable.len()) {
-        var e: string = borrowable[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        // Match the key e[0:bar] against `name` by byte comparison — NOT `e[0:bar]
-        // == name`, whose substring slice allocated a fresh string on every one of
-        // the ~N registry entries scanned per call. This runs for every call-arg on
-        // every body walk of both interproc fixpoints (~6 + ~3 passes), and that
-        // per-entry slice churn was ~800 MB of the whole-program emit floor (#3457
-        // step 2). The length guard rejects the common mismatch in O(1).
-        if (bar < e.len() && bar == nl) {
+    var n: i32 = e.len();
+    var p: i32 = 0;
+    while (p < n) {
+        var bar: i32 = p;
+        while (bar < n && e[bar] != 124) { bar = bar + 1; }         // 124 = '|'
+        var end: i32 = bar;
+        while (end < n && e[end] != 10) { end = end + 1; }          // 10 = '\n'
+        if (bar < n && bar - p == nl) {
             var eq: boolean = true;
             var k: i32 = 0;
-            while (eq && k < nl) { if (e[k] != name[k]) { eq = false; } k = k + 1; }
+            while (eq && k < nl) { if (e[p + k] != name[k]) { eq = false; } k = k + 1; }
             if (eq) {
                 var pos: i32 = bar + 1 + idx;
-                return pos < e.len() && e[pos] == 49;   // 49 = '1'
+                return pos < end && e[pos] == 49;                   // 49 = '1'
             }
         }
-        i = i + 1;
+        p = end + 1;
     }
     return false;
 }
@@ -46039,9 +46048,36 @@ function param_match_binding_escapes_stmt(st: parser.Stmt, name: string): boolea
     return false;
 }
 
+// A borrowability registry is a fixed-width bucket array, NOT a list of entries:
+// exactly BORROW_REG_BUCKETS strings, bucket b holding the '\n'-terminated
+// "<key>|<flags>" records whose key hashes to b. It stays a `string[]` so the
+// ~20 walker signatures that thread it are untouched, and so regs_equal — which
+// compares positionally — keeps working unchanged.
+//
+// Bucketing on the key's FIRST BYTE would not do: self-host names are dominated
+// by shared prefixes (set_*, emit_*, is_*, lower_*, collect_*), so the worst
+// first-byte bucket holds 159 of irlower.fern's 1,359 functions — 11.7% of the
+// table. The whole key is hashed instead.
+//
+// A prime count keeps unrelated hash strides from aliasing onto the same bucket.
+function borrow_reg_buckets(): i32 { return 251; }
+
+function borrow_reg_new(): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    var n: i32 = borrow_reg_buckets();
+    while (i < n) { out = out.append(""); i = i + 1; }
+    return out;
+}
+
+function borrow_reg_put(reg: string[], key: string, flags: string): string[] {
+    var b: i32 = util.hash_bucket(key, reg.len());
+    return reg.with(b, reg[b] + key + "|" + flags + "\n");
+}
+
 pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     var none: string[] = [];
-    var out: string[] = [];
+    var out: string[] = borrow_reg_new();
     var k: i32 = 0;
     while (k < funcs.len()) {
         var flags: string = "";
@@ -46062,11 +46098,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             else { flags = flags + "0"; }
             pj = pj + 1;
         }
-        if (any) {
-            var key: string = funcs[k].name;
-            if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
-            out = out.append(key + "|" + flags);
-        }
+        if (any) { out = borrow_reg_put(out, borrowable_key(funcs[k]), flags); }
         k = k + 1;
     }
     return out;
@@ -46123,14 +46155,14 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     // "callee|flags"; methods keyed "<Type>.<method>".
     //
     // Seed: every param of every function optimistically borrowable.
-    var reg: string[] = [];
+    var reg: string[] = borrow_reg_new();
     var s0: i32 = 0;
     while (s0 < funcs.len()) {
         if (funcs[s0].params.len() > 0) {
             var seedflags: string = "";
             var sp: i32 = 0;
             while (sp < funcs[s0].params.len()) { seedflags = seedflags + "1"; sp = sp + 1; }
-            reg = reg.append(borrowable_key(funcs[s0]) + "|" + seedflags);
+            reg = borrow_reg_put(reg, borrowable_key(funcs[s0]), seedflags);
         }
         s0 = s0 + 1;
     }
@@ -46139,7 +46171,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     var prev: string[] = [];
     while (iter < cap && !regs_equal(reg, prev)) {
         prev = reg;
-        var next: string[] = [];
+        var next: string[] = borrow_reg_new();
         var i: i32 = 0;
         while (i < funcs.len()) {
             if (funcs[i].params.len() > 0) {
@@ -46159,7 +46191,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = next.append(borrowable_key(funcs[i]) + "|" + flags); }
+                if (any) { next = borrow_reg_put(next, borrowable_key(funcs[i]), flags); }
             }
             i = i + 1;
         }
@@ -46172,9 +46204,11 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
     return reg;
 }
 
-// regs_equal compares two borrowability registries entry-for-entry. Entries are
-// produced in funcs order every pass, so positional equality is exactly "the
-// registry is unchanged" — the greatest fixpoint's convergence test.
+// regs_equal compares two borrowability registries bucket-for-bucket — the
+// convergence test for both interprocedural fixpoints. Bucket assignment is a
+// pure function of the key and records land in funcs order within a bucket, so
+// two passes producing the same verdicts produce byte-identical buckets, and
+// positional equality is exactly "the registry is unchanged".
 //
 // It stops at the first difference, which is the case on every pass but the
 // last. The serialised-signature form this replaced could not: it concatenated
@@ -46200,13 +46234,25 @@ function regs_equal(a: string[], b: string[]): boolean {
 // borrow side of the per-arg check. Encoded "callee|flags" like borrowable.
 // Computed ONCE per module on the emit path, threaded into lower_func.
 pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable: string[]): string[] {
-    var reg: string[] = [];
+    // Seeded to an EMPTY bucket array rather than `[]` so the first convergence
+    // test compares a real registry against the zero-length sentinel and runs at
+    // least one pass. A `[]` seed answers every probe false exactly as an
+    // all-empty bucket array does, so the analysis is unchanged.
+    var reg: string[] = borrow_reg_new();
     var cap: i32 = 8;
     var iter: i32 = 0;
-    var prevsize: i32 = 0 - 1;
-    while (iter < cap && reg.len() != prevsize) {
-        prevsize = reg.len();
-        var next: string[] = [];
+    var prev: string[] = [];
+    // EXACT convergence, not `reg.len() != prevsize`. The size test was already
+    // imprecise — a pass can flip a flag inside an existing entry ("10" -> "11")
+    // without changing the entry count, and the loop would stop believing it had
+    // converged — and under bucketing it is outright wrong, because the length is
+    // a constant 251 and it would report convergence after a single pass.
+    // Under-converging from below is conservative (fewer consume-safe params, so
+    // reclaims are missed rather than unsound), which is why the old test was a
+    // precision bug and not a leak.
+    while (iter < cap && !regs_equal(reg, prev)) {
+        prev = reg;
+        var next: string[] = borrow_reg_new();
         var i: i32 = 0;
         while (i < funcs.len()) {
             if (funcs[i].params.len() > 0) {
@@ -46218,7 +46264,7 @@ pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable:
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = next.append(borrowable_key(funcs[i]) + "|" + flags); }
+                if (any) { next = borrow_reg_put(next, borrowable_key(funcs[i]), flags); }
             }
             i = i + 1;
         }
