@@ -22,7 +22,7 @@ function main(): i32 { return helper(41); }`
 	asm := compile(t, src, Options{})
 
 	for _, fn := range []string{"main", "helper"} {
-		want := ".section .text." + fn + ",\"ax\",@progbits"
+		want := ".section .text." + AsmFnName(fn) + ",\"ax\",@progbits"
 		if !strings.Contains(asm, want) {
 			t.Errorf("ELF arm64 output must emit %q so ld can veneer cross-function "+
 				"calls past the ±128 MiB bl range (the self-host .text wall); not found", want)
@@ -38,7 +38,7 @@ function main(): i32 { return helper(41); }`
 func TestArm64FunctionSectionsDarwinUnaffected(t *testing.T) {
 	src := `function main(): i32 { return 0; }`
 	asm := compile(t, src, Options{Darwin: true})
-	if strings.Contains(asm, ".section .text.main") {
+	if strings.Contains(asm, ".section .text."+AsmFnName("main")) {
 		t.Error("arm64-darwin (Mach-O) output must NOT emit the ELF .section .text.<name> directive")
 	}
 }

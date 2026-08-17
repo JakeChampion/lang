@@ -19,6 +19,7 @@ import (
 
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // TestCLISharedX86Dlopen drives the user-facing `-shared` flag end to end:
@@ -275,12 +276,7 @@ function main(): i32 { return fib10(); }`, 55},
 				export = "fib10"
 			}
 			asm := compileToX86Asm(t, c.src)
-			text, rodata, relocs, exportVAddr, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, []string{export})
-			if err != nil {
-				t.Fatalf("AssembleProgramShared: %v", err)
-			}
-			exports := []nativeelf.Export{{Name: export, Value: exportVAddr[export]}}
-			so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), exports, "libfern.so")
+			so := sharedLibX86(t, asm, export)
 
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
@@ -345,12 +341,7 @@ function main(): i32 { return 0; }`, 0, 0, 41, 42},
 			// Compile with the export as a tree-shake root — jni_answer is
 			// never called by main, exactly like a real JVM-only JNI entry.
 			asm := compileToX86AsmExports(t, c.src, []string{c.fn})
-			text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, []string{c.fn})
-			if err != nil {
-				t.Fatalf("AssembleProgramShared: %v", err)
-			}
-			so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-				[]nativeelf.Export{{Name: c.fn, Value: ev[c.fn]}}, "libfern.so")
+			so := sharedLibX86(t, asm, c.fn)
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
 			if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -422,12 +413,7 @@ function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d
 function main(): i32 { return 0; }`
 	exps := []string{"run0", "run1", "run4"}
 	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "run0", Value: ev["run0"]}, {Name: "run1", Value: ev["run1"]}, {Name: "run4", Value: ev["run4"]}}, "libfern.so")
+	so := sharedLibX86(t, asm, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -487,12 +473,7 @@ function probe1(env: usize, cls: usize, jenv: usize, idx: usize, a0: usize): i32
 }
 function main(): i32 { return 0; }`
 	asm := compileToX86AsmExports(t, src, []string{"probe1"})
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, []string{"probe1"})
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "probe1", Value: ev["probe1"]}}, "libfern.so")
+	so := sharedLibX86(t, asm, "probe1")
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -989,13 +970,7 @@ function ab_idx(env: usize, cls: usize, i: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"ab_data", "ab_idx"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "ab_data", Value: ev["ab_data"]}, {Name: "ab_idx", Value: ev["ab_idx"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1130,13 +1105,7 @@ function check(env: usize, cls: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"check"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "check", Value: ev["check"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1308,4 +1277,23 @@ int main(int c,char**v){
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
 		t.Fatalf("jvalue float-arg packing = %d, want 42 (out=%q)", code, out)
 	}
+}
+
+// sharedLibX86 assembles x86-64 `asm` into a .so exporting `names`, the way
+// `fern -shared` does: .dynsym carries each export's Fern name, resolved
+// against the mangled symbol the backend actually emitted. Getting that pair
+// wrong is an "export is not a defined .text symbol" error, so the four
+// callers share one implementation of it rather than four.
+func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
+	t.Helper()
+	asmNames := symname.Fns(names)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
+	if err != nil {
+		t.Fatalf("AssembleProgramShared: %v", err)
+	}
+	exports := make([]nativeelf.Export, len(names))
+	for i, n := range names {
+		exports[i] = nativeelf.Export{Name: n, Value: ev[asmNames[i]]}
+	}
+	return nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), exports, "libfern.so")
 }

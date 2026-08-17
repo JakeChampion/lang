@@ -33,6 +33,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
@@ -792,7 +793,7 @@ func (g *generator) emitDataSections() {
 			g.line(".align 3")
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
-				g.line(fmt.Sprintf("\t.quad %s", m.Func))
+				g.line(fmt.Sprintf("\t.quad %s", g.sym(m.Func)))
 			}
 			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
 			// §4.4, slice 4c): the concrete type's drop fn as an absolute
@@ -805,7 +806,7 @@ func (g *generator) emitDataSections() {
 			// and the Mach-O __DATA,__const path above, so this works for
 			// both arm64 targets.
 			if vt.Drop != "" {
-				g.line(fmt.Sprintf("\t.quad %s", vt.Drop))
+				g.line(fmt.Sprintf("\t.quad %s", g.sym(vt.Drop)))
 			} else {
 				g.line("\t.quad 0")
 			}
@@ -853,7 +854,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
 			g.label(g.closureCellSym(name))
-			g.line(fmt.Sprintf("\t.quad %s", name))
+			g.line(fmt.Sprintf("\t.quad %s", g.sym(name)))
 			g.line("\t.quad 0")
 		}
 	}
@@ -9120,7 +9121,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		// drop_fn is 0 (the generic drop guards drop_fn!=0).
 		g.emit("mov w0, #32")
 		g.emit("bl __fern_alloc_rc1")
-		g.adrpAdd("x1", op.Str)
+		g.adrpAdd("x1", g.sym(op.Str))
 		g.emit("str x1, [x0]")
 		g.emit("str xzr, [x0, #8]")
 		g.emit("str xzr, [x0, #16]")
@@ -9236,7 +9237,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// target).
 	g.emit("mov w0, #32")
 	g.emit("bl __fern_alloc_rc1")
-	g.adrpAdd("x1", op.Str)
+	g.adrpAdd("x1", g.sym(op.Str))
 	g.emit("str x1, [x0]")
 	g.emit("str x19, [x0, #8]")
 	// drop_fn = &__closure_drop_<name> when the IR generated the thunk
@@ -9245,7 +9246,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// by re-reading the flag in codegen, so a free-OFF build (or a flag
 	// toggled by a concurrent test) stores 0 instead of a dangling label.
 	if _, ok := g.funcs["__closure_drop_"+op.Str]; ok {
-		g.adrpAdd("x1", "__closure_drop_"+op.Str)
+		g.adrpAdd("x1", g.sym("__closure_drop_"+op.Str))
 		g.emit("str x1, [x0, #16]")
 	} else {
 		g.emit("str xzr, [x0, #16]")
@@ -10205,7 +10206,7 @@ func (g *generator) emitStartRuntime() {
 			}
 		}
 	}
-	g.emit("bl main")
+	g.emit("bl %s", AsmFnName("main"))
 	if ast.LeakCheckEnabled {
 		// Leak detector (#5362 slice 1): print the alloc/free summary
 		// before exiting. main's return value parks in x19 (callee-save,
@@ -10263,6 +10264,29 @@ func (g *generator) emitStartRuntime() {
 // reassigns it. (Mirrors the x86-64 backend's rcInlineMaxOps.)
 var rcInlineMaxOps = 1_000_000
 
+// AsmFnName returns the asm symbol for a Fern function `name` — see
+// internal/symname for why every one of them is mangled. It must be used at
+// EVERY site that emits a Fern function's name as an asm token (definition,
+// `bl`, and `.quad` / `adrp` pointer), or the definition and its references
+// disagree and the link fails with an undefined symbol.
+//
+// Only Fern functions go through it. The runtime helpers this backend emits
+// itself (`__fern_alloc`, `__memcpy`, the `__c_call*` family, …) are not Fern
+// functions and keep their own names; `sym` is the call-site form that tells
+// the two apart. (Mirrors the x86-64 backend's AsmFnName.)
+func AsmFnName(name string) string { return symname.Fn(name) }
+
+// sym returns the asm symbol for a direct-call target, which the IR names in
+// one namespace whether it is a function the program defines or a runtime
+// helper this backend provides. A defined function is the mangled symbol; a
+// helper is its own bare name.
+func (g *generator) sym(target string) string {
+	if _, ok := g.funcs[target]; ok {
+		return AsmFnName(target)
+	}
+	return target
+}
+
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.current = fn
 	g.currentIR = irFn
@@ -10315,6 +10339,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 	frameSize := 16 + localsSize
 
+	sym := AsmFnName(fn.Name)
 	g.line("")
 	// Emit each function into its OWN section (`-ffunction-sections` style) rather
 	// than one monolithic `.text`. On AArch64 a `bl`/`R_AARCH64_CALL26` reaches only
@@ -10326,11 +10351,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// only — the arm64-darwin Mach-O path links via clang+lld, which already inserts
 	// range-extension thunks within a section, and uses `__TEXT,__text` sections.
 	if !g.darwin {
-		g.line(fmt.Sprintf(".section .text.%s,\"ax\",@progbits", fn.Name))
+		g.line(fmt.Sprintf(".section .text.%s,\"ax\",@progbits", sym))
 	}
-	g.line(fmt.Sprintf(".global %s", fn.Name))
-	g.typeDirective(fn.Name)
-	g.label(fn.Name)
+	g.line(fmt.Sprintf(".global %s", sym))
+	g.typeDirective(sym)
+	g.label(sym)
 	// Prologue:
 	//   stp x29, x30, [sp, #-16]!  ; save fp/lr, sp -= 16
 	//   mov x29, sp                ; fp = sp (points at saved pair)
@@ -10422,7 +10447,7 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("ret")
-	g.sizeDirective(fn.Name)
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 	return nil
 }
@@ -12287,7 +12312,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", op.Str)
+		g.emit("bl %s", g.sym(op.Str))
 		g.emitCallArgsCleanup(slotCount)
 		if returnIsVoid(g, op.Str) {
 			break
@@ -12329,7 +12354,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// back to the call in functions too large to absorb the inline bloat.
 		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
-			g.emit("bl %s", op.Str)
+			g.emit("bl %s", g.sym(op.Str))
 			g.push()
 			return nil
 		}
@@ -12367,7 +12392,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.usesRcIsUnique = true // keep the helper emitted (RcFreeDebug / large-fn bl)
 		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
-			g.emit("bl %s", op.Str)
+			g.emit("bl %s", g.sym(op.Str))
 			g.push()
 			return nil
 		}
@@ -13014,7 +13039,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", target)
+		g.emit("bl %s", g.sym(target))
 		g.emitCallArgsCleanup(slotCount)
 		// Push return value(s). String-returning user fns return
 		// (data, len) in (x0, x1) under the two-word ABI; push
@@ -13070,7 +13095,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", op.Str)
+		g.emit("bl %s", g.sym(op.Str))
 		g.emitCallArgsCleanup(slotCount)
 		g.emit("mov x16, x1") // stash payload (x1 may be clobbered)
 		g.push()              // push x0 (tag)

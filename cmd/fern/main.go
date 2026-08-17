@@ -76,6 +76,7 @@ import (
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/printer"
 	"github.com/jakechampion/lang/internal/ssa"
+	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
@@ -2072,12 +2073,9 @@ func linkNativePIE(asm, outPath string) error {
 // machine (x86-64 vs arm64/arm64-android).
 func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 	soname := filepath.Base(outPath)
+	asmNames := symname.Fns(exportNames)
 	var so []byte
 	if target == "x86-64-linux" {
-		asmNames := make([]string, len(exportNames))
-		for i, n := range exportNames {
-			asmNames[i] = x86_64codegen.AsmFnName(n)
-		}
 		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
@@ -2087,8 +2085,8 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 		}
 		so = nativeelf.SharedLibraryX86(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
-	} else { // arm64 / arm64-android: the backend reserves no names, so the asm symbol is the Fern name
-		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exportNames)
+	} else { // arm64 / arm64-android
+		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2096,7 +2094,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		for i, r := range relocs {
 			elfRelocs[i] = nativeelf.Reloc{Offset: r.Offset, Addend: r.Addend}
 		}
-		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, exportNames, ev), soname)
+		so = nativeelf.SharedLibrary(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
 	}
 	if err := os.WriteFile(outPath, so, 0o755); err != nil {
 		return err
@@ -2106,8 +2104,8 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 
 // sharedExports pairs each export's Fern name with the vaddr the assembler
 // resolved for the asm symbol at asmNames[i], preserving the requested order.
-// The two differ wherever the backend escaped a name its assembler reserves;
-// .dynsym carries the Fern name, which is what a loader looks up.
+// The two always differ — the backends mangle every Fern function symbol —
+// and .dynsym carries the Fern name, which is what a loader looks up.
 func sharedExports(names, asmNames []string, vaddr map[string]uint64) []nativeelf.Export {
 	out := make([]nativeelf.Export, len(names))
 	for i, n := range names {
@@ -2279,7 +2277,9 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 			}
 		}
 		if len(vars) > 0 {
-			out[fn.Name] = vars
+			// Keyed by the emitted symbol: the DWARF builder walks the
+			// linked symbol table, which carries mangled names.
+			out[symname.Fn(fn.Name)] = vars
 		}
 	}
 	return out

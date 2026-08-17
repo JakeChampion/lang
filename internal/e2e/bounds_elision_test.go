@@ -14,6 +14,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 var boundsElisionCases = []struct {
@@ -108,15 +110,17 @@ func TestX86_64BoundsElisionEmitted(t *testing.T) {
 	}
 }
 
-// mainBody returns the text of `main:` up to its `.size` directive, so the
-// bounds-trap count isn't polluted by other functions' array accesses.
+// mainBody returns the text of main's emitted symbol up to its `.size`
+// directive, so the bounds-trap count isn't polluted by other functions'
+// array accesses.
 func mainBody(asm string) string {
-	i := strings.Index(asm, "\nmain:")
+	sym := symname.Fn("main")
+	i := strings.Index(asm, "\n"+sym+":")
 	if i < 0 {
 		return asm
 	}
 	rest := asm[i:]
-	if j := strings.Index(rest, ".size main"); j >= 0 {
+	if j := strings.Index(rest, ".size "+sym); j >= 0 {
 		return rest[:j]
 	}
 	return rest

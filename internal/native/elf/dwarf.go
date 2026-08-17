@@ -13,6 +13,8 @@ package elf
 // section is needed. Addresses use DW_FORM_addr (absolute), valid for the
 // ET_EXEC images the WX writers produce.
 
+import "github.com/jakechampion/lang/internal/symname"
+
 // DWARF tag / attribute / form constants used below (DWARF v4, section 7).
 const (
 	dwTagCompileUnit     = 0x11
@@ -551,15 +553,19 @@ func buildDebugInfo(syms []Sym, textLo, textHi uint64, name, compDir string, has
 				emittable = append(emittable, v)
 			}
 		}
+		// DW_AT_name describes the source, so a Fern function is named
+		// the way it was written rather than the way it was mangled — a
+		// debugger's `break main` and backtraces read source names.
+		name, _ := symname.Source(s.Name)
 		if len(emittable) == 0 {
 			die = appendULEB(die, abbrevSubprogram)
-			die = cstr(die, s.Name)
+			die = cstr(die, name)
 			die = le64(die, s.Value)
 			die = le64(die, s.Value+s.Size)
 			continue
 		}
 		die = appendULEB(die, abbrevSubprogramVars)
-		die = cstr(die, s.Name)
+		die = cstr(die, name)
 		die = le64(die, s.Value)
 		die = le64(die, s.Value+s.Size)
 		// DW_AT_frame_base = exprloc [DW_OP_reg<fbReg>].

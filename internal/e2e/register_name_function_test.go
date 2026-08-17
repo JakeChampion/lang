@@ -9,12 +9,12 @@ import (
 )
 
 // A user function whose name is an x86 register mnemonic (`ch`, `al`, `si`,
-// `ax`, …) must compile and run correctly. The x86-64 backend escapes such a
-// name to `<name>$fn` so no assembler ever sees the bare token: without that,
-// `call ch` resolves to the register CH and encodes an indirect call through
-// garbage → SIGSEGV. This exercises several such names, called and returning,
-// so a regression re-segfaults here on x86-64 (and stays correct on the other
-// backends, which were never affected).
+// `ax`, …) must compile and run correctly. The native backends mangle every
+// Fern function symbol, so no assembler ever sees the bare token: without
+// that, `call ch` resolves to the register CH and encodes an indirect call
+// through garbage → SIGSEGV. This exercises several such names, called and
+// returning, so a regression re-segfaults here on x86-64 (and stays correct on
+// the other backends, which were never affected).
 //
 // ch(10)=11, al(20)=19, si(3)=9, ax(4)=5, cx(100)=50 → 11+19+9+5+50 = 94.
 const registerNameFnSrc = `function ch(x: i32): i32 { return x + 1; }
@@ -64,15 +64,14 @@ func TestWASMRegisterNameFn(t *testing.T) {
 	}
 }
 
-// The escape above covered only the registers the backend itself emits, so
-// every other token GNU `as` reserves in Intel syntax still reached the
-// assembler bare (#6022) — and only on the `-cc` path, since this project's
-// own assembler knows none of them and reads them as the symbols they are.
-// One name per class that was missing: a segment register (the issue's
-// reproducer, `.size cs, .-cs` does not evaluate), an APX extended GPR
-// (`call r16` assembles clean as a REX2 indirect call — no diagnostic, then
-// SIGSEGV), MMX / control / instruction-pointer registers, an Intel-syntax
-// expression operator and a size keyword.
+// One name per class GNU `as` resolves as something other than a symbol, all
+// of which used to reach the assembler bare (#6022) — and only on the `-cc`
+// path, since this project's own assembler knows none of them and reads them
+// as the symbols they are: a segment register (the issue's reproducer,
+// `.size cs, .-cs` does not evaluate), an APX extended GPR (`call r16`
+// assembles clean as a REX2 indirect call — no diagnostic, then SIGSEGV),
+// MMX / control / instruction-pointer registers, an Intel-syntax expression
+// operator and a size keyword.
 //
 // The x86-64 leg is the one that regresses; the other three run it because a
 // reserved asm token must not become a frontend problem either.
@@ -111,7 +110,8 @@ func TestInterpAsmReservedNameFn(t *testing.T) {
 
 // compileAndRunX86_64 assembles and links with gcc, which is the path #6022
 // broke: before the fix this failed to build at all
-// (`Error: .size expression for cs does not evaluate to a constant`).
+// (`Error: .size expression for cs does not evaluate to a constant`) while the
+// in-process assembler built the same source happily.
 func TestX86_64AsmReservedNameFn(t *testing.T) {
 	out, code := compileAndRunX86_64(t, asmReservedNameFnSrc)
 	if code != 44 {
@@ -129,5 +129,62 @@ func TestArm64AsmReservedNameFn(t *testing.T) {
 func TestWASMAsmReservedNameFn(t *testing.T) {
 	if code := runWasm(t, asmReservedNameFnSrc); code != 44 {
 		t.Errorf("wasm exit = %d, want 44", code)
+	}
+}
+
+// The other half of the same namespace: the runtime helpers the backends emit
+// alongside the program. A Fern function named after one used to define that
+// symbol twice — gcc said `symbol '__fern_alloc' is already defined`, and the
+// in-process assembler (the DEFAULT for `-target x86-64`) took the first
+// definition and built a binary that called the runtime helper wherever the
+// program meant its own function. Silently: the program below returned 32
+// instead of 42. Mangling separates the two namespaces, so the helper keeps
+// its name and the Fern function gets its own.
+//
+// The array forces __fern_alloc to actually be emitted; a program that never
+// allocates has no helper to collide with.
+//
+// __fern_alloc(3 + 38) = 42.
+const runtimeHelperNameFnSrc = `function __fern_alloc(x: i32): i32 { return x + 1; }
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    return __fern_alloc(a.len() + 38);
+}
+`
+
+func TestInterpRuntimeHelperNameFn(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(runtimeHelperNameFnSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Errorf("exit = %d, want 42\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64RuntimeHelperNameFn(t *testing.T) {
+	out, code := compileAndRunX86_64(t, runtimeHelperNameFnSrc)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestArm64RuntimeHelperNameFn(t *testing.T) {
+	out, code := compileAndRunArm64(t, runtimeHelperNameFnSrc)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestWASMRuntimeHelperNameFn(t *testing.T) {
+	if code := runWasm(t, runtimeHelperNameFnSrc); code != 42 {
+		t.Errorf("wasm exit = %d, want 42", code)
 	}
 }

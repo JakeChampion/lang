@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // hasLoadCommand reports whether a Mach-O image contains a load command
@@ -369,9 +371,12 @@ func TestArm64DarwinDwarfSymtab(t *testing.T) {
 	for _, s := range gf.Symtab.Syms {
 		got[s.Name] = s.Value
 	}
-	for _, name := range []string{"main", "helper"} {
-		if _, ok := got[name]; !ok {
-			t.Errorf("missing symbol %q in -g build (have %v)", name, got)
+	// Mangled: the symbol table names what was emitted, which is what a
+	// disassembler and `nm` see at those addresses. `_main` is the Mach-O
+	// entry wrapper, a separate symbol from the Fern function it calls.
+	for _, fn := range []string{"main", "helper"} {
+		if _, ok := got[symname.Fn(fn)]; !ok {
+			t.Errorf("missing symbol %q in -g build (have %v)", symname.Fn(fn), got)
 		}
 	}
 	// Every function symbol lands inside the __text section's address range.
