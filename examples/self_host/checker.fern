@@ -780,7 +780,12 @@ pub struct UnionSig { name: string, variants: string[] }
 pub struct Scope {
   names: string[],
   types: Type[],
-  sigs: FuncSig[],
+  // The module's function table, name-indexed. Every scope in a module
+  // shares one SigTable by reference — bind / enter_loop / with_ret_type
+  // carry it through unchanged — so the index is built once per module,
+  // not once per scope. That matters: build_func_scope runs nine times per
+  // function across the diagnostic passes.
+  sigs: SigTable,
   structs: StructSig[],
   unions: UnionSig[],
   methods: MethodSig[],
@@ -806,6 +811,63 @@ pub struct Scope {
   trait_reqs: parser.TraitReq[],
 }
 
+// SigTable is the module's function signature table plus a bucket index over
+// the signature NAMES. head[b] is the first sigs index in bucket b (-1 when
+// empty) and next[i] chains to the next index in the same bucket, ascending —
+// so a bucket walk visits candidates in declaration order and a duplicated
+// name still resolves to its first declaration, as the linear scan did.
+pub struct SigTable {
+  sigs: FuncSig[],
+  head: i32[],
+  next: i32[],
+}
+
+// sig_buckets is the bucket count of the signature index. Prime, so unrelated
+// hash strides do not alias onto one bucket. A whole-compiler module declares
+// ~4,600 signatures, which this keeps at roughly one per bucket.
+function sig_buckets(): i32 { return 4093; }
+
+// sig_name_bucket hashes a signature name to a bucket. Folded by the modulus
+// at every step rather than at the end, so the accumulator stays small and the
+// hash needs no wrapping arithmetic.
+function sig_name_bucket(name: string): i32 {
+  var h: i32 = 0;
+  var i: i32 = 0;
+  var n: i32 = name.len();
+  while (i < n) {
+    h = ((h * 131) + (name[i] as i32)) % 4093;
+    i = i + 1;
+  }
+  return h;
+}
+
+// sig_table indexes `sigs` by name. The chain is built by walking BACKWARD and
+// pushing each entry onto the front of its bucket, which leaves every chain in
+// ascending index order without needing a per-bucket tail.
+function sig_table(sigs: FuncSig[]): SigTable {
+  var head: i32[] = [];
+  var b: i32 = 0;
+  var nb: i32 = sig_buckets();
+  while (b < nb) {
+    head = head.append(0 - 1);
+    b = b + 1;
+  }
+  var next: i32[] = [];
+  var j: i32 = 0;
+  while (j < sigs.len()) {
+    next = next.append(0 - 1);
+    j = j + 1;
+  }
+  var k: i32 = sigs.len() - 1;
+  while (k >= 0) {
+    var bk: i32 = sig_name_bucket(sigs[k].name);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    k = k - 1;
+  }
+  return SigTable { sigs: sigs, head: head, next: next };
+}
+
 function new_scope(): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
@@ -813,37 +875,13 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: fs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
-function new_scope_with_sigs(sigs: FuncSig[]): Scope {
+function new_scope_full(st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
-  var ss: StructSig[] = [];
-  var us: UnionSig[] = [];
-  var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sigs, structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
-}
-
-function new_scope_with_sigs_structs(sigs: FuncSig[], structs: StructSig[]): Scope {
-  var ns: string[] = [];
-  var ts: Type[] = [];
-  var us: UnionSig[] = [];
-  var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
-}
-
-function new_scope_with_sigs_structs_unions(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[]): Scope {
-  var ns: string[] = [];
-  var ts: Type[] = [];
-  var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
-}
-
-function new_scope_full(sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
-  var ns: string[] = [];
-  var ts: Type[] = [];
-  return Scope { names: ns, types: ts, sigs: sigs, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
@@ -1087,12 +1125,12 @@ function (s: Scope) lookup(name: string): Type {
 }
 
 function (s: Scope) lookup_sig(name: string): FuncSig {
-  var i: i32 = 0;
-  while (i < s.sigs.len()) {
-    if (s.sigs[i].name == name) {
-      return s.sigs[i];
+  var i: i32 = s.sigs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.sigs.sigs[i].name == name) {
+      return s.sigs.sigs[i];
     }
-    i = i + 1;
+    i = s.sigs.next[i];
   }
   // Sentinel: empty name + empty param list + unknown ret_type
   // tells callers the name isn't a function.
@@ -1285,8 +1323,8 @@ function (s: Scope) has_array_method(field: string): boolean {
   var target: string = "__method_Array_" + field;
   var tn: i32 = target.len();
   var i: i32 = 0;
-  while (i < s.sigs.len()) {
-    var nm: string = s.sigs[i].name;
+  while (i < s.sigs.sigs.len()) {
+    var nm: string = s.sigs.sigs[i].name;
     if (nm == target) {
       return true;
     }
@@ -1319,13 +1357,13 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
       var target: string = "__method_Array_" + field;
       var tn: i32 = target.len();
       var i: i32 = 0;
-      while (i < s.sigs.len()) {
-        var nm: string = s.sigs[i].name;
+      while (i < s.sigs.sigs.len()) {
+        var nm: string = s.sigs.sigs[i].name;
         if (nm == target) {
-          return s.sigs[i].ret_type;
+          return s.sigs.sigs[i].ret_type;
         }
         if (nm.len() > tn && nm[nm.len() - tn:nm.len()] == target) {
-          return s.sigs[i].ret_type;
+          return s.sigs.sigs[i].ret_type;
         }
         i = i + 1;
       }
@@ -1540,12 +1578,12 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
 // concat; the two call sites below want a boolean, and both reach it only
 // after `defines` already failed — i.e. they are biased toward the miss.
 function (s: Scope) has_sig(name: string): boolean {
-  var i: i32 = 0;
-  while (i < s.sigs.len()) {
-    if (s.sigs[i].name == name) {
+  var i: i32 = s.sigs.head[sig_name_bucket(name)];
+  while (i >= 0) {
+    if (s.sigs.sigs[i].name == name) {
       return true;
     }
-    i = i + 1;
+    i = s.sigs.next[i];
   }
   return false;
 }
@@ -3512,8 +3550,8 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // ret_type (so StmtReturn arms can compare against it), the receiver (for
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
-function build_func_scope(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
-  var s: Scope = new_scope_full(sigs, structs, unions, methods);
+function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
+  var s: Scope = new_scope_full(st, structs, unions, methods);
   if (fd.ret_type.len() > 0) {
     s = s.with_ret_type(type_from_name_with_structs_unions(fd.ret_type, structs, unions));
   }
@@ -3528,8 +3566,8 @@ function build_func_scope(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructS
   return s;
 }
 
-function check_func_body(fd: parser.FuncDecl, sigs: FuncSig[], structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
-  var s: Scope = build_func_scope(fd, sigs, structs, unions, methods);
+function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
+  var s: Scope = build_func_scope(fd, st, structs, unions, methods);
   // A GENERIC function's body operates on opaque-typed values — its type
   // parameters erase to unknown in this partial type system, so `v: T`
   // binds `v` to unknown and any expression over it infers unknown. That's
@@ -11082,6 +11120,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     well_typed = false;
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
+  var st: SigTable = sig_table(sigs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   var body_diags: Diag[] = [];
   var ambig: string[] = ambiguous_variants(mod.enums);
@@ -11099,7 +11138,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       i = i + 1;
       continue;
     }
-    if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) {
+    if (!check_func_body(mod.funcs[i], st, structs, unions, methods)) {
       well_typed = false;
     }
     var dbody: parser.Stmt[] = mod.funcs[i].body;
@@ -11110,10 +11149,10 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       // E052 — falling off the end is the normal exit) and must not
       // return a value (E002 on any `return <expr>;`). Matches the Go
       // checker, which treats void specially on both fronts.
-      var vsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
+      var vsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
       body_diags = append_diags(body_diags, void_ret_diags(dbody, vsc, unions));
     } else if (mod.funcs[i].ret_type.len() > 0) {
-      var fsc: Scope = build_func_scope(mod.funcs[i], sigs, structs, unions, methods);
+      var fsc: Scope = build_func_scope(mod.funcs[i], st, structs, unions, methods);
       body_diags = append_diags(body_diags, ret_diags(dbody, fsc, fsc.ret_type, unions));
       // E052: a non-void function whose body can fall off the end
       // without returning, reported at the function declaration.
@@ -11130,30 +11169,30 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // E063: returning a `[T]` slice that views function-local storage
     // (a use-after-free once the frame is reclaimed). Runs for every
     // function — a slice can escape from an inferred-return body too.
-    body_diags = append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods)));
+    body_diags = append_diags(body_diags, slice_escape_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods)));
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
     // checkMustConsume — docs/MUST-CONSUME.md).
     if (mc_on) {
-      body_diags = append_diags(body_diags, must_consume_diags(mod.funcs[i], build_func_scope(mod.funcs[i], sigs, structs, unions, methods), mod.structs, mod.enums));
+      body_diags = append_diags(body_diags, must_consume_diags(mod.funcs[i], build_func_scope(mod.funcs[i], st, structs, unions, methods), mod.structs, mod.enums));
     }
     // E002 (lambda bodies): return-type mismatch inside a lambda is
     // checked against the lambda's own declared return type, not the
     // enclosing function's. Runs for every function (even void ones —
     // a lambda can be declared anywhere), scope-threaded so a lambda
     // sees earlier locals.
-    body_diags = append_diags(body_diags, lret_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+    body_diags = append_diags(body_diags, lret_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions));
     // E031: match/if-expression arms must have compatible types
     // (scope-threaded so an arm sees earlier locals + its payload).
-    body_diags = append_diags(body_diags, mx_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions, mod.enums));
+    body_diags = append_diags(body_diags, mx_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions, mod.enums));
     // E005: struct literal missing a declared field (any expression in
     // the body, struct table is module-global so no scope needed).
     body_diags = append_diags(body_diags, stmts_slit_diags(dbody, structs));
     // E004: free-function call arity (scope-threaded so a shadowing
     // local isn't mistaken for the function).
-    body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs)));
+    body_diags = append_diags(body_diags, stmts_call_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods).with_impls(mod.impls, mod.trait_reqs)));
     // E003: assignment / annotated-var type mismatch (scope-threaded).
-    body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), unions));
+    body_diags = append_diags(body_diags, stmts_assign_diags(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), unions));
     // E011 / E058: break / continue outside a loop, and a labeled
     // break/continue whose label names no enclosing loop (structural).
     body_diags = append_diags(body_diags, loop_diags(dbody, false, []));
@@ -11171,7 +11210,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     var pdi: i32 = 0;
     while (pdi < mod.funcs[i].params.len()) {
       if (mod.funcs[i].params[pdi].has_default) {
-        body_diags = append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(sigs, structs, unions, methods), unions, mod.enums), "P002"));
+        body_diags = append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, structs, unions, methods), unions, mod.enums), "P002"));
       }
       pdi = pdi + 1;
     }
@@ -11184,11 +11223,11 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
-      body_diags = append_diags(body_diags, vref_stmts(dbody, build_func_scope(mod.funcs[i], sigs, structs, unions, methods), ambig));
+      body_diags = append_diags(body_diags, vref_stmts(dbody, build_func_scope(mod.funcs[i], st, structs, unions, methods), ambig));
     }
     i = i + 1;
   }
-  var s: Scope = new_scope_full(sigs, structs, unions, methods);
+  var s: Scope = new_scope_full(st, structs, unions, methods);
   var top_tys: Type[] = [];
   var j: i32 = 0;
   while (j < mod.top_stmts.len()) {
@@ -11201,13 +11240,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     j = j + 1;
   }
   var dtop: parser.Stmt[] = mod.top_stmts;
-  body_diags = append_diags(body_diags, lret_stmts(dtop, new_scope_full(sigs, structs, unions, methods), unions));
-  body_diags = append_diags(body_diags, mx_stmts(dtop, new_scope_full(sigs, structs, unions, methods), unions, mod.enums));
+  body_diags = append_diags(body_diags, lret_stmts(dtop, new_scope_full(st, structs, unions, methods), unions));
+  body_diags = append_diags(body_diags, mx_stmts(dtop, new_scope_full(st, structs, unions, methods), unions, mod.enums));
   body_diags = append_diags(body_diags, stmts_slit_diags(dtop, structs));
-  body_diags = append_diags(body_diags, stmts_call_diags(dtop, new_scope_full(sigs, structs, unions, methods)));
-  body_diags = append_diags(body_diags, stmts_assign_diags(dtop, new_scope_full(sigs, structs, unions, methods), unions));
+  body_diags = append_diags(body_diags, stmts_call_diags(dtop, new_scope_full(st, structs, unions, methods)));
+  body_diags = append_diags(body_diags, stmts_assign_diags(dtop, new_scope_full(st, structs, unions, methods), unions));
   if (ambig.len() > 0) {
-    body_diags = append_diags(body_diags, vref_stmts(dtop, new_scope_full(sigs, structs, unions, methods), ambig));
+    body_diags = append_diags(body_diags, vref_stmts(dtop, new_scope_full(st, structs, unions, methods), ambig));
   }
   body_diags = append_diags(body_diags, loop_diags(dtop, false, []));
   body_diags = append_diags(body_diags, dupvar_diags(dtop));
@@ -11343,12 +11382,12 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   while (exi < mod.funcs.len()) {
     var xfn: parser.FuncDecl = mod.funcs[exi];
     if (xfn.fip || xfn.fbip) {
-      body_diags = append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, build_func_scope(xfn, sigs, structs, unions, methods)));
+      body_diags = append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, build_func_scope(xfn, st, structs, unions, methods)));
     }
     if (xfn.ret_str) {
-      body_diags = append_diags(body_diags, e065_diags(xfn, str_ret_names, build_func_scope(xfn, sigs, structs, unions, methods)));
+      body_diags = append_diags(body_diags, e065_diags(xfn, str_ret_names, build_func_scope(xfn, st, structs, unions, methods)));
     }
-    body_diags = append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, build_func_scope(xfn, sigs, structs, unions, methods)));
+    body_diags = append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, build_func_scope(xfn, st, structs, unions, methods)));
     exi = exi + 1;
   }
   var esi: i32 = 0;
@@ -11414,15 +11453,16 @@ pub function ill_typed_hint(mod: parser.Module): Diag[] {
     een = een + 1;
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
+  var st: SigTable = sig_table(sigs);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (!check_func_body(mod.funcs[i], sigs, structs, unions, methods)) {
+    if (!check_func_body(mod.funcs[i], st, structs, unions, methods)) {
       return [dg_at("type", "\"" + mod.funcs[i].name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", mod.funcs[i].line, mod.funcs[i].col)];
     }
     i = i + 1;
   }
-  var s: Scope = new_scope_full(sigs, structs, unions, methods);
+  var s: Scope = new_scope_full(st, structs, unions, methods);
   var j: i32 = 0;
   while (j < mod.top_stmts.len()) {
     var r: CheckResult = check_stmt(mod.top_stmts[j], s);
@@ -12254,7 +12294,7 @@ function type_to_arrtag(t: Type): string {
 // build_module_tables mirrors the head of check_module (structs → union names →
 // enums → func sigs → methods); it is duplicated rather than shared so the
 // annotate pass cannot perturb check_module's byte-identity-critical body.
-pub struct ModuleTables { structs: StructSig[], unions: UnionSig[], sigs: FuncSig[], methods: MethodSig[] }
+pub struct ModuleTables { structs: StructSig[], unions: UnionSig[], sigs: SigTable, methods: MethodSig[] }
 
 function build_module_tables(mod: parser.Module): ModuleTables {
   var alias_names: string[] = [];
@@ -12278,7 +12318,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
-  return ModuleTables { structs: structs, unions: unions, sigs: sigs, methods: methods };
+  return ModuleTables { structs: structs, unions: unions, sigs: sig_table(sigs), methods: methods };
 }
 
 // annotate_advance threads the block scope from one statement to the next,

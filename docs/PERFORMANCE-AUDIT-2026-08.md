@@ -272,6 +272,12 @@ separate cleanly on this:
 | `bindingHoldsContainer` in `fieldPlaceAppendCopies` | 3.07 GB → **988 B** | 19 s → **9.3 s** |
 | bucket-indexing the assembler's label table | 988 B (flat) | 9.8 s → **5.9 s** |
 
+And on the whole-compiler self-compile, the subject that actually ranks item 3:
+
+| change | wall clock |
+|---|---|
+| name-indexing `Scope.sigs` | 2 m 13 s → **1 m 44 s** |
+
 So a flat cliff line means "no append regressed", never "nothing is copying",
 and the converse holds too: a large cliff number is not by itself evidence of
 where the *time* goes.
@@ -385,11 +391,26 @@ branch fixup and again per resolve. Bucket-indexing it by name took 9.8 s to
 **5.9 s**, byte-identical (#6911). It is item 3's shape (a flat table scanned
 per lookup) in a different file, and it was the larger of the two.
 
-**Re-profile before picking the next one — this list has now moved twice in a
-session.** `__fern_strcmp` was 22.0% / 16.5% on the 19 s build and is the
-obvious remaining leaf, but a third of it was `x86_label_idx`'s and is gone.
-Item 5 (symbol interning, #4394) is still the best-evidenced open item; measure
-it against the 5.9 s build before scoping it.
+**Item 3 was downgraded on the wrong workload.** §4b measured the `Scope`
+cluster at 2.5–6% and concluded #6899 had taken most of it — but that was the
+self-host compiler compiling ONE module (`checker.fern`), where `sigs` is small.
+Profiled against the whole compiler compiling ITSELF — the fixpoint workload,
+where `sigs` reaches ~4,600 entries — `Scope.lookup_sig` is **62% / 64%** of the
+run across two 400-sample runs, every direct sample of it under one caller
+(`check_call_expr`). Name-indexing the table took that self-compile from
+2 m 13 s to **1 m 44 s** (user 99.5 s → 70.5 s), byte-identical.
+
+**Pick the subject as carefully as the metric.** A per-module compile and a
+whole-compiler self-compile rank these items differently, and the audit had been
+reading the first while the roadmap cares about the second. `lookup_sig` was
+0.5% of the `checker.fern` run and 62% of the self-compile.
+
+**What is next, measured on the 1 m 44 s build (400 samples):**
+`Scope.array_method_ret_type` is **35%** (52 direct + 89 of `__fern_strcmp`'s
+120). It is the same table scanned the same way, but by SUFFIX
+(`nm` ends with `__method_Array_<field>`), so the exact-name index does not
+apply — it needs its own key. `lookup_sig` is down to 11/400. Item 5 (symbol
+interning, #4394) should be re-measured on this subject before scoping.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
