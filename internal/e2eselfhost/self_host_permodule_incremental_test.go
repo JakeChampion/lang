@@ -14,18 +14,20 @@ import (
 // incremental-codegen manifest (#3451 step 6 / #3458): the driver's
 // `-per-module-manifest` mode prints, per module,
 //
-//	<ns>|<src_hash>|<sig_hash>|<imp1,imp2,...>
+//	<ns>|<src_hash>|<sig_hash>|<dep1,dep2,...>
 //
 // which is everything a build orchestrator needs to decide — correctly — which
 // modules to re-emit on a rebuild and which to reuse from cache. A module's
 // cache key is its own src_hash folded with the SIG hash of every module it
-// imports. That split is the whole point:
+// depends on — the transitive closure the dependency column reports, so an
+// orchestrator folding that column verbatim gets the driver's own key. That
+// split is the whole point:
 //
 //   - src_hash makes a body-only edit re-emit that module (its own codegen
-//     changed) while leaving importers alone (a dependency's *signature* is
+//     changed) while leaving dependents alone (a dependency's *signature* is
 //     unchanged, so their call-site codegen is unchanged).
 //   - sig_hash makes a *signature* edit to a dependency invalidate the modules
-//     that call into it, even though their own source is byte-for-byte
+//     that depend on it, even though their own source is byte-for-byte
 //     unchanged — because per-module emit tags cross-module calls by the
 //     callee's signature (the whole-program side-tables, #3454). Keying on
 //     source alone would silently ship stale codegen here; this test's
@@ -125,8 +127,14 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	}
 
 	// cacheKey folds a module's own src_hash with the sig_hash of each module it
-	// imports (sorted, so it's order-independent). This is the invalidation
-	// contract: change a dependency's signature and every importer's key moves.
+	// depends on (sorted, so it's order-independent). This is the invalidation
+	// contract: change a dependency's signature and every dependent's key moves.
+	//
+	// The manifest's dependency column is the TRANSITIVE closure, not the direct
+	// edges, so folding it verbatim reproduces the driver's own key. That is the
+	// point of reporting the closure: an orchestrator that walked direct edges
+	// would compute a weaker key than the driver and reuse a unit the driver
+	// would have re-emitted.
 	cacheKey := func(m modInfo, byNS map[string]modInfo) string {
 		parts := []string{m.srcHash}
 		var deps []string
@@ -294,9 +302,16 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	// ================= Scenario B: signature edit to leaf =================
 	// leaf's return type changes i32 -> i64. leaf's key moves (source + sig),
 	// and mid's key MUST move too — because mid calls into leaf — even though
-	// mid's own source is byte-for-byte unchanged. __entry must be reused
-	// (mid's signature is unchanged). This is the stale-codegen guard: a
-	// source-only cache would reuse the old mid unit and ship wrong code.
+	// mid's own source is byte-for-byte unchanged. This is the stale-codegen
+	// guard: a source-only cache would reuse the old mid unit and ship wrong code.
+	//
+	// __entry's key moves as well. It reaches leaf only transitively, and its
+	// codegen does not actually depend on leaf's return type here — but the key
+	// folds the whole dependency closure, because a unit lowers under the
+	// whole-program view and can reference declarations it never imported
+	// (TestSelfHostPerModuleTransitiveInvalidationX86_64 has the shape where that
+	// is a miscompile). The closure is a sound over-approximation, so a chain like
+	// this one re-emits a unit it could in principle have kept.
 	writeLeaf(leafI64)
 	orderB, byNSB := manifest()
 	keysB := keysOf(orderB, byNSB)
@@ -307,8 +322,8 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	if byNSB["leaf"].sigHash == byNSA["leaf"].sigHash {
 		t.Fatalf("B: leaf sig_hash did NOT change on a return-type edit")
 	}
-	if got := changedNS(keysA, keysB); !eq(got, []string{"leaf", "mid"}) {
-		t.Fatalf("B: signature edit changed cache keys %v, want exactly [leaf mid]", got)
+	if got := changedNS(keysA, keysB); !eq(got, []string{"__entry", "leaf", "mid"}) {
+		t.Fatalf("B: signature edit changed cache keys %v, want exactly [__entry leaf mid]", got)
 	}
 
 	// Direct proof this is not over-caution: mid's freshly-emitted unit really
@@ -326,11 +341,8 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 	}
 
 	unitsB, reB := rebuild("B", orderB, keysB)
-	if !eq(reB, []string{"leaf", "mid"}) {
-		t.Fatalf("B: incremental rebuild re-emitted %v, want exactly [leaf mid]", reB)
-	}
-	if unitsB["__entry"] != units1["__entry"] {
-		t.Errorf("B: __entry was not reused byte-identically (its signature deps are unchanged)")
+	if !eq(reB, []string{"__entry", "leaf", "mid"}) {
+		t.Fatalf("B: incremental rebuild re-emitted %v, want exactly [__entry leaf mid]", reB)
 	}
 	cleanB := map[string]string{}
 	for i, m := range orderB {
@@ -353,8 +365,8 @@ func TestSelfHostPerModuleIncrementalCodegenX86_64(t *testing.T) {
 // key, serves a hit from disk (skipping codegen), and populates on a miss —
 // reporting hit/miss per module on stderr while stdout stays exactly the unit
 // asm. The invalidation contract is identical: a body-only edit re-emits just
-// that module; a dependency's signature change re-emits that module and its
-// importers, with everything else served byte-for-byte from cache.
+// that module; a dependency's signature change re-emits that module and
+// everything that depends on it, with the rest served byte-for-byte from cache.
 func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	shDir := writeSelfHostModloadProject(t)
@@ -546,16 +558,19 @@ func TestSelfHostPerModuleObjectCacheX86_64(t *testing.T) {
 	}
 	assertUnitsMatch("bodyedit", unitsA)
 
-	// --- Signature edit to leaf (i32 -> i64): leaf AND mid re-emit (mid's
-	// call-site codegen depends on leaf's return type), __entry served. This is
-	// the guard: a source-only cache would serve a stale mid unit. ---
+	// --- Signature edit to leaf (i32 -> i64): everything in leaf's dependency
+	// closure re-emits. mid's call-site codegen depends on leaf's return type
+	// directly; __entry reaches it transitively, and the key folds the whole
+	// closure because a unit lowers under the whole-program view and can
+	// reference declarations it never imported. This is the guard: a source-only
+	// cache would serve a stale mid unit. ---
 	writeLeaf("pub function leaf_val(): i64 { return 41i64; }\n")
 	unitsB, hitsB, missesB := buildWithCache()
-	if !eq(missesB, "leaf", "mid") {
-		t.Fatalf("sig edit: misses=%v, want exactly [leaf mid]", missesB)
+	if !eq(missesB, "leaf", "mid", "__entry") {
+		t.Fatalf("sig edit: misses=%v, want exactly [leaf mid __entry]", missesB)
 	}
-	if !eq(hitsB, "__entry") {
-		t.Fatalf("sig edit: hits=%v, want exactly [__entry]", hitsB)
+	if len(hitsB) != 0 {
+		t.Fatalf("sig edit: hits=%v, want nothing served", hitsB)
 	}
 	if code := linkRun("sigedit", unitsB); code != 42 {
 		t.Fatalf("sig-edit build exit %d, want 42", code)

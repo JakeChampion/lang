@@ -856,27 +856,30 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // per module — everything an out-of-process build orchestrator needs to
         // decide, correctly, which modules to re-emit and which to reuse:
         //
-        //   <ns>|<src_hash>|<sig_hash>|<imp1,imp2,...>
+        //   <ns>|<src_hash>|<sig_hash>|<dep1,dep2,...>
         //
         // A module's cache key is  src_hash(self) folded with sig_hash(m) for every
-        // m it imports.  src_hash makes a body-only edit re-emit that module (its
-        // own codegen changed); sig_hash makes a signature edit re-emit that module
-        // AND its importers (their call-site tagging changed) — while a body-only
-        // edit to a dependency leaves importers untouched (their sig_hash input is
-        // unchanged).  This is the correct-invalidation core: keying on source
-        // alone would ship stale codegen when a depended-on return type changes.
+        // m in the dependency column.  src_hash makes a body-only edit re-emit that
+        // module (its own codegen changed); sig_hash makes a signature edit re-emit
+        // that module AND everything depending on it (their call-site tagging
+        // changed) — while a body-only edit to a dependency leaves dependents
+        // untouched (their sig_hash input is unchanged).  This is the
+        // correct-invalidation core: keying on source alone would ship stale codegen
+        // when a depended-on return type changes.
         //
-        // src_hash reads the module's own source file (flat sibling layout:
-        // <dir><ns>.fern, the whole-compiler self-host case); the entry reads
-        // entry_path.  If a source read fails (e.g. a module resolved from a
-        // subdir), src_hash is "?", which the orchestrator MUST treat as
-        // always-rebuild — sound (never reuses stale), just not incremental for
-        // that module.  A subdir-aware version would thread each module's resolved
-        // path through the loader; tracked as a follow-up on #3458.
+        // The dependency column is the TRANSITIVE closure rather than the direct
+        // import edges, so an orchestrator folding it verbatim computes the same key
+        // the driver does; modloader's section header has the shape that makes
+        // direct edges unsound.
+        //
+        // src_hash resolves the module's source through the loader, so a module in a
+        // sub-directory is hashed at its real path.  If it cannot be resolved at all,
+        // src_hash is "?", which the orchestrator MUST treat as always-rebuild —
+        // sound (never reuses stale), just not incremental for that module.
         var mi: i32 = 0;
         while (mi < parts.len()) {
             var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, mi);
-            print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_import_ns(infmods[mi]) + "\n");
+            print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
             mi = mi + 1;
         }
         return 0;

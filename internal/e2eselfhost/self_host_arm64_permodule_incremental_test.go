@@ -13,7 +13,7 @@ import (
 // TestSelfHostPerModuleObjectCacheArm64 is the arm64 twin of
 // TestSelfHostPerModuleObjectCacheX86_64 (#3451 step 6 / #3458): the arm64
 // per-module driver's own on-disk object cache (-cache-dir). The cache KEYS are
-// backend-independent (a module's source + the signatures of what it calls into
+// backend-independent (a module's source + the signatures of what it depends on
 // don't depend on the target), so the hit/miss decisions match x86 exactly;
 // only the cached unit bytes are arm64 asm.
 //
@@ -156,14 +156,13 @@ func TestSelfHostPerModuleObjectCacheArm64(t *testing.T) {
 		}
 	}
 
-	// Signature edit (i32 -> i64): leaf AND mid re-emit (mid's arm64 call-site
-	// codegen depends on leaf's return type), __entry served.
+	// Signature edit (i32 -> i64): everything in leaf's dependency closure
+	// re-emits. mid's arm64 call-site codegen depends on leaf's return type
+	// directly; __entry reaches it transitively and the key folds the closure,
+	// which is backend-independent like the rest of the key.
 	writeLeaf("pub function leaf_val(): i64 { return 41i64; }\n")
-	unitsB, hitsB, missesB := buildWithCache()
-	if !eq(missesB, "leaf", "mid") || !eq(hitsB, "__entry") {
-		t.Fatalf("sig edit: misses=%v hits=%v, want misses=[leaf mid] hits=[__entry]", missesB, hitsB)
-	}
-	if unitsB["__entry"] != units["__entry"] {
-		t.Errorf("sig edit: arm64 __entry not reused byte-identically")
+	_, hitsB, missesB := buildWithCache()
+	if !eq(missesB, "leaf", "mid", "__entry") || len(hitsB) != 0 {
+		t.Fatalf("sig edit: misses=%v hits=%v, want misses=[leaf mid __entry] hits=[]", missesB, hitsB)
 	}
 }

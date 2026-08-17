@@ -10,14 +10,15 @@
 // Modes:
 //
 //   -per-module-count           how many modules the entry pulls in
-//   -per-module-manifest        one line per module: ns|src_hash|sig_hash|imports
+//   -per-module-manifest        one line per module: ns|src_hash|sig_hash|deps
 //   -per-module-emit N          emit module N's unit (function bodies) to stdout
 //     [-cache-dir DIR]          serve it from / populate an object cache
 //
-// The cache key is modloader.module_cache_key: a module's own source hash folded
-// with the SIGNATURE hashes of the modules it imports. That asymmetry is the
-// point — a body-only edit re-emits just that module, while a signature change
-// also invalidates its importers, whose call-site tagging depends on it.
+// The cache key is modloader.module_unit_cache_key: a module's own source hash
+// folded with the SIGNATURE hashes of everything it depends on, plus the function
+// window the unit covers. That asymmetry is the point — a body-only edit re-emits
+// just that module, while a signature change also invalidates its dependents,
+// whose call-site tagging depends on it.
 // hit/miss is reported on stderr (one ns per line) so a build orchestrator, or a
 // test, can observe the reuse set; stdout stays exactly the unit text.
 //
@@ -254,7 +255,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var mi: i32 = 0;
         while (mi < parts.len()) {
             print(parts[mi].ns + "|" + modloader.module_src_hash(dir, entry_path, parts, mi)
-                + "|" + sighashes[mi] + "|" + modloader.module_import_ns(infmods[mi]) + "\n");
+                + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
             mi = mi + 1;
         }
         return 0;
