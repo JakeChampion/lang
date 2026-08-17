@@ -363,7 +363,7 @@ phase where the rename lands.
 - `arr.sorted_asc()` / `arr.sorted_desc()` / `arr.sorted_str_*` →
   returns a fresh sorted array. **No rename**, but see the
   inconsistency note below.
-- `arr.reversed()` (i32[]) → returns a fresh reversed array.
+- `arr.reverse()` (i32[]) → returns a fresh reversed array.
   **No rename.**
 - `arr.abs_each()` / `arr.cumsum()` / `arr.pairwise_diffs()` →
   all return new arrays. **No rename.**

@@ -52,7 +52,7 @@ import "std/string";
 function work(ss: string[]): i32 {
     var a: i32 = ss.len();
     var j: string = ss.join(",");
-    var r: string[] = ss.reversed();
+    var r: string[] = ss.reverse();
     var c: string[] = ss.concat(r);
     var acc: i32 = a + j.len() + r.len() + c.len();
     var i: i32 = 0;

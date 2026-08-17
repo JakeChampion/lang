@@ -14,7 +14,10 @@ all: build test
 
 build: bin/fern
 
-bin/fern: $(shell find . -name '*.go' -not -path './build/*')
+# The stdlib sources are baked in with go:embed (internal/stdlib/stdlib.go), so
+# they are inputs to the binary just as the .go files are. Leaving them out made
+# an edit to std/*.fern silently test against the previously embedded copy.
+bin/fern: $(shell find . -name '*.go' -not -path './build/*') $(shell find internal/stdlib -name '*.fern')
 	@mkdir -p bin
 	go build -o $@ ./cmd/fern
 

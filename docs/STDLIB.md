@@ -248,70 +248,91 @@ Grouped by family:
 
 ### `std/array`
 
-Receiver methods on arrays. Both `i32[]` and `string[]` element
-types are covered. `Array.push` stays a built-in IR primitive
-(intercepted by codegen) and is registered by the checker — every
-other `__method_Array_*` here is auto-discovered from the naming
-convention.
+Receiver methods on arrays. `Array.push` stays a built-in IR primitive
+(intercepted by codegen) and is registered by the checker.
 
-- **i32[] reductions:** `sum`, `max`, `min`, `product`, `avg`,
-  `range`, `count`, `gcd_all`, `lcm_all`, `abs_each`,
-  `first_index_of`, `pairwise_diffs`, `min_max`, `reversed`,
-  `every_positive`, `sorted_asc`, `sorted_desc`, `cumsum`,
-  `sum_squared`, `median`, `mode`
-- **Wider int / float reductions** (free functions —
-  array-method dispatch can't yet overload by element type,
-  so these aren't receiver methods):
-  `sum_i64`, `max_i64`, `min_i64`, `avg_i64`;
-  `sum_u32`, `max_u32`, `min_u32`;
-  `sum_u64`, `max_u64`, `min_u64`;
-  `sum_f64`, `product_f64` (empty = 1), `cumsum_f64` (running
-  prefix sum), `cumprod_f64` (running product), `diff_f64`
-  (successive differences, one shorter; inverse of `cumsum`),
-  `max_f64`, `min_f64`, `avg_f64`,
-  `variance_f64` / `stddev_f64` (population variance and its
-  square root, `Option[f64]`, `None` for empty),
-  `median_f64` (averages the two middles for even length),
-  `range_f64` (`max - min` spread),
-  `dot_f64(a, b)` (dot product, runs to the shorter length),
-  `norm_f64` (Euclidean / L2 norm, `sqrt(dot(self, self))`),
-  `distance_f64(a, b)` (Euclidean distance `norm(a - b)`),
-  `normalize_f64` (unit vector; zero / empty returned unchanged),
-  `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
-  (element-wise sum, runs to the shorter length)
-- **string[] core:** `join`, `position`, `reverse`,
-  `filter_non_empty`, `count_non_empty`, `distinct`,
-  `distinct_count`, `max_by_len`, `min_by_len`, `sum_lens`,
-  `take`, `drop`, `all_non_empty`, `any_contains`,
-  `count_str`, `all_starts_with`, `all_ends_with`,
-  `sorted_str_asc`, `sorted_str_desc`, `join_with_last`
-- **generic `[T]` combinators** (free + method forms): `is_empty`,
-  `first`/`last` (→ `Option[T]`, `None` when empty), `get(i)`
-  (bounds-checked → `Option[T]`, negative index → `None`), `map`,
-  `filter`, `fold`, `reduce`, `any`, `all`, `none` (complement of
-  `any`), `find`, `find_map`
-  (first `Some` of a projection returning `Option[U]`), `position`,
-  `count_where` (tally matching a predicate), `sum_by` (sum of an
-  i32 projection over any element type), `max_index`/`min_index`
-  (index of the extremal element by `Ord` → `Option[i32]`),
-  `take`/`drop`/`take_while`/`drop_while`, `slice`, `chunks`,
-  `windows`, `zip`, `enumerate`, `reverse`, `rotate_left`/
-  `rotate_right` (cyclic shift by n mod len; negative n rotates
-  the other way), `intersperse`,
-  `flat_map`, `flatten` (`T[][]` → `T[]`), `partition`
-  (→ `(kept, rejected)`), `scan` (running left fold, same length
-  as input), `max_by_i32_key`/`min_by_i32_key` (extremum by an
-  i32 projection), `max_by`/`min_by` (extremum under a `sort_by`-
-  style comparator; first on a tie, `None` when empty).
-  Eq/Ord-bounded: `contains`, `index_of`,
-  `index_of_last`, `distinct` (remove all duplicates), `dedup`
-  (collapse consecutive runs — single-pass complement of
-  `distinct`), `binary_search` (O(log n) → `Option[i32]` over an
-  ascending-sorted array), `all_equal` (≤ 1 distinct value),
-  `count`, `is_sorted`, `equal`,
-  `starts_with`/`ends_with`. Every Eq-bounded verb compares through
-  the bound's `eq` method, so a `@derive(Eq)` struct or enum element
-  works as well as a primitive one.
+Two spellings reach the same `arr.<name>(…)` dispatch, and which one a verb
+uses is now a statement about the verb rather than about the compiler.
+Anything usable at more than one element type is written with a real
+element-polymorphic receiver, `pub function (xs: T[]) name(…)`. The older
+`__method_Array_<name>(arr: i32[], …)` form, auto-discovered from the naming
+convention, pins a concrete element type and is reserved for verbs that are
+genuinely specific to it. The namespace keys on the method NAME, so the two
+forms cannot both claim one name.
+
+- **Element-polymorphic reductions** (one bounded generic each, so the same
+  call works for i32 / i64 / u32 / u64 / f32 / f64 / string and
+  `@derive(Ord)` / `@derive(Eq)` element types alike):
+  `max` / `min` (`Ord` → `Option[T]`, `None`
+  when empty), `sorted_asc` / `sorted_desc` (`Ord`, fresh array, input
+  untouched), `count(target)` / `first_index_of(target)` (`Eq`; the latter
+  is the `Option[i32]` companion to `index_of`'s `-1` sentinel),
+  `distinct` (`Eq`), and the structural `reverse` / `take(n)` / `drop(n)`.
+
+  These used to exist twice — once for `i32[]`, once for `string[]` under a
+  name invented to dodge the shared namespace (`count` vs `count_str`,
+  `reversed` vs `reverse`, `sorted_asc` vs `sorted_str_asc`). Those dodged
+  names are gone (#2663); use the single generic verb.
+
+  `sum` and `product` are the holdouts: the generic form
+  (`[T: num.Add + num.Zero]` delegating to `num.sum`) works on native and on
+  the self-host compiler, but `num.sum` reaches its identity through
+  `T.zero()` — a receiver-less trait function called through a type
+  parameter — which the self-host INTERPRETER cannot dispatch. That gap
+  predates the collapse (`num.sum(xs)` fails there directly too), so both
+  stay pinned to `i32[]` for now.
+
+- **i32[]-specific:** `sum`, `product`, `avg`, `range`, `gcd_all`, `lcm_all`, `abs_each`,
+  `pairwise_diffs`, `min_max`, `every_positive`, `cumsum`, `sum_squared`,
+  `sum_abs`, `all_zero`, `median`, `mode`. These need integer division or an
+  i32 identity, so they stay pinned to the element type.
+
+- **string[]-specific:** `join`, `join_with_last`, `filter_non_empty`,
+  `count_non_empty`, `distinct_count`, `max_by_len`, `min_by_len`,
+  `sum_lens`, `all_non_empty`, `any_contains`, `all_starts_with`,
+  `all_ends_with`, `all_eq_str`.
+
+- **i64 / f64 free functions** (statistical and vector reductions with no
+  generic bounded equivalent — `avg` in particular cannot be written
+  generically without a numeric conversion trait): `avg_i64`;
+  `product_f64` (empty = 1), `cumsum_f64` (running prefix sum),
+  `cumprod_f64` (running product), `diff_f64` (successive differences, one
+  shorter; inverse of `cumsum`), `avg_f64`, `variance_f64` / `stddev_f64`
+  (population variance and its square root, `Option[f64]`, `None` for
+  empty), `median_f64` (averages the two middles for even length),
+  `range_f64` (`max - min` spread), `dot_f64(a, b)` (dot product, runs to
+  the shorter length), `norm_f64` (Euclidean / L2 norm,
+  `sqrt(dot(self, self))`), `distance_f64(a, b)` (Euclidean distance
+  `norm(a - b)`), `normalize_f64` (unit vector; zero / empty returned
+  unchanged), `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
+  (element-wise sum, runs to the shorter length).
+
+- **generic `[T]` combinators** (free + method forms, so pipelines read
+  left-to-right — `xs.map(f).filter(g)`): `is_empty`, `first`/`last`
+  (→ `Option[T]`, `None` when empty), `get(i)` (bounds-checked →
+  `Option[T]`, negative index → `None`), `map`, `filter`, `fold`, `reduce`,
+  `any`, `all`, `none` (complement of `any`), `find`, `find_map`
+  (first `Some` of a projection returning `Option[U]`), `position` (index of
+  the first element satisfying a PREDICATE — the value-driven form is
+  `first_index_of`), `find_last`, `rposition`, `count_where` (tally matching
+  a predicate), `sum_by` (sum of an i32 projection over any element type),
+  `max_index`/`min_index` (index of the extremal element by `Ord` →
+  `Option[i32]`), `take_while`/`drop_while`, `take_last`/`drop_last`,
+  `slice`, `chunks`, `chunks_exact`, `windows`, `zip`, `enumerate`,
+  `concat`, `rotate_left`/`rotate_right` (cyclic shift by n mod len;
+  negative n rotates the other way), `step_by`, `intersperse`, `flat_map`,
+  `flatten` (`T[][]` → `T[]`), `partition` (→ `(kept, rejected)`), `scan`
+  (running left fold, same length as input), `max_by_i32_key`/
+  `min_by_i32_key` (extremum by an i32 projection), `max_by`/`min_by`
+  (extremum under a `sort_by`-style comparator; first on a tie, `None` when
+  empty), `sort_by`.
+  Eq/Ord-bounded: `contains`, `index_of`, `index_of_last`, `dedup`
+  (collapse consecutive runs — single-pass complement of `distinct`),
+  `binary_search` (O(log n) → `Option[i32]` over an ascending-sorted array),
+  `all_equal` (≤ 1 distinct value), `is_sorted`, `equal`,
+  `starts_with`/`ends_with`, `union`/`intersection`/`difference`. Every
+  Eq-bounded verb compares through the bound's `eq` method, so a
+  `@derive(Eq)` struct or enum element works as well as a primitive one.
 
 ### `std/unicode`
 

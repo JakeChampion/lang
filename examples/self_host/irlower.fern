@@ -10109,11 +10109,11 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // treatment of rc-tracked elements.
     //
     // Both DEFER to an in-scope std/array helper, like the string[]
-    // index_of intercept above: std/array defines
-    // `__method_Array_reverse(arr: string[])`, and `concat` is a
-    // generic array METHOD that monomorphize rewrites to
-    // `__arrm_concat(xs, ys)` before lowering (so it normally never
-    // reaches here at all — see TestSelfHostArrayConcatMethodIR).
+    // index_of intercept above: `reverse` and `concat` are both
+    // generic array METHODS that monomorphize rewrites to
+    // `__arrm_reverse(xs)` / `__arrm_concat(xs, ys)` before lowering
+    // (so with std/array imported they normally never reach here at
+    // all — see TestSelfHostArrayConcatMethodIR).
     // The gap #3457 needs closed is the driver-dialect program that
     // imports nothing.
     //

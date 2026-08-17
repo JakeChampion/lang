@@ -1,0 +1,37 @@
+import "std/array";
+
+// One method name per verb, working at several element types in the same
+// program (#2663). Before the collapse each of these existed twice — once
+// for an `i32[]` receiver, once for a `string[]` one under a dodged name
+// (`count_str`, `reversed`, `sorted_str_asc`) — because the Array method
+// namespace keys on the name alone and could not fan out on the element.
+function main(): i32 {
+    var xs: i32[] = [3, 1, 2];
+    var ls: i64[] = [10i64, 20i64];
+    var ss: string[] = ["b", "a", "b"];
+
+    if (xs.count(1) != 1) { return 4; }
+    if (ss.count("b") != 2) { return 5; }
+
+    if (xs.sorted_asc()[0] != 1) { return 6; }
+    if (ss.sorted_asc()[0] != "a") { return 7; }
+    if (xs.sorted_desc()[0] != 3) { return 8; }
+
+    if (xs.reverse()[0] != 2) { return 9; }
+    if (ss.reverse()[0] != "b") { return 10; }
+
+    if (xs.take(2).len() != 2) { return 11; }
+    if (ss.drop(1).len() != 2) { return 12; }
+    if (ss.distinct().len() != 2) { return 13; }
+    if (xs.distinct().len() != 3) { return 14; }
+
+    match (xs.max()) { Some(m) => { if (m != 3) { return 15; } }, None => { return 16; } }
+    match (ss.max()) { Some(m) => { if (m != "b") { return 17; } }, None => { return 18; } }
+    match (ls.min()) { Some(m) => { if (m != 10i64) { return 19; } }, None => { return 20; } }
+
+    match (ss.first_index_of("a")) { Some(i) => { if (i != 1) { return 21; } }, None => { return 22; } }
+    match (xs.first_index_of(2)) { Some(i) => { if (i != 2) { return 23; } }, None => { return 24; } }
+    match (xs.first_index_of(99)) { Some(_) => { return 25; }, None => {} }
+
+    return 42;
+}
