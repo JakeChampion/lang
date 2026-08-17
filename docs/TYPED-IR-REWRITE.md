@@ -212,8 +212,10 @@ information down toward codegen, and this is the first place where the
 information arrives correctly and codegen has nowhere to put it. Where that
 happens, widening the IR — not the frontend — is the work.
 
-Note the fixpoint is blind to this: the self-host's own sources use no fn-typed
-params, so `internal/e2eselfhost` and the fixture legs are the gates that matter.
+Note how little of this the fixpoint reaches: the self-host's own sources carry
+one fn-typed parameter (`astwalk.fold_expr` / `fold_stmt`, #6993) at one arity
+and one signature, so `internal/e2eselfhost` and the fixture legs are still the
+gates that matter.
 
 **CLOSED (the section below is the record of why it was blocked).** `fn_ret` now
 carries scalar returns, and `parse_stmt`'s var binding stamps them onto an

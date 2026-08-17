@@ -9,6 +9,166 @@ import "./util";
 // in yet — see the SH-022 appendix.) Imports only parser, so any
 // frontend module can depend on it.
 
+// fold_expr threads `acc` through every expression reachable from `e`, calling
+// `visit` on each node in pre-order before descending into its children. It is
+// the shared spine the hand-written per-consumer traversals collapse onto: a
+// consumer writes only what one node contributes and inherits the recursion, so
+// a new parser node is covered everywhere the moment it is covered here (#6993).
+//
+// `visit` reaches it as a nested named function closing over whatever context
+// the consumer needs — see collect_calls_stmt. It cannot be an arrow lambda:
+// native rejects a union-typed lambda parameter with "expected Expr, got Expr"
+// (#6996).
+pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T): T {
+    acc = visit(e, acc);
+    match (e) {
+        parser.ExprIdent(_) => { return acc; },
+        parser.ExprNumber(_) => { return acc; },
+        parser.ExprString(_) => { return acc; },
+        parser.ExprBool(_) => { return acc; },
+        parser.ExprBinary(b) => {
+            acc = fold_expr(b.left, acc, visit);
+            return fold_expr(b.right, acc, visit);
+        },
+        parser.ExprUnary(u) => { return fold_expr(u.operand, acc, visit); },
+        parser.ExprCall(c) => {
+            acc = fold_expr(c.callee, acc, visit);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                acc = fold_expr(c.args[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                acc = fold_expr(a.elements[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprMapLit(ml) => {
+            var i: i32 = 0;
+            while (i < ml.keys.len()) {
+                acc = fold_expr(ml.keys[i], acc, visit);
+                acc = fold_expr(ml.vals[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFString(fs) => {
+            var i: i32 = 0;
+            while (i < fs.exprs.len()) {
+                if (fs.is_expr[i]) { acc = fold_expr(fs.exprs[i], acc, visit); }
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) {
+                acc = fold_expr(t.elements[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprIndex(x) => {
+            acc = fold_expr(x.array, acc, visit);
+            return fold_expr(x.index, acc, visit);
+        },
+        parser.ExprSlice(sl) => {
+            acc = fold_expr(sl.array, acc, visit);
+            acc = fold_expr(sl.start, acc, visit);
+            return fold_expr(sl.end, acc, visit);
+        },
+        parser.ExprStructLit(sl) => {
+            if (sl.has_base) { acc = fold_expr(sl.base, acc, visit); }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) {
+                acc = fold_expr(sl.field_values[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprFieldAccess(fa) => { return fold_expr(fa.obj, acc, visit); },
+        parser.ExprLambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = fold_stmt(lm.body[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.ExprUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
+// reaches, in source order. Statement nodes themselves are not visited — a
+// consumer that needs those inspects the statement before handing its
+// expressions here.
+pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+    match (st) {
+        parser.StmtDefer(d) => { return fold_stmt(d.action, acc, visit); },
+        parser.StmtVar(v) => { return fold_expr(v.init, acc, visit); },
+        parser.StmtReturn(r) => { return fold_expr(r.value, acc, visit); },
+        parser.StmtExpr(e) => { return fold_expr(e.value, acc, visit); },
+        parser.StmtIf(i) => {
+            acc = fold_expr(i.cond, acc, visit);
+            var ti: i32 = 0;
+            while (ti < i.then_body.len()) {
+                acc = fold_stmt(i.then_body[ti], acc, visit);
+                ti = ti + 1;
+            }
+            var ei: i32 = 0;
+            while (ei < i.else_body.len()) {
+                acc = fold_stmt(i.else_body[ei], acc, visit);
+                ei = ei + 1;
+            }
+            return acc;
+        },
+        parser.StmtWhile(w) => {
+            acc = fold_expr(w.cond, acc, visit);
+            var i: i32 = 0;
+            while (i < w.body.len()) {
+                acc = fold_stmt(w.body[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtAssign(a) => { return fold_expr(a.value, acc, visit); },
+        parser.StmtMatch(m) => {
+            acc = fold_expr(m.scrutinee, acc, visit);
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard) { acc = fold_expr(m.arms[ai].guard, acc, visit); }
+                var bi: i32 = 0;
+                while (bi < m.arms[ai].body.len()) {
+                    acc = fold_stmt(m.arms[ai].body[bi], acc, visit);
+                    bi = bi + 1;
+                }
+                ai = ai + 1;
+            }
+            return acc;
+        },
+        parser.StmtFor(f) => {
+            acc = fold_expr(f.iter, acc, visit);
+            var i: i32 = 0;
+            while (i < f.body.len()) {
+                acc = fold_stmt(f.body[i], acc, visit);
+                i = i + 1;
+            }
+            return acc;
+        },
+        parser.StmtBreak(_) => { return acc; },
+        parser.StmtContinue(_) => { return acc; },
+        parser.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
 // collect_idents_expr appends every identifier READ in `e` to `acc`
 // (with duplicates; consumers dedup when building capture lists).
 pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
@@ -266,174 +426,45 @@ function append_bound_name(acc: string[], name: string): string[] {
 // follows the method half as a call-graph edge.
 pub struct CallSite { name: string, line: i32, col: i32, method: boolean }
 
-// collect_calls_expr appends every call in `e` whose callee is NAMED in `want`
-// to `acc` — the callee's own name for a bare identifier, the field name for a
-// method call.
+// call_site_of records the call `e` makes if its callee is NAMED in `want` —
+// the callee's own name for a bare identifier, the field name for a method
+// call. It is one node's contribution; fold_expr / fold_stmt supply the walk.
 //
-// The filter is not a convenience: the only caller looks for a handful of
-// names across the whole bundle, and collecting every call first would
-// allocate one CallSite per call site in the program — on the compiler's own
-// sources that is the kind of pass that walks a self-compile into the arena
-// wall. Matching during the walk keeps the allocation proportional to the
-// hits, which is normally none.
+// The filter is not a convenience: the only callers look for a handful of names
+// across the whole bundle, and collecting every call first would allocate one
+// CallSite per call site in the program — on the compiler's own sources that is
+// the kind of pass that walks a self-compile into the arena wall. Matching
+// during the walk keeps the allocation proportional to the hits, which is
+// normally none.
 //
-// Unlike collect_idents_expr this descends INTO a lambda body rather than
+// Unlike collect_idents_expr this sees INTO a lambda body rather than
 // subtracting its bindings: a lambda's calls are part of what the artifact
-// executes, which is the question here, where free-variable analysis asks
-// what the enclosing scope must capture.
-pub function collect_calls_expr(e: parser.Expr, want: string[], acc: CallSite[]): CallSite[] {
+// executes, which is the question here, where free-variable analysis asks what
+// the enclosing scope must capture.
+function call_site_of(e: parser.Expr, want: string[], acc: CallSite[]): CallSite[] {
     match (e) {
-        parser.ExprIdent(_) => { return acc; },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_calls_expr(b.left, want, acc);
-            return collect_calls_expr(b.right, want, acc);
-        },
-        parser.ExprUnary(u) => { return collect_calls_expr(u.operand, want, acc); },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(id) => {
-                    if (util.has_str(want, id.name)) { acc = acc.append(CallSite { name: id.name, line: c.line, col: c.col, method: false }); }
+                    if (util.has_str(want, id.name)) { return acc.append(CallSite { name: id.name, line: c.line, col: c.col, method: false }); }
+                    return acc;
                 },
                 parser.ExprFieldAccess(fa) => {
-                    if (util.has_str(want, fa.field)) { acc = acc.append(CallSite { name: fa.field, line: c.line, col: c.col, method: true }); }
-                    acc = collect_calls_expr(fa.obj, want, acc);
+                    if (util.has_str(want, fa.field)) { return acc.append(CallSite { name: fa.field, line: c.line, col: c.col, method: true }); }
+                    return acc;
                 },
-                _ => { acc = collect_calls_expr(c.callee, want, acc); }
+                _ => { return acc; }
             }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_calls_expr(c.args[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
         },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = collect_calls_expr(a.elements[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprMapLit(ml) => {
-            var i: i32 = 0;
-            while (i < ml.keys.len()) {
-                acc = collect_calls_expr(ml.keys[i], want, acc);
-                acc = collect_calls_expr(ml.vals[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFString(fs) => {
-            var i: i32 = 0;
-            while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = collect_calls_expr(fs.exprs[i], want, acc); }
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_calls_expr(t.elements[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_calls_expr(x.array, want, acc);
-            return collect_calls_expr(x.index, want, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_calls_expr(sl.array, want, acc);
-            acc = collect_calls_expr(sl.start, want, acc);
-            return collect_calls_expr(sl.end, want, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_calls_expr(sl.base, want, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_calls_expr(sl.field_values[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFieldAccess(fa) => { return collect_calls_expr(fa.obj, want, acc); },
-        parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = collect_calls_stmt(lm.body[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprUnknown(_) => { return acc; }
+        _ => { return acc; }
     }
     return acc;
 }
 
-// collect_calls_stmt is collect_calls_expr's statement half.
+// collect_calls_stmt appends every wanted call reachable from `st` to `acc`.
 pub function collect_calls_stmt(st: parser.Stmt, want: string[], acc: CallSite[]): CallSite[] {
-    match (st) {
-        parser.StmtDefer(d) => { return collect_calls_stmt(d.action, want, acc); },
-        parser.StmtVar(v) => { return collect_calls_expr(v.init, want, acc); },
-        parser.StmtReturn(r) => { return collect_calls_expr(r.value, want, acc); },
-        parser.StmtExpr(e) => { return collect_calls_expr(e.value, want, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_calls_expr(i.cond, want, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_calls_stmt(i.then_body[ti], want, acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_calls_stmt(i.else_body[ei], want, acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_calls_expr(w.cond, want, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_calls_stmt(w.body[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(a) => { return collect_calls_expr(a.value, want, acc); },
-        parser.StmtMatch(m) => {
-            acc = collect_calls_expr(m.scrutinee, want, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = collect_calls_expr(m.arms[ai].guard, want, acc); }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_calls_stmt(m.arms[ai].body[bi], want, acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_calls_expr(f.iter, want, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_calls_stmt(f.body[i], want, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
+    function visit(e: parser.Expr, a: CallSite[]): CallSite[] { return call_site_of(e, want, a); }
+    return fold_stmt(st, acc, visit);
 }
 
 pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
