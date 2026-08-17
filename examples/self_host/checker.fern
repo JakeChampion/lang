@@ -754,7 +754,7 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[], ret_type_name: string, param_type_names: string[] }
+pub struct FuncSig { name: string, param_types: Type[], ret_type: Type, type_param_count: i32, param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -1203,7 +1203,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob, ret_type_name: "", param_type_names: non };
+  return FuncSig { name: "", param_types: empty, ret_type: t_unknown("undefined function:" + name), type_param_count: 0, param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -2354,6 +2354,15 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       if (is_nopayload_builtin_variant(id.name)) {
         return t_union(mx_builtin_enum_of(id.name));
       }
+      // A top-level `const` reaches the parser as a zero-parameter FuncDecl
+      // carrying `is_const`, so it lands in the SIG table rather than the value
+      // scope, and a bare reference to one found nothing here. The const flag is
+      // what separates it from a bare function VALUE of the same shape, which
+      // types as a function rather than as its return type.
+      var csig: FuncSig = s.lookup_sig(id.name);
+      if (csig.is_const) {
+        return csig.ret_type;
+      }
       return bound;
     },
     parser.ExprBinary(b) => {
@@ -3034,7 +3043,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], structs: StructSig[], union
       ptn = ptn.append(fd.params[j].type_name);
       j = j + 1;
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions), type_param_count: fd.type_param_count, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, ret_type: type_from_name_with_structs_unions(fd.ret_type, structs, unions), type_param_count: fd.type_param_count, param_bound: pbnd, ret_type_name: fd.ret_type, param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
