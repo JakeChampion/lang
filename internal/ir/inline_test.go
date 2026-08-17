@@ -447,3 +447,54 @@ func TestInlineSingleUseLiftsSizeCap(t *testing.T) {
 		}
 	}
 }
+
+// A call the lowering marked `Runtime` names the BACKEND's helper, never a
+// program function that happens to share the name. Candidates are keyed by
+// name, so without the guard the user's body is spliced into the lowering's
+// own call site — a string-append call site becoming a bare `x + 1`, which
+// built a wasm module rejected at load ("type mismatch: values remaining on
+// stack"). Inline runs on the wasm path today and on the natives later, so
+// this belongs here rather than in a backend.
+func TestInlineSkipsRuntimeMarkedCall(t *testing.T) {
+	p := loweredAndInlined(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	// Control: the same call inlines when it is NOT marked, so the assertion
+	// below is about the flag and not about eligibility.
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "dbl" {
+			t.Fatalf("unmarked call should inline; the guard is too broad:\n%s", p)
+		}
+	}
+
+	p = lowerSource(t, `function dbl(x: i32): i32 { return x * 2; }
+		function main(): i32 { return dbl(7); }`)
+	main = findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	marked := false
+	for i := range main.Ops {
+		if main.Ops[i].Kind == OpCallDirect && main.Ops[i].Str == "dbl" {
+			main.Ops[i].Runtime = true
+			marked = true
+		}
+	}
+	if !marked {
+		t.Fatal("no OpCallDirect dbl to mark; the lowering changed shape")
+	}
+	Inline(p)
+	main = findFunc(p, "main")
+	survived := false
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "dbl" {
+			survived = true
+		}
+	}
+	if !survived {
+		t.Errorf("a Runtime-marked call was inlined from a program function:\n%s", p)
+	}
+}
