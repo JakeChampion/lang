@@ -31,6 +31,9 @@ import "core/cmp";
 // support.
 import "std/i32";
 import "std/string";
+// std/num supplies the `Add`/`Zero`/`Mul`/`One` traits bounding `sum` /
+// `product` below, and the primitive impls that satisfy them.
+import "std/num";
 
 // === i32 array math ===
 //
@@ -39,45 +42,6 @@ import "std/string";
 // identity element. The element-polymorphic reductions (`sum` / `max` /
 // `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
 // the file as bounded generic methods.
-
-// `(arr: i32[]).sum()` / `.product()` — additive / multiplicative fold.
-//
-// These two are the collapse's holdouts, blocked by TRAIT-METHOD NAMESPACING
-// rather than by anything about arrays. The generic form is
-// `(xs: T[]) sum[T: num.Add + num.Zero]() { return num.sum(xs); }`, which
-// needs `import "std/num"` here — and `std/string` imports this module, so
-// that puts `impl Add for i32` in the transitive closure of nearly every
-// program. A trait impl's methods land in one flat `i32.<name>` namespace,
-// so num's `Add::add` for i32 then collides with a USER trait that also
-// provides `add` for i32, and their program stops compiling with
-// `E006: method "add" on i32 redeclared` — pointing into stdlib source it
-// never imported. Two different traits providing the same method name for
-// one type is legal and should stay legal.
-//
-// Widening the numeric surface therefore has to wait for per-trait method
-// namespacing in the checker. Everything else in the reductions family is
-// element-polymorphic (see the bottom of this file).
-pub function __method_Array_sum(arr: i32[]): i32 {
-    var n: i32 = arr.len();
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        total = total + arr[i];
-        i = i + 1;
-    }
-    return total;
-}
-
-pub function __method_Array_product(arr: i32[]): i32 {
-    var n: i32 = arr.len();
-    var acc: i32 = 1;
-    var i: i32 = 0;
-    while (i < n) {
-        acc = acc * arr[i];
-        i = i + 1;
-    }
-    return acc;
-}
 
 // `(arr: i32[]) avg()` — integer mean (truncated toward zero).
 // None on empty input. The running sum is accumulated in i64,
@@ -1893,8 +1857,8 @@ pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); 
 
 // ---- Element-polymorphic method forms of the reductions ------------
 //
-// `max` / `min` / `count` / `first_index_of` / `sorted_asc` /
-// `sorted_desc` / `reverse` / `take` / `drop` / `distinct`
+// `sum` / `product` / `max` / `min` / `count` / `first_index_of` /
+// `sorted_asc` / `sorted_desc` / `reverse` / `take` / `drop` / `distinct`
 // used to exist twice, once for an `i32[]` receiver and once for a
 // `string[]` one, under names invented to dodge a namespace that keyed on
 // the method name alone (`count` vs `count_str`, `reversed` vs `reverse`,
@@ -1902,6 +1866,12 @@ pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); 
 // so the same call works for every element type that satisfies the bound —
 // i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
 // `@derive(Eq)` types alike (#2663).
+
+// `xs.sum()` / `xs.product()` — additive / multiplicative fold over any
+// element type carrying the identity its bound names, so the same call
+// works for i32 / i64 / f64 / … and for a user type with `impl Add`.
+pub function (xs: T[]) sum[T: num.Add + num.Zero](): T { return num.sum(xs); }
+pub function (xs: T[]) product[T: num.Mul + num.One](): T { return num.product(xs); }
 
 // `xs.max()` / `xs.min()` — extremal element by `Ord`, `None` when empty.
 // The Option arm is necessary: no sentinel is safe across a full numeric range.

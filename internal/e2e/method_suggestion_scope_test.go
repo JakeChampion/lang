@@ -70,9 +70,13 @@ function main(): i32 {
 		{"drop", true, true},
 		{"reverse", true, true},
 		{"distinct", true, true},
-		// Genuinely element-specific: integer division / an i32 identity.
+		// Element-polymorphic, but bounded on traits string does not
+		// implement: `sum` needs `num.Add + num.Zero`, `product`
+		// `num.Mul + num.One`. Listed for i32[] and not for string[],
+		// which takes reading the BOUND — the receiver is `T[]` either way.
 		{"sum", true, false},
 		{"product", true, false},
+		// Genuinely element-specific: integer division / an i32 identity.
 		{"avg", true, false},
 		{"median", true, false},
 		{"cumsum", true, false},

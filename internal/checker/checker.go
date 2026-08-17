@@ -7693,8 +7693,8 @@ func (c *checker) methodsOn(typeName string) []string {
 //
 // A method survives when its receiver parameter accepts this receiver.
 // Anything the check cannot see through — no recorded signature, no
-// parameters, a generic receiver — is kept, so the filter only ever removes
-// a name it can prove inapplicable.
+// parameters, a generic receiver whose bounds this receiver may satisfy —
+// is kept, so the filter only ever removes a name it can prove inapplicable.
 func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
 	all := c.methodsOn(typeName)
 	if recv == nil {
@@ -7708,8 +7708,14 @@ func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
 			continue
 		}
 		sig, ok := c.info.FuncSigs[mangled]
-		if !ok || len(sig.Params) == 0 || containsParamType(sig.Params[0]) {
+		if !ok || len(sig.Params) == 0 {
 			out = append(out, name)
+			continue
+		}
+		if containsParamType(sig.Params[0]) {
+			if c.boundsAdmitReceiver(mangled, sig.Params[0], recv) {
+				out = append(out, name)
+			}
 			continue
 		}
 		if c.argAssignable(sig.Params[0], recv, false) {
@@ -7717,6 +7723,46 @@ func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
 		}
 	}
 	return out
+}
+
+// boundsAdmitReceiver reports whether an element-polymorphic method could
+// apply to this concrete receiver, by binding its receiver parameter against
+// the receiver and testing each type parameter's bounds. `(xs: T[]) sum[T:
+// num.Add + num.Zero]()` and `(xs: T[]) max[T: cmp.Ord]()` share the `Array`
+// namespace and both accept a `T[]`, but only the second is reachable from a
+// `string[]` — listing `sum` there sends the reader from an E043 to the E021
+// that says string does not implement Add.
+//
+// It answers on the same index the instantiation check errors from
+// (`Info.Impls`, which explicit impls and `@derive` both populate), so the
+// list and the error agree. Anything it cannot resolve — no recorded
+// declaration, a receiver that will not bind, an element with no type name —
+// admits the method, keeping the filter's remove-only-what-is-proven rule.
+func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool {
+	fn, ok := c.info.GenericFuncs[mangled]
+	if !ok || len(fn.Bounds) == 0 {
+		return true
+	}
+	sub := map[string]ast.Type{}
+	if !c.unifyType(param, recv, sub) {
+		return true
+	}
+	for tp, traits := range fn.Bounds {
+		bound, ok := sub[tp]
+		if !ok {
+			continue
+		}
+		tn, ok := methodTypeName(bound)
+		if !ok {
+			continue
+		}
+		for _, traitName := range traits {
+			if !c.info.Impls[traitName][tn] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // unknownMethodMessage builds the E043 text for a method call whose

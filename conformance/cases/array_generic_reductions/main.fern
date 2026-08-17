@@ -5,10 +5,19 @@ import "std/array";
 // for an `i32[]` receiver, once for a `string[]` one under a dodged name
 // (`count_str`, `reversed`, `sorted_str_asc`) — because the Array method
 // namespace keys on the name alone and could not fan out on the element.
+//
+// `sum` / `product` joined last: they delegate to `num.sum` / `num.product`,
+// so std/array has to import std/num, which put `impl Add for i32` in nearly
+// every program's transitive closure and collided with any user trait
+// providing `add` for i32 (#6931).
 function main(): i32 {
     var xs: i32[] = [3, 1, 2];
     var ls: i64[] = [10i64, 20i64];
     var ss: string[] = ["b", "a", "b"];
+
+    if (xs.sum() != 6) { return 1; }
+    if (ls.sum() != 30i64) { return 2; }
+    if (xs.product() != 6) { return 3; }
 
     if (xs.count(1) != 1) { return 4; }
     if (ss.count("b") != 2) { return 5; }
