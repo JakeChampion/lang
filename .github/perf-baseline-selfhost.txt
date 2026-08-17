@@ -31,22 +31,27 @@
 # ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
+#
+# MEASURED AT c92acc7. The file is one snapshot of one commit, so regenerate it
+# wholesale (`scripts/perf-bench-selfhost`) and move this line with it — that
+# makes a stale baseline a commit distance anyone can read, rather than
+# something to infer from the size of the drift.
 
-selfhost/arm64-linux/array_append.emit	1204
-selfhost/arm64-linux/array_index.emit	1168
+selfhost/arm64-linux/array_append.emit	1225
+selfhost/arm64-linux/array_index.emit	1191
 selfhost/arm64-linux/call_overhead.emit	156
-selfhost/arm64-linux/closure_call.emit	1176
-selfhost/arm64-linux/enum_match.emit	1351
+selfhost/arm64-linux/closure_call.emit	1203
+selfhost/arm64-linux/enum_match.emit	1370
 selfhost/arm64-linux/int_loop.emit	62
-selfhost/arm64-linux/map_int.emit	7977
-selfhost/arm64-linux/map_string.emit	91900
-selfhost/arm64-linux/sort_inplace.emit	85534
-selfhost/arm64-linux/sort_ints.emit	85540
-selfhost/arm64-linux/string_build.emit	85517
-selfhost/arm64-linux/string_scan.emit	85644
-selfhost/arm64-linux/string_slice.emit	1096
-selfhost/arm64-linux/struct_drop.emit	85962
-selfhost/arm64-linux/tokenize.emit	1410
+selfhost/arm64-linux/map_int.emit	7868
+selfhost/arm64-linux/map_string.emit	91611
+selfhost/arm64-linux/sort_inplace.emit	85383
+selfhost/arm64-linux/sort_ints.emit	85387
+selfhost/arm64-linux/string_build.emit	85362
+selfhost/arm64-linux/string_scan.emit	85485
+selfhost/arm64-linux/string_slice.emit	1123
+selfhost/arm64-linux/struct_drop.emit	85749
+selfhost/arm64-linux/tokenize.emit	1437
 selfhost/wasm32-wasi/array_append.emit	343
 selfhost/wasm32-wasi/array_index.emit	329
 selfhost/wasm32-wasi/call_overhead.emit	128
@@ -54,26 +59,26 @@ selfhost/wasm32-wasi/closure_call.emit	366
 selfhost/wasm32-wasi/enum_match.emit	416
 selfhost/wasm32-wasi/int_loop.emit	93
 selfhost/wasm32-wasi/map_int.emit	3691
-selfhost/wasm32-wasi/map_string.emit	52190
-selfhost/wasm32-wasi/sort_inplace.emit	48856
-selfhost/wasm32-wasi/sort_ints.emit	48859
-selfhost/wasm32-wasi/string_build.emit	48810
-selfhost/wasm32-wasi/string_scan.emit	48890
+selfhost/wasm32-wasi/map_string.emit	52492
+selfhost/wasm32-wasi/sort_inplace.emit	49158
+selfhost/wasm32-wasi/sort_ints.emit	49161
+selfhost/wasm32-wasi/string_build.emit	49112
+selfhost/wasm32-wasi/string_scan.emit	49192
 selfhost/wasm32-wasi/string_slice.emit	312
-selfhost/wasm32-wasi/struct_drop.emit	49074
+selfhost/wasm32-wasi/struct_drop.emit	49376
 selfhost/wasm32-wasi/tokenize.emit	447
-selfhost/x86-64-linux/array_append.emit	720
-selfhost/x86-64-linux/array_index.emit	692
+selfhost/x86-64-linux/array_append.emit	737
+selfhost/x86-64-linux/array_index.emit	711
 selfhost/x86-64-linux/call_overhead.emit	148
-selfhost/x86-64-linux/closure_call.emit	674
-selfhost/x86-64-linux/enum_match.emit	876
+selfhost/x86-64-linux/closure_call.emit	697
+selfhost/x86-64-linux/enum_match.emit	891
 selfhost/x86-64-linux/int_loop.emit	64
-selfhost/x86-64-linux/map_int.emit	6759
-selfhost/x86-64-linux/map_string.emit	84283
-selfhost/x86-64-linux/sort_inplace.emit	78322
-selfhost/x86-64-linux/sort_ints.emit	78327
-selfhost/x86-64-linux/string_build.emit	78293
-selfhost/x86-64-linux/string_scan.emit	78410
-selfhost/x86-64-linux/string_slice.emit	612
-selfhost/x86-64-linux/struct_drop.emit	78688
-selfhost/x86-64-linux/tokenize.emit	907
+selfhost/x86-64-linux/map_int.emit	6646
+selfhost/x86-64-linux/map_string.emit	83852
+selfhost/x86-64-linux/sort_inplace.emit	78029
+selfhost/x86-64-linux/sort_ints.emit	78032
+selfhost/x86-64-linux/string_build.emit	77996
+selfhost/x86-64-linux/string_scan.emit	78109
+selfhost/x86-64-linux/string_slice.emit	635
+selfhost/x86-64-linux/struct_drop.emit	78333
+selfhost/x86-64-linux/tokenize.emit	930
