@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**58 of 75** codes are pinned by a conformance case. The table
+**59 of 76** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -118,12 +118,13 @@ language does not have. It is deleted.
 | `E071` | a literal outside the Unicode scalar range was cast to `char` | — |
 | `E072` | ? | — |
 | `E073` | an explicit call to a `core/mem.Drop` finalizer | `diag_e073` |
+| `E074` | two visible implementations of one method name on one type | `diag_e074` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
 | `P004` | At most one `_` placeholder in a piped call | `diag_p004` |
 
-## The 20 unpinned codes
+## The 17 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are

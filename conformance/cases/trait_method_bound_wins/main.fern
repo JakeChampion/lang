@@ -1,0 +1,27 @@
+// A trait bound decides which impl a generic body dispatches to, even
+// when the receiver's concrete type has the same method name from two
+// traits and nothing else separates them.
+//
+// `twice` is checked once with `v: T` — dispatch goes through `T: A`, so
+// the answer is A's `scale`. The monomorphiser then substitutes T = P and
+// re-checks the clone, where the receiver is concrete and BOTH traits are
+// equally in scope: without the bound's answer carried onto the call site
+// that re-check reports E074 for a call the first check resolved, and it
+// does so from inside a generated clone the source cannot point at.
+import "std/i32";
+
+struct P { x: i32 }
+
+trait A { function scale(self: Self): i32; }
+trait B { function scale(self: Self): i32; }
+
+impl A for P { function scale(self: Self): i32 { return self.x; } }
+impl B for P { function scale(self: Self): i32 { return 100; } }
+
+function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
+
+function main(): i32 {
+    var v: P = P { x: 5 };
+    print(twice(v).to_string());
+    return 0;
+}
