@@ -519,13 +519,15 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 // =================== WIDER-INT / FLOAT REDUCTIONS ===================
 //
 // `avg_i64` / `avg_f64` and the running / statistical reductions
-// (`product_f64`, `cumsum_f64`, `cumprod_f64`, `diff_f64`,
-// `variance_f64`, `stddev_f64`, …) that have no generic bounded
-// equivalent. The per-width `sum_*` / `max_*` / `min_*` zoo that once
-// lived here was retired in favour of the generic bounded verbs
+// (`cumsum_f64`, `cumprod_f64`, `diff_f64`, `variance_f64`,
+// `stddev_f64`, …) that have no generic bounded equivalent. The
+// per-width `sum_*` / `max_*` / `min_*` zoo that once lived here was
+// retired in favour of the generic bounded verbs
 // (`num.sum[T: Add + Zero]`, `cmp.max_of` / `cmp.min_of[T: Ord]`, #4387
 // item 2 / #5349); those cover i64 / u32 / u64 / f64 with the same
 // wrapping-add, unsigned-compare, and NaN-skip-by-comparison semantics.
+// `product_f64` left with them once `product` became
+// `[T: Mul + One]` (#2663) — `xs.product()` is the f64 spelling now.
 //
 // Empty-input semantics: `avg_*` returns None (no sensible default).
 
@@ -539,20 +541,6 @@ pub function avg_i64(arr: i64[]): Option[i64] {
     var i: i32 = 0;
     while (i < n) { total = total + arr[i]; i = i + 1; }
     return Some(total / (n as i64));
-}
-
-// `product_f64(arr)` — the product of every element, the f64 sibling of the i32
-// `product`. The empty product is `1.0` (the multiplicative identity), so no
-// Option is needed.
-pub function product_f64(arr: f64[]): f64 {
-    var n: i32 = arr.len();
-    var p: f64 = 1.0;
-    var i: i32 = 0;
-    while (i < n) {
-        p = p * arr[i];
-        i = i + 1;
-    }
-    return p;
 }
 
 // `cumsum_f64(arr)` — the running (prefix) sum: element `i` of the result is
