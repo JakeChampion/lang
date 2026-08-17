@@ -11794,13 +11794,19 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
         parser.ExprIdent(id) => {
             var slot: i32 = s.slot_of(id.name);
             if (slot >= 0) { return s.emit(ir.op_load_local(slot)); }
-            // The empty Option `None` → a payloadless box with tag 1.
-            if (id.name == "None") { return s.emit(ir.op_opt_none()); }
             // A bare struct name that isn't a local is a no-payload enum variant
             // value (e.g. `Red`, `Empty`): a 0-field variant box via struct_make.
+            // Checked BEFORE the builtin `None` below, the way the call arm
+            // checks decl_is_struct before `Some` / `Ok`: a user enum may
+            // declare `None`, and only the user's variant is a declared struct,
+            // so ownership is what separates them. The other order built an
+            // Option box for `enum E { …, None }`, which then matched no
+            // variant index at all.
             if (decl_is_struct(s.structs, id.name) && decl_field_count(s.structs, id.name) == 0) {
                 return s.emit(ir.op_struct_make(id.name, 0));
             }
+            // The empty Option `None` → a payloadless box with tag 1.
+            if (id.name == "None") { return s.emit(ir.op_opt_none()); }
             // A bare identifier that is not a local naming a ZERO-ARG,
             // receiver-less function (a `const`, desugared to such a function) is
             // a CALL to it — its value. Mirrors the retired x86 AST emitter's ExprIdent rule
