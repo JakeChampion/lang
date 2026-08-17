@@ -532,13 +532,7 @@ function probe_newstr(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_find", "probe_newstr"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "probe_find", Value: ev["probe_find"]}, {Name: "probe_newstr", Value: ev["probe_newstr"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -595,13 +589,7 @@ function probe_gmid(env: usize, cls: usize, jenv: usize, a0: usize, a1: usize, a
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_gmid"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "probe_gmid", Value: ev["probe_gmid"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -664,17 +652,7 @@ function probe_sfield(env: usize, cls: usize, jenv: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_field", "probe_smethod", "probe_sfield"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{
-			{Name: "probe_field", Value: ev["probe_field"]},
-			{Name: "probe_smethod", Value: ev["probe_smethod"]},
-			{Name: "probe_sfield", Value: ev["probe_sfield"]},
-		}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -734,13 +712,7 @@ func TestStdJNICstr(t *testing.T) {
 function probe_cstr(env: usize, cls: usize): usize { return jni.cstr("hello"); }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_cstr"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "probe_cstr", Value: ev["probe_cstr"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -816,16 +788,7 @@ function main(): i32 { return 0; }`
 	for i, p := range probes {
 		exps[i] = p.fn
 	}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	elfExports := make([]nativeelf.Export, len(probes))
-	for i, p := range probes {
-		elfExports[i] = nativeelf.Export{Name: p.fn, Value: ev[p.fn]}
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -885,16 +848,7 @@ function g_sint(env: usize, cls: usize, j: usize): i32 { return jni.get_static_i
 function arrlen(env: usize, cls: usize, j: usize, a: usize): i32 { return jni.get_array_length(j, a); }
 function main(): i32 { return 0; }`
 	exps := []string{"g_int", "g_long", "g_obj", "s_int", "g_sint", "arrlen"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	elfExports := make([]nativeelf.Export, len(exps))
-	for i, n := range exps {
-		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1027,16 +981,7 @@ function p_double(env: usize, cls: usize, j: usize): i32 { return (jni.get_doubl
 function p_sdouble(env: usize, cls: usize, j: usize): i32 { return (jni.get_static_double_field(j, 0 as usize, 0 as usize) * 4.0) as i32; }
 function main(): i32 { return 0; }`
 	exps := []string{"p_float", "p_double", "p_sdouble"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	elfExports := make([]nativeelf.Export, len(exps))
-	for i, n := range exps {
-		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1163,16 +1108,7 @@ function p_void(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"p_int", "p_dbl", "p_void"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	elfExports := make([]nativeelf.Export, len(exps))
-	for i, n := range exps {
-		elfExports[i] = nativeelf.Export{Name: n, Value: ev[n]}
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs), elfExports, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1234,13 +1170,7 @@ function p(env: usize, cls: usize, j: usize, obj: usize, m: usize): i32 {
 }
 function main(): i32 { return 0; }`
 	exps := []string{"p"}
-	asm := compileToX86AsmExports(t, src, exps)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, exps)
-	if err != nil {
-		t.Fatalf("AssembleProgramShared: %v", err)
-	}
-	so := nativeelf.SharedLibraryX86(text, rodata, toElfRelocsX86(relocs),
-		[]nativeelf.Export{{Name: "p", Value: ev["p"]}}, "libfern.so")
+	so := sharedLibX86(t, compileToX86AsmExports(t, src, exps), exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -1282,8 +1212,9 @@ int main(int c,char**v){
 // sharedLibX86 assembles x86-64 `asm` into a .so exporting `names`, the way
 // `fern -shared` does: .dynsym carries each export's Fern name, resolved
 // against the mangled symbol the backend actually emitted. Getting that pair
-// wrong is an "export is not a defined .text symbol" error, so the four
-// callers share one implementation of it rather than four.
+// wrong is an "export is not a defined .text symbol" error, and this file had
+// fifteen hand-rolled copies of the pairing that all broke identically, so
+// every caller shares one implementation of it.
 func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
 	t.Helper()
 	asmNames := symname.Fns(names)
