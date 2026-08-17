@@ -3166,6 +3166,87 @@ function main(): i32 { return pick(1); }`,
 	}
 }
 
+// A struct-pattern field carrying a SUB-PATTERN (`P { x: 0, y }`) makes the
+// arm REFUTABLE. A struct has one shape, so a plain struct arm always matches
+// and satisfies exhaustiveness on its own; a refutable field does not, and the
+// match needs a fallback the way a literal scrutinee does.
+func TestStructFieldSubPatternChecks(t *testing.T) {
+	const decls = "enum E { A(i32), B }\nstruct P { x: i32, y: i32 }\nstruct W { e: E, n: i32 }\n"
+	bad := map[string]struct{ src, code string }{
+		"refutable field needs a fallback": {`function f(p: P): i32 {
+  match (p) { P { x: 0, y } => { return y; } }
+}`, "E030"},
+		"variant field needs a fallback": {`function f(w: W): i32 {
+  match (w) { W { e: A(v), n } => { return v + n; } }
+}`, "E030"},
+		"field literal type mismatch": {`function f(p: P): i32 {
+  match (p) { P { x: "s", y } => { return y; }, _ => { return 0; } }
+}`, "E035"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+c.src)
+			if err == nil {
+				t.Fatalf("want %s, got none", c.code)
+			}
+			if code := firstErrCode(err); code != c.code {
+				t.Errorf("code = %q, want %s: %v", code, c.code, err)
+			}
+		})
+	}
+
+	ok := map[string]string{
+		"literal field with an irrefutable sibling": `function f(p: P): i32 {
+  match (p) { P { x: 0, y } => { return y; }, P { x, y } => { return x + y; } }
+}`,
+		"variant field covering every variant plus a fallback": `function f(w: W): i32 {
+  match (w) { W { e: A(v), n } => { return v + n; }, W { e: B(), n } => { return n; } }
+}`,
+		// The fallback is spelled as a SIBLING struct arm, not `_`. A struct
+		// has one shape, so the merged arm matches every value and a trailing
+		// `_` is unreachable (E026) — see TestStructFieldSubPatternFallbackGap
+		// for the interaction that still needs resolving.
+		"sub-pattern binds in the arm scope": `function f(w: W): i32 {
+  match (w) { W { e: A(v), n } => { return v + n; }, W { e, n } => { return n; } }
+}`,
+		"expression form": `function f(p: P): i32 {
+  return match (p) { P { x: 0, y } => y, P { x, y } => x + y };
+}`,
+	}
+	for name, body := range ok {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
+// PINS AN UNRESOLVED INTERACTION, not desired behaviour. With a refutable
+// field sub-pattern, a trailing `_` is the natural catch-all — but a struct
+// has one shape, so the merged arm matches every value and E026 calls the `_`
+// unreachable, while dropping it makes the inner match non-exhaustive (E030).
+// Only a sibling struct arm works today. Payload nesting does not hit this
+// because a `_` there still covers the enum's other variants.
+//
+// The fix belongs in reachability: a merged arm whose inner match can fall
+// through does not match every value. Written as an assertion so it fails the
+// moment that lands, rather than sitting as a comment nobody re-reads.
+func TestStructFieldSubPatternFallbackGap(t *testing.T) {
+	const src = `enum E { A(i32), B }
+struct W { e: E, n: i32 }
+function f(w: W): i32 {
+  match (w) { W { e: A(v), n } => { return v + n; }, _ => { return 0; } }
+}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("E026 no longer fires — the fallback gap is fixed; delete this test and accept `_` in TestStructFieldSubPatternChecks")
+	}
+	if code := firstErrCode(err); code != "E026" {
+		t.Errorf("code = %q, want E026 (the pinned gap): %v", code, err)
+	}
+}
+
 // A struct that implements all of a trait's methods with matching
 // signatures type-checks, and the impl is recorded in Info.Impls.
 // See docs/TRAITS.md.
