@@ -2985,6 +2985,13 @@ type FuncDecl struct {
 	// empty for non-methods. See docs/TRAITS.md.
 	MethodRecv       string
 	MethodSimpleName string
+	// ImplTrait names the trait an `impl Trait for Type` block provided
+	// this method (or associated function) through, in its mangled form.
+	// Empty for an inherent method, an inherent `impl Type` block, and a
+	// plain function. The checker uses it to key Info.TraitMethods /
+	// Info.MethodOwners so two traits offering the same method name for
+	// one type stay distinguishable.
+	ImplTrait string
 	// AssocType, when non-empty, marks this as an associated function
 	// of that (mangled) type name — a receiver-less `impl` method like
 	// `function origin(): Self` in `impl … for Point`. Receiver stays
@@ -3482,6 +3489,13 @@ type Program struct {
 	// method dispatch under module-scoped semantics (see
 	// docs/PRELUDE-TO-MODULES.md).
 	ModuleImports map[string]map[string]bool
+	// DirectImports is ModuleImports without the transitive step: each
+	// entry holds only the module paths named by that module's own
+	// `import` declarations, plus the module itself. Trait-method
+	// resolution ranks a candidate higher when the trait comes from a
+	// module the caller imported directly rather than one it merely
+	// reaches through the closure.
+	DirectImports map[string]map[string]bool
 	// LoadedStdlibPaths records every `std/…` / `core/…` canonical
 	// path modload pulled in (keyed by the `stdlib://…` path form
 	// modload uses internally — see `internal/modload/modload.go`).
