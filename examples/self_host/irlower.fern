@@ -1497,6 +1497,60 @@ pub function fn_param_from_spelling(name: string, sp: string): parser.ParamDecl 
     return fn_param_decl(name, tys, trim_spaces(sp[j + 2 : n]));
 }
 
+// bytes_at: `e` carries the bytes of `s` starting at index `at`.
+function bytes_at(e: string, at: i32, s: string): boolean {
+    var n: i32 = s.len();
+    if (at + n > e.len()) { return false; }
+    var k: i32 = 0;
+    while (k < n) {
+        if (e[at + k] != s[k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+// tagged_value_start: for a reclaim entry `e` shaped "<pfx><name>|<value>" with
+// a non-empty value, the index at which <value> begins; -1 for any other entry.
+//
+// Byte compares only. These scans run inside the per-function emit, whose bump
+// arena never frees, so slicing a candidate to compare it allocated once or
+// twice for every entry of every probe — and the probes run per local slot, so
+// the allocation was quadratic in the function's size.
+function tagged_value_start(e: string, pfx: string, name: string): i32 {
+    var pl: i32 = pfx.len();
+    var nl: i32 = name.len();
+    if (e.len() <= pl + nl + 1) { return 0 - 1; }
+    // Prefix first: it discriminates on the first byte for most of the list,
+    // where the bar test reads a far offset the entry usually does not reach.
+    if (!bytes_at(e, 0, pfx)) { return 0 - 1; }
+    if (e[pl + nl] != 124) { return 0 - 1; }   // 124 = '|'
+    var k: i32 = 0;
+    while (k < nl) {
+        // A '|' inside `name` would put the entry's first bar before the one
+        // tested above, which is a miss — as it was for the decoders that
+        // located the bar by scanning.
+        if (name[k] == 124) { return 0 - 1; }
+        if (e[pl + k] != name[k]) { return 0 - 1; }
+        k = k + 1;
+    }
+    return pl + nl + 1;
+}
+
+// tagged_value_of: the <value> of the first "<pfx><name>|<value>" entry in
+// `names`, or "" when none carries one. Every caller reads "" as "not
+// registered", which is what an empty value would mean too, so
+// tagged_value_start skips those rather than returning an empty match.
+function tagged_value_of(names: string[], pfx: string, name: string): string {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var e: string = names[i];
+        var st: i32 = tagged_value_start(e, pfx, name);
+        if (st >= 0) { return e[st : e.len()] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
 // fn_value_sig returns the funcref signature tag seeded for the fn-value named
 // `name` ("l_w", "w_l", …), or "" when the value has no usable declared
 // signature — an erased generic, an all-i32 one, or a fn value that did not come
@@ -1504,18 +1558,10 @@ pub function fn_param_from_spelling(name: string, sp: string): parser.ParamDecl 
 // dispatch passes as the hidden first argument, so the tag always describes the
 // signature the funcref ACTUALLY has, which is what wasm validates against.
 pub function (s: LowerState) fn_value_sig(name: string, with_env: boolean): string {
-    var pfx: string = "FNSIG:" + name + "|";
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
-            var tag: str = e[pfx.len() : e.len()];
-            if (with_env) { return "w" + tag; }
-            return tag + "";
-        }
-        i = i + 1;
-    }
-    return "";
+    var tag: string = tagged_value_of(s.reclaimable_names, "FNSIG:", name);
+    if (tag.len() == 0) { return ""; }
+    if (with_env) { return "w" + tag; }
+    return tag;
 }
 
 // fn_value_ret returns the DECLARED return-type spelling of the fn-value named
@@ -1523,16 +1569,7 @@ pub function (s: LowerState) fn_value_sig(name: string, with_env: boolean): stri
 // fn_value_sig reads: lower_i64 needs it to tell an indirect call that genuinely
 // yields an i64 from one whose i32 result it must sign-extend.
 pub function (s: LowerState) fn_value_ret(name: string): string {
-    var pfx: string = "FNRET:" + name + "|";
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
-            return e[pfx.len() : e.len()] + "";
-        }
-        i = i + 1;
-    }
-    return "";
+    return tagged_value_of(s.reclaimable_names, "FNRET:", name);
 }
 
 // fn_arg_width_char returns the wasm_width_char of parameter `ai` of the
@@ -1558,16 +1595,16 @@ pub function (s: LowerState) fn_arg_width_char(name: string, ai: i32): string {
 // "FNDYN:<name>|<comma-separated positions>" seed lower_func plants for each
 // fn-typed param carrying dyn positions (parser's fn_param_dyn). #5276.
 pub function (s: LowerState) fn_arg_is_dyn(name: string, ai: i32): boolean {
-    var pfx: string = "FNDYN:" + name + "|";
     var i: i32 = 0;
     while (i < s.reclaimable_names.len()) {
         var e: string = s.reclaimable_names[i];
-        if (e.len() > pfx.len() && e[0 : pfx.len()] + "" == pfx) {
+        var st: i32 = tagged_value_start(e, "FNDYN:", name);
+        if (st >= 0) {
             // The tail is a comma-separated list of dyn positions ("0" / "0,2").
             // Parse each number numerically and test membership of `ai`.
             var cur: i32 = 0;
             var started: boolean = false;
-            var pj: i32 = pfx.len();
+            var pj: i32 = st;
             while (pj < e.len()) {
                 var ch: i32 = e[pj] as i32;
                 if (ch == 44) {   // 44 = ','
@@ -1647,18 +1684,7 @@ pub function (s: LowerState) add_clo_cap_kinds(entry: string): LowerState {
 // clo_cap_kinds_of returns the registered capture-kinds string for closure
 // local `name` ("" when not registered / approval never consumed).
 pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        if (e.len() > 4 && e[0:4] == "CLO:") {
-            var t: str = e[4 : e.len()];
-            var bar: i32 = 0;
-            while (bar < t.len() && t[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-            if (bar < t.len() && t[0:bar] == name) { return t[bar + 1 : t.len()] + ""; }
-        }
-        i = i + 1;
-    }
-    return "";
+    return tagged_value_of(s.reclaimable_names, "CLO:", name);
 }
 
 // clo_rc_approved reports whether lower_func approved `name` for capture RC
@@ -25282,30 +25308,15 @@ function collect_fresh_rcenum_names(stmts: parser.Stmt[], structs: parser.Struct
 // the list stays tiny; the expr-lowering consults it without a LowerState
 // field, which is pinned at 33). A borrowable position cannot retain,
 // return, or alias its argument, so a fresh anonymous temp passed there is
-// dead after the call. ALLOCATION-FREE by construction (char compares, no
-// slicing): this runs inside the per-function emit, whose fixed bump arena
-// never frees — a per-probe slice allocation here OOM-killed the per-module
-// whole-compiler emit.
+// dead after the call.
 function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
     var i: i32 = 0;
     while (i < s.reclaimable_names.len()) {
         var ent: string = s.reclaimable_names[i];
-        // "BORROW:" prefix (66 79 82 82 79 87 58), then <callee>, then '|' (124).
-        if (ent.len() > 8 + callee.len()
-            && ent[0] == 66 && ent[1] == 79 && ent[2] == 82 && ent[3] == 82
-            && ent[4] == 79 && ent[5] == 87 && ent[6] == 58
-            && ent[7 + callee.len()] == 124) {
-            var m: boolean = true;
-            var k: i32 = 0;
-            while (k < callee.len()) {
-                if (ent[7 + k] != callee[k]) { m = false; k = callee.len(); }
-                else { k = k + 1; }
-            }
-            if (m) {
-                var fi: i32 = 7 + callee.len() + 1 + ai;
-                if (fi < ent.len()) { return ent[fi] == 49; }   // 49 = '1'
-                return false;
-            }
+        var st: i32 = tagged_value_start(ent, "BORROW:", callee);
+        if (st >= 0) {
+            if (st + ai < ent.len()) { return ent[st + ai] == 49; }   // 49 = '1'
+            return false;
         }
         i = i + 1;
     }
@@ -25503,28 +25514,9 @@ function len_recv_callees_stmt(st: parser.Stmt, acc: string[]): string[] {
 // discarded_tuple_ret_flags: the "TUPRET:<callee>|<flags>" entry's flags for a
 // discarded call to `callee`, "" when none. Flag k = '1' means tuple element k
 // is a fresh scalar-element array buffer the StmtExpr deep-drop releases before
-// the box. Char-compare lookup like call_arg_borrowable (runs per discarded
-// call statement — rare — so the one flags slice is cheap).
+// the box.
 function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var ent: string = s.reclaimable_names[i];
-        // "TUPRET:" prefix (84 85 80 82 69 84 58), then <callee>, then '|' (124).
-        if (ent.len() > 8 + callee.len()
-            && ent[0] == 84 && ent[1] == 85 && ent[2] == 80 && ent[3] == 82
-            && ent[4] == 69 && ent[5] == 84 && ent[6] == 58
-            && ent[7 + callee.len()] == 124) {
-            var m: boolean = true;
-            var k: i32 = 0;
-            while (k < callee.len()) {
-                if (ent[7 + k] != callee[k]) { m = false; k = callee.len(); }
-                else { k = k + 1; }
-            }
-            if (m) { return ent[7 + callee.len() + 1 : ent.len()] + ""; }
-        }
-        i = i + 1;
-    }
-    return "";
+    return tagged_value_of(s.reclaimable_names, "TUPRET:", callee);
 }
 
 // lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
@@ -31494,10 +31486,12 @@ function slot_enum_reassign_reclaim(s: LowerState, i: i32): string {
     var j: i32 = 0;
     while (j < s.reclaimable_names.len()) {
         var r: string = s.reclaimable_names[j];
-        if (r.len() > 7 && r[0:7] == "ENUMRE:") {
+        if (bytes_at(r, 0, "ENUMRE:")) {
             var k: i32 = 7;
-            while (k < r.len() && r[k:k + 1] != ":") { k = k + 1; }
-            if (k < r.len() && r[k + 1:r.len()] == nm) { return r[7:k] + ""; }
+            while (k < r.len() && r[k] != 58) { k = k + 1; }   // 58 = ':'
+            if (k < r.len() && k + 1 + nm.len() == r.len() && bytes_at(r, k + 1, nm)) {
+                return r[7:k] + "";
+            }
         }
         j = j + 1;
     }
@@ -36810,18 +36804,7 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
 // concrete STRUCT type name for an unboxed struct payload, or a primitive
 // type name ("i32"/"f64"/"boolean"/"string") for an op_dyn_box'd cell.
 function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        if (e.len() > 4 && e[0:4] == "DYN:") {
-            var body: str = e[4 : e.len()];
-            var bar: i32 = 0;
-            while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-            if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()] + ""; }
-        }
-        i = i + 1;
-    }
-    return "";
+    return tagged_value_of(s.reclaimable_names, "DYN:", name);
 }
 
 // darr_kinds_of (#4351 slice 3): the element-kind string registered for dyn
@@ -36829,18 +36812,7 @@ function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
 // kinds[i] = 'p' (plain cell/box dec) or 's' (string cell: inner box free
 // then dec) for element i of the credited literal.
 function darr_kinds_of(s: LowerState, name: string): string {
-    var i: i32 = 0;
-    while (i < s.reclaimable_names.len()) {
-        var e: string = s.reclaimable_names[i];
-        if (e.len() > 5 && e[0:5] == "DARR:") {
-            var body: str = e[5 : e.len()];
-            var bar: i32 = 0;
-            while (bar < body.len() && body[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-            if (bar < body.len() && body[0:bar] == name) { return body[bar + 1 : body.len()] + ""; }
-        }
-        i = i + 1;
-    }
-    return "";
+    return tagged_value_of(s.reclaimable_names, "DARR:", name);
 }
 
 // slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
