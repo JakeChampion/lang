@@ -1,0 +1,141 @@
+// A TUPLE sub-pattern in a variant payload slot, in EXPRESSION position:
+// `var v = match (t) { Pr((a, b)) => a + b, … }`.
+//
+// The statement form (tuple_payload_pattern) desugars the slot's inner match
+// through build_tuple_match, which splices each arm body into a `done`-flag
+// if-chain. In expression position that chain sits inside the match's IIFE,
+// where an arm's `return` leaves the ENCLOSING function instead of yielding
+// the expression's value — so the arms route through a value LOCAL, the same
+// cure the tuple- and struct-SCRUTINEE desugars already take.
+//
+// The i64 arms pin the value local's WIDTH: it is declared from a synthetic
+// zero, and an unsuffixed one gives it an i32 slot that a 64-bit arm store
+// cannot reach. The two `wide_*_scrutinee` functions pin that on the tuple- and
+// struct-scrutinee desugars too — the value local is shared, and it was broken
+// on both of them before this case existed.
+
+import "std/i32";
+import "std/i64";
+import "std/u64";
+
+enum T2 { Pr((i32, i32)), Non }
+enum T3 { Q((i32, i32)), R }
+
+// Literal element beside a binder element, in `return` position.
+function pick(t: T2): i32 {
+    return match (t) {
+        Pr((1, b)) => 50 + b,
+        Pr((a, b)) => a + b,
+        Non => 0,
+    };
+}
+
+// A flat sibling must rebind the whole payload.
+function flat_sibling(t: T2): i32 {
+    var v: i32 = match (t) {
+        Pr((9, b)) => 900 + b,
+        Pr(whole) => whole.0 * 2 + whole.1,
+        Non => 0,
+    };
+    return v;
+}
+
+// An irrefutable tuple arm followed by an outer wildcard.
+function with_fallthrough(t: T3): i32 {
+    var v: i32 = match (t) {
+        Q((a, b)) => a + b,
+        _ => 7,
+    };
+    return v;
+}
+
+// A guard on the tuple arm falls through when false.
+function guarded(t: T2): i32 {
+    var v: i32 = match (t) {
+        Pr((a, b)) when a > 2 => 100,
+        Pr((a, b)) => a + b,
+        Non => 0,
+    };
+    return v;
+}
+
+// A string result rides the same value local as a pointer.
+function as_string(t: T2): string {
+    var s: string = match (t) {
+        Pr((1, b)) => "one",
+        Pr((a, b)) => "many",
+        Non => "none",
+    };
+    return s;
+}
+
+// A 64-bit result: the value local has to be an i64 slot.
+function as_i64(t: T2): i64 {
+    var v: i64 = match (t) {
+        Pr((1, b)) => 5000000000i64,
+        Pr((a, b)) => 7i64,
+        Non => 0i64,
+    };
+    return v;
+}
+
+// The same width rule on the two SCRUTINEE desugars that share the value local.
+function wide_scrutinee(t: (i32, i32)): i64 {
+    var v: i64 = match (t) {
+        (1, b) => 6000000000i64,
+        (a, b) => 8i64,
+    };
+    return v;
+}
+
+struct P { x: i32, y: i32 }
+
+function wide_struct_scrutinee(p: P): i64 {
+    var v: i64 = match (p) {
+        P { x, y } when x > 1 => 7000000000i64,
+        P { x, y } => 9i64,
+    };
+    return v;
+}
+
+// u64 is the other 64-bit tag the zero carries.
+function wide_unsigned(t: T2): u64 {
+    var v: u64 = match (t) {
+        Pr((1, b)) => 9000000000u64,
+        Pr((a, b)) => 11u64,
+        Non => 0u64,
+    };
+    return v;
+}
+
+function main(): i32 {
+    print(pick(T2.Pr((1, 2))).to_string());
+    print(pick(T2.Pr((3, 4))).to_string());
+    print(pick(T2.Non).to_string());
+
+    print(flat_sibling(T2.Pr((9, 1))).to_string());
+    print(flat_sibling(T2.Pr((3, 4))).to_string());
+
+    print(with_fallthrough(T3.Q((2, 3))).to_string());
+    print(with_fallthrough(T3.R).to_string());
+
+    print(guarded(T2.Pr((5, 1))).to_string());
+    print(guarded(T2.Pr((1, 2))).to_string());
+
+    print(as_string(T2.Pr((1, 9))));
+    print(as_string(T2.Pr((3, 9))));
+    print(as_string(T2.Non));
+
+    print(as_i64(T2.Pr((1, 0))).to_string());
+    print(as_i64(T2.Pr((4, 0))).to_string());
+
+    print(wide_scrutinee((1, 0)).to_string());
+    print(wide_scrutinee((4, 0)).to_string());
+
+    print(wide_struct_scrutinee(P { x: 5, y: 0 }).to_string());
+    print(wide_struct_scrutinee(P { x: 0, y: 0 }).to_string());
+
+    print(wide_unsigned(T2.Pr((1, 0))).to_string());
+    print(wide_unsigned(T2.Pr((4, 0))).to_string());
+    return 0;
+}
