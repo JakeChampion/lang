@@ -2704,6 +2704,10 @@ pub function (s: LowerState) mark_arrarr_elem(i: i32, kind: string): LowerState 
 // (StructDecl.enum_owner, set when the parser desugars an enum's variants),
 // or "" if `name` isn't a known enum variant. Lets the IR path recover a
 // freshly-constructed variant's enum type for `<Enum>.<method>` dispatch.
+//
+// FIRST match wins, and variant decls are keyed by the BARE name, so this
+// cannot answer for a name two enums both declare. Anywhere the enum is
+// already known — a qualified `Enum.Variant` — use variant_decl_index.
 pub function variant_enum_owner(structs: parser.StructDecl[], name: string): string {
     var vi: i32 = 0;
     while (vi < structs.len()) {
@@ -2711,6 +2715,22 @@ pub function variant_enum_owner(structs: parser.StructDecl[], name: string): str
         vi = vi + 1;
     }
     return "";
+}
+
+// variant_decl_index returns the index in `structs` of the variant `name`
+// declared by enum `owner`, or -1. Two enums may declare the same variant
+// name, so a qualified `Enum.Variant` has to ask whether such a decl EXISTS
+// rather than whether the first decl of that name happens to be the right
+// one — the flat, bare-keyed table cannot answer the latter correctly. The
+// index is what callers then read fields through, since the by-name
+// accessors are first-match too.
+pub function variant_decl_index(structs: parser.StructDecl[], name: string, owner: string): i32 {
+    var vi: i32 = 0;
+    while (vi < structs.len()) {
+        if (structs[vi].name == name && structs[vi].enum_owner == owner) { return vi; }
+        vi = vi + 1;
+    }
+    return 0 - 1;
 }
 
 // expr_enum_type returns the enum type an expression evaluates to when it is a
@@ -3670,6 +3690,17 @@ pub function struct_field_width(structs: parser.StructDecl[], struct_name: strin
 pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: string, index: i32): boolean {
     var ft64: string = decl_field_type_at(structs, struct_name, index);
     return ft64 == "i64" || ft64 == "u64";
+}
+
+// struct_field_at_is_i64 is the same question asked of an already-resolved
+// decl. Two enums may declare one variant name at different payload widths
+// (`A { W(i64) }` / `B { W(i32) }`), and the by-name form above would answer
+// for whichever was declared first — reading the wrong width for the other.
+pub function struct_field_at_is_i64(structs: parser.StructDecl[], decl_index: i32, index: i32): boolean {
+    if (decl_index < 0 || decl_index >= structs.len()) { return false; }
+    if (index < 0 || index >= structs[decl_index].fields.len()) { return false; }
+    var fw: string = structs[decl_index].fields[index].type_name;
+    return fw == "i64" || fw == "u64";
 }
 
 pub function (s: LowerState) field_index_in(struct_name: string, field: string): i32 {
@@ -10043,29 +10074,31 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // handled the bare form, so a qualified construction made the
     // module IR-ineligible and fell back to the AST emitter, which
     // mis-lowers it (`# unresolved ident: <Enum>`). Recognise it
-    // here: `fa.field` is a known variant whose enum_owner is the
-    // bare type name in `fa.obj` (not a local), so `Enum.Variant`
-    // is unambiguous variant construction, not a method/assoc call.
-    var qvowner: string = variant_enum_owner(s.structs, fa.field);
-    if (qvowner != "") {
-        match (fa.obj) {
-            parser.ExprIdent(qvid) => {
-                if (qvid.name == qvowner && s.slot_of(qvid.name) < 0) {
-                    if (!decl_is_leaksafe(s.structs, fa.field)) { return s.fail(); }
-                    if (c.args.len() != decl_field_count(s.structs, fa.field)) { return s.fail(); }
-                    var qv: LowerState = s;
-                    var qi: i32 = 0;
-                    while (qi < c.args.len()) {
-                        if (struct_field_is_i64(s.structs, fa.field, qi)) { qv = lower_i64(c.args[qi], qv); }
-                        else { qv = lower_expr(c.args[qi], qv); }
-                        if (!qv.ok) { return qv; }
-                        qi = qi + 1;
-                    }
-                    return qv.emit(ir.op_struct_make(fa.field, c.args.len()));
+    // here: `fa.field` is a variant DECLARED BY the bare type name in
+    // `fa.obj` (not a local), so `Enum.Variant` is variant construction,
+    // not a method/assoc call. Asked of that enum rather than of the
+    // variant name alone — two enums may declare the same name, and the
+    // by-name lookups answer for whichever was declared first. The arity
+    // and field widths are read through the resolved INDEX for the same
+    // reason.
+    match (fa.obj) {
+        parser.ExprIdent(qvid) => {
+            var qvi: i32 = variant_decl_index(s.structs, fa.field, qvid.name);
+            if (qvi >= 0 && s.slot_of(qvid.name) < 0) {
+                if (!decl_is_leaksafe(s.structs, fa.field)) { return s.fail(); }
+                if (c.args.len() != s.structs[qvi].fields.len()) { return s.fail(); }
+                var qv: LowerState = s;
+                var qi: i32 = 0;
+                while (qi < c.args.len()) {
+                    if (struct_field_at_is_i64(s.structs, qvi, qi)) { qv = lower_i64(c.args[qi], qv); }
+                    else { qv = lower_expr(c.args[qi], qv); }
+                    if (!qv.ok) { return qv; }
+                    qi = qi + 1;
                 }
-            },
-            _ => {}
-        }
+                return qv.emit(ir.op_struct_make(fa.field, c.args.len()));
+            }
+        },
+        _ => {}
     }
     // xs.sum() / xs.product() on an i32[] — receiver-only builtins
     // backed by Fern helpers (asmcore.fern's __fern_arr_i32_sum /
@@ -11735,19 +11768,19 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // Qualified UNIT-variant value `Enum.Variant` (no call) — the same
             // value as the bare unit variant `Variant`: a 0-field variant box via
             // struct_make. (The payload form `Enum.Variant(args)` is handled in
-            // ExprCall.) `fa.field` must be a known variant whose enum_owner is the
-            // bare type name in `fa.obj` (not a local), so this is unambiguous.
-            var uvowner: string = variant_enum_owner(s.structs, fa.field);
-            if (uvowner != "") {
-                match (fa.obj) {
-                    parser.ExprIdent(uvid) => {
-                        if (uvid.name == uvowner && s.slot_of(uvid.name) < 0
-                            && decl_field_count(s.structs, fa.field) == 0) {
-                            return s.emit(ir.op_struct_make(fa.field, 0));
-                        }
-                    },
-                    _ => {}
-                }
+            // ExprCall.) `fa.field` must be a variant DECLARED BY the bare type
+            // name in `fa.obj` (not a local) — asked of that enum, because two
+            // enums may declare the same variant name and the by-name lookup
+            // answers for whichever was declared first.
+            match (fa.obj) {
+                parser.ExprIdent(uvid) => {
+                    var uvi: i32 = variant_decl_index(s.structs, fa.field, uvid.name);
+                    if (uvi >= 0 && s.slot_of(uvid.name) < 0
+                        && s.structs[uvi].fields.len() == 0) {
+                        return s.emit(ir.op_struct_make(fa.field, 0));
+                    }
+                },
+                _ => {}
             }
             // Bare struct field read `p.x` → struct_get at x's decl index. (As a
             // call receiver — `p.len()` — field access is handled in ExprCall; a
