@@ -4199,7 +4199,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
                 // at coercion — docs/DYN-TRAITS.md §4.2.3), AND enum receivers
                 // (#4785 — matched per-variant below): each is an `if` arm
                 // needing a matching `end`.
-                if (funcs[df0].name == o.str && funcs[df0].receiver_type.len() > 0
+                if (irlower.dyn_arm_matches(funcs[df0], o.str, funcs) && funcs[df0].receiver_type.len() > 0
                         && (irlower.decl_is_struct(structs, dbn0) || irlower.decl_is_prim_recv(structs, dbn0)
                             || (!asmcore.recv_is_array(funcs[df0].receiver_type) && irlower.decl_is_enum(structs, dbn0)))) {
                     if (nimpl == 0) {
@@ -4214,7 +4214,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             while (dfi < funcs.len()) {
                 var dbn: string = util.base_type_name(funcs[dfi].receiver_type);
                 var dprim: boolean = funcs[dfi].receiver_type.len() > 0 && irlower.decl_is_prim_recv(structs, dbn);
-                if (funcs[dfi].name == o.str && funcs[dfi].receiver_type.len() > 0
+                if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
                         && (irlower.decl_is_struct(structs, dbn) || dprim)) {
                     // Shape compare: a struct value carries its type id @0; a
                     // primitive `dyn` box stores prim_type_id @0 (op_dyn_box).
@@ -4245,7 +4245,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
                 // dispatch to their own impls. recv_is_array excludes an
                 // array method's `T[]` receiver (base_type_name strips the
                 // `[]`, which would otherwise mis-read as an enum — #2766).
-                if (funcs[dfi].name == o.str && funcs[dfi].receiver_type.len() > 0
+                if (irlower.dyn_arm_matches(funcs[dfi], o.str, funcs) && funcs[dfi].receiver_type.len() > 0
                         && !asmcore.recv_is_array(funcs[dfi].receiver_type)
                         && irlower.decl_is_enum(structs, dbn)
                         && !(irlower.decl_is_struct(structs, dbn) || dprim)) {

@@ -161,6 +161,196 @@ function main(): i32 {
 		}
 	})
 
+	// Two traits may each provide a method of the same name for one type
+	// (#6931). The self-host emits a method as the flat `<Type>.<name>`
+	// symbol, so without disambiguation both providers land on `$P.scale` —
+	// a WAT text module with two `(func $P.scale …)` is rejected outright by
+	// wasmtime ("duplicate func identifier"), and the register backends
+	// silently keep whichever they saw first. parser.claim_method_name
+	// interposes the second provider's trait; these assert the emitted symbol
+	// namespace is injective and that the surviving definition is the FIRST
+	// provider's, which is what every call site resolves to.
+	t.Run("two-traits-one-method-emits-one-symbol", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping duplicate-method-symbol check")
+		}
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
+		src := `import "std/i32";
+
+struct P { x: i32 }
+
+trait A { function scale(self: Self): i32; }
+trait B { function scale(self: Self): i32; }
+
+impl A for P { function scale(self: Self): i32 { return self.x; } }
+impl B for P { function scale(self: Self): i32 { return 100; } }
+
+function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
+
+function main(): i32 {
+    var v: P = P { x: 5 };
+    return twice(v);
+}
+`
+		srcPath := filepath.Join(dir, "two_traits_one_method.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		if got := bytes.Count(wat, []byte("(func $P.scale ")); got != 1 {
+			t.Errorf("emitted WAT defines $P.scale %d times, want exactly 1", got)
+		}
+		if !bytes.Contains(wat, []byte("(func $P.B.scale ")) {
+			t.Error("B's provider was not interposed with its trait; expected a $P.B.scale definition")
+		}
+		watPath := filepath.Join(dir, "two_traits_one_method.wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", watPath)
+		out, _ := cmd.CombinedOutput()
+		// A's `scale` is `self.x`, so 5 + 5. Native resolves the call through
+		// the `T: A` bound to the same answer.
+		if got := cmd.ProcessState.ExitCode(); got != 10 {
+			t.Errorf("twice(P{x:5}) on wasm exited %d, want 10\n%s", got, out)
+		}
+	})
+
+	// The cross-module shape of the same collision: std/num's `impl Add for
+	// i32` and a user trait's `add` for i32 both want the symbol `i32.add`.
+	// mangle_module deliberately leaves method NAMES alone, so only
+	// flatten.disambiguate_methods separates them — the first module to claim
+	// the key keeps it, and the entry (bundled last) is interposed with its
+	// namespace.
+	t.Run("cross-module-method-collision-emits-one-symbol", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping cross-module collision check")
+		}
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
+		src := `import "std/num";
+
+trait MyAdd { function add(self: Self, o: Self): Self; }
+impl MyAdd for i32 { function add(self: Self, o: Self): Self { return self + o + 1; } }
+
+function sum[T: num.Add](a: T, b: T): T { return a.add(b); }
+
+function main(): i32 { return sum(2, 3); }
+`
+		srcPath := filepath.Join(dir, "cross_module_add.fern")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
+		if code != 0 {
+			t.Fatalf("-target wasm emit exited %d, want 0", code)
+		}
+		if got := bytes.Count(wat, []byte("(func $i32.add ")); got != 1 {
+			t.Errorf("emitted WAT defines $i32.add %d times, want exactly 1", got)
+		}
+		if !bytes.Contains(wat, []byte("(func $i32.__entry.add ")) {
+			t.Error("the entry's colliding provider was not interposed with its namespace")
+		}
+		watPath := filepath.Join(dir, "cross_module_add.wat")
+		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			t.Fatalf("write wat: %v", err)
+		}
+		cmd := exec.Command("wasmtime", "run", watPath)
+		out, _ := cmd.CombinedOutput()
+		// std/num is bundled before the entry, so its `Add` claims `i32.add`
+		// and `sum`'s `a.add(b)` reaches it: 2 + 3.
+		if got := cmd.ProcessState.ExitCode(); got != 5 {
+			t.Errorf("sum(2, 3) on wasm exited %d, want 5\n%s", got, out)
+		}
+	})
+
+	// `dyn B` over a type whose `m` comes from BOTH A and B. The arm chain is
+	// keyed on the method name, so once B's provider is emitted as `S.B.m` a
+	// search for a bare `m` finds only A's — the trait set travels on
+	// op_dyn_dispatch so the arm resolves to the provider the dyn names. Both
+	// directions are asserted: a fix that merely flips which provider wins
+	// fails the `dyn A` case.
+	t.Run("dyn-picks-the-named-trait-provider", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH; skipping dyn provider check")
+		}
+		const decls = `trait A { function m(self: Self): i32; }
+trait B { function m(self: Self): i32; }
+struct S { v: i32 }
+impl A for S { function m(self: Self): i32 { return self.v; } }
+impl B for S { function m(self: Self): i32 { return 7; } }
+`
+		for _, tc := range []struct {
+			name string
+			dyn  string
+			want int
+		}{
+			// B's provider is the interposed one; A's keeps the bare name.
+			{"dyn-b", "dyn B", 7},
+			{"dyn-a", "dyn A", 3},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				src := decls + "function main(): i32 {\n    var d: " + tc.dyn + " = S { v: 3 };\n    return d.m();\n}\n"
+				srcPath := filepath.Join(dir, "dyn_"+tc.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
+				if code != 0 {
+					t.Fatalf("-target wasm emit exited %d, want 0", code)
+				}
+				watPath := filepath.Join(dir, "dyn_"+tc.name+".wat")
+				if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+					t.Fatalf("write wat: %v", err)
+				}
+				cmd := exec.Command("wasmtime", "run", watPath)
+				out, _ := cmd.CombinedOutput()
+				if got := cmd.ProcessState.ExitCode(); got != tc.want {
+					t.Errorf("`%s` dispatch exited %d, want %d\n%s", tc.dyn, got, tc.want, out)
+				}
+			})
+		}
+		// A dyn set whose traits declare DIFFERENT method names must keep
+		// resolving through the bare name — nothing was interposed there.
+		t.Run("multi-trait-distinct-names", func(t *testing.T) {
+			src := `trait A { function m(self: Self): i32; }
+trait B { function n(self: Self): i32; }
+struct S { v: i32 }
+impl A for S { function m(self: Self): i32 { return self.v; } }
+impl B for S { function n(self: Self): i32 { return 7; } }
+function main(): i32 {
+    var d: dyn A + B = S { v: 3 };
+    return d.m() + d.n();
+}
+`
+			srcPath := filepath.Join(dir, "dyn_multi.fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
+			if code != 0 {
+				t.Fatalf("-target wasm emit exited %d, want 0", code)
+			}
+			watPath := filepath.Join(dir, "dyn_multi.wat")
+			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", watPath)
+			out, _ := cmd.CombinedOutput()
+			if got := cmd.ProcessState.ExitCode(); got != 10 {
+				t.Errorf("`dyn A + B` dispatch exited %d, want 10\n%s", got, out)
+			}
+		})
+	})
+
 	t.Run("emit-stdout", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ret42.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {

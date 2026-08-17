@@ -1607,7 +1607,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 // docs/DYN-TRAITS.md §4.2.3). A primitive arm UNBOXES: the receiver
                 // local holds the box pointer, so arg0 is reloaded from box+8.
                 var dprim: boolean = dfd.receiver_type.len() > 0 && asmcore.is_prim_recv_name(ddbn, s);
-                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
                         && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
                     var dbn: string = ddbn;
                     var dlit: asm_ir.ShapeRefOut = asm_ir.shape_ref(s, dbn);
@@ -1648,7 +1648,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
                 // excludes an array method's `T[]` receiver (base_type_name
                 // strips the `[]`, which would otherwise mis-read as an
                 // enum — #2766). Mirrors the x86 asm_ir arm.
-                if (dfd.name == o.str && dfd.receiver_type.len() > 0
+                if (irlower.dyn_arm_matches(dfd, o.str, s.funcs) && dfd.receiver_type.len() > 0
                         && !asmcore.recv_is_array(dfd.receiver_type)
                         && irlower.decl_is_enum(s.struct_decls, ddbn)) {
                     var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);

@@ -518,7 +518,8 @@ The self-hosted compiler dispatches heap values dynamically by shape
 pointer already, so `dyn Trait` maps onto that path for free — a
 struct/enum value carries its own shape, and `d.m()` shape-dispatches to
 the concrete impl regardless of `d`'s static type. So the self-host
-needed only the **parse**, not a new dispatch path:
+needed only the **parse**, not a new dispatch path — with one exception
+below:
 
 - `dyn` is a lexer keyword (`is_keyword`), and `parse_type_name`
   consumes `dyn Trait` into a coarse `"dyn <trait>"` spelling (recursing
@@ -532,6 +533,26 @@ needed only the **parse**, not a new dispatch path:
   call through runtime-shape dispatch. (This was a pre-existing bug for
   *any* struct array, not just `dyn` — `for p in points { p.m() }` hit
   it too; the `dyn` work surfaced it.)
+
+**The exception — the trait set rides on the op (#6931).** Shape dispatch
+alone is enough only while a `(Type, method)` pair has ONE definition.
+Since two different traits may each provide a method of that name for one
+type, the self-host emits the second provider as `<Type>.<Trait>.<m>`
+(`parser.claim_method_name`) so the symbol namespace stays injective — and
+a dispatch chain searching for a bare `m` would then find only the FIRST
+trait's provider, whatever `d`'s trait says. So `op_dyn_dispatch` carries
+the dyn type's trait set alongside the method name (`str` is `m|B` /
+`m|A,B`), and every backend's arm enumerator resolves through
+`irlower.dyn_arm_matches`: a receiver whose provider for one of the dyn's
+traits was interposed matches THAT definition, and its bare namesake — a
+different trait's method — does not answer for it. Receivers with no
+collision keep matching the bare name, so `dyn A + B` where A provides `m`
+and B provides `n` is unaffected. The self-host's AST **interpreter**
+(`interp.fern`) is NOT covered: `call_method` dispatches on the runtime
+receiver type and the method name, and the interpreter does no type
+checking, so the receiver's declared `dyn B` never reaches the call — it
+still answers with the first provider. Closing that needs the interpreter
+to acquire static receiver types, which is #6984.
 
 Primitive / `string` receivers behind `dyn` now work in the self-host
 too, via the same **uniform boxing** as native (§4.2.3) adapted to the
