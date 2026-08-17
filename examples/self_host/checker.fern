@@ -1435,7 +1435,7 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
       }
       var arm: MethodSig = s.array_recv_method(field);
       if (arm.name.len() > 0) {
-        return arm.ret_type;
+        return s.arr_recv_ret_type(recv_ty, arm);
       }
       return t_unknown("no array method `" + field + "`");
     },
@@ -1443,6 +1443,40 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
       return t_unknown("array_method_ret_type: receiver isn't an array");
     }
   }
+}
+
+// arr_recv_ret_type resolves an array-receiver method's declared return when
+// it names the receiver's ELEMENT type parameter — `(xs: T[]) sum[T: …](): T`.
+// collect erases that spelling to unknown (T is not a type it can represent on
+// its own), so the receiver's actual element is substituted for it here.
+//
+// Only a BARE element return needs this. A `T[]` / `Option[T]` return already
+// mismatches a wrong destination on its shape alone, and a concrete return
+// (`i32`, `boolean`) was never erased — which is why `sum` and `product`, the
+// only array methods returning the element itself, were the ones a wrong
+// destination type slipped past.
+//
+// The array analogue of the `Box[T]` receiver substitution in check_call_expr,
+// down to reusing type_from_ref_subst. A method-level parameter pinned by an
+// ARGUMENT rather than by the element (`fold[A](init: A, …): A`) is a separate
+// inference this does not attempt.
+function (s: Scope) arr_recv_ret_type(recv_ty: Type, arm: MethodSig): Type {
+  if (!type_contains_unknown(arm.ret_type) || arm.ret_type_name.len() == 0) {
+    return arm.ret_type;
+  }
+  var rt: string = arm.receiver_type;
+  if (rt.len() <= 2) { return arm.ret_type; }
+  var elem_param: string = rt[0:rt.len() - 2] + "";
+  match (recv_ty) {
+    TypeArray(ra) => {
+      var tps: string[] = [elem_param];
+      var targs: Type[] = [ra.elem];
+      var rref: parser.TypeRef = parser.parse_type_ref(arm.ret_type_name);
+      return type_from_ref_subst(rref, tps, targs, s.structs, s.unions);
+    },
+    _ => {}
+  }
+  return arm.ret_type;
 }
 
 function (s: Scope) lookup_struct(name: string): StructSig {

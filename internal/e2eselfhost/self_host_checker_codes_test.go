@@ -1641,6 +1641,16 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// (join→string) returns are each covered on a clean and a mismatch path.
 		{"array-sum-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.sum(); return x; }\n"},
 		{"array-sum-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: string = a.sum(); return 0; }\n"},
+		// `sum` / `product` are the only array methods returning the ELEMENT
+		// itself, so they are the only ones whose return has to be recovered
+		// from the receiver rather than read off the declaration. The f64 rows
+		// are the ones with teeth: a substitution that resolved the element to
+		// i32 rather than to the receiver's own would pass every i32 row here
+		// and report nothing for `var x: i32 = f.sum()`.
+		{"array-product-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.product(); return x; }\n"},
+		{"array-product-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: string = a.product(); return 0; }\n"},
+		{"array-sum-f64-elem-ok", "import \"std/array\";\nfunction main(): i32 { var f: f64[] = [1.5, 2.5]; var x: f64 = f.sum(); return 0; }\n"},
+		{"array-sum-f64-elem-mismatch", "import \"std/array\";\nfunction main(): i32 { var f: f64[] = [1.5, 2.5]; var x: i32 = f.sum(); return 0; }\n"},
 		{"array-reversed-ret-array-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = a.reverse(); return b[0]; }\n"},
 		{"array-reversed-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var c: string = a.reverse(); return 0; }\n"},
 		{"array-every-positive-ret-bool-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; if (a.every_positive()) { return 1; } return 0; }\n"},
