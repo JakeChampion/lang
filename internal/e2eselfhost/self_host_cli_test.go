@@ -544,6 +544,46 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("payloadless-variant-as-payload-binder", func(t *testing.T) {
+		// #2698: a bare payload-LESS variant name in a payload slot parses as
+		// a BINDER, so `Wrap(Er2)` matched every payload and the arm returned
+		// its answer for every value. Native gained the rejection first; the
+		// self-host did not, which turned a shared bug into a divergence —
+		// native refusing the program while the self-host compiled it and
+		// answered 9 where 1 is correct. Both must now refuse it, with the
+		// same code, and must still accept the two spellings that are fine:
+		// an ordinary binder, and the empty-paren form that tests the tag.
+		decls := "enum Res2 { Ok2(i32), Er2 }\nenum Nest3 { Wrap(Res2), Bare }\n"
+		bad := decls + "function g(w: Nest3): i32 { match (w) { Wrap(Er2) => { return 9; }, _ => { return 1; } } }\nfunction main(): i32 { return g(Nest3.Wrap(Res2.Ok2(5))); }\n"
+		badPath := filepath.Join(dir, "plbinder_bad.fern")
+		if err := os.WriteFile(badPath, []byte(bad), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", badPath); code != 1 {
+			t.Errorf("self-host -check on a payload-less-variant binder exited %d, want 1", code)
+		}
+		combined, _ := exec.Command(fernBin, "-check", badPath).CombinedOutput()
+		if !strings.Contains(string(combined), "error[E015]") {
+			t.Errorf("self-host -check diagnostics = %q, want error[E015]", combined)
+		}
+		if !strings.Contains(string(combined), "Er2()") {
+			t.Errorf("diagnostic must name the spelling that works: %q", combined)
+		}
+
+		// An ordinary binder, and a binder whose name belongs to a DIFFERENT
+		// enum, are both untouched — the rule is scoped to the enum the slot
+		// actually holds, as native's is.
+		ok := decls + "enum Other { Zed, Yy(i32) }\nfunction g(w: Nest3): i32 { match (w) { Wrap(x) => { return 1; }, Bare => { return 2; } } }\nfunction h(w: Nest3): i32 { match (w) { Wrap(Zed) => { return 1; }, Bare => { return 2; } } }\nfunction main(): i32 { return g(Nest3.Bare) + h(Nest3.Bare); }\n"
+		okPath := filepath.Join(dir, "plbinder_ok.fern")
+		if err := os.WriteFile(okPath, []byte(ok), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		okOut, _ := exec.Command(fernBin, "-check", okPath).CombinedOutput()
+		if strings.Contains(string(okOut), "error[E015]") {
+			t.Errorf("rule fired on a legitimate binder: %q", okOut)
+		}
+	})
+
 	t.Run("float-literal-out-of-range", func(t *testing.T) {
 		// #6842: a float literal too large for f64 is rejected by the front
 		// end, as native's parser does, instead of compiling to +Inf. All
