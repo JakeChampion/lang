@@ -861,6 +861,47 @@ pub function rt_src_print_int(t: string): string {
     return "function __fern_print_int(n: i64): i32 { var p: i32 = __raw_scratch(24); var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { __raw_store8(p, 0, 48); return __syscall3(" + sysno(t, "write") + ", 1, p, 1); } var nd: i32 = 0; var t2: u64 = v; while (t2 != (0 as u64)) { nd = nd + 1; t2 = t2 / (10 as u64); } var total: i32 = nd + neg; if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __syscall3(" + sysno(t, "write") + ", 1, p, total); }";
 }
 
+// The two stdin leaves that return no box (#2649) — a bare integer and a bare
+// string — so unlike read_line / reader_read_chunk they carry no Option-layout
+// question. Both fix a bug the hand-asm had on every target.
+
+// rt_src_read_int backs `read_int()` → one read(2) of up to 16 bytes from fd 0,
+// parsed as an optionally-signed decimal. Bytes past the number (the newline, and
+// anything else in that 16-byte window) are consumed and discarded: there is no
+// pushback, which is why read_int and read_line cannot be mixed on one stream.
+//
+// It returns i64 because the hand-asm accumulated in a 64-bit register, and the
+// op site pushes a 64-bit slot either way.
+//
+// The `n < 0` clamp is the fix. The hand-asm computed its end pointer as
+// `buf + n` from the RAW read return, so a failed read (fd 0 closed → -EBADF)
+// put the end BEHIND the start. The loop tests pointer equality and only ever
+// advances, so it could never reach that end: it walked uninitialised stack until
+// it happened to hit a non-digit, and a leading '-' in the garbage even flipped
+// the sign. Witnessed returning 9999 out of a dead frame rather than 0.
+pub function rt_src_read_int(t: string): string {
+    return "function __fern_read_int(): i64 { var p: i32 = __raw_scratch(16); var n: i32 = __syscall3(" + sysno(t, "read") + ", 0, p, 16); if (n < 0) { n = 0; } var i: i32 = 0; var neg: i32 = 0; if (n > 0) { if (__raw_load8(p, 0) == 45) { neg = 1; i = 1; } } var acc: i64 = 0 as i64; while (i < n) { var c: i32 = __raw_load8(p, i); if (c < 48) { i = n; } else { if (c > 57) { i = n; } else { acc = acc * (10 as i64) + ((c - 48) as i64); i = i + 1; } } } if (neg == 1) { acc = (0 as i64) - acc; } return acc; }";
+}
+
+// rt_src_read_all_stdin backs `read_all_stdin()` → fd 0 drained to EOF into one
+// string. `__raw_string` is exactly what the hand-asm did by hand (it called
+// __fern_str_box, which is what the op lowers to), so the returned box is
+// byte-identical and no consumer sees a change.
+//
+// The capacity clamp is the fix. The hand-asm's only loop exit was `read <= 0`;
+// nothing compared the write cursor against the end of the 32 MiB block, so a
+// larger input ran straight past it. That does not fault — the block sits inside
+// the 16 GiB MAP_NORESERVE arena, so the writes land in mapped memory and corrupt
+// whatever follows, including the str box allocated immediately after the buffer.
+// Witnessed: 33 MiB of input reported len=34603008 and exited 0.
+//
+// Input past the cap is now truncated rather than corrupting the heap. Growing
+// the buffer instead would need a copy on every doubling; the bound is what makes
+// this safe, and raising it is a separate decision.
+pub function rt_src_read_all_stdin(t: string): string {
+    return "function __fern_read_all_stdin(): string { var cap: i32 = 33554432; var p: i32 = __raw_alloc(cap); var total: i32 = 0; var go: i32 = 1; while (go == 1) { var want: i32 = 1048576; if (total + want > cap) { want = cap - total; } if (want <= 0) { go = 0; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", 0, __raw_addr(p, total), want); if (n <= 0) { go = 0; } else { total = total + n; } } } return __raw_string(p, total); }";
+}
+
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
 // (#2649) — the single definition of the mapping native's __fern_io_error carries,
 // so the fs leaves stop INLINING the five-way branch and just call it. `path` is

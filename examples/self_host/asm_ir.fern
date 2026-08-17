@@ -2065,95 +2065,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_print_int and __fern_print_str are Fern runtime functions (#2649):
     // asmcore.rt_src_print_int / rt_src_print_str, lowered through the IR pipeline
     // via emit_ir_runtime_fern_fn in the entry block, not hand-written bodies here.
-    // __fern_read_int: read up to 16 bytes from stdin (fd 0), parse a leading
-    // optional-sign decimal into %rax. Transcribed verbatim from asm.fern. Gated on
-    // the read_int need the op handler marked.
-    if (s.has_need("read_int")) {
-        s = s.write("__fern_read_int:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    subq $32, %rsp\n");
-        s = s.write("    movq $0, %rdi\n");
-        s = s.write("    leaq -16(%rbp), %rsi\n");
-        s = s.write("    movq $16, %rdx\n");
-        s = s.write("    movq $0, %rax\n");
-        s = s.write("    syscall\n");
-        s = s.write("    leaq -16(%rbp), %rcx\n");
-        s = s.write("    leaq -16(%rbp), %r8\n");
-        s = s.write("    addq %rax, %r8\n");
-        s = s.write("    movq $0, %r9\n");
-        s = s.write("    movq $0, %r10\n");
-        s = s.write("    cmpq %rcx, %r8\n");
-        s = s.write("    je .Lri_done\n");
-        s = s.write("    movzbq (%rcx), %rax\n");
-        s = s.write("    cmpq $45, %rax\n");
-        s = s.write("    jne .Lri_loop\n");
-        s = s.write("    movq $1, %r10\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write(".Lri_loop:\n");
-        s = s.write("    cmpq %rcx, %r8\n");
-        s = s.write("    je .Lri_done\n");
-        s = s.write("    movzbq (%rcx), %rax\n");
-        s = s.write("    subq $48, %rax\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jl .Lri_done\n");
-        s = s.write("    cmpq $9, %rax\n");
-        s = s.write("    jg .Lri_done\n");
-        s = s.write("    imulq $10, %r9\n");
-        s = s.write("    addq %rax, %r9\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lri_loop\n");
-        s = s.write(".Lri_done:\n");
-        s = s.write("    cmpq $0, %r10\n");
-        s = s.write("    je .Lri_no_neg\n");
-        s = s.write("    negq %r9\n");
-        s = s.write(".Lri_no_neg:\n");
-        s = s.write("    movq %r9, %rax\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_read_all_stdin: no args -> string (#5623). Loops sys_read(fd 0)
-    // until EOF and returns ONE string box holding the whole input, so a driver
-    // can pull in a multi-line source. Ported from asm.fern's AST runtime, with
-    // one deliberate difference: the box is built by __fern_str_box rather than a
-    // bare __fern_alloc(16), because on the IR path this is a reclaimable string
-    // the program holds DIRECTLY. __fern_str_free reads the rc word at box-8, so
-    // a headerless box would have it read whatever precedes the allocation.
-    // (read_line's headerless strbox is safe only because it is wrapped in an
-    // rc-headered Option.) Gated on read_all_stdin; needs heap.
-    if (s.has_need("read_all_stdin")) {
-        s = s.write("__fern_read_all_stdin:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %r12\n");        // total bytes
-        s = s.write("    pushq %r13\n");        // buf base
-        s = s.write("    pushq %r14\n");        // current write ptr
-        s = s.write("    movq $33554432, %rdi\n");   // 32 MiB read buffer
-        s = s.write("    call __fern_alloc\n");
-        s = s.write("    movq %rax, %r13\n");
-        s = s.write("    movq %rax, %r14\n");
-        s = s.write("    movq $0, %r12\n");
-        s = s.write(".Lras_loop:\n");
-        s = s.write("    movq $0, %rax\n");      // sys_read
-        s = s.write("    movq $0, %rdi\n");      // fd 0
-        s = s.write("    movq %r14, %rsi\n");    // dst = write ptr
-        s = s.write("    movq $1048576, %rdx\n");// up to 1 MiB per read
-        s = s.write("    syscall\n");
-        s = s.write("    cmpq $0, %rax\n");
-        s = s.write("    jle .Lras_done\n");     // 0 = EOF, <0 = error
-        s = s.write("    addq %rax, %r12\n");
-        s = s.write("    addq %rax, %r14\n");
-        s = s.write("    jmp .Lras_loop\n");
-        s = s.write(".Lras_done:\n");
-        s = s.write("    movq %r13, %rdi\n");        // data
-        s = s.write("    movq %r12, %rsi\n");        // len
-        s = s.write("    call __fern_str_box\n");    // rc-headered string box
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    leave\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_read_int and __fern_read_all_stdin are Fern runtime functions (#2649):
+    // asmcore.rt_src_read_int / rt_src_read_all_stdin, lowered through the IR
+    // pipeline via emit_ir_runtime_fern_fn in the entry block. read_int parses out
+    // of the static __fern_scratch, so it joins that gate; read_all_stdin still
+    // allocates its own 32 MiB buffer and so stays with the heap runtime.
     // __fern_read_line: no args -> Option[string] (#4369): reads ONE line from
     // stdin (fd 0); EOF before any byte -> None; else box the line INCLUDING the
     // '\n' (strbox {data@0,len@8}) wrapped in Some. The OPTION box is
@@ -4099,7 +4015,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         // __fern_print_int / __fern_eprint_str / __fern_putchar are gone.
         "__fn___fern_print_str", "__fn___fern_print_int",
         "__fn___fern_eprint_str", "__fn___fern_putchar",
-        "__fern_read_int", "__fern_read_line", "__fn___fern_read_file",
+        "__fn___fern_read_int", "__fern_read_line", "__fn___fern_read_file",
         "__fern_reader_read_chunk", "__fern_reader_close", "__fn___fern_write_file",
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir", "__fn___fern_remove_file",
         "__fn___fern_create_dir_all",
@@ -4107,7 +4023,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fern_args", "__fern_arg_at", "__fern_arg_at_rc", "__fern_strbuf_append",
         // #5623: the IR path's whole-stdin reader, emitted in the entry module's
         // runtime — .globl so a per-module sibling's `call` resolves against it.
-        "__fern_read_all_stdin",
+        "__fn___fern_read_all_stdin",
         "__fern_strbuf_reset", "__fern_strbuf_take",
         // crash-only supervision (#5686): the entry owns fork / wait4.
         "__fn___fern_proc_fork", "__fn___fern_proc_waitpid", "__fn___fern_proc_exec",
@@ -5095,14 +5011,16 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_print_str\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("str_print");
         } else if (o.kind_tag == 167) {  // read_int
-            // no args -> read an i32 from stdin (the AST path's __fern_read_int),
-            // push the result (a value op).
-            s = s.write("    call __fern_read_int\n    pushq %rax\n");
+            // no args -> call the Fern-compiled __fn___fern_read_int (#2649) and
+            // push the result (a value op). A zero-arg helper's stack and register
+            // conventions coincide, so there is nothing to marshal.
+            s = s.write("    call __fn___fern_read_int\n    pushq %rax\n");
             s = s.need("read_int");
         } else if (o.kind_tag == 209) {  // read_all_stdin
-            // no args -> read fd 0 to EOF into ONE fresh string box, push it
-            // (a value op). Allocates, so it pulls in the heap runtime.
-            s = s.write("    call __fern_read_all_stdin\n    pushq %rax\n");
+            // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
+            // fd 0 to EOF in ONE fresh string box, pushed as a value op. Allocates,
+            // so it pulls in the heap runtime.
+            s = s.write("    call __fn___fern_read_all_stdin\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_all_stdin");
         } else if (o.kind_tag == 168) {  // read_line
             // no args -> read one line from stdin into a fresh string box (the AST
@@ -7363,12 +7281,20 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
     // they sit with the clocks rather than in the heap runtime: a program that only
     // prints must still link.
+    if (s.has_need("read_int")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_int("x86_64"), all_structs, s);
+    }
+    if (s.has_need("read_all_stdin")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin("x86_64"), all_structs, s);
+    }
     if (s.has_need("str_print")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), all_structs, s);
