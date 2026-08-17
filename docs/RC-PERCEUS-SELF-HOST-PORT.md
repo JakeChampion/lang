@@ -7724,3 +7724,37 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   move the whole surface at once.
 
   Refs #6544 #4451.
+
+- 2026-08-17 (later still): two facts that survive the entry above, found while
+  scoping the same slice independently. The ordering conclusion there stands —
+  this only sharpens the two ends of it.
+
+  **The retain needs no runtime work, and here is the evidence.** The entry above
+  calls it "the two-word change", which is right, but the reason is worth
+  recording because native has a `__fern_str_inc` (`ir.go:7649`) and the
+  self-host has no such helper — which reads like a three-backend port waiting
+  to happen. It is not one: `__fn___fern_rc_inc` carries the SAME preamble as
+  `__fn___fern_str_free` (null guard, `testb $1` inline/SSO-tag skip,
+  `cmpq $0x10000` low-addr guard, rc at `-8`, negative rc = immortal skip), and
+  it is ALREADY emitted on string slots — `slot_is_rc_container`
+  (`irlower.fern:1678`) is `is_arr_slot || is_str_slot || tuple_elems`, and the
+  Option-payload alias inc (`:8036`) calls `__fern_rc_inc` through it. The helper
+  is generic over rc-headered blocks; only the return-site admission is
+  array-shaped.
+
+  **"Admitting a user-declared callee" on the drop side stays unsound even after
+  the retain lands.** Native's `ownedCallResultType` admits any user-declared
+  callee and leans on the is_unique gate, which is safe there because native's
+  return-transfer inc is GENERAL. The retain contemplated here covers exactly one
+  shape, `return <bare param>`. A callee returning `h.tag` (a struct field), or a
+  captured string, still hands the caller an UNCOUNTED alias — so a drop admitting
+  every user-declared callee frees it, which is an over-release, not a leak. The
+  drops have to admit precisely the per-callee proved set, and that set has to
+  stay in step with whatever shapes the retain covers.
+
+  Which is a second argument for the receiver-pointer-compare alternative above:
+  its admission gate IS the static proof (`every return is fresh or the
+  receiver`), with no retain to keep in sync and no shape that can silently fall
+  outside it.
+
+  Refs #6544 #4451.
