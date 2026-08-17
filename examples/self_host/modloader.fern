@@ -424,13 +424,26 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
 //
 // These live here rather than in one driver because the RULE they encode is
 // subtle and must not drift between backends: a module's key is its own source
-// hash folded with the SIGNATURE hash of every module it imports. src_hash makes
-// a body-only edit re-emit that module (its own codegen changed); sig_hash makes
-// a signature edit re-emit that module AND its importers (their call-site tagging
-// changed) — while a body-only edit to a dependency leaves importers untouched,
-// since their sig_hash input is unchanged. That asymmetry is the whole basis of
-// correct invalidation; keying on source alone would ship stale codegen when a
-// depended-on return type changes.
+// hash folded with the SIGNATURE hash of every module it depends on. src_hash
+// makes a body-only edit re-emit that module (its own codegen changed); sig_hash
+// makes a signature edit re-emit that module AND its dependents (their call-site
+// tagging changed) — while a body-only edit to a dependency leaves dependents
+// untouched, since their sig_hash input is unchanged. That asymmetry is the whole
+// basis of correct invalidation; keying on source alone would ship stale codegen
+// when a depended-on return type changes.
+//
+// "Depends on" is the TRANSITIVE import closure, not the direct edges. A unit is
+// lowered under the whole-program function and struct view, so a module reaches
+// declarations it never imported: `main` importing only `mid` can read a field of
+// a struct `leaf` declares (field OFFSETS come from leaf) and can call a receiver
+// method leaf declares on it (call-site tagging comes from leaf's signature).
+// Neither shows up in mid's own signature — `get(): Thing` is unchanged when
+// Thing's field list moves — so a direct-edge key leaves main stale.
+//
+// The closure is a sound over-approximation, not a precise dependency set: a
+// signature change low in the graph invalidates everything above it, whether or
+// not those units name anything that moved. Narrowing it means computing the
+// declarations each unit actually references; correctness comes first.
 
 pub function module_sig_string(mod: parser.Module): string {
     var out: string = "";
@@ -524,27 +537,55 @@ pub function module_src_hash(dir: string, entry_path: string, parts: flatten.Per
     return "?";
 }
 
+// import_closure_ns returns the namespaces module `idx` depends on transitively
+// — the dependency set the cache key folds signatures over (see the section
+// header for why direct edges are not enough). Names that resolve to no loaded
+// part are harmless: the fold walks `parts` and asks membership, so an unresolved
+// import contributes nothing.
+//
+// A fixed point over `parts` rather than a worklist: the module count is small
+// (tens), and re-scanning is what makes an import CYCLE terminate instead of
+// revisiting forever.
+pub function import_closure_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string[] {
+    var seen: string[] = [];
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        var j: i32 = 0;
+        while (j < parts.len()) {
+            if (j == idx || util.has_str(seen, parts[j].ns)) {
+                var imps: parser.Import[] = infmods[j].imports;
+                var ii: i32 = 0;
+                while (ii < imps.len()) {
+                    var nm: string = base_name(imps[ii].path);
+                    if (!util.has_str(seen, nm)) {
+                        seen = seen.append(nm);
+                        grew = true;
+                    }
+                    ii = ii + 1;
+                }
+            }
+            j = j + 1;
+        }
+    }
+    return seen;
+}
+
 // module_cache_key builds the content-addressed key for module `idx`: its own
-// src_hash, folded with the SIGNATURE hash of every module it imports (walked in
-// parts order, so the key is deterministic without a sort). The entry also folds
-// in the runtime-need set it was asked to emit (pm_extra), since that set is part
-// of the entry unit's codegen inputs. `ns` is included so two modules with
-// byte-identical source but different namespaces (hence different mangled output)
-// never share a key. Returns "" when src_hash is "?" — the signal to skip the
-// cache and always emit.
+// src_hash, folded with the SIGNATURE hash of every module it depends on
+// transitively (walked in parts order, so the key is deterministic without a
+// sort). The entry also folds in the runtime-need set it was asked to emit
+// (pm_extra), since that set is part of the entry unit's codegen inputs. `ns` is
+// included so two modules with byte-identical source but different namespaces
+// (hence different mangled output) never share a key. Returns "" when src_hash is
+// "?" — the signal to skip the cache and always emit.
 pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[]): string {
     if (src_hash == "?") { return ""; }
     var key: string = parts[idx].ns + "|" + src_hash;
-    var imps: parser.Import[] = infmods[idx].imports;
+    var deps: string[] = import_closure_ns(parts, infmods, idx);
     var j: i32 = 0;
     while (j < parts.len()) {
-        var ii: i32 = 0;
-        var imported: boolean = false;
-        while (ii < imps.len()) {
-            if (base_name(imps[ii].path) == parts[j].ns) { imported = true; }
-            ii = ii + 1;
-        }
-        if (imported) { key = key + "#" + sighashes[j]; }
+        if (util.has_str(deps, parts[j].ns)) { key = key + "#" + sighashes[j]; }
         j = j + 1;
     }
     if (parts[idx].is_entry) {
@@ -554,5 +595,20 @@ pub function module_cache_key(parts: flatten.PerModule[], infmods: parser.Module
         key = key + "@" + util.hash_key(ex);
     }
     return key;
+}
+
+// module_unit_cache_key is module_cache_key for ONE emitted unit: the same key
+// with the function window [lo,hi) folded in, so two shards of a module never
+// share an entry. `hi < 0` means "to the end", which is how a whole-module emit
+// spells its window; a caller that knows the module's function count must
+// normalise a full window to -1 or the same bytes get two keys.
+//
+// Every driver goes through this rather than appending the window itself: the
+// window is part of what the cached bytes ARE, so a driver that forgot it would
+// serve one shard's asm for another.
+pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, extra: string[], lo: i32, hi: i32): string {
+    var key: string = module_cache_key(parts, infmods, sighashes, idx, src_hash, extra);
+    if (key.len() == 0) { return ""; }
+    return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi);
 }
 

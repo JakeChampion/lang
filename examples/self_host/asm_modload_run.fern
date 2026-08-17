@@ -390,10 +390,36 @@ function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[]
     return asm_ir.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_structs);
 }
 
+// unit_cache_file returns the object path for ONE emitted unit, or "" when the
+// cache is off or the module has no stable key (src_hash "?" — always rebuild).
+// The single source of the path both the read and the write use.
+//
+// A window covering the whole module is normalised to hi = -1, which is how a
+// single `-per-module-emit N` spells it. The two routes emit byte-identical
+// bytes for that unit (TestSelfHostPerModuleEmitAllX86_64 pins it), so without
+// the normalisation they would key the same asm twice and never reuse each
+// other's entries.
+function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], src_hash: string, midx: i32, extra: string[], wlo: i32, whi: i32): string {
+    if (cache_dir.len() == 0 || sighashes.len() == 0 || src_hash.len() == 0) { return ""; }
+    var khi: i32 = whi;
+    if (wlo == 0 && khi >= infmods[midx].funcs.len()) { khi = 0 - 1; }
+    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, midx, src_hash, extra, wlo, khi);
+    if (key.len() == 0) { return ""; }
+    var shard_tag: string = "";
+    if (wlo > 0) { shard_tag = "_s" + util.i32_to_string(wlo); }
+    return cache_dir + "/" + parts[midx].ns + shard_tag + "__" + util.hash_key(key) + ".s";
+}
+
 // emit_unit_to_file emits ONE flat unit and writes it to <out_dir>/unit_*.s.
 // Containers are passed with an index rather than as indexed element VALUES so
 // the callee reads them in place.
-function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], wpb: irlower.FnSigs, target: string): boolean {
+//
+// With `cachefile` set the unit is served from disk when it is there — skipping
+// codegen, the expensive part — and the cache is populated on a miss. hit/miss
+// goes to stderr (one shard-ns per line) so an orchestrator can see the reuse
+// set; the unit FILE is written either way, since that is what the caller reads
+// back.
+function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], wpb: irlower.FnSigs, target: string, cachefile: string): boolean {
     var wlo: i32 = nth_field_i32(unit_spec, 1);
     var whi: i32 = nth_field_i32(unit_spec, 2);
     var is_entry: boolean = parts[midx].is_entry;
@@ -401,19 +427,42 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
     if (is_entry) { extra = needs; }
     var shard_ns: string = parts[midx].ns;
     if (wlo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(wlo); }
+    var outpath: string = out_dir + "/" + unit_file_name(unit_spec);
+    if (cachefile.len() > 0) {
+        match (read_file(cachefile)) {
+            Ok(cached) => {
+                eprint("cache-hit " + shard_ns + "\n");
+                match (write_file(outpath, cached)) {
+                    Err(cwerr) => {
+                        eprint("per-module: unit write failed: " + outpath + "\n");
+                        return false;
+                    },
+                    Ok(_) => { },
+                }
+                return true;
+            },
+            Err(e_ch) => { },
+        }
+    }
     var unit: string = "";
     if (target == "arm64-linux") {
         unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi);
     } else {
         unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi, [], wpb);
     }
-    var outpath: string = out_dir + "/" + unit_file_name(unit_spec);
     match (write_file(outpath, unit)) {
         Err(werr) => {
             eprint("per-module: unit write failed: " + outpath + "\n");
             return false;
         },
         Ok(_) => { },
+    }
+    if (cachefile.len() > 0) {
+        eprint("cache-miss " + shard_ns + "\n");
+        match (write_file(cachefile, unit)) {
+            Err(cerr) => { eprint("per-module: cache write failed for " + shard_ns + "\n"); },
+            Ok(_) => { },
+        }
     }
     return true;
 }
@@ -426,14 +475,19 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
 // shut), whereas the crash-only process trio is granted by every native target.
 // It also needs no pipes, because the child communicates through the unit FILES
 // it writes rather than through stdout.
-function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32, hi: i32, target: string): i32 {
+function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32, hi: i32, target: string, cache_dir: string): i32 {
     var pid: i32 = proc_fork();
     if (pid < 0) { return 0 - 1; }
     if (pid == 0) {
         // proc_exec supplies argv[0] from self_exe, so only real arguments here.
-        var rc: i32 = proc_exec(self_exe, [entry_path, "-per-module-emit-all", "-out-dir", tmp,
-                                           "-unit-range", util.i32_to_string(lo) + ":" + util.i32_to_string(hi),
-                                           "-assume-eligible", "-target", target]);
+        var argv: string[] = [entry_path, "-per-module-emit-all", "-out-dir", tmp,
+                              "-unit-range", util.i32_to_string(lo) + ":" + util.i32_to_string(hi),
+                              "-assume-eligible", "-target", target];
+        if (cache_dir.len() > 0) {
+            argv = argv.append("-cache-dir");
+            argv = argv.append(cache_dir);
+        }
+        var rc: i32 = proc_exec(self_exe, argv);
         // Only reached if exec failed; 127 is the shell's convention for it and
         // is distinguishable from any emit failure the child would report.
         exit(127);
@@ -476,13 +530,21 @@ function spawn_batch(self_exe: string, entry_path: string, tmp: string, lo: i32,
 // lower leaves a dangling `__fn_` symbol and fails loudly at LINK, the same
 // backstop the harness-driven batched build already relies on.
 //
+// `-cache-dir` is forwarded to each batch child, which is what makes the DEFAULT
+// build flow incremental (#5330): every child consults and populates the same
+// object cache, so a rebuild after a one-module edit re-emits that module and its
+// signature-dependents and serves the rest from disk. The cache is keyed on
+// program sources and signatures only — not on the compiler that emitted the
+// bytes — so the directory belongs to whoever drives the build and must not
+// outlive a compiler rebuild.
+//
 // Return codes, so the caller never has to guess whether stdout was touched:
 // 0 = the stream was written; 1 = nothing was written, fall back to the AST
 // emitter; 2 = failed mid-stream, so stdout holds a partial unit and a hard
 // error is the only sound outcome. Every ordinary failure is detected before the
 // first write — hence the presence pre-pass — so 2 needs an I/O race inside our
 // own private temp directory.
-function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, func_budget: i32, batch: i32, self_exe: string): i32 {
+function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], target: string, func_budget: i32, batch: i32, self_exe: string, cache_dir: string): i32 {
     if (self_exe.len() == 0) { return 1; }
     // Only the flat unit LIST is needed here (analysis, no codegen); each child
     // re-derives the same list and emits its slice of it.
@@ -507,7 +569,7 @@ function emit_per_module_spawned(dir: string, entry_path: string, entry: parser.
     while (lo < units.len()) {
         var hi: i32 = lo + batch;
         if (hi > units.len()) { hi = units.len(); }
-        var rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target);
+        var rc: i32 = spawn_batch(self_exe, entry_path, tmp, lo, hi, target, cache_dir);
         if (rc != 0) {
             eprint("per-module spawned: unit batch " + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + " failed (exit " + util.i32_to_string(rc) + "), falling back to the AST emitter\n");
             var ce1: i32 = 0;
@@ -708,6 +770,24 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         var needs: string[] = asm_ir.all_runtime_need_roots();
         var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
+        // Incremental object cache (#3451 step 6 / #3458). This is the mode the
+        // DEFAULT build flow runs in — emit_per_module_spawned execs a child per
+        // batch — so wiring the cache here is what makes an ordinary rebuild
+        // incremental rather than just the explicit single-unit mode.
+        //
+        // Both fingerprint tables are derived once per process and indexed by
+        // module, not recomputed per unit: a module sharded into several windows
+        // would otherwise re-read and re-hash its source once per shard.
+        var srchashes: string[] = [];
+        var sighashes_ea: string[] = [];
+        if (cache_dir.len() > 0) {
+            var chi: i32 = 0;
+            while (chi < parts.len()) {
+                srchashes = srchashes.append(modloader.module_src_hash(dir, entry_path, parts, chi));
+                sighashes_ea = sighashes_ea.append(util.hash_key(modloader.module_sig_string(infmods[chi])));
+                chi = chi + 1;
+            }
+        }
         // Module index whose eligibility has been checked. Units are emitted in
         // module order, so a scalar suffices to check once per MODULE rather than
         // once per window — the check re-lowers the whole module (see
@@ -717,7 +797,24 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         while (uidx < units.len()) {
             if (uidx < unit_lo || uidx >= unit_hi) { uidx = uidx + 1; continue; }
             var idx: i32 = nth_field_i32(units[uidx], 0);
-            if (!assume_eligible && idx != checked_idx) {
+            var uextra: string[] = [];
+            if (parts[idx].is_entry) { uextra = needs; }
+            var usrc: string = "";
+            if (srchashes.len() > 0) { usrc = srchashes[idx]; }
+            var ucache: string = unit_cache_file(cache_dir, parts, infmods, sighashes_ea, usrc, idx, uextra, nth_field_i32(units[uidx], 1), nth_field_i32(units[uidx], 2));
+            // Whatever is in the cache was emitted from a module that lowered, so
+            // a hit makes the eligibility re-lowering pure waste — and that check
+            // costs about as much as the emit the hit just saved. Probe before
+            // paying it; a later window of the same module that MISSES still
+            // checks, because a hit leaves checked_idx alone.
+            var cached_here: boolean = false;
+            if (ucache.len() > 0) {
+                match (stat(ucache)) {
+                    Ok(cst) => { cached_here = true; },
+                    Err(e_cs) => { },
+                }
+            }
+            if (!assume_eligible && !cached_here && idx != checked_idx) {
                 if (!module_ir_eligible(infmods, parts, idx, known, all_funcs, all_structs)) {
                     eprint("per-module: module not IR-eligible: ");
                     eprint(parts[idx].ns);
@@ -726,7 +823,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 }
                 checked_idx = idx;
             }
-            if (!emit_unit_to_file(out_dir, units[uidx], infmods, parts, idx, needs, all_funcs, all_structs, wpb, target)) { return 1; }
+            if (!emit_unit_to_file(out_dir, units[uidx], infmods, parts, idx, needs, all_funcs, all_structs, wpb, target, ucache)) { return 1; }
             uidx = uidx + 1;
         }
         return 0;
@@ -802,23 +899,22 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     var extra: string[] = [];
     if (parts[pm_index].is_entry) { extra = pm_extra; }
     // Incremental object cache (#3451 step 6 / #3458). With -cache-dir set, the
-    // driver computes this module's content-addressed key (its own source folded
-    // with the signatures of the modules it calls into — module_cache_key) and
-    // serves the emitted unit from <cache_dir>/<ns>__<hash>.s when it exists. A
-    // hit skips codegen entirely (the expensive part); a miss emits, populates
-    // the cache, then writes. This is what makes a rebuild after a one-module
-    // edit re-emit only that module and its signature-dependents — every other
-    // module's key is unchanged, so its unit is reused byte-for-byte. hit/miss is
-    // reported on stderr (ns per line) so an orchestrator can see the reuse set;
-    // stdout stays exactly the unit asm. A "?" src_hash yields an empty key,
-    // which disables the cache for that module (always emit — sound, see
+    // driver computes this unit's content-addressed key (its module's source
+    // folded with the signatures of everything it depends on, plus the emitted
+    // function window — unit_cache_file) and serves the unit from disk when it is
+    // there. A hit skips codegen entirely (the expensive part); a miss emits,
+    // populates the cache, then writes. This is what makes a rebuild after a
+    // one-module edit re-emit only that module and its signature-dependents —
+    // every other module's key is unchanged, so its unit is reused byte-for-byte.
+    // hit/miss is reported on stderr (ns per line) so an orchestrator can see the
+    // reuse set; stdout stays exactly the unit asm. A "?" src_hash yields an empty
+    // key, which disables the cache for that module (always emit — sound, see
     // module_src_hash).
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
         var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, pm_index);
-        var key: string = modloader.module_cache_key(parts, infmods, sighashes, pm_index, src_hash, extra);
-        if (key.len() > 0) {
-            cachefile = cache_dir + "/" + parts[pm_index].ns + "__" + util.hash_key(key) + ".s";
+        cachefile = unit_cache_file(cache_dir, parts, infmods, sighashes, src_hash, pm_index, extra, pm_lo, pm_hi);
+        if (cachefile.len() > 0) {
             match (read_file(cachefile)) {
                 Ok(cached) => {
                     eprint("cache-hit " + parts[pm_index].ns + "\n");
@@ -847,8 +943,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // `.rodata` string labels don't collide at link. The lo=0 shard keeps the
     // base ns, so a full-range emit stays byte-identical (the byte-identity
     // invariant), and disjoint windows have disjoint lo values → distinct ns.
-    // (Sharding uses -func-range, the cache uses -cache-dir; they are not
-    // combined — a full-range cached emit keeps shard_ns == base ns.)
+    // -func-range composes with -cache-dir: the window is part of the cache key
+    // and of the entry's file name, so two shards of one module never share one.
     var shard_ns: string = parts[pm_index].ns;
     if (pm_lo > 0) { shard_ns = shard_ns + "_s" + util.i32_to_string(pm_lo); }
     var unit: string = "";
@@ -995,7 +1091,7 @@ function main(): i32 {
     // The audit reads only the two records, so it takes no entry file.
     if (paudit) { return provided_audit(); }
     if (entry_path == "") {
-        eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-cache-dir DIR] [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-assume-eligible]\n");
+        eprint("usage: asm_modload_run <entry.fern> [-verifyprovided | -provided-audit | -ir-probe | -per-module-count | -per-module-needs | -per-module-func-counts | -per-module-manifest | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all -out-dir DIR [-func-budget N] [-unit-range LO:HI]] [-cache-dir DIR] [-assume-eligible]\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);
@@ -1056,7 +1152,7 @@ function main(): i32 {
                         // `-per-module-emit` child is the exact path
                         // TestSelfHostModloadPerModuleWholeCompilerArm64 drives, so
                         // this reuses a proven leg rather than adding one.
-                        var asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0]);
+                        var asrc: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
                         if (asrc == 0) { return 0; }
                         if (asrc == 2) {
                             eprint("asm_modload_run: spawned per-module emit failed after writing output\n");
@@ -1109,7 +1205,7 @@ function main(): i32 {
                     var pmc: string = emit_per_module_concat(dir, entry, loaded, reach, "x86-64-linux");
                     if (pmc.len() > 0) { write(pmc); return 0; }
                 } else {
-                    var src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0]);
+                    var src: i32 = emit_per_module_spawned(dir, entry_path, entry, loaded, target, func_budget, unit_batch, a[0], cache_dir);
                     if (src == 0) { return 0; }
                     if (src == 2) {
                         eprint("asm_modload_run: spawned per-module emit failed after writing output\n");
