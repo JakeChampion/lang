@@ -2799,6 +2799,62 @@ pub function decl_is_struct(structs: parser.StructDecl[], name: string): boolean
     return false;
 }
 
+// dyn_trait_set splits a `dyn Trait` type spelling into its trait names:
+// "dyn B" -> ["B"], "dyn A + B" -> ["A", "B"]. Non-dyn spellings yield none.
+pub function dyn_trait_set(ty: string): string[] {
+    var out: string[] = [];
+    if (ty.len() <= 4 || ty[0:4] != "dyn ") { return out; }
+    var start: i32 = 4;
+    var i: i32 = 4;
+    while (i <= ty.len()) {
+        if (i == ty.len() || ty[i] == 43) {            // '+'
+            var part: string = trim_spaces(ty[start:i] + "");
+            if (part.len() > 0) { out = out.append(part); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// dyn_arm_matches reports whether `fd` is the definition a `dyn` dispatch on
+// `tag` (an op_dyn_dispatch str) must call for fd's OWN receiver type. The arm
+// search is keyed on the method name, and two traits providing one method for
+// one type produce two definitions: the first claimant keeps the bare `<m>` and
+// the later one is emitted as `<Trait>.<m>` (parser's claim_method_name). So a
+// receiver whose provider for one of the dyn's traits was interposed must match
+// THAT definition, and its bare namesake — a different trait's method — must
+// not answer for it.
+pub function dyn_arm_matches(fd: parser.FuncDecl, tag: string, funcs: parser.FuncDecl[]): boolean {
+    var method: string = ir.dyn_dispatch_method(tag);
+    var traits: string[] = ir.dyn_dispatch_traits(tag);
+    var ti: i32 = 0;
+    while (ti < traits.len()) {
+        if (fd.name == traits[ti] + "." + method) { return true; }
+        ti = ti + 1;
+    }
+    if (fd.name != method) { return false; }
+    var bn: string = util.base_type_name(fd.receiver_type);
+    var tj: i32 = 0;
+    while (tj < traits.len()) {
+        if (method_decl_index(funcs, bn, traits[tj] + "." + method) >= 0) { return false; }
+        tj = tj + 1;
+    }
+    return true;
+}
+
+// method_decl_index returns the index of the method named `name` on receiver
+// base type `bn`, or -1.
+function method_decl_index(funcs: parser.FuncDecl[], bn: string, name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() > 0 && funcs[i].name == name
+                && util.base_type_name(funcs[i].receiver_type) == bn) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 // decl_is_enum reports whether `name` is a declared enum — i.e. some decl records
 // it as its enum_owner (the variants of `name` are stored in `structs` with
 // enum_owner == name). Precise (unlike the loose syntactic is_enum_like_name): it
@@ -11143,7 +11199,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             dm = dm.emit(ir.op_store_local(dbase + 1 + dai));
             dai = dai + 1;
         }
-        return dm.emit(ir.op_dyn_dispatch(fa.field, dbase, dargc));
+        return dm.emit(ir.op_dyn_dispatch(fa.field, dyn_trait_set(rty), dbase, dargc));
     }
     // A function-VALUE struct field call `h.f(args)` — `f` is a
     // "fn"-typed field, NOT a method. The lift pass (#3445) stores

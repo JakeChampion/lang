@@ -1236,10 +1236,54 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 // (so every backend can reload them per dispatch arm — wasm can't index a deep
 // operand-stack slot). The backend reads the receiver's runtime shape pointer
 // and dispatches to the matching `<ConcreteType>.<method>` — a compare-branch
-// chain over the trait's impl types, mirroring the AST emitter. `str` is the
-// method name; `i32_imm` is base_slot; `width` is argc (1 + nargs).
-pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
-    return Op { decl: 0 - 1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
+// chain over the trait's impl types, mirroring the AST emitter. `i32_imm` is
+// base_slot; `width` is argc (1 + nargs).
+//
+// `str` is the method name, followed by the dyn type's TRAIT SET after a `|`
+// (`m|B`, `m|A,B`). The arm search is name-keyed, so it needs the trait set to
+// pick between two traits that each provide the method for one receiver type:
+// the second provider is emitted as `<Type>.<Trait>.<m>` (parser's
+// claim_method_name), which a search for a bare `m` would never find. Read the
+// halves back with dyn_dispatch_method / dyn_dispatch_traits.
+pub function op_dyn_dispatch(method: string, traits: string[], base_slot: i32, argc: i32): Op {
+    var tag: string = method;
+    var i: i32 = 0;
+    while (i < traits.len()) {
+        if (i == 0) { tag = tag + "|"; } else { tag = tag + ","; }
+        tag = tag + traits[i];
+        i = i + 1;
+    }
+    return Op { decl: 0 - 1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
+}
+// dyn_dispatch_method returns the method-name half of an op_dyn_dispatch `str`.
+pub function dyn_dispatch_method(tag: string): string {
+    var i: i32 = 0;
+    while (i < tag.len()) {
+        if (tag[i] == 124) { return tag[0:i] + ""; }   // '|'
+        i = i + 1;
+    }
+    return tag;
+}
+// dyn_dispatch_traits returns the trait-set half of an op_dyn_dispatch `str`,
+// empty when the dyn type named no traits the lowerer could resolve.
+pub function dyn_dispatch_traits(tag: string): string[] {
+    var out: string[] = [];
+    var bar: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < tag.len()) {
+        if (tag[i] == 124) { bar = i; i = tag.len(); } else { i = i + 1; }
+    }
+    if (bar < 0) { return out; }
+    var start: i32 = bar + 1;
+    var k: i32 = start;
+    while (k <= tag.len()) {
+        if (k == tag.len() || tag[k] == 44) {          // ','
+            if (k > start) { out = out.append(tag[start:k] + ""); }
+            start = k + 1;
+        }
+        k = k + 1;
+    }
+    return out;
 }
 // op_dyn_box heap-boxes a PRIMITIVE/string value coerced into a `dyn Trait`
 // slot (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its

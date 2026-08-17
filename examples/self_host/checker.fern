@@ -8315,33 +8315,6 @@ function const_grammar_diags(mod: parser.Module): Diag[] {
 }
 
 
-// distinct_impl_traits counts how many DIFFERENT traits provide `name` for
-// `recv_type` in this module's `impl` blocks. Two or more means the second
-// declaration is a legitimate second provider, not a redeclaration: a type
-// may implement `Adder` and `num.Add` and get an `add` from each (#6931).
-//
-// Counted rather than attributed per declaration because `parser.FuncDecl`
-// carries no trait back-pointer on this side — adding one means touching
-// 105 struct literals, which is the full mirror and a separate change. The
-// count is enough for the question asked here, and it keeps the cases that
-// must STAY E006 firing: the same trait twice counts 1, and two inherent
-// declarations count 0.
-function distinct_impl_traits(mod: parser.Module, name: string, recv_type: string): i32 {
-  var seen: string[] = [];
-  var i: i32 = 0;
-  while (i < mod.impls.len()) {
-    var im: parser.ImplInfo = mod.impls[i];
-    if (im.trait_name.len() > 0
-        && util.base_type_name(im.impl_type) == util.base_type_name(recv_type)
-        && name_in(name, im.method_names)
-        && !name_in(im.trait_name, seen)) {
-      seen = seen.append(im.trait_name);
-    }
-    i = i + 1;
-  }
-  return seen.len();
-}
-
 function collect_decl_diags(mod: parser.Module): Diag[] {
   var out: Diag[] = append_diags([], const_grammar_diags(mod));
   // E007: duplicate field within a struct (enum-variant structs carry at
@@ -8416,7 +8389,7 @@ function collect_decl_diags(mod: parser.Module): Diag[] {
     if (earlier) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
-      } else if (distinct_impl_traits(mod, f2.name, f2.receiver_type) < 2) {
+      } else {
         out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + util.base_type_name(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }

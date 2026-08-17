@@ -28,6 +28,7 @@
 // builtins (s[i], s[i:j], .len(), ==, +), matching the rest of the
 // self-host sources.
 
+import "./util";
 import "./lexer";
 import "./parser";
 
@@ -891,6 +892,61 @@ function append_aliases(into: parser.TypeAlias[], more: parser.TypeAlias[]): par
     return into;
 }
 
+// MethodDedup is disambiguate_methods' answer: the rewritten module, and the
+// claim table extended with the keys it took.
+struct MethodDedup { mod: parser.Module, keys: string[] }
+
+// disambiguate_methods is the cross-module half of parser.claim_method_name.
+// mangle_module deliberately leaves a receiver method's NAME alone (dispatch is
+// by receiver type), so `impl Add for i32` in std/num and a user trait's `add`
+// for i32 both want the flat symbol `i32.add`. The first module to claim a
+// `<Type>.<name>` key keeps it — that is the definition every call site
+// resolves to — and a later module's method is interposed with its namespace
+// (`i32.num.add`). parse_module already made each module injective on its own,
+// so a claim never has to be attributed back to an ImplInfo here. `claimed` is
+// threaded across the whole bundle, entry included.
+//
+// Collisions are tested against EARLIER modules only (`claimed`), never against
+// keys this module itself contributes: two methods of ONE module that still
+// share a key after claim_method_name are a genuine redeclaration, and renaming
+// one would hide the E006 the checker owes for it.
+function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[]): MethodDedup {
+    var out: parser.FuncDecl[] = [];
+    var added: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var fd: parser.FuncDecl = mod.funcs[i];
+        if (fd.receiver_type.len() == 0) {
+            out = out.append(fd);
+            i = i + 1;
+            continue;
+        }
+        var base: string = util.base_type_name(fd.receiver_type);
+        var key: string = base + "." + fd.name;
+        if (util.index_of_str(claimed, key) < 0) {
+            if (util.index_of_str(added, key) < 0) { added = added.append(key); }
+            out = out.append(fd);
+            i = i + 1;
+            continue;
+        }
+        var renamed: string = ns + "." + fd.name;
+        var rkey: string = base + "." + renamed;
+        if (util.index_of_str(claimed, rkey) >= 0 || util.index_of_str(added, rkey) >= 0) {
+            out = out.append(fd);
+            i = i + 1;
+            continue;
+        }
+        added = added.append(rkey);
+        out = out.append(parser.FuncDecl { ...fd, name: renamed });
+        i = i + 1;
+    }
+    var keys: string[] = claimed;
+    var k: i32 = 0;
+    while (k < added.len()) { keys = keys.append(added[k]); k = k + 1; }
+    var deduped: parser.Module = parser.Module { ...mod, funcs: out };
+    return MethodDedup { mod: deduped, keys: keys };
+}
+
 // bundle merges an entry module with its imported modules into one
 // flat Module the asm emitter can lower directly. Each import is
 // mangled (`name__*`, brick 2) — which also renames its own `main`
@@ -936,9 +992,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     // `pub use` re-export table: redirects a consumer's `facade.name`
     // (which mangles to `facade__name`) to the original `origin__name`.
     var rx: ReexportTable = build_reexports(imports);
+    var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        mclaims = md.keys;
+        var m: parser.Module = md.mod;
         funcs = append_funcs(funcs, m.funcs);
         structs = append_structs(structs, m.structs);
         aliases = append_aliases(aliases, m.aliases);
@@ -955,7 +1014,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
+    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
     funcs = append_funcs(funcs, e.funcs);
     structs = append_structs(structs, e.structs);
     aliases = append_aliases(aliases, e.aliases);
@@ -1062,13 +1121,19 @@ pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): P
     }
     var rx: ReexportTable = build_reexports(imports);
     var out: PerModule[] = [];
+    // Same claim threading `bundle` does, in the same module order, so the
+    // per-module units and the merged bundle agree on which definition owns a
+    // `<Type>.<name>` symbol.
+    var mclaims: string[] = [];
     var i: i32 = 0;
     while (i < imports.len()) {
-        var m: parser.Module = mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets);
+        var md: MethodDedup = disambiguate_methods(mangle_module(imports[i].mod, imports[i].name, ivar_names, ivar_mangled, rx.keys, rx.targets), imports[i].name, mclaims);
+        mclaims = md.keys;
+        var m: parser.Module = md.mod;
         out = out.append(PerModule { ns: imports[i].name, mod: m, is_entry: false });
         i = i + 1;
     }
-    var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
+    var e: parser.Module = disambiguate_methods(flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets), "__entry", mclaims).mod;
     out = out.append(PerModule { ns: "__entry", mod: e, is_entry: true });
     return out;
 }

@@ -385,6 +385,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// cleanly.
 		{"dyn-ambiguous-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m();\n}\n", []string{"E062"}},
 		{"dyn-multi-trait-dispatch-ok", "trait A { function m(self: Self): i32; }\ntrait B { function n(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function n(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m() + d.n();\n}\n", nil},
+		// The other side of that relaxation: the SAME trait implemented twice
+		// for one type is still a redeclaration, not a second provider, so
+		// E006 must keep firing. (Two inherent declarations are covered by
+		// "method-redeclared" below.)
+		{"same-trait-twice-redeclared", "trait A { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl A for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},

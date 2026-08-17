@@ -5589,18 +5589,20 @@ function parse_type_name(p: Par): (string, boolean, string, Par) {
     // runtime trait-object type. The self-host erases it to a coarse
     // `"dyn <trait>"` / `"dyn A + B"` spelling and dispatches method
     // calls by the value's runtime shape (a struct/enum value carries
-    // its own shape pointer); op_dyn_dispatch enumerates EVERY module
+    // its own shape pointer); op_dyn_dispatch enumerates every module
     // method of the called name over its struct/prim receivers, so a
-    // method from ANY trait in the set lands on the concrete impl with
-    // no trait-specific dispatch path — only the type parse changes for
-    // the multi-trait case. Recurse per trait so `dyn Shape[]` /
+    // method from ANY trait in the set lands on the concrete impl. The
+    // trait set rides along on the op for the one case the name-keyed
+    // search cannot answer alone: two traits providing one method for
+    // one type, where the second provider is emitted as
+    // `<Type>.<Trait>.<m>` and only the trait picks it out
+    // (irlower.dyn_arm_matches). Recurse per trait so `dyn Shape[]` /
     // `dyn mod.Shape` / `dyn A + B[]` reuse the generic-arg +
     // trailing-`[]` handling; the `[]` falls on the last trait and so on
     // the whole `"dyn …"` spelling, which is what is_array_type_name +
     // the element-strip (name[0:len-2]) expect. Traits are joined in
-    // source order with " + " (matching the native String() separator);
-    // dispatch is set-agnostic, so no sort/dedup is needed for the
-    // coarse self-host model. A trailing/empty `+` is a parse error.
+    // source order with " + " (matching the native String() separator).
+    // A trailing/empty `+` is a parse error.
     // See docs/DYN-TRAITS.md §4.3 + §10.
     if (base == "dyn") {
         p = p.advance(); // consume `dyn`
@@ -14574,6 +14576,34 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // Empty for an inherent impl, which has no trait.
 pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], method_names: string[], trait_spelling: string }
 
+// MethodClaim is claim_method_name's answer: the (possibly renamed) function,
+// and the claim table extended with the key it took.
+struct MethodClaim { fn: FuncDecl, keys: string[], traits: string[] }
+
+// claim_method_name registers the flat `<Type>.<name>` symbol key `fd` will be
+// emitted under, and renames `fd` when a DIFFERENT trait already claimed that
+// key. Every backend labels a method `<base receiver type>.<name>`, so two
+// traits each providing `scale` for `P` would otherwise emit `P.scale` twice.
+// The FIRST claimant keeps the plain name — that is the name every call site
+// resolves to — and a later distinct-trait provider is interposed with its
+// trait (`P.B.scale`), mirroring native's mangleMethodName. A second provider
+// from the SAME trait, and an inherent redeclaration, keep the colliding name
+// so the checker still reports E006. `keys` / `traits` run parallel: the key,
+// and the trait that claimed it ("" for an inherent method).
+function claim_method_name(fd: FuncDecl, tname: string, keys: string[], traits: string[]): MethodClaim {
+    if (fd.receiver_type.len() == 0) { return MethodClaim { fn: fd, keys: keys, traits: traits }; }
+    var base: string = util.base_type_name(fd.receiver_type);
+    var key: string = base + "." + fd.name;
+    var at: i32 = util.index_of_str(keys, key);
+    if (at < 0) { return MethodClaim { fn: fd, keys: keys.append(key), traits: traits.append(tname) }; }
+    if (tname.len() == 0 || traits[at] == tname) { return MethodClaim { fn: fd, keys: keys, traits: traits }; }
+    var renamed: string = tname + "." + fd.name;
+    var rkey: string = base + "." + renamed;
+    if (util.index_of_str(keys, rkey) >= 0) { return MethodClaim { fn: fd, keys: keys, traits: traits }; }
+    var renamed_fd: FuncDecl = FuncDecl { ...fd, name: renamed };
+    return MethodClaim { fn: renamed_fd, keys: keys.append(rkey), traits: traits.append(tname) };
+}
+
 // str_list_contains reports whether `xs` holds `want`.
 function str_list_contains(xs: string[], want: string): boolean {
     var i: i32 = 0;
@@ -16633,6 +16663,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     var traits: TraitDecl[] = [];
     var impl_decls: ImplDecl[] = [];
     var flines: FieldLines[] = [];
+    // Claimed `<Type>.<name>` method symbol keys, and the trait that claimed
+    // each — see claim_method_name, which keeps the emitted symbol namespace
+    // injective when two traits provide one method for one type.
+    var mth_keys: string[] = [];
+    var mth_traits: string[] = [];
     while (!p.at_end()) {
         var kw: string = p.peek_keyword();
         // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
@@ -16836,13 +16871,19 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             var (fr_func, fr_p) = parse_func_decl(p);
             p = fr_p;
             var fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub };
+            var fr_out: FuncDecl = fr_pub;
             if (decl_fip || decl_fbip) {
-                funcs = funcs.append(FuncDecl { ...fr_pub, fip: decl_fip, fbip: decl_fbip, fip_allowance: decl_fip_allowance });
+                fr_out = FuncDecl { ...fr_pub, fip: decl_fip, fbip: decl_fbip, fip_allowance: decl_fip_allowance };
             } else if (decl_async) {
-                funcs = funcs.append(FuncDecl { ...fr_pub, async: true });
-            } else {
-                funcs = funcs.append(fr_pub);
+                fr_out = FuncDecl { ...fr_pub, async: true };
             }
+            // A free-standing receiver method (`function (p: P) scale()`) is an
+            // INHERENT claim on `P.scale`: a trait impl later in the module is
+            // a second provider, not a redeclaration.
+            var fr_cl: MethodClaim = claim_method_name(fr_out, "", mth_keys, mth_traits);
+            mth_keys = fr_cl.keys;
+            mth_traits = fr_cl.traits;
+            funcs = funcs.append(fr_cl.fn);
             continue;
         }
         if (kw == "struct") {
@@ -16921,7 +16962,10 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             // and once as the free-standing receiver method it desugars to.
             var mi: i32 = 0;
             while (mi < imr_funcs.len() && !p.verbatim) {
-                funcs = funcs.append(imr_funcs[mi]);
+                var im_cl: MethodClaim = claim_method_name(imr_funcs[mi], imr_trait_name, mth_keys, mth_traits);
+                mth_keys = im_cl.keys;
+                mth_traits = im_cl.traits;
+                funcs = funcs.append(im_cl.fn);
                 mi = mi + 1;
             }
             impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, method_names: imr_method_names, trait_spelling: imr_trait_spelling });
@@ -16965,7 +17009,10 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             var td: TraitDefault = trait_defaults[ddi];
             if (td.trait_name == info.trait_name) {
                 if (!str_list_contains(info.method_names, td.method.name)) {
-                    funcs = funcs.append(finalize_impl_method(td.method, info.impl_type, info.type_params));
+                    var td_cl: MethodClaim = claim_method_name(finalize_impl_method(td.method, info.impl_type, info.type_params), info.trait_name, mth_keys, mth_traits);
+                    mth_keys = td_cl.keys;
+                    mth_traits = td_cl.traits;
+                    funcs = funcs.append(td_cl.fn);
                 }
             }
             ddi = ddi + 1;
