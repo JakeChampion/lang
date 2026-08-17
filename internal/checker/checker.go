@@ -2338,6 +2338,15 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			methodKey := typeName + "." + fn.Name
 			if _, dup := c.info.Methods[methodKey]; dup {
 				c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
+				// Hoist the receiver even though the declaration is rejected.
+				// Its BODY is still walked, and a receiver left off Params[0]
+				// makes that walk report a second `E001: undefined identifier
+				// "self"` — inside the LOSING method's source, which for a
+				// stdlib impl is a file the program never imported and cannot
+				// act on. One error per mistake; the hoist costs nothing on a
+				// path that has already failed.
+				fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+				fn.Receiver = nil
 				continue
 			}
 			mangled := "__method_" + typeName + "_" + fn.Name

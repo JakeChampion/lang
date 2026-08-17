@@ -5852,3 +5852,38 @@ func firstErrCode(err error) string {
 	}
 	return ""
 }
+
+// A redeclared method reports E006 and NOTHING ELSE.
+//
+// The dup check rejects the second declaration and moves on, but the losing
+// FuncDecl's body is still walked. Its receiver used to be left un-hoisted —
+// the `Params = append([]ast.Param{*fn.Receiver}, ...)` rewrite sits after the
+// `continue` — so every `self` in that body resolved to nothing and the walk
+// added `E001: undefined identifier "self"` on top of the real error.
+//
+// That second diagnostic is worse than noise when the loser is a stdlib impl:
+// it cites a file the program never imported, at a line the reader cannot act
+// on. `impl Add for i32` in std/num is exactly that shape, and it is what a
+// user trait providing `add` for i32 collides with (#6931).
+func TestRedeclaredMethodReportsOneError(t *testing.T) {
+	// Two traits each providing `add` for i32 — the exact shape a user trait
+	// hits once anything in the import closure carries `impl num.Add for i32`.
+	// The receiver must be spelled `self` for the cascade to be visible: that
+	// is the identifier the un-hoisted body fails to resolve.
+	src := `trait A { function add(self: Self, n: i32): i32; }
+trait B { function add(self: Self, n: i32): i32; }
+impl A for i32 { function add(self: Self, n: i32): i32 { return self + n; } }
+impl B for i32 { function add(self: Self, n: i32): i32 { return self - n; } }
+function main(): i32 { return 0; }`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatal("expected a redeclaration error, got nil")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "redeclared") {
+		t.Errorf("want the redeclaration error, got %q", got)
+	}
+	if strings.Contains(got, "E001") || strings.Contains(got, `undefined identifier "self"`) {
+		t.Errorf("the rejected declaration's body leaked a second diagnostic: %q", got)
+	}
+}
