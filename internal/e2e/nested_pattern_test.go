@@ -8,9 +8,11 @@
 // binary agrees with the interpreter oracle across the shapes the desugar
 // must get right: the headline `Some(Ok(n))`, a flat sibling arm, guards,
 // deep nesting, one-nested-plus-one-plain payload, the expression form,
-// and the outer-`_` fallthrough (a payload matching no inner pattern must
-// run the outer wildcard body, not bail non-exhaustive). A couple also
-// run through wasm to confirm the desugar is backend-agnostic.
+// the outer-`_` fallthrough (a payload matching no inner pattern must
+// run the outer wildcard body, not bail non-exhaustive), and a payload-less
+// inner variant (`Some(None())` — the empty parens are what make it a
+// pattern rather than a binder). A couple also run through wasm to confirm
+// the desugar is backend-agnostic.
 package e2e
 
 import "testing"
@@ -108,13 +110,31 @@ enum Shape { Boxed(Rect), Empty }
 function g(o: Option[Shape]): i32 {
   match (o) {
     Some(Boxed(r)) => { return r.w + r.h; },
-    Some(Empty) => { return 0; },
+    Some(Empty()) => { return 0; },
     None => { return 0 - 1; },
   }
   return 0 - 2;
 }
-function main(): i32 { return g(Some(Boxed(Rect { w: 3, h: 4 }))); }`,
+function main(): i32 { return g(Some(Boxed(Rect { w: 3, h: 4 }))) + g(Some(Empty)); }`,
 		want: 7,
+	},
+	{
+		// A payload-less inner variant is spelled with the empty parens —
+		// `Wrap(Err2)` is a BINDER (E015 in the checker), so only this form
+		// tests the payload's tag. Folds all three outcomes so one exit code
+		// pins that non-Err2 payloads reach the outer wildcard.
+		name: "payloadless_inner",
+		src: `enum Res { Ok2(i32), Err2 }
+enum Nest { Wrap(Res), Bare }
+function g(w: Nest): i32 {
+  match (w) {
+    Wrap(Err2()) => { return 9; },
+    _ => { return 1; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Bare) * 100; }`,
+		want: 191, // 1 + 90 + 100
 	},
 	{
 		// Outer `_` fallthrough: `Some(Err(_))` matches no inner arm, so the
@@ -167,7 +187,7 @@ func TestNestedPatternX86_64(t *testing.T) {
 // TestNestedPatternWasm confirms the desugar is backend-agnostic by
 // running the headline + fallthrough cases through the wasm pipeline.
 func TestNestedPatternWasm(t *testing.T) {
-	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form"} {
+	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner"} {
 		var tc = nestedPatternCasesByName(t, name)
 		t.Run(name, func(t *testing.T) {
 			if got := runWasm(t, tc.src); got != tc.want {

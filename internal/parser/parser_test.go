@@ -3502,3 +3502,53 @@ func TestParseNegativeLiteralPatternShape(t *testing.T) {
 		t.Errorf("operand Value = %d, want 1 (the sign belongs to the Unary)", num.Value)
 	}
 }
+
+// The parser has no types, so a bare name in a payload slot is a binder and
+// only the empty-paren spelling nests. This pins the split the checker's
+// binder-vs-payload-less-variant diagnostic (E015) is built on: `Wrap(Err2)`
+// stays one flat arm binding the whole payload, while `Wrap(Err2())` becomes
+// the merged arm whose body re-matches the payload.
+func TestBarePayloadSlotNameStaysABinder(t *testing.T) {
+	armOf := func(t *testing.T, src string) *ast.MatchArm {
+		t.Helper()
+		prog, err := Parse(`enum Res { Ok2(i32), Err2 }
+enum Nest { Wrap(Res), Bare }
+function f(w: Nest): i32 {
+  ` + src + `
+  return 0;
+}`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+		if !ok {
+			t.Fatalf("first stmt should be *ast.Match; got %T", prog.Funcs[0].Body.Stmts[0])
+		}
+		return m.Arms[0]
+	}
+
+	bare := armOf(t, `match (w) { Wrap(Err2) => { return 9; }, _ => { return 1; } }`)
+	if len(bare.Bindings) != 1 || bare.Bindings[0] != "Err2" {
+		t.Errorf("bare form Bindings = %v, want [Err2] (a binder)", bare.Bindings)
+	}
+	if len(bare.Body.Stmts) != 1 {
+		t.Errorf("bare form body should be the arm body unchanged, got %d stmts", len(bare.Body.Stmts))
+	} else if _, nested := bare.Body.Stmts[0].(*ast.Match); nested {
+		t.Error("bare form must not desugar to an inner match — the parser cannot tell binder from variant")
+	}
+
+	paren := armOf(t, `match (w) { Wrap(Err2()) => { return 9; }, _ => { return 1; } }`)
+	if len(paren.Bindings) != 1 || paren.Bindings[0] == "Err2" {
+		t.Errorf("paren form Bindings = %v, want a single synthetic temp", paren.Bindings)
+	}
+	if len(paren.Body.Stmts) != 1 {
+		t.Fatalf("paren form body should be the inner match alone, got %d stmts", len(paren.Body.Stmts))
+	}
+	inner, ok := paren.Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("paren form body should re-match the payload; got %T", paren.Body.Stmts[0])
+	}
+	if inner.Arms[0].VariantName != "Err2" || len(inner.Arms[0].Bindings) != 0 {
+		t.Errorf("inner arm = %q/%v, want the payload-less variant Err2", inner.Arms[0].VariantName, inner.Arms[0].Bindings)
+	}
+}
