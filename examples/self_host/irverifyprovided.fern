@@ -132,81 +132,6 @@ pub function is_provided(name: string): boolean {
     return util.has_str(provided_names(), name);
 }
 
-// ---- the declared-name index -------------------------------------------
-
-// NameIndex is a membership set over the program's declared names, bucketed so
-// a lookup does not scan the whole set. The self-host compiler declares ~3000
-// functions and emits tens of thousands of calls, so a linear `has_str` per
-// call op makes the pass quadratic on the one program it most needs to check.
-//
-// Two flat arrays rather than a `string[][]`: `starts` holds each bucket's
-// first index into `items` (length n_buckets + 1, so bucket b spans
-// [starts[b], starts[b+1])), and `items` holds the names grouped by bucket.
-pub struct NameIndex { starts: i32[], items: string[] }
-
-function n_buckets(): i32 { return 1024; }
-
-// bucket_of hashes a name to its bucket. Ordinary polynomial hashing; the
-// multiply is allowed to wrap, which is what makes it a hash.
-function bucket_of(name: string): i32 {
-    var h: i32 = 0;
-    var i: i32 = 0;
-    while (i < name.len()) {
-        h = h * 31 + (name[i] as i32);
-        i = i + 1;
-    }
-    // Negate rather than mask, and treat the one value whose negation is
-    // itself (i32 min) as bucket 0 — `%` on a negative would index backwards.
-    if (h < 0) { h = 0 - h; }
-    if (h < 0) { return 0; }
-    return h % n_buckets();
-}
-
-// name_index builds the membership set. Counting pass, prefix sum, placement
-// pass — so it is linear in the number of names rather than quadratic.
-pub function name_index(names: string[]): NameIndex {
-    var nb: i32 = n_buckets();
-    var counts: i32[] = [];
-    var i: i32 = 0;
-    while (i <= nb) { counts = counts.append(0); i = i + 1; }
-    var j: i32 = 0;
-    while (j < names.len()) {
-        var b: i32 = bucket_of(names[j]);
-        counts = counts.with(b + 1, counts[b + 1] + 1);
-        j = j + 1;
-    }
-    var k: i32 = 1;
-    while (k <= nb) { counts = counts.with(k, counts[k] + counts[k - 1]); k = k + 1; }
-    // `cursor` walks each bucket's fill point; `counts` stays the boundaries.
-    var cursor: i32[] = [];
-    var c: i32 = 0;
-    while (c <= nb) { cursor = cursor.append(counts[c]); c = c + 1; }
-    var items: string[] = [];
-    var f: i32 = 0;
-    while (f < names.len()) { items = items.append(""); f = f + 1; }
-    var m: i32 = 0;
-    while (m < names.len()) {
-        var bb: i32 = bucket_of(names[m]);
-        items = items.with(cursor[bb], names[m]);
-        cursor = cursor.with(bb, cursor[bb] + 1);
-        m = m + 1;
-    }
-    return NameIndex { starts: counts, items: items };
-}
-
-// index_has reports membership.
-pub function index_has(ix: NameIndex, name: string): boolean {
-    if (ix.items.len() == 0) { return false; }
-    var b: i32 = bucket_of(name);
-    var i: i32 = ix.starts[b];
-    var end: i32 = ix.starts[b + 1];
-    while (i < end) {
-        if (ix.items[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
 // ---- the pass ----------------------------------------------------------
 
 // ProvidedResult is one module's verdict: the problems, and how many
@@ -222,7 +147,7 @@ pub struct ProvidedResult { problems: irverify.Problem[], calls: i32 }
 //
 // An empty callee name is irverify.fern's problem, not this one — it reports
 // that already, and repeating it here would double every occurrence.
-pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: NameIndex): ProvidedResult {
+pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: irverify.NameIndex): ProvidedResult {
     var out: irverify.Problem[] = [];
     var calls: i32 = 0;
     var k_calld: i32 = ir.kind_id("call_direct");
@@ -230,7 +155,7 @@ pub function verify_provided_fn(fn_name: string, ops: ir.Op[], declared: NameInd
     while (i < ops.len()) {
         if (ops[i].kind_tag == k_calld && ops[i].str.len() > 0) {
             calls = calls + 1;
-            if (!index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
+            if (!irverify.index_has(declared, ops[i].str) && !is_provided(ops[i].str)) {
                 out = out.append(irverify.Problem {
                     fn_name: fn_name, op: i, kind: "call_direct",
                     msg: "calls " + ops[i].str

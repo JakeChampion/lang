@@ -78,6 +78,18 @@ function area(s: Shape): i32 {
     }
 }
 function main(): i32 { return area(Shape.Box(3, 4)) + area(Shape.Line(2)); }`},
+	// Receiver methods are the arity check's off-by-one case: the call site
+	// pushes the receiver as an argument and the declaration does not list it,
+	// so an index that counted only `params` would report every method call in
+	// every program the compiler builds.
+	{"methods", `struct Acc { n: i32 }
+pub function (a: Acc) bump(by: i32): i32 { return a.n + by; }
+pub function (a: Acc) zero(): i32 { return a.n; }
+function main(): i32 {
+    var a: Acc = Acc { n: 5 };
+    var s: string = "abc";
+    return a.bump(2) + a.zero() + s.len();
+}`},
 	{"structs", `struct P { x: i32, y: i32 }
 function shift(p: P, d: i32): P { return P { ...p, x: p.x + d }; }
 function main(): i32 {

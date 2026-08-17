@@ -37,30 +37,6 @@ import "./treeshake";
 
 // ---- callee resolution (#6639 slice 4) ---------------------------------
 
-// declared_names is every function the WHOLE program declares, spelled the way
-// a call_direct names it: bare for a free function, `Type.method` for a
-// receiver method — the same key irlower.lower_module stores on LoweredFn.
-//
-// Built from the DECLARED functions, not the lowered ones. A function whose
-// lowering bailed, and a generic monomorphised under another name, are both
-// absent from the lowered set while being perfectly well declared; resolving
-// against what lowered would report a missing callee on exactly the functions
-// a lowering bug already hid. `@import` externs are ordinary FuncDecls here,
-// so the host-supplied half needs no separate arm.
-function declared_names(funcs: parser.FuncDecl[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].receiver_type.len() > 0) {
-            out = out.append(util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name);
-        } else {
-            out = out.append(funcs[i].name);
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
 // verify_provided_module runs the resolution pass over the whole merged
 // program and writes the verdict. Returns the process exit code.
 //
@@ -71,7 +47,10 @@ function declared_names(funcs: parser.FuncDecl[]): string[] {
 // once the bundle is.
 function verify_provided_module(merged: parser.Module): i32 {
     var vmod: parser.Module = asm_ir.lift_lambdas(parser.module_with_builtins(merged));
-    var ix: irverifyprovided.NameIndex = irverifyprovided.name_index(declared_names(vmod.funcs));
+    // Every function the WHOLE program declares, keyed the way a call_direct
+    // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
+    // half needs no separate arm.
+    var ix: irverify.NameIndex = irlower.fn_sig_index(vmod.funcs);
     var fns: irlower.LoweredFn[] = irlower.lower_module(vmod.funcs, vmod.structs);
     var probs: irverify.Problem[] = [];
     var calls: i32 = 0;

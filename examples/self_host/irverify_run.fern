@@ -27,7 +27,7 @@ import "./irverifyprovided";
 import "./irverifygate";
 import "./util";
 
-function no_sigs(): irverify.FnSig[] { return []; }
+function no_sigs(): irverify.NameIndex { return irverify.sig_index([]); }
 
 // count_problems verifies `ops` and returns how many problems came back.
 function count_problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
@@ -275,11 +275,11 @@ function fip_checks(): i32 {
 // pv_count is how many unresolved-callee problems `ops` draws against a
 // program declaring `declared`.
 function pv_count(ops: ir.Op[], declared: string[]): i32 {
-    return irverifyprovided.verify_provided_fn("f", ops, irverifyprovided.name_index(declared)).problems.len();
+    return irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared)).problems.len();
 }
 
 function pv_msg(ops: ir.Op[], declared: string[]): string {
-    var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverifyprovided.name_index(declared));
+    var r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared));
     if (r.problems.len() == 0) { return ""; }
     return irverify.problem_str(r.problems[0]);
 }
@@ -327,7 +327,7 @@ function provided_checks(): i32 {
     // The call tally travels with the verdict, so a clean result over a module
     // with no calls is distinguishable from a clean result over one with many.
     var mixed: ir.Op[] = [ir.op_call_direct("helper", 1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_call_direct("nope", 0)];
-    var mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverifyprovided.name_index(decl));
+    var mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverify.name_index(decl));
     if (mr.calls != 3) { return 86; }
     if (mr.problems.len() != 1) { return 87; }
 
@@ -338,23 +338,23 @@ function provided_checks(): i32 {
     var big: string[] = [];
     var i: i32 = 0;
     while (i < 3000) { big = big.append("fn_" + util.i32_to_string(i)); i = i + 1; }
-    var ix: irverifyprovided.NameIndex = irverifyprovided.name_index(big);
-    if (!irverifyprovided.index_has(ix, "fn_0")) { return 88; }
-    if (!irverifyprovided.index_has(ix, "fn_1499")) { return 89; }
-    if (!irverifyprovided.index_has(ix, "fn_2999")) { return 90; }
-    if (irverifyprovided.index_has(ix, "fn_3000")) { return 91; }
-    if (irverifyprovided.index_has(ix, "")) { return 92; }
+    var ix: irverify.NameIndex = irverify.name_index(big);
+    if (!irverify.index_has(ix, "fn_0")) { return 88; }
+    if (!irverify.index_has(ix, "fn_1499")) { return 89; }
+    if (!irverify.index_has(ix, "fn_2999")) { return 90; }
+    if (irverify.index_has(ix, "fn_3000")) { return 91; }
+    if (irverify.index_has(ix, "")) { return 92; }
     // Every name goes in exactly once — a placement bug that overwrote a
     // bucket entry would leave an earlier name unfindable.
     var placed: i32 = 0;
     var pj: i32 = 0;
     while (pj < big.len()) {
-        if (irverifyprovided.index_has(ix, big[pj])) { placed = placed + 1; }
+        if (irverify.index_has(ix, big[pj])) { placed = placed + 1; }
         pj = pj + 1;
     }
     if (placed != 3000) { return 93; }
     // The empty program's index answers no to everything rather than trapping.
-    if (irverifyprovided.index_has(irverifyprovided.name_index(none), "x")) { return 94; }
+    if (irverify.index_has(irverify.name_index(none), "x")) { return 94; }
 
     // The inventory is non-empty and every entry resolves through is_provided
     // — an entry that did not would be dead weight the audit could not see.
@@ -377,14 +377,14 @@ function gate_checks(): i32 {
     // all: it runs on every function of every compile, so a false positive here
     // would refuse valid programs.
     var clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
-    if (irverifygate.verify_problems("f", clean, 0, 1).len() != 0) { return 170; }
+    if (irverifygate.verify_problems("f", clean, 0, 1, no_sigs()).len() != 0) { return 170; }
 
     // A STRUCTURE problem alone: the local index is outside a 1-slot frame.
     // The stack pass is silent on it (load_local pops nothing either way), so
     // this reaches the gate only through irverify.
     var bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-    if (irverifygate.verify_problems("f", bad_slot, 0, 1).len() != 1) { return 171; }
-    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1)[0]),
+    if (irverifygate.verify_problems("f", bad_slot, 0, 1, no_sigs()).len() != 1) { return 171; }
+    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1, no_sigs())[0]),
         "is outside the frame")) { return 172; }
 
     // A STACK problem alone: `add` needs two operands and is handed one. The
@@ -392,16 +392,29 @@ function gate_checks(): i32 {
     // reaches the gate — the direction a merge dropping irverifystack would
     // miss, which is the class the gate was built for.
     var underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
-    if (irverifygate.verify_problems("f", underflow, 0, 1).len() != 1) { return 173; }
-    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1)[0]),
+    if (irverifygate.verify_problems("f", underflow, 0, 1, no_sigs()).len() != 1) { return 173; }
+    if (!util.contains(irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1, no_sigs())[0]),
         "operand stack underflow")) { return 174; }
 
     // Both at once: the gate reports each pass's findings, structure first.
     var both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
-    var bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1);
+    var bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, no_sigs());
     if (bps.len() != 2) { return 175; }
     if (!util.contains(irverify.problem_str(bps[0]), "is outside the frame")) { return 176; }
     if (!util.contains(irverify.problem_str(bps[1]), "operand stack underflow")) { return 177; }
+
+    // The callee index the backends hand in has to REACH irverify, not sit in
+    // the parameter list. A wrong-arity call is invisible to the stack pass —
+    // it pops what the op says it pops — so this is the only case that fails
+    // if the gate goes back to verifying against an empty signature set.
+    var sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
+    var arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
+    var aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, sigs);
+    if (aps.len() != 1) { return 178; }
+    if (!util.contains(irverify.problem_str(aps[0]), "calls takes2 with 0 args")) { return 179; }
+    // Same stream, no index: clean, so the case above is the index doing the
+    // work rather than the op stream being malformed some other way.
+    if (irverifygate.verify_problems("f", arity, 0, 1, no_sigs()).len() != 0) { return 180; }
     return 0;
 }
 
@@ -414,7 +427,7 @@ function gate_checks(): i32 {
 // or that the exit code is 4. Reached only via `-refuse`.
 function refuse_probe(): i32 {
     var malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-    irverifygate.verify_or_refuse("probe", malformed, 0, 1);
+    irverifygate.verify_or_refuse("probe", malformed, 0, 1, no_sigs());
     // Only reachable with the flag unset: the gate must be inert by default,
     // which is as much of the contract as the refusal is.
     print("irverifygate: inert (FERN_IR_VERIFY unset)");
@@ -510,10 +523,10 @@ function main(): i32 {
     if (count_problems([ir.op_block(0), ir.op_br(0 - 1), ir.op_end()], 0, 1) != 1) { return 38; }
 
     // ---- 4. call arity -------------------------------------------------
-    var sigs: irverify.FnSig[] = [
+    var sigs: irverify.NameIndex = irverify.sig_index([
         irverify.FnSig { name: "takes2", n_params: 2 },
         irverify.FnSig { name: "takes0", n_params: 0 }
-    ];
+    ]);
 
     // Exact arity is clean.
     var call_ok: ir.Op[] = [ir.op_call_direct("takes2", 2)];
