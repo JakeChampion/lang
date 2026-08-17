@@ -1,0 +1,79 @@
+# Emitted-size baseline for the SELF-HOSTED compiler over examples/bench,
+# checked against every run by scripts/ci-check-perf.
+#
+# FORMAT: metric  value  [tolerance%]. The metric key is
+# selfhost/<target>/<benchmark>.emit — indented lines of emitted output, which
+# is one per machine instruction for the two native targets and one per WAT
+# s-expression body line for wasm32-wasi. See scripts/perf-bench-selfhost for
+# why this is `.emit` and not the native lane's `.text`: they do not measure
+# the same thing and should not share a name.
+#
+# EXACT. Every figure here is a property of the emitted text for a given commit
+# and repeats byte-for-byte across runs and hosts — verified over three
+# consecutive runs when the lane landed. There is no noise floor, so the
+# comparator's 1% default is a significance threshold and no entry needs its
+# own tolerance. That is the whole reason the lane measures emitted size rather
+# than anything timed.
+#
+# WHY THIS FILE IS SEPARATE FROM perf-baseline.txt. That one measures the
+# NATIVE compiler and is namespaced by HOST arch, because its dynamic half has
+# to execute. This lane is namespaced by TARGET: one self-host binary
+# cross-emits all three, so both CI hosts produce these same numbers, and a
+# divergence between hosts is itself a defect this file would catch.
+#
+# THREE TARGETS, COMPARED SIDE BY SIDE. The point is not the absolute figures
+# but the ratios between targets on the same program. arm64 drifting away from
+# x86-64 is what an unconditionally-emitted runtime bundle looks like — that is
+# exactly how arm64 came to carry ~400 instructions of f64 transcendental
+# runtime in every program, including pure-integer ones, until #2649 gated it
+# (int_loop: 468 -> 62). Two keys moving apart is the signal.
+#
+# ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
+# on purpose, update it in the same PR; the job summary prints the corrected
+# lines ready to paste. Keep the reason in the PR, not here.
+
+selfhost/arm64-linux/array_append.emit	1204
+selfhost/arm64-linux/array_index.emit	1168
+selfhost/arm64-linux/call_overhead.emit	156
+selfhost/arm64-linux/closure_call.emit	1176
+selfhost/arm64-linux/enum_match.emit	1351
+selfhost/arm64-linux/int_loop.emit	62
+selfhost/arm64-linux/map_int.emit	7977
+selfhost/arm64-linux/map_string.emit	91900
+selfhost/arm64-linux/sort_inplace.emit	85534
+selfhost/arm64-linux/sort_ints.emit	85540
+selfhost/arm64-linux/string_build.emit	85517
+selfhost/arm64-linux/string_scan.emit	85644
+selfhost/arm64-linux/string_slice.emit	1096
+selfhost/arm64-linux/struct_drop.emit	85962
+selfhost/arm64-linux/tokenize.emit	1410
+selfhost/wasm32-wasi/array_append.emit	343
+selfhost/wasm32-wasi/array_index.emit	329
+selfhost/wasm32-wasi/call_overhead.emit	128
+selfhost/wasm32-wasi/closure_call.emit	366
+selfhost/wasm32-wasi/enum_match.emit	416
+selfhost/wasm32-wasi/int_loop.emit	93
+selfhost/wasm32-wasi/map_int.emit	3691
+selfhost/wasm32-wasi/map_string.emit	52190
+selfhost/wasm32-wasi/sort_inplace.emit	48856
+selfhost/wasm32-wasi/sort_ints.emit	48859
+selfhost/wasm32-wasi/string_build.emit	48810
+selfhost/wasm32-wasi/string_scan.emit	48890
+selfhost/wasm32-wasi/string_slice.emit	312
+selfhost/wasm32-wasi/struct_drop.emit	49074
+selfhost/wasm32-wasi/tokenize.emit	447
+selfhost/x86-64-linux/array_append.emit	720
+selfhost/x86-64-linux/array_index.emit	692
+selfhost/x86-64-linux/call_overhead.emit	148
+selfhost/x86-64-linux/closure_call.emit	674
+selfhost/x86-64-linux/enum_match.emit	876
+selfhost/x86-64-linux/int_loop.emit	64
+selfhost/x86-64-linux/map_int.emit	6759
+selfhost/x86-64-linux/map_string.emit	84283
+selfhost/x86-64-linux/sort_inplace.emit	78322
+selfhost/x86-64-linux/sort_ints.emit	78327
+selfhost/x86-64-linux/string_build.emit	78293
+selfhost/x86-64-linux/string_scan.emit	78410
+selfhost/x86-64-linux/string_slice.emit	612
+selfhost/x86-64-linux/struct_drop.emit	78688
+selfhost/x86-64-linux/tokenize.emit	907

@@ -1,10 +1,12 @@
 name: Perf
 
-# Two gates, one comparator (scripts/ci-check-perf):
+# Three gates, one comparator (scripts/ci-check-perf):
 #
 #   bench   instruction counts over examples/bench, vs .github/perf-baseline.txt
 #   cliff   how much the self-host compiler copies crossing the rc==1 append
 #           cliff, vs .github/cliff-baseline.txt
+#   selfhost-size  what the self-host compiler EMITS, all three targets from
+#           one build, vs .github/perf-baseline-selfhost.txt
 #
 # WHY INSTRUCTION COUNTS AND NOT WALL TIME. A shared CI runner's wall time
 # varies by tens of percent between runs, so a threshold loose enough to avoid
@@ -18,7 +20,9 @@ name: Perf
 # while and the corpus is trusted. This mirrors the size gate (#6826), which
 # took the same route.
 #
-# Cheap: the whole corpus is ~8 seconds of measurement on top of a Go build.
+# Cost: `bench` is ~8 seconds of measurement on top of a Go build. `cliff` and
+# `selfhost-size` both build the self-hosted compiler first, so they run in
+# minutes — `selfhost-size` measures for ~30 seconds once it has a binary.
 
 on:
   pull_request:
@@ -93,4 +97,40 @@ jobs:
         with:
           name: cliff-report-x86_64
           path: ${{ runner.temp }}/cliff-report.txt
+          if-no-files-found: warn
+
+  # What the SELF-HOST compiler EMITS, for all three targets from one build.
+  #
+  # `bench` above measures the native compiler, so the self-host compiler's own
+  # output was never measured and moved unobserved: the roadmap's 353-line
+  # figure was stale and unreproducible, and arm64 shipped a ~400-instruction
+  # f64 transcendental bundle in every program — pure-integer ones included —
+  # until #2649 gated it. A size lane exists to catch precisely that, and
+  # neither showed up in the native numbers.
+  #
+  # x86_64 only, like `cliff`: the aarch64 lane does not build a self-host
+  # compiler. That costs nothing here, because these metrics are keyed by
+  # TARGET rather than host — one binary cross-emits x86-64, arm64 and wasm, so
+  # a single host covers the whole namespace.
+  selfhost-size:
+    name: selfhost-size-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: Measure the self-host compiler's emitted size
+        run: scripts/perf-bench-selfhost "${{ runner.temp }}/selfhost-size-report.txt"
+
+      - name: Compare against the baseline
+        env:
+          FERN_PERF_GATE_LABEL: self-host emitted size
+        run: scripts/ci-check-perf .github/perf-baseline-selfhost.txt "${{ runner.temp }}/selfhost-size-report.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: selfhost-size-report-x86_64
+          path: ${{ runner.temp }}/selfhost-size-report.txt
           if-no-files-found: warn

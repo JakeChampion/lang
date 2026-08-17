@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# perf-bench-selfhost — measure what the SELF-HOSTED compiler emits, and write a
+# metrics report in scripts/ci-check-perf's format.
+#
+# Usage: perf-bench-selfhost [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout).
+#
+# WHY THIS EXISTS SEPARATELY FROM scripts/perf-bench. That script measures
+# `bin/fern`, the NATIVE compiler. Nothing measured the self-host compiler's
+# output, so its emitted size moved unobserved: the roadmap's standing figure of
+# 353 lines for a small program was stale and not reproducible, and arm64 was
+# emitting a ~400-instruction f64 transcendental bundle into every program,
+# including pure-integer ones, until #2649 gated it. Both are exactly what a
+# size lane exists to surface, and neither was visible from the native numbers.
+#
+# ONE BINARY, THREE TARGETS. The dynamic half of the native lane has to run the
+# program, which pins it to the host ISA. A static count does not, and the
+# self-host compiler cross-emits, so this lane measures all three targets from
+# one build. That is the coverage the native lane cannot get, and it is the
+# shape that catches a per-backend divergence: arm64 drifting away from x86-64
+# on the same program is visible here as two keys moving apart, which is how the
+# transcendental bundle would have been caught the day it landed.
+#
+# The metric is `.emit` rather than the native lane's `.text` because the two do
+# not measure the same thing. Per target:
+#
+#   x86-64-linux / arm64-linux   indented lines of emitted assembly — one per
+#                                machine instruction (labels and directives sit
+#                                at column 0 and are not counted).
+#   wasm32-wasi                  indented lines of emitted WAT — s-expression
+#                                body lines, a size proxy rather than an
+#                                instruction count.
+#
+# Deterministic for a given commit, like the native lane, so a 1% move is signal
+# rather than noise and the comparator's default tolerance applies unchanged.
+#
+# A compile that fails or emits nothing is a hard error, not a skipped row: a
+# size lane that quietly measures fewer benchmarks than it claims reports green
+# for a corpus it never compiled.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+REPORT="${1:-/dev/stdout}"
+BENCH_DIR="${FERN_BENCH_DIR:-examples/bench}"
+STDLIB="$ROOT/internal/stdlib"
+
+# The self-host CLI needs ABSOLUTE paths: a relative one is unopenable from an
+# arm64-darwin binary (AT_FDCWD is -2 on XNU, not -100), and every other harness
+# in the tree passes absolute for the same reason.
+if [ ! -x bin/fern ]; then
+  echo "perf-bench-selfhost: building bin/fern" >&2
+  go build -o bin/fern ./cmd/fern
+fi
+if [ ! -x bin/fern-selfhost ]; then
+  echo "perf-bench-selfhost: building bin/fern-selfhost" >&2
+  make selfhost-cli >&2
+fi
+SELFHOST="$ROOT/bin/fern-selfhost"
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+{
+  echo "# scripts/perf-bench-selfhost report — emitted size, self-hosted compiler"
+  echo "# metric key: selfhost/<target>/<benchmark>.emit"
+} > "$work/report"
+
+benches=0
+for src in "$BENCH_DIR"/*.fern; do
+  [ -e "$src" ] || continue
+  name="$(basename "$src" .fern)"
+  benches=$((benches + 1))
+
+  for target in x86-64-linux arm64-linux wasm32-wasi; do
+    out="$work/$name.$target.out"
+    if ! "$SELFHOST" -target "$target" -emit asm "$ROOT/$src" "$STDLIB" -o "$out" > "$work/err" 2>&1; then
+      echo "perf-bench-selfhost: $name failed to compile for $target" >&2
+      sed -n '1,20p' "$work/err" >&2
+      exit 1
+    fi
+    if [ ! -s "$out" ]; then
+      echo "perf-bench-selfhost: $name emitted 0 bytes for $target" >&2
+      exit 1
+    fi
+    n="$(grep -c '^[[:space:]]' "$out" || true)"
+    if [ "$n" = 0 ]; then
+      echo "perf-bench-selfhost: $name emitted no body lines for $target" >&2
+      exit 1
+    fi
+    printf 'selfhost/%s/%s.emit\t%s\n' "$target" "$name" "$n" >> "$work/report"
+  done
+done
+
+if [ "$benches" = 0 ]; then
+  echo "perf-bench-selfhost: no benchmarks found under $BENCH_DIR" >&2
+  exit 1
+fi
+
+cat "$work/report" > "$REPORT"
