@@ -11478,11 +11478,17 @@ function owned_scalar_field_type(t: string): boolean {
         || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "char";
 }
 
-// owned_fresh_call_callee: the callee NAME when `e` is a direct call to a free
+// owned_fresh_call_callee: the callee KEY when `e` is a direct call to a
 // function in the strict-fresh registry (`kind` "" for the struct entries,
 // "ARR:" for the scalar-array ones), else "". A LOCAL callee is refused — the
 // registry is keyed by declaration name and a same-named local holds an unknown
 // closure body.
+//
+// A METHOD callee resolves to the "<Type>.<method>" key
+// return_fresh_struct_ret_fns_of already writes for one. Without this arm the
+// reclaim fired for `mkp(i).a` and not for `seed.next().a` — the same strictly
+// fresh box, leaked at 48 B/round purely because the callee was spelled with a
+// receiver.
 function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): string {
     match (e) {
         parser.ExprCall(c) => {
@@ -11491,6 +11497,13 @@ function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): s
                     if (s.slot_of(cid.name) >= 0) { return ""; }
                     if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
                     return cid.name;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    var rty: string = method_recv_tyname(cfa.obj, s);
+                    if (rty == "") { return ""; }
+                    var key: string = rty + "." + cfa.field;
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + key) < 0) { return ""; }
+                    return key;
                 },
                 _ => { return ""; }
             }

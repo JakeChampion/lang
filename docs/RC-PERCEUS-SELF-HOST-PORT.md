@@ -8174,3 +8174,42 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   in 0..n`) to reproduce, which is worth remembering: a regression test that
   does not fail on the parent is not yet a regression test. Plus the whole
   `internal/e2eselfhost` package. Refs #6544 #3425 #4451.
+
+- 2026-08-17 (struct half, third slice): **The #6491 owned-call-result reclaim
+  fired for a free function and not for the same method (#6544).**
+
+  `mk().k` — a field read off a call the strict-fresh registry proves returns a
+  sole-owned box — releases that box at the read. The admission runs through
+  `owned_fresh_call_callee`, which matched only a bare `ExprIdent` callee, so
+  the identical program spelled with a receiver was refused. The registry has
+  keyed methods `"<Type>.<method>"` all along; only the lookup was missing.
+
+  The decomposition that found it is worth keeping, because the first guess —
+  "the leak is the method result" — was wrong twice over. Per round, x86-64,
+  before this slice:
+
+  | probe | B/round | what it isolates |
+  |---|---|---|
+  | `mkp(i).a`, scalar-only struct, FREE callee | 0 | the reclaim works |
+  | `seed.next().a`, scalar-only struct, METHOD callee | 48 | **the callee spelling, and nothing else** |
+  | `mk2(i).n`, struct with a `string` field, FREE callee | 23 | a SECOND gap, not method-specific |
+  | `bump2(b).tag.len()`, aliasing field, FREE callee | 71 | correctly refused — the field aliases a live local |
+  | `var c = b.bump(); c.tag.len()` | 21 | binding recovers most of it |
+
+  So the "method result" framing was a red herring: two of those rows are the
+  same free-function gap. Only the second row is this slice, and it goes to 0.
+  `s_mkmethod` (a `string`-field struct through a method) lands at 21, which is
+  parity with the free-function 23 — the remaining leak is the `string`-field
+  admission, shared by both spellings, and its own slice.
+
+  `alloc_flat_method_identity_return` is unmoved at 117: its `relabel` builds
+  `Box { tag: t, n: b.n }` from a param, so the box does not sole-own its tag
+  and the strict-fresh gate correctly declines.
+
+  VERIFIED: `methodresult-method-callee-flat` fails at 98 on the parent, while
+  `methodresult-free-callee-flat` — the same program with a free callee —
+  passes on BOTH, which is what makes the pair isolate the spelling rather than
+  the shape. Three refusal rows (an identity return, a field-aliasing return, a
+  200,000-round balance check) guard the direction that matters here: a wrongly
+  admitted result is a use-after-free, not a leak, so each reads the receiver
+  back after the freelist has recycled. Refs #6544 #6491 #4451.
