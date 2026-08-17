@@ -304,6 +304,16 @@ func inlineOps(fn *Func, ops []Op, candidates map[string]inlineCandidate) []Op {
 			out = append(out, op)
 			continue
 		}
+		if op.Runtime {
+			// The lowering meant the BACKEND's helper of this name, not a
+			// program function that happens to share it. Candidates are keyed
+			// by name, so without this a program defining `__fern_str_append`
+			// gets its body spliced into the string-append lowering's own call
+			// site — which is how that program built a module whose `main`
+			// carried a bare `i32.const 1 / i32.add` where an append belonged.
+			out = append(out, op)
+			continue
+		}
 		cand, ok := candidates[op.Str]
 		if !ok || cand.fn == fn || !siteAllows(cand, loopDepth, allConstArgs(out, int(op.I32))) {
 			// Unknown callee, self-recursion, or a body too big for

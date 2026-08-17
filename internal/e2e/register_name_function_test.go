@@ -198,12 +198,13 @@ func TestWASMRuntimeHelperNameFn(t *testing.T) {
 // an append. `ir.Op.Runtime` records which one the lowering meant, so the
 // emitters no longer guess from the name.
 //
-// No wasm leg, unlike the cases above: the wasm backend resolves callees
-// through a single name→funcidx map (and a name-keyed signature table), so the
-// same program still fails there — as a REJECTED MODULE at build time
-// ("type mismatch: values remaining on stack"), never as a wrong answer. That
-// is a separate fix in a backend that fails loudly; this one covers the two
-// that failed silently.
+// The wasm leg failed differently and for a third reason: ir.Inline, which
+// runs on the wasm path but not yet on the natives, resolves candidates by
+// name, so it spliced the user's `x + 1` into the append lowering's own call
+// site. The module it built carried a bare `i32.const 1 / i32.add` where an
+// append belonged and was REJECTED at load ("type mismatch: values remaining
+// on stack") rather than returning a wrong answer. The inliner honours the
+// same flag now.
 //
 // The loop forces real appends; a single concatenation folds away.
 // s = "a" + "b"*3 → len 4; __fern_str_append(4 + 37) = 42.
@@ -243,5 +244,11 @@ func TestArm64LoweringHelperNameFn(t *testing.T) {
 	out, code := compileAndRunArm64(t, loweringHelperNameFnSrc)
 	if code != 42 {
 		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestWASMLoweringHelperNameFn(t *testing.T) {
+	if code := runWasm(t, loweringHelperNameFnSrc); code != 42 {
+		t.Errorf("wasm exit = %d, want 42", code)
 	}
 }
