@@ -22,6 +22,22 @@
 // side for the same reason — it is an AST question, and answering it here
 // would drag the parser into the gate's closure.
 //
+// # Still off by default, and what it is waiting on
+//
+// The plan is a flag first and on-by-default once the self-compile is clean
+// under it. Three of the four corpora are: the whole compiler verifies clean
+// on all three backends, and all 475 conformance fixtures compile clean
+// through the real CLI on x86-64 and wasm.
+//
+// The fourth is not. Running the gate inside the WASM-HOSTED compiler
+// corrupts the WAT it emits — one 4-byte word of an emitted string literal
+// comes out incremented by one, which wasm-tools then refuses to parse. It is
+// irverifystack's walk that triggers it, the structure pass alone is clean,
+// and it reproduces on a tree without any of this: the gate has always done
+// this under FERN_IR_VERIFY=1, so it is a latent fault the gate surfaces
+// rather than one it introduces. #6994. Until that is fixed, on-by-default
+// would break the wasm-hosted compiler for everyone.
+//
 // # What it does NOT check, and why
 //
 // A function the stack pass cannot model is skipped rather than reported: that
