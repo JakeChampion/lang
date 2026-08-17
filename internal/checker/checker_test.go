@@ -5925,7 +5925,10 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 			if code := firstErrCode(err); code != "E015" {
 				t.Errorf("code = %q, want E015: %v", code, err)
 			}
-			for _, want := range []string{"payload-less variant of enum E", "matches every value"} {
+			// The cure the message names has to be a spelling that works —
+			// `(B(), y)` was itself a parse error until tuple elements
+			// accepted variant sub-patterns.
+			for _, want := range []string{"payload-less variant of enum E", "matches every value", "write `B()`"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("want %q in:\n%v", want, err)
 				}
@@ -5955,6 +5958,74 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 }`,
 	}
 	for name, body := range good {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestTupleElemVariantPatternChecks covers the variant sub-pattern element
+// `(A(x), y)`: payload arity, tag/type agreement and binder scoping follow the
+// same rules an arm-position `A(x) => …` follows, because both route through
+// resolveVariantBindings.
+func TestTupleElemVariantPatternChecks(t *testing.T) {
+	const decls = "enum E { A(i32), B, C(i32, string) }\n"
+	bad := map[string]struct{ src, code string }{
+		"payload arity": {`function f(t: (E, i32)): i32 {
+  match (t) { (A(x, z), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`, "E015"},
+		"unknown variant": {`function f(t: (E, i32)): i32 {
+  match (t) { (Zz(x), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`, "E014"},
+		"non-enum element": {`function f(t: (E, i32)): i32 {
+  match (t) { (e, A(y)) => { return 0; }, _ => { return 0; } }
+  return 0;
+}`, "E035"},
+		"binder collides with an element binder": {`function f(t: (E, i32)): i32 {
+  match (t) { (A(x), x) => { return x; }, _ => { return 0; } }
+  return 0;
+}`, "E013"},
+		// A variant element is refutable, so it cannot make the match exhaustive.
+		"no wildcard arm": {`function f(t: (E, i32)): i32 {
+  match (t) { (A(x), y) => { return x + y; } }
+  return 0;
+}`, "E030"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+c.src)
+			if err == nil {
+				t.Fatalf("want %s, got none", c.code)
+			}
+			if code := firstErrCode(err); code != c.code {
+				t.Errorf("code = %q, want %s: %v", code, c.code, err)
+			}
+		})
+	}
+
+	ok := map[string]string{
+		"payload binds at the element's type": `function f(t: (E, i32)): i32 {
+  match (t) { (C(n, s), y) => { return n + y + s.len(); }, _ => { return 0; } }
+  return 0;
+}`,
+		"payload-less spelled with empty parens": `function f(t: (E, i32)): i32 {
+  match (t) { (B(), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`,
+		"generic element substitutes the payload type": `function f(t: (Option[i32], i32)): i32 {
+  match (t) { (Some(v), y) => { return v + y; }, _ => { return 0; } }
+  return 0;
+}`,
+		"guard sees the element's payload binds": `function f(t: (E, i32)): i32 {
+  match (t) { (A(x), y) when x > y => { return x; }, _ => { return 0; } }
+  return 0;
+}`,
+	}
+	for name, body := range ok {
 		t.Run(name, func(t *testing.T) {
 			if err := checkSource(t, decls+body); err != nil {
 				t.Errorf("want accepted, got: %v", err)

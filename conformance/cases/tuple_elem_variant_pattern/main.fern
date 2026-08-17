@@ -1,0 +1,140 @@
+// A VARIANT sub-pattern in a tuple ELEMENT: `(A(x), y)`.
+//
+// The element grammar used to be binder / `_` / literal only, and a bare `B`
+// there is a BINDER that matches every value — the #6923 hazard in a second
+// position, which E015 now rejects with the `B()` cure. This case pins the
+// spelling that replaces it.
+//
+// The lowering is where the work was. Native tuple matching builds each arm's
+// condition as an AST expression so a literal element reuses the literal-match
+// comparison settling (string / float compares, the two-word string ABI). A
+// variant element has no AST spelling — it is a tag load at offset 0 of the
+// element pointer — so the arm test is now "AST cond, then raw tag tests"
+// combined without short-circuit, which is sound because every element test is
+// a pure read of the borrowed tuple box. The self-host reaches the same place
+// from the other side: its tuple match is a done-flag chain built at parse
+// time, so a variant element nests the arm's matched path inside a match on
+// the element temp.
+
+import "std/i32";
+
+enum Sh { A(i32), B, C(i32, i32) }
+enum Msg { Txt(string), Num(i32) }
+enum Wrap { P((Sh, i32)), Q }
+
+// The headline: a payloaded variant element beside a binder element, a
+// payload-less one spelled with the empty parens, and a multi-payload one
+// beside a LITERAL element — the arm test that mixes both condition kinds.
+function classify(t: (Sh, i32)): i32 {
+    match (t) {
+        (A(x), y) => { return x + y; },
+        (B(), y) => { return 100 + y; },
+        (C(p, q), 7) => { return p * q; },
+        _ => { return 0 - 1; },
+    }
+}
+
+// Two variant elements in one tuple, so the tag tests have to AND together
+// and each element's payloads bind from its own box.
+function both(t: (Sh, Msg)): i32 {
+    match (t) {
+        (A(x), Num(n)) => { return x * 100 + n; },
+        (A(x), Txt(s)) => { return x + s.len(); },
+        (B(), Num(n)) => { return n; },
+        _ => { return 0 - 2; },
+    }
+}
+
+// A generic enum element: the payload type comes from the instantiation, not
+// the declaration, so the binder must load at the substituted width.
+function opt(t: (Option[i32], i32)): i32 {
+    match (t) {
+        (Some(v), y) => { return v + y; },
+        (None(), y) => { return 0 - y; },
+        _ => { return 0; },
+    }
+}
+
+// A string payload bound out of a variant element — a two-word load on the
+// targets whose string ABI is two words.
+function texts(t: (Msg, string)): string {
+    match (t) {
+        (Txt(s), tail) => { return s + tail; },
+        _ => { return "?"; },
+    }
+}
+
+// A failing tag test must fall through to the next arm, and a written guard
+// must fall through the same way with the element's payloads in scope.
+function guarded(t: (Sh, i32)): i32 {
+    match (t) {
+        (A(x), y) when x > y => { return 1; },
+        (A(x), y) => { return 2; },
+        _ => { return 3; },
+    }
+}
+
+// `@` binds the whole tuple alongside what the elements bind.
+function at_bound(t: (Sh, i32)): i32 {
+    match (t) {
+        w @ (A(x), y) => { return x + y + w.1; },
+        _ => { return 0; },
+    }
+}
+
+// Expression form: same element rules, arm bodies are expressions.
+function pick(t: (Sh, i32)): i32 {
+    return match (t) {
+        (A(x), y) => x * 10 + y,
+        (B(), _) => 200,
+        _ => 0 - 3,
+    };
+}
+
+// A variant element inside a tuple sub-pattern in a PAYLOAD slot — the two
+// nested forms composed. The payload slot's inner tuple match is built by the
+// same code path, so this comes along with the element grammar rather than
+// needing its own.
+function nested(w: Wrap): i32 {
+    match (w) {
+        P((A(n), y)) => { return n + y; },
+        P((B(), y)) => { return 100 + y; },
+        P(t) => { return 0; },
+        Q => { return 0 - 1; },
+    }
+}
+
+function main(): i32 {
+    print(classify((Sh.A(5), 3)).to_string());
+    print(classify((Sh.B, 4)).to_string());
+    print(classify((Sh.C(6, 7), 7)).to_string());
+    print(classify((Sh.C(6, 7), 8)).to_string());
+
+    print(both((Sh.A(2), Msg.Num(9))).to_string());
+    print(both((Sh.A(2), Msg.Txt("abc"))).to_string());
+    print(both((Sh.B, Msg.Num(4))).to_string());
+    print(both((Sh.B, Msg.Txt("z"))).to_string());
+
+    print(opt((Some(4), 3)).to_string());
+    print(opt((None, 3)).to_string());
+
+    print(texts((Msg.Txt("ab"), "cd")));
+    print(texts((Msg.Num(1), "cd")));
+
+    print(guarded((Sh.A(9), 1)).to_string());
+    print(guarded((Sh.A(1), 9)).to_string());
+    print(guarded((Sh.B, 9)).to_string());
+
+    print(at_bound((Sh.A(5), 2)).to_string());
+    print(at_bound((Sh.B, 2)).to_string());
+
+    print(pick((Sh.A(5), 3)).to_string());
+    print(pick((Sh.B, 4)).to_string());
+    print(pick((Sh.C(1, 2), 4)).to_string());
+
+    print(nested(Wrap.P((Sh.A(5), 3))).to_string());
+    print(nested(Wrap.P((Sh.B, 4))).to_string());
+    print(nested(Wrap.P((Sh.C(1, 2), 4))).to_string());
+    print(nested(Wrap.Q).to_string());
+    return 0;
+}

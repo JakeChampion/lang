@@ -7879,6 +7879,18 @@ func scalarModuleFor(t ast.Type) string {
 // variant: a near-miss is far more likely to be a typo than an attempt
 // at a wildcard.
 func unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	if s := variantSpellingHint(name, ed); s != "" {
+		return s
+	}
+	return " — a bare name in arm position is a VARIANT, not a binding;" +
+		" for a catch-all use `_`, binding the scrutinee to a variable first if you need its value"
+}
+
+// variantSpellingHint suggests the nearest variant name, or "" when none is
+// close enough. It is the whole hint where the spelling already says the
+// pattern is a variant — a tuple element's `A(x)`, which cannot be read as a
+// binder, so unknownVariantHint's arm-position advice would misdirect.
+func variantSpellingHint(name string, ed *ast.EnumDecl) string {
 	best, bestD := "", 0
 	max := len(name)/3 + 1
 	for i := range ed.Variants {
@@ -7890,8 +7902,7 @@ func unknownVariantHint(name string, ed *ast.EnumDecl) string {
 	if best != "" {
 		return fmt.Sprintf(" (did you mean %q?)", best)
 	}
-	return " — a bare name in arm position is a VARIANT, not a binding;" +
-		" for a catch-all use `_`, binding the scrutinee to a variable first if you need its value"
+	return ""
 }
 
 // editDistanceStr is Levenshtein over bytes, for the hint above.
@@ -9621,8 +9632,7 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 		if k < len(variant.Payloads) {
 			outTypes[k] = substituteType(variant.Payloads[k], sub)
 			if en, clash := c.payloadlessVariantNamed(bindings[k], outTypes[k]); clash {
-				c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a payload slot is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
-					bindings[k], en, bindings[k])
+				c.errPayloadlessVariantBinder(pos, bindings[k], en, "a payload slot")
 			}
 		}
 	}
@@ -9638,9 +9648,18 @@ func (c *checker) checkMergedSiblingBinder(pos ast.Position, name string, scrut 
 		return
 	}
 	if en, clash := c.payloadlessVariantNamed(name, scrut); clash {
-		c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a payload slot is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
-			name, en, name)
+		c.errPayloadlessVariantBinder(pos, name, en, "a payload slot")
 	}
+}
+
+// errPayloadlessVariantBinder reports the bare-name-is-a-binder hazard: a
+// pattern position spelled with a payload-less variant's name binds every
+// value instead of testing the variant the spelling suggests. `where` names
+// the position — a payload slot or a tuple element; both are cured the same
+// way, by writing the empty parens.
+func (c *checker) errPayloadlessVariantBinder(pos ast.Position, name, enum, where string) {
+	c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in %s is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
+		name, enum, where, name)
 }
 
 // checkTuplePatElem types tuple-pattern element k against the scrutinee's
@@ -9654,6 +9673,10 @@ func (c *checker) checkMergedSiblingBinder(pos ast.Position, name string, scrut 
 func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, bindingTypes []ast.Type, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
 	el := &elems[k]
 	bindingTypes[k] = elT
+	if el.VariantName != "" {
+		c.checkTuplePatVariantElem(pos, el, k, elT, armScope, seen)
+		return true
+	}
 	if el.Literal != nil {
 		litT := c.checkExpr(el.Literal, s)
 		if litT != nil {
@@ -9674,11 +9697,60 @@ func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, 
 	}
 	seen[el.Name] = true
 	if en, clash := c.payloadlessVariantNamed(el.Name, elT); clash {
-		c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a tuple element is a binder that matches every value — rename the binder, or match the element in a nested match (a variant test on a tuple element is not supported yet)",
-			el.Name, en)
+		c.errPayloadlessVariantBinder(pos, el.Name, en, "a tuple element")
 	}
 	armScope.names[el.Name] = elT
 	return false
+}
+
+// checkTuplePatVariantElem validates a variant sub-pattern on tuple element k
+// (`(A(x), y)`) and binds its payloads into armScope. The element type must be
+// an enum; the variant's payload arity and type-parameter substitution go
+// through resolveVariantBindings, so a payload slot follows exactly the rules
+// a top-level `A(x) => …` arm follows.
+func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, armScope *scope, seen map[string]bool) {
+	et, isEnum := elT.(ast.EnumType)
+	if !isEnum {
+		c.errfCode(pos, "E035", "variant pattern on tuple element %d, but the element has type %s", k, elT)
+		return
+	}
+	ed, known := c.info.Enums[et.Name]
+	if !known {
+		c.errfCode(pos, "E043", "unknown enum type %q", et.Name)
+		return
+	}
+	c.checkVariantQualifier(pos, el.VariantModule, ed)
+	var variant *ast.EnumVariant
+	for j := range ed.Variants {
+		if ed.Variants[j].Name == el.VariantName {
+			variant = &ed.Variants[j]
+			break
+		}
+	}
+	if variant == nil {
+		c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
+			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
+		return
+	}
+	var sub map[string]ast.Type
+	if len(ed.TypeParams) > 0 && len(et.Args) == len(ed.TypeParams) {
+		sub = make(map[string]ast.Type, len(ed.TypeParams))
+		for i, tp := range ed.TypeParams {
+			sub[tp] = et.Args[i]
+		}
+	}
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, sub)
+	for i, name := range el.VariantBindings {
+		if name == "_" {
+			continue
+		}
+		if seen[name] {
+			c.errfCode(pos, "E013", "variable %q already declared in this scope", name)
+			continue
+		}
+		seen[name] = true
+		armScope.names[name] = el.VariantBindingTypes[i]
+	}
 }
 
 // payloadlessVariantNamed reports whether name is a payload-less variant of

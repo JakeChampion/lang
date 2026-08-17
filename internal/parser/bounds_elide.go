@@ -332,6 +332,11 @@ func armBinds(bindings []string, tupleElems []ast.TuplePatElem, name string) boo
 		if te.Name == name {
 			return true
 		}
+		for _, vb := range te.VariantBindings {
+			if vb == name {
+				return true
+			}
+		}
 	}
 	return false
 }

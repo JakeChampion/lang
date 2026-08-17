@@ -2674,6 +2674,33 @@ type Match struct {
 	Origin string
 }
 
+// TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
+// match arm — exactly one of: a binder name (binds the element in the
+// arm's scope), the `_` wildcard (element ignored), a literal (element
+// compared by equality), or a variant sub-pattern (element tested
+// against a variant tag, its payloads bound). See MatchArm.TupleElems.
+type TuplePatElem struct {
+	Name       string // binder; empty unless this is the binder form
+	IsWildcard bool   // `_` element
+	Literal    Expr   // literal element; nil otherwise
+	// VariantName is a variant sub-pattern on the element —
+	// `(A(x), y) => …` on a `(Enum, i32)` scrutinee. The element is
+	// tested against the variant's tag and VariantBindings names its
+	// payloads, in payload order; `A()` is the payload-less spelling
+	// (a bare `A` is a binder, which E015 rejects when it names a
+	// payload-less variant). Empty for the other element forms.
+	VariantName string
+	// VariantModule is the optional `mod.` qualifier on a variant
+	// sub-pattern — same semantics as MatchArm.VariantModule.
+	VariantModule string
+	// VariantBindings are the sub-pattern's payload binder names;
+	// VariantBindingTypes is filled by the checker with the matching
+	// (type-substituted) payload types, so the IR picks the right
+	// per-payload load width.
+	VariantBindings     []string
+	VariantBindingTypes []Type
+}
+
 // MatchArm is one pattern → body pair. The Bindings are the
 // names introduced by the pattern (in declaration order, matching
 // the variant's payload positions); each binding's type is the
@@ -2691,16 +2718,6 @@ type Match struct {
 // with VariantName / IsWildcard — the parser sets exactly one
 // of {Literal, IsWildcard, VariantName}. Literal-pattern arms
 // dispatch via equality comparison instead of tag-based match.
-// TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
-// match arm — exactly one of: a binder name (binds the element in the
-// arm's scope), the `_` wildcard (element ignored), or a literal
-// (element compared by equality). See MatchArm.TupleElems.
-type TuplePatElem struct {
-	Name       string // binder; empty when IsWildcard or Literal != nil
-	IsWildcard bool   // `_` element
-	Literal    Expr   // literal element; nil otherwise
-}
-
 type MatchArm struct {
 	P           Position
 	VariantName string // empty when IsWildcard or Literal != nil

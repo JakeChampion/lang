@@ -3002,6 +3002,13 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 					}
 					matched := true
 					for k, el := range arm.TupleElems {
+						if el.VariantName != "" {
+							if !tupleElemVariantMatches(arr[k], el.VariantName) {
+								matched = false
+								break
+							}
+							continue
+						}
 						if el.Literal == nil {
 							continue
 						}
@@ -3021,9 +3028,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						if el.Name != "" {
-							armEnv.declare(el.Name, arr[k])
-						}
+						bindTupleElem(armEnv, el, arr[k])
 					}
 				}
 				if arm.Guard != nil {
@@ -3143,6 +3148,35 @@ func matchExprArmsHaveTuple(arms []*ast.MatchExprArm) bool {
 		}
 	}
 	return false
+}
+
+// tupleElemVariantMatches reports whether a tuple element's runtime value is
+// the variant its sub-pattern names (`(A(x), y)`), mirroring the compiled
+// backend's tag test in tupleMatchArmTest.
+func tupleElemVariantMatches(v Value, variantName string) bool {
+	ev, isEnum := v.(*Enum)
+	return isEnum && ev.VariantName == variantName
+}
+
+// bindTupleElem declares whatever a tuple-pattern element binds: the element
+// itself for a binder, or the named variant's payloads for a sub-pattern.
+// Literal and `_` elements bind nothing.
+func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
+	if el.VariantName != "" {
+		ev, isEnum := v.(*Enum)
+		if !isEnum {
+			return
+		}
+		for i, name := range el.VariantBindings {
+			if i < len(ev.Payloads) {
+				armEnv.declare(name, ev.Payloads[i])
+			}
+		}
+		return
+	}
+	if el.Name != "" {
+		armEnv.declare(el.Name, v)
+	}
 }
 
 // valuesEqual is a value-equality check used for match-tag / map-key
@@ -3738,6 +3772,13 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 					}
 					matched := true
 					for k, el := range arm.TupleElems {
+						if el.VariantName != "" {
+							if !tupleElemVariantMatches(arr[k], el.VariantName) {
+								matched = false
+								break
+							}
+							continue
+						}
 						if el.Literal == nil {
 							continue
 						}
@@ -3757,9 +3798,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						if el.Name != "" {
-							armEnv.declare(el.Name, arr[k])
-						}
+						bindTupleElem(armEnv, el, arr[k])
 					}
 				}
 				if arm.Guard != nil {
