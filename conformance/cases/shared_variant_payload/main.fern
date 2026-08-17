@@ -1,0 +1,66 @@
+// Two enums may declare the same variant name at DIFFERENT payload types.
+// Variant decls are keyed by the bare variant name, so `A.W` and `B.W`
+// leave two decls called `W`, and a lookup by name answers for whichever
+// was declared first. A match arm reading its payload that way reads the
+// OTHER enum's type and width: an f64 payload loaded as i32 gives the low
+// half of the double, an i64 payload truncates, and a string payload is
+// typed i32 so its methods do not resolve.
+//
+// An arm means the variant of ITS scrutinee, so the arm's enum is known —
+// from the pattern's `Enum.` qualifier, or from the scrutinee's type when
+// the pattern is unqualified.
+enum A { W(i32), P }
+enum B { W(f64), Q }
+enum C { W(string), R }
+enum D { W(i64), S }
+
+function a_of(v: A): i32 {
+    match (v) {
+        A.W(n) => { return n; },
+        A.P => { return 0; },
+    }
+}
+
+function b_of(v: B): i32 {
+    // f64 behind i32: read at the wrong width this compared unequal.
+    match (v) {
+        B.W(n) => { if (n == 4.5) { return 2; } return 0; },
+        B.Q => { return 0; },
+    }
+}
+
+function c_of(v: C): i32 {
+    // string behind i32: the binding was typed i32, so `.len()` did not
+    // resolve as a string method.
+    match (v) {
+        C.W(s) => { return s.len(); },
+        C.R => { return 0; },
+    }
+}
+
+function d_of(v: D): i32 {
+    // i64 behind i32: the payload truncated to its low 32 bits.
+    match (v) {
+        D.W(n) => { if (n == 4294967296) { return 8; } return 0; },
+        D.S => { return 0; },
+    }
+}
+
+// An UNQUALIFIED pattern has no `Enum.` to resolve against, so the arm's
+// enum comes from the scrutinee's type alone.
+function b_bare(v: B): i32 {
+    match (v) {
+        W(n) => { if (n == 4.5) { return 16; } return 0; },
+        _ => { return 0; },
+    }
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + a_of(A.W(1));       // 1  — the first-declared enum
+    total = total + b_of(B.W(4.5));     // 3
+    total = total + c_of(C.W("abcd"));  // 7
+    total = total + d_of(D.W(4294967296)); // 15
+    total = total + b_bare(B.W(4.5));   // 31
+    return total;
+}

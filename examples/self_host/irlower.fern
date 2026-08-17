@@ -3366,6 +3366,16 @@ pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string)
     return decl_is_leaksafe_d(structs, struct_name, 0, seen);
 }
 
+// decl_at_is_leaksafe is the same question asked of an already-resolved decl —
+// what a variant pattern needs, since two enums may declare one variant name and
+// only one of the two decls is this arm's. The recursion below stays by-name:
+// every type it descends into is a struct or enum TYPE name, which is unique.
+pub function decl_at_is_leaksafe(structs: parser.StructDecl[], decl_index: i32): boolean {
+    if (decl_index < 0 || decl_index >= structs.len()) { return false; }
+    var seen: string[] = [];
+    return decl_is_leaksafe_at_d(structs, decl_index, 0, seen);
+}
+
 // decl_is_leaksafe_d is the recursion: a struct is leak-safe if every field is a
 // scalar (i32/boolean/string/scalar-array) OR a struct that is itself leak-safe
 // (composite struct fields, leak mode — the pointer is stored in one slot, no
@@ -3380,83 +3390,85 @@ pub function decl_is_leaksafe(structs: parser.StructDecl[], struct_name: string)
 function decl_is_leaksafe_d(structs: parser.StructDecl[], struct_name: string, depth: i32, visiting: string[]): boolean {
     if (depth > 16) { return false; }
     // Back-edge to a struct already on the proof path: leak-only, so safe.
+    // Checked before the lookup so a name with no decl at all still bails.
+    if (util.has_str(visiting, struct_name)) { return true; }
+    return decl_is_leaksafe_at_d(structs, decl_index_of(structs, struct_name), depth, visiting);
+}
+
+function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, depth: i32, visiting: string[]): boolean {
+    if (depth > 16) { return false; }
+    if (decl_index < 0 || decl_index >= structs.len()) { return false; }
+    var struct_name: string = structs[decl_index].name;
     if (util.has_str(visiting, struct_name)) { return true; }
     var nv: string[] = visiting.append(struct_name);
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            var fi: i32 = 0;
-            while (fi < structs[i].fields.len()) {
-                var t: string = structs[i].fields[fi].type_name;
-                // The ≤32-bit integer scalars (u32 + the sub-word u8)
-                // are leak-only and ride one i32 slot exactly like i32, so a struct
-                // carrying them is leaf-safe and lowers (construction stores / field
-                // read loads at the default 32-bit width; a sub-word cast wraps the
-                // value before the store). u64 / f32 are NOT added: they need real
-                // 64-bit / float width handling, so they keep the struct on AST.
-                // Thread this proof's depth + visiting set (`nv`) into the Option /
-                // tuple field predicates so a self-referential `Option[Node]` /
-                // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
-                // back-edge check then short-circuits the cycle instead of recursing
-                // forever (was a SIGSEGV on any linked list / tree).
-                if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
-                    fi = fi + 1;
-                    continue;
-                }
-                // A struct-typed field is allowed if its struct is leak-safe too.
-                if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1, nv)) {
-                    fi = fi + 1;
-                    continue;
-                }
-                // A nominal-enum field (Color, Expr, …) is leak-only on the IR
-                // path — the exit sweep never frees an enum box — so it leaks
-                // with the struct like a string / Option / tuple field: no RC, no
-                // aliasing bail. is_enum_like_name can over-match a bare nominal
-                // that is not really an enum, but the only consequence is an AST
-                // fallback at the construction / match site (never a miscompile),
-                // and the stage-2 fixpoint guards byte-stability.
-                if (is_enum_like_name(t, structs)) {
-                    fi = fi + 1;
-                    continue;
-                }
-                // An array-of-struct field `X[]` (X a leak-safe struct): admitted
-                // in leak mode (the array + its elements leak with the struct; a
-                // recursive-drop follow-up frees them). The element's leaf-safety
-                // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
-                // hits the cap and bails to AST.
-                if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
-                    var elt: str = t[0 : t.len() - 2];
-                    if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1, nv)) {
-                        fi = fi + 1;
-                        continue;
-                    }
-                    // An array-of-ENUM field `C[]` — enum boxes leak with the
-                    // struct like the struct-element arrays above (and the
-                    // nominal-enum field case), so admit it in leak mode.
-                    if (is_enum_like_name(elt, structs)) {
-                        fi = fi + 1;
-                        continue;
-                    }
-                    // An array-of-ARRAY field `T[][]` whose element `T[]` is
-                    // itself a leaf-safe array (scalar / struct / enum array), or
-                    // an array-of-Option/Result field `Option[T][]` whose element
-                    // `Option[T]` is a leak-safe Option/Result, or an array-of-
-                    // TUPLE field `(i32, string)[]` whose element tuple is a
-                    // leak-safe tuple: the whole nested structure leaks with the
-                    // struct. Covers the common 2-D field; deeper nesting still
-                    // bails.
-                    if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field_d(structs, elt)) {
-                        fi = fi + 1;
-                        continue;
-                    }
-                }
-                return false;
-            }
-            return true;
+    var fi: i32 = 0;
+    while (fi < structs[decl_index].fields.len()) {
+        var t: string = structs[decl_index].fields[fi].type_name;
+        // The ≤32-bit integer scalars (u32 + the sub-word u8)
+        // are leak-only and ride one i32 slot exactly like i32, so a struct
+        // carrying them is leaf-safe and lowers (construction stores / field
+        // read loads at the default 32-bit width; a sub-word cast wraps the
+        // value before the store). u64 / f32 are NOT added: they need real
+        // 64-bit / float width handling, so they keep the struct on AST.
+        // Thread this proof's depth + visiting set (`nv`) into the Option /
+        // tuple field predicates so a self-referential `Option[Node]` /
+        // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
+        // back-edge check then short-circuits the cycle instead of recursing
+        // forever (was a SIGSEGV on any linked list / tree).
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && t[0:5] == "Cell[")) {
+            fi = fi + 1;
+            continue;
         }
-        i = i + 1;
+        // A struct-typed field is allowed if its struct is leak-safe too.
+        if (decl_is_struct(structs, t) && decl_is_leaksafe_d(structs, t, depth + 1, nv)) {
+            fi = fi + 1;
+            continue;
+        }
+        // A nominal-enum field (Color, Expr, …) is leak-only on the IR
+        // path — the exit sweep never frees an enum box — so it leaks
+        // with the struct like a string / Option / tuple field: no RC, no
+        // aliasing bail. is_enum_like_name can over-match a bare nominal
+        // that is not really an enum, but the only consequence is an AST
+        // fallback at the construction / match site (never a miscompile),
+        // and the stage-2 fixpoint guards byte-stability.
+        if (is_enum_like_name(t, structs)) {
+            fi = fi + 1;
+            continue;
+        }
+        // An array-of-struct field `X[]` (X a leak-safe struct): admitted
+        // in leak mode (the array + its elements leak with the struct; a
+        // recursive-drop follow-up frees them). The element's leaf-safety
+        // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
+        // hits the cap and bails to AST.
+        if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
+            var elt: str = t[0 : t.len() - 2];
+            if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1, nv)) {
+                fi = fi + 1;
+                continue;
+            }
+            // An array-of-ENUM field `C[]` — enum boxes leak with the
+            // struct like the struct-element arrays above (and the
+            // nominal-enum field case), so admit it in leak mode.
+            if (is_enum_like_name(elt, structs)) {
+                fi = fi + 1;
+                continue;
+            }
+            // An array-of-ARRAY field `T[][]` whose element `T[]` is
+            // itself a leaf-safe array (scalar / struct / enum array), or
+            // an array-of-Option/Result field `Option[T][]` whose element
+            // `Option[T]` is a leak-safe Option/Result, or an array-of-
+            // TUPLE field `(i32, string)[]` whose element tuple is a
+            // leak-safe tuple: the whole nested structure leaks with the
+            // struct. Covers the common 2-D field; deeper nesting still
+            // bails.
+            if (is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt) || is_enum_array_field_type(structs, elt) || is_leaksafe_opt_field_d(structs, elt) || is_leaksafe_tuple_field_d(structs, elt)) {
+                fi = fi + 1;
+                continue;
+            }
+        }
+        return false;
     }
-    return false;
+    return true;
 }
 
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
@@ -3646,18 +3658,96 @@ pub function field_access_is_fnarr(e: parser.Expr, s: LowerState): boolean {
     }
 }
 
+// decl_index_of returns the index in `structs` of the FIRST decl named `name`,
+// or -1. Struct names are unique, so first-wins is exact for them; enum VARIANT
+// decls are keyed by their bare name, so two enums declaring one variant name
+// give two decls this cannot tell apart — resolve those through
+// variant_pattern_decl_index instead.
+pub function decl_index_of(structs: parser.StructDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// variant_pattern_decl_index resolves the decl a variant PATTERN reads its
+// payload through. `owner` is the arm's enum when it is known — the pattern's
+// `Enum.` qualifier, else the scrutinee's type. Falls back to the first decl of
+// that name when the owner names no such variant: a module-qualified pattern, a
+// union member (`type X = A | B`, whose members are ordinary uniquely-named
+// structs), or a scrutinee whose type the lowering could not recover.
+pub function variant_pattern_decl_index(structs: parser.StructDecl[], name: string, owner: string): i32 {
+    if (owner != "") {
+        var oi: i32 = variant_decl_index(structs, name, owner);
+        if (oi >= 0) { return oi; }
+    }
+    return decl_index_of(structs, name);
+}
+
+// variant_pattern_bare_name strips a pattern's `Enum.` / `mod.` qualifier —
+// variant decls are keyed by the bare variant name. variant_pattern_qualifier
+// returns the stripped qualifier, or "" for an unqualified pattern. Both take
+// the LAST dot.
+pub function variant_pattern_bare_name(type_name: string): string {
+    var bare: string = type_name;
+    var i: i32 = 0;
+    while (i < type_name.len()) {
+        if (type_name[i] == 46) { bare = type_name[i + 1 : type_name.len()] + ""; }
+        i = i + 1;
+    }
+    return bare;
+}
+
+pub function variant_pattern_qualifier(type_name: string): string {
+    var q: string = "";
+    var i: i32 = 0;
+    while (i < type_name.len()) {
+        if (type_name[i] == 46) { q = type_name[0 : i] + ""; }
+        i = i + 1;
+    }
+    return q;
+}
+
+// variant_arm_decl_index resolves the decl a variant ARM reads its payload
+// through, given the scrutinee's struct/enum type name (expr_struct_type of the
+// match's scrutinee, "" when unrecoverable). The pattern's own qualifier wins
+// when it names the variant's enum — a `mod.` qualifier does not, and falls
+// through to the scrutinee.
+pub function variant_arm_decl_index(pv: parser.PatVariant, scrut_enum: string, s: LowerState): i32 {
+    var bare: string = variant_pattern_bare_name(pv.type_name);
+    var owner: string = variant_pattern_qualifier(pv.type_name);
+    if (variant_decl_index(s.structs, bare, owner) < 0) { owner = scrut_enum; }
+    return variant_pattern_decl_index(s.structs, bare, owner);
+}
+
+// The decl accessors come in pairs: an `_at` form taking an already-resolved
+// decl index, and a by-name form that resolves first-wins and delegates. A
+// variant name two enums share has two decls, so anywhere the owning enum is
+// known the `_at` form is the correct one — the by-name form silently answers
+// for whichever enum was declared first.
+
+// decl_at_field_type returns the type of field `index` (decl order) of the decl
+// at `decl_index`, or "".
+pub function decl_at_field_type(structs: parser.StructDecl[], decl_index: i32, index: i32): string {
+    if (decl_index < 0 || decl_index >= structs.len()) { return ""; }
+    if (index < 0 || index >= structs[decl_index].fields.len()) { return ""; }
+    return structs[decl_index].fields[index].type_name;
+}
+
 // decl_field_type_at returns the type of field `index` (decl order) in struct
 // `struct_name`, or "".
 pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: string, index: i32): string {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            if (index >= 0 && index < structs[i].fields.len()) { return structs[i].fields[index].type_name; }
-            return "";
-        }
-        i = i + 1;
-    }
-    return "";
+    return decl_at_field_type(structs, decl_index_of(structs, struct_name), index);
+}
+
+// decl_at_field_name returns the NAME of field `index` (decl order) of the decl
+// at `decl_index`, or "".
+pub function decl_at_field_name(structs: parser.StructDecl[], decl_index: i32, index: i32): string {
+    if (decl_index < 0 || decl_index >= structs.len()) { return ""; }
+    if (index < 0 || index >= structs[decl_index].fields.len()) { return ""; }
+    return structs[decl_index].fields[index].name;
 }
 
 // decl_field_name_at returns the NAME of field `index` (decl order) in struct
@@ -3666,25 +3756,42 @@ pub function decl_field_type_at(structs: parser.StructDecl[], struct_name: strin
 // registry ("FNPTR:<sty>.<field>") so a plain-fn-pointer array field leaks instead
 // of being walked as a box array (its elements are raw code addresses).
 pub function decl_field_name_at(structs: parser.StructDecl[], struct_name: string, index: i32): string {
-    var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == struct_name) {
-            if (index >= 0 && index < structs[i].fields.len()) { return structs[i].fields[index].name; }
-            return "";
-        }
-        i = i + 1;
-    }
-    return "";
+    return decl_at_field_name(structs, decl_index_of(structs, struct_name), index);
 }
 
-// struct_field_width returns the field's load/store width for op_struct_get /
-// op_struct_set: 64 if the field is f64, else 0 (i32-shaped). Drives wasm's
-// f64.load/store vs i32.load/store selection (register backends ignore it).
-pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
-    var t: string = decl_field_type_at(structs, struct_name, index);
+// decl_at_payload_type returns the type of an enum variant decl's payload field
+// `index` — the parser desugars a variant's payloads to fields `__ev`, `__ev1`,
+// … in order. "" when the decl is not an enum variant: a union member
+// (`type X = A | B`) is an ordinary struct whose fields have real names.
+pub function decl_at_payload_type(structs: parser.StructDecl[], decl_index: i32, index: i32): string {
+    if (decl_at_field_name(structs, decl_index, 0) != "__ev") { return ""; }
+    return decl_at_field_type(structs, decl_index, index);
+}
+
+// decl_at_field_count returns the field count of the decl at `decl_index`.
+pub function decl_at_field_count(structs: parser.StructDecl[], decl_index: i32): i32 {
+    if (decl_index < 0 || decl_index >= structs.len()) { return 0; }
+    return structs[decl_index].fields.len();
+}
+
+// field_type_width classifies a field's declared type as a load/store width for
+// op_struct_get / op_struct_set: 64 for the 8-byte types, else 0 (i32-shaped).
+// Drives wasm's f64.load/store vs i32.load/store selection (register backends
+// ignore it).
+function field_type_width(t: string): i32 {
     if (t == "f64" || t == "f32" || t == "float" || t == "i64" || t == "u64") { return 64; }
     return 0;
 }
+
+// struct_field_at_width is struct_field_width asked of an already-resolved decl.
+pub function struct_field_at_width(structs: parser.StructDecl[], decl_index: i32, index: i32): i32 {
+    return field_type_width(decl_at_field_type(structs, decl_index, index));
+}
+
+pub function struct_field_width(structs: parser.StructDecl[], struct_name: string, index: i32): i32 {
+    return field_type_width(decl_field_type_at(structs, struct_name, index));
+}
+
 // struct_field_is_i64 reports whether field `index` of `struct_name` is i64 (an
 // 8-byte INTEGER field — i64.load/store on wasm, vs f64.load/store for f64).
 pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: string, index: i32): boolean {
@@ -3692,14 +3799,9 @@ pub function struct_field_is_i64(structs: parser.StructDecl[], struct_name: stri
     return ft64 == "i64" || ft64 == "u64";
 }
 
-// struct_field_at_is_i64 is the same question asked of an already-resolved
-// decl. Two enums may declare one variant name at different payload widths
-// (`A { W(i64) }` / `B { W(i32) }`), and the by-name form above would answer
-// for whichever was declared first — reading the wrong width for the other.
+// struct_field_at_is_i64 is the same question asked of an already-resolved decl.
 pub function struct_field_at_is_i64(structs: parser.StructDecl[], decl_index: i32, index: i32): boolean {
-    if (decl_index < 0 || decl_index >= structs.len()) { return false; }
-    if (index < 0 || index >= structs[decl_index].fields.len()) { return false; }
-    var fw: string = structs[decl_index].fields[index].type_name;
+    var fw: string = decl_at_field_type(structs, decl_index, index);
     return fw == "i64" || fw == "u64";
 }
 
@@ -8783,7 +8885,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             }
             vi = vi + 1;
         }
-        return vctor.emit(ir.op_struct_make(cid.name, c.args.len()));
+        return vctor.emit(ir.op_struct_make(cid.name, c.args.len(), decl_index_of(vctor.structs, cid.name)));
     }
     if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
         var mn: LowerState = lower_expr(c.args[0], s);
@@ -10112,7 +10214,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                     if (!qv.ok) { return qv; }
                     qi = qi + 1;
                 }
-                return qv.emit(ir.op_struct_make(fa.field, c.args.len()));
+                return qv.emit(ir.op_struct_make(fa.field, c.args.len(), qvi));
             }
         },
         _ => {}
@@ -11816,7 +11918,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             if (compact) {
                 return sm.emit(ir.op_load_local(result_slot));
             }
-            return sm.emit(ir.op_struct_make(slit.type_name, ndecl));
+            return sm.emit(ir.op_struct_make(slit.type_name, ndecl, decl_index_of(sm.structs, slit.type_name)));
         },
         parser.ExprFieldAccess(fa) => {
             // Numeric field `t.0` / `t.1` → tuple element access (no shape slot,
@@ -11859,7 +11961,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     var uvi: i32 = variant_decl_index(s.structs, fa.field, uvid.name);
                     if (uvi >= 0 && s.slot_of(uvid.name) < 0
                         && s.structs[uvi].fields.len() == 0) {
-                        return s.emit(ir.op_struct_make(fa.field, 0));
+                        return s.emit(ir.op_struct_make(fa.field, 0, uvi));
                     }
                 },
                 _ => {}
@@ -11927,7 +12029,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // Option box for `enum E { …, None }`, which then matched no
             // variant index at all.
             if (decl_is_struct(s.structs, id.name) && decl_field_count(s.structs, id.name) == 0) {
-                return s.emit(ir.op_struct_make(id.name, 0));
+                return s.emit(ir.op_struct_make(id.name, 0, decl_index_of(s.structs, id.name)));
             }
             // The empty Option `None` → a payloadless box with tag 1.
             if (id.name == "None") { return s.emit(ir.op_opt_none()); }
@@ -14238,7 +14340,7 @@ function iife_payload_wide_bindable(ft: string, name: string, arm: parser.MatchA
     return false;
 }
 
-function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_srt: string, temp_is_i32: boolean, scrut_is_ident: boolean, res_kind: string, s: LowerState): boolean {
+function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_srt: string, scrut_enum: string, temp_is_i32: boolean, scrut_is_ident: boolean, res_kind: string, s: LowerState): boolean {
     if (opt_srt != "") {
         var pt: string = opt_payload_type(opt_srt, pv.type_name);
         if (pt == "i32") { return true; }
@@ -14273,7 +14375,7 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
     }
     // User-enum variant: read its single payload field type, then admit i32 / i64 /
     // f64 / leak-safe scalar array per iife_payload_field_bindable.
-    var ft: string = iife_user_enum_payload_type(pv, s);
+    var ft: string = iife_user_enum_payload_type(pv, scrut_enum, s);
     if (ft == "") { return false; }
     return iife_payload_field_bindable(ft, pv.binding, arm, res_kind, s);
 }
@@ -14284,26 +14386,21 @@ function iife_payload_bindable(pv: parser.PatVariant, arm: parser.MatchArm, opt_
 // iife_payload_field_bindable (i32 / directly-returned i64-f64 / borrow-only
 // leak-safe array). The underlying StmtMatch path binds the payload fields at
 // width. A `_` binding is skipped.
-function iife_enum_payloads_bindable(pv: parser.PatVariant, arm: parser.MatchArm, s: LowerState): boolean {
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(s.structs, vname)) { return false; }
+function iife_enum_payloads_bindable(pv: parser.PatVariant, arm: parser.MatchArm, scrut_enum: string, s: LowerState): boolean {
+    var vdecl: i32 = variant_arm_decl_index(pv, scrut_enum, s);
+    if (vdecl < 0) { return false; }
     // Multi-payload arms keep the existing i32 / direct-i64-f64 / borrow-only
     // admission — a string result from a multi-binding arm isn't in scope here, so
     // res_kind is left "" (no string admit for this shape).
     if (pv.binding.len() > 0 && pv.binding != "_") {
-        var ft0: string = decl_field_type(s.structs, vname, "__ev");
+        var ft0: string = decl_at_payload_type(s.structs, vdecl, 0);
         if (!iife_payload_field_bindable(ft0, pv.binding, arm, "", s)) { return false; }
     }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
         var eb: string = pv.extra_bindings[k];
         if (eb.len() > 0 && eb != "_") {
-            var ftk: string = decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1));
+            var ftk: string = decl_at_payload_type(s.structs, vdecl, k + 1);
             if (!iife_payload_field_bindable(ftk, eb, arm, "", s)) { return false; }
         }
         k = k + 1;
@@ -14315,20 +14412,15 @@ function iife_enum_payloads_bindable(pv: parser.PatVariant, arm: parser.MatchArm
 // binding name within a PatVariant arm: `__ev` for the main binding, `__ev<k+1>`
 // for the k-th extra binding. Returns "" when the name doesn't bind a payload of
 // this variant (so a bare-ident return that isn't a payload is left unclassified).
-function iife_variant_payload_field(pv: parser.PatVariant, name: string, s: LowerState): string {
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(s.structs, vname)) { return ""; }
+function iife_variant_payload_field(pv: parser.PatVariant, name: string, scrut_enum: string, s: LowerState): string {
+    var vdecl: i32 = variant_arm_decl_index(pv, scrut_enum, s);
+    if (vdecl < 0) { return ""; }
     var pvb: string = pv.binding;
-    if (pvb.len() > 0 && pvb != "_" && pvb == name) { return decl_field_type(s.structs, vname, "__ev"); }
+    if (pvb.len() > 0 && pvb != "_" && pvb == name) { return decl_at_payload_type(s.structs, vdecl, 0); }
     var k: i32 = 0;
     while (k < pv.extra_bindings.len()) {
         var eb: string = pv.extra_bindings[k];
-        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_field_type(s.structs, vname, "__ev" + util.i32_to_string(k + 1)); }
+        if (eb.len() > 0 && eb != "_" && eb == name) { return decl_at_payload_type(s.structs, vdecl, k + 1); }
         k = k + 1;
     }
     return "";
@@ -14344,8 +14436,8 @@ function iife_variant_payload_field(pv: parser.PatVariant, name: string, s: Lowe
 // payload variants), keeping multi-binding arms on the user-enum field path. "" when
 // neither resolves (an unannotated scrutinee, a `_` binding, or a name that doesn't
 // bind this variant's payload).
-function iife_bound_payload_type(pv: parser.PatVariant, name: string, opt_srt: string, s: LowerState): string {
-    var ft: string = iife_variant_payload_field(pv, name, s);
+function iife_bound_payload_type(pv: parser.PatVariant, name: string, opt_srt: string, scrut_enum: string, s: LowerState): string {
+    var ft: string = iife_variant_payload_field(pv, name, scrut_enum, s);
     if (ft != "") { return ft; }
     if (opt_srt != "" && pv.binding.len() > 0 && pv.binding != "_" && pv.binding == name) {
         return opt_payload_type(opt_srt, pv.type_name);
@@ -14361,6 +14453,7 @@ function iife_bound_payload_type(pv: parser.PatVariant, name: string, opt_srt: s
 // else "". Mirrors the underlying StmtMatch path's struct_get_i64 / width-64 read
 // of the same field — so the temp width lines up with the value the binding loads.
 function iife_payload_result_width(m: parser.StmtMatch, s: LowerState): string {
+    var scrut_enum: string = expr_struct_type(m.scrutinee, s);
     var i: i32 = 0;
     while (i < m.arms.len()) {
         var arm: parser.MatchArm = m.arms[i];
@@ -14372,7 +14465,7 @@ function iife_payload_result_width(m: parser.StmtMatch, s: LowerState): string {
                         parser.PatVariant(pv) => {
                             match (r.value) {
                                 parser.ExprIdent(rid) => {
-                                    var ft: string = iife_variant_payload_field(pv, rid.name, s);
+                                    var ft: string = iife_variant_payload_field(pv, rid.name, scrut_enum, s);
                                     // u64 classifies as the i64-wide temp — the temp
                                     // records WIDTH, and the slot carries the payload's
                                     // own signedness (#6647).
@@ -14432,7 +14525,7 @@ function iife_payload_kind_of_type(ft: string, s: LowerState): string {
 // carry); "" for an i32 / boolean / unrecoverable result (handled by the i32 temp /
 // the existing classifiers). The kind names the temp width the StmtMatch arm-body
 // lowering already produces for the same field read, so the temp lines up.
-function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: LowerState): string {
+function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, scrut_enum: string, s: LowerState): string {
     if (arm.body.len() == 0) { return ""; }
     var last: parser.Stmt = arm.body[arm.body.len() - 1];
     var rval: parser.Expr = parser.e_unknown("");
@@ -14447,7 +14540,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
             match (rval) {
                 // Bare payload `V(x) => x` — kind is the payload field type's kind.
                 parser.ExprIdent(rid) => {
-                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, s);
+                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, scrut_enum, s);
                     return iife_payload_kind_of_type(ft, s);
                 },
                 // `name.<field>` / `name.<digit>` — a field / tuple-element read of
@@ -14455,7 +14548,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         parser.ExprIdent(oid) => {
-                            var ft0: string = iife_bound_payload_type(pv, oid.name, opt_srt, s);
+                            var ft0: string = iife_bound_payload_type(pv, oid.name, opt_srt, scrut_enum, s);
                             if (ft0 == "") { return ""; }
                             // Tuple element `t.0`: recover the element tag's kind.
                             if (util.is_all_digits(fa.field)) {
@@ -14483,7 +14576,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
                 parser.ExprBinary(bc) => {
                     if (bc.op != "+") { return ""; }
                     if (pv.binding.len() == 0 || pv.binding == "_") { return ""; }
-                    var ftc: string = iife_bound_payload_type(pv, pv.binding, opt_srt, s);
+                    var ftc: string = iife_bound_payload_type(pv, pv.binding, opt_srt, scrut_enum, s);
                     if (ftc == "") { return ""; }
                     if (iife_string_concat_borrow_only(rval, pv.binding, ftc, s)) { return "string"; }
                     // i64 / f64 ARITHMETIC over the bound wide payload (`V(n) => n + 1`,
@@ -14513,7 +14606,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
                         parser.ExprFieldAccess(mcf) => {
                             match (mcf.obj) {
                                 parser.ExprIdent(rcv) => {
-                                    var ft0: string = iife_bound_payload_type(pv, rcv.name, opt_srt, s);
+                                    var ft0: string = iife_bound_payload_type(pv, rcv.name, opt_srt, scrut_enum, s);
                                     if (ft0 == "") { return ""; }
                                     // i64 only: a wide i64-returning payload method
                                     // round-trips through the value-position temp; the
@@ -14547,10 +14640,11 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, s: 
 // the struct-field / tuple-element shapes for all three kinds.
 function iife_payload_result_kind(m: parser.StmtMatch, s: LowerState): string {
     var opt_srt: string = try_opt_type(m.scrutinee, s);
+    var scrut_enum: string = expr_struct_type(m.scrutinee, s);
     var found: string = "";
     var i: i32 = 0;
     while (i < m.arms.len()) {
-        var k: string = iife_arm_payload_result_kind(m.arms[i], opt_srt, s);
+        var k: string = iife_arm_payload_result_kind(m.arms[i], opt_srt, scrut_enum, s);
         if (k != "") {
             if (found != "" && found != k) { return ""; }
             found = k;
@@ -14613,7 +14707,7 @@ function iife_tuple_lit_tags(e: parser.Expr, s: LowerState): string {
 // Option / array result, an unrecoverable shape, or a tail that isn't a return.
 // Tuple results carry the comma-joined element TAGS (mark_tuple_elems form); struct
 // / enum results carry the type NAME (mark_struct_type form).
-function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, s: LowerState): string {
+function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, scrut_enum: string, s: LowerState): string {
     if (arm.body.len() == 0) { return ""; }
     var last: parser.Stmt = arm.body[arm.body.len() - 1];
     var rval: parser.Expr = parser.e_unknown("");
@@ -14628,7 +14722,7 @@ function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, s
         parser.PatVariant(pv) => {
             match (rval) {
                 parser.ExprIdent(rid) => {
-                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, s);
+                    var ft: string = iife_bound_payload_type(pv, rid.name, opt_srt, scrut_enum, s);
                     if (iife_type_is_composite(ft, s)) {
                         if (tuple_elems_lowerable(ft, s.structs) && !decl_is_struct(s.structs, ft) && !is_enum_like_name(ft, s.structs)) { return tuple_elem_tags(ft); }
                         return ft;
@@ -14669,10 +14763,11 @@ function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, s
 // tags (tuple); iife_result_is_tuple distinguishes the two.
 function iife_match_composite_result_type(m: parser.StmtMatch, s: LowerState): string {
     var opt_srt: string = try_opt_type(m.scrutinee, s);
+    var scrut_enum: string = expr_struct_type(m.scrutinee, s);
     var found: string = "";
     var i: i32 = 0;
     while (i < m.arms.len()) {
-        var t: string = iife_arm_composite_result_type(m.arms[i], opt_srt, s);
+        var t: string = iife_arm_composite_result_type(m.arms[i], opt_srt, scrut_enum, s);
         if (t == "") {
             // An arm with no recoverable composite result — if ANY other arm DID
             // recover one, the match isn't uniformly composite-typed, so bail.
@@ -14698,15 +14793,8 @@ function iife_result_is_tuple(t: string, s: LowerState): boolean {
 // iife_user_enum_payload_type returns a user-enum variant's single payload field
 // type (`__ev`), stripping any `Enum.` qualifier. "" when the variant isn't a
 // known struct (so a non-user-enum / Option scrutinee is handled elsewhere).
-function iife_user_enum_payload_type(pv: parser.PatVariant, s: LowerState): string {
-    var vname: string = pv.type_name;
-    var vld: i32 = 0;
-    while (vld < pv.type_name.len()) {
-        if (pv.type_name[vld] == 46) { vname = pv.type_name[vld + 1 : pv.type_name.len()] + ""; }
-        vld = vld + 1;
-    }
-    if (!decl_is_struct(s.structs, vname)) { return ""; }
-    return decl_field_type(s.structs, vname, "__ev");
+function iife_user_enum_payload_type(pv: parser.PatVariant, scrut_enum: string, s: LowerState): string {
+    return decl_at_payload_type(s.structs, variant_arm_decl_index(pv, scrut_enum, s), 0);
 }
 
 // iife_rewrite_arm_body rewrites one match-EXPRESSION arm body so it STORES the
@@ -14823,6 +14911,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
     // (a call scrutinee) lowers instead of bailing. A user-enum payload is read
     // from the variant's `__ev` field. A non-i32 (or unresolvable) payload bails.
     var opt_srt: string = try_opt_type(m.scrutinee, ts);
+    var scrut_enum: string = expr_struct_type(m.scrutinee, ts);
     // The temp is i32 unless classified f64 / i64 / string above. A nested-Option
     // payload binding is admitted only into an i32 temp, and only for an ident
     // scrutinee (see iife_payload_bindable).
@@ -14857,7 +14946,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
                     // (`Pair(a, b) => a`, a i64) is admitted into the matching-width
                     // temp classified above. The underlying StmtMatch path binds
                     // __ev / __ev1… at width (#3193).
-                    if (!iife_enum_payloads_bindable(pv, m.arms[i], ts)) { return s.fail(); }
+                    if (!iife_enum_payloads_bindable(pv, m.arms[i], scrut_enum, ts)) { return s.fail(); }
                 } else if (pv.binding.len() > 0 && pv.binding != "_") {
                     // Single payload binding: an i32 payload (`tmp = n` is an i32
                     // store), a nested-Option payload into an i32 temp (bound via the
@@ -14873,8 +14962,8 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
                     // produces the pointer; the iife_payload_bindable gate (which only
                     // admits a BORROW read of a struct/enum payload, not a bare return)
                     // would otherwise reject it.
-                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, temp_is_i32, scrut_is_ident, res_kind, ts)
-                        && !(comp_ty != "" && iife_arm_composite_result_type(m.arms[i], opt_srt, ts) == comp_ty)) { return s.fail(); }
+                    if (!iife_payload_bindable(pv, m.arms[i], opt_srt, scrut_enum, temp_is_i32, scrut_is_ident, res_kind, ts)
+                        && !(comp_ty != "" && iife_arm_composite_result_type(m.arms[i], opt_srt, scrut_enum, ts) == comp_ty)) { return s.fail(); }
                 }
             },
             _ => {}
@@ -19826,10 +19915,21 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     var vmangled: string = pv.type_name[0 : vdot] + "__" + pv.type_name[vdot + 1 : pv.type_name.len()];
                     if (decl_is_struct(ms.structs, vmangled)) { vname = vmangled; }
                 }
-                if (!decl_is_struct(ms.structs, vname)) { return s.fail(); }
-                if (!decl_is_leaksafe(ms.structs, vname)) { return s.fail(); }
+                // Resolve WHICH decl named `vname` this arm is about. Variant
+                // decls are keyed by the bare variant name, so two enums
+                // declaring one variant name give two decls, and the by-name
+                // accessors answer for whichever was declared first — reading
+                // the other enum's payload type and width. The arm's enum is
+                // the pattern's `Enum.` qualifier when it has one, else the
+                // scrutinee's type; everything below reads through the decl
+                // that names.
+                var vowner: string = variant_pattern_qualifier(pv.type_name);
+                if (variant_decl_index(ms.structs, vname, vowner) < 0) { vowner = expr_struct_type(m.scrutinee, ms); }
+                var vdecl: i32 = variant_pattern_decl_index(ms.structs, vname, vowner);
+                if (vdecl < 0) { return s.fail(); }
+                if (!decl_at_is_leaksafe(ms.structs, vdecl)) { return s.fail(); }
                 var has_bind: boolean = pv.binding.len() > 0 && pv.binding != "_";
-                if (has_bind && decl_field_count(ms.structs, vname) < 1) { return s.fail(); }
+                if (has_bind && decl_at_field_count(ms.structs, vdecl) < 1) { return s.fail(); }
                 ms = ms.emit(ir.op_block(0));   // arm block: br 0 = skip arm
                 ms = ms.emit(ir.op_load_local(scrut_slot));
                 ms = ms.emit(ir.op_variant_is(vname));
@@ -19854,7 +19954,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 // legacy AST emitter's `is_enum_variant` split
                 // (asm.fern:3677-3693): enum variant -> offset-8 payload,
                 // union member -> bind the box ptr itself.
-                var union_member: boolean = decl_field_type(ms.structs, vname, "__ev") == "";
+                var union_member: boolean = decl_at_field_name(ms.structs, vdecl, 0) != "__ev";
                 if (union_member) {
                     // Union member: a single binding bound to the box ptr,
                     // typed `vname` so `x.field` resolves. No struct_get /
@@ -19873,21 +19973,21 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     var bname: string = pv.binding;
                     if (bidx > 0) { bname = pv.extra_bindings[bidx - 1]; }
                     if (bname.len() > 0 && bname != "_") {
-                        var fname: string = "__ev";
-                        if (bidx > 0) { fname = "__ev" + util.i32_to_string(bidx); }
-                        var ev_ty: string = decl_field_type(ms.structs, vname, fname);
+                        // Payload fields are `__ev`, `__ev1`, … in decl order,
+                        // so the binding index IS the field index.
+                        var ev_ty: string = decl_at_field_type(ms.structs, vdecl, bidx);
                         ms = ms.add_local(bname);
                         var bslot: i32 = ms.slot_of(bname);
                         // Read the payload at its width: an i64/u64 payload uses
                         // struct_get_i64 (i64.load — u64 rides the i64 8-byte
                         // domain), everything else struct_get at the width
-                        // struct_field_width gives the field. The u64 read MUST
+                        // struct_field_at_width gives the field. The u64 read MUST
                         // match the binding's mark_u64 below (is_i64_slot →
                         // 64-bit) or the wasm backend, which has true 32/64
                         // widths, sees the i32 read feed an i64 use and fails to
                         // validate (type mismatch).
                         //
-                        // Deferring to struct_field_width rather than testing
+                        // Deferring to struct_field_at_width rather than testing
                         // "f64" here is what makes an **f32** payload read
                         // correctly: the construction side widens an f32 field to
                         // an 8-byte f64 (op_struct_new's f64.store, and the AST
@@ -19896,7 +19996,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                         // simply false. Found via the WIT f32-arm variant extern.
                         ms = ms.emit(ir.op_load_local(scrut_slot));
                         if (ev_ty == "i64" || ev_ty == "u64") { ms = ms.emit(ir.op_struct_get_i64(bidx)); }
-                        else { ms = ms.emit(ir.op_struct_get(bidx, struct_field_width(ms.structs, vname, bidx))); }
+                        else { ms = ms.emit(ir.op_struct_get(bidx, struct_field_at_width(ms.structs, vdecl, bidx))); }
                         ms = ms.emit(ir.op_store_local(bslot));
                         // Type the bound payload for downstream dispatch: a
                         // string payload (`Word(string)`) as a string; a
@@ -40146,7 +40246,7 @@ function emit_trmc(fn: parser.FuncDecl, ctor: string, sin: LowerState): LowerSta
                                     var li: i32 = 0;
                                     while (li < hslots.len()) { s = s.emit(ir.op_load_local(hslots[li])); li = li + 1; }
                                     s = s.emit(ir.op_const_i32(0));
-                                    s = s.emit(ir.op_struct_make(arm_ctor, argc));
+                                    s = s.emit(ir.op_struct_make(arm_ctor, argc, decl_index_of(s.structs, arm_ctor)));
                                     var ntmp: string = "$trmc_n" + util.i32_to_string(ai);
                                     s = s.add_local(ntmp);
                                     var nslot: i32 = s.slot_of(ntmp);
@@ -50024,7 +50124,9 @@ function eval_expand_const_structs(fns: LoweredFn[]): LoweredFn[] {
                 var words: string[] = ir.const_struct_values(o.str);
                 var wi: i32 = 0;
                 while (wi < words.len()) { ops = ops.append(ir.op_const_i32_text(words[wi])); wi = wi + 1; }
-                ops = ops.append(ir.op_struct_make(ir.const_struct_type(o.str), words.len()));
+                // The compile-time evaluator reads no field widths, so this
+                // expansion needs no decl (and has no decl table in scope).
+                ops = ops.append(ir.op_struct_make(ir.const_struct_type(o.str), words.len(), 0 - 1));
             } else {
                 ops = ops.append(o);
             }
