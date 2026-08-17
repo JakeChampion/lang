@@ -42,15 +42,21 @@ import "std/string";
 
 // `(arr: i32[]).sum()` / `.product()` — additive / multiplicative fold.
 //
-// These two are the collapse's holdouts. The generic form is
+// These two are the collapse's holdouts, blocked by TRAIT-METHOD NAMESPACING
+// rather than by anything about arrays. The generic form is
 // `(xs: T[]) sum[T: num.Add + num.Zero]() { return num.sum(xs); }`, which
-// works on native and on the self-host COMPILER, but `num.sum` reaches the
-// additive identity through `T.zero()` — a receiver-less trait function
-// called through a type parameter — and the self-host INTERPRETER cannot
-// dispatch that (`undefined method \`add\` on \`zero\``). That gap predates
-// this collapse: `num.sum(xs)` called directly fails there too. Until it is
-// fixed these stay pinned to i32[]; everything else in the reductions
-// family is element-polymorphic (see the bottom of this file).
+// needs `import "std/num"` here — and `std/string` imports this module, so
+// that puts `impl Add for i32` in the transitive closure of nearly every
+// program. A trait impl's methods land in one flat `i32.<name>` namespace,
+// so num's `Add::add` for i32 then collides with a USER trait that also
+// provides `add` for i32, and their program stops compiling with
+// `E006: method "add" on i32 redeclared` — pointing into stdlib source it
+// never imported. Two different traits providing the same method name for
+// one type is legal and should stay legal.
+//
+// Widening the numeric surface therefore has to wait for per-trait method
+// namespacing in the checker. Everything else in the reductions family is
+// element-polymorphic (see the bottom of this file).
 pub function __method_Array_sum(arr: i32[]): i32 {
     var n: i32 = arr.len();
     var total: i32 = 0;
