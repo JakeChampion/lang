@@ -2313,6 +2313,11 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       if (n.suffix == "u8") {
         return t_u8();
       }
+      // `'x'` — the lexer tags a character literal with the type name
+      // rather than a numeric suffix, since `char` has no suffix form.
+      if (n.suffix == "char") {
+        return t_char();
+      }
       return t_i32();
     },
     parser.ExprBool(_) => {

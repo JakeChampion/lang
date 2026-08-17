@@ -104,7 +104,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 // *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit.
 func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
-	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
 	case *ast.Call:
 		// A single asset is a string, so it is legal in a const
@@ -316,7 +316,7 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 }
 
 // litType returns the ast.Type that matches a folded literal. Only
-// the four scalar literal kinds appear here — everything else would
+// the scalar literal kinds appear here — everything else would
 // have been rejected as non-constant in evalConst.
 // settleConstLit checks a const's resolved literal against its declared type
 // and, when they agree, stamps the declared width onto the literal node.
@@ -404,6 +404,11 @@ func litType(e ast.Expr) ast.Type {
 		return ast.BoolType{}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.CharLit:
+		if e.(*ast.CharLit).IsByte {
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		return ast.CharType{}
 	}
 	return nil
 }
@@ -688,6 +693,8 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 		return &ast.BoolLit{P: pos, Value: v.Value}
 	case *ast.StringLit:
 		return &ast.StringLit{P: pos, Value: v.Value}
+	case *ast.CharLit:
+		return &ast.CharLit{P: pos, Value: v.Value, Raw: v.Raw, IsByte: v.IsByte}
 	}
 	return src
 }

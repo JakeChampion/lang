@@ -163,6 +163,9 @@ func cloneExpr(e ast.Expr) ast.Expr {
 	case *ast.StringLit:
 		c := *x
 		return &c
+	case *ast.CharLit:
+		c := *x
+		return &c
 	case *ast.BoolLit:
 		c := *x
 		return &c

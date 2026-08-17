@@ -26,6 +26,13 @@ const (
 	Keyword
 	String
 	FString
+	// Char is `'x'` — one Unicode scalar value, typed `char`.
+	Char
+	// Byte is `b'x'` — one byte, typed `u8`. Separate from Char
+	// because the types are: `s[i] == b'['` compares two u8s while
+	// `s[i] == '['` is a type error, which is the discipline
+	// ast.CharType exists to enforce.
+	Byte
 )
 
 func (k Kind) String() string {
@@ -46,6 +53,10 @@ func (k Kind) String() string {
 		return "String"
 	case FString:
 		return "FString"
+	case Char:
+		return "Char"
+	case Byte:
+		return "Byte"
 	}
 	return "?"
 }
@@ -77,6 +88,11 @@ type Token struct {
 	// the polymorphic-numeric flow and stamp the AST node with
 	// a fixed type directly.
 	Suffix string
+	// Scalar is the decoded value when Kind == Char or Byte: the
+	// Unicode scalar value for `'x'`, the byte for `b'x'`. Text
+	// holds the spelling as written, escapes and all, so `-fmt`
+	// re-emits `'\u{1F600}'` rather than normalising it.
+	Scalar int32
 }
 
 func (t Token) String() string {
@@ -378,6 +394,19 @@ func (l *lexer) next() (Token, error) {
 		return Token{Kind: FString, Pos: start, FParts: parts}, nil
 	}
 
+	// Byte literal `b'x'`. Checked before the identifier path for the
+	// same reason the f-string prefix is: `b` is an identifier start.
+	// No valid program has an identifier immediately followed by `'`,
+	// so the two-character lookahead is unambiguous.
+	if r == 'b' && l.i+1 < len(l.src) && l.src[l.i+1] == '\'' {
+		return l.scanQuoted(start, true)
+	}
+
+	// Character literal `'x'`.
+	if r == '\'' {
+		return l.scanQuoted(start, false)
+	}
+
 	// Identifier or keyword.
 	if asciiIdentStart(r) {
 		begin := l.i
@@ -587,6 +616,169 @@ func (l *lexer) badCharError(start ast.Position) error {
 		return &Error{Pos: start, Msg: fmt.Sprintf("identifiers must be ASCII; found %q", r)}
 	}
 	return &Error{Pos: start, Msg: fmt.Sprintf("unexpected character %q", r)}
+}
+
+// scanQuoted reads a character literal `'x'` (isByte false) or a byte
+// literal `b'x'` (isByte true), positioned at the `'` or the `b`. It
+// returns a Char / Byte token whose Scalar is the decoded value and
+// whose Text is the source spelling, quotes and escapes included.
+//
+// Everything a literal cannot mean is rejected here rather than left
+// for the parser: one with nothing between the quotes, more than one
+// scalar / byte, a non-ASCII `b'é'` (a byte literal has to fit in u8),
+// and an unterminated one.
+func (l *lexer) scanQuoted(start ast.Position, isByte bool) (Token, error) {
+	begin := l.i
+	kindName := "character"
+	if isByte {
+		kindName = "byte"
+		l.advance() // `b`
+	}
+	l.advance() // opening '
+	if l.i >= len(l.src) {
+		return Token{}, &Error{Pos: start, Msg: "unterminated " + kindName + " literal"}
+	}
+	c := l.src[l.i]
+	switch c {
+	case '\'':
+		l.advance()
+		return Token{}, &Error{Pos: start, Msg: "empty " + kindName + " literal"}
+	case '\n':
+		return Token{}, &Error{Pos: start, Msg: "newline inside " + kindName + " literal"}
+	}
+
+	var val int32
+	switch {
+	case c == '\\':
+		v, err := l.scanQuotedEscape(start, isByte, kindName)
+		if err != nil {
+			return Token{}, err
+		}
+		val = v
+	case isByte:
+		if c >= utf8.RuneSelf {
+			r, _ := utf8.DecodeRuneInString(l.src[l.i:])
+			return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("byte literal must be ASCII; %q is a Unicode scalar, so write it as a character literal", r)}
+		}
+		val = int32(c)
+		l.advance()
+	default:
+		r, size := utf8.DecodeRuneInString(l.src[l.i:])
+		if r == utf8.RuneError && size <= 1 {
+			return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid UTF-8 byte 0x%02X in character literal", c)}
+		}
+		for k := 0; k < size; k++ {
+			l.advance()
+		}
+		val = int32(r)
+	}
+
+	if l.i >= len(l.src) || l.src[l.i] != '\'' {
+		unit := "character"
+		if isByte {
+			unit = "byte"
+		}
+		if l.closingQuoteAhead() {
+			return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("%s literal must hold exactly one %s", kindName, unit)}
+		}
+		return Token{}, &Error{Pos: start, Msg: "unterminated " + kindName + " literal"}
+	}
+	l.advance() // closing '
+	kind := Char
+	if isByte {
+		kind = Byte
+	}
+	return Token{Kind: kind, Text: l.src[begin:l.i], Pos: start, Scalar: val}, nil
+}
+
+// closingQuoteAhead reports whether a `'` closes the literal later on
+// this line, which separates a too-long literal (`'ab'`) from an
+// unterminated one (`'ab`) so each gets the message that names its
+// actual problem.
+func (l *lexer) closingQuoteAhead() bool {
+	for j := l.i; j < len(l.src) && l.src[j] != '\n'; j++ {
+		if l.src[j] == '\'' {
+			return true
+		}
+	}
+	return false
+}
+
+// scanQuotedEscape decodes the escape at the current `\`, which it
+// consumes along with the escape body.
+//
+// `\u{...}` is a Unicode scalar, so it is accepted only in a character
+// literal; `\xNN` reaches the full byte range in a byte literal but
+// stops at 0x7F in a character literal, where anything above ASCII has
+// two plausible readings (the byte, or the scalar with that value) and
+// `\u{...}` says which unambiguously.
+func (l *lexer) scanQuotedEscape(start ast.Position, isByte bool, kindName string) (int32, error) {
+	l.advance() // backslash
+	if l.i >= len(l.src) {
+		return 0, &Error{Pos: start, Msg: "unterminated " + kindName + " literal"}
+	}
+	esc := l.src[l.i]
+	l.advance()
+	switch esc {
+	case 'n':
+		return '\n', nil
+	case 't':
+		return '\t', nil
+	case 'r':
+		return '\r', nil
+	case '0':
+		return 0, nil
+	case '\\':
+		return '\\', nil
+	case '\'':
+		return '\'', nil
+	case '"':
+		return '"', nil
+	case 'x':
+		if l.i+1 >= len(l.src) || !isHexDigit(rune(l.src[l.i])) || !isHexDigit(rune(l.src[l.i+1])) {
+			return 0, &Error{Pos: start, Msg: "\\x escape needs two hex digits"}
+		}
+		v := int32(hexVal(rune(l.src[l.i]))<<4 | hexVal(rune(l.src[l.i+1])))
+		l.advance()
+		l.advance()
+		if !isByte && v > 0x7F {
+			return 0, &Error{Pos: start, Msg: fmt.Sprintf("\\x%02X is above ASCII in a character literal; write \\u{%X} for the scalar", v, v)}
+		}
+		return v, nil
+	case 'u':
+		if isByte {
+			return 0, &Error{Pos: start, Msg: "\\u{...} is a Unicode scalar; a byte literal takes \\xNN"}
+		}
+		if l.i >= len(l.src) || l.src[l.i] != '{' {
+			return 0, &Error{Pos: start, Msg: "\\u escape needs braces: \\u{1F600}"}
+		}
+		l.advance() // {
+		digits := 0
+		v := int32(0)
+		for l.i < len(l.src) && isHexDigit(rune(l.src[l.i])) {
+			if digits == 6 {
+				return 0, &Error{Pos: start, Msg: "\\u{...} takes at most 6 hex digits"}
+			}
+			v = v<<4 | int32(hexVal(rune(l.src[l.i])))
+			digits++
+			l.advance()
+		}
+		if digits == 0 {
+			return 0, &Error{Pos: start, Msg: "\\u{...} needs at least one hex digit"}
+		}
+		if l.i >= len(l.src) || l.src[l.i] != '}' {
+			return 0, &Error{Pos: start, Msg: "unterminated \\u{...} escape"}
+		}
+		l.advance() // }
+		if v > 0x10FFFF {
+			return 0, &Error{Pos: start, Msg: fmt.Sprintf("\\u{%X} is above the maximum Unicode scalar 10FFFF", v)}
+		}
+		if v >= 0xD800 && v <= 0xDFFF {
+			return 0, &Error{Pos: start, Msg: fmt.Sprintf("\\u{%X} is a surrogate, not a Unicode scalar value", v)}
+		}
+		return v, nil
+	}
+	return 0, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c in %s literal", rune(esc), kindName)}
 }
 
 // scanFString consumes the body of an f-string starting at the

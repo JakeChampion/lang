@@ -23,7 +23,7 @@ it cannot be read, cited in a bug report, or implemented against.
 Following Go and ECMA-262, the lexical and syntactic grammars are
 separate. `grammar.ebnf` is the **syntactic** grammar and its terminals
 are tokens, not characters. The **lexical** grammar is
-`internal/lexer`, which produces exactly eight token kinds:
+`internal/lexer`, which produces exactly ten token kinds:
 
 | Kind | Written in `grammar.ebnf` as |
 | --- | --- |
@@ -31,6 +31,8 @@ are tokens, not characters. The **lexical** grammar is
 | `Number` | `NUMBER` — decimal or `0x` hex, optional `i32`/`i64`/`u8`/`u32`/`u64` suffix |
 | `Float` | `FLOAT` — optional `f32`/`f64` suffix |
 | `String` | `STRING` |
+| `Char` | `CHAR` — `'x'`, one Unicode scalar value |
+| `Byte` | `BYTE` — `b'x'`, one byte |
 | `FString` | `FSTRING` — the lexer splits the body into literal and interpolant parts |
 | `Keyword` | a quoted literal, e.g. `'function'` |
 | `Punct` | a quoted literal, e.g. `'|>'` |

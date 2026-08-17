@@ -11542,6 +11542,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.VoidType{}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.CharLit:
+		// Neither form is polymorphic: `'x'` is a `char` and `b'x'` a
+		// `u8`, full stop. That is what makes `s[i] == b'['` check and
+		// `s[i] == '['` an error — a numeric literal would settle to
+		// whatever the other operand is and erase the distinction.
+		if n.IsByte {
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		return ast.CharType{}
 	case *ast.FString:
 		// Build the desugared `+`-chain right here so method-call
 		// dispatch on each `.to_string()` gets resolved via the

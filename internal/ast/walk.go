@@ -96,7 +96,7 @@ func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
 // its rewritten form. Mirrors walkChildren's expression coverage.
 func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 	switch x := n.(type) {
-	case *NumberLit, *BoolLit, *StringLit, *FloatLit, *Ident, *CaptureRef:
+	case *NumberLit, *BoolLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
 		// leaves
 	case *CastExpr:
 		x.Inner = rewriteExpr(x.Inner, fn)
@@ -302,7 +302,7 @@ func walkChildren(n Node, fn func(Node) bool) {
 	switch x := n.(type) {
 
 	// ---------- Expressions with no Expr children ----------
-	case *NumberLit, *BoolLit, *StringLit, *FloatLit, *Ident, *CaptureRef:
+	case *NumberLit, *BoolLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
 		// leaves
 
 	// ---------- Expressions ----------

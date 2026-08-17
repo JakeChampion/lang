@@ -266,10 +266,16 @@ measured because it is not the current bottleneck.
 
 ### 3.3 Character literals
 
-`'['` is a lexer error, so byte constants are decimal: 342 of them. `s[0]`
-yields `u8` and comparing it to an i32-inferred local is E041, so the tree
-carries 311 `as i32` casts (3,275 casts total). `char` exists as a *type* — with
-no literal syntax and no producers. The cheapest high-value fix on this list.
+**The syntax landed (#6991):** `'x'` is a `char` and `b'x'` is a `u8`, on both
+compilers. The split is the point — `s[0]` yields `u8`, so byte-level code
+compares against `b'['` while `'['` stays a scalar and neither converts to the
+other or to i32 without a cast.
+
+What has not moved is the tree itself: the **342** decimal byte comparisons and
+the share of the **311** `as i32` casts they force are still written out, and
+converting them is a separate mechanical pass. The `char`-typed stdlib
+accessors (#5629 slice 5's deferred half) are still open too — the literal is
+`char`'s first producer in user code, not in the stdlib.
 
 ### 3.4 Multi-return / cheap tuples
 
@@ -469,9 +475,9 @@ Ordered by (unblocking value) ÷ (cost), not by size.
    the enclosing file in `parseExprFromText`, mirror in `lexer.fern`. Unblocks
    trusting any diagnostic inside an f-string, and removes a reason to keep
    writing `+` chains.
-2. **Character literals** (§3.3). Days. Deletes 342 magic constants and a large
-   share of 311 `as i32` casts on sight, and gives the already-shipped `char`
-   type its first producer.
+2. ~~**Character literals** (§3.3)~~ — the syntax is in (#6991), on both
+   compilers. What remains is the mechanical pass that converts the 342 magic
+   constants and the `as i32` casts they force.
 3. **Poison, don't delete, a failed `var` binding** (§4.2). Small, and removes a
    paper cut that has shaped self-host style. The derive hints (§4.3) and the
    dead `unknownTypeHint` branches (§4.4) were the same size and are done.

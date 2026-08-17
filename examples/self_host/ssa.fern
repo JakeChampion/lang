@@ -1502,7 +1502,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                 var ot: i32 = opt_tag(pv.type_name);
                 var tag: i32 = ot;
                 if (ot < 0) { tag = find_struct_index(structs, pv.type_name); }
-                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: int_str(tag), suffix: "", is_float: false, line: 0, col: 0 } };
+                var cond: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "==", left: parser.ExprIdent { name: "$tag", line: 0, col: 0 }, right: parser.ExprNumber { text: int_str(tag), suffix: "", raw: "", is_float: false, line: 0, col: 0 } };
                 var then_body: parser.Stmt[] = [];
                 if (pv.binding.len() > 0 && pv.binding != "_") {
                     var binit: parser.Expr = parser.ExprIdent { name: "$scrut", line: 0, col: 0 };
@@ -1594,14 +1594,14 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     // var $iN = 0 - 1;   (sentinel: the top-of-body increment yields 0 first)
     var decl_i: parser.Stmt = parser.StmtVar { name: i_name, type_name: "",
         init: parser.ExprBinary { line: 0, col: 0, op: "-",
-            left: parser.ExprNumber { text: "0", suffix: "", is_float: false, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
+            left: parser.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 },
+            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, is_str: false };
 
     // guard: $iN + 1 < $arrN.len()
     var guard: parser.Expr = parser.ExprBinary { line: 0, col: 0, op: "<",
         left: parser.ExprBinary { line: 0, col: 0, op: "+",
             left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } },
+            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } },
         right: parser.ExprCall {
             callee: parser.ExprFieldAccess { obj: parser.ExprIdent { name: arr_name, line: 0, col: 0 }, field: "len", line: 0, col: 0, ty: "" },
             args: [], line: 0, col: 0, type_argc: 0, ty: "" } };
@@ -1610,7 +1610,7 @@ function build_for(fr: parser.StmtFor, s: BState): BState {
     var incr: parser.Stmt = parser.StmtAssign { target: i_name,
         value: parser.ExprBinary { line: 0, col: 0, op: "+",
             left: parser.ExprIdent { name: i_name, line: 0, col: 0 },
-            right: parser.ExprNumber { text: "1", suffix: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
+            right: parser.ExprNumber { text: "1", suffix: "", raw: "", is_float: false, line: 0, col: 0 } }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var wbody: parser.Stmt[] = [incr];
     // `for (k, v) in m` — the parser joins the two names as "k,v". A comma in
     // the loop variable means map iteration: bind each via __ssa_map_key_at /

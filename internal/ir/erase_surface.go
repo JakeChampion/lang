@@ -45,9 +45,9 @@ func eraseSurfaceTypes(prog *ast.Program, info *checker.Info) {
 		case *ast.CastExpr:
 			// Type slots inside an EXPRESSION, not just a declaration.
 			// `str` never needed this (nothing casts to a view), but a
-			// cast is the only way to produce a `char`, so leaving these
-			// unerased hands the backends a `cast from char to i32`
-			// they have no lowering for.
+			// `char` is routinely cast in both directions, so leaving
+			// these unerased hands the backends a `cast from char to
+			// i32` they have no lowering for.
 			x.Target = eraseStr(x.Target)
 			x.InnerType = eraseStr(x.InnerType)
 		case *ast.ArrayLit:

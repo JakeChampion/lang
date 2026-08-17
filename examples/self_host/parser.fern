@@ -34,7 +34,12 @@ import "./lexer";
 // Ident / Binary / Call); this port collapses similar shapes into
 // fewer variants to keep the union member count tractable.
 
-pub struct ExprNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
+// `raw` is the source spelling of a quoted literal — `'x'` (a `char`,
+// suffix "char") or `b'x'` (a `u8`, suffix "u8"). The lexer decodes the
+// scalar into `text` as a decimal numeral, so every consumer of a
+// suffixed integer literal reads them unchanged and only the printer
+// needs the spelling back. Empty for an ordinary number.
+pub struct ExprNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
 pub struct ExprIdent { name: string, line: i32, col: i32 }
 pub struct ExprString { value: string, line: i32, col: i32 }
 pub struct ExprBool { value: boolean }
@@ -519,10 +524,13 @@ function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
 // rule. Same pattern lexer.fern uses for Token construction.
 
 function e_number(text: string, suffix: string, is_float: boolean): Expr {
-    return ExprNumber { text: text, suffix: suffix, is_float: is_float, line: 0, col: 0 };
+    return ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: 0, col: 0 };
 }
 function e_number_at(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Expr {
-    return ExprNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
+    return ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: line, col: col };
+}
+function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: i32): Expr {
+    return ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
 function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, col: 0 }; }
 function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col }; }
@@ -2070,6 +2078,9 @@ function parse_primary(p: Par): (Expr, Par) {
             }
             // Route through parse_postfix so a numeric primary can
             // carry a trailing `as Type` cast (e.g. `15 as u8`).
+            if (x.raw.len() > 0) {
+                return parse_postfix(p, e_quoted_at(x.text, x.suffix, x.raw, nline, ncol));
+            }
             return parse_postfix(p, e_number_at(x.text, x.suffix, x.is_float, nline, ncol));
         },
         lexer.TokString(x) => {
@@ -16260,7 +16271,7 @@ function settle_float_expr(e: Expr): Expr {
     if (!is_unsettled_int_literal(e)) { return e; }
     match (e) {
         ExprNumber(n) => {
-            return ExprNumber { text: n.text, suffix: n.suffix, is_float: true, line: n.line, col: n.col };
+            return ExprNumber { text: n.text, suffix: n.suffix, raw: n.raw, is_float: true, line: n.line, col: n.col };
         },
         ExprUnary(u) => {
             return ExprUnary { op: u.op, operand: settle_float_expr(u.operand), line: u.line, col: u.col };

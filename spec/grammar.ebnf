@@ -3,7 +3,7 @@
 # This is a PEG over the TOKEN stream, not over characters: `|` is
 # ORDERED choice (first match wins) and `{ }` is greedy and possessive.
 # See spec/README.md for why, and for the lexical grammar that produces
-# the terminals IDENT / NUMBER / FLOAT / STRING / FSTRING.
+# the terminals IDENT / NUMBER / FLOAT / STRING / FSTRING / CHAR / BYTE.
 #
 # The first rule is the start symbol. Every rule is reachable from it and
 # none is left-recursive; both are enforced.
@@ -210,7 +210,7 @@ VariantPattern
 LiteralPattern
             = LiteralValue [ ( '..=' | '..' ) LiteralValue ] ;
 LiteralValue
-            = [ '-' ] ( NUMBER | FLOAT ) | STRING | 'true' | 'false' ;
+            = [ '-' ] ( NUMBER | FLOAT ) | STRING | CHAR | BYTE | 'true' | 'false' ;
 BindingPattern
             = QualName | '_' ;
 QualName    = PrimitiveType '.' IDENT { '.' IDENT }
@@ -278,6 +278,8 @@ Primary     = NUMBER
             | FLOAT
             | STRING
             | FSTRING
+            | CHAR
+            | BYTE
             | 'true'
             | 'false'
             | IfExpr

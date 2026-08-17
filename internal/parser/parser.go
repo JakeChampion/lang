@@ -3536,12 +3536,12 @@ func (p *parser) parseTypeArgList() ([]ast.Type, error) {
 
 // isLiteralPatternStart reports whether the token at hand opens
 // a literal pattern in match-arm position — a NumberLit,
-// FloatLit, StringLit, or the `true` / `false` keywords. Variant
-// names live in lexer.Ident space and are handled by the
+// FloatLit, StringLit, CharLit, or the `true` / `false` keywords.
+// Variant names live in lexer.Ident space and are handled by the
 // surrounding parseMatchArm branch.
 func isLiteralPatternStart(t lexer.Token) bool {
 	switch t.Kind {
-	case lexer.Number, lexer.Float, lexer.String:
+	case lexer.Number, lexer.Float, lexer.String, lexer.Char, lexer.Byte:
 		return true
 	}
 	if t.Kind == lexer.Keyword && (t.Text == "true" || t.Text == "false") {
@@ -6150,6 +6150,13 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.String:
 		p.advance()
 		return &ast.StringLit{P: t.Pos, Value: t.Text}, nil
+	case lexer.Char, lexer.Byte:
+		// The lexer has already decoded the escape and rejected every
+		// spelling that is not exactly one scalar / byte, so there is
+		// nothing left to validate here. Text is the source spelling,
+		// kept so `-fmt` re-emits what the author wrote.
+		p.advance()
+		return &ast.CharLit{P: t.Pos, Value: int64(t.Scalar), Raw: t.Text, IsByte: t.Kind == lexer.Byte}, nil
 	case lexer.FString:
 		p.advance()
 		// Build the AST node by sub-parsing each interpolant Expr

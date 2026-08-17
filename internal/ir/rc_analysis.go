@@ -1619,7 +1619,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return false
 	case *ast.Ident:
 		return tainted[x.Name]
-	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit:
+	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.CharLit:
 		// A scalar literal aliases nothing, so a fresh owned result whose only
 		// "borrowed" input is a literal arg is reclaimable — e.g.
 		// int_to_string's `__alloc_u8(16)` buffer, or split's literal-length
