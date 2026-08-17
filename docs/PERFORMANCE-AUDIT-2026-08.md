@@ -694,15 +694,40 @@ half of the case is a linear scan an index removes, not a comparison an id
 removes. Interning would leave the ~4,600-entry walk in place and only make each
 step cheaper.
 
-**The fix is the one #6948 and #6953 already established**: a chained name index
-(`head` / `next` over the existing array, the `checker.SigTable` idiom) so each
-predicate walks one bucket. It must be a chain and not a single slot — both
-predicates today keep scanning past a name match and return true if ANY
-same-named decl satisfies the extra conditions, so the index has to preserve
-every entry for a key, in array order. The index belongs ON the threaded value
-rather than beside it: `mfuncs: parser.FuncDecl[]` is passed through ~40 lift-pass
-signatures, so adding a parallel parameter is the side-channel the engineering bar
-forbids — carry the decls and their index in one struct instead.
+**The fix was the one #6948 and #6953 already established — done in #7008**: a
+chained name index (`head` / `next` over the existing array, the
+`checker.SigTable` idiom) so each predicate walks one bucket, built once where
+`lift_lambdas_view` settles `sigs` (it is fixed before the drain and unchanged
+across its rounds). Three things the code forced rather than invited:
+
+- It is a chain and not a single slot: both predicates keep looking past a name
+  match and answer true if ANY same-named decl satisfies the remaining
+  conditions, so collapsing a name to one entry would change the verdict.
+- The index rides ON the threaded value. `mfuncs` is a parameter of **45**
+  lift-pass signatures, so a parallel index parameter is the side channel the
+  engineering bar forbids; `MFuncs { decls, head, next }` replaces the bare
+  `FuncDecl[]` and arity is unchanged everywhere.
+- `hoist_escaping_closure`'s list is `sigs` plus the current worklist entry's
+  lifted functions, so it grows per entry. `mfuncs_extend` indexes only the extra
+  decls — re-seeding 4093 heads per entry would cost more than the scan it
+  replaces.
+
+| | before | after |
+|---|---|---|
+| `lift_callee_*` + their `strcmp` | 74 / 400 samples | **0 / 400**, absent |
+| self-compile wall | 2 m 10.9 s | **2 m 3.3 s** |
+| self-compile user | 82.2 s | **77.1 s** (−6.2%) |
+
+Byte-identical on `checker.fern` and on the whole self-compile.
+
+**And the instrument caveat is the part to carry forward: 18.5% of samples was
+worth 6% of the clock.** The predicates really are gone from the profile, so the
+attribution was not wrong about WHERE the work was — it was wrong about HOW MUCH.
+400 gdb samples over-attributed by ~3x, which is §4b's lesson recurring: leaf
+shares locate a cost reliably and size it badly. Size the prize from an A/B
+clock, not from the sample count. `__fern_strcmp` remains the top leaf (85 → 73
+of 400) with its callers now spread across `dyn_reclaim_concrete_of`, the
+`Scope.lookup_*` family and `util.has_str`, no single site dominant.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
