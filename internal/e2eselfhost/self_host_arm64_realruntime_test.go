@@ -80,8 +80,8 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			// `p = arm64_gas_link(p, …)` rebind and crashes the signature hash.
 			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
 			sb.WriteString("    var pa: Arm64Asm = p.asm;\n")
-			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len());\n")
-			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len());\n")
+			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
+			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
 			sb.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 			sb.WriteString("    var pa2: Arm64Asm = p.asm;\n")
 			sb.WriteString("    var bin: i32[] = macho_executable(pa2.code, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")

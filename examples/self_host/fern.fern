@@ -2196,8 +2196,8 @@ function run(): i32 {
                 return 2;
             }
             var pa: arm64_native.Arm64Asm = prog.asm;
-            var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), prog.data.len());
-            var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len());
+            var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), prog.data.len(), prog.bss_size);
+            var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len(), prog.bss_size);
             prog = arm64_native.arm64_gas_link(prog, tv, dv);
             if (prog.unknown.len() > 0) {
                 var _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
