@@ -154,9 +154,11 @@ func TestSelfHostArgAtIRArm64(t *testing.T) {
 }
 
 // TestSelfHostArgAtIRWasm runs the same shapes through the self-hosted wasm IR
-// driver. wasm strings are [len:i32][bytes] blocks rather than the register
-// backends' rc-headered {data,len} box, so $__fern_arg_at builds the block
-// directly and needs no _rc split. Arguments reach the module through
+// driver. A wasm string is a [len:i32][bytes] block rather than the register
+// backends' {data,len} box, but it is rc-headered just the same — $__fern_str_box
+// prepends rc+bsz and returns base+8 — so $__fern_arg_at must BOX its result
+// rather than hand back a raw __fern_alloc block, which is what it used to do.
+// Arguments reach the module through
 // wasmtime's `--` passthrough, which is what wasi args_get reads.
 func TestSelfHostArgAtIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
