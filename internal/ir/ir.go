@@ -6729,60 +6729,130 @@ func isTupleMatchExprArms(arms []*ast.MatchExprArm) bool {
 // The pointer is BORROWED (no inc, no free), mirroring the enum-match
 // heap-form scrutinee; bindings extracted on the matched path are
 // borrows of the box's elements the same way enum payload bindings are.
-func (b *builder) tupleMatchPrep(tag ast.Expr, elems []ast.Type) (ptrSlot int32, offs []int32, elemName []string, err error) {
-	ptrSlot = b.allocSlot()
-	b.locals[fmt.Sprintf("__tup_match_p_%d", ptrSlot)] = ptrSlot
+func (b *builder) tupleMatchPrep(tag ast.Expr, elems []ast.Type) (*tupMatch, error) {
+	tm := &tupMatch{elems: elems, scratch: map[string]string{}}
+	tm.ptrSlot = b.allocSlot()
+	b.locals[fmt.Sprintf("__tup_match_p_%d", tm.ptrSlot)] = tm.ptrSlot
 	if err := b.expr(tag); err != nil {
-		return 0, nil, nil, err
+		return nil, err
 	}
-	b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
-	offs, _ = tupleElemLayout(elems, b.ptrW)
-	elemName = make([]string, len(elems))
-	return ptrSlot, offs, elemName, nil
+	b.emit(Op{Kind: OpStoreLocal, I32: tm.ptrSlot})
+	tm.offs, _ = tupleElemLayout(elems, b.ptrW)
+	return tm, nil
+}
+
+// tupMatch is the lowering state shared by a tuple match's arms: the
+// borrowed scrutinee pointer, the top-level element layout, and the
+// literal-comparison scratch locals, reused across arms that address the
+// same value.
+type tupMatch struct {
+	ptrSlot int32
+	offs    []int32
+	elems   []ast.Type
+	scratch map[string]string // tupPathKey → scratch local name
+}
+
+// tupPathStep is one hop from the scrutinee pointer to a value inside the
+// tuple box: add off, then load with t's width. A top-level element is one
+// hop; a nested tuple's element and a variant element's payload are two, and
+// nesting adds one per level. Addressing every position through the same
+// path removes the per-shape load chains the flat form needed.
+type tupPathStep struct {
+	off int32
+	t   ast.Type
+}
+
+// tupPath appends a step to prefix without aliasing it — sibling elements
+// share a prefix, so appending in place would let one element's step
+// overwrite the next one's.
+func tupPath(prefix []tupPathStep, off int32, t ast.Type) []tupPathStep {
+	out := make([]tupPathStep, len(prefix), len(prefix)+1)
+	copy(out, prefix)
+	return append(out, tupPathStep{off: off, t: t})
+}
+
+// tupPathKey identifies a path for the scratch-local cache.
+func tupPathKey(path []tupPathStep) string {
+	var sb strings.Builder
+	for _, st := range path {
+		fmt.Fprintf(&sb, "/%d", st.off)
+	}
+	return sb.String()
+}
+
+// emitTupPath emits path's load chain, leaving the addressed value on the
+// operand stack. Every hop is a pure read of the borrowed tuple box.
+func (b *builder) emitTupPath(ptrSlot int32, path []tupPathStep) {
+	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+	for _, st := range path {
+		b.emit(Op{Kind: OpConstI32, I32: st.off})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOpFor(st.t, b.ptrW))
+	}
 }
 
 // tupleMatchElemIdent returns (lazily creating) a synthetic typed
-// scratch local holding element k of the scrutinee, for use as the left
+// scratch local holding the value at path, for use as the left
 // side of a literal-comparison Binary — the exact emitLiteralMatch
 // scrutinee-slot shape, which settles string (OpStrEq) / float compares
 // uniformly, including the two-word string ABI.
-func (b *builder) tupleMatchElemIdent(ptrSlot int32, offs []int32, elems []ast.Type, elemName []string, k int) string {
-	if elemName[k] != "" {
-		return elemName[k]
+func (b *builder) tupleMatchElemIdent(tm *tupMatch, path []tupPathStep) string {
+	key := tupPathKey(path)
+	if name := tm.scratch[key]; name != "" {
+		return name
 	}
 	s := b.allocSlot()
 	name := fmt.Sprintf("__tup_match_e_%d", s)
 	b.locals[name] = s
-	b.scratchType[s] = elems[k]
-	elemName[k] = name
-	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: offs[k]})
-	b.emit(Op{Kind: OpAdd})
-	b.emit(payloadLoadOpFor(elems[k], b.ptrW))
+	b.scratchType[s] = path[len(path)-1].t
+	tm.scratch[key] = name
+	b.emitTupPath(tm.ptrSlot, path)
 	b.emit(Op{Kind: OpStoreLocal, I32: s})
 	return name
 }
 
 // tupleMatchArmTest emits the arm's element test, leaving one i32 boolean on
 // the operand stack, and reports whether it emitted anything at all (false =
-// irrefutable arm, every element a binder or `_`).
+// irrefutable arm, every element a binder or `_` at every depth).
 //
 // Literal elements go through an AST `==` (tupleMatchArmCond) so the
 // comparison settles the way emitLiteralMatch's does — OpStrEq for strings,
 // float compares, the two-word string ABI. A variant element has no AST
 // spelling: it is a tag load at offset 0 of the element pointer. The two
 // halves are combined with a non-short-circuiting OpAnd, which is sound
-// because every element test is a pure read of the borrowed tuple box.
-func (b *builder) tupleMatchArmTest(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) (bool, error) {
+// because every element test is a pure read of the borrowed tuple box. Both
+// walks recurse through nested tuple elements, so a literal or a tag test at
+// any depth folds into the same condition.
+func (b *builder) tupleMatchArmTest(arm ast.Position, tupleElems []ast.TuplePatElem, tm *tupMatch) (bool, error) {
 	emitted := false
-	if cond := b.tupleMatchArmCond(arm, tupleElems, ptrSlot, offs, elems, elemName); cond != nil {
+	if cond := b.tupleMatchArmCond(arm, tupleElems, tm, tm.elems, tm.offs, nil); cond != nil {
 		if err := b.expr(cond); err != nil {
 			return false, err
 		}
 		emitted = true
 	}
+	return b.tupleMatchTagTests(tupleElems, tm, tm.elems, tm.offs, nil, emitted)
+}
+
+// tupleMatchTagTests emits the raw tag test for every variant element at this
+// level and, recursively, inside every nested tuple element. emitted tracks
+// whether a boolean is already on the stack, so each new test folds in with
+// OpAnd; the return says whether one is there when the walk finishes.
+func (b *builder) tupleMatchTagTests(tupleElems []ast.TuplePatElem, tm *tupMatch, elems []ast.Type, offs []int32, prefix []tupPathStep, emitted bool) (bool, error) {
 	for k, el := range tupleElems {
-		if el.VariantName == "" || k >= len(elems) || k >= len(offs) {
+		if k >= len(elems) || k >= len(offs) {
+			continue
+		}
+		if el.Nested != nil {
+			noffs, _ := tupleElemLayout(el.NestedTypes, b.ptrW)
+			var err error
+			emitted, err = b.tupleMatchTagTests(el.Nested, tm, el.NestedTypes, noffs, tupPath(prefix, offs[k], elems[k]), emitted)
+			if err != nil {
+				return false, err
+			}
+			continue
+		}
+		if el.VariantName == "" {
 			continue
 		}
 		et, isEnum := elems[k].(ast.EnumType)
@@ -6793,10 +6863,7 @@ func (b *builder) tupleMatchArmTest(arm ast.Position, tupleElems []ast.TuplePatE
 		if !ok {
 			return false, fmt.Errorf("ir: tuple pattern references unknown variant %q", el.VariantName)
 		}
-		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
-		b.emit(Op{Kind: OpAdd})
-		b.emit(payloadLoadOpFor(elems[k], b.ptrW))
+		b.emitTupPath(tm.ptrSlot, tupPath(prefix, offs[k], elems[k]))
 		b.emit(Op{Kind: OpMatchTag})
 		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
 		b.emit(Op{Kind: OpEq})
@@ -6809,27 +6876,40 @@ func (b *builder) tupleMatchArmTest(arm ast.Position, tupleElems []ast.TuplePatE
 }
 
 // tupleMatchArmCond builds the arm's literal-element condition as an
-// AST expression (nil when no element is a literal).
-func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) ast.Expr {
+// AST expression (nil when no element is a literal), recursing into nested
+// tuple elements so a literal at any depth joins the same `&&` chain.
+func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatElem, tm *tupMatch, elems []ast.Type, offs []int32, prefix []tupPathStep) ast.Expr {
 	var cond ast.Expr
+	and := func(eq ast.Expr) {
+		if cond == nil {
+			cond = eq
+		} else {
+			cond = &ast.Binary{P: arm, Op: "&&", Left: cond, Right: eq}
+		}
+	}
 	for k, el := range tupleElems {
-		if el.Literal == nil || k >= len(elems) {
+		if k >= len(elems) || k >= len(offs) {
 			continue
 		}
-		name := b.tupleMatchElemIdent(ptrSlot, offs, elems, elemName, k)
-		eq := &ast.Binary{
+		if el.Nested != nil {
+			noffs, _ := tupleElemLayout(el.NestedTypes, b.ptrW)
+			if sub := b.tupleMatchArmCond(arm, el.Nested, tm, el.NestedTypes, noffs, tupPath(prefix, offs[k], elems[k])); sub != nil {
+				and(sub)
+			}
+			continue
+		}
+		if el.Literal == nil {
+			continue
+		}
+		name := b.tupleMatchElemIdent(tm, tupPath(prefix, offs[k], elems[k]))
+		and(&ast.Binary{
 			P:           arm,
 			Op:          "==",
 			Left:        &ast.Ident{P: arm, Name: name},
 			Right:       el.Literal,
 			IsStringCmp: isStringType(elems[k]),
 			IsFloat:     isFloatType(elems[k]),
-		}
-		if cond == nil {
-			cond = eq
-		} else {
-			cond = &ast.Binary{P: arm, Op: "&&", Left: cond, Right: eq}
-		}
+		})
 	}
 	return cond
 }
@@ -6840,15 +6920,34 @@ func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatE
 // undoes any cross-shape temporary name remaps (#4510, see
 // bindingSlotScoped) — callers invoke it right after lowering the arm
 // body.
-func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) func() {
-	restores := []func(){}
+func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, tm *tupMatch) func() {
+	var restores []func()
+	b.tupleMatchBindLevel(tupleElems, bindingTypes, tm, tm.offs, nil, &restores)
+	return func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
+	}
+}
+
+// tupleMatchBindLevel binds one level of a tuple pattern, recursing into
+// nested tuple elements. A binder is a one-hop path from the scrutinee
+// pointer, a variant element's payload a two-hop one, and each nesting level
+// adds a hop — all three go through the same emitTupPath.
+func (b *builder) tupleMatchBindLevel(tupleElems []ast.TuplePatElem, types []ast.Type, tm *tupMatch, offs []int32, prefix []tupPathStep, restores *[]func()) {
 	for k, el := range tupleElems {
 		if k >= len(offs) {
 			continue
 		}
 		elT := ast.Type(ast.NumberType{})
-		if k < len(bindingTypes) && bindingTypes[k] != nil {
-			elT = bindingTypes[k]
+		if k < len(types) && types[k] != nil {
+			elT = types[k]
+		}
+		path := tupPath(prefix, offs[k], elT)
+		if el.Nested != nil {
+			noffs, _ := tupleElemLayout(el.NestedTypes, b.ptrW)
+			b.tupleMatchBindLevel(el.Nested, el.NestedTypes, tm, noffs, path, restores)
+			continue
 		}
 		if el.VariantName != "" {
 			// The element is an enum box; its payloads sit at the same
@@ -6860,14 +6959,8 @@ func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes 
 					bt = el.VariantBindingTypes[i]
 				}
 				slot, restore := b.bindingSlotScoped(name, bt)
-				restores = append(restores, restore)
-				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-				b.emit(Op{Kind: OpConstI32, I32: offs[k]})
-				b.emit(Op{Kind: OpAdd})
-				b.emit(payloadLoadOpFor(elT, b.ptrW))
-				b.emit(Op{Kind: OpConstI32, I32: poffs[i]})
-				b.emit(Op{Kind: OpAdd})
-				b.emit(payloadLoadOpFor(bt, b.ptrW))
+				*restores = append(*restores, restore)
+				b.emitTupPath(tm.ptrSlot, tupPath(path, poffs[i], bt))
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 			continue
@@ -6876,17 +6969,9 @@ func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes 
 			continue
 		}
 		slot, restore := b.bindingSlotScoped(el.Name, elT)
-		restores = append(restores, restore)
-		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
-		b.emit(Op{Kind: OpAdd})
-		b.emit(payloadLoadOpFor(elT, b.ptrW))
+		*restores = append(*restores, restore)
+		b.emitTupPath(tm.ptrSlot, path)
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
-	}
-	return func() {
-		for i := len(restores) - 1; i >= 0; i-- {
-			restores[i]()
-		}
 	}
 }
 
@@ -6900,7 +6985,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 	if !ok {
 		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
 	}
-	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	tm, err := b.tupleMatchPrep(n.Tag, tup.Elems)
 	if err != nil {
 		return err
 	}
@@ -6926,7 +7011,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, tm)
 		if err != nil {
 			return err
 		}
@@ -6934,13 +7019,13 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 			b.openIf(BlockTypeVoid)
 		}
 		// Bind BEFORE the guard so the guard sees the arm's names.
-		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, tm)
 		// `@` binding: the whole matched tuple (scrutinee pointer), borrowed.
 		restoreAt := func() {}
 		if arm.AtBinding != "" {
 			atSlot, r := b.bindingSlotScoped(arm.AtBinding, tup)
 			restoreAt = r
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: tm.ptrSlot})
 			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 		}
 		if arm.Guard != nil {
@@ -6975,7 +7060,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 	if !ok {
 		return fmt.Errorf("ir: tuple-pattern match scrutinee is not tuple-typed (compiler bug)")
 	}
-	ptrSlot, offs, elemName, err := b.tupleMatchPrep(n.Tag, tup.Elems)
+	tm, err := b.tupleMatchPrep(n.Tag, tup.Elems)
 	if err != nil {
 		return err
 	}
@@ -7027,20 +7112,20 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, tm)
 		if err != nil {
 			return err
 		}
 		if tested {
 			b.openIf(BlockTypeVoid)
 		}
-		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
+		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, tm)
 		// `@` binding: the whole matched tuple (scrutinee pointer), borrowed.
 		restoreAt := func() {}
 		if arm.AtBinding != "" {
 			atSlot, r := b.bindingSlotScoped(arm.AtBinding, tup)
 			restoreAt = r
-			b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: tm.ptrSlot})
 			b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
 		}
 		if arm.Guard != nil {

@@ -2091,9 +2091,10 @@ func TestTupleElemVariantIsRefutableAtBindingSites(t *testing.T) {
 }
 
 // Tuple patterns parse in expression-form match arms too, and the
-// remaining error shapes hold: singleton tuple patterns and nested tuple
-// patterns are parse errors. (Tuple or-patterns now parse — see
-// TestMatchLiteralOrPatternParses.)
+// remaining error shape holds: a singleton tuple pattern is a parse error
+// at every nesting level. (Tuple or-patterns now parse — see
+// TestMatchLiteralOrPatternParses; nested tuple elements parse — see
+// TestNestedTuplePatternParses.)
 func TestTupleMatchPatternErrors(t *testing.T) {
 	if _, err := Parse(`function f(p: (i32, i32)): i32 {
 		var v = match (p) { (0, y) => y, (a, b) => a };
@@ -2106,8 +2107,8 @@ func TestTupleMatchPatternErrors(t *testing.T) {
 			match (p) { (a) => { return 1; } }
 			return 0;
 		}`,
-		"nested": `function f(p: (i32, i32)): i32 {
-			match (p) { ((a, b), c) => { return 1; } }
+		"singleton nested": `function f(p: ((i32, i32), i32)): i32 {
+			match (p) { ((a), c) => { return 1; } }
 			return 0;
 		}`,
 	}
@@ -2115,6 +2116,43 @@ func TestTupleMatchPatternErrors(t *testing.T) {
 		if _, err := Parse(src); err == nil {
 			t.Errorf("%s: expected parse error", name)
 		}
+	}
+}
+
+// A tuple element can be a nested tuple pattern, to any depth, mixing
+// freely with the binder / `_` / literal / variant element forms.
+func TestNestedTuplePatternParses(t *testing.T) {
+	prog, err := Parse(`function f(p: ((i32, string), (i32, (i32, i32)))): i32 {
+		match (p) {
+			((1, "a"), (b, (c, _))) => { return b + c; },
+			((x, _), (_, (y, z))) => { return x + y + z; }
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatalf("nested tuple pattern should parse: %v", err)
+	}
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Match; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	if len(m.Arms) != 2 {
+		t.Fatalf("want 2 arms, got %d", len(m.Arms))
+	}
+	first := m.Arms[0].TupleElems
+	if len(first) != 2 {
+		t.Fatalf("want 2 top-level elements, got %d", len(first))
+	}
+	if len(first[0].Nested) != 2 || first[0].Nested[0].Literal == nil {
+		t.Fatalf("element 0 should nest a 2-element tuple starting with a literal: %+v", first[0])
+	}
+	// `(b, (c, _))` — the second level nests a third.
+	deep := first[1].Nested
+	if len(deep) != 2 || deep[0].Name != "b" {
+		t.Fatalf("element 1 should nest `(b, …)`: %+v", first[1])
+	}
+	if len(deep[1].Nested) != 2 || deep[1].Nested[0].Name != "c" || !deep[1].Nested[1].IsWildcard {
+		t.Fatalf("element 1 should nest `(c, _)` at depth 3: %+v", deep[1])
 	}
 }
 

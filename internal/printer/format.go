@@ -1219,35 +1219,7 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 			f.formatExpr(arm.RangeHi, precLowest)
 		}
 	case arm.TupleElems != nil:
-		f.b.WriteByte('(')
-		for i, el := range arm.TupleElems {
-			if i > 0 {
-				f.b.WriteString(", ")
-			}
-			switch {
-			case el.IsWildcard:
-				f.b.WriteByte('_')
-			case el.Literal != nil:
-				f.formatExpr(el.Literal, precLowest)
-			case el.VariantName != "":
-				if el.VariantModule != "" {
-					f.b.WriteString(el.VariantModule)
-					f.b.WriteByte('.')
-				}
-				f.b.WriteString(el.VariantName)
-				f.b.WriteByte('(')
-				for j, vb := range el.VariantBindings {
-					if j > 0 {
-						f.b.WriteString(", ")
-					}
-					f.b.WriteString(vb)
-				}
-				f.b.WriteByte(')')
-			default:
-				f.b.WriteString(el.Name)
-			}
-		}
-		f.b.WriteByte(')')
+		f.formatTuplePatElems(arm.TupleElems)
 	default:
 		if arm.VariantModule != "" {
 			f.b.WriteString(arm.VariantModule)
@@ -1280,6 +1252,42 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 			f.b.WriteByte(')')
 		}
 	}
+}
+
+// formatTuplePatElems renders a tuple pattern `(p0, p1, …)`, recursing for a
+// nested tuple element so `(a, (b, c))` round-trips at any depth.
+func (f *formatter) formatTuplePatElems(elems []ast.TuplePatElem) {
+	f.b.WriteByte('(')
+	for i, el := range elems {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		switch {
+		case el.Nested != nil:
+			f.formatTuplePatElems(el.Nested)
+		case el.IsWildcard:
+			f.b.WriteByte('_')
+		case el.Literal != nil:
+			f.formatExpr(el.Literal, precLowest)
+		case el.VariantName != "":
+			if el.VariantModule != "" {
+				f.b.WriteString(el.VariantModule)
+				f.b.WriteByte('.')
+			}
+			f.b.WriteString(el.VariantName)
+			f.b.WriteByte('(')
+			for j, vb := range el.VariantBindings {
+				if j > 0 {
+					f.b.WriteString(", ")
+				}
+				f.b.WriteString(vb)
+			}
+			f.b.WriteByte(')')
+		default:
+			f.b.WriteString(el.Name)
+		}
+	}
+	f.b.WriteByte(')')
 }
 
 // formatExprArmPattern renders a match-EXPRESSION arm's pattern. MatchExprArm

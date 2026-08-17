@@ -2779,8 +2779,11 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal,
 // 3 = variant sub-pattern (`(A(x), y)`) — elem_pats[k] then holds the
 // PatVariant, and build_tuple_match nests the arm inside a match on the
-// element temp rather than adding a condition. elem_pats runs parallel to
-// elem_kinds with a wildcard filler at every other kind.
+// element temp rather than adding a condition — 4 = nested tuple
+// (`(a, (b, c))`), where elem_pats[k] carries the nested element encoding in
+// its own tup_* fields and build_tuple_match destructures the element temp a
+// level deeper. elem_pats runs parallel to elem_kinds with a wildcard filler
+// at every other kind.
 struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // p_variant_binds builds the pattern for a tuple element's variant
@@ -2797,6 +2800,15 @@ function p_variant_binds(type_name: string, binds: string[]): Pattern {
     var no_tup_lits: Expr[] = [];
     var no_tup_pats: Pattern[] = [];
     return PatVariant { type_name: type_name, binding: binds[0], extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
+}
+
+// p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
+// can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
+// only the tup_* fields are read back.
+function p_tuple_carrier(kinds: i32[], binds: string[], lits: Expr[], pats: Pattern[]): Pattern {
+    var no_extra: string[] = [];
+    var no_nested: Pattern[] = [];
+    return PatVariant { type_name: "", binding: "", extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: kinds, tup_binds: binds, tup_lits: lits, tup_pats: pats };
 }
 
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
@@ -2819,6 +2831,17 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Pattern[], P
             binds = binds.append("");
             lits = lits.append(e_bool(true));
             pats = pats.append(p_wildcard());
+        } else if (p.peek_punct() == "(") {
+            // Nested tuple element: the same production, one level down, so
+            // `(a, (b, (c, d)))` nests to any depth and every element rule
+            // applies at every level (including the 2-element minimum).
+            var (ne_kinds, ne_binds, ne_lits, ne_pats, ne_p) = parse_tuple_arm_pattern(p);
+            p = ne_p;
+            if (ne_kinds.len() == 0) { return (none, [], [], no_pats, p); }
+            elem_kinds = elem_kinds.append(4);
+            binds = binds.append("");
+            lits = lits.append(e_bool(true));
+            pats = pats.append(p_tuple_carrier(ne_kinds, ne_binds, ne_lits, ne_pats));
         } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
             // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
             // (payload list, empty for a payload-less variant) and `.` (a
@@ -2877,6 +2900,84 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Pattern[], P
     return (elem_kinds, binds, lits, pats, p);
 }
 
+// tuple_elem_names joins the per-element temp names for one level's
+// destructure — `prefix_e0,prefix_e1,…`, the comma-joined form a multi-name
+// `var` declaration takes.
+function tuple_elem_names(prefix: string, n: i32): string {
+    var names: string = "";
+    var k: i32 = 0;
+    while (k < n) {
+        if (k > 0) { names = names + ","; }
+        names = names + prefix + "_e" + util.i32_to_string(k);
+        k = k + 1;
+    }
+    return names;
+}
+
+// wrap_tuple_elems wraps an arm's matched path in whatever its non-binder
+// elements need, innermost element last, and returns the wrapped path.
+//
+// A variant element (kind 3) nests the path inside a match on the element
+// temp — the tag test and the payload binds are exactly what a match arm
+// already does. A nested tuple element (kind 4) destructures the element temp
+// one level deeper, recurses for that level's own elements, declares its
+// binders and tests its literals. The destructure is irrefutable, so running
+// it before the level's own tests is safe.
+function wrap_tuple_elems(path: Stmt[], kinds: i32[], pats: Pattern[], prefix: string, line: i32, col: i32): Stmt[] {
+    var cur: Stmt[] = path;
+    var wi: i32 = kinds.len() - 1;
+    while (wi >= 0) {
+        var en: string = prefix + "_e" + util.i32_to_string(wi);
+        if (kinds[wi] == 3) {
+            var mk_arms: MatchArm[] = [];
+            mk_arms = mk_arms.append(MatchArm { pattern: pats[wi], body: cur, line: line, col: col, guard: e_bool(true), has_guard: false });
+            var mk_skip: Stmt[] = [];
+            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false });
+            var mk_wrap: Stmt[] = [];
+            mk_wrap = mk_wrap.append(s_match_at(e_ident_at(en, line, col), mk_arms, line, col));
+            cur = mk_wrap;
+        } else if (kinds[wi] == 4) {
+            var (nk, nb, nl, np) = pv_tup(pats[wi]);
+            var sub: Stmt[] = wrap_tuple_elems(cur, nk, np, en, line, col);
+            // This level's binder decls sit outside the deeper wraps, so they
+            // are in scope for everything the wrap encloses — the deeper
+            // elements' tests, the guard and the body.
+            var body: Stmt[] = [];
+            var bk: i32 = 0;
+            while (bk < nk.len()) {
+                if (nk[bk] == 0) {
+                    body = body.append(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col));
+                }
+                bk = bk + 1;
+            }
+            var si: i32 = 0;
+            while (si < sub.len()) { body = body.append(sub[si]); si = si + 1; }
+            var ncond: Expr = e_bool(true);
+            var has_ncond: boolean = false;
+            var lk: i32 = 0;
+            while (lk < nk.len()) {
+                if (nk[lk] == 2) {
+                    var one: Expr = e_binary("==", e_ident(en + "_e" + util.i32_to_string(lk)), nl[lk]);
+                    if (has_ncond) { ncond = e_binary("&&", ncond, one); } else { ncond = one; }
+                    has_ncond = true;
+                }
+                lk = lk + 1;
+            }
+            var nwrap: Stmt[] = [];
+            nwrap = nwrap.append(s_var_at(tuple_elem_names(en, nk.len()), "", e_ident_at(en, line, col), line, col));
+            if (has_ncond) {
+                nwrap = nwrap.append(s_if(ncond, body, []));
+            } else {
+                var ci: i32 = 0;
+                while (ci < body.len()) { nwrap = nwrap.append(body[ci]); ci = ci + 1; }
+            }
+            cur = nwrap;
+        }
+        wi = wi - 1;
+    }
+    return cur;
+}
+
 // build_tuple_match assembles the desugared statement described above.
 function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32): Stmt {
     if (arms.len() == 0) { return s_unknown("empty tuple match"); }
@@ -2892,13 +2993,7 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
     var base: string = "__tm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
     var done: string = base + "_d";
     var whole: string = base + "_w";
-    var names: string = "";
-    var k: i32 = 0;
-    while (k < n_elems) {
-        if (k > 0) { names = names + ","; }
-        names = names + base + "_e" + util.i32_to_string(k);
-        k = k + 1;
-    }
+    var names: string = tuple_elem_names(base, n_elems);
     // Any `@` binding forces caching the whole tuple in `whole` first, so the
     // at-name can alias it while the element destructure reads from it (a
     // single scrutinee eval). Without `@` the destructure reads `scrut`
@@ -2970,25 +3065,11 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
             var ab: i32 = 0;
             while (ab < a.body.len()) { inner = inner.append(a.body[ab]); ab = ab + 1; }
         }
-        // A variant sub-pattern element (`(A(x), y)`) tests the element's tag
-        // and binds its payloads — which is exactly what a match arm does, so
-        // the arm's whole matched path nests inside one match per such element
-        // (innermost = last element). The `done` flag is set inside, so a
-        // failing tag test falls through to the next arm the way a failing
-        // literal test does.
-        var wi: i32 = a.elem_kinds.len() - 1;
-        while (wi >= 0) {
-            if (a.elem_kinds[wi] == 3) {
-                var mk_arms: MatchArm[] = [];
-                mk_arms = mk_arms.append(MatchArm { pattern: a.elem_pats[wi], body: inner, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
-                var mk_skip: Stmt[] = [];
-                mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
-                var mk_wrap: Stmt[] = [];
-                mk_wrap = mk_wrap.append(s_match_at(e_ident_at(base + "_e" + util.i32_to_string(wi), a.line, a.col), mk_arms, a.line, a.col));
-                inner = mk_wrap;
-            }
-            wi = wi - 1;
-        }
+        // The variant and nested-tuple elements wrap the arm's whole matched
+        // path (innermost = last element). The `done` flag is set inside, so a
+        // failing tag or nested-literal test falls through to the next arm the
+        // way a failing top-level literal test does.
+        inner = wrap_tuple_elems(inner, a.elem_kinds, a.elem_pats, base, a.line, a.col);
         outer = outer.append(s_if(cond, inner, []));
         ai = ai + 1;
     }
@@ -4088,6 +4169,19 @@ function prepend_stmt(s: Stmt, body: Stmt[]): Stmt[] {
     return out;
 }
 
+// pv_tup returns a pattern's tuple sub-pattern encoding, empty for a wildcard.
+function pv_tup(pat: Pattern): (i32[], string[], Expr[], Pattern[]) {
+    var no_k: i32[] = [];
+    var no_b: string[] = [];
+    var no_l: Expr[] = [];
+    var no_p: Pattern[] = [];
+    match (pat) {
+        PatVariant(v) => { return (v.tup_kinds, v.tup_binds, v.tup_lits, v.tup_pats); },
+        PatWildcard(w) => { return (no_k, no_b, no_l, no_p); }
+    }
+    return (no_k, no_b, no_l, no_p);
+}
+
 // pv_name returns a pattern's variant type-name, or "" for a wildcard.
 function pv_name(pat: Pattern): string {
     match (pat) {
@@ -4179,13 +4273,18 @@ function group_has_tuple(arms: MatchArm[], lo: i32, hi: i32): boolean {
     return false;
 }
 
-// tuple_elems_irrefutable reports whether every element is a binder or `_`
-// (kind 0 or 1). A literal element (kind 2) is the only thing that can make a
-// tuple pattern fail, so anything without one matches every value.
-function tuple_elems_irrefutable(kinds: i32[]): boolean {
+// tuple_elems_irrefutable reports whether every element matches every value —
+// a binder (kind 0), a `_` (kind 1), or a nested tuple (kind 4) all of whose
+// own elements do. A literal (kind 2) and a variant sub-pattern (kind 3) can
+// fail, at any depth.
+function tuple_elems_irrefutable(kinds: i32[], pats: Pattern[]): boolean {
     var i: i32 = 0;
     while (i < kinds.len()) {
         if (kinds[i] == 2 || kinds[i] == 3) { return false; }
+        if (kinds[i] == 4) {
+            var (nk, nb, nl, np) = pv_tup(pats[i]);
+            if (!tuple_elems_irrefutable(nk, np)) { return false; }
+        }
         i = i + 1;
     }
     return true;
@@ -4240,7 +4339,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
             match (ga.pattern) {
                 PatVariant(gv2) => {
                     if (gv2.tup_kinds.len() > 0) {
-                        if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds)) { tuple_covers = true; }
+                        if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds, gv2.tup_pats)) { tuple_covers = true; }
                         tarms = tarms.append(TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col });
                     } else {
                         var b2: Stmt[] = ga.body;

@@ -289,10 +289,12 @@ Tuples (follow-up status):
   …, (x, y) when x > y => …, (x, y) => … }` — in both the
   statement and expression forms. Each pattern element is a
   binder, `_`, a literal (compared by equality; string / float
-  elements use the same settled compares as literal matches), or
-  a variant sub-pattern `A(x)` / `mod.A(x)` / `A()` — which tests
+  elements use the same settled compares as literal matches), a
+  variant sub-pattern `A(x)` / `mod.A(x)` / `A()` — which tests
   the element's tag and binds its payloads under the same rules
-  an arm-position `A(x) => …` follows. A bare `A` stays a binder,
+  an arm-position `A(x) => …` follows — or a nested tuple pattern
+  `(a, (b, c))`, which applies every one of these rules again one
+  level down, to any depth. A bare `A` stays a binder,
   so naming a payload-less variant there is E015 (write `A()`); a
   variant element is refutable, so it never satisfies
   exhaustiveness on its own. Guards run with the arm's binders in
@@ -300,21 +302,30 @@ Tuples (follow-up status):
   per arm (E035), element literals type-check against the
   scrutinee's element types (E035), and exhaustiveness requires
   an unguarded `_` or an unguarded all-binder arm (E030); an arm
-  after an irrefutable arm is unreachable (E026). A nested tuple
-  element (`(a, (b, c))`) is not supported. The native compiler
-  lowers them directly (checker + interp + a dedicated IR path
-  mirroring the literal-match chain, with bindings borrowed from
-  the tuple box like enum payload binds; a variant element adds a
-  raw tag load ANDed onto the arm's AST condition, sound because
-  every element test is a pure read); the self-host parser
+  after an irrefutable arm is unreachable (E026) — a nested tuple
+  is refutable exactly when one of its own elements is. The
+  native compiler lowers them directly (checker + interp + a
+  dedicated IR path mirroring the literal-match chain, with
+  bindings borrowed from the tuple box like enum payload binds).
+  Every position inside the box is addressed as a PATH of
+  (offset, width) hops from the cached scrutinee pointer, so a
+  binder, a literal's scratch local, a variant element's raw tag
+  load — ANDed onto the arm's AST condition, sound because every
+  element test is a pure read — and a payload bind all share one
+  emitter, and nesting is one more hop. The self-host parser
   desugars the whole match at parse time (build_tuple_match) into
   a destructure + flag-guarded if chain — a variant element nests
-  the arm's matched path inside a match on the element temp — so
-  every self-host backend gets them for free. Two self-host
+  the arm's matched path inside a match on the element temp, and
+  a nested tuple element destructures that temp one level deeper
+  — so every self-host backend gets them for free. Two self-host
   dispatch limits: the FIRST arm must be a tuple pattern (a
   guarded-`_`-first tuple match parses natively but not in the
   self-host compiler), and a tuple pattern in an `if let` head
-  does not parse there at all.
+  does not parse there at all. At the IRREFUTABLE binding sites
+  (`let`/`var` destructure, destructured parameters) a nested
+  tuple element is still rejected: a destructure binds one flat
+  level of a single tuple box, so bind the inner tuple to a name
+  and destructure it on the next line.
   With this, tuple destructuring covers all binding sites
   (#4406): statements, function parameters, and match arms.
 
