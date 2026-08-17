@@ -47,6 +47,19 @@ var ifLetIRCases = []struct {
 	// wildcard arm still has to be appended after the expansion.
 	{"or-no-match-else", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(9); if let A(v) | B(v) = e { return v + pad; } else { return 7 + pad; } }", 7},
 	{"or-three-alts", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(13); if let A(v) | B(v) | C(v) = e { return v + pad; } return 1 + pad; }", 13},
+	// Struct-pattern heads. These route to build_struct_match — the same
+	// field-bind flag chain the match arms use — rather than parse_pattern,
+	// whose `IDENT {` is the record-form VARIANT pattern instead. `structnames`
+	// tells the two apart. The pattern is irrefutable, so the `with-else` case
+	// pins that a written else parses and stays unreachable.
+	{"struct-shorthand", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: Point = Point { x: 3, y: 4 }; if let Point { x, y } = p { return x + y + pad; } return 1 + pad; }", 7},
+	{"struct-with-else", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: Point = Point { x: 3, y: 4 }; if let Point { x, y } = p { return x + y + pad; } else { return 99 + pad; } }", 7},
+	// `field: local` renaming, which the shared named-field parser handles.
+	{"struct-rename", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: Point = Point { x: 3, y: 4 }; if let Point { x: a, y: b } = p { return a * 10 + b + pad; } return 1 + pad; }", 34},
+	// `..` rest: bind one field, ignore the remainder.
+	{"struct-rest", "struct P3 { x: i32, y: i32, z: i32 } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: P3 = P3 { x: 3, y: 4, z: 5 }; if let P3 { x, .. } = p { return x + pad; } return 1 + pad; }", 3},
+	// `@` binding the whole struct alongside its destructured fields.
+	{"struct-at-binding", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var p: Point = Point { x: 3, y: 4 }; if let w @ Point { x, y } = p { return x + y + w.x + pad; } return 1 + pad; }", 10},
 }
 
 // TestSelfHostIfLetIRX86_64 compiles each case through the self-hosted x86-64
