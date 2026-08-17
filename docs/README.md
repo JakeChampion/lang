@@ -84,6 +84,7 @@ so explicitly.
 | --- | --- | --- |
 | `SELF-HOST-REMAINING-PLAN.md` | [record] | Goal-1 widening tracker; the per-function IR subset is now mature — remaining gaps are the bundle budget (#3425) and wasm-IR exclusions (#4316–#4320). |
 | `SELF-HOST-AUDIT.md` | [tracker] | SH-NNN code-quality worklist; mirrored in #2849. |
+| `SELFHOST-LANGUAGE-FRICTION.md` | [research] | Which *language* features (missing, unusable, or wrongly-specified) make the self-host harder than it should be; census + probes + ranked fixes. |
 | `SELFHOST-CHECKER-PORT.md` | [tracker] | Checker parity port log; open residue in #4363, #4346, #4344, #4345. |
 | `SELFHOST-CHECKER.md` | [record] | Early narrow Option/Result guard — superseded by `SELFHOST-CHECKER-PORT.md`. |
 | `IR-CLOSURES-PLAN.md` | [record] | Closures on the IR path — shipped. |
