@@ -49,13 +49,14 @@ fn-value site — hence a port.
 
 ## 3. Feasibility: fixpoint-safe
 
-**The self-host compiler's own sources use no first-class functions** — `=>`
-appears only in `match` arms, and there are zero fn-typed parameters or
-lambda-as-value across `examples/self_host/*.fern` (grep-verified 2026-06-16). So
-changing the fn-value representation in `irlower` **cannot change how the compiler
-compiles itself**: the Stage-2 byte-identical fixpoint is unaffected. The only
-constraint is keeping the existing USER-PROGRAM closure tests green. This removes
-the dominant risk and is what makes the port tractable in the self-host.
+The port was designed while the self-host compiler's own sources used **no**
+first-class functions, so changing the fn-value representation in `irlower`
+could not change how the compiler compiled itself and the Stage-2 byte-identical
+fixpoint was unaffected. That is no longer true: `astwalk.fern`'s `fold_expr` /
+`fold_stmt` take a fn-typed parameter and `collect_calls_stmt` supplies it as a
+capturing nested function (#6993), so the fixpoint now DOES see this
+representation. The constraint on further work here is therefore both the
+USER-PROGRAM closure tests and the fixpoint.
 
 ## 4. Design — uniform boxed fn-values + env-first calls
 

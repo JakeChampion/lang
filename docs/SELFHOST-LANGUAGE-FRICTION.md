@@ -41,8 +41,8 @@ What a 167k-line compiler written in a modern language uses, counted across
 
 | Construct | The language has it | Self-host uses it |
 |---|---|---|
-| Generic functions / structs | ✅ monomorphised, with trait bounds | **0** |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **0** |
+| Generic functions / structs | ✅ monomorphised, with trait bounds | **2** (`astwalk.fold_expr` / `fold_stmt`, #6993) |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **1** (`astwalk.collect_calls_stmt`'s visitor, #6993) |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **0** |
@@ -184,6 +184,31 @@ Breaking it needs a deliberate act: pick one module, adopt one feature, and back
 it with `internal/e2eselfhost` coverage (which runs programs the compiler does
 *not* contain, and is the gate that actually carries signal here) rather than
 with the fixpoint.
+
+**What the first adoption cost (#6993).** `astwalk.fern` gained a generic
+`fold_expr` / `fold_stmt` pair taking a fn-typed visitor, and
+`collect_calls_stmt` became four lines over it — 169 lines of hand-written
+`Expr` + `Stmt` recursion deleted, 164 added that every other traversal can now
+reuse, so the slice itself is roughly line-neutral and the payoff is the second
+conversion onward. Nothing about the lowering had to change: the shape compiles
+on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
+per-module fixpoint is unaffected. Two things it hit that the next conversion
+will hit too:
+
+- **The visitor cannot be an arrow lambda.** A lambda's declared parameter types
+  are resolved only when the enclosing function is generic (`checker.go`'s
+  `resolveTypesInBlock` does not descend into expression-position lambdas), so a
+  `parser.Expr`-annotated lambda parameter stays an unresolved struct name and
+  every use of it reports `expected Expr, got Expr` — #6996. A nested named
+  function — which resolves, and captures just the same — is the spelling that
+  works.
+- **A visitor with no descent control cannot express every walk.**
+  `collect_calls_*` converted cleanly because a node it does not record
+  contributes nothing on its own, so a uniform pre-order walk is equivalent to
+  the hand-written one. `collect_qualrefs_*` is not: it records a qualified call
+  at the CALL's position and must then not re-record the callee's field access
+  at its own. Converting that family needs the visitor to be able to say "do not
+  descend", which this pair deliberately does not model yet.
 
 ### 2.5 Types are strings
 
