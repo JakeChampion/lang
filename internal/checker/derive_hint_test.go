@@ -263,3 +263,174 @@ func TestUnknownTypeHintOnlyFiresForUnknownNames(t *testing.T) {
 		t.Fatalf("str / u8 and every suggested spelling must check clean: %v", err)
 	}
 }
+
+// foreignHintCases are the derive/impl hints reached with a type from
+// ANOTHER module. `regex.RMatch` is a `pub struct` in std/regex with no
+// Eq / Ord / Display, so every one of these fires on a name modload has
+// mangled to `regex__RMatch`.
+var foreignHintCases = []struct {
+	name string
+	bad  string
+	// orphan is the local `impl` the hint must NOT tell the reader to
+	// write; the checker refuses it, which is why the hint sends them to
+	// the declaring module instead. "" where the hint offers no impl.
+	orphan string
+	// local is a fix that DOES work from here, "" where none exists.
+	local string
+}{
+	{
+		name: "E041 equality",
+		bad: foreignProg(`    if (a == b) { return 1; }
+    return 0;`),
+		orphan: `import "std/regex";
+import "core/cmp";
+impl cmp.Eq for regex.RMatch {
+    function eq(self: Self, other: Self): boolean { return true; }
+}
+function main(): i32 { return 0; }`,
+	},
+	{
+		name: "E041 ordering",
+		bad: foreignProg(`    if (a < b) { return 1; }
+    return 0;`),
+		orphan: `import "std/regex";
+import "core/cmp";
+impl cmp.Ord for regex.RMatch {
+    function cmp(self: Self, other: Self): i32 { return 0; }
+}
+function main(): i32 { return 0; }`,
+	},
+	{
+		name: "E038 print",
+		bad: foreignProg(`    print(a);
+    return 0;`),
+		orphan: `import "std/regex";
+import "core/cmp";
+impl cmp.Display for regex.RMatch {
+    function to_string(self: Self): string { return "m"; }
+}
+function main(): i32 { return 0; }`,
+		// The receiver-method route the message offers first. Only a
+		// TRAIT impl is orphan-checked, so this one is writable here.
+		local: `import "std/regex";
+pub function (m: regex.RMatch) to_string(): string { return "m"; }
+function main(): i32 {
+    var a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    print(a);
+    return 0;
+}`,
+	},
+	{
+		name: "E045 map key",
+		bad: `import "std/regex";
+import "core/map";
+function main(): i32 {
+    var m: Map[regex.RMatch, i32] = Map {};
+    m = m.insert(regex.RMatch { found: true, start: 0, end: 0 }, 1);
+    return 0;
+}`,
+	},
+}
+
+// foreignProg wraps `body` in a program that binds two std/regex values.
+func foreignProg(body string) string {
+	return `import "std/regex";
+function main(): i32 {
+    var a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    var b: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+` + body + `
+}`
+}
+
+// TestDeriveHintsForForeignTypesNameAWritableFix is the cross-module half
+// of the pairing above, and it is the half #7000 did not have: every one
+// of its cases declares the type locally, so the mangled spelling never
+// appeared. Reached with a type from another module, the same four hints
+// were wrong twice over — they printed the internal `regex__RMatch`, and
+// both routes they named are ones this checker refuses (`@derive`
+// annotates a declaration you do not own, a local impl of a foreign trait
+// for a foreign type is an orphan impl).
+//
+// So the contract has two directions: every route a hint OFFERS must
+// check clean, and every route it WITHHOLDS must be one the checker
+// really rejects. Asserting only the first lets a hint go quiet about a
+// fix that works; asserting only the second lets it recommend one that
+// does not.
+func TestDeriveHintsForForeignTypesNameAWritableFix(t *testing.T) {
+	for _, tc := range foreignHintCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkModuleSource(t, tc.bad)
+			if err == nil {
+				t.Fatalf("expected a diagnostic for:\n%s", tc.bad)
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "regex__RMatch") {
+				t.Errorf("hint leaks the mangled name, which is not a spelling anyone can write: %v", msg)
+			}
+			for _, w := range []string{"regex.RMatch", "in module `regex`, which declares it"} {
+				if !strings.Contains(msg, w) {
+					t.Errorf("hint is missing %q, got: %v", w, msg)
+				}
+			}
+			if tc.orphan != "" {
+				if !strings.Contains(msg, "orphan impl") {
+					t.Errorf("hint offers an impl without saying it has to go in `regex`: %v", msg)
+				}
+				if err := checkModuleSource(t, tc.orphan); err == nil {
+					t.Error("a local impl for a foreign trait and a foreign type checked clean — the hint's reason for sending the reader to the declaring module no longer holds")
+				} else if !strings.Contains(err.Error(), "orphan impl") {
+					t.Errorf("expected an orphan-impl diagnostic, got: %v", err)
+				}
+			} else if strings.Contains(msg, "orphan impl") {
+				t.Errorf("hint mentions an orphan impl but names no impl route: %v", msg)
+			}
+			if tc.local != "" {
+				if err := checkModuleSource(t, tc.local); err != nil {
+					t.Errorf("the route the hint offers does not check clean: %v\nsrc:\n%s", err, tc.local)
+				}
+			}
+		})
+	}
+}
+
+// The E001 Map hint names an import, so it gets the same pairing: the
+// program it describes has to check clean.
+func TestMapHintNamesAnImportThatWorks(t *testing.T) {
+	err := checkModuleSource(t, `function main(): i32 {
+    var m: Map[string, i32] = Map {};
+    return 0;
+}`)
+	if err == nil {
+		t.Fatal("expected E001 for Map without its import")
+	}
+	if want := "`import \"core/map\";`"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("hint is missing %q, got: %v", want, err)
+	}
+	if err := checkModuleSource(t, `import "core/map";
+function main(): i32 {
+    var m: Map[string, i32] = Map {};
+    return 0;
+}`); err != nil {
+		t.Fatalf("the import the hint names must make the program check: %v", err)
+	}
+}
+
+// demangleAll is what keeps a hint's type label writable. The composite
+// case is the reason it is not a single strings.Replace: `demangle` undoes
+// one mangling, and a tuple carries one per element.
+func TestDemangleAllRewritesEveryPart(t *testing.T) {
+	for in, want := range map[string]string{
+		"P":                          "P",
+		"regex__RMatch":              "regex.RMatch",
+		"(a__A, b__B)":               "(a.A, b.B)",
+		"box__Box[point__Point]":     "box.Box[point.Point]",
+		"regex__RMatch[]":            "regex.RMatch[]",
+		"Map[k__K, i32]":             "Map[k.K, i32]",
+		"__method_P_eq":              "__method_P_eq",
+		"Map[string, __method_P_eq]": "Map[string, __method_P_eq]",
+	} {
+		if got := demangleAll(in); got != want {
+			t.Errorf("demangleAll(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

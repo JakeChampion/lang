@@ -3723,9 +3723,13 @@ function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[]
   return ok;
 }
 
-// type_label renders a Type as a friendly name for a diagnostic message
-// (messages aren't part of the differential gate — codes are — so this is
-// best-effort).
+// type_label renders a Type as a friendly name for a diagnostic message.
+// Most message text is still outside the differential, but the hints that
+// name a spelling to write are not: TestSelfHostCheckerHintTextDifferential
+// compares those against native word for word (#7018).
+//
+// It returns the name as DECLARED, so a cross-module type arrives mangled.
+// A hint has to demangle it — `mod__Name` is not writable Fern.
 function type_label(t: Type): string {
   match (t) {
     TypeI32(it) => {
@@ -3769,6 +3773,54 @@ function type_label(t: Type): string {
     }
   }
   return "unknown";
+}
+
+// dunder_at returns the index of the module-mangling `__` in name, or -1.
+// Index 0 never counts: a leading `__` marks a compiler-internal name, not
+// a module prefix.
+function dunder_at(name: string): i32 {
+  var i: i32 = 1;
+  while (i + 1 < name.len()) {
+    if (name[i:i + 2] == "__") { return i; }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// demangle turns a module-mangled name back into the `mod.Name` the reader
+// wrote. `mod__Name` is not a spelling anyone can type, so a hint carrying
+// one names a fix that does not compile.
+function demangle(name: string): string {
+  var cut: i32 = dunder_at(name);
+  if (cut < 0) { return name; }
+  return name[0:cut] + "." + name[cut + 2:name.len()];
+}
+
+// derive_hint renders the "add `@derive(…)` (or `impl … for T`)" clause
+// the derive hints share. `derive` is the attribute spelling and `trait`
+// the trait for the impl form, "" to offer the derive alone.
+//
+// A type from ANOTHER module takes neither route where the reader is
+// standing: `@derive` annotates the declaration, and an impl of a foreign
+// trait for a foreign type is an orphan impl. So the hint names the
+// declaring module instead of two spellings that both fail. Kept in
+// lockstep with the native checker's deriveHint, which the message-text
+// differential compares against.
+function derive_hint(tn: string, derive: string, trait_name: string): string {
+  var cut: i32 = dunder_at(tn);
+  var routes: string = "`@derive(" + derive + ")`";
+  if (cut < 0) {
+    if (trait_name.len() > 0) {
+      routes = routes + " (or `impl " + trait_name + " for " + tn + "`)";
+    }
+    return "add " + routes + ", which requires `import \"core/cmp\";`";
+  }
+  var orphan: string = "";
+  if (trait_name.len() > 0) {
+    routes = routes + " (or `impl " + trait_name + " for " + tn[cut + 2:tn.len()] + "`)";
+    orphan = " (an impl written here instead would be an orphan impl)";
+  }
+  return "add " + routes + " in module `" + tn[0:cut] + "`, which declares it and needs `import \"core/cmp\";` there" + orphan;
 }
 
 // e042_ret_label renders a known-primitive declared return type with the
@@ -6824,7 +6876,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           if (eqrecv == "") {
             out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
           } else if (s.lookup_method("eq", eqrecv).name.len() == 0) {
-            out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for " + eqrecv + "`), which requires `import \"core/cmp\";`, so `==` can use structural equality", b.line, b.col));
+            out = out.append(dg_at("E041", "cannot compare values of type " + demangle(type_label(elt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
           }
         }
       }
@@ -6917,7 +6969,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
               if (ordrecv == "") {
                 out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
               } else if (s.lookup_method("cmp", ordrecv).name.len() == 0) {
-                out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": type does not implement `Ord` — add `@derive(cmp.Ord)` (or `impl cmp.Ord for " + ordrecv + "`), which requires `import \"core/cmp\";`, so ordering can use structural comparison", b.line, b.col));
+                out = out.append(dg_at("E041", "cannot order values of type " + demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
               }
             } else {
               out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));

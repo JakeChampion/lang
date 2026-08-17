@@ -3773,6 +3773,78 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // import too — a bare `@derive(Eq)` is E021 "unknown trait".
 const cmpImport = "`import \"core/cmp\";`"
 
+// deriveHint renders the "add `@derive(…)` (or `impl … for T`)" clause
+// the E038 / E041 / E045 hints share. `derive` is the attribute spelling
+// (`cmp.Eq`, `cmp.Eq, cmp.Hash`) and `trait` the trait for the impl form,
+// "" to offer the derive alone. `tn` is the receiver's registered name,
+// still module-mangled.
+//
+// A type from ANOTHER module takes neither route where the reader is
+// standing: `@derive` annotates the declaration, and an impl of a foreign
+// trait for a foreign type is the orphan impl this checker refuses. So
+// the hint names the declaring module rather than two spellings that both
+// fail — the E045/E041/E038 family already learned once (#6990) that a
+// hint which does not compile is worse than no hint.
+func deriveHint(tn, derive, trait string) string {
+	mod, simple, foreign := strings.Cut(tn, "__")
+	if mod == "" {
+		// A leading `__` marks a compiler-internal name, not a module
+		// prefix.
+		foreign = false
+	}
+	if !foreign {
+		simple = tn
+	}
+	routes := fmt.Sprintf("`@derive(%s)`", derive)
+	if trait != "" {
+		routes += fmt.Sprintf(" (or `impl %s for %s`)", trait, simple)
+	}
+	if !foreign {
+		return fmt.Sprintf("add %s, which requires %s", routes, cmpImport)
+	}
+	orphan := ""
+	if trait != "" {
+		orphan = " (an impl written here instead would be an orphan impl)"
+	}
+	return fmt.Sprintf("add %s in module `%s`, which declares it and needs %s there%s", routes, mod, cmpImport, orphan)
+}
+
+// typeLabel renders t the way the reader wrote it. modload mangles a
+// cross-module nominal type to `mod__Name`, which is not a spelling
+// anyone can type, so a message naming a type — above all one telling the
+// reader to write `impl cmp.Eq for <type>` — has to turn it back into
+// `mod.Name`.
+func typeLabel(t ast.Type) string { return demangleAll(t.String()) }
+
+// demangleAll applies demangle to every identifier in s, so a composite
+// type label demangles each of its parts (`(a__A, b__B)`), not just the
+// first. An identifier starting with `_` is a runtime symbol
+// (`__method_P_eq`), never a module mangling, and is left alone.
+func demangleAll(s string) string {
+	identPart := func(b byte) bool {
+		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if !identPart(s[i]) || s[i] >= '0' && s[i] <= '9' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && identPart(s[j]) {
+			j++
+		}
+		if word := s[i:j]; word[0] == '_' {
+			b.WriteString(word)
+		} else {
+			b.WriteString(demangle(word))
+		}
+		i = j
+	}
+	return b.String()
+}
+
 // deriveKind classifies a (possibly module-mangled) derived-trait name
 // by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
 // or "Debug". Returns "" for any other trait — only these are derivable.
@@ -3822,14 +3894,14 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
+		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
 	case ast.EnumType:
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
+		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
 	}
-	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
+	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", typeLabel(k), cmpImport)
 }
 
 // deriveConf answers "does type <tn> implement trait <dn>?" at
@@ -4053,7 +4125,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			case "Default":
 				m, badField, badType := synthDefault(sd, recvType)
 				if m == nil {
-					c.errfCode(sd.P, "E021", "cannot @derive(Default) for %s: field %q has type %s, which has no default; implement Default by hand", demangle(sd.Name), badField, badType)
+					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: field %q has type %s, which has no default; implement %s by hand", demangle(dn), demangle(sd.Name), badField, badType, demangle(dn))
 					continue
 				}
 				method = m
@@ -4114,7 +4186,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			case "Default":
 				m, badType := synthEnumDefault(ed, recvType)
 				if m == nil {
-					c.errfCode(ed.P, "E021", "cannot @derive(Default) for enum %s: first variant has a payload of type %s, which has no default; implement Default by hand", demangle(ed.Name), badType)
+					c.errfCode(ed.P, "E021", "cannot @derive(%s) for enum %s: first variant has a payload of type %s, which has no default; implement %s by hand", demangle(dn), demangle(ed.Name), badType, demangle(dn))
 					continue
 				}
 				method = m
@@ -11883,9 +11955,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					return ast.VoidType{}
 				}
 				if !c.typeImplementsDisplay(at) {
+					// The receiver-method route survives a foreign type
+					// where the other two do not: only a TRAIT impl is
+					// orphan-checked, so `function (x: mod.T) to_string()`
+					// is writable here. It is offered first for that reason.
+					atn, _ := methodTypeName(at)
 					c.errfCode(n.Args[0].Pos(), "E038",
-						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or add `@derive(cmp.Display)` / `impl cmp.Display for %s`, which require %s",
-						id.Name, at, at, at, cmpImport)
+						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
+						id.Name, typeLabel(at), typeLabel(at), deriveHint(atn, "cmp.Display", "cmp.Display"))
 					return ast.VoidType{}
 				}
 				n.Args[0] = &ast.Call{
@@ -12892,7 +12969,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						n.CmpCall = cmpCall
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — add `@derive(cmp.Ord)` (or `impl cmp.Ord for %s`), which requires %s, so ordering can use structural comparison", lt, n.Op, tn, cmpImport)
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Ord", "cmp.Ord"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
@@ -12989,7 +13066,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						n.EqNegate = n.Op == "!="
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for %s`), which requires %s, so `==` can use structural equality", lt, n.Op, tn, cmpImport)
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Eq", "cmp.Eq"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
