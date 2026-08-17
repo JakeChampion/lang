@@ -2817,7 +2817,7 @@ type MatchArm struct {
 	// reachability check must not call it unreachable. It still counts
 	// for exhaustiveness: the copy is what makes the inner match total.
 	FallConsumed bool
-	Body           *Block
+	Body         *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2881,7 +2881,7 @@ type MatchExprArm struct {
 	// reachability check must not call it unreachable. It still counts
 	// for exhaustiveness: the copy is what makes the inner match total.
 	FallConsumed bool
-	Body           Expr
+	Body         Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }
