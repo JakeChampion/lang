@@ -454,33 +454,44 @@ remainder splits three ways:
   branched to. Both are gone; the survivor drops the `_rc` suffix, which only
   existed to avoid a label collision with the corpse.
 
-- **Still-migratable leaves**, in the same shape and not yet attempted:
-  `read_line`, `reader_read_chunk`, `reader_close`, and `udp_send`.
+- **The three Option-returning Reader leaves** — `read_line`,
+  `reader_read_chunk`, `reader_close` — **have since moved**, and here the
+  migration WAS the fix rather than a risk to be managed.
 
-  These three are where the box question lives, and it is not a layout
-  preference — it is a latent RC bug. `read_line` and `reader_read_chunk`
-  hand-build an `Option[string]` whose inner strbox is a **headerless** raw
-  `__fern_alloc(16)`, and `reader_read_chunk` makes its OUTER Option headerless
-  too. `__fn___fern_str_free` / `__fn___fern_arr_dec` read the refcount at
-  `box-8`, so a dec of one of these reads the last word of the *previous*
-  allocation; if that word is 1, the block is pushed onto a freelist bin chosen
-  from another garbage word. Heap corruption, not a clean crash.
+  Each hand-asm built its result with bare `__fern_alloc`, so the boxes carried
+  no refcount header: `read_line`'s inner strbox, and both of
+  `reader_read_chunk`'s boxes plus its Option. `__fn___fern_str_free` /
+  `__fn___fern_arr_dec` read the refcount at `box-8`, so a dec of one of those
+  reads the last word of the PRECEDING allocation; if that word happens to be 1,
+  the block is pushed onto a freelist bin chosen from another garbage word. Heap
+  corruption, not a clean crash.
 
-  It is safe today only because **nothing decs them**: the match lowering frees a
-  scrutinee box only for a `map.get` scrutinee, and the `optret_pending` drop
-  machinery only fires for a direct `Some(...)` ctor or a function in the
-  OPTFRESH registry — an op is in neither set. So the boxes simply leak. The
-  nearest miss is `std/io`'s `chunks.append(chunk)`: had `chunks` qualified for
-  element reclaim, the exit sweep would `__fern_str_free` each headerless
-  element. It does not qualify only because a bare ident may alias, which
-  disqualifies the array. That is one predicate away from being live.
+  It never fired only because **nothing decs them**. The match lowering frees a
+  scrutinee box only for a `map.get` scrutinee, and the optret drop machinery
+  only fires for a direct `Some(...)` ctor or a function in the OPTFRESH
+  registry — an op is in neither set, so the boxes simply leaked. The nearest
+  miss is `std/io`'s `chunks.append(chunk)`: had `chunks` qualified for element
+  reclaim, the exit sweep would `str_free` each headerless element, and it fails
+  to qualify only because a bare ident may alias. One predicate away.
 
-  So the Fern rewrite is the fix, not a risk: ordinary `Some(__raw_string(...))`
-  lowering keeps offsets 0 and 8 exactly where they are and puts a real `rc=1`
-  at `box-8`. Nothing reads the header today, and everything that might later
-  would read a valid one.
+  Ordinary `Some(__raw_string(...))` lowering keeps the tag at offset 0 and the
+  payload at 8 exactly where they were, and puts a real `rc=1` at `box-8`. So
+  the layout change nothing depended on is the one that closes the hazard.
 
-  `udp_send` is the odd one, and it is worse than recorded here before. The
+  `read_line`'s **one byte per syscall** is preserved verbatim, because it is
+  load-bearing rather than an oversight (#6052): a single `read(0, buf, 256)`
+  silently discarded every byte past the first newline, so a read-until-EOF loop
+  saw the first line and then a spurious EOF — `10\n15\n17\n` summed to 10, not
+  42. So is the 256-byte cap, which is observable. `reader_close` still discards
+  its `close` result and answers `None`; reporting the error now would be a
+  behaviour change rather than a migration.
+
+  arm64 also stops emitting the two reader bodies unconditionally — they sat
+  inside the heap block with `has_need("reader")` never tested on that backend at
+  all, so any allocating program carried them.
+
+- **`udp_send`** is what is left of the "still-migratable" list, and it is
+  worse than recorded here before. The
   entry said its hand-asm exists only on arm64 and that `asm_ir.fern` has no
   `kind_tag == 208` case, implying arm64 lowers it. **Neither backend does.**
   Measured: `udp_send("127.0.0.1", 9999, "hi")` emits `unsupported bin udp_send`

@@ -348,6 +348,36 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_read_all_stdin",
 			[]string{"\n__fern_read_all_stdin:", ".Lras_loop"},
 		},
+		{
+			// read_line — Option[string] over read(2), one byte per syscall so no
+			// byte past the newline is consumed. The old hand-asm body
+			// (__fern_read_line: / .Lrl_*) is gone; op_read_line calls the
+			// stack-ABI __fn___fern_read_line, which boxes with __raw_string.
+			"read_line",
+			`function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`,
+			"__fn___fern_read_line",
+			[]string{"\n__fern_read_line:", ".Lrl_loop", ".Lrl_box", ".Lrl_none"},
+		},
+		{
+			// reader_read_chunk — the Reader half of the same read(2), taking the
+			// fd rather than assuming 0. The old hand-asm body
+			// (__fern_reader_read_chunk: / .Lirc_*) is gone; op_read_chunk calls
+			// __fn___fern_reader_read_chunk. Migrating it also gave the Some box a
+			// real refcount header, which the bare-__fern_alloc hand-asm never wrote.
+			"reader_read_chunk",
+			`function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Some(c) => c.len(), None => 0 }; }`,
+			"__fn___fern_reader_read_chunk",
+			[]string{"\n__fern_reader_read_chunk:", ".Lirc_none", ".Lirc_ret"},
+		},
+		{
+			// reader_close — close(2), always None. The old hand-asm body
+			// (__fern_reader_close:) carried no local labels at all; the symbol
+			// itself is the whole marker.
+			"reader_close",
+			`function main(): i32 { var r: Reader = stdin(); r.close(); return 7; }`,
+			"__fn___fern_reader_close",
+			[]string{"\n__fern_reader_close:"},
+		},
 	}
 
 	for _, tc := range cases {
