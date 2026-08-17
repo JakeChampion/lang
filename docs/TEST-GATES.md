@@ -195,6 +195,29 @@ Worth knowing so you do not assume coverage you do not have:
   `FERN_RC_TRACE=1` names the alloc site it came from (both below, on the
   native *and* the self-host x86-64 compilers), but neither runs as part of
   any gate — you have to go looking.
+- **A syntactic form native accepts and the self-host does not.** Nothing
+  enumerates the language's surface, so parity is only ever tested at the
+  shapes some case happens to use. `conformance/cases/` is the one corpus that
+  reaches the self-host on all three targets — and whether a form appears
+  there is up to whoever added it. A Go-inline e2e test does not count:
+  `internal/e2e/param_pattern_test.go` builds its sources as Go string
+  literals, so the struct-pattern and `@` parameters it covers are invisible
+  to every self-host leg, and those two forms have been native-only since they
+  landed.
+
+  The failure this hides is not a rejection, which someone would notice. It is
+  a self-host parser that reads the form as something ELSE and compiles a
+  different program: a literal in a variant payload (`Some(0)`) was discarded
+  outright, leaving a bare `Some` arm that matched everything — native said 2,
+  the self-host binary said 1, and the corpus was green because no case wrote
+  the form. Three pattern loops in the same file spun forever on input native
+  rejects cleanly, for the same reason.
+
+  So when you add a syntactic form, **write a `conformance/cases/` entry for
+  it** and check the self-host actually agrees; a green fixture leg is a claim
+  about the shapes in the corpus and nothing wider. `bin/fern-selfhost -fmt`
+  is the cheap probe — ~3 ms, and it prints the AST the self-host really
+  built, which separates "rejected" from "silently read as something else".
 
 ## Practical rules
 
