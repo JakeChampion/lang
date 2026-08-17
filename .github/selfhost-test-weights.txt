@@ -80,7 +80,7 @@ TestSelfHostTupleFnZeroArgIRWasm 12
 TestSelfHostFnValueCaptureIRX86_64 35
 TestSelfHostFnValueCaptureWasmIR 35
 TestSelfHostAsmIRPath 28
-TestSelfHostStdTestE2E 18
+TestSelfHostStdTestE2E 92
 TestSelfHostAppendValueSemanticsX86_64 45
 TestSelfHostAppendValueSemanticsWasmIR 45
 # Not a driver-restore cost like the block above: MEASURED 128 s against an entry
