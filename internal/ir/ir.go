@@ -8242,6 +8242,10 @@ func (b *builder) expr(e ast.Expr) error {
 		} else {
 			b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 		}
+	case *ast.CharLit:
+		// Both forms ride a 32-bit slot: `char` is erased to i32 by
+		// eraseSurfaceTypes and `u8` is stored in the low byte of one.
+		b.emit(Op{Kind: OpConstI32, I32: int32(n.Value)})
 	case *ast.DowncastExpr:
 		return b.emitDowncast(n)
 	case *ast.CastExpr:
@@ -10144,6 +10148,14 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		}
 	case *ast.StringLit:
 		return ast.StringType{}
+	case *ast.CharLit:
+		// The erased shape, not the surface type: every caller here
+		// sizes slots and picks store widths, and `char` reaches the
+		// backends as i32 (eraseSurfaceTypes).
+		if x.IsByte {
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		return ast.NumberType{Width: 32}
 	case *ast.NumberLit:
 		// The checker stamps `Width` on the literal once
 		// the destination type is known. Mirror it back as

@@ -346,7 +346,7 @@ func rewriteBoxedExpr(e ast.Expr, boxed map[string]ast.Type) ast.Expr {
 			}
 		}
 		return x
-	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.FloatLit, *ast.CaptureRef:
+	case *ast.NumberLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit, *ast.FloatLit, *ast.CaptureRef:
 		return x
 	case *ast.CastExpr:
 		x.Inner = rewriteBoxedExpr(x.Inner, boxed)

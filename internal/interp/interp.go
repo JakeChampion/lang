@@ -3431,6 +3431,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		return Number(0), nil
 	case *ast.StringLit:
 		return String(x.Value), nil
+	case *ast.CharLit:
+		// A `char` rides an i32 and a `u8` a byte; the interpreter's
+		// Number covers both, exactly as it does for `n as char`.
+		return Number(x.Value), nil
 	case *ast.FString:
 		// The checker desugars `f"foo {x} bar"` into the equivalent
 		// `"foo " + (x).to_string() + " bar"` `+`-chain and stamps

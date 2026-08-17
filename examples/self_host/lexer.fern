@@ -35,7 +35,14 @@
 // from a Go test that compiles + executes it.
 
 pub struct TokEof { line: i32, col: i32 }
-pub struct TokNumber { text: string, suffix: string, is_float: boolean, line: i32, col: i32 }
+// `raw` is the source spelling of a quoted literal — `'x'` / `b'x'`,
+// which reach the parser AS number tokens: the decoded value rides
+// `text` as a decimal numeral and the type rides `suffix` ("char" /
+// "u8"), so every consumer of a suffixed integer literal handles them
+// unchanged. Empty for an ordinary number, where `text` already is the
+// spelling. The printer re-emits `raw` so an author's escape survives
+// `-fmt`, matching native's ast.CharLit.Raw.
+pub struct TokNumber { text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32 }
 pub struct TokIdent { name: string, line: i32, col: i32 }
 pub struct TokKeyword { name: string, line: i32, col: i32 }
 pub struct TokPunct { text: string, line: i32, col: i32 }
@@ -292,7 +299,10 @@ pub function punct_tok(text: string, line: i32, col: i32): Token {
     return TokPunct { text: text, line: line, col: col };
 }
 pub function number_tok(text: string, suffix: string, is_float: boolean, line: i32, col: i32): Token {
-    return TokNumber { text: text, suffix: suffix, is_float: is_float, line: line, col: col };
+    return TokNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: line, col: col };
+}
+pub function quoted_tok(text: string, suffix: string, raw: string, line: i32, col: i32): Token {
+    return TokNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
 }
 pub function error_tok(msg: string, line: i32, col: i32): Token {
     return TokError { msg: msg, line: line, col: col };
@@ -533,6 +543,182 @@ function apply_escape(l: Lex, esc: i32): EscResult {
     return EscResult { lex: l, frag: "", hexerr: false, unknown: true };
 }
 
+// dec_str renders a non-negative i32 in base 10. util.i32_to_string is
+// the shared home for this, but reaching it means importing util here,
+// and this module deliberately imports nothing — see the header. Only
+// scan_quoted needs it, over the scalar range 0..0x10FFFF.
+function dec_str(v: i32): string {
+    if (v == 0) { return "0"; }
+    var rev: i32[] = [];
+    while (v > 0) {
+        rev = rev.append(48 + (v % 10));
+        v = v / 10;
+    }
+    var out: string = "";
+    var i: i32 = rev.len() - 1;
+    while (i >= 0) {
+        out = out + string_from_bytes_unchecked([rev[i]]);
+        i = i - 1;
+    }
+    return out;
+}
+
+// Utf8 is one decoded UTF-8 sequence: `val` is the scalar, `len` its
+// byte length, and len 0 marks a malformed sequence. Only character
+// literals need it — every other scanner here works byte-at-a-time.
+struct Utf8 { val: i32, len: i32 }
+
+function decode_utf8(src: string, i: i32, n: i32): Utf8 {
+    var b0: i32 = src[i] as i32;
+    if (b0 < 128) { return Utf8 { val: b0, len: 1 }; }
+    var need: i32 = 0;
+    var val: i32 = 0;
+    if (b0 >= 240 && b0 < 248) { need = 3; val = b0 & 7; }
+    else if (b0 >= 224) { need = 2; val = b0 & 15; }
+    else if (b0 >= 192) { need = 1; val = b0 & 31; }
+    else { return Utf8 { val: 0, len: 0 }; }
+    if (i + need >= n) { return Utf8 { val: 0, len: 0 }; }
+    var k: i32 = 1;
+    while (k <= need) {
+        var c: i32 = src[i + k] as i32;
+        if (c < 128 || c >= 192) { return Utf8 { val: 0, len: 0 }; }
+        val = (val << 6) | (c & 63);
+        k = k + 1;
+    }
+    return Utf8 { val: val, len: need + 1 };
+}
+
+// EscVal is one decoded escape inside a quoted literal: the advanced
+// lexer, the scalar it produced, and a non-empty `err` when the escape
+// was rejected.
+struct EscVal { lex: Lex, val: i32, err: string }
+
+// quoted_escape decodes the escape at the current `\`, which it
+// consumes along with the escape body. `\u{...}` is a Unicode scalar so
+// it is character-literal-only, and `\xNN` reaches the full byte range
+// in a byte literal but stops at 0x7F in a character literal, where
+// anything above ASCII has two readings and `\u{...}` says which.
+// Mirrors the Go lexer's scanQuotedEscape.
+function quoted_escape(l: Lex, is_byte: boolean): EscVal {
+    l = l.advance();   // backslash
+    if (l.at_end()) { return EscVal { lex: l, val: 0, err: "unterminated quoted literal" }; }
+    var esc: i32 = l.peek_byte();
+    l = l.advance();
+    if (esc == 110) { return EscVal { lex: l, val: 10, err: "" }; }
+    if (esc == 116) { return EscVal { lex: l, val: 9, err: "" }; }
+    if (esc == 114) { return EscVal { lex: l, val: 13, err: "" }; }
+    if (esc == 48) { return EscVal { lex: l, val: 0, err: "" }; }
+    if (esc == 92) { return EscVal { lex: l, val: 92, err: "" }; }
+    if (esc == 39) { return EscVal { lex: l, val: 39, err: "" }; }
+    if (esc == 34) { return EscVal { lex: l, val: 34, err: "" }; }
+    if (esc == 120) {
+        if (l.i + 1 >= l.n || !is_hex_digit((l.src[l.i] as i32)) || !is_hex_digit((l.src[l.i + 1] as i32))) {
+            return EscVal { lex: l, val: 0, err: "\\x escape needs two hex digits" };
+        }
+        var v: i32 = hex_val((l.src[l.i] as i32)) * 16 + hex_val((l.src[l.i + 1] as i32));
+        l = l.advance();
+        l = l.advance();
+        if (!is_byte && v > 127) {
+            return EscVal { lex: l, val: 0, err: "\\x escape is above ASCII in a character literal; write \\u{...} for the scalar" };
+        }
+        return EscVal { lex: l, val: v, err: "" };
+    }
+    if (esc == 117) {
+        if (is_byte) {
+            return EscVal { lex: l, val: 0, err: "\\u{...} is a Unicode scalar; a byte literal takes \\xNN" };
+        }
+        if (l.at_end() || l.peek_byte() != 123) {
+            return EscVal { lex: l, val: 0, err: "\\u escape needs braces: \\u{1F600}" };
+        }
+        l = l.advance();   // {
+        var digits: i32 = 0;
+        var uv: i32 = 0;
+        while (!l.at_end() && is_hex_digit(l.peek_byte())) {
+            if (digits == 6) { return EscVal { lex: l, val: 0, err: "\\u{...} takes at most 6 hex digits" }; }
+            uv = uv * 16 + hex_val(l.peek_byte());
+            digits = digits + 1;
+            l = l.advance();
+        }
+        if (digits == 0) { return EscVal { lex: l, val: 0, err: "\\u{...} needs at least one hex digit" }; }
+        if (l.at_end() || l.peek_byte() != 125) { return EscVal { lex: l, val: 0, err: "unterminated \\u{...} escape" }; }
+        l = l.advance();   // }
+        if (uv > 1114111) { return EscVal { lex: l, val: 0, err: "\\u{...} is above the maximum Unicode scalar 10FFFF" }; }
+        if (uv >= 55296 && uv <= 57343) { return EscVal { lex: l, val: 0, err: "\\u{...} is a surrogate, not a Unicode scalar value" }; }
+        return EscVal { lex: l, val: uv, err: "" };
+    }
+    return EscVal { lex: l, val: 0, err: "unknown escape in quoted literal" };
+}
+
+// closing_quote_ahead separates a too-long literal (`'ab'`) from an
+// unterminated one (`'ab`) so each error names its own problem.
+function closing_quote_ahead(l: Lex): boolean {
+    var j: i32 = l.i;
+    while (j < l.n && l.src[j] != 10) {
+        if (l.src[j] == 39) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// scan_quoted reads a character literal `'x'` or, when `is_byte`, a
+// byte literal `b'x'`; `l` is positioned at the leading `b` / `'`.
+// Everything a literal cannot mean is rejected here rather than left
+// for the parser: an empty `''`, more than one scalar / byte, a
+// non-ASCII `b'é'`, and an unterminated one. Mirrors scanQuoted in
+// internal/lexer/lexer.go.
+function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
+    var begin: i32 = l.i;
+    var kind_name: string = "character";
+    var suffix: string = "char";
+    if (is_byte) {
+        kind_name = "byte";
+        suffix = "u8";
+        l = l.advance();   // `b`
+    }
+    l = l.advance();       // opening '
+    if (l.at_end()) {
+        return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
+    }
+    var c: i32 = l.peek_byte();
+    if (c == 39) {
+        l = l.advance();
+        return NumResult { lex: l, tok: error_tok("empty " + kind_name + " literal", start_line, start_col) };
+    }
+    if (c == 10) {
+        return NumResult { lex: l, tok: error_tok("newline inside " + kind_name + " literal", start_line, start_col) };
+    }
+    var val: i32 = 0;
+    if (c == 92) {
+        var ev: EscVal = quoted_escape(l, is_byte);
+        l = ev.lex;
+        if (ev.err.len() > 0) {
+            return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
+        }
+        val = ev.val;
+    } else if (is_byte) {
+        if (c >= 128) {
+            return NumResult { lex: l, tok: error_tok("byte literal must be ASCII; write a character literal for a Unicode scalar", start_line, start_col) };
+        }
+        val = c;
+        l = l.advance();
+    } else {
+        var u: Utf8 = decode_utf8(l.src, l.i, l.n);
+        if (u.len == 0) {
+            return NumResult { lex: l, tok: error_tok("invalid UTF-8 byte in character literal", start_line, start_col) };
+        }
+        val = u.val;
+        l = l.advance_to(l.i + u.len);
+    }
+    if (l.at_end() || l.peek_byte() != 39) {
+        if (closing_quote_ahead(l)) {
+            return NumResult { lex: l, tok: error_tok(kind_name + " literal must hold exactly one " + kind_name, start_line, start_col) };
+        }
+        return NumResult { lex: l, tok: error_tok("unterminated " + kind_name + " literal", start_line, start_col) };
+    }
+    l = l.advance();       // closing '
+    return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, l.src[begin:l.i] + "", start_line, start_col) };
+}
+
 // scan_string reads `"…"` with C-style escapes. The Go lexer
 // uses strings.Builder + WriteRune; here we build the unescaped
 // value by walking the source and concatenating. Errors (newline
@@ -745,6 +931,26 @@ function tokenize_impl(src: string, keep: boolean): LexResult {
             l = rf.lex;
             out = out.append(rf.tok);
             if (is_error_tok(rf.tok)) { return LexResult { tokens: out, comments: comments }; }
+            after_dot = false;
+            continue;
+        }
+        // Byte literal `b'x'` — checked before the identifier path for
+        // the same reason the f-string prefix is: `b` starts an
+        // identifier, and no valid program has one immediately followed
+        // by a `'`.
+        if (b == 98 && l.i + 1 < l.n && l.src[l.i + 1] == 39) {
+            var rb = scan_quoted(l, true, start_line, start_col);
+            l = rb.lex;
+            out = out.append(rb.tok);
+            if (is_error_tok(rb.tok)) { return LexResult { tokens: out, comments: comments }; }
+            after_dot = false;
+            continue;
+        }
+        if (b == 39) {   // '
+            var rc = scan_quoted(l, false, start_line, start_col);
+            l = rc.lex;
+            out = out.append(rc.tok);
+            if (is_error_tok(rc.tok)) { return LexResult { tokens: out, comments: comments }; }
             after_dot = false;
             continue;
         }
@@ -1103,6 +1309,71 @@ function test_unknown_char(): i32 {
     return 0;
 }
 
+// check_quoted — assert toks[0] is the number token a quoted literal
+// lexes to, with the decoded scalar in `text`, the type in `suffix`
+// and the spelling in `raw`.
+function check_quoted(src: string, want_text: string, want_suffix: string): boolean {
+    var t: Token[] = tokenize(src);
+    if (t.len() != 2) { return false; }
+    match (t[0]) {
+        TokNumber(n) => {
+            return n.text == want_text && n.suffix == want_suffix
+                && n.raw == src && !n.is_float;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// test_quoted_literals — `'x'` (a `char`) and `b'x'` (a `u8`), the
+// escape set each accepts, and every spelling rejected at lex time.
+// Mirrors the Go lexer's TestCharAndByteLiterals /
+// TestCharAndByteLiteralErrors.
+function test_quoted_literals(): i32 {
+    if (!check_quoted("'x'", "120", "char")) { return 1950; }
+    if (!check_quoted("'['", "91", "char")) { return 1951; }
+    if (!check_quoted("'\\n'", "10", "char")) { return 1952; }
+    if (!check_quoted("'\\0'", "0", "char")) { return 1953; }
+    if (!check_quoted("'\\''", "39", "char")) { return 1954; }
+    if (!check_quoted("'\\\\'", "92", "char")) { return 1955; }
+    if (!check_quoted("'\\x7F'", "127", "char")) { return 1956; }
+    if (!check_quoted("'\\u{41}'", "65", "char")) { return 1957; }
+    if (!check_quoted("'\\u{1F600}'", "128512", "char")) { return 1958; }
+    if (!check_quoted("'\\u{10FFFF}'", "1114111", "char")) { return 1959; }
+    if (!check_quoted("'😀'", "128512", "char")) { return 1960; }
+    if (!check_quoted("'é'", "233", "char")) { return 1961; }
+    if (!check_quoted("b'x'", "120", "u8")) { return 1962; }
+    if (!check_quoted("b'['", "91", "u8")) { return 1963; }
+    if (!check_quoted("b'\\n'", "10", "u8")) { return 1964; }
+    if (!check_quoted("b'\\xFF'", "255", "u8")) { return 1965; }
+
+    // Rejected at lex time, not left for the parser.
+    if (!has_error(tokenize("''"))) { return 1970; }
+    if (!has_error(tokenize("b''"))) { return 1971; }
+    if (!has_error(tokenize("'ab'"))) { return 1972; }
+    if (!has_error(tokenize("b'ab'"))) { return 1973; }
+    if (!has_error(tokenize("'a"))) { return 1974; }
+    if (!has_error(tokenize("b'é'"))) { return 1975; }
+    if (!has_error(tokenize("b'\\u{41}'"))) { return 1976; }
+    if (!has_error(tokenize("'\\u{D800}'"))) { return 1977; }
+    if (!has_error(tokenize("'\\u{110000}'"))) { return 1978; }
+    if (!has_error(tokenize("'\\xFF'"))) { return 1979; }
+    if (!has_error(tokenize("'\\q'"))) { return 1980; }
+    if (!has_error(tokenize("'\n'"))) { return 1981; }
+
+    // A `b` not followed by `'` is an ordinary identifier.
+    var idt: Token[] = tokenize("b bytes");
+    match (idt[0]) {
+        TokIdent(x) => { if (x.name != "b") { return 1990; } },
+        _ => { return 1991; }
+    }
+    match (idt[1]) {
+        TokIdent(x) => { if (x.name != "bytes") { return 1992; } },
+        _ => { return 1993; }
+    }
+    return 0;
+}
+
 // check_part — assert one FStringPart matches the expected kind +
 // text + position. `want_expr` selects which payload field to compare;
 // a literal part carries no position, so both coordinates are 0 there.
@@ -1270,6 +1541,7 @@ function main(): i32 {
     c = test_hex_needs_digits();   if (c != 0) { return c; }
     c = test_string_errors();      if (c != 0) { return c; }
     c = test_unknown_char();       if (c != 0) { return c; }
+    c = test_quoted_literals();    if (c != 0) { return c; }
     c = test_fstring();            if (c != 0) { return c; }
     c = test_fstring_positions();  if (c != 0) { return c; }
     c = test_comments();           if (c != 0) { return c; }

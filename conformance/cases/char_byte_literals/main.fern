@@ -1,0 +1,111 @@
+// Character and byte literals (#6991).
+//
+// `'x'` is a `char` — one Unicode scalar value — and `b'x'` is a `u8`,
+// one byte. The two are separate spellings because the types are
+// separate: `s[i]` yields a `u8`, so byte-level code compares against
+// `b'['` while a scalar comparison uses `'['`, and neither silently
+// becomes the other or an `i32`.
+//
+// Both reach the backends as integer constants (`char` is erased to i32
+// at the lowering choke point), so this case pins that the erasure feeds
+// every backend the value the source wrote — escapes, an astral scalar,
+// and a match on byte literals included.
+
+import "core/int";
+
+const OPEN: u8 = b'[';
+const NEWLINE: char = '\n';
+
+function bracket_depth(s: string): i32 {
+    var depth: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == b'[') { depth = depth + 1; }
+        if (s[i] == b']') { depth = depth - 1; }
+        i = i + 1;
+    }
+    return depth;
+}
+
+function classify(b: u8): i32 {
+    match (b) {
+        b'[' => { return 1; },
+        b']' => { return 2; },
+        b'\n' => { return 3; },
+        b'\\' => { return 4; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function upper_ascii(c: char): char {
+    var n: i32 = c as i32;
+    if (n >= 97 && n <= 122) { return (n - 32) as char; }
+    return c;
+}
+
+function main(): i32 {
+    var s: string = "a[b][c]";
+
+    // A byte literal against a string index — the shape the feature exists
+    // for. No `as i32` on either side.
+    if (s[1] != b'[') { return 1; }
+    if (s[3] != b']') { return 2; }
+    if (s[0] == b'[') { return 3; }
+    if (bracket_depth(s) != 0) { return 4; }
+    if (bracket_depth("[[a") != 2) { return 5; }
+
+    // The same read through a `str` view.
+    var v: str = s[0:4];
+    if (v[1] != b'[') { return 6; }
+
+    // Byte escapes, including the full 0..255 range `\xNN` reaches.
+    if ((b'\n' as i32) != 10) { return 7; }
+    if ((b'\t' as i32) != 9) { return 8; }
+    if ((b'\r' as i32) != 13) { return 9; }
+    if ((b'\0' as i32) != 0) { return 10; }
+    if ((b'\\' as i32) != 92) { return 11; }
+    if ((b'\'' as i32) != 39) { return 12; }
+    if ((b'\x1B' as i32) != 27) { return 13; }
+    if ((b'\xFF' as i32) != 255) { return 14; }
+
+    // Character literals: ASCII, escapes, `\u{...}`, and a source-encoded
+    // scalar beyond the BMP.
+    var c: char = 'x';
+    if ((c as i32) != 120) { return 15; }
+    if (('\n' as i32) != 10) { return 16; }
+    if (('\'' as i32) != 39) { return 17; }
+    if (('\u{41}' as i32) != 65) { return 18; }
+    if (('\u{1F600}' as i32) != 128512) { return 19; }
+    if (('\u{10FFFF}' as i32) != 1114111) { return 20; }
+    if (('😀' as i32) != 128512) { return 21; }
+    if (('é' as i32) != 233) { return 22; }
+
+    // char-to-char equality and assignment, no conversion in sight.
+    var d: char = c;
+    if (!(c == d)) { return 23; }
+    if (c == 'y') { return 24; }
+    if ((upper_ascii('a') as i32) != 65) { return 25; }
+    if ((upper_ascii('A') as i32) != 65) { return 26; }
+
+    // Literal patterns in match-arm position, on both types.
+    if (classify(s[1]) != 1) { return 27; }
+    if (classify(s[3]) != 2) { return 28; }
+    if (classify(b'\n') != 3) { return 29; }
+    if (classify(b'\\') != 4) { return 30; }
+    if (classify(b'z') != 0) { return 31; }
+
+    // Arrays keep the element type.
+    var bytes: u8[] = [b'a', b'b', b'c'];
+    if (bytes[2] != b'c') { return 32; }
+    var chars: char[] = ['x', '\u{1F600}'];
+    if ((chars[1] as i32) != 128512) { return 33; }
+
+    // A literal is a constant expression.
+    if (s[1] != OPEN) { return 34; }
+    if ((NEWLINE as i32) != 10) { return 35; }
+
+    print("depth=" + int.int_to_string(bracket_depth("[a[b]]")));
+    print("cls=" + int.int_to_string(classify(s[1])));
+    return 0;
+}

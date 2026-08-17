@@ -316,6 +316,8 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		} else {
 			b.WriteString(s)
 		}
+	case *ast.CharLit:
+		b.WriteString(x.Raw)
 	case *ast.StringLit:
 		b.WriteByte('"')
 		for i := 0; i < len(x.Value); i++ {

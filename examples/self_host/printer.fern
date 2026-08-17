@@ -194,6 +194,9 @@ function print_expr_iife(c: parser.ExprCall): string {
 function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
     match (e) {
         parser.ExprNumber(n) => {
+            // A quoted literal prints its spelling, escapes and all — the
+            // decoded value in `text` is not what the author wrote.
+            if (n.raw.len() > 0) { return n.raw; }
             if (n.suffix.len() > 0) { return n.text + n.suffix; }
             return n.text;
         },

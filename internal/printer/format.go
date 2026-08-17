@@ -1472,6 +1472,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(s)
 			f.b.WriteString(suffix)
 		}
+	case *ast.CharLit:
+		// Raw is the spelling as written: an escape the author chose
+		// (`'\u{1F600}'`, `b'\x1B'`) is part of what they wrote, the
+		// same contract NumberLit.Raw carries for a hex literal.
+		f.b.WriteString(x.Raw)
 	case *ast.StringLit:
 		f.b.WriteByte('"')
 		for i := 0; i < len(x.Value); i++ {

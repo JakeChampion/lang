@@ -112,15 +112,15 @@ type StrType struct{}
 // behind #5552, and the reason the ASCII/Unicode split can't survive as a
 // naming convention across a 144-method surface (docs/STRINGS-SOTA.md D2).
 //
-// In this first slice NO stdlib producer yields `char` yet — the type exists
-// so signatures can declare scalar-vs-byte intent, mirroring how StrType
-// landed. Conversion is EXPLICIT in both directions (`c as i32`, `n as char`);
-// a `char` never implicitly becomes an integer or vice versa, which is the
-// whole point. Range/surrogate validation on `as char` is deferred with the
-// producers (#5629 slice 5).
+// It is written as a CharLit (`'x'`, #6991) or reached by an explicit cast.
+// Conversion is EXPLICIT in both directions (`c as i32`, `n as char`); a
+// `char` never implicitly becomes an integer or vice versa, which is the whole
+// point, and is why the byte literal `b'x'` is a separate spelling typed `u8`
+// rather than a `char` that settles from context. A literal cast to `char` is
+// range- and surrogate-checked (E071); a runtime one is not.
 //
 // Runtime shape: an i32 slot, identical to NumberType{Width:32}, so it is
-// ERASED to i32 at the LowerWith choke point (ir/erase_char.go) exactly as
+// ERASED to i32 at the LowerWith choke point (ir/erase_surface.go) exactly as
 // StrType erases to StringType — no backend or width classification ever sees
 // it.
 type CharType struct{}
@@ -737,6 +737,9 @@ func CloneExpr(e Expr) Expr {
 		c := *x
 		return &c
 	case *StringLit:
+		c := *x
+		return &c
+	case *CharLit:
 		c := *x
 		return &c
 	case *Binary:
@@ -1705,6 +1708,27 @@ type StringLit struct {
 	Value string
 }
 
+// CharLit is a quoted scalar literal: `'x'`, one Unicode scalar value
+// typed `char`, or `b'x'`, one byte typed `u8`. IsByte selects which.
+//
+// One node for both because they differ only in the type they produce —
+// the runtime shape is an integer constant either way (`char` erases to
+// i32, `u8` is a NumberType already). Keeping them distinct at the type
+// level is the point: `s[i] == b'['` checks and `s[i] == '['` does not,
+// so a byte-level comparison cannot silently be read as a scalar one.
+//
+// Value is the scalar (0..0x10FFFF, surrogates excluded) or the byte
+// (0..255). Raw is the spelling as written, quotes and escapes
+// included, so `-fmt` re-emits the author's `'\u{1F600}'` rather than
+// normalising it to the character — the same contract NumberLit.Raw and
+// FloatLit.Raw carry.
+type CharLit struct {
+	P      Position
+	Value  int64
+	Raw    string
+	IsByte bool
+}
+
 // FString is an interpolated string literal — `f"hello {x}"`.
 // Parts alternates literal segments and interpolant expressions
 // in source order. The empty list means an empty f-string `f""`.
@@ -2259,6 +2283,7 @@ func (e *BlockExpr) Pos() Position    { return e.P }
 func (e *BoolLit) Pos() Position      { return e.P }
 func (e *UnitLit) Pos() Position      { return e.P }
 func (e *StringLit) Pos() Position    { return e.P }
+func (e *CharLit) Pos() Position      { return e.P }
 func (e *FString) Pos() Position      { return e.P }
 func (e *FloatLit) Pos() Position     { return e.P }
 func (e *Ident) Pos() Position        { return e.P }
@@ -2308,6 +2333,7 @@ func (e *BlockExpr) String() string {
 func (*BoolLit) isExpr()     {}
 func (*UnitLit) isExpr()     {}
 func (*StringLit) isExpr()   {}
+func (*CharLit) isExpr()     {}
 func (*FString) isExpr()     {}
 func (*FloatLit) isExpr()    {}
 func (*Ident) isExpr()       {}

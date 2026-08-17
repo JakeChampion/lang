@@ -31,7 +31,7 @@ const (
 	nOpt                   // [ a ]
 	nRef                   // RuleName
 	nLit                   // 'text'      keyword or punctuation
-	nClass                 // IDENT, NUMBER, FLOAT, STRING, FSTRING
+	nClass                 // IDENT, NUMBER, FLOAT, STRING, FSTRING, CHAR, BYTE
 )
 
 type node struct {
@@ -60,6 +60,7 @@ func (g *Grammar) RuleNames() []string {
 // other terminal is a literal keyword or punctuator.
 var tokenClasses = map[string]bool{
 	"IDENT": true, "NUMBER": true, "FLOAT": true, "STRING": true, "FSTRING": true,
+	"CHAR": true, "BYTE": true,
 }
 
 // Parse reads grammar source: a sequence of `Name = expr ;` rules, with

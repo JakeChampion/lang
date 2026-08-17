@@ -138,6 +138,14 @@ func (m *matcher) matchNode(n *node, pos int) int {
 			if t.Kind == lexer.FString {
 				return pos + 1
 			}
+		case "CHAR":
+			if t.Kind == lexer.Char {
+				return pos + 1
+			}
+		case "BYTE":
+			if t.Kind == lexer.Byte {
+				return pos + 1
+			}
 		}
 		return failed
 	}

@@ -40,7 +40,7 @@ import "./util";
 // fold uses util.i32_to_string to render a folded literal. See SH-020.
 
 function lit_i32(n: i32): parser.Expr {
-    return parser.ExprNumber { text: util.i32_to_string(n), suffix: "", is_float: false, line: 0, col: 0 };
+    return parser.ExprNumber { text: util.i32_to_string(n), suffix: "", raw: "", is_float: false, line: 0, col: 0 };
 }
 
 function lit_bool(b: boolean): parser.Expr {

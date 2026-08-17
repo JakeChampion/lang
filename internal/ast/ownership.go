@@ -143,7 +143,7 @@ func ExprResultOwnershipWith(e Expr, t Type, resolve func(name string) (Ownershi
 		return View // array slice aliases the parent's storage
 	case *ArrayLit, *StructLit, *TupleLit, *MapLit:
 		return Owned // fresh construction, sole-owned
-	case *NumberLit, *BoolLit, *FloatLit:
+	case *NumberLit, *BoolLit, *FloatLit, *CharLit:
 		return Owned // scalar (inert; NeedsRC() is false)
 	case *Call:
 		return Owned // fresh result (borrowed-return refinement is a later slice)

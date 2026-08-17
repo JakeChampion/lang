@@ -84,6 +84,15 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		// Match expressions with guards, on one line.
 		{"match expr", `function main(): i32 { var a = match (p) { (1, b) => b * 10, (x, _) => x }; return a; }`},
 		{"match expr with guard", `function main(): i32 { var b = match (q) { (0, y) => y, (x, y) when x == y => x + y, (x, y) => x - y }; return b; }`},
+
+		// Character and byte literals, in expression and in match-arm
+		// position. No corpus source writes one yet, so only these cases
+		// reach the CHAR / BYTE terminals.
+		{"char literal", `function main(): i32 { var c: char = 'x'; return 0; }`},
+		{"byte literal", `function main(): i32 { var b: u8 = b'['; return 0; }`},
+		{"char literal escape", `function main(): i32 { var c: char = '\u{1F600}'; return 0; }`},
+		{"byte literal pattern", `function main(): i32 { match (s[0]) { b'[' => { return 1; }, _ => { return 0; } } return 0; }`},
+		{"char literal pattern", `function main(): i32 { match (c) { 'a' => { return 1; }, _ => { return 0; } } return 0; }`},
 	}
 
 	for _, tc := range cases {

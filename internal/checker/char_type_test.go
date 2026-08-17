@@ -151,6 +151,105 @@ func TestCharCastAcceptsValidLiteral(t *testing.T) {
 	}
 }
 
+// `'x'` is a `char` and `b'x'` a `u8`, and neither is polymorphic: the
+// literal forms inherit the whole discipline above rather than settling to
+// whatever context asks for. This is what the byte literal exists for —
+// `s[i] == b'['` compares two bytes, and every crossing of the three types
+// still needs a written cast.
+func TestCharAndByteLiteralsDoNotInterconvert(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"i32 var from char literal",
+			`function main(): i32 { var n: i32 = 'x'; return n; }`,
+			"cannot assign char to variable of type i32"},
+		{"i32 var from byte literal",
+			`function main(): i32 { var n: i32 = b'x'; return n; }`,
+			"cannot assign u8 to variable of type i32"},
+		{"char var from byte literal",
+			`function main(): i32 { var c: char = b'x'; return 0; }`,
+			"cannot assign u8 to variable of type char"},
+		{"u8 var from char literal",
+			`function main(): i32 { var b: u8 = 'x'; return 0; }`,
+			"cannot assign char to variable of type u8"},
+		{"char literal compared with i32 literal",
+			`function main(): i32 { if ('x' == 120) { return 1; } return 0; }`,
+			"cannot compare char and i32"},
+		{"byte literal compared with i32",
+			`function main(): i32 { var n: i32 = 120; if (b'x' == n) { return 1; } return 0; }`,
+			"cannot compare u8 and i32"},
+		{"string index compared with char literal",
+			`function main(): i32 { var s: string = "ab"; if (s[0] == 'a') { return 1; } return 0; }`,
+			"cannot compare u8 and char"},
+		{"char literal compared with byte literal",
+			`function main(): i32 { if ('x' == b'x') { return 1; } return 0; }`,
+			"cannot compare char and u8"},
+		{"arithmetic on a char literal",
+			`function main(): i32 { return 'x' + 1; }`,
+			`operator "+" requires an integer type, got char`},
+		{"char literal returned as i32",
+			`function f(): i32 { return 'x'; }
+			 function main(): i32 { return f(); }`,
+			"function returns i32 but expression is char"},
+		{"byte literal at an i32 parameter",
+			`function g(n: i32): i32 { return n; }
+			 function main(): i32 { return g(b'x'); }`,
+			"expected i32, got u8"},
+		{"char literal in a u8 match arm",
+			`function main(): i32 { var s: string = "ab"; match (s[0]) { 'a' => { return 1; }, _ => { return 0; } } return 0; }`,
+			"literal pattern of type char does not match scrutinee type u8"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if err == nil {
+				t.Fatalf("checked clean, want an error containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// The other half: every use the literals are FOR must check, including the
+// byte-level comparison the 342 decimal-constant sites in the self-host
+// compiler are written as today (#6991).
+func TestCharAndByteLiteralsAccepted(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"byte literal against a string index",
+			`function main(): i32 { var s: string = "a[b]"; if (s[1] == b'[') { return 1; } return 0; }`},
+		{"byte literal against a str view index",
+			`function main(): i32 { var s: string = "a[b]"; var v: str = s[0:2]; if (v[1] == b'[') { return 1; } return 0; }`},
+		{"byte literal in a u8 var and match",
+			`function main(): i32 { var b: u8 = b'\n'; match (b) { b'\n' => { return 1; }, _ => { return 0; } } return 0; }`},
+		{"char literal in a char var and match",
+			`function main(): i32 { var c: char = 'x'; match (c) { 'x' => { return 1; }, _ => { return 0; } } return 0; }`},
+		{"char literal cast to i32",
+			`function main(): i32 { return 'x' as i32; }`},
+		{"byte literal cast to i32",
+			`function main(): i32 { return b'x' as i32; }`},
+		{"char literal at a char parameter",
+			`function f(c: char): char { return c; }
+			 function main(): i32 { return f('x') as i32; }`},
+		{"astral scalar in a char array",
+			`function main(): i32 { var a: char[] = ['x', '\u{1F600}']; return a[1] as i32; }`},
+		{"byte literal in a u8 array",
+			`function main(): i32 { var a: u8[] = [b'a', b'b']; return a[0] as i32; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+		})
+	}
+}
+
 // A NON-literal cast stays unchecked on purpose: `as char` is the reinterpret
 // hatch std/unicode uses on values its tables have already proven are scalars,
 // and re-validating them on every lookup would be pure cost. The checked path
