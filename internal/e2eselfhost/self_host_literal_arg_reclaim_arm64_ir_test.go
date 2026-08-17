@@ -62,4 +62,45 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "literal-arg-retained-safe-arm64", 0)
+
+	// #6544: the same reclaim at a METHOD call, which was wired at the
+	// free-call site only.
+	run(t, `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
+function main(): i32 {
+    var recv: string = "rr";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + recv.readit("ab"); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 1000) { acc = acc + recv.readit("ab"); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (recv.len() != 2) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 4800) { return 97; }
+    return 0;
+}`, "method-literal-arg-borrowable-flat-arm64", 0)
+
+	// The param MOVED into a struct field is not borrowable, so the literal
+	// keeps its prior sound leak and the field stays readable.
+	run(t, `struct Box { tag: string, n: i32 }
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var b: Box = Box { tag: "start", n: i % 8 };
+        var r: Box = b.relabel("fresh-tag-value");
+        if (r.tag.len() != 15) { bad = 1; }
+        if (b.tag.len() != 5) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "method-literal-arg-consumed-safe-arm64", 0)
 }
