@@ -30,12 +30,12 @@ import (
 // checker recorded as a coercion site. These methods are reachable only
 // through the runtime vtable, never via a static call the tree-shake /
 // IR reachability walkers can follow, so each backend pins them as
-// extra roots (`treeshake.Run(prog, DynCoercionImplMethods(info)...)`).
+// extra roots (`treeshake.Run(prog, info, DynCoercionImplMethods(info)...)`).
 //
 // For a struct/enum concrete the vtable slot points directly at the real
 // receiver method, so the mangled `__method_<C>_<m>` is rooted (mirrors
-// ir.collectVtables' struct/enum slot resolution: info.Methods, falling
-// back to the conventional name).
+// ir.collectVtables' struct/enum slot resolution: the trait's registered
+// impl, falling back to the conventional name).
 //
 // For a primitive/string concrete the value is heap-boxed at the coercion
 // site and the vtable slot points at a synthesized unboxing WRAPPER
@@ -93,11 +93,7 @@ func DynCoercionImplMethods(info *checker.Info) []string {
 				// points at it, and a primitive's wrapper calls it (so it
 				// must survive into IR lowering where the wrapper is
 				// generated).
-				fn := info.Methods[dc.Concrete+"."+m.Name]
-				if fn == "" {
-					fn = "__method_" + dc.Concrete + "_" + m.Name
-				}
-				add(fn)
+				add(implMethodName(info, dc.Concrete, m.Name, tr))
 				// For a primitive concrete also root the wrapper name (the
 				// actual vtable target). No-op in the AST tree-shaker today.
 				if prim {
@@ -171,11 +167,7 @@ func DowncastImplMethods(prog *ast.Program, info *checker.Info) []string {
 				if m.Assoc {
 					continue
 				}
-				fn := info.Methods[concrete+"."+m.Name]
-				if fn == "" {
-					fn = "__method_" + concrete + "_" + m.Name
-				}
-				add(fn)
+				add(implMethodName(info, concrete, m.Name, tr))
 			}
 		}
 		return true
@@ -260,14 +252,25 @@ func keyedMapMethod(name string) bool {
 // non-nominal key (i32 / string / tuple) is a no-op — those don't use
 // the keyed path. Mirrors the IR's mapKeyKindTag==3 routing so the AST
 // tree-shake keeps exactly what codegen emits a call to.
-func enqueueKeyedMapDeps(method string, kType ast.Type, enqueue func(string)) {
+func enqueueKeyedMapDeps(method string, kType ast.Type, info *checker.Info, enqueue func(string)) {
 	name := nominalKeyName(kType)
 	if name == "" {
 		return
 	}
 	enqueue(method + "_keyed")
-	enqueue("__method_" + name + "_hash")
-	enqueue("__method_" + name + "_eq")
+	enqueue(implMethodName(info, name, "hash", "Hash"))
+	enqueue(implMethodName(info, name, "eq", "Eq"))
+}
+
+// implMethodName is the mangled function a (type, method) pair resolves
+// to, preferring the trait that declares it and falling back to the
+// conventional receiver-hoist name. Mirrors the IR's realImplMethodName
+// so tree-shake roots exactly the symbol codegen emits a call to.
+func implMethodName(info *checker.Info, typeName, method, trait string) string {
+	if fn, _, ok := info.ResolveMethod(typeName, method, []string{trait}); ok && fn != "" {
+		return fn
+	}
+	return "__method_" + typeName + "_" + method
 }
 
 // nominalKeyName returns the struct/enum type name of a map key, or ""
@@ -293,8 +296,10 @@ func nominalKeyName(t ast.Type) string {
 // wrappers (e.g. the test-path `_start` printing main()'s
 // result via `int_to_string`) where the call is generated
 // outside the AST and tree-shake would otherwise drop the
-// callee.
-func Run(prog *ast.Program, extras ...string) {
+// callee. `info` resolves the trait-provided methods codegen
+// emits calls to but no AST Call names; nil is tolerated (the
+// conventional manglings are rooted instead).
+func Run(prog *ast.Program, info *checker.Info, extras ...string) {
 	if len(prog.Funcs) == 0 {
 		return
 	}
@@ -369,7 +374,7 @@ func Run(prog *ast.Program, extras ...string) {
 		if fn == nil || fn.Body == nil {
 			continue
 		}
-		walkStmt(fn.Body, byName, enqueue)
+		walkStmt(fn.Body, byName, info, enqueue)
 	}
 	// Filter prog.Funcs to the reachable set, preserving
 	// declaration order.
@@ -382,63 +387,63 @@ func Run(prog *ast.Program, extras ...string) {
 	prog.Funcs = out
 }
 
-func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, enqueue func(string)) {
+func walkStmt(s ast.Stmt, byName map[string]*ast.FuncDecl, info *checker.Info, enqueue func(string)) {
 	switch x := s.(type) {
 	case *ast.Block:
 		for _, st := range x.Stmts {
-			walkStmt(st, byName, enqueue)
+			walkStmt(st, byName, info, enqueue)
 		}
 	case *ast.If:
-		walkExpr(x.Cond, byName, enqueue)
-		walkStmt(x.Then, byName, enqueue)
+		walkExpr(x.Cond, byName, info, enqueue)
+		walkStmt(x.Then, byName, info, enqueue)
 		if x.Else != nil {
-			walkStmt(x.Else, byName, enqueue)
+			walkStmt(x.Else, byName, info, enqueue)
 		}
 	case *ast.While:
-		walkExpr(x.Cond, byName, enqueue)
-		walkStmt(x.Body, byName, enqueue)
+		walkExpr(x.Cond, byName, info, enqueue)
+		walkStmt(x.Body, byName, info, enqueue)
 	case *ast.Loop:
-		walkStmt(x.Body, byName, enqueue)
+		walkStmt(x.Body, byName, info, enqueue)
 	case *ast.For:
 		if x.Init != nil {
-			walkStmt(x.Init, byName, enqueue)
+			walkStmt(x.Init, byName, info, enqueue)
 		}
-		walkExpr(x.Cond, byName, enqueue)
+		walkExpr(x.Cond, byName, info, enqueue)
 		if x.Step != nil {
-			walkStmt(x.Step, byName, enqueue)
+			walkStmt(x.Step, byName, info, enqueue)
 		}
-		walkStmt(x.Body, byName, enqueue)
+		walkStmt(x.Body, byName, info, enqueue)
 	case *ast.Return:
 		if x.Value != nil {
-			walkExpr(x.Value, byName, enqueue)
+			walkExpr(x.Value, byName, info, enqueue)
 		}
 	case *ast.Var:
-		walkExpr(x.Init, byName, enqueue)
+		walkExpr(x.Init, byName, info, enqueue)
 	case *ast.Destructure:
-		walkExpr(x.Init, byName, enqueue)
+		walkExpr(x.Init, byName, info, enqueue)
 	case *ast.ExprStmt:
-		walkExpr(x.Expr, byName, enqueue)
+		walkExpr(x.Expr, byName, info, enqueue)
 	case *ast.Match:
-		walkExpr(x.Tag, byName, enqueue)
+		walkExpr(x.Tag, byName, info, enqueue)
 		for _, arm := range x.Arms {
 			if arm.Guard != nil {
-				walkExpr(arm.Guard, byName, enqueue)
+				walkExpr(arm.Guard, byName, info, enqueue)
 			}
-			walkStmt(arm.Body, byName, enqueue)
+			walkStmt(arm.Body, byName, info, enqueue)
 		}
 	case *ast.Defer:
-		walkExpr(x.Expr, byName, enqueue)
+		walkExpr(x.Expr, byName, info, enqueue)
 	case *ast.FuncDecl:
 		// Local FuncDecl (closure-converted) — its body is
 		// reachable via the closure conversion that hoisted
 		// it. Walk too.
 		if x.Body != nil {
-			walkStmt(x.Body, byName, enqueue)
+			walkStmt(x.Body, byName, info, enqueue)
 		}
 	}
 }
 
-func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string)) {
+func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, info *checker.Info, enqueue func(string)) {
 	if e == nil {
 		return
 	}
@@ -449,62 +454,62 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// also lands here via Call.Callee).
 		enqueue(x.Name)
 	case *ast.Call:
-		walkExpr(x.Callee, byName, enqueue)
+		walkExpr(x.Callee, byName, info, enqueue)
 		// Struct/enum (keyKind-3) map key: the IR routes this op to the
 		// `_keyed` runtime variant (#2671), which dispatches through the
 		// key type's derived hash/eq. Pull both the keyed impl alias and
 		// those derived methods so codegen's emitted call resolves.
 		if id, ok := x.Callee.(*ast.Ident); ok && keyedMapMethod(id.Name) && len(x.TypeArgs) >= 1 {
-			enqueueKeyedMapDeps(id.Name, x.TypeArgs[0], enqueue)
+			enqueueKeyedMapDeps(id.Name, x.TypeArgs[0], info, enqueue)
 		}
 		for _, a := range x.Args {
-			walkExpr(a, byName, enqueue)
+			walkExpr(a, byName, info, enqueue)
 		}
 	case *ast.Binary:
-		walkExpr(x.Left, byName, enqueue)
-		walkExpr(x.Right, byName, enqueue)
+		walkExpr(x.Left, byName, info, enqueue)
+		walkExpr(x.Right, byName, info, enqueue)
 	case *ast.Unary:
-		walkExpr(x.Operand, byName, enqueue)
+		walkExpr(x.Operand, byName, info, enqueue)
 	case *ast.IfExpr:
-		walkExpr(x.Cond, byName, enqueue)
-		walkExpr(x.Then, byName, enqueue)
-		walkExpr(x.Else, byName, enqueue)
+		walkExpr(x.Cond, byName, info, enqueue)
+		walkExpr(x.Then, byName, info, enqueue)
+		walkExpr(x.Else, byName, info, enqueue)
 	case *ast.TryOp:
-		walkExpr(x.Inner, byName, enqueue)
+		walkExpr(x.Inner, byName, info, enqueue)
 	case *ast.MatchExpr:
-		walkExpr(x.Tag, byName, enqueue)
+		walkExpr(x.Tag, byName, info, enqueue)
 		for _, arm := range x.Arms {
 			if arm.Guard != nil {
-				walkExpr(arm.Guard, byName, enqueue)
+				walkExpr(arm.Guard, byName, info, enqueue)
 			}
-			walkExpr(arm.Body, byName, enqueue)
+			walkExpr(arm.Body, byName, info, enqueue)
 		}
 	case *ast.BlockExpr:
 		for _, st := range x.Stmts {
-			walkStmt(st, byName, enqueue)
+			walkStmt(st, byName, info, enqueue)
 		}
 		if x.Tail != nil {
-			walkExpr(x.Tail, byName, enqueue)
+			walkExpr(x.Tail, byName, info, enqueue)
 		}
 	case *ast.Assign:
-		walkExpr(x.Target, byName, enqueue)
-		walkExpr(x.Value, byName, enqueue)
+		walkExpr(x.Target, byName, info, enqueue)
+		walkExpr(x.Value, byName, info, enqueue)
 	case *ast.Index:
-		walkExpr(x.Array, byName, enqueue)
-		walkExpr(x.Idx, byName, enqueue)
+		walkExpr(x.Array, byName, info, enqueue)
+		walkExpr(x.Idx, byName, info, enqueue)
 	case *ast.SliceExpr:
-		walkExpr(x.Source, byName, enqueue)
-		walkExpr(x.Low, byName, enqueue)
-		walkExpr(x.High, byName, enqueue)
+		walkExpr(x.Source, byName, info, enqueue)
+		walkExpr(x.Low, byName, info, enqueue)
+		walkExpr(x.High, byName, info, enqueue)
 	case *ast.FieldAccess:
-		walkExpr(x.Target, byName, enqueue)
+		walkExpr(x.Target, byName, info, enqueue)
 	case *ast.ArrayLit:
 		for _, el := range x.Elems {
-			walkExpr(el, byName, enqueue)
+			walkExpr(el, byName, info, enqueue)
 		}
 	case *ast.StructLit:
 		for _, f := range x.Fields {
-			walkExpr(f.Value, byName, enqueue)
+			walkExpr(f.Value, byName, info, enqueue)
 		}
 		// Struct-update `Foo { ...base, field: v }`: the spread source is an
 		// ordinary expression, so a call appearing ONLY there (`Foo { ...mk(),
@@ -512,7 +517,7 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// callee was pruned, leaving the emitted call site with an undefined
 		// label at assembly time.
 		if x.Base != nil {
-			walkExpr(x.Base, byName, enqueue)
+			walkExpr(x.Base, byName, info, enqueue)
 		}
 	case *ast.MapLit:
 		// IR lowers `Map { ... }` to map_new + a chain of
@@ -523,28 +528,28 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		enqueue("__method_Map_set")
 		// A struct/enum-keyed map literal lowers to the keyed set
 		// variant (#2671); pull its impl + the key's derived hash/eq.
-		enqueueKeyedMapDeps("__method_Map_set", x.KeyType, enqueue)
+		enqueueKeyedMapDeps("__method_Map_set", x.KeyType, info, enqueue)
 		for _, en := range x.Entries {
-			walkExpr(en.Key, byName, enqueue)
-			walkExpr(en.Value, byName, enqueue)
+			walkExpr(en.Key, byName, info, enqueue)
+			walkExpr(en.Value, byName, info, enqueue)
 		}
 	case *ast.TupleLit:
 		for _, el := range x.Elems {
-			walkExpr(el, byName, enqueue)
+			walkExpr(el, byName, info, enqueue)
 		}
 	case *ast.EnumLit:
 		for _, p := range x.Args {
-			walkExpr(p, byName, enqueue)
+			walkExpr(p, byName, info, enqueue)
 		}
 	case *ast.CastExpr:
-		walkExpr(x.Inner, byName, enqueue)
+		walkExpr(x.Inner, byName, info, enqueue)
 	case *ast.DowncastExpr:
-		walkExpr(x.Inner, byName, enqueue)
+		walkExpr(x.Inner, byName, info, enqueue)
 	case *ast.MakeClosure:
 		// Closure formation references the hoisted body.
 		enqueue(x.FuncName)
 		for _, c := range x.Captures {
-			walkExpr(c, byName, enqueue)
+			walkExpr(c, byName, info, enqueue)
 		}
 	case *ast.Lambda:
 		// Anonymous function expression — walk the body so any
@@ -557,7 +562,7 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// only reachable through a lambda gets pruned, leading
 		// to "undefined reference to __method_string_trim" at
 		// link time.
-		walkStmt(x.Body, byName, enqueue)
+		walkStmt(x.Body, byName, info, enqueue)
 	case *ast.CaptureRef:
 		// CaptureRef targets a synthesised env variable; no
 		// direct function reference.
@@ -573,10 +578,10 @@ func walkExpr(e ast.Expr, byName map[string]*ast.FuncDecl, enqueue func(string))
 		// to_string()` body alive.
 		for _, p := range x.Parts {
 			if p.Expr != nil {
-				walkExpr(p.Expr, byName, enqueue)
+				walkExpr(p.Expr, byName, info, enqueue)
 			}
 		}
-		walkExpr(x.Desugared, byName, enqueue)
+		walkExpr(x.Desugared, byName, info, enqueue)
 	}
 }
 
@@ -610,10 +615,7 @@ func DropImplMethods(info *checker.Info) []string {
 			if !impld {
 				continue
 			}
-			fn := info.Methods[typeName+".drop"]
-			if fn == "" {
-				fn = "__method_" + typeName + "_drop"
-			}
+			fn := implMethodName(info, typeName, "drop", trait)
 			if !seen[fn] {
 				seen[fn] = true
 				out = append(out, fn)

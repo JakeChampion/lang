@@ -2521,7 +2521,16 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			if m.Assoc {
 				prefix = "__assoc_"
 			}
+			// Resolve against THIS impl's trait: the conformance
+			// verdict has to read the signature and own-flags of the
+			// method this impl block provided, not of a same-named one
+			// another trait registered for the same type. The prefix
+			// guard keeps an assoc slot from matching a receiver method
+			// (and vice versa), which stays a missing-method report.
 			mangled := prefix + typeName + "_" + m.Name
+			if got, _, found := c.resolveMethod(typeName, m.Name, []string{impl.Trait}); found && strings.HasPrefix(got, prefix) {
+				mangled = got
+			}
 			sig, ok := c.info.FuncSigs[mangled]
 			if !ok {
 				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
@@ -2973,6 +2982,69 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	owners := append(c.info.MethodOwners[key], trait)
 	slices.Sort(owners)
 	c.info.MethodOwners[key] = owners
+}
+
+// simpleTraitName strips a trait name's module mangling, so a caller can
+// name `Ord` without knowing it arrives as `cmp__Ord` (and pass a name it
+// already holds in mangled form unchanged).
+func simpleTraitName(name string) string {
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		return name[i+2:]
+	}
+	return name
+}
+
+// ResolveMethod finds the implementation of `name` on `typeName`.
+// `prefer` names the traits the caller already knows it wants — the
+// Display spine wants Display, the `<` desugar wants Ord, a vtable slot
+// wants the trait that declares it — matched by simple name so a mangled
+// `cmp__Ord` and a bare `Ord` both hit. An empty `prefer` means "any".
+// `owner` is the trait that provided the returned implementation, empty
+// for an inherent method or a builtin.
+//
+// A preference only ever selects among registrations that already exist,
+// so it can neither invent a lookup that would otherwise fail nor, while
+// E006 still rejects two traits offering one method name for one type,
+// return a different implementation than the flat `Methods` key. Ranking
+// the candidates when that restriction lifts belongs here.
+func (in *Info) ResolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
+	if in == nil {
+		return "", "", false
+	}
+	key := typeName + "." + name
+	owners := in.MethodOwners[key]
+	for _, want := range prefer {
+		if want == "" {
+			continue
+		}
+		want = simpleTraitName(want)
+		for _, o := range owners {
+			if simpleTraitName(o) != want {
+				continue
+			}
+			if m, found := in.TraitMethods[o+"."+key]; found {
+				return m, o, true
+			}
+		}
+	}
+	mangled, ok = in.Methods[key]
+	if !ok {
+		return "", "", false
+	}
+	// Report the owner of the implementation actually returned, so a
+	// caller that stamps it and re-resolves later lands on this exact
+	// registration again.
+	for _, o := range owners {
+		if in.TraitMethods[o+"."+key] == mangled {
+			return mangled, o, true
+		}
+	}
+	return mangled, "", true
+}
+
+// resolveMethod is ResolveMethod against the checker's own Info.
+func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
+	return c.info.ResolveMethod(typeName, name, prefer)
 }
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
@@ -3440,7 +3512,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 		}
 	}
-	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt}
+	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt, OwnerTrait: ownerTrait}
 	// DynTrait records the trait that OWNS the resolved method (not the
 	// whole set) — that's what the IR vtable lookup and the interp's
 	// error messages key on. Runtime dispatch is still by the receiver's
@@ -3510,11 +3582,7 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 // by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
 // or "Debug". Returns "" for any other trait — only these are derivable.
 func deriveKind(name string) string {
-	simple := name
-	if i := strings.LastIndex(simple, "__"); i >= 0 {
-		simple = simple[i+2:]
-	}
-	switch simple {
+	switch simple := simpleTraitName(name); simple {
 	case "Eq", "Display", "Ord", "Hash", "Json", "Default", "Debug":
 		return simple
 	}
@@ -4940,7 +5008,7 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 	if tn == "" {
 		return false
 	}
-	mangled, ok := c.info.Methods[tn+".to_string"]
+	mangled, _, ok := c.resolveMethod(tn, "to_string", []string{"Display"})
 	if !ok {
 		return false
 	}
@@ -5749,6 +5817,15 @@ var arithOpMethod = map[string]string{
 	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
 }
 
+// arithOpTrait names the std/num trait that declares each overloadable
+// arithmetic method, so the overload resolves against that trait's impl
+// rather than whichever registration happened to claim the flat name.
+// The bitwise / shift / remainder methods have no trait yet — an entry
+// appears here when one does.
+var arithOpTrait = map[string]string{
+	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "neg": "Neg",
+}
+
 // compositeOpOverload handles operator overloading for a binary operator
 // whose operands are the same composite (struct / enum) type: it desugars
 // `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
@@ -6006,7 +6083,7 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 		return nil, false
 	}
 	tn, _ := methodTypeName(lt)
-	if mangled, ok := c.info.Methods[tn+"."+opMethod]; ok && c.methodVisibleHere(mangled) {
+	if mangled, _, ok := c.resolveMethod(tn, opMethod, []string{arithOpTrait[opMethod]}); ok && c.methodVisibleHere(mangled) {
 		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
 		rtt := c.checkExpr(call, s)
 		n.ArithCall = call
@@ -8308,8 +8385,13 @@ func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
 		return false
 	}
 	if dt, ok := m.Receiver.(ast.DynTraitType); ok {
-		// The method may be declared by any trait in the set — search
-		// the union, matching checkDynMethodCall's resolution.
+		// checkDynMethodCall resolved the method to exactly one trait of
+		// the set (two declaring it is E062, which never reaches here)
+		// and recorded it — read the same one back rather than
+		// re-searching the union and hoping the two agree.
+		if m.OwnerTrait != "" {
+			return c.dynMethodConsumes(m.OwnerTrait, m.Field)
+		}
 		for _, tr := range dt.Traits {
 			td, ok := c.info.Traits[tr]
 			if !ok {
@@ -8327,7 +8409,11 @@ func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
 	if !ok {
 		return false
 	}
-	if mangled, ok := c.info.Methods[typeName+"."+m.Field]; ok {
+	// Preferring the call site's own OwnerTrait is what keeps this
+	// answer bound to the impl dispatch picked: ResolveMethod reports an
+	// owner only for the implementation it returned, so re-resolving
+	// with that owner as the preference lands on the same registration.
+	if mangled, _, ok := c.resolveMethod(typeName, m.Field, []string{m.OwnerTrait}); ok {
 		flags := c.ownFuncs[mangled]
 		return len(flags) > 0 && flags[0]
 	}
@@ -11534,7 +11620,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
 					// deferred bounded-*method* path below.
 					if c.current != nil && containsString(c.current.TypeParams, tid.Name) {
-						if tm, _, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
+						if tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
 							tp := ast.ParamType{Name: tid.Name}
 							if len(n.Args) != len(tm.Params) {
 								c.errfCode(n.P, "E004", "associated function %q expects %d argument(s), got %d", fa.Field, len(tm.Params), len(n.Args))
@@ -11547,7 +11633,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 								}
 							}
-							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp}
+							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp, OwnerTrait: boundTrait}
 							return ast.SubstSelf(tm.Result, tp)
 						}
 					}
@@ -11559,7 +11645,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// resolves after the type-param rewrite.
 					isPrim := isPrimitiveTypeName(tid.Name)
 					if isStruct || isEnum || isPrim {
-						if mangled, ok := c.info.Methods[tid.Name+"."+fa.Field]; ok {
+						if mangled, _, ok := c.resolveMethod(tid.Name, fa.Field, nil); ok {
 							if strings.HasPrefix(mangled, "__assoc_") {
 								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 							} else {
@@ -11729,7 +11815,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// path below resolves the now-concrete receiver to the
 			// impl's mangled method. See docs/TRAITS.md §4.
 			if pt, ok := tt.(ast.ParamType); ok {
-				tm, _, found := c.resolveTraitMethodForParam(pt.Name, fa.Field)
+				tm, boundTrait, found := c.resolveTraitMethodForParam(pt.Name, fa.Field)
 				if !found {
 					c.errfCode(n.P, "E021",
 						"no method %q on type parameter %s; add a trait bound such as [%s: SomeTrait] that provides it",
@@ -11748,7 +11834,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 					}
 				}
-				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt}
+				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt, OwnerTrait: boundTrait}
 				return ast.SubstSelf(tm.Result, tt)
 			}
 			// Trait object: `d.m(...)` where `d: dyn Trait`. Resolve the
@@ -11799,8 +11885,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if typeName != "" {
-				key := typeName + "." + fa.Field
-				if mangled, ok := c.info.Methods[key]; ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+				if mangled, ownerTrait, ok := c.resolveMethod(typeName, fa.Field, nil); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
 					if fa.Field == "drop" && c.hasDropImpl(typeName) {
 						c.errfCode(fa.FieldPos, "E073",
 							"`drop` is a finalizer, not a method to call: the runtime runs %s's `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized", typeName)
@@ -11808,11 +11893,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Preserve the source-level call site so the LSP
 					// can resolve hover / goto-def on `area` in
 					// `p.area()` after we rewrite the AST to a
-					// mangled flat call.
+					// mangled flat call, and so the move/borrow
+					// analysis re-resolves to this same impl.
 					n.Method = &ast.MethodCallSite{
-						Field:    fa.Field,
-						FieldPos: fa.FieldPos,
-						Receiver: tt,
+						Field:      fa.Field,
+						FieldPos:   fa.FieldPos,
+						Receiver:   tt,
+						OwnerTrait: ownerTrait,
 					}
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
@@ -12430,7 +12517,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				switch lt.(type) {
 				case ast.StructType, ast.EnumType:
 					tn, _ := methodTypeName(lt)
-					if mangled, ok := c.info.Methods[tn+".cmp"]; ok && c.methodVisibleHere(mangled) {
+					if mangled, _, ok := c.resolveMethod(tn, "cmp", []string{"Ord"}); ok && c.methodVisibleHere(mangled) {
 						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
 							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
@@ -12526,7 +12613,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				switch lt.(type) {
 				case ast.StructType, ast.EnumType:
 					tn, _ := methodTypeName(lt)
-					if mangled, ok := c.info.Methods[tn+".eq"]; ok && c.methodVisibleHere(mangled) {
+					if mangled, _, ok := c.resolveMethod(tn, "eq", []string{"Eq"}); ok && c.methodVisibleHere(mangled) {
 						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
 							if _, isBool := rt2.(ast.BoolType); !isBool {
@@ -12610,7 +12697,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			switch t.(type) {
 			case ast.StructType, ast.EnumType:
 				tn, _ := methodTypeName(t)
-				if mangled, ok := c.info.Methods[tn+".neg"]; ok && c.methodVisibleHere(mangled) {
+				if mangled, _, ok := c.resolveMethod(tn, "neg", []string{arithOpTrait["neg"]}); ok && c.methodVisibleHere(mangled) {
 					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
 					rtt := c.checkExpr(call, s)
 					n.NegCall = call

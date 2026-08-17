@@ -355,7 +355,7 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	dynRoots := append(treeshake.DynCoercionImplMethods(info), treeshake.DowncastImplMethods(prog, info)...)
 	dynRoots = append(dynRoots, treeshake.DropImplMethods(info)...)
 	dynRoots = append(dynRoots, opts.Exports...) // -shared exports survive tree-shaking
-	treeshake.Run(prog, dynRoots...)
+	treeshake.Run(prog, info, dynRoots...)
 	// x86-64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate.
 	// It ALSO reclaims them (Perceus RC, slice 4b — docs/DYN-TRAITS.md

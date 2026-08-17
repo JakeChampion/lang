@@ -174,10 +174,11 @@ function main(): i32 { return 0; }`
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	treeshake.Run(prog, "seeded")
+	treeshake.Run(prog, info, "seeded")
 	names := make([]string, 0, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		names = append(names, fn.Name)

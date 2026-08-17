@@ -419,20 +419,28 @@ type Interp struct {
 	// accumulated string and resets. (The AOT backends use a 64 MiB BSS
 	// buffer; the interp just grows a []byte.)
 	strbuf []byte
+	// traitMethods is the interpreter's own copy of the checker's
+	// TraitMethods index — `<Trait>.<Type>.<method>` to the flat symbol
+	// — rebuilt from the FuncDecls handed to Register, since the interp
+	// never sees a checker.Info. Dyn dispatch consults it so a method
+	// name offered by two traits for one type resolves to the trait the
+	// call site named.
+	traitMethods map[string]string
 }
 
 func New() *Interp {
 	i := &Interp{
-		Funcs:     map[string]*ast.FuncDecl{},
-		Enums:     map[string]*ast.EnumDecl{},
-		Builtins:  map[string]*Builtin{},
-		Stdout:    os.Stdout,
-		Stderr:    os.Stderr,
-		Stdin:     os.Stdin,
-		Exiter:    os.Exit,
-		openFiles: map[int64]*os.File{},
-		nextFd:    100,
-		Global:    newEnv(nil),
+		Funcs:        map[string]*ast.FuncDecl{},
+		traitMethods: map[string]string{},
+		Enums:        map[string]*ast.EnumDecl{},
+		Builtins:     map[string]*Builtin{},
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
+		Stdin:        os.Stdin,
+		Exiter:       os.Exit,
+		openFiles:    map[int64]*os.File{},
+		nextFd:       100,
+		Global:       newEnv(nil),
 	}
 	i.Builtins["print"] = &Builtin{Fn: builtinPrint}
 	i.Builtins["write"] = &Builtin{Fn: builtinWrite}
@@ -2398,8 +2406,15 @@ func builtinStrbufTake(i *Interp, args []Value) (Value, error) {
 
 // Register adds a user-defined function to the interpreter. Subsequent
 // declarations of the same name overwrite the previous one (handy for
-// REPL redefinitions).
-func (i *Interp) Register(fn *ast.FuncDecl) { i.Funcs[fn.Name] = fn }
+// REPL redefinitions). A hoisted trait method is additionally indexed by
+// the trait that provided it, so dyn dispatch can name the impl it means
+// rather than whichever registration claimed the flat mangling.
+func (i *Interp) Register(fn *ast.FuncDecl) {
+	i.Funcs[fn.Name] = fn
+	if fn.ImplTrait != "" && fn.MethodRecv != "" && fn.MethodSimpleName != "" {
+		i.traitMethods[fn.ImplTrait+"."+fn.MethodRecv+"."+fn.MethodSimpleName] = fn.Name
+	}
+}
 
 // RegisterEnum makes an enum decl visible to subsequent eval calls.
 // Variant constructors and `match` patterns find their variants by
@@ -3954,7 +3969,13 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("interp: cannot dispatch dyn %s.%s on a %T value", c.DynTrait, fa.Field, recv)
 		}
-		mangled := "__method_" + tn + "_" + fa.Field
+		// c.DynTrait names the trait that OWNS the resolved method, so
+		// prefer that trait's impl and fall back to the conventional
+		// receiver-hoist name (builtins and inherent methods).
+		mangled, ok := i.traitMethods[c.DynTrait+"."+tn+"."+fa.Field]
+		if !ok {
+			mangled = "__method_" + tn + "_" + fa.Field
+		}
 		callArgs := append([]Value{recv}, args...)
 		if b, ok := i.Builtins[mangled]; ok {
 			return b.Fn(i, callArgs)

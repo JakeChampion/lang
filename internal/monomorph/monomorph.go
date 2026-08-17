@@ -510,16 +510,25 @@ func Run(prog *ast.Program, info *checker.Info) error {
 					progressed = true
 				}
 				for _, mn := range impl.MethodNames {
-					prefix := "__method_"
-					genName := prefix + baseName + "_" + mn
+					// Prefer the name THIS impl's trait registered:
+					// reconstructing `__method_<base>_<mn>` picks
+					// whichever registration claimed the flat mangling,
+					// which need not be this trait's.
+					genName, _, _ := info.ResolveMethod(baseName, mn, []string{impl.Trait})
 					gen, isGen := info.GenericFuncs[genName]
-					if !isGen {
-						prefix = "__assoc_"
-						genName = prefix + baseName + "_" + mn
+					for _, pre := range []string{"__method_", "__assoc_"} {
+						if isGen {
+							break
+						}
+						genName = pre + baseName + "_" + mn
 						gen, isGen = info.GenericFuncs[genName]
 					}
 					if !isGen {
 						continue
+					}
+					prefix := "__method_"
+					if strings.HasPrefix(genName, "__assoc_") {
+						prefix = "__assoc_"
 					}
 					margs := make([]ast.Type, len(gen.TypeParams))
 					complete := true
