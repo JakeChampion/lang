@@ -95,6 +95,11 @@ func TestSelfHostBlockNeverIR_X86_64(t *testing.T) {
 // TestSelfHostBlockValuelessStillRejected is the other direction: a tail-less
 // block that can FALL THROUGH still has no value and is still refused. Without
 // it, admitting the `never` case could widen into accepting every void block.
+//
+// The refusal comes from the build gate and names the same code native does,
+// E061. It used to reach IR lowering and be refused there instead, so this
+// asserted on that bail's wording; gating every coded diagnostic (#6961) means
+// the checker now speaks first, which is the convergence worth pinning.
 func TestSelfHostBlockValuelessStillRejected(t *testing.T) {
 	_, mmc, stdlibRoot, _, _ := annotateF64ProjDir(t)
 	const src = `function side(): i32 { return 1; }
@@ -107,8 +112,12 @@ function main(): i32 {
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write main.fern: %v", err)
 	}
-	out, _ := exec.Command(mmc, mainPath, stdlibRoot).CombinedOutput()
-	if !strings.Contains(string(out), "value branch has no trailing expression") {
-		t.Errorf("a fall-through value-less block was not refused; driver said: %s", out)
+	cmd := exec.Command(mmc, mainPath, stdlibRoot)
+	out, _ := cmd.CombinedOutput()
+	if cmd.ProcessState.ExitCode() == 0 {
+		t.Fatalf("a fall-through value-less block was accepted; driver emitted %d bytes of asm", len(out))
+	}
+	if !strings.Contains(string(out), "E061") {
+		t.Errorf("refused, but not with native's E061; driver said: %s", out)
 	}
 }
