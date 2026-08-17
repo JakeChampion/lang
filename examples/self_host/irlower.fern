@@ -10446,6 +10446,68 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 lr = lr.emit(ir.op_drop());
                 return lr;
             }
+            // A fresh-or-RECEIVER method result (`base.drop(2).len()`,
+            // SFRRECV:) — the receiver-position half of #6544. The callee is
+            // proven to return either a fresh box or the receiver itself, so
+            // the pointer decides at runtime which one arrived: free it only
+            // when it differs from the receiver's. No return-transfer inc is
+            // involved, which is what makes this safe without the whole-surface
+            // drop coverage that inc would require (§9).
+            //
+            // The receiver must be a bare string LOCAL, so its pointer is a
+            // slot load with no re-evaluation and no second allocation to
+            // confuse the compare.
+            var frslot: i32 = 0 - 1;
+            var frname: string = "";
+            match (fa.obj) {
+                parser.ExprCall(frc) => {
+                    match (frc.callee) {
+                        parser.ExprFieldAccess(frfa) => {
+                            match (frfa.obj) {
+                                parser.ExprIdent(frid) => {
+                                    var fsl: i32 = s.slot_of(frid.name);
+                                    if (fsl >= 0 && s.is_str_slot(fsl)) {
+                                        var frty: string = method_recv_tyname(frfa.obj, s);
+                                        if (frty != "" && util.index_of_str(s.sigs.str_fresh_ret_fns, "SFRRECV:" + frty + "." + frfa.field) >= 0) {
+                                            frslot = fsl;
+                                            frname = frid.name;
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (frslot >= 0) {
+                var fr: LowerState = lower_expr(fa.obj, s);
+                if (!fr.ok) { return fr; }
+                var rscr: string = "$frr" + util.i32_to_string(fr.locals.len());
+                fr = fr.add_local(rscr);
+                var rslot: i32 = fr.slot_of(rscr);
+                fr = fr.emit(ir.op_store_local(rslot));
+                // Park the length too: the release below opens a block, and a
+                // value left on the stack under it is not something every
+                // backend's verifier accepts.
+                var nscr: string = "$frn" + util.i32_to_string(fr.locals.len());
+                fr = fr.add_local(nscr);
+                var nslot: i32 = fr.slot_of(nscr);
+                fr = fr.emit(ir.op_load_local(rslot));
+                fr = fr.emit(ir.op_str_len());
+                fr = fr.emit(ir.op_store_local(nslot));
+                fr = fr.emit(ir.op_load_local(rslot));
+                fr = fr.emit(ir.op_load_local(frslot));
+                fr = fr.emit(ir.op_bin("ne", 0, false));
+                fr = fr.emit(ir.op_if(0));
+                fr = fr.emit(ir.op_load_local(rslot));
+                fr = fr.emit(ir.op_call_direct("__fern_str_free", 1));
+                fr = fr.emit(ir.op_drop());
+                fr = fr.emit(ir.op_end());
+                return fr.emit(ir.op_load_local(nslot));
+            }
         }
         var sl: LowerState = lower_view_borrowed(fa.obj, s);
         if (!sl.ok) { return sl; }
@@ -25875,6 +25937,31 @@ function body_has_nonfresh_str_return(stmts: parser.Stmt[]): boolean {
 // alias of a borrowed arg / field / literal. Only free functions: a method key
 // would need the receiver type the string binding can't supply (is_fresh_ret_binding
 // keys a method on recv_type, empty here).
+// body_has_nonfreshrecv_str_return: any return whose value is neither a fresh
+// string producer NOR the bare RECEIVER ident. It is body_has_nonfresh_str_return
+// widened by exactly one shape — `return self` / `return s` — which is the
+// IDENTITY path every borrowing string method carries
+// (`if (n <= 0) { return s; }`).
+function body_has_nonfreshrecv_str_return(stmts: parser.Stmt[], recv: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var ok: boolean = str_return_is_fresh(r.value);
+                if (!ok) { match (r.value) { parser.ExprIdent(rid) => { ok = rid.name == recv; }, _ => {} } }
+                if (!ok) { return true; }
+            },
+            parser.StmtIf(f) => { if (body_has_nonfreshrecv_str_return(f.then_body, recv) || body_has_nonfreshrecv_str_return(f.else_body, recv)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfreshrecv_str_return(w.body, recv)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfreshrecv_str_return(fo.body, recv)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshrecv_str_return(m.arms[a].body, recv)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -25882,6 +25969,31 @@ pub function str_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         if (funcs[k].ret_type == "string" && funcs[k].receiver_type.len() == 0
                 && body_has_return(funcs[k].body) && !body_has_nonfresh_str_return(funcs[k].body)) {
             out = out.append(funcs[k].name);
+        }
+        // "SFRRECV:<Recv>.<method>" — a string-shaped METHOD whose every return
+        // is either fresh or the RECEIVER itself (#6544). That is the shape a
+        // borrowing string method actually has: `(s: string) drop(n): str`
+        // returns a fresh slice, or `s` unchanged when there is nothing to drop.
+        //
+        // Freshness alone cannot admit these, and native's route is not open
+        // either: it reclaims an identity return through an is_unique gate that
+        // rests on a return-transfer inc the self-host emits for array params
+        // only — and adding that inc UNPAIRED measures strictly worse (§9,
+        // 2026-08-17). What this key buys instead is a runtime discriminator
+        // that needs no inc at all: a fresh box is never the receiver's pointer
+        // and an identity return always is, so the consuming site frees only
+        // when the two differ.
+        //
+        // `str` and `string` both qualify — a `str` return is a real rc-headered
+        // box on this path, not a borrowed view. Rides the str_fresh_ret_fns
+        // list under a prefix (the "ARRF:" convention — ':' can never appear in
+        // an identifier), so the bare-name membership checks cannot match it and
+        // no registry field is added.
+        if (funcs[k].receiver_type.len() > 0 && funcs[k].receiver_name.len() > 0
+                && (funcs[k].ret_type == "string" || funcs[k].ret_type == "str")
+                && body_has_return(funcs[k].body)
+                && !body_has_nonfreshrecv_str_return(funcs[k].body, funcs[k].receiver_name)) {
+            out = out.append("SFRRECV:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
     }
