@@ -69,6 +69,13 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	if len(echoAsm) == 0 {
 		t.Fatal("self-host arm64 compiler emitted 0 bytes for the echo program")
 	}
+	// Both helpers are Fern runtime functions (#2649), so the branches carry the
+	// stack-ABI `__fn___` prefix.
+	for _, sym := range []string{"bl __fn___fern_reader_read_chunk", "bl __fn___fern_reader_close"} {
+		if !bytes.Contains(echoAsm, []byte(sym)) {
+			t.Fatalf("echo asm has no %q", sym)
+		}
+	}
 	echoBin := buildBin(t, arm64gcc, dir, "echo", string(echoAsm))
 
 	cases := []struct {

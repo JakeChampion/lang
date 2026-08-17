@@ -80,6 +80,13 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// machine is irrelevant — this only has to make the ops lower.
 		"    if (read_int() < (0 as i64)) { return 24; }\n" +
 		"    if (read_all_stdin().len() != 0) { return 25; }\n" +
+		// The three Option-returning Reader leaves. read_line gates on
+		// `str_read_line`; read_chunk and close share the `reader` need, so the
+		// Reader has to be both read from and closed for both to be reachable.
+		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
+		"    var rd: Reader = stdin();\n" +
+		"    match (rd.read_chunk(64)) { Some(_) => {}, None => {} }\n" +
+		"    rd.close();\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -159,7 +166,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// arm64 shed more here than the other targets — the dead AST
 		// __fern_read_all_stdin body and its __fern_read_all_stdin_rc IR twin both
 		// went with the migration.
-		"read_int", "read_all_stdin"} {
+		"read_int", "read_all_stdin",
+		// The three Option-returning Reader leaves (#2649). read_chunk and close
+		// were emitted UNCONDITIONALLY inside the arm64 heap block before the
+		// migration — `has_need("reader")` was never consulted on this backend —
+		// so every heap program carried two helpers it could not reach. They ride
+		// the same need gate as x86-64's now, which is what makes them absent
+		// from a program that holds no Reader.
+		"read_line", "reader_read_chunk", "reader_close"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -231,6 +245,30 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if !strings.Contains(asm, "    ldr x8, [sp], #16\n    svc #0\n") {
 		t.Error("__syscall3 did not emit the `ldr x8` + `svc #0` sequence darwinize matches")
 	}
+
+	// The other side of the Reader leaves' need gate (#2649). The hand-asm
+	// read_chunk / close bodies sat unconditionally inside the arm64 heap block,
+	// so ANY heap program carried them; the Fern ones are gated on `reader` like
+	// x86-64's. A heap program that holds no Reader must therefore emit none of
+	// the three — which is the half of the gating change the probe above, holding
+	// every leaf at once, cannot see.
+	noReader := filepath.Join(t.TempDir(), "no_reader.fern")
+	if err := os.WriteFile(noReader, []byte("function main(): i32 { var s: string = \"a\" + \"b\"; print_str(s); return s.len(); }\n"), 0o644); err != nil {
+		t.Fatalf("write no-reader probe: %v", err)
+	}
+	nrOut, err := exec.Command(mmc, noReader, "-target", "arm64-linux").Output()
+	if err != nil {
+		t.Fatalf("self-host arm64 emit (no-reader probe) failed: %v", err)
+	}
+	nrAsm := string(nrOut)
+	if !strings.Contains(nrAsm, "__fn___fern_str_concat:") {
+		t.Fatal("the no-reader probe did not pull in the heap runtime — it cannot show the gate")
+	}
+	for _, leaf := range []string{"read_line", "reader_read_chunk", "reader_close"} {
+		if strings.Contains(nrAsm, "__fn___fern_"+leaf+":") {
+			t.Errorf("__fn___fern_%s emitted for a program that holds no Reader — the need gate is not being consulted", leaf)
+		}
+	}
 }
 
 // TestSelfHostSyscallLeavesDarwinizedArm64 pins the Mach-O half of the same
@@ -291,6 +329,12 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// number can be inspected below.
 		"    if (read_int() < (0 as i64)) { return 18; }\n" +
 		"    if (read_all_stdin().len() != 0) { return 19; }\n" +
+		// The three Reader leaves, called for effect so their read(2) / close(2)
+		// numbers can be inspected below.
+		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
+		"    var rd: Reader = stdin();\n" +
+		"    match (rd.read_chunk(64)) { Some(_) => {}, None => {} }\n" +
+		"    rd.close();\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -397,7 +441,12 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// tcp_recv is in this loop rather than the constant table for the same reason,
 	// and it used to assert only that the helper was Fern at all: scoping to the
 	// body is what makes its number checkable.
-	for _, sym := range []string{"__fn___fern_read_int", "__fn___fern_read_all_stdin", "__fn___fern_tcp_recv"} {
+	//
+	// read_line and reader_read_chunk join them (#2649): the same read(2), one
+	// byte at a time from fd 0 for read_line and up to n from the Reader's own fd
+	// for read_chunk.
+	for _, sym := range []string{"__fn___fern_read_int", "__fn___fern_read_all_stdin", "__fn___fern_tcp_recv",
+		"__fn___fern_read_line", "__fn___fern_reader_read_chunk"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
@@ -411,6 +460,27 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		}
 		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
 			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
+		}
+	}
+	// reader_close is the one migrated leaf whose syscall is close(2) — Darwin 6,
+	// arm64 Linux 57. Body-scoped for the same reason as the read(2) group: 6 is
+	// an ordinary literal this emit holds many of, so a file-wide match would pass
+	// whatever asmcore.sysno's `close` row said.
+	{
+		const sym = "__fn___fern_reader_close"
+		body := extractFuncBody(asm, sym)
+		if body == "" {
+			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
+		} else {
+			if !strings.Contains(body, "    mov x0, #6\n    str x0, [sp, #-16]!\n") {
+				t.Errorf("%s does not push Darwin's close number (6)", sym)
+			}
+			if strings.Contains(body, "    mov x0, #57\n    str x0, [sp, #-16]!\n") {
+				t.Errorf("%s pushes Linux's close number (57) in Mach-O output", sym)
+			}
+		}
+		if strings.Contains(asm, "\n__fern_reader_close:") {
+			t.Error("the register-ABI hand-asm __fern_reader_close is back")
 		}
 	}
 	if strings.Contains(asm, "ldr x8, [sp], #16") {

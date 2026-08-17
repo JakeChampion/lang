@@ -20,21 +20,26 @@ import (
 // builtins) fed a stdin string and oracle-checked against the interpreter with the
 // same stdin. x86-64 only — there is no wasm stdin runtime (wasm_eligible rejects
 // read_chunk/reader_close, mirroring read_int/read_line).
+//
+// Both helpers are Fern runtime functions (#2649, asmcore.rt_src_reader_read_chunk /
+// rt_src_reader_close), so the emitted calls carry the stack-ABI `__fn___` prefix;
+// wantSyms pins that per case (a case only calls what its source calls).
 var readerStdinIRCases = []struct {
-	name  string
-	main  string
-	stdin string
+	name     string
+	main     string
+	stdin    string
+	wantSyms []string
 }{
 	// Sum the lengths of all chunks = total byte count. "hello" -> 5.
-	{"count-bytes", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, "hello"},
+	{"count-bytes", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, "hello", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// Empty stdin -> first read is None -> 0.
-	{"empty", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, ""},
+	{"empty", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, "", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// A longer input still totals correctly across one or more chunks. 16 bytes.
-	{"longer", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, "hello world test"},
+	{"longer", `function main(): i32 { var r: Reader = stdin(); var n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Some(c) => { n = n + c.len(); }, None => { r.close(); return n; } } } return n; }`, "hello world test", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// A single read_chunk, matched directly (not in a loop): Some -> len, None -> 0.
-	{"single-chunk", `function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Some(c) => c.len(), None => 0 }; }`, "abcd"},
+	{"single-chunk", `function main(): i32 { var r: Reader = stdin(); return match (r.read_chunk(4096)) { Some(c) => c.len(), None => 0 }; }`, "abcd", []string{"call __fn___fern_reader_read_chunk"}},
 	// close()'s result (Option[IoError]) discarded; just exercise stdin+close. 7.
-	{"close-only", `function main(): i32 { var r: Reader = stdin(); r.close(); return 7; }`, "ignored"},
+	{"close-only", `function main(): i32 { var r: Reader = stdin(); r.close(); return 7; }`, "ignored", []string{"call __fn___fern_reader_close"}},
 }
 
 func runExitStdin(t *testing.T, bin, in string) int {
@@ -82,6 +87,11 @@ func TestSelfHostReaderStdinIRX86_64(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, src)
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			for _, sym := range tc.wantSyms {
+				if !bytes.Contains(asm, []byte(sym)) {
+					t.Fatalf("%s: emitted asm has no %q", tc.name, sym)
+				}
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			if code := runExitStdin(t, progBin, tc.stdin); code != want {

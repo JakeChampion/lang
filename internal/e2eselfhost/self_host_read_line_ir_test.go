@@ -16,6 +16,11 @@ import (
 // check the exit code. This pins all three fixed divergences (type shape, newline
 // retention, EOF signaling) end-to-end.
 //
+// On the register backends read_line is a Fern runtime function (#2649,
+// asmcore.rt_src_read_line), so the call goes to the stack-ABI `__fn___fern_read_line`.
+// Wasm still emits its own `$__fern_read_line` helper — the two symbol assertions
+// below are deliberately different names, not a typo.
+//
 // The MULTI-CALL cases at the bottom exist because every case above calls
 // read_line exactly ONCE, and #6052 only appeared on the second call: the
 // runtime issued a single read(0, buf, 256), boxed as far as the first '\n', and
@@ -61,8 +66,8 @@ func TestSelfHostReadLineIRX86_64(t *testing.T) {
 	for _, tc := range readLineIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if !bytes.Contains(asm, []byte("call __fern_read_line")) {
-				t.Fatalf("%s: no call to __fern_read_line — did not lower through the IR path", tc.name)
+			if !bytes.Contains(asm, []byte("call __fn___fern_read_line")) {
+				t.Fatalf("%s: no call to __fn___fern_read_line — did not lower through the IR path", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd
@@ -186,8 +191,8 @@ func TestSelfHostReadLineIRArm64(t *testing.T) {
 			if err != nil || len(asm) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.src, err)
 			}
-			if !bytes.Contains(asm, []byte("bl __fern_read_line")) {
-				t.Fatalf("%s: no bl __fern_read_line — did not lower through the arm64 IR path", tc.name)
+			if !bytes.Contains(asm, []byte("bl __fn___fern_read_line")) {
+				t.Fatalf("%s: no bl __fn___fern_read_line — did not lower through the arm64 IR path", tc.name)
 			}
 			bin := buildBinArm64(t, arm64gcc, dir, "rl_"+tc.name, string(asm))
 			run := runArm64Bin(qemu, bin)

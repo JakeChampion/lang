@@ -1063,10 +1063,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("read_all_stdin");
             s = s.write("    bl __fn___fern_read_all_stdin\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 168) {  // read_line
-            // no args -> read one line from stdin into a fresh string box
-            // (asm_arm64.emit_runtime's __fern_read_line, reused via str_read_line).
+            // no args -> call the Fern-compiled __fn___fern_read_line (#2649) and
+            // push the fresh Option[string]. A zero-arg helper needs no marshalling.
             s = s.need("heap"); s = s.need("str_read_line");
-            s = s.write("    bl __fern_read_line\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_read_line\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 169) {  // read_file
             // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_read_file
             // (asmcore.rt_src_read_file, #2649) via the stack ABI, as asm_ir does.
@@ -1140,15 +1140,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap");
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_subprocess\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 178) {  // read_chunk
-            // [fd][n] -> read up to n bytes from the Reader fd, push a fresh
-            // Option[string] box (asm_arm64.emit_runtime's __fern_reader_read_chunk,
-            // in its heap block). Pop n into x1, fd into x0; push the result box.
+            // [fd, n] -> the Fern-compiled __fn___fern_reader_read_chunk (#2649),
+            // pushing a fresh Option[string]. n is on top but param[0] is fd, so
+            // swap before the call.
             s = s.need("heap"); s = s.need("reader");
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_reader_read_chunk\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_reader_read_chunk\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 179) {  // reader_close
-            // [fd] -> close the Reader fd, push a fresh Option[IoError] (None).
+            // [fd] IS param[0]; call the Fern-compiled __fn___fern_reader_close
+            // (#2649), which pushes a fresh Option[IoError] (always None).
             s = s.need("heap"); s = s.need("reader");
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_reader_close\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_reader_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 180) {  // args
             // no args -> build a fresh string[] of the command-line arguments
             // (asm_arm64.emit_runtime's __fern_args, emitted in its args block).
@@ -2508,6 +2510,13 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     if (s.has_need("read_all_stdin")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin(ctgt), s.struct_decls, s);
     }
+    if (s.has_need("str_read_line")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
+    }
+    if (s.has_need("reader")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_read_chunk(ctgt), s.struct_decls, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_reader_close(ctgt), s.struct_decls, s);
+    }
     if (s.has_need("str_print")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
     }
@@ -2644,70 +2653,9 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("str_cmp")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s.struct_decls, s);
     }
-    // __fern_read_line: no args. Reads ONE line from stdin a byte
-    // at a time, returns a 16-byte box ptr. Linux syscall sys_read
-    // (#63 on aarch64).
-    if (s.has_need("str_read_line")) {
-        // __fern_read_line: no args -> Option[string] (#4369): Some(line incl. '\n')
-        // / None at EOF, reads stdin (fd 0). The Option box is rc-headered
-        // (__fern_arr_box cap=2, like op_opt_make) so the match-consume drop is
-        // valid. Shared by the AST and IR paths (str_read_line).
-        //
-        // One byte per syscall, stopping at '\n' — the arm64 half of #6052. The
-        // previous single read(0, buf, 256) DISCARDED everything after the first
-        // newline, so a read-until-EOF loop saw one line and then a real EOF.
-        // See the x86-64 sibling in asm_ir.fern for the full diagnosis.
-        s = s.write("__fern_read_line:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");   // x19=buf, x20=bytes_read
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");   // x21=len/strbox
-        s = s.write("    mov x0, #256\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x19, x0\n");      // buffer base
-        s = s.write("    mov x20, x19\n");     // write cursor = base
-        s = s.write(".Lrl_loop:\n");
-        s = s.write("    sub x1, x20, x19\n");
-        s = s.write("    cmp x1, #256\n");
-        s = s.write("    b.ge .Lrl_box\n");    // buffer full -> return what we have
-        s = s.write("    mov x0, #0\n");       // fd 0
-        s = s.write("    mov x1, x20\n");
-        s = s.write("    mov x2, #1\n");       // ONE byte
-        s = s.write("    mov x8, #63\n");      // sys_read
-        s = s.write("    svc #0\n");
-        s = s.write("    cmp x0, #1\n");
-        s = s.write("    b.lt .Lrl_eof\n");    // EOF (0) / error (<0)
-        s = s.write("    ldrb w0, [x20]\n");
-        s = s.write("    add x20, x20, #1\n");
-        s = s.write("    cmp w0, #10\n");
-        s = s.write("    b.eq .Lrl_box\n");    // '\n' -> line ends, newline kept
-        s = s.write("    b .Lrl_loop\n");
-        s = s.write(".Lrl_eof:\n");
-        s = s.write("    cmp x20, x19\n");
-        s = s.write("    b.eq .Lrl_none\n");   // EOF before any byte -> None
-        s = s.write(".Lrl_box:\n");
-        s = s.write("    sub x21, x20, x19\n");// len = cursor - base
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");  // strbox
-        s = s.write("    str x19, [x0]\n");
-        s = s.write("    str x21, [x0, #8]\n");
-        s = s.write("    mov x21, x0\n");      // strbox
-        s = s.write("    mov x0, #2\n");
-        s = s.write("    bl __fern_arr_box\n");// Some box (rc-headered)
-        s = s.write("    str xzr, [x0]\n");    // tag=0 Some
-        s = s.write("    str x21, [x0, #8]\n");// payload = strbox
-        s = s.write("    b .Lrl_ret\n");
-        s = s.write(".Lrl_none:\n");
-        s = s.write("    mov x0, #2\n");
-        s = s.write("    bl __fern_arr_box\n");// None box (rc-headered)
-        s = s.write("    mov x1, #1\n");
-        s = s.write("    str x1, [x0]\n");     // tag=1 None
-        s = s.write(".Lrl_ret:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_read_line is a Fern runtime function (#2649): asmcore.rt_src_read_line,
+    // emitted with the other stdin leaves. Its one-byte-per-syscall loop (#6052) and
+    // 256-byte cap are preserved; the Option and string boxes are rc-headered now.
     // __fern_i32_to_string is now a Fern runtime function (#2649, via the
     // raw-memory intrinsics): see asmcore.rt_src_i32_to_string. The single shared
     // __fn___fern_i32_to_string body serves both arm64 AST + IR, replacing the old
@@ -4047,12 +3995,6 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fn___fern_drop_arr_ptr:\n");
     s = s.write("    ret\n");
 
-    // __fern_reader_read_chunk(x0 = fd, x1 = n) → Option[string].
-    // Reads up to n bytes; Some(string) on a non-empty read — an
-    // Option box [tag=0, strbox@8] wrapping a {data@0, len@8}
-    // string box — and None (box [tag=1]) at EOF (read ≤ 0).
-    s = s.write(".globl __fern_reader_read_chunk\n");
-    s = s.write(".type __fern_reader_read_chunk, %function\n");
     return s;
 }
 
@@ -4064,63 +4006,11 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // derivation as emit_rt_clock_and_print's ctgt.
     var tgt: string = "arm64-linux";
     if (darwin) { tgt = "arm64-darwin"; }
-    s = s.write("__fern_reader_read_chunk:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // fd
-    s = s.write("    mov x20, x1\n");           // n
-    s = s.write("    mov x0, x20\n");           // alloc n data bytes
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x21, x0\n");           // data ptr
-    s = s.write("    mov x0, x19\n");           // read(fd, data, n)
-    s = s.write("    mov x1, x21\n");
-    s = s.write("    mov x2, x20\n");
-    s = s.write("    mov x8, #63\n");           // sys_read
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.le .Larrc_none\n");
-    s = s.write("    mov x22, x0\n");           // bytes_read
-    s = s.write("    mov x0, #16\n");           // string box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    str x21, [x0]\n");         // data@0
-    s = s.write("    str x22, [x0, #8]\n");     // len@8
-    s = s.write("    mov x21, x0\n");           // strbox
-    s = s.write("    mov x0, #16\n");           // Some box
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #0\n");
-    s = s.write("    str x1, [x0]\n");          // tag = Some
-    s = s.write("    str x21, [x0, #8]\n");     // payload
-    s = s.write("    b .Larrc_ret\n");
-    s = s.write(".Larrc_none:\n");
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #1\n");
-    s = s.write("    str x1, [x0]\n");          // tag = None
-    s = s.write(".Larrc_ret:\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_reader_read_chunk, .-__fern_reader_read_chunk\n");
-
-    // __fern_reader_close(x0 = fd) → Option[IoError]. Closes the
-    // fd and always returns None (error arm unused by read_all_stdin).
-    s = s.write(".globl __fern_reader_close\n");
-    s = s.write(".type __fern_reader_close, %function\n");
-    s = s.write("__fern_reader_close:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    mov x8, #57\n");           // sys_close(fd)
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x0, #16\n");
-    s = s.write("    bl __fern_alloc\n");
-    s = s.write("    mov x1, #1\n");
-    s = s.write("    str x1, [x0]\n");          // None
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_reader_close, .-__fern_reader_close\n");
+    // __fern_reader_read_chunk and __fern_reader_close are Fern runtime functions
+    // (#2649): asmcore.rt_src_reader_read_chunk / rt_src_reader_close, emitted
+    // need-gated below. Their Option and string boxes come from ordinary lowering
+    // now, so they carry the rc header at box-8 that the hand-written bare
+    // __fern_alloc boxes lacked.
 
     // The register-ABI hand-asm __fern_io_error used to live here. Every fs
     // leaf that called it is Fern now (#2649) and calls the bundled

@@ -1,6 +1,7 @@
 package sourcelint
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,7 +60,7 @@ func TestAsmcoreAddressesAvoidI32Arithmetic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read asmcore.fern: %v", err)
 	}
-	src := string(raw)
+	src := blankFullLineComments(string(raw))
 
 	for _, name := range addrTakingIntrinsics {
 		for _, open := range callOpenParens(src, name) {
@@ -125,4 +126,38 @@ func firstArg(src string, open int) (string, bool) {
 
 func lineOf(src string, off int) int {
 	return strings.Count(src[:off], "\n") + 1
+}
+
+// blankFullLineComments replaces the body of every whole-line `//` comment with
+// spaces, so the scan sees only code. Offsets are preserved, keeping lineOf's
+// reported line numbers correct.
+//
+// Only lines whose first non-space characters are `//` are blanked. Cutting at
+// any `//` would truncate a code line that carries one inside a Fern string
+// literal, and asmcore.fern is nothing but string literals.
+//
+// A helper's block comment naturally spells the intrinsic it describes —
+// "ordinary Some(__raw_string(...)) lowering" is the shape that surfaced this —
+// and an argument of `...` is not a pointer expression to check.
+func blankFullLineComments(src string) string {
+	out := []byte(src)
+	for i := 0; i < len(out); {
+		end := bytes.IndexByte(out[i:], '\n')
+		if end < 0 {
+			end = len(out)
+		} else {
+			end += i
+		}
+		j := i
+		for j < end && (out[j] == ' ' || out[j] == '\t') {
+			j++
+		}
+		if j+1 < end && out[j] == '/' && out[j+1] == '/' {
+			for k := j; k < end; k++ {
+				out[k] = ' '
+			}
+		}
+		i = end + 1
+	}
+	return string(out)
 }

@@ -14,15 +14,19 @@ import (
 // its fd (stdin() = fd 0), so read_chunk reads stdin via preview1 fd_read into a
 // fresh string block and boxes Some(chunk) / None-at-EOF, and close calls
 // fd_close and boxes None — the same Option[string] / Option[IoError] ABIs the
-// register backends' __fern_reader_read_chunk / __fern_reader_close produce, and
-// the same string+Option layout env_func builds. Backs the std/io read_all_stdin
-// loop on wasm. (open_reader/open_writer never lower on the IR path — they bail
-// to the AST backend — so on wasm IR a Reader only ever wraps stdin.)
+// register backends' __fn___fern_reader_read_chunk / __fn___fern_reader_close
+// produce, and the same string+Option layout env_func builds. Backs the std/io
+// read_all_stdin loop on wasm.
+//
+// Wasm keeps its own hand-emitted helpers under the bare `$__fern_reader_*` names;
+// only the register backends moved to Fern runtime functions (#2649) and so to the
+// stack-ABI `__fn___` names. The assertions below differ from the register-backend
+// ones for that reason.
 //
 // Each case (a) pins the IR route (the WAT calls $__fern_reader_read_chunk /
 // $__fern_reader_close) and (b) actually reads stdin under wasmtime, asserting
-// the program's stdout and exit code. Distinct from the register-backend reader
-// tests, which read a file via open_reader on the AST path.
+// the program's stdout and exit code. The register-backend counterparts are
+// TestSelfHostReaderX86_64 and TestSelfHostReaderArm64.
 func TestSelfHostReaderWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host reader wasm IR e2e")
