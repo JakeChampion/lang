@@ -2,10 +2,13 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array.product_f64 / cumsum_f64 — the product of
-// all elements (empty product = 1) and the running prefix sum (same length as
-// the input). product returns a plain f64; cumsum returns an f64[] (scalar
-// payload). Both lower on all four backends including wasmbin. Returns 42 iff
+// Differential coverage for std/array's `product` at an f64 element and
+// cumsum_f64 — the product of all elements (empty product = 1) and the running
+// prefix sum (same length as the input). product returns a plain f64; cumsum
+// returns an f64[] (scalar payload). Since #2663 `product` is the bounded
+// generic `[T: Mul + One]`, so these pin its f64 instantiation rather than a
+// `product_f64` sibling; the empty case names its element type for that
+// reason. Both lower on all four backends including wasmbin. Returns 42 iff
 // every check holds across interp / x86-64 / wasm / arm64; each leg skips itself
 // when its toolchain is absent.
 const arrayProductCumsumProg = `
@@ -14,9 +17,11 @@ import "std/num" as num;
 function approx(a: f64, b: f64): boolean { var d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     var xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-    if (!approx(array.product_f64(xs), 24.0)) { return 1; }
-    if (!approx(array.product_f64([]), 1.0)) { return 2; }              // empty product = 1
-    if (!approx(array.product_f64([2.0, 0.0 - 3.0]), 0.0 - 6.0)) { return 3; }  // negatives
+    if (!approx(xs.product(), 24.0)) { return 1; }
+    var mt: f64[] = [];
+    if (!approx(mt.product(), 1.0)) { return 2; }                       // empty product = 1
+    var neg: f64[] = [2.0, 0.0 - 3.0];
+    if (!approx(neg.product(), 0.0 - 6.0)) { return 3; }                // negatives
     var cs: f64[] = array.cumsum_f64(xs);
     if (!approx(cs[0], 1.0)) { return 4; }
     if (!approx(cs[1], 3.0)) { return 5; }

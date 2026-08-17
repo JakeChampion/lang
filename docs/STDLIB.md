@@ -301,7 +301,7 @@ forms cannot both claim one name.
 - **i64 / f64 free functions** (statistical and vector reductions with no
   generic bounded equivalent — `avg` in particular cannot be written
   generically without a numeric conversion trait): `avg_i64`;
-  `product_f64` (empty = 1), `cumsum_f64` (running prefix sum),
+  `cumsum_f64` (running prefix sum),
   `cumprod_f64` (running product), `diff_f64` (successive differences, one
   shorter; inverse of `cumsum`), `avg_f64`, `variance_f64` / `stddev_f64`
   (population variance and its square root, `Option[f64]`, `None` for

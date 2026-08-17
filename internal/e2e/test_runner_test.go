@@ -2372,8 +2372,8 @@ func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
 	}
 }
 
-// `examples/tests/array_product_cumsum_test.fern` covers std/array's product_f64
-// (product of all elements, empty = 1) and cumsum_f64 (running prefix sum).
+// `examples/tests/array_product_cumsum_test.fern` covers std/array's `product`
+// at an f64 element (empty = 1) and cumsum_f64 (running prefix sum).
 // product returns f64, cumsum an f64[] — both scalar payload, so on the interp
 // gate and both self-host gates; the Go-side TestArrayProductCumsum pins native
 // compilation on all four backends (no wasm skip). Passing → exit 0.
