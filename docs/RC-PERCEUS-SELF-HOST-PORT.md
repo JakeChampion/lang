@@ -7611,3 +7611,70 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   Measurement of record for the three shapes is the table above; it stands.
   Refs #6544 #4451.
+
+- 2026-08-17: **#6544 is NOT a registry slice — it needs the string
+  return-transfer inc. One of its four leaks is closed; the other three are
+  blocked on that.** The case was decomposed per shape, self-host x86-64,
+  `__heap_bump_bytes()` at 50 and 100 rounds, `(b2-b1)/100` = bytes per round:
+
+  | piece of the case | self-host B/round | native |
+  |---|---|---|
+  | `(i % 8).to_string()` concat temp | 32 | 0 |
+  | `base.drop(2).len() + base.tail(4).to_owned().len()` | 96 | 0 |
+  | `b.relabel(…).tag.len()` (both lines) | 120 | 0 |
+  | `base` + `base.tail(0).len() + base.len()` (the identity controls) | 0 | 0 |
+
+  **Extending the fresh-return registries to method keys cannot close any of the
+  three big rows, and the reason is the case's own design.** `tail`, `drop` and
+  `relabel` each carry an IDENTITY-RETURN path (`if (n <= 0) { return s; }`), so
+  `str_fresh_ret_fns_of` and `return_fresh_struct_ret_fns_of` are RIGHT to
+  refuse them — a method key would be looked up and correctly miss. Native does
+  not reclaim these from a freshness proof either: `ownedCallResultType`
+  (`rc_insert.go:226`) admits any user-declared callee and leans entirely on the
+  is_unique gate, whose safety argument is "an aliased return is rc>=2 via the
+  return-transfer inc" (`ir.go:7352`, `:12143`).
+
+  The self-host emits that inc for a bare ARRAY param only —
+  `irlower.fern:15236`, `s.is_arr_slot(rps)`, the #4357 port — so a string or
+  struct param handed straight back is an UNCOUNTED alias, and the consuming
+  site's comment says exactly that: "the self-host IR path has no return-transfer
+  inc, so ONLY registry-proven-fresh callees are safe to free"
+  (`irlower.fern:40672`). `__fern_str_free` is already the is_unique gate it
+  needs (rc>1 → dec and keep, rc==1 → free), so the missing half is the inc, not
+  the free.
+
+  **The inc and the consuming-site drop have to land together**, which is what
+  makes this a slice rather than a one-liner. Adding the inc alone regresses the
+  case's own controls: `base.tail(0).len()` currently costs nothing because the
+  aliased result is dropped on the floor, and with an unpaired inc `base`'s box
+  ratchets to rc 2 and its owner's dec never reaches 0. The wasm
+  `call-operand-borrowed-return` case records the same hazard from the other
+  side. So the remaining work is: the transfer inc for a bare string (then
+  struct) param return, PLUS a drop at every position that consumes such a
+  result — `.len()` receiver, `.to_owned()` receiver, field read — not one of
+  them.
+
+  **SHIPPED here: the 32 B/round row.** `tostring_recv_is_scalar` decided "is
+  this the builtin decimal producer?" by enumerating three receiver SHAPES — a
+  number literal, an `as_` cast, a bare slot with no pointer marker — so
+  `(i % 8).to_string()` declined and `emit_str_concat_reclaim` left the operand
+  box behind, once per evaluation. The proof is inductive over the operator, so
+  the predicate now recurses through the plain arithmetic binaries and unary
+  `-`/`~`. `+?` / `+|` (Option / saturating), the comparisons and `!` are
+  excluded: they do not yield a scalar this claim covers. A string `+` cannot
+  slip through — a string operand is a marked slot or an `ExprString`, and
+  neither arm admits one. `"lit" + (i % 8).to_string()` goes 1720/3248 →
+  152/48 bytes.
+
+  This is NOT the general call-operand widening the wasm
+  `call-operand-borrowed-return` case guards: the callee is still only the
+  builtin scalar `to_string`, and only its receiver's shape moved.
+
+  The three `alloc_flat_method_identity_return` divergence rows therefore REMAIN
+  listed, and #6544 stays open on the return-transfer-inc slice above.
+
+  VERIFIED: new `arith-tostring-operand-churn` + `neg-tostring-operand-churn`
+  rows in `TestSelfHostStrConcatTempIRX86_64` (both FAIL on the parent commit),
+  the `arith-tostring-string-operand-alias-safe` negative, and an
+  `arith-tostring-operand-churn` row on `TestSelfHostStrConcatTempWasmIR`
+  (`__rc_underflow_count()` = 0). Refs #6544 #4353 #4451.
