@@ -864,7 +864,7 @@ function x86_movsd_rr(buf: i32[], dst: i32, src: i32): i32[] {
 // x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .double constant from .rodata.
-function x86_movsd_load_rip_label(a: X86Asm, xmm: i32, name: string): X86Asm {
+function x86_movsd_load_rip_label(own a: X86Asm, xmm: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(242) }; // 0xF2
     if (xmm >= 8) {
         a = X86Asm { ...a, code: a.code.append(x86_rex(0, xmm, 0, 0)) }; // REX.R
@@ -956,7 +956,7 @@ function x86_movabsq(buf: i32[], reg: i32, imm: i64): i32[] {
 // x86_mov_load_rip_label: `movq sym(%rip), <dst>` (REX.W 8B /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
 // uses to load a .bss/.data global (e.g. the heap pointer).
-function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
@@ -973,7 +973,7 @@ function x86_mov_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
 // `cmpq __fern_heap_end(%rip), %rdi` in the bump allocator; without a rip-aware
 // path x86_gas_alu encoded it as base %rax (mod=00 rm=000), comparing against
 // [%rax] instead of the symbol, so the alloc bounds check misfired.
-function x86_alu_load_rip_label(a: X86Asm, opcode: i32, dst: i32, name: string): X86Asm {
+function x86_alu_load_rip_label(own a: X86Asm, opcode: i32, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(opcode) };
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
@@ -988,7 +988,7 @@ function x86_alu_load_rip_label(a: X86Asm, opcode: i32, dst: i32, name: string):
 // ModR/M mod=00 rm=101) with a deferred rip-relative fixup — the 32-bit
 // sibling of x86_mov_load_rip_label. asm.fern reads the
 // __fern_rc_underflow counter this way.
-function x86_movl_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_rex_opt(a.code, dst, 0, 0) };
     a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
@@ -1002,7 +1002,7 @@ function x86_movl_load_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
 // x86_incl_rip_label: `incl sym(%rip)` (FF /0 m32, ModR/M mod=00 rm=101)
 // with a deferred rip-relative fixup — asm.fern bumps the 32-bit
 // __fern_rc_underflow diagnostic counter this way in the RC dec glue.
-function x86_incl_rip_label(a: X86Asm, name: string): X86Asm {
+function x86_incl_rip_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // RIP-relative, /0
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
@@ -1020,7 +1020,7 @@ function x86_incl_rip_label(a: X86Asm, name: string): X86Asm {
 // disp32, so the displacement is registered with the immediate's width as a
 // tail: x86_resolve measures from the end of the instruction, not the end of
 // the displacement, and without that the store lands `imm_bytes` too far on.
-function x86_store_imm_rip_label(a: X86Asm, opcode: i32, w: i32, name: string, imm: i32, imm_bytes: i32): X86Asm {
+function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: string, imm: i32, imm_bytes: i32): X86Asm {
     if (w != 0) { a = X86Asm { ...a, code: a.code.append(x86_rex(1, 0, 0, 0)) }; }
     a = X86Asm { ...a, code: a.code.append(opcode) };
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5) ) };   // RIP-relative, /0
@@ -1048,7 +1048,7 @@ function x86_fix_tail(a: X86Asm, patch_off: i32): i32 {
 
 // x86_mov_store_rip_label: `movq <src>, sym(%rip)` (REX.W 89 /r, ModR/M
 // mod=00 rm=101) with a deferred rip-relative fixup.
-function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
+function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(137) }; // 0x89
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
@@ -1061,7 +1061,7 @@ function x86_mov_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
 
 // x86_movl_store_rip_label: `movl <src32>, sym(%rip)` (89 /r, no REX.W) —
 // the 32-bit sibling of x86_mov_store_rip_label, for a 32-bit global.
-function x86_movl_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
+function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm {
     if (src >= 8) {
         a = X86Asm { ...a, code: a.code.append(x86_rex(0, src, 0, 0)) }; // REX.R
     }
@@ -1075,7 +1075,7 @@ function x86_movl_store_rip_label(a: X86Asm, src: i32, name: string): X86Asm {
 
 // x86_alu_store_rip_label: `<alu>q <src>, sym(%rip)` — the store-form ALU
 // (add 0x01 / sub 0x29 / cmp 0x39) against a rip-relative global.
-function x86_alu_store_rip_label(a: X86Asm, opcode: i32, src: i32, name: string): X86Asm {
+function x86_alu_store_rip_label(own a: X86Asm, opcode: i32, src: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(opcode) };
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
@@ -1087,7 +1087,7 @@ function x86_alu_store_rip_label(a: X86Asm, opcode: i32, src: i32, name: string)
 
 // x86_incq_rip_label: `incq sym(%rip)` (REX.W FF /0) — the 64-bit sibling
 // of x86_incl_rip_label.
-function x86_incq_rip_label(a: X86Asm, name: string): X86Asm {
+function x86_incq_rip_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex_w()) };
     a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // /0, RIP-relative
@@ -1345,7 +1345,15 @@ function x86_call_rel32(buf: i32[], rel: i32): i32[] {
 // `buf` starting at offset `at` (the rel32 field of a previously-emitted
 // branch placeholder). Used to resolve a forward reference once its
 // target offset is known.
-function x86_patch_rel32(buf: i32[], at: i32, rel: i32): i32[] {
+//
+// `own buf` is what makes the patch path linear rather than O(code_len^2).
+// A BORROWED array parameter forces every `.with` down the copy-on-write
+// path — the callee cannot know the caller has no other reader — so each
+// patched branch cloned the whole .text buffer. Every caller must therefore
+// pass a fresh value, another `own` parameter, or a self-reassign
+// `code = x86_patch_rel32(code, …)` (E051), which is why the two patch
+// loops below lift the buffer out of the struct first.
+function x86_patch_rel32(own buf: i32[], at: i32, rel: i32): i32[] {
     buf = buf.with(at, rel & 255);
     buf = buf.with(at + 1, (rel >> 8) & 255);
     buf = buf.with(at + 2, (rel >> 16) & 255);
@@ -1424,7 +1432,7 @@ function x86_align8(n: i32): i32 {
 }
 
 // x86_label records `name` at the current .text offset (section 0).
-function x86_label(a: X86Asm, name: string): X86Asm {
+function x86_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
     a = X86Asm { ...a, lab_secs: a.lab_secs.append(0) };
     a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
@@ -1433,7 +1441,7 @@ function x86_label(a: X86Asm, name: string): X86Asm {
 
 // x86_rodata_label records `name` at the current .rodata offset (section
 // 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
-function x86_rodata_label(a: X86Asm, name: string): X86Asm {
+function x86_rodata_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
     a = X86Asm { ...a, lab_secs: a.lab_secs.append(1) };
     a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.rodata.len()) };
@@ -1444,14 +1452,14 @@ function x86_rodata_label(a: X86Asm, name: string): X86Asm {
 // constant. The value is i64 because a `.quad` is: taking it as an i32 half and
 // a separately-supplied high half meant every caller had to know the sign, and
 // the one caller passed a hardcoded zero (#6458).
-function x86_rodata_quad(a: X86Asm, v: i64): X86Asm {
+function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
     return X86Asm { ...a, rodata: x86_le64_i64(a.rodata, v) };
 }
 
 // x86_bss_label records `name` at the current .bss offset (section 2).
 // .bss is zero-init memory not present in the file: only the running size
 // advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
-function x86_bss_label(a: X86Asm, name: string): X86Asm {
+function x86_bss_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
     a = X86Asm { ...a, lab_secs: a.lab_secs.append(2) };
     a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.bss_size) };
@@ -1460,7 +1468,7 @@ function x86_bss_label(a: X86Asm, name: string): X86Asm {
 
 // x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
 // `.align` reservation in the .bss section).
-function x86_bss_skip(a: X86Asm, n: i32): X86Asm {
+function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
     a = X86Asm { ...a, bss_size: a.bss_size + n };
     return a;
 }
@@ -1489,12 +1497,15 @@ pub function x86_label_off(a: X86Asm, name: string): i32 {
 }
 
 // x86_final_off resolves `name` to its offset (from .text start) in the
-// final image, given the padded .text length (the .rodata base). .text
-// labels keep their offset; .rodata labels sit at padded_text + their
-// .rodata offset; .bss labels sit just past .rodata (padded_text +
-// rodata_len + their .bss offset), matching the ELF's in-memory layout
-// (.bss is the zero-init region after the file content).
-function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
+// final image, given the two section bases: the padded .text length
+// (where .rodata starts) and where .bss starts (just past .rodata),
+// matching the ELF's in-memory layout (.bss is the zero-init region after
+// the file content). .text labels keep their offset.
+//
+// bss_base is passed rather than derived from `a.rodata.len()` because the
+// patch loops below hold .rodata as a uniquely-owned local while they run —
+// the struct's own field is empty there, so deriving it would read 0.
+function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32): i32 {
     var i: i32 = x86_label_idx(a, name);
     if (i < 0) {
         return 0 - 1;
@@ -1503,7 +1514,7 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
         return padded_text + a.lab_offs[i];
     }
     if (a.lab_secs[i] == 2) {
-        return padded_text + a.rodata.len() + a.lab_offs[i];
+        return bss_base + a.lab_offs[i];
     }
     return a.lab_offs[i];
 }
@@ -1512,11 +1523,18 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32): i32 {
 // emitted into a.code: the rel32 field starts at a.code.len()-4. If the
 // target is an already-placed .text label, patch immediately; otherwise
 // queue a fixup for x86_resolve.
-function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
+function x86_fixup_or_patch(own a: X86Asm, name: string): X86Asm {
     var patch_off: i32 = a.code.len() - 4;
     var target: i32 = x86_label_off(a, name);
     if (target >= 0) {
-        a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off)) };
+        // Take the buffer OUT of the struct before patching. `a.code` read
+        // while `a` still holds it is a second reference, which sends the
+        // `.with` inside x86_patch_rel32 down the copy path — one full
+        // .text clone per backward branch.
+        var code: i32[] = a.code;
+        a = X86Asm { ...a, code: [] };
+        code = x86_patch_rel32(code, patch_off, x86_rel_to(target, patch_off));
+        a = X86Asm { ...a, code: code };
     } else {
         a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
         a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
@@ -1530,7 +1548,7 @@ function x86_fixup_or_patch(a: X86Asm, name: string): X86Asm {
 // exactly x86_rel_to's math — so it shares the resolve path with branches.
 // Always deferred: a .rodata target's final offset isn't known until the
 // whole .text is emitted.
-function x86_lea_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
+function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
     a = X86Asm { ...a, code: a.code.append(141) }; // 0x8D
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
@@ -1542,13 +1560,13 @@ function x86_lea_rip_label(a: X86Asm, dst: i32, name: string): X86Asm {
 }
 
 // x86_jcc_label emits a conditional jump to a (possibly forward) label.
-function x86_jcc_label(a: X86Asm, cc: i32, name: string): X86Asm {
+function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_jcc_rel32(a.code, cc, 0) }; // placeholder rel32
     return x86_fixup_or_patch(a, name);
 }
 
 // x86_jmp_label emits an unconditional jump to a label.
-function x86_jmp_label(a: X86Asm, name: string): X86Asm {
+function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_jmp_rel32(a.code, 0) };
     return x86_fixup_or_patch(a, name);
 }
@@ -1583,7 +1601,7 @@ function x86_jmp_reg(buf: i32[], reg: i32): i32[] {
 }
 
 // x86_call_label emits a call to a label.
-function x86_call_label(a: X86Asm, name: string): X86Asm {
+function x86_call_label(own a: X86Asm, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_call_rel32(a.code, 0) };
     return x86_fixup_or_patch(a, name);
 }
@@ -1602,7 +1620,7 @@ function x86_gas_is_symbol(tok: string): boolean {
 // x86_rodata_quad_sym lays down an 8-byte placeholder in .rodata and
 // queues an absolute relocation against `name`, patched by
 // x86_resolve_data once the load address is known.
-function x86_rodata_quad_sym(a: X86Asm, name: string): X86Asm {
+function x86_rodata_quad_sym(own a: X86Asm, name: string): X86Asm {
     var off: i32 = a.rodata.len();
     a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
     a = X86Asm { ...a, dfix_offs: a.dfix_offs.append(off) };
@@ -1615,12 +1633,15 @@ function x86_rodata_quad_sym(a: X86Asm, name: string): X86Asm {
 // x86_resolve with the .text vaddr; body offsets map linearly onto virtual
 // addresses from there, because .text and the data blob share one PT_LOAD.
 // An unresolvable name is recorded, not patched as 0.
-pub function x86_resolve_data(a: X86Asm, text_vaddr: i32): X86Asm {
+pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
     var padded_text: i32 = x86_align8(a.code.len());
+    var bss_base: i32 = padded_text + a.rodata.len();
+    var rodata: i32[] = a.rodata;
+    a = X86Asm { ...a, rodata: [] };
     var i: i32 = 0;
     while (i < a.dfix_offs.len()) {
         var name: string = a.dfix_names[i];
-        var target: i32 = x86_final_off(a, name, padded_text);
+        var target: i32 = x86_final_off(a, name, padded_text, bss_base);
         if (target < 0) {
             a = X86Asm { ...a, unknown: a.unknown.append(".quad " + name) };
         } else {
@@ -1628,13 +1649,13 @@ pub function x86_resolve_data(a: X86Asm, text_vaddr: i32): X86Asm {
             var abs: i64 = (text_vaddr as i64) + (target as i64);
             var j: i32 = 0;
             while (j < 8) {
-                a = X86Asm { ...a, rodata: a.rodata.with(at + j, ((abs >> ((j * 8) as i64)) & (255 as i64)) as i32) };
+                rodata = rodata.with(at + j, ((abs >> ((j * 8) as i64)) & (255 as i64)) as i32);
                 j = j + 1;
             }
         }
         i = i + 1;
     }
-    return a;
+    return X86Asm { ...a, rodata: rodata };
 }
 
 // x86_resolve patches every queued fixup (forward branches and all
@@ -1642,22 +1663,28 @@ pub function x86_resolve_data(a: X86Asm, text_vaddr: i32): X86Asm {
 // targets resolve against the padded .text length — the offset the ELF
 // data image places .rodata at. Call once after emitting the whole
 // program; afterwards a.code + a.rodata are the final sections.
-function x86_resolve(a: X86Asm): X86Asm {
+function x86_resolve(own a: X86Asm): X86Asm {
     var padded_text: i32 = x86_align8(a.code.len());
+    var bss_base: i32 = padded_text + a.rodata.len();
+    // The buffer is pulled out of the struct ONCE and threaded through the
+    // whole fixup loop as a uniquely-owned local, then folded back. Patching
+    // it in place inside the struct cloned the entire .text per fixup.
+    var code: i32[] = a.code;
+    a = X86Asm { ...a, code: [] };
     var i: i32 = 0;
     while (i < a.fix_offs.len()) {
         var patch_off: i32 = a.fix_offs[i];
-        var target: i32 = x86_final_off(a, a.fix_names[i], padded_text);
+        var target: i32 = x86_final_off(a, a.fix_names[i], padded_text, bss_base);
         // A missing label is -1; patching that as a displacement branches
         // into the ELF header, so refuse rather than emit it (#6045).
         if (target < 0) {
             a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
         } else {
-            a = X86Asm { ...a, code: x86_patch_rel32(a.code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off)) };
+            code = x86_patch_rel32(code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off));
         }
         i = i + 1;
     }
-    return a;
+    return X86Asm { ...a, code: code };
 }
 
 // ============================================================
@@ -1898,7 +1925,7 @@ function x86_gas_reg32(tok: string): i32 {
 
 // x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
 // reg->mem (store), all 32-bit.
-function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
+function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg or mem
         if (x86_str_contains(dst, "(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
             var mi: GasMem = x86_gas_parse_mem(dst);
@@ -1939,7 +1966,7 @@ function x86_gas_movl(a: X86Asm, src: string, dst: string): X86Asm {
 
 // x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
 // the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
-function x86_gas_alu32(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+function x86_gas_alu32(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) {
         a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src)) };
         return a;
@@ -2340,7 +2367,7 @@ function x86_gas_parse_mem(op: string): GasMem {
 
 // x86_gas_movq dispatches the movq operand shapes (AT&T src, dst),
 // including the SSE forms movq %gpr,%xmm and movq %xmm,%gpr.
-function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
+function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     var src_xmm: boolean = x86_gas_is_xmm(src);
     var dst_xmm: boolean = x86_gas_is_xmm(dst);
     if (dst_xmm && !src_xmm) { // movq %gpr, %xmm
@@ -2409,7 +2436,7 @@ function x86_gas_movq(a: X86Asm, src: string, dst: string): X86Asm {
 
 // x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp):
 // `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
-function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
+function x86_gas_alu(own a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> reg
         a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
@@ -2454,7 +2481,7 @@ function x86_gas_alu(a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
 
 // x86_gas_logic dispatches andq/orq/xorq: `$imm, %reg` uses the group-1
 // imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
-function x86_gas_logic(a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+function x86_gas_logic(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) {
         a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
         return a;
@@ -2489,7 +2516,7 @@ function x86_gas_top_comma(s: string): i32 {
 
 // x86_gas_movb dispatches movb's three shapes: $imm->mem, reg8->mem (store),
 // mem->reg8 (load), in AT&T src, dst order.
-function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
+function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == 36) { // $imm -> mem
         var m: GasMem = x86_gas_parse_mem(dst);
         if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
@@ -2513,7 +2540,7 @@ function x86_gas_movb(a: X86Asm, src: string, dst: string): X86Asm {
 }
 
 // x86_gas_movzbq dispatches movzbq: mem->reg64 or reg8->reg64.
-function x86_gas_movzbq(a: X86Asm, src: string, dst: string): X86Asm {
+function x86_gas_movzbq(own a: X86Asm, src: string, dst: string): X86Asm {
     if (x86_str_contains(src, "(")) {
         var m: GasMem = x86_gas_parse_mem(src);
         if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
@@ -2526,7 +2553,7 @@ function x86_gas_movzbq(a: X86Asm, src: string, dst: string): X86Asm {
 }
 
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
-function x86_gas_emit(a: X86Asm, mnem: string, rest: string): X86Asm {
+function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // zero-operand
     if (mnem == "ret") { a = X86Asm { ...a, code: x86_ret(a.code) }; return a; }
     if (mnem == "syscall") { a = X86Asm { ...a, code: x86_syscall(a.code) }; return a; }
@@ -3103,5 +3130,6 @@ pub function x86_gas_assemble(src: string): X86Asm {
         }
         a = x86_gas_emit(a, mnem, rest);
     }
-    return x86_resolve(a);
+    a = x86_resolve(a);
+    return a;
 }

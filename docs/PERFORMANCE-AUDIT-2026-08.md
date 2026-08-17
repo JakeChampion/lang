@@ -240,6 +240,14 @@ of the compiler. And `__str_slice` reaching `memcpy` sits badly with "string
 slicing does not allocate". Both were measured on benchmarks; neither
 generalised to a 46k-line module.
 
+**`arr_cow_inplace` is now accounted for: it was `x86_patch_rel32`.** Every
+branch fixup in the in-process x86 assembler ran four `.with`s over a borrowed
+`a.code`, cloning the whole .text per patched branch. Lifting the buffer out of
+the struct for the two patch loops (#6911, the idiom `arm64_native.fern` already
+used from #6011) took a `checker.fern` compile from 97 s to **19 s** with
+byte-identical output. It is the largest single win this audit has produced, and
+the cliff counters could not see it at all — see §4c.
+
 **Instrument limit.** Frame #2 resolves to `??` above these helpers, so the
 Fern-level caller that chose to copy is not recoverable this way. Attributing
 copies to source sites needs `__heap_bump_bytes()` probes or the existing
@@ -249,6 +257,31 @@ copies to source sites needs `__heap_bump_bytes()` probes or the existing
 of §4's four rows decayed within days of being written, and two of the items
 ranked off them were aimed at costs that had already been removed. Re-measure
 before picking, and record the run count.
+
+## 4c. Copying: what the cliff counters can and cannot see
+
+`FERN_CLIFF_REPORT=1` / `__arr_push_shared_bytes()` are bumped by
+`__fern_arr_push`'s un-share path only. A quadratic `.with` — copy-on-write
+through `__fern_arr_cow_inplace` — moves neither number. #6911's two halves
+separate cleanly on this:
+
+| change | cliff bytes | wall clock |
+|---|---|---|
+| `own` on the 31 `X86Asm` state params | 21.4 GB → 3.07 GB | 97 s → 97 s |
+| buffer lifted out of the struct for the `.with` patch loops | 3.07 GB → 3.07 GB | 97 s → **19 s** |
+
+So a flat cliff line means "no append regressed", never "nothing is copying",
+and the converse holds too: a large cliff number is not by itself evidence of
+where the *time* goes.
+
+Attribution: frame #2 resolves to `??` above the runtime helpers (hand-written
+asm, no frame pointers), so gdb cannot name the Fern caller — §4b's instrument
+limit. Source instrumentation can: bracket a region with
+`__arr_push_shared_bytes()` reads and print only non-zero deltas, tagged with
+what was being processed. That is how the 21.4 GB was localised to
+`x86_gas_assemble` in three ~2-minute iterations. It has an observer effect —
+an added statement changes liveness and so can change which appends reuse in
+place — so confirm by fixing the site and re-measuring an unprobed build.
 
 ## 5. Multiplier 4 — repeated whole-program walks
 
@@ -296,11 +329,17 @@ contradict comments in the tree:
 | 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4b — **18.0% in `strcmp`, in both runs** |
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
-| 8 | **Cut the copying** — `arr_cow_inplace`, `arr_push_grow*`, `str_slice`, `strcat` | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
+| 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
 measuring near its original attribution; 4 is the multi-PR track.
+
+**8 has paid once already and is not finished.** #6911 gave the x86 in-process
+assembler the `own` treatment `arm64_native.fern` got in #6011: a `checker.fern`
+self-host compile went 97 s → 19 s and the append cliff 21.4 GB → 3.07 GB, all
+from one file. The remaining 3.07 GB still copies ~2,170× the emitted binary, so
+the next increment is in the same place — see §4c for how to find it.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
