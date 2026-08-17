@@ -143,7 +143,7 @@ Stmt        = Block
 
 LabeledLoop = IDENT ':' ( WhileStmt | LoopStmt | ForStmt ) ;
 
-IfStmt      = 'if' 'let' Pattern '=' Expr Block [ 'else' ( IfStmt | Block ) ]
+IfStmt      = 'if' 'let' ArmPatterns '=' Expr Block [ 'else' ( IfStmt | Block ) ]
             | 'if' '(' Expr ')' Block [ 'else' ( IfStmt | Block ) ]
             ;
 WhileStmt   = 'while' '(' Expr ')' Block ;
@@ -165,8 +165,10 @@ VarNoSemi   = 'var' ( TupleBinding | IDENT ) [ ':' Type ] '=' Expr ;
 TupleBinding
             = '(' IDENT { ',' IDENT } [ ',' ] ')' ;
 
-# `let PATTERN = expr else { … };`, plus tuple/struct destructuring.
-LetStmt     = 'let' Pattern '=' Expr [ 'else' Block ] ';' ;
+# `let PATTERN = expr else { … };`, plus tuple/struct destructuring. The head
+# takes the same or-pattern list a match arm does — `if let` and `let … else`
+# both consume the shared pattern grammar.
+LetStmt     = 'let' ArmPatterns '=' Expr [ 'else' Block ] ';' ;
 
 # Callback-flattening bind. `<-` lexes as two punctuation tokens.
 UseStmt     = 'use' IDENT [ ':' Type ] '<' '-' Expr ';' ;
@@ -182,14 +184,23 @@ ExprStmt    = Expr ';' ;
 
 # ----------------------------------------------------------------- patterns
 
-Pattern     = StructPattern
+Pattern     = AtPattern
+            | StructPattern
             | TuplePattern
             | VariantPattern
             | LiteralPattern
             | BindingPattern
             ;
+# `n @ pat` — bind the whole matched value to `n` as well as destructuring it.
+# Valid at every binding site that takes a Pattern.
+AtPattern   = IDENT '@' Pattern ;
+# A trailing `..` says "and ignore the remaining fields"; without it the
+# listed fields are all of them.
 StructPattern
-            = QualName '{' [ FieldPattern { ',' FieldPattern } [ ',' ] ] '}' ;
+            = QualName '{' [ StructPatFields ] '}' ;
+StructPatFields
+            = '..'
+            | FieldPattern { ',' FieldPattern } [ ',' [ '..' ] ] ;
 FieldPattern
             = IDENT [ ':' IDENT ] ;
 TuplePattern
