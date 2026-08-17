@@ -3923,6 +3923,9 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 	if err != nil {
 		return nil, err
 	}
+	if err := p.sameFieldList(group); err != nil {
+		return nil, err
+	}
 	arity := len(group[0].pat.Bindings)
 	tmps := make([]string, arity)
 	for k := range tmps {
@@ -3965,8 +3968,48 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 		VariantName:   V,
 		VariantModule: mod,
 		Bindings:      tmps,
-		Body:          &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
+		// A named-field group keeps its shape: the merged arm still projects
+		// by FIELD, with the synthetic temps standing in for the binders.
+		// Dropping this would leave a struct arm looking positional, which
+		// the checker rejects (E035) and whose temps nothing would bind.
+		NamedFields: group[0].pat.NamedFields,
+		FieldNames:  fieldNamesOf(group[0].pat),
+		Body:        &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
 	}, nil
+}
+
+// fieldNamesOf returns a named-field pattern's projected field names, nil
+// for a positional one.
+func fieldNamesOf(pat matchPattern) []string {
+	if !pat.NamedFields {
+		return nil
+	}
+	return append([]string(nil), pat.fieldNames...)
+}
+
+// sameFieldList rejects a nested-pattern group whose named-field arms do not
+// all project the same fields in the same order. The merged arm carries ONE
+// field list (group[0]'s) and one temp per slot, so arms listing different
+// fields would bind the wrong values — a positional group cannot hit this
+// because a variant's payload arity is fixed.
+func (p *parser) sameFieldList(group []stmtRawArm) error {
+	if !group[0].pat.NamedFields {
+		return nil
+	}
+	want := group[0].pat.fieldNames
+	for k := 1; k < len(group); k++ {
+		got := group[k].pat.fieldNames
+		same := len(got) == len(want)
+		for i := 0; same && i < len(want); i++ {
+			same = got[i] == want[i]
+		}
+		if !same {
+			return p.errorfCode(group[k].pat.P, "P001",
+				"arms for `%s` with nested field patterns must list the same fields in the same order — this arm lists {%s}, the group lists {%s}",
+				group[k].pat.VariantName, strings.Join(got, ", "), strings.Join(want, ", "))
+		}
+	}
+	return nil
 }
 
 // slotBinderOf is the name a flat sibling arm bound the merged slot to, or
@@ -4008,9 +4051,9 @@ func (p *parser) rebindStmtBody(pat matchPattern, pos int, tmps []string, body *
 // error when the next token isn't `{` (a positional or payloadless arm).
 // Returns parallel field / binding lists: for the shorthand `S { x }` the
 // two are equal; `S { x: nx }` renames field x to local nx.
-func (p *parser) parseNamedFieldPattern() (fields, bindings []string, ok bool, err error) {
+func (p *parser) parseNamedFieldPattern() (fields, bindings []string, subs []*matchPattern, ok bool, err error) {
 	if _, isBrace := p.accept(lexer.Punct, "{"); !isBrace {
-		return nil, nil, false, nil
+		return nil, nil, nil, false, nil
 	}
 	if !p.match(lexer.Punct, "}") {
 		for {
@@ -4024,20 +4067,37 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, ok bool, e
 			}
 			fieldTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
-				return nil, nil, false, err
+				return nil, nil, nil, false, err
 			}
 			bind := fieldTok.Text
-			// `field: local` renames the bound field (struct matches only —
-			// the checker rejects a rename in an enum named-field pattern).
+			var sub *matchPattern
+			// `field: <x>` is either a rename binding the field to a local
+			// (struct matches only — the checker rejects a rename in an enum
+			// named-field pattern) or a SUB-PATTERN matched against the
+			// field's value. isNestedPatternStart draws the same line it
+			// draws for a payload slot, so `field: local` stays a rename and
+			// only an unambiguous pattern recurses.
 			if _, isRename := p.accept(lexer.Punct, ":"); isRename {
-				bindTok, err := p.expect(lexer.Ident, "")
-				if err != nil {
-					return nil, nil, false, err
+				if p.isNestedPatternStart() {
+					sp, err := p.parseMatchPattern()
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+					sub = &sp
+					// A sub-pattern introduces its own bindings; the slot
+					// itself binds nothing, matching a nested payload slot.
+					bind = ""
+				} else {
+					bindTok, err := p.expect(lexer.Ident, "")
+					if err != nil {
+						return nil, nil, nil, false, err
+					}
+					bind = bindTok.Text
 				}
-				bind = bindTok.Text
 			}
 			fields = append(fields, fieldTok.Text)
 			bindings = append(bindings, bind)
+			subs = append(subs, sub)
 			if _, c := p.accept(lexer.Punct, ","); c {
 				if p.match(lexer.Punct, "}") {
 					break
@@ -4048,9 +4108,9 @@ func (p *parser) parseNamedFieldPattern() (fields, bindings []string, ok bool, e
 		}
 	}
 	if _, e := p.expect(lexer.Punct, "}"); e != nil {
-		return nil, nil, false, e
+		return nil, nil, nil, false, e
 	}
-	return fields, bindings, true, nil
+	return fields, bindings, subs, true, nil
 }
 
 // matchPattern is the pattern half of a match arm — the fields that
@@ -4377,12 +4437,13 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			if _, err := p.expect(lexer.Punct, ")"); err != nil {
 				return pat, err
 			}
-		} else if fields, bindings, ok, err := p.parseNamedFieldPattern(); err != nil {
+		} else if fields, bindings, subs, ok, err := p.parseNamedFieldPattern(); err != nil {
 			return pat, err
 		} else if ok {
 			pat.NamedFields = true
 			pat.Bindings = bindings
 			pat.fieldNames = fields
+			pat.subPats = subs
 		}
 	} else {
 		return pat, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
@@ -4615,6 +4676,9 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 	if err != nil {
 		return nil, err
 	}
+	if err := p.sameFieldList(stmtGroup); err != nil {
+		return nil, err
+	}
 	arity := len(group[0].pat.Bindings)
 	tmps := make([]string, arity)
 	for k := range tmps {
@@ -4650,7 +4714,11 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 		VariantName:   V,
 		VariantModule: mod,
 		Bindings:      tmps,
-		Body:          innerMatch,
+		// See buildMergedStmtArm: a named-field group keeps projecting by
+		// FIELD, with the temps standing in for the binders.
+		NamedFields: group[0].pat.NamedFields,
+		FieldNames:  fieldNamesOf(group[0].pat),
+		Body:        innerMatch,
 	}, nil
 }
 

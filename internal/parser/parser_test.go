@@ -1615,6 +1615,62 @@ function f(s: Shape): i32 {
 	}
 }
 
+// A named field can carry a SUB-PATTERN rather than a binder —
+// `P { x: 0, y }` — matched against the field's value. It reuses the payload
+// slot's mechanism: the slot binds a synthetic temp and the arm's body nests
+// inside a match on it, so the merged arm keeps projecting by field.
+func TestStructFieldSubPatternParses(t *testing.T) {
+	for name, src := range map[string]string{
+		"literal": `struct P { x: i32, y: i32 }
+function f(p: P): i32 {
+    match (p) { P { x: 0, y } => { return y; }, P { x, y } => { return x + y; } }
+}`,
+		"variant": `enum E { A(i32), B }
+struct W { e: E, n: i32 }
+function f(w: W): i32 {
+    match (w) { W { e: A(v), n } => { return v + n; }, W { e: B(), n } => { return n; } }
+}`,
+		"tuple": `struct T { p: (i32, i32), n: i32 }
+function f(t: T): i32 {
+    match (t) { T { p: (0, b), n } => { return b + n; }, T { p: (a, b), n } => { return a + b + n; } }
+}`,
+		"nested struct": `struct P { x: i32, y: i32 }
+struct N { inner: P, n: i32 }
+function f(v: N): i32 {
+    match (v) { N { inner: P { x: 0, y }, n } => { return y + n; }, N { inner: P { x, y }, n } => { return x + y + n; } }
+}`,
+		"expression form": `struct P { x: i32, y: i32 }
+function f(p: P): i32 { return match (p) { P { x: 0, y } => y, P { x, y } => x + y }; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse(src); err != nil {
+				t.Errorf("should parse: %v", err)
+			}
+		})
+	}
+}
+
+// The merged arm carries ONE field list and one temp per slot, so arms in a
+// nested-field group that project different fields would bind wrong values.
+// That is a diagnostic, not a silent miscompile — a positional group cannot
+// hit it because a variant's payload arity is fixed.
+func TestStructFieldSubPatternFieldListsMustAgree(t *testing.T) {
+	_, err := Parse(`struct P { x: i32, y: i32 }
+function f(p: P): i32 {
+    match (p) {
+        P { x: 0, y } => { return y; },
+        P { x } => { return x; },
+        _ => { return 0; },
+    }
+}`)
+	if err == nil {
+		t.Fatal("want a diagnostic for mismatched field lists, got none")
+	}
+	if !strings.Contains(err.Error(), "same fields in the same order") {
+		t.Errorf("want the field-list diagnostic, got: %v", err)
+	}
+}
+
 // `match (e) { Variant => { … }, _ => { … } }` parses into a
 // Match stmt with an Arms slice mirroring the source order.
 func TestMatchStmtParses(t *testing.T) {
