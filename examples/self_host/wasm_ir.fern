@@ -660,6 +660,31 @@ pub function module_uses_str_slice(cache: irlower.LowerResult[]): boolean {
     return false;
 }
 
+// unsupported_op_refuse ends compilation for an IR op with no instruction
+// selection on this backend, the wasm half of #6917.
+//
+// Both binary selectors used to return ";; ir: unsupported bin <name>" — a WAT
+// COMMENT where an instruction belongs — and the op dispatch's terminal `else`
+// routes EVERY unrecognised tag here, so an op this backend does not model was
+// silently dropped. The register backends were fixed for exactly this; their
+// version of the bug is on record as `print_i64` printing nothing and `udp_send`
+// sending nothing, each for as long as it took someone to notice.
+//
+// Dropping an op is not reliably even a loud failure here. A binary op leaves its
+// two operands behind and wasmtime rejects the module — with a stack-height
+// complaint that names neither the op nor the function. A UNARY op is pops-1
+// pushes-1, so omitting it keeps the stack balanced and the module validates and
+// runs, computing the wrong answer with nothing to read.
+//
+// There is no AST emitter left to degrade into, so an op reaching here is always a
+// miscompile. The refusal is unconditional rather than strict-mode-only, matching
+// the register backends.
+function unsupported_op_refuse(tag: i32): string {
+    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the wasm backend — refusing to emit a silently dropped operation (#6917)\n");
+    exit(3);
+    return "";
+}
+
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
 function wasm_binop(tag: i32): string {
@@ -697,7 +722,7 @@ function wasm_binop(tag: i32): string {
     if (tag == 42) { return "i32.le_u"; }
     if (tag == 43) { return "i32.gt_u"; }
     if (tag == 44) { return "i32.ge_u"; }
-    return ";; ir: unsupported bin " + ir.kind_name(tag) + "\n";
+    return unsupported_op_refuse(tag);
 }
 
 // wasm_binop_w selects the i64 instruction variant when the operand width is 64
@@ -754,7 +779,7 @@ function wasm_binop_w(tag: i32, width: i32): string {
     if (tag == 52) { return "f64.le"; }
     if (tag == 53) { return "f64.gt"; }
     if (tag == 54) { return "f64.ge"; }
-    return ";; ir: unsupported i64 bin " + ir.kind_name(tag) + "\n";
+    return unsupported_op_refuse(tag);
 }
 
 // slot_in_list reports membership of slot x in an i32 list (the LowerResult's
