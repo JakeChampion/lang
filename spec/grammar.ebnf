@@ -201,8 +201,11 @@ StructPattern
 StructPatFields
             = '..'
             | FieldPattern { ',' FieldPattern } [ ',' [ '..' ] ] ;
+# `x` binds field x to a local of the same name; `x: y` renames it; `x: pat`
+# matches pat against the field's value. The rename is not a separate case —
+# BindingPattern derives a bare name, so one Pattern covers both.
 FieldPattern
-            = IDENT [ ':' IDENT ] ;
+            = IDENT [ ':' Pattern ] ;
 TuplePattern
             = '(' Pattern { ',' Pattern } [ ',' ] ')' ;
 VariantPattern
