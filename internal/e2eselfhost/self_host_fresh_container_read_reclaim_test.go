@@ -265,6 +265,99 @@ function main(): i32 {
     return 0;
 }`, 0},
 
+	// The same read off a METHOD producer (#6544). `bump()` returns a
+	// strict-fresh Box every time, so the temp the read leaves behind is this
+	// frame's own allocation — the free-function cases above with the receiver
+	// the registry already keys ("<Base>.<method>"). The struct box AND its
+	// fresh tag leaked per round before.
+	{"fresh-struct-method-field-string", `struct Box { tag: string, n: i32 }
+function (b: Box) bump(): Box { return Box { tag: b.tag + "!", n: b.n + 1 }; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: 1 }; acc = acc + b.bump().tag.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 900) { return 91; }
+    if (y != 1800) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The SCALAR field off a method producer: the box dec alone, no field move —
+	// fresh-struct-field-scalar with the receiver. The struct carries no string
+	// field, which is the same restriction that case has: the bare registry entry
+	// proves a fresh LITERAL, not that the box owns its string buffers, so a
+	// string-bearing struct read for a scalar still strands them (the STRFLDF
+	// admission carries that proof, and spending it here is the next slice).
+	{"fresh-struct-method-field-scalar", `struct Pair { j: i32, k: i32 }
+function (p: Pair) bump(): Pair { return Pair { j: p.j + 1, k: p.k + 1 }; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var p: Pair = Pair { j: i, k: i + 1 }; acc = acc + p.bump().k; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 1325) { return 91; }
+    if (y != 5150) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The IDENTITY-return refusal, which is what stops the method admission from
+	// becoming an over-release: `me()` hands the RECEIVER back, so the "temp" the
+	// read would free is `keep`'s own box and the moved-out tag is `keep`'s own
+	// string. Every return must be a struct LITERAL for the registry to admit,
+	// and this one is not.
+	{"method-identity-return-refused", `struct Box { tag: string, n: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function (b: Box) me(): Box { return b; }
+function main(): i32 {
+    var keep: Box = Box { tag: wide(7), n: 7 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var f: string = keep.me().tag; t = t + f.len(); i = i + 1; }
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (t != 4100) { return 91; }
+    if (keep.tag.len() != 41) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The RECEIVER-FIELD refusal, the method sibling of strfld-param-value-refused:
+	// `same()` builds a fresh box around the receiver's own string, so moving that
+	// string out and freeing it would release `keep`'s tag underneath it.
+	{"method-receiver-field-value-refused", `struct Box { tag: string, n: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function (b: Box) same(): Box { return Box { tag: b.tag, n: b.n }; }
+function main(): i32 {
+    var keep: Box = Box { tag: wide(7), n: 7 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var f: string = keep.same().tag; t = t + f.len(); i = i + 1; }
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (t != 4100) { return 91; }
+    if (keep.tag.len() != 41) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
 	// The refusal that carries the pointer half's safety argument on the ELEMENT
 	// side. `pair` builds its array out of a FIELD READ, which the array literal
 	// does not retain — so if the producer were admitted, the deep free would

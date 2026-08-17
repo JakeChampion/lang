@@ -11478,11 +11478,19 @@ function owned_scalar_field_type(t: string): boolean {
         || t == "u8" || t == "i8" || t == "u16" || t == "i16" || t == "char";
 }
 
-// owned_fresh_call_callee: the callee NAME when `e` is a direct call to a free
+// owned_fresh_call_callee: the callee NAME when `e` is a direct call to a
 // function in the strict-fresh registry (`kind` "" for the struct entries,
 // "ARR:" for the scalar-array ones), else "". A LOCAL callee is refused — the
 // registry is keyed by declaration name and a same-named local holds an unknown
 // closure body.
+//
+// A METHOD producer (`b.bump().tag`) answers under its "<Base>.<method>" key,
+// the same one every other consumer of this registry reads. The receiver must
+// be a bare LOCAL: expr_struct_type reports a struct-ARRAY-returning call's
+// ELEMENT type (the `mk()[i].field` recovery), so a call receiver could name a
+// method of a type the value is only an array OF, and a slot lookup cannot.
+// A struct FIELD of the method's name is a fn-typed field call and names no
+// method at all.
 function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): string {
     match (e) {
         parser.ExprCall(c) => {
@@ -11491,6 +11499,18 @@ function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): s
                     if (s.slot_of(cid.name) >= 0) { return ""; }
                     if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + cid.name) < 0) { return ""; }
                     return cid.name;
+                },
+                parser.ExprFieldAccess(cfa) => {
+                    var rty: string = "";
+                    match (cfa.obj) {
+                        parser.ExprIdent(_) => { rty = expr_struct_type(cfa.obj, s); },
+                        _ => { return ""; }
+                    }
+                    if (rty == "") { return ""; }
+                    if (decl_field_type(s.structs, rty, cfa.field) != "") { return ""; }
+                    var mkey: string = rty + "." + cfa.field;
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, kind + mkey) < 0) { return ""; }
+                    return mkey;
                 },
                 _ => { return ""; }
             }
@@ -30048,18 +30068,26 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
                     || body_returns_local_built_strarr(funcs[k].body, str_fresh))) {
             out = out.append("STRARR:" + funcs[k].name);
         }
-        // "STRFLDF:<name>" — the field-read half: a strict-fresh struct producer
-        // whose every `string` field is fresh, and whose return type carries no
-        // rc-ARRAY field (so the read's release is the bare box dec, with no
-        // __struct_drop_<T> to also touch the field being moved out). The read
-        // then MOVES the string: no retain, no field dec, one owner in and one
-        // owner out. Every OTHER string field of the box leaks with it — the
-        // established safe floor, never an over-release.
-        if (funcs[k].receiver_type.len() == 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
+        // "STRFLDF:<name>" / "STRFLDF:<Base>.<method>" — the field-read half: a
+        // strict-fresh struct producer whose every `string` field is fresh, and
+        // whose return type carries no rc-ARRAY field (so the read's release is
+        // the bare box dec, with no __struct_drop_<T> to also touch the field
+        // being moved out). The read then MOVES the string: no retain, no field
+        // dec, one owner in and one owner out. Every OTHER string field of the
+        // box leaks with it — the established safe floor, never an over-release.
+        //
+        // A METHOD earns the entry on the same terms. The receiver is not a
+        // special case for it: every return being a strict-fresh LITERAL
+        // already refuses `return b`, and body_strfields_all_fresh refuses a
+        // literal built out of `b.tag` — the two shapes in which the result
+        // could carry the receiver's own box.
+        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
                 && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body)
                 && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
-            out = out.append("STRFLDF:" + funcs[k].name);
+            var skey: string = funcs[k].name;
+            if (funcs[k].receiver_type.len() > 0) { skey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
+            out = out.append("STRFLDF:" + skey);
         }
         k = k + 1;
     }
