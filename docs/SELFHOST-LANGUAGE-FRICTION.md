@@ -195,13 +195,17 @@ on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
 per-module fixpoint is unaffected. Two things it hit that the next conversion
 will hit too:
 
-- **The visitor cannot be an arrow lambda.** A lambda's declared parameter types
-  are resolved only when the enclosing function is generic (`checker.go`'s
-  `resolveTypesInBlock` does not descend into expression-position lambdas), so a
-  `parser.Expr`-annotated lambda parameter stays an unresolved struct name and
-  every use of it reports `expected Expr, got Expr` — #6996. A nested named
-  function — which resolves, and captures just the same — is the spelling that
-  works.
+- **The visitor could not be an arrow lambda — until it could.** A lambda's
+  declared parameter types were resolved only when the enclosing function was
+  generic (`checker.go`'s `resolveTypesInBlock` did not descend into
+  expression-position lambdas), so a `parser.Expr`-annotated lambda parameter
+  stayed an unresolved struct name and every use of it reported
+  `expected Expr, got Expr`. The first conversion worked around it with a nested
+  named function, which resolves and captures identically. #6996 then fixed the
+  cause — and the bug turned out to be neither union-specific nor lambda-specific,
+  reaching `var`s in expression position too. Its real cost was the ratchet's:
+  nothing exercised closures here, so the one genuine bug in the path went
+  unfound.
 - **A visitor with no descent control cannot express every walk.**
   `collect_calls_*` converted cleanly because a node it does not record
   contributes nothing on its own, so a uniform pre-order walk is equivalent to
