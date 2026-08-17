@@ -224,9 +224,26 @@ cliff **188 times and copies 812 bytes** doing it — 4-byte loop-depth stacks i
 appends copies **2.3 GB**. Two rounds of `own`-conversion work were scoped
 against the unweighted count and aimed at sites that could not have paid.
 
-Attributing crossings to a function needs no flag: build with `-g`, break on the
-counter bump inside `__fern_arr_push_grow` under gdb, and report
-`info symbol *(unsigned long *)$rsp`. Details in `docs/TEST-GATES.md`.
+**The counters see appends and nothing else.** They are bumped by
+`__fern_arr_push`'s un-share path, so a quadratic `.with` — copy-on-write via
+`__fern_arr_cow_inplace` — moves neither of them. In #6911 that was the whole
+difference between the numbers and the clock: `own` on the x86 assembler's state
+parameter took the cliff from 21.4 GB to 3.07 GB and the compile time from 97 s
+to 97 s, while lifting the code buffer out of the struct for the two `.with`
+patch loops moved the cliff not at all and took the same compile to 19 s. Read a
+flat cliff line as "no append regressed", never as "nothing is copying".
+
+**Attribute crossings by source instrumentation, not gdb.** Frame #2 resolves to
+`??` above the runtime helpers — they are hand-written asm with no frame pointers
+— so breaking on the counter bump cannot name the Fern caller. What works:
+bracket a suspect region with `__arr_push_shared_bytes()` reads and print the
+delta. Bisecting the self-host compiler that way costs about two minutes an
+iteration (15 s to rebuild `bin/fern-selfhost`, 20–100 s to compile
+`checker.fern`), and a probe printing only when the delta is non-zero — tagged
+with the source line being assembled — attributes 36k crossings in one run.
+Instrumentation is not free of observer effect: an added statement changes
+liveness, and so can change which appends reuse in place. Confirm a suspected
+site by *fixing* it and re-measuring an unprobed build.
 
 ## arm64 / qemu locally: debug only, never a gate
 
