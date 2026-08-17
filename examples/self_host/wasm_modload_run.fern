@@ -178,11 +178,11 @@ function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], 
 function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, lo: i32, hi: i32, cache_dir: string): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0) { return ""; }
     var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, idx);
-    var key: string = modloader.module_cache_key(parts, infmods, sighashes, idx, src_hash, []);
+    // The window is folded in by module_unit_cache_key so two shards of one
+    // module get distinct objects; the filename carries the shard-ns for
+    // readability.
+    var key: string = modloader.module_unit_cache_key(parts, infmods, sighashes, idx, src_hash, [], lo, hi);
     if (key.len() == 0) { return ""; }
-    // Fold the window into the key so two shards of one module get distinct
-    // objects; the filename carries the shard-ns for readability.
-    key = key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi);
     return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__" + util.hash_key(key) + ".wu";
 }
 
