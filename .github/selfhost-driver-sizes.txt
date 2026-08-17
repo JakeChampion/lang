@@ -36,8 +36,18 @@
 # x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
 #
-# REFRESHED after #6894 (exit-sweep drop outlining), which cut every driver:
-# the tracked artifact by 42.5%, the front-end-only drivers by over 80%.
+# REFRESHED after #4111 (8-byte operand-stack slots + real push/pop on the
+# x86-64 backend). Note the two-tier split in that refresh, because it is the
+# most informative thing this file currently records: the drivers WITHOUT the
+# strbuf runtime fell 17.9-19.2%, which is the actual code-density win, while
+# the whole-compiler drivers fell only 3.4-5.0%. The difference is not a
+# codegen effect — `__fern_strbuf_data` reserves 64 MiB of .bss that the
+# linker materialises as zero bytes in the file, so ~79% of `fern.fern` is
+# zeros and no amount of code-density work moves it. See #4109.
+#
+# Refreshed before that after #6894 (exit-sweep drop outlining), which cut
+# every driver: the tracked artifact by 42.5%, the front-end-only drivers by
+# over 80%.
 #
 # Five figures came from run 31959802603's warm-asm job. The other ten were
 # linked locally — which is sound BECAUSE the host-independence claim below was
@@ -58,18 +68,18 @@
 # percentage is what is compared, deliberately, so a small driver's regression is
 # not lost inside a big one's noise.
 
-fern.fern 89738492
-asm_load_run.fern 84467932
-asm_modload_run.fern 83126948
-asm_ir_run.fern 82876188
-asm_run.fern 82275084
-wasm_ir_run.fern 14591068
-wasm_run.fern 14570236
-wasm_runio_run.fern 14519260
-asm_pathprobe_run.fern 13791740
-ssa_lift_scan_run.fern 13380684
-asm_ir_elig_run.fern 12967852
-irlower_run.fern 12318492
-checker_modload_run.fern 5128020
-ssa_emit_run.fern 4990076
-ssa_run.fern 4775500
+fern.fern 85239036
+asm_load_run.fern 81168764
+asm_modload_run.fern 80081732
+asm_ir_run.fern 79908796
+asm_run.fern 79440700
+wasm_ir_run.fern 11801500
+wasm_run.fern 11784764
+wasm_runio_run.fern 11750172
+asm_pathprobe_run.fern 11207164
+ssa_lift_scan_run.fern 10882124
+asm_ir_elig_run.fern 10592172
+irlower_run.fern 10110748
+checker_modload_run.fern 4144980
+ssa_emit_run.fern 4060284
+ssa_run.fern 3911244

@@ -91,28 +91,22 @@ the audit history is preserved.
 
 ### 5. 16-byte operand-stack slots on natives — memory + perf
 
-- **Where**: `internal/codegen/arm64/arm64.go:4434`
-  (`slotBytes = 16`), `internal/codegen/x86_64/x86_64.go:1678`
-  (same).
-- **Why**: every push uses 16 bytes regardless of type — a
-  16-byte alignment hedge for arm64 `stp` / `ldp` and System
-  V pre-call alignment on x86-64. Halving slots to 8 bytes
-  is *not* a simple constant flip: an experiment patching
-  both `slotBytes` values to 8 (no other changes) **builds
-  cleanly but SIGSEGVs 55 of the e2e fixtures**, because
-  the existing codegen relies on every push being an even
-  multiple of the call-boundary alignment requirement
-  (16 bytes for arm64 AAPCS64 and x86-64 SysV) — every
-  push currently maintains the invariant "for free".
-  Switching to 8-byte pushes makes parity toggle each push,
-  so calls land at an unaligned `sp` and the callee's stp /
-  push of a save register faults. The alignment requirement
-  matters at call boundaries; what's missing is the
-  bookkeeping to re-align there.
-- **Fix**: switch arm64 to unaligned `str x0, [sp, #-8]!`,
-  x86-64 to `push rax`. Re-align sp to 16 only at the
-  `bl` / `call`. Touches every push/pop, callee-save spill,
-  multi-arg call layout. Medium scope, independent of items
+- **Where**: `internal/codegen/arm64/arm64.go`
+  (`slotBytes = 16`). x86-64 is DONE — #4111 moved it to
+  8-byte slots with real `push` / `pop`, cutting the self-host
+  CLI's executable segment by 20.3%.
+- **Why arm64 is left**: a push there uses 16 bytes regardless of
+  type, an alignment hedge for `stp` / `ldp`. Halving it is *not*
+  a constant flip: an experiment patching `slotBytes` to 8 with
+  no other change **builds cleanly but SIGSEGVs 55 of the e2e
+  fixtures**, because the codegen relies on every push keeping sp
+  16-aligned for free. On x86-64 the fix was to track the operand
+  depth and pad only at call boundaries; AAPCS64 is stricter —
+  it wants sp 16-aligned for *any* sp-relative access, not just
+  at `bl` — so the same trick does not transfer.
+- **Fix**: pair two 8-byte spills into one `stp` / `ldp` rather
+  than halving the slot. Touches every push/pop, callee-save
+  spill, multi-arg call layout. Medium scope, independent of items
   1-4.
 
 ### Latent bugs (not user-visible yet)

@@ -578,21 +578,34 @@ Pre-requisite for the two-word form: usize (Item 1).
 
 **Impact:** halves operand-stack memory; tighter stack frames
 mean smaller working-set; fewer cache misses on deep call chains.
+The code-size win is the bigger one: a spill pair drops from
+16 bytes of encoding (`sub rsp, 16` / `mov [rsp], rax` and back)
+to 2 (`push rax` / `pop rax`).
 
-**Status:** today every push uses a 16-byte slot regardless of
-type, on both natives. The 16-byte slot was a 16-byte-alignment
-hedge for `stp` / `ldp` on arm64 and System V's pre-call
-alignment.
+**Status:** DONE on x86-64 (#4111): `slotBytes = 8`, real
+`push` / `pop`, and 16-byte alignment restored at call
+boundaries only. Measured on `examples/self_host/fern.fern`
+linked for `x86-64-linux`: executable segment 22,206,407 ->
+17,692,055 bytes, **-20.3%**.
 
-**Sketch:** drop to 8-byte slots universally. Use unaligned
-`str x0, [sp, #-8]!` / `ldr x0, [sp], #8` on arm64 (works on all
-ARMv8 targets); use `push rax` / `pop rax` (8-byte native
-encoding) on x86-64. Re-align sp to 16 only at call boundaries
-(already done via the stack-arg overflow pad).
+arm64 still pushes 16-byte slots (`str x0, [sp, #-16]!`). AAPCS64
+wants a 16-byte-aligned sp for any sp-relative access, not just
+at calls, so the arm64 flip is a harder change than x86-64's and
+the win is narrower — pairing two 8-byte spills into one
+`stp` / `ldp` is the shape to aim at.
 
-**Scope:** medium. Touches every push/pop on both natives,
-operand-stack offset calculations (closure captures, callee-save
-spills, multi-arg call ABI). Per-test re-verification.
+**How the x86-64 alignment is kept:** the generator tracks the
+live operand depth (`opBytes`) and pads 8 bytes before a call
+only when the depth is odd; with stack arguments the pad is
+folded into the overflow area so it cannot move the outgoing
+args. `TestEmittedCallsAre16ByteAligned` re-derives rsp from the
+emitted text and fails on any call reached at an odd multiple of
+8 — a counter bug would otherwise be invisible until a C callee
+faulted.
+
+**Scope for arm64:** medium. Touches every push/pop, operand-
+stack offset calculations (closure captures, callee-save spills,
+multi-arg call ABI). Per-test re-verification.
 
 ### 4. Per-instantiation Map entry sizing (depends on Item 2)
 

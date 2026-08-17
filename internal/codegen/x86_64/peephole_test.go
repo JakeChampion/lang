@@ -2,9 +2,9 @@ package x86_64
 
 // Tests for the streaming output peephole (generator.put / peepholeTail).
 //
-// The peephole removes two safe, purely-local stack-machine redundancies:
-//   P1  a push immediately followed by the matching pop (a store to a fresh
-//       stack slot then an immediate reload of the same slot), and
+// The peephole removes three safe, purely-local stack-machine redundancies:
+//   P1  a `push rax` immediately followed by the matching `pop DST`,
+//   P3  a `push rax` whose slot is freed unread, and
 //   P2  a `jmp L` immediately followed by the label `L:`.
 // It must NOT collapse a non-adjacent push/pop, which is a genuinely live
 // stack slot (left for the register allocator). These tests assert the
@@ -12,6 +12,7 @@ package x86_64
 // slots are preserved — without an assembler or qemu.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -91,18 +92,18 @@ func TestPeepholeRemovesRedundantStoreReload(t *testing.T) {
 
 	// Sanity: with the peephole off, the un-collapsed program must actually
 	// contain the patterns — otherwise the test proves nothing.
-	if !hasAdjacent(off, "mov [rsp], rax", "mov rcx, [rsp]") &&
-		!hasAdjacent(off, "mov [rsp], rax", "mov rax, [rsp]") {
+	if !hasAdjacent(off, "push rax", "pop rcx") &&
+		!hasAdjacent(off, "push rax", "pop rax") {
 		t.Fatal("precondition: un-peepholed asm has no adjacent push/pop to collapse")
 	}
 	if !hasJumpToNextLabel(off) {
 		t.Fatal("precondition: un-peepholed asm has no jump-to-next-label to remove")
 	}
 
-	// P1: no `mov [rsp], rax` is immediately followed by a reload of [rsp].
-	if hasAdjacent(on, "mov [rsp], rax", "mov rcx, [rsp]") ||
-		hasAdjacent(on, "mov [rsp], rax", "mov rax, [rsp]") {
-		t.Error("P1: redundant store-then-reload survived the peephole")
+	// P1: no `push rax` is immediately followed by a pop.
+	if hasAdjacent(on, "push rax", "pop rcx") ||
+		hasAdjacent(on, "push rax", "pop rax") {
+		t.Error("P1: redundant push-then-pop survived the peephole")
 	}
 	// P2: no jump to the immediately-following label survives.
 	if hasJumpToNextLabel(on) {
@@ -117,23 +118,22 @@ func TestPeepholeRemovesRedundantStoreReload(t *testing.T) {
 
 // A non-adjacent push/pop is a live stack slot and must be preserved. In
 // add(), the first operand `a` is pushed, then `b` is evaluated, then `a` is
-// popped — so a `mov [rsp], rax` ... (other lines) ... `mov rax, [rsp]` pair
-// must still be present after the peephole.
+// popped — so a `push rax` ... (other lines) ... `pop rax` pair must still be
+// present after the peephole.
 func TestPeepholePreservesLiveStackSlot(t *testing.T) {
 	on := compileOpts(t, peepProg, Options{})
 	lines := strings.Split(on, "\n")
 	sawPush, sawNonAdjacentPop := false, false
 	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if t == "mov [rsp], rax" {
+		cur := strings.TrimSpace(l)
+		if cur == "push rax" {
 			// Only count it as a surviving live-slot push if its pop is NOT
 			// the very next line (that case is exactly what P1 removes).
-			if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "mov rax, [rsp]" &&
-				strings.TrimSpace(lines[i+1]) != "mov rcx, [rsp]" {
+			if i+1 < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "pop ") {
 				sawPush = true
 			}
 		}
-		if t == "mov rax, [rsp]" {
+		if cur == "pop rax" {
 			sawNonAdjacentPop = true
 		}
 	}
@@ -165,22 +165,10 @@ function main(): i32 {
   return t;
 }`
 
-// hasDeadPush reports whether a push/free triple survives: `sub rsp, N` then
-// `mov [rsp], rax` then `add rsp, N` with the same N.
+// hasDeadPush reports whether a push/free pair survives: `push rax` then the
+// one-slot release `add rsp, 8`.
 func hasDeadPush(asm string) bool {
-	lines := strings.Split(asm, "\n")
-	for i := 0; i+2 < len(lines); i++ {
-		a := strings.TrimSpace(lines[i])
-		b := strings.TrimSpace(lines[i+1])
-		c := strings.TrimSpace(lines[i+2])
-		if !strings.HasPrefix(a, "sub rsp, ") || b != "mov [rsp], rax" {
-			continue
-		}
-		if c == "add rsp, "+strings.TrimPrefix(a, "sub rsp, ") {
-			return true
-		}
-	}
-	return false
+	return hasAdjacent(asm, "push rax", fmt.Sprintf("add rsp, %d", slotBytes))
 }
 
 func TestPeepholeRemovesDeadPush(t *testing.T) {
@@ -207,16 +195,17 @@ func TestPeepholePreservesReadBeforeFree(t *testing.T) {
 	lines := strings.Split(on, "\n")
 	sawLive := false
 	for i, l := range lines {
-		if strings.TrimSpace(l) != "mov [rsp], rax" {
+		if strings.TrimSpace(l) != "push rax" {
 			continue
 		}
-		// Walk forward to the slot's release; a reload before it means live.
+		// Walk forward to the slot's release; a `pop` before a bare release
+		// means the value was read.
 		for j := i + 1; j < len(lines); j++ {
 			cur := strings.TrimSpace(lines[j])
 			if strings.HasPrefix(cur, "add rsp, ") {
 				break
 			}
-			if strings.HasSuffix(cur, ", [rsp]") {
+			if strings.HasPrefix(cur, "pop ") {
 				sawLive = true
 				break
 			}
