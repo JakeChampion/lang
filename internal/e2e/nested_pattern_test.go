@@ -157,6 +157,42 @@ function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Wrap(Thir
 		want: 195, // 5 + 90 + 100
 	},
 	{
+		// A TUPLE sub-pattern in a payload slot (`Pr((a, b))`). It rides the
+		// same group-by-variant desugar variant sub-patterns use — the slot
+		// binds a temp and the inner match is a tuple match — so the only
+		// parser change was recognising `(` as a sub-pattern start. Folds a
+		// literal element in too, which must still discriminate.
+		name: "tuple_in_payload",
+		src: `enum T2 { Pr((i32, i32)), Non }
+function g(t: T2): i32 {
+  match (t) {
+    Pr((1, b)) => { return 50 + b; },
+    Pr((a, b)) => { return a + b; },
+    Non => { return 0; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(T2.Pr((1, 2))) + g(T2.Pr((3, 4))) * 10 + g(T2.Non) * 100; }`,
+		want: 122, // 52 + 70 + 0
+	},
+	{
+		// An all-binder tuple sub-pattern is IRREFUTABLE, so the outer `_`
+		// must not be appended after it inside the merged inner match — doing
+		// so made the checker call the arm unreachable (E026) and the whole
+		// program failed to compile. `_` is not the only covering shape.
+		name: "tuple_in_payload_irrefutable_with_fallthrough",
+		src: `enum T2 { Pr((i32, i32)), Non }
+function g(t: T2): i32 {
+  match (t) {
+    Pr((a, b)) => { return a + b; },
+    _ => { return 9; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(T2.Non) + g(T2.Pr((2, 3))) * 10; }`,
+		want: 59, // 9 + 50
+	},
+	{
 		// Outer `_` fallthrough: `Some(Err(_))` matches no inner arm, so the
 		// outer wildcard body runs (rather than a non-exhaustive bail).
 		name: "wildcard_fallthrough",
@@ -207,7 +243,7 @@ func TestNestedPatternX86_64(t *testing.T) {
 // TestNestedPatternWasm confirms the desugar is backend-agnostic by
 // running the headline + fallthrough cases through the wasm pipeline.
 func TestNestedPatternWasm(t *testing.T) {
-	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner"} {
+	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner", "tuple_in_payload"} {
 		var tc = nestedPatternCasesByName(t, name)
 		t.Run(name, func(t *testing.T) {
 			if got := runWasm(t, tc.src); got != tc.want {

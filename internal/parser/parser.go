@@ -3919,7 +3919,7 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 			// meant as a variant rather than a binder.
 			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
 		}
-		if innerPat.IsWildcard && g.guard == nil {
+		if coversEveryValue(innerPat) && g.guard == nil {
 			hasInnerWild = true
 		}
 		body := p.rebindStmtBody(g.pat, pos, tmps, g.body)
@@ -4076,6 +4076,28 @@ func (mp *matchPattern) hasNestedSub() bool {
 	return false
 }
 
+// coversEveryValue reports whether an inner sub-pattern matches anything the
+// slot can hold, so appending the outer fallthrough after it would produce an
+// arm the checker calls unreachable. A `_` obviously covers; so does a tuple
+// pattern whose elements are all binders or `_`, which is decidable here
+// because a literal element is the only thing that can make one fail. Struct
+// patterns are NOT included: the parser cannot tell a struct from an
+// enum's record-form variant, and only the former is irrefutable.
+func coversEveryValue(mp matchPattern) bool {
+	if mp.IsWildcard {
+		return true
+	}
+	if mp.TupleElems == nil {
+		return false
+	}
+	for _, el := range mp.TupleElems {
+		if el.Literal != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // isNestedPatternStart reports whether the token(s) at the cursor begin
 // a nested sub-pattern (as opposed to a bare binder name). A sub-pattern
 // is recognised only when it is UNAMBIGUOUSLY a pattern: a literal, or an
@@ -4087,6 +4109,12 @@ func (mp *matchPattern) hasNestedSub() bool {
 // rejects it (E015) rather than letting the arm match every payload.
 func (p *parser) isNestedPatternStart() bool {
 	t := p.peek()
+	// A `(` opens a tuple sub-pattern (`Pr((a, b))`). It is unambiguous: a
+	// payload slot otherwise holds a binder, a `_`, or a literal, none of
+	// which start with `(`.
+	if t.Kind == lexer.Punct && t.Text == "(" {
+		return true
+	}
 	if p.atLiteralPattern() {
 		return true
 	}
@@ -4508,7 +4536,7 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 		} else {
 			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
 		}
-		if innerPat.IsWildcard && g.guard == nil {
+		if coversEveryValue(innerPat) && g.guard == nil {
 			hasInnerWild = true
 		}
 		body := p.rebindExprBody(g.pat, pos, tmps, g.body)
