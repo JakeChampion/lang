@@ -2,10 +2,12 @@
 # depth-repro — generate an N-arm `else if` chain and compile it with both
 # compilers, reporting each one's peak RSS.
 #
-# The self-host compiler's IR lowering is SUPER-QUADRATIC in the nesting depth
-# of an else-if chain, where the native compiler is linear (#6911). Its own emit
-# dispatchers are exactly this shape, which is why three functions account for
-# 2.28 GB of a self-compile's 6.55 GB of lowering allocation.
+# The self-host compiler's IR lowering WAS super-quadratic in the nesting depth
+# of an else-if chain, where the native compiler is linear: 1.83 GB at 400 arms,
+# 13.4 GB at 800, and 1,600 arms was killed by the OOM killer. #6911 made
+# body_assign_targets linear, which took those to 147 MB / 495 MB / 1.84 GB.
+# Keep this to hand: the compiler's own emit dispatchers are exactly this shape,
+# so a regression here shows up as a self-compile that will not finish.
 #
 # Usage: depth-repro [N...]      (default: 100 200 400 800)
 set -uo pipefail

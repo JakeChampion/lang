@@ -51888,20 +51888,32 @@ function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs:
 // — or the closure local — is mutated, so the lifted call-time argument always
 // equals the capture's value at the lambda's definition.
 function body_assign_targets(stmts: parser.Stmt[]): string[] {
-    var out: string[] = [];
+    return assign_targets_into([], stmts);
+}
+
+// assign_targets_into is body_assign_targets threading ONE accumulator instead
+// of returning a fresh array per nesting level for its caller to copy in.
+//
+// The copy is what made it quadratic in nesting DEPTH: an `else if` chain is
+// right-nested, so level i copied the whole result of level i+1 and a chain of
+// n arms cost O(n^2) appends. Callers make that a further factor: this runs at
+// the head of consumed_scalar_enum_frees / consumed_rcpayload_option_frees /
+// consumed_rcpayload_enum_frees, which lower_block runs on every nested block —
+// and an if-chain's else-body IS the whole remaining chain (#6911).
+function assign_targets_into(out: string[], stmts: parser.Stmt[]): string[] {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtAssign(a) => { out = out.append(a.target); },
             parser.StmtIf(f) => {
-                out = append_all(out, body_assign_targets(f.then_body));
-                out = append_all(out, body_assign_targets(f.else_body));
+                out = assign_targets_into(out, f.then_body);
+                out = assign_targets_into(out, f.else_body);
             },
-            parser.StmtWhile(w) => { out = append_all(out, body_assign_targets(w.body)); },
-            parser.StmtFor(fr) => { out = append_all(out, body_assign_targets(fr.body)); },
+            parser.StmtWhile(w) => { out = assign_targets_into(out, w.body); },
+            parser.StmtFor(fr) => { out = assign_targets_into(out, fr.body); },
             parser.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { out = append_all(out, body_assign_targets(m.arms[ai].body)); ai = ai + 1; }
+                while (ai < m.arms.len()) { out = assign_targets_into(out, m.arms[ai].body); ai = ai + 1; }
             },
             _ => { }
         }
