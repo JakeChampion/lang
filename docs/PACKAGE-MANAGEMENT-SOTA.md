@@ -278,7 +278,8 @@ successor.
 
 Fern-specific synergy (new since the first survey): #3458's
 incremental-codegen cache is keyed by content hashes of per-module
-compilation inputs + imported-signature hashes. A package cache and
+compilation inputs + the signature hashes of a module's transitive
+dependency closure. A package cache and
 the object cache should be two levels of the same content-addressed
 store: immutable package sources hash once at fetch time, and that
 hash feeds directly into the object-cache key. One hashing

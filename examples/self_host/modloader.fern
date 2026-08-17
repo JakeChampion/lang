@@ -474,17 +474,27 @@ pub function module_sig_string(mod: parser.Module): string {
     return out;
 }
 
-// module_import_ns joins the base names of a module's direct imports (comma-
-// separated) — the per-import-edge dependency list the incremental cache keys a
-// module against. An importer's cache key folds in the SIGNATURE hash of each
-// name here, so a signature change in any module it calls into invalidates it.
-pub function module_import_ns(mod: parser.Module): string {
+// module_dep_ns joins (comma-separated, in parts order) the namespaces module
+// `idx` depends on — the dependency list the incremental cache keys it against.
+// A key folds in the SIGNATURE hash of each name here, so a signature change in
+// anything it depends on invalidates it.
+//
+// This is the TRANSITIVE closure, and it is what the manifest reports for a
+// reason: the manifest exists so an out-of-process orchestrator can compute the
+// keys the driver computes. Reporting direct edges instead would hand it a
+// weaker rule than the driver's, so it would reuse a unit the driver would have
+// re-emitted — the same stale codegen, one layer out. Only loaded modules are
+// listed; an import that resolved to no part contributes no signature.
+pub function module_dep_ns(parts: flatten.PerModule[], infmods: parser.Module[], idx: i32): string {
+    var deps: string[] = import_closure_ns(parts, infmods, idx);
     var out: string = "";
-    var i: i32 = 0;
-    while (i < mod.imports.len()) {
-        if (i > 0) { out = out + ","; }
-        out = out + base_name(mod.imports[i].path);
-        i = i + 1;
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        if (util.has_str(deps, parts[j].ns)) {
+            if (out.len() > 0) { out = out + ","; }
+            out = out + parts[j].ns;
+        }
+        j = j + 1;
     }
     return out;
 }
