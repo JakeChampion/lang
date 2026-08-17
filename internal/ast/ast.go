@@ -639,6 +639,19 @@ func SubstSelf(t Type, self Type) Type {
 // materialise a trait's default method body once per implementing type
 // (see docs/TRAITS.md); monomorph uses all three to instantiate a
 // generic function's body per type-argument set.
+// clonePatternNames copies a match arm's parallel binding slices. A clone that
+// shared them with its source was only safe until something renamed a binding
+// in place: shadowrename rewrites `arm.Bindings[i]` and the matching Idents in
+// the arm BODY, and the body is deep-copied while the names were not — so one
+// monomorphised instantiation's rename reached every sibling's pattern while
+// each sibling's body kept the old name. The stale reference then resolved to
+// another arm's binding of that name, and lowering read the wrong struct.
+func clonePatternNames(bindings []string, types []Type, fields []string) ([]string, []Type, []string) {
+	return append([]string(nil), bindings...),
+		append([]Type(nil), types...),
+		append([]string(nil), fields...)
+}
+
 func CloneBlock(b *Block) *Block {
 	if b == nil {
 		return nil
@@ -712,6 +725,7 @@ func CloneStmt(s Stmt) Stmt {
 			ac.Guard = CloneExpr(arm.Guard)
 			ac.Body = CloneBlock(arm.Body)
 			ac.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			ac.Bindings, ac.BindingTypes, ac.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
 			c.Arms[i] = &ac
 		}
 		return &c
@@ -796,6 +810,7 @@ func CloneExpr(e Expr) Expr {
 			}
 			a.Body = CloneExpr(arm.Body)
 			a.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			a.Bindings, a.BindingTypes, a.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
 			c.Arms[i] = &a
 		}
 		return &c
