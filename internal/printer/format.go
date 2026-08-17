@@ -1268,6 +1268,28 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 	}
 }
 
+// formatExprArmPattern renders a match-EXPRESSION arm's pattern. MatchExprArm
+// carries the same pattern fields as MatchArm and differs only in its body
+// type, so it borrows the one renderer rather than keeping a second copy —
+// the copy it used to keep silently dropped `@` bindings, range high bounds,
+// tuple patterns and field renames, rewriting `3..=4 => …` to `3 => …`.
+func (f *formatter) formatExprArmPattern(arm *ast.MatchExprArm) {
+	f.formatArmPattern(&ast.MatchArm{
+		P:              arm.P,
+		VariantName:    arm.VariantName,
+		VariantModule:  arm.VariantModule,
+		Bindings:       arm.Bindings,
+		NamedFields:    arm.NamedFields,
+		FieldNames:     arm.FieldNames,
+		IsWildcard:     arm.IsWildcard,
+		Literal:        arm.Literal,
+		RangeHi:        arm.RangeHi,
+		RangeInclusive: arm.RangeInclusive,
+		TupleElems:     arm.TupleElems,
+		AtBinding:      arm.AtBinding,
+	})
+}
+
 // Precedence levels mirror the parser's. Higher value binds
 // tighter — formatExpr emits parentheses around an operand only
 // when its outer operator binds strictly less tightly than the
@@ -1656,39 +1678,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
-			if arm.IsWildcard {
-				f.b.WriteByte('_')
-			} else if arm.Literal != nil {
-				// Literal-pattern arm (`0 => …`, `"yes" => …`). Without
-				// this the pattern was dropped and the formatter emitted
-				// `=> …`, which failed to re-parse.
-				f.formatExpr(arm.Literal, precLowest)
-			} else {
-				if arm.VariantModule != "" {
-					f.b.WriteString(arm.VariantModule)
-					f.b.WriteByte('.')
-				}
-				f.b.WriteString(arm.VariantName)
-				if arm.NamedFields {
-					f.b.WriteString(" { ")
-					for j, bind := range arm.Bindings {
-						if j > 0 {
-							f.b.WriteString(", ")
-						}
-						f.b.WriteString(bind)
-					}
-					f.b.WriteString(" }")
-				} else if len(arm.Bindings) > 0 {
-					f.b.WriteByte('(')
-					for j, bind := range arm.Bindings {
-						if j > 0 {
-							f.b.WriteString(", ")
-						}
-						f.b.WriteString(bind)
-					}
-					f.b.WriteByte(')')
-				}
-			}
+			f.formatExprArmPattern(arm)
 			if arm.Guard != nil {
 				f.b.WriteString(" when ")
 				f.formatExpr(arm.Guard, precLowest)

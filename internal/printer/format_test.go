@@ -1292,3 +1292,58 @@ func TestFormatKeepsArrowLambda(t *testing.T) {
 		})
 	}
 }
+
+// A negative literal PATTERN must survive a format round trip. The parser
+// used to fold the `-` into NumberLit.Value, which collides with the
+// representation of an unsigned literal above i64::MAX — so the formatter
+// applied the unsigned reading and rewrote `-1 =>` to
+// `18446744073709551615 =>`, producing a file that no longer compiles.
+// Both readings are asserted here so a fix for one cannot re-break the other.
+func TestFormatNegativeLiteralPattern(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"plain", `function f(n: i32): i32 { match (n) { -1 => { return 7; }, _ => { return 0; } } }`, "-1 =>"},
+		{"range", `function f(n: i32): i32 { match (n) { -3..0 => { return 7; }, _ => { return 0; } } }`, "-3..0 =>"},
+		{"or_alt", `function f(n: i32): i32 { match (n) { 1 | -3 => { return 7; }, _ => { return 0; } } }`, "-3 =>"},
+		{"float", `function f(n: f64): i32 { match (n) { -1.5 => { return 7; }, _ => { return 0; } } }`, "-1.5 =>"},
+		{"tuple_elem", `function f(t: (i32, i32)): i32 { match (t) { (-1, y) => { return 7; }, _ => { return 0; } } }`, "(-1, y) =>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if strings.Contains(got, "18446744073709551615") {
+				t.Errorf("negative pattern rendered as the unsigned bit pattern:\n%s", got)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
+// Match-EXPRESSION arms render through the same pattern renderer as
+// statement arms. They used to keep a second, impoverished copy that knew
+// only variant / named-field / wildcard / bare-literal, so it silently
+// dropped range high bounds, `@` bindings, tuple patterns and field
+// renames — rewriting `3..=4 => …` into `3 => …`, a different program.
+func TestFormatMatchExprArmPatterns(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"range", `function f(n: i32): i32 { return match (n) { 3..=4 => 10, _ => 0 }; }`, "3..=4 =>"},
+		{"range_exclusive", `function f(n: i32): i32 { return match (n) { 3..5 => 10, _ => 0 }; }`, "3..5 =>"},
+		{"at_binding", `function f(n: i32): i32 { return match (n) { k @ 3..=4 => k, _ => 0 }; }`, "k @ 3..=4 =>"},
+		{"tuple", `function f(t: (i32, i32)): i32 { return match (t) { (a, b) => a + b }; }`, "(a, b) =>"},
+		{"struct_rename", `struct P { x: i32, y: i32 }
+function f(p: P): i32 { return match (p) { P { x: a, y: b } => a + b }; }`, "P { x: a, y: b } =>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}

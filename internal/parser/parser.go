@@ -3563,15 +3563,16 @@ func (p *parser) parseLiteralPattern() (ast.Expr, error) {
 	if !neg {
 		return lit, nil
 	}
-	switch x := lit.(type) {
-	case *ast.NumberLit:
-		x.Value = -x.Value
-	case *ast.FloatLit:
-		x.Value = -x.Value
+	switch lit.(type) {
+	case *ast.NumberLit, *ast.FloatLit:
 	default:
 		return nil, p.errorfCode(p.peek().Pos, "P001", "`-` in a match arm must be followed by a number")
 	}
-	return lit, nil
+	// Wrap rather than folding the sign into the literal's Value. A negative
+	// NumberLit.Value means "unsigned magnitude above i64::MAX" everywhere
+	// else in the tree, so folding made `-1` indistinguishable from
+	// `18446744073709551615` — which is what the formatter then printed.
+	return &ast.Unary{P: lit.Pos(), Op: "-", Operand: lit}, nil
 }
 
 func (p *parser) parseMatch() (ast.Stmt, error) {
@@ -4099,13 +4100,11 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		if sub.atBinding != "" {
 			return sub, p.errorfCode(t.Pos, "P001", "an `@`-pattern cannot nest another `@` binding")
 		}
-		// v1: `@` bindings are supported on variant patterns (`n @ Some(x)`,
-		// `n @ Color.Red`), struct patterns (`n @ Point { x, y }`, which carry
-		// a VariantName), and tuple patterns (`n @ (a, b)`). Literal and
-		// wildcard sub-patterns stay rejected — the whole-value capture there
-		// is redundant (`n @ 0`) or pointless (`n @ _`).
-		if (sub.VariantName == "" && sub.TupleElems == nil) || sub.IsWildcard {
-			return sub, p.errorfCode(t.Pos, "P001", "`@` bindings are supported on variant, struct, and tuple patterns, not on literal or `_` patterns")
+		// `_` is the one sub-pattern that cannot carry an `@`: the arm binds
+		// nothing to project, and every downstream stage treats a wildcard as
+		// the unconditional default rather than a pattern with bindings.
+		if sub.IsWildcard {
+			return sub, p.errorfCode(t.Pos, "P001", "`@` bindings are not supported on a `_` pattern")
 		}
 		sub.atBinding = t.Text
 		return sub, nil

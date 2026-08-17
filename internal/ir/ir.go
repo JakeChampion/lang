@@ -6235,6 +6235,7 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 		}
 		if arm.Guard != nil {
 			b.openIf(BlockTypeVoid)
+			restoreAt := b.bindScalarAt(arm.AtBinding, scrSlot, tagT)
 			if err := b.expr(arm.Guard); err != nil {
 				return err
 			}
@@ -6245,14 +6246,17 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 			b.brTo(exitDepth, false)
 			b.closeScope()
 			b.closeScope()
+			restoreAt()
 			continue
 		}
 		b.openIf(BlockTypeVoid)
+		restoreAt := b.bindScalarAt(arm.AtBinding, scrSlot, tagT)
 		if err := b.stmt(arm.Body); err != nil {
 			return err
 		}
 		b.brTo(exitDepth, false)
 		b.closeScope()
+		restoreAt()
 	}
 	b.closeScope() // outer exit block
 	return nil
@@ -6260,6 +6264,20 @@ func (b *builder) emitLiteralMatch(n *ast.Match) error {
 
 func literalMatchScrName(slot int32) string {
 	return fmt.Sprintf("__lit_match_scr_%d", slot)
+}
+
+// bindScalarAt binds a literal/range arm's `@` name to the matched scalar,
+// which the caller already stashed in scrSlot. Call it just inside the arm's
+// `if` so the guard and body both see the name; run the returned restore
+// after the arm's scope closes.
+func (b *builder) bindScalarAt(atBinding string, scrSlot int32, tagT ast.Type) func() {
+	if atBinding == "" {
+		return func() {}
+	}
+	atSlot, restore := b.bindingSlotScoped(atBinding, tagT)
+	b.emit(Op{Kind: OpLoadLocal, I32: scrSlot})
+	b.emit(Op{Kind: OpStoreLocal, I32: atSlot})
+	return restore
 }
 
 // anyArmAtBinding reports whether any arm carries an `@` binding
@@ -6502,6 +6520,7 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 		}
 		if arm.Guard != nil {
 			b.openIf(BlockTypeVoid)
+			restoreAt := b.bindScalarAt(arm.AtBinding, scrSlot, tagT)
 			if err := b.expr(arm.Guard); err != nil {
 				return err
 			}
@@ -6513,15 +6532,18 @@ func (b *builder) emitLiteralMatchExpr(n *ast.MatchExpr) error {
 			b.brTo(exitDepth, false)
 			b.closeScope()
 			b.closeScope()
+			restoreAt()
 			continue
 		}
 		b.openIf(BlockTypeVoid)
+		restoreAt := b.bindScalarAt(arm.AtBinding, scrSlot, tagT)
 		if err := b.emitCountedYield(arm.Body); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpStoreLocal, I32: resultSlot})
 		b.brTo(exitDepth, false)
 		b.closeScope()
+		restoreAt()
 	}
 	b.closeScope()
 	b.emit(Op{Kind: OpLoadLocal, I32: resultSlot})
