@@ -1666,11 +1666,31 @@ func AsmFnName(name string) string { return symname.Fn(name) }
 // one namespace whether it is a function the program defines or a runtime
 // helper this backend provides. A defined function is the mangled symbol; a
 // helper is its own bare name.
+//
+// Membership in g.funcs is the discriminator for every call site EXCEPT an
+// OpCallDirect the lowering marked `Runtime` — see callSym, which the ops that
+// carry that flag must go through instead.
 func (g *generator) sym(target string) string {
 	if _, ok := g.funcs[target]; ok {
 		return AsmFnName(target)
 	}
 	return target
+}
+
+// callSym is sym for an OpCallDirect, which is the one site where the two
+// namespaces genuinely overlap: the lowering calls its own helpers by plain
+// name (`__fern_str_append`, `__memcpy`, …) and a program may define a
+// function called the same thing. `op.Runtime` records which the lowering
+// meant, so neither has to be guessed from the name.
+//
+// `target` is the callee after this backend's own rewrites (the
+// `__method_Map_*` → `__map_*_impl` family). A rewritten target names an
+// emitted helper by construction, so it is never mangled either.
+func (g *generator) callSym(op ir.Op, target string) string {
+	if op.Runtime || target != op.Str {
+		return target
+	}
+	return g.sym(target)
 }
 
 // emitFunc lowers one function to assembly. Per-function
@@ -2560,7 +2580,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
+		g.emit(fmt.Sprintf("call %s", g.callSym(op, op.Str)))
 		g.emitCallArgsCleanup(argc, extra)
 		g.push()
 
@@ -2703,7 +2723,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
 			extra := g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
+			g.emit(fmt.Sprintf("call %s", op.Str))
 			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
@@ -2749,7 +2769,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// recorded the "__fern_rc_is_unique" use, so the helper is
 			// emitted regardless of inline-vs-call.
 			extra := g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
+			g.emit(fmt.Sprintf("call %s", op.Str))
 			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
@@ -2968,7 +2988,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", g.sym(target)))
+		g.emit(fmt.Sprintf("call %s", g.callSym(op, target)))
 		g.emitCallArgsCleanup(argc, extra)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
@@ -2998,7 +3018,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// call" contract is now register-backed.
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
+		g.emit(fmt.Sprintf("call %s", g.callSym(op, op.Str)))
 		g.emitCallArgsCleanup(argc, extra)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)

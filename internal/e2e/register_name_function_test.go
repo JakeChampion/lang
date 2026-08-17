@@ -188,3 +188,60 @@ func TestWASMRuntimeHelperNameFn(t *testing.T) {
 		t.Errorf("wasm exit = %d, want 42", code)
 	}
 }
+
+// The third face of the same namespace: helpers the LOWERING calls by name.
+// The IR names a runtime helper and a program function in one string space —
+// `__fern_str_append` is the string-append lowering's own callee — so a Fern
+// program defining that name used to have its function called where the
+// lowering meant the helper. Silently: the program below returned 43 instead
+// of 42 on both native backends, one extra `+1` from the wrong callee running
+// an append. `ir.Op.Runtime` records which one the lowering meant, so the
+// emitters no longer guess from the name.
+//
+// No wasm leg, unlike the cases above: the wasm backend resolves callees
+// through a single name→funcidx map (and a name-keyed signature table), so the
+// same program still fails there — as a REJECTED MODULE at build time
+// ("type mismatch: values remaining on stack"), never as a wrong answer. That
+// is a separate fix in a backend that fails loudly; this one covers the two
+// that failed silently.
+//
+// The loop forces real appends; a single concatenation folds away.
+// s = "a" + "b"*3 → len 4; __fern_str_append(4 + 37) = 42.
+const loweringHelperNameFnSrc = `function __fern_str_append(x: i32): i32 { return x + 1; }
+function main(): i32 {
+    var s: string = "a";
+    for i in 0..3 { s = s + "b"; }
+    return __fern_str_append(s.len() + 37);
+}
+`
+
+func TestInterpLoweringHelperNameFn(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(loweringHelperNameFnSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	cmd := exec.Command(bin, "-interp", src)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Errorf("exit = %d, want 42\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+func TestX86_64LoweringHelperNameFn(t *testing.T) {
+	out, code := compileAndRunX86_64(t, loweringHelperNameFnSrc)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
+
+func TestArm64LoweringHelperNameFn(t *testing.T) {
+	out, code := compileAndRunArm64(t, loweringHelperNameFnSrc)
+	if code != 42 {
+		t.Errorf("exit = %d, want 42\n%s", code, out)
+	}
+}
