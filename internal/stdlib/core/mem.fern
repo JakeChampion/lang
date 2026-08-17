@@ -15,9 +15,9 @@
 // at the point the refcount reaches zero and BEFORE the value's fields
 // are reclaimed — so the body can still read every field.
 //
-// Do not call it yourself. An explicit `v.drop()` is currently accepted
-// and runs the body a SECOND time, on a value the runtime is still going
-// to finalize; rejecting it at check time is a follow-up.
+// Do not call it yourself: an explicit `v.drop()` would run the body a
+// SECOND time, on a value the runtime is still going to finalize. The
+// checker rejects one (E073).
 //
 // A `Drop` type does not participate in Perceus reuse. Reuse hands a
 // dying value's box straight to the next constructor of the same shape
