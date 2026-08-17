@@ -16,9 +16,18 @@ func (a *Assembler) MachOTextLen() int {
 	return len(a.insns) * 4
 }
 
-// MachODataLen returns the size of the data blob (merged __const + __bss /
-// __data) in bytes.
-func (a *Assembler) MachODataLen() int { return len(a.rodata) }
+// MachODataLen returns the size of the data blob (__const / __data plus the
+// .bss reservation) in bytes. It fixes .bss's position, so it must be called
+// before LinkMachO resolves any symbol against it — the Mach-O layout needs
+// this size up front anyway, which is what makes that ordering natural.
+//
+// The whole blob is counted, .bss included: unlike the ELF writer, the
+// Mach-O container has no zero-fill section here, so the reservation is
+// materialised in the file (see the LinkMachO note).
+func (a *Assembler) MachODataLen() int {
+	a.padForBss()
+	return len(a.rodata) + len(a.bss)
+}
 
 // MachODataRebaseOffsets returns the offsets, within the data blob, of every
 // 8-byte slot holding an ABSOLUTE address (`.quad <symbol>` — jump tables and
@@ -43,7 +52,13 @@ func (a *Assembler) MachODataRebaseOffsets() []int {
 // returns the text and data blobs. The literal pool must already be
 // flushed (MachOTextLen does this); calling FlushLiterals again here is a
 // no-op.
+// A Mach-O __DATA segment here carries filesize == vmsize, so a .bss
+// reservation is written to the file rather than zero-filled by dyld. Laying
+// .bss at the tail (as the ELF path needs) does not by itself change that —
+// shrinking the segment's filesize means moving __LINKEDIT and recomputing
+// the code signature over the smaller file, which is separate work.
 func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, err error) {
+	a.padForBss()
 	a.FlushLiterals()
 	if a.veneerErr != nil {
 		return nil, nil, a.veneerErr
@@ -69,6 +84,9 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 		}
 		if s.inText {
 			return textVAddr + uint64(s.val)*4, true
+		}
+		if s.inBss {
+			return dataVAddr + uint64(a.bssBase()+s.val), true
 		}
 		return dataVAddr + uint64(s.val), true
 	}
@@ -123,5 +141,5 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 	for _, insn := range a.insns {
 		text = Put(text, insn)
 	}
-	return text, a.rodata, nil
+	return text, append(a.rodata, a.bss...), nil
 }

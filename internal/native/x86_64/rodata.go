@@ -9,43 +9,58 @@ import (
 	"github.com/jakechampion/lang/internal/native/gasstr"
 )
 
-func (a *Assembler) appendRodata(b []byte) { a.rodata = append(a.rodata, b...) }
+// dataBuf is the accumulator the current data section appends to. .bss is
+// kept apart from .rodata so it can be laid out last — see the Assembler
+// field comment.
+func (a *Assembler) dataBuf(sec string) *[]byte {
+	if sec == "bss" {
+		return &a.bss
+	}
+	return &a.rodata
+}
 
-func (a *Assembler) alignRodata(n int) {
+func (a *Assembler) appendRodata(sec string, b []byte) {
+	buf := a.dataBuf(sec)
+	*buf = append(*buf, b...)
+}
+
+func (a *Assembler) alignRodata(sec string, n int) {
 	if n <= 1 {
 		return
 	}
-	for len(a.rodata)%n != 0 {
-		a.rodata = append(a.rodata, 0)
+	buf := a.dataBuf(sec)
+	for len(*buf)%n != 0 {
+		*buf = append(*buf, 0)
 	}
 }
 
-// appendRodataDirective materialises a .rodata data directive into the
-// data blob. Strings store a 4-byte length prefix (emitted by the code
-// generator as a separate .4byte) immediately before the data label, so
-// the layout here just has to be contiguous and order-preserving.
-func (a *Assembler) appendRodataDirective(d, rest string) error {
+// appendRodataDirective materialises a data directive into the blob for
+// `sec` (".rodata"/".data" or ".bss"). Strings store a 4-byte length prefix
+// (emitted by the code generator as a separate .4byte) immediately before
+// the data label, so the layout here just has to be contiguous and
+// order-preserving.
+func (a *Assembler) appendRodataDirective(sec, d, rest string) error {
 	switch d {
 	case ".byte":
-		return a.emitInts(rest, 1)
+		return a.emitInts(sec, rest, 1)
 	case ".2byte", ".hword", ".short", ".half", ".value":
-		return a.emitInts(rest, 2)
+		return a.emitInts(sec, rest, 2)
 	case ".4byte", ".word", ".long", ".int":
-		return a.emitInts(rest, 4)
+		return a.emitInts(sec, rest, 4)
 	case ".8byte", ".xword", ".quad", ".dword":
-		return a.emitInts(rest, 8)
+		return a.emitInts(sec, rest, 8)
 	case ".double", ".dc.d":
-		return a.emitFloats(rest, 8)
+		return a.emitFloats(sec, rest, 8)
 	case ".float", ".single", ".dc.s":
-		return a.emitFloats(rest, 4)
+		return a.emitFloats(sec, rest, 4)
 	case ".ascii", ".asciz", ".string":
 		s, err := gasstr.Unquote(strings.TrimSpace(rest))
 		if err != nil {
 			return fmt.Errorf("bad string literal %q: %v", rest, err)
 		}
-		a.appendRodata([]byte(s))
+		a.appendRodata(sec, []byte(s))
 		if d != ".ascii" {
-			a.appendRodata([]byte{0})
+			a.appendRodata(sec, []byte{0})
 		}
 		return nil
 	case ".space", ".skip":
@@ -53,7 +68,7 @@ func (a *Assembler) appendRodataDirective(d, rest string) error {
 		if err != nil {
 			return fmt.Errorf("bad .space/.skip size %q", rest)
 		}
-		a.appendRodata(make([]byte, n))
+		a.appendRodata(sec, make([]byte, n))
 		return nil
 	case ".align", ".balign":
 		// On x86 GAS these take a byte count (unlike arm64's power-of-two).
@@ -61,14 +76,14 @@ func (a *Assembler) appendRodataDirective(d, rest string) error {
 		if err != nil {
 			return fmt.Errorf("bad alignment %q", rest)
 		}
-		a.alignRodata(n)
+		a.alignRodata(sec, n)
 		return nil
 	case ".p2align":
 		n, err := strconv.Atoi(strings.Fields(rest)[0])
 		if err != nil {
 			return fmt.Errorf("bad .p2align %q", rest)
 		}
-		a.alignRodata(1 << n)
+		a.alignRodata(sec, 1<<n)
 		return nil
 	case ".globl", ".global", ".type", ".size", ".intel_syntax":
 		return nil
@@ -77,7 +92,7 @@ func (a *Assembler) appendRodataDirective(d, rest string) error {
 	}
 }
 
-func (a *Assembler) emitInts(rest string, width int) error {
+func (a *Assembler) emitInts(sec, rest string, width int) error {
 	for _, tok := range strings.Split(rest, ",") {
 		tok = strings.TrimSpace(tok)
 		if tok == "" {
@@ -90,8 +105,11 @@ func (a *Assembler) emitInts(rest string, width int) error {
 				// A ".quad <symbol>" slot: emit the symbol's absolute
 				// 8-byte address (function-/data-pointer tables).
 				if width == 8 && isLabelName(tok) {
+					if sec == "bss" {
+						return fmt.Errorf(".bss cannot hold the address of %q: it is not zero", tok)
+					}
 					a.quadSyms = append(a.quadSyms, quadSymFixup{at: len(a.rodata), sym: tok})
-					a.appendRodata(make([]byte, 8))
+					a.appendRodata(sec, make([]byte, 8))
 					continue
 				}
 				return fmt.Errorf("bad integer %q", tok)
@@ -103,12 +121,12 @@ func (a *Assembler) emitInts(rest string, width int) error {
 		for i := 0; i < width; i++ {
 			b[i] = byte(uv >> (8 * i))
 		}
-		a.appendRodata(b)
+		a.appendRodata(sec, b)
 	}
 	return nil
 }
 
-func (a *Assembler) emitFloats(rest string, width int) error {
+func (a *Assembler) emitFloats(sec, rest string, width int) error {
 	for _, tok := range strings.Split(rest, ",") {
 		tok = strings.TrimSpace(tok)
 		if tok == "" {
@@ -128,7 +146,7 @@ func (a *Assembler) emitFloats(rest string, width int) error {
 		for i := 0; i < width; i++ {
 			b[i] = byte(uv >> (8 * i))
 		}
-		a.appendRodata(b)
+		a.appendRodata(sec, b)
 	}
 	return nil
 }

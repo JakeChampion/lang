@@ -22,7 +22,15 @@ type Assembler struct {
 	fixups []fixup
 
 	// Data section + symbol addressing (used by AssembleProgram).
-	rodata        []byte
+	rodata []byte
+	// bss accumulates .bss (zero-initialised) contributions separately from
+	// rodata and is concatenated after it at layout time. Folding the two in
+	// emission order left the 64 MiB __fern_strbuf_data reservation with
+	// initialised .rodata after it, so the ELF writer's trailing-zero trim
+	// could not reach it and every strbuf-using binary carried 64 MiB of
+	// zeros on disk (#6928).
+	bss           []byte
+	inBssSection  bool
 	syms          map[string]symbol
 	adrpFixups    []symFixup
 	lo12Fixups    []symFixup
@@ -148,9 +156,10 @@ type litResolve struct {
 }
 
 // symbol is a named location: in .text it's an instruction index, in
-// .rodata a byte offset within the rodata blob.
+// .rodata or .bss a byte offset within that blob.
 type symbol struct {
 	inText bool
+	inBss  bool
 	val    int
 }
 
@@ -206,26 +215,70 @@ func (a *Assembler) TextLabel(name string) {
 	a.syms[name] = symbol{inText: true, val: len(a.insns)}
 }
 
-// RodataLabel marks a .rodata symbol at the current rodata offset.
+// RodataLabel marks a data symbol at the current offset of whichever data
+// blob is active (see SetBssSection).
 func (a *Assembler) RodataLabel(name string) {
-	a.syms[name] = symbol{inText: false, val: len(a.rodata)}
+	if a.inBssSection {
+		a.syms[name] = symbol{inBss: true, val: len(a.bss)}
+		return
+	}
+	a.syms[name] = symbol{val: len(a.rodata)}
+}
+
+// SetBssSection selects which blob the AppendRodata / AlignRodata /
+// RodataLabel helpers write to. .bss is accumulated apart from .rodata so
+// it can be laid out last, where the ELF writer's trailing-zero trim can
+// drop it from the file — see the bss field comment (#6928).
+func (a *Assembler) SetBssSection(on bool) { a.inBssSection = on }
+
+// InBssSection reports whether .bss is the active data section.
+func (a *Assembler) InBssSection() bool { return a.inBssSection }
+
+// dataBuf is the blob the active data section appends to.
+func (a *Assembler) dataBuf() *[]byte {
+	if a.inBssSection {
+		return &a.bss
+	}
+	return &a.rodata
+}
+
+// bssBase is .bss's offset within the combined data blob. It is 16-aligned
+// past .rodata so the widest scalar in it stays naturally aligned, and it
+// is only meaningful once emission is finished — call padForBss first.
+func (a *Assembler) bssBase() int { return len(a.rodata) }
+
+// padForBss pads .rodata so bssBase is 16-aligned. Idempotent, and a
+// no-op when there is no .bss — a program without one must not grow.
+func (a *Assembler) padForBss() {
+	if len(a.bss) == 0 {
+		return
+	}
+	for len(a.rodata)%16 != 0 {
+		a.rodata = append(a.rodata, 0)
+	}
 }
 
 // AppendQuadSym appends an 8-byte .rodata slot that will hold the
 // absolute virtual address of sym, filled in by BytesProgram. Backs
-// `.quad <symbol>` (function-pointer / closure tables).
+// `.quad <symbol>` (function-pointer / closure tables). A symbol address
+// is never zero, so such a slot is initialised data and cannot live in
+// .bss; the caller rejects it there.
 func (a *Assembler) AppendQuadSym(sym string) {
 	a.quadSymFixups = append(a.quadSymFixups, quadSymFixup{at: len(a.rodata), label: sym})
 	a.AppendRodata(make([]byte, 8))
 }
 
-// AppendRodata appends raw bytes to the .rodata blob.
-func (a *Assembler) AppendRodata(b []byte) { a.rodata = append(a.rodata, b...) }
+// AppendRodata appends raw bytes to the active data blob.
+func (a *Assembler) AppendRodata(b []byte) {
+	buf := a.dataBuf()
+	*buf = append(*buf, b...)
+}
 
-// AlignRodata pads .rodata to a multiple of n bytes.
+// AlignRodata pads the active data blob to a multiple of n bytes.
 func (a *Assembler) AlignRodata(n int) {
-	for n > 0 && len(a.rodata)%n != 0 {
-		a.rodata = append(a.rodata, 0)
+	buf := a.dataBuf()
+	for n > 0 && len(*buf)%n != 0 {
+		*buf = append(*buf, 0)
 	}
 }
 
@@ -475,7 +528,8 @@ func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relo
 	// bytes: .rela.dyn is 8-aligned after the data blob, one Elf64_Rela
 	// (24 bytes) per `.quad <symbol>` slot; __ehdr_start is the ELF header
 	// at vaddr 0, so adrp/:lo12: of it yields the runtime load base.
-	relaStart := rodataVAddr + uint64(len(a.rodata))
+	a.padForBss()
+	relaStart := rodataVAddr + uint64(len(a.rodata)+len(a.bss))
 	if rem := relaStart % 8; rem != 0 {
 		relaStart += 8 - rem
 	}
@@ -498,6 +552,8 @@ func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relo
 // treated as base-relative (a PIE) and each `.quad <symbol>` slot records
 // an R_AARCH64_RELATIVE entry into *relocs.
 func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Reloc, pieSyms map[string]uint64) (text, rodata []byte, err error) {
+	// Fix .bss's position before any symbol resolves against it.
+	a.padForBss()
 	// Resolve each ldr-literal's PC-relative offset.
 	for _, f := range a.litFixups {
 		insnAddr := textVAddr + uint64(f.at)*4
@@ -525,6 +581,9 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 		}
 		if s.inText {
 			return textVAddr + uint64(s.val)*4, true
+		}
+		if s.inBss {
+			return rodataVAddr + uint64(a.bssBase()+s.val), true
 		}
 		return rodataVAddr + uint64(s.val), true
 	}
@@ -589,7 +648,7 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 	for _, insn := range a.insns {
 		text = Put(text, insn)
 	}
-	return text, a.rodata, nil
+	return text, append(a.rodata, a.bss...), nil
 }
 
 // checkBranchRange validates a branch fixup's instruction-count offset

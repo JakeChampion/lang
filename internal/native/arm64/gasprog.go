@@ -176,14 +176,19 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 	d := fields[0]
 	switch d {
 	case ".text":
+		a.SetBssSection(false)
 		return secText, nil
 	case ".ltorg":
 		// Flush the literal pool here (off the execution path).
 		a.FlushLiterals()
 		return sec, nil
-	case ".rodata", ".bss":
-		// .bss is zero-initialised data; we materialise it as zero
-		// bytes in the (writable) data region right alongside .rodata.
+	case ".rodata":
+		a.SetBssSection(false)
+		return secRodata, nil
+	case ".bss":
+		// Zero-initialised data, accumulated apart from .rodata so it can
+		// be laid out last and left out of the file (#6928).
+		a.SetBssSection(true)
 		return secRodata, nil
 	case ".file":
 		// DWARF `.file` directive (-g); emits no bytes.
@@ -210,10 +215,15 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		}
 		switch {
 		case strings.Contains(arg, ".text"), strings.Contains(arg, "__text"):
+			a.SetBssSection(false)
 			return secText, nil
-		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"),
+		case strings.Contains(arg, ".bss"), strings.Contains(arg, "__bss"):
+			a.SetBssSection(true)
+			return secRodata, nil
+		case strings.Contains(arg, ".rodata"),
 			strings.Contains(arg, "__const"), strings.Contains(arg, "__cstring"),
-			strings.Contains(arg, "__data"), strings.Contains(arg, "__bss"):
+			strings.Contains(arg, "__data"):
+			a.SetBssSection(false)
 			return secRodata, nil
 		default:
 			return secIgnore, nil
@@ -331,6 +341,9 @@ func emitInts(a *Assembler, rest string, width int) error {
 				// A `.quad <symbol>` slot: emit the symbol's absolute
 				// 8-byte address (function-pointer / closure tables).
 				if width == 8 && isIdent(tok) {
+					if a.InBssSection() {
+						return fmt.Errorf(".bss cannot hold the address of %q: it is not zero", tok)
+					}
 					a.AppendQuadSym(tok)
 					continue
 				}
