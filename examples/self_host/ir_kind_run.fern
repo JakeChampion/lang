@@ -125,7 +125,7 @@ function main(): i32 {
         ir.op_bin("ge_u", 0, true), ir.op_fbin("fadd"), ir.op_funary("fsqrt"),
         ir.op_load(ir.width_ptr()), ir.op_store(ir.width_ptr()), ir.op_alloc(),
         ir.op_arr_make(2, 0), ir.op_str_concat(), ir.op_map_len(),
-        ir.op_struct_make("S", 1), ir.op_call_direct("f", 1), ir.op_if(0),
+        ir.op_struct_make("S", 1, 0 - 1), ir.op_call_direct("f", 1), ir.op_if(0),
         ir.op_br(1), ir.op_drop(), ir.op_return(),
         ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32),
         ir.op_map_hash_seed(), ir.op_raw_addr(), ir.op_raw_arr_box(),

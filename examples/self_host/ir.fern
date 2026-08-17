@@ -52,6 +52,15 @@ pub struct Op {
     width: i32,
     unsigned: boolean,
     str: string,
+    // decl indexes the struct-decl table an opcode's `str` names, or -1 when
+    // the opcode names no decl. `str` alone cannot identify one: enum variants
+    // are declared under their BARE name, so two enums declaring one variant
+    // name give two decls, and a backend resolving `str` by name gets whichever
+    // was declared first — reading the other enum's field types and widths. The
+    // index is into the SAME decl array the lowering ran against; every consumer
+    // is handed that array (`all_structs` reaches lower_all_for_view and
+    // emit_functions_view alike), so it means the same decl on both sides.
+    decl: i32,
 }
 
 // WidthPtr is the backend-resolved pointer-width sentinel (native's
@@ -66,12 +75,12 @@ pub function width_ptr(): i32 { return 0 - 1; }
 // always fully initialised (the value-semantics discipline ssa.fern uses).
 
 function op0(kind: string): Op {
-    return Op { kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // constants
 pub function op_const_i32(v: i32): Op {
-    return Op { kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // op_const_i32_text carries an integer literal's SOURCE TEXT (in `str`) so the
 // backends splice it straight into a 32-bit immediate (`movq $TEXT` /
@@ -81,51 +90,51 @@ pub function op_const_i32(v: i32): Op {
 // text parser handles the base and the unsigned range, where the IR's prior
 // `util.digits_to_i32` (decimal-only) zeroed every hex literal.
 pub function op_const_i32_text(t: string): Op {
-    return Op { kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+    return Op { decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 pub function op_const_i64(v: i64): Op {
-    return Op { kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // int_extend widens an i32 to i64 (`as i64` / `as u64`); int_wrap narrows an
 // i64 to i32 (`as i32` / `as u32`). `unsigned` picks zero- vs sign-extension on
 // the register backends (wasm uses i64.extend_i32_s/u and i32.wrap_i64).
-pub function op_int_extend(unsigned: boolean): Op { return Op { kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
-pub function op_int_wrap(unsigned: boolean): Op { return Op { kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
+pub function op_int_extend(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" }; }
+pub function op_int_wrap(unsigned: boolean): Op { return Op { decl: 0 - 1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" }; }
 // op_const_i64_text carries the literal's SOURCE TEXT (in `str`) rather than a
 // parsed i64, so the backends can splice it straight into a 64-bit immediate
 // (`movabsq $TEXT` / `ldr x0, =TEXT` / `i64.const TEXT`) without an i64
 // parse+format round-trip. width=64 marks it an i64 value.
 pub function op_const_i64_text(t: string): Op {
-    return Op { kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 pub function op_const_f64(v: f64): Op {
-    return Op { kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
 }
 pub function op_const_str(s: string): Op {
-    return Op { kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+    return Op { decl: 0 - 1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
 // op_const_func pushes a plain (capture-free) function VALUE — a function
 // pointer. `str` carries the function's name; `i32_imm` is a table-index slot
 // the backend fills (wasm resolves the name to its funcref-table index at emit
 // time, so irlower can pass 0 here). The value is consumed by op_call_indirect.
 pub function op_const_func(table_idx: i32, name: string): Op {
-    return Op { kind_tag: 6, i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+    return Op { decl: 0 - 1, kind_tag: 6, i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 // locals
 pub function op_load_local(idx: i32): Op {
-    return Op { kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_store_local(idx: i32): Op {
-    return Op { kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_tee_local(idx: i32): Op {
-    return Op { kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // integer arithmetic / comparison (width selects i32 vs i64)
 pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
-    return Op { kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 
 // f64 arithmetic / comparison. `kind` is the float opcode ("fadd"/"fsub"/
@@ -135,7 +144,7 @@ pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
 // registers (xmm / d-regs / wasm f64). Arithmetic yields an f64; a compare
 // yields an i32 0/1.
 pub function op_fbin(kind: string): Op {
-    return Op { kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 // f64 unary math intrinsic. `kind` is the float opcode ("fsqrt"/"ffloor"/
@@ -147,7 +156,7 @@ pub function op_fbin(kind: string): Op {
 // (log/exp/sin/cos/pow) need multi-instruction emulation / external calls and
 // stay on the AST path for now.
 pub function op_funary(kind: string): Op {
-    return Op { kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 // f64 <-> i32 conversions. i32_to_f64 widens a signed i32 to f64 (cvtsi2sd /
@@ -166,7 +175,7 @@ pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
 // converted to -1.0 (#6051). Mirrors op_f64_to_u32 / op_f64_to_u64, which have
 // carried `unsigned` since #4332.
 pub function op_int_to_f64(width: i32, unsigned: boolean): Op {
-    return Op { kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
 pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
 // f64_to_i64 truncates an f64 toward zero to a signed i64 (cvttsd2si to a
@@ -179,10 +188,10 @@ pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
 // NaN / negative -> 0, overflow -> u32::MAX / u64::MAX (arm64 fcvtzu, wasm
 // i32/i64.trunc_sat_f64_u, x86 the ported compare-and-clamp shape).
 pub function op_f64_to_u32(): Op {
-    return Op { kind_tag: kind_id("f64_to_i32"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i32"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 pub function op_f64_to_u64(): Op {
-    return Op { kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("f64_to_i64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: true, str: "" };
 }
 
 // f64_bits / f64_from_bits — IEEE-754 bit reinterpret between an f64 and its
@@ -202,15 +211,15 @@ pub function op_f32_from_bits(): Op { return op0("f32_from_bits"); }
 // `f64.const TEXT`) without a float parse+format round-trip — mirroring
 // op_const_i64_text. width=64 marks it a 64-bit (float) value.
 pub function op_const_f64_text(t: string): Op {
-    return Op { kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+    return Op { decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 // memory: width carries 8/16/32/64 or width_ptr() for pointer-typed slots
 pub function op_load(width: i32): Op {
-    return Op { kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_store(width: i32): Op {
-    return Op { kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_alloc(): Op { return op0("alloc"); }
 // `ptr_width` pushes the target's heap-pointer width in BYTES — 8 on x86-64 /
@@ -235,28 +244,28 @@ pub function op_ptr_width(): Op { return op0("ptr_width"); }
 // so width only steers the wasm backend; `arr_get` / `arr_set` carry the same
 // element width so they select the matching load/store on wasm.
 pub function op_arr_make(n: i32, width: i32): Op {
-    return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
-pub function op_arr_get(width: i32): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_get(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 // Unchecked `arr_get` (#4380 lever 3, self-host port): i32_imm == 1 flags a read
 // the emitter has statically proven in bounds — the foreach counted loops, whose
 // `idx < arr_len` guard runs immediately before the read every iteration. The
 // x86 backend skips the bounds compare + oob trap for it; arm64 / wasm read only
 // kind_tag and keep their checks (a safe no-op there until they honour the flag).
-pub function op_arr_get_nc(width: i32): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
-pub function op_arr_set(width: i32): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_get_nc(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_set(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 // i64-element array ops: an 8-byte stride like f64, but the wasm backend uses
 // i64.load / i64.store (an INTEGER 8-byte slot) instead of f64.load/store. The
 // `unsigned` flag carries that "8-byte element is i64, not f64" distinction
 // (width 64 + unsigned => i64; width 64 + !unsigned => f64). The register
 // backends move 8-byte slots regardless and ignore it.
 pub function op_arr_make_i64(n: i32): Op {
-    return Op { kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
-pub function op_arr_get_i64(): Op { return Op { kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_get_i64(): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 // Unchecked 8-byte `arr_get` (i64/u64 element) — the i64 sibling of op_arr_get_nc.
-pub function op_arr_get_i64_nc(): Op { return Op { kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
-pub function op_arr_set_i64(): Op { return Op { kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_get_i64_nc(): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
+pub function op_arr_set_i64(): Op { return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_len(): Op { return op0("arr_len"); }
 pub function op_arr_rc(): Op { return op0("arr_rc"); }
 // `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
@@ -336,7 +345,7 @@ pub function op_store_ptr(): Op { return op0("store_ptr"); }
 // `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
 // (zero-extend low 32 — movl).
 // The target type name rides `str`. Mirrors the retired x86 AST emitter's `as_<ty>` int→int masking.
-pub function op_int_cast(ty: string): Op { return Op { kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
+pub function op_int_cast(ty: string): Op { return Op { decl: 0 - 1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty }; }
 // `u32_wrap` reduces a value on the operand stack to its u32 range (zero-extend
 // low 32 bits). Emitted after a u32 arithmetic op (add/sub/mul/shl) on the
 // 64-bit REGISTER backends so u32 semantics wrap at 2^32 like native (and like
@@ -379,7 +388,7 @@ pub function op_str_slice(): Op { return op0("str_slice"); }
 // into a fresh inline block, so there is no box to place). irlower emits this
 // form only for a view whose whole life is inside the frame that made it.
 pub function op_str_slice_frame(base: i32): Op {
-    return Op { kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // `arr_slice` pops [arr, start, end] → a fresh array holding arr[start:end]
 // (end exclusive), COPYING the 8-byte (x86/arm64) / 4-byte (wasm) element
@@ -388,7 +397,7 @@ pub function op_str_slice_frame(base: i32): Op {
 // `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
 // elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
 // helper. The register backends copy 8-byte slots regardless and ignore it.
-pub function op_arr_slice(width: i32): Op { return Op { kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
+pub function op_arr_slice(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
 // op_arr_reverse / op_arr_concat back the builtin `xs.reverse()` / `xs.concat(ys)`
 // on arrays: a FRESH array with the elements copied (reversed, or A-then-B).
@@ -580,7 +589,7 @@ pub function op_writer_write(): Op { return op0("writer_write"); }
 // =577) and open_appender (O_WRONLY|O_CREAT|O_APPEND=1089) — the file half of
 // the streaming Reader/Writer surface (#4372).
 pub function op_open_file(flags: i32): Op {
-    return Op { kind_tag: kind_id("open_file"), i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("open_file"), i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // `__heap_bump_bytes` takes no operands → an i64: the bump allocator's
 // high-water mark (cursor − region base; 0 before the first allocation). It
@@ -606,13 +615,13 @@ pub function op_heap_release_to(): Op { return op0("heap_release_to"); }
 // and the SWAR sequences these replace — that definition is why the x86-64
 // lowering cannot use a bare bsr/bsf, whose result is undefined at zero.
 pub function op_clz(width: i32): Op {
-    return Op { kind_tag: kind_id("clz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("clz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_ctz(width: i32): Op {
-    return Op { kind_tag: kind_id("ctz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("ctz"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 pub function op_popcount(width: i32): Op {
-    return Op { kind_tag: kind_id("popcount"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: kind_id("popcount"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 // `__arr_push_shared_count` takes no operands → an i32: the number of appends
 // that copied a buffer which still had SPARE CAPACITY, i.e. the copy was bought
@@ -703,23 +712,23 @@ pub function op_str_split(): Op { return op0("str_split"); }
 // box with `i32_imm` as the tag (Some/Ok=0, Err=1); `opt_none` builds a
 // payloadless box with tag 1; `opt_tag` pops [box] → the i32 tag at offset 0
 // (drives Some/None/Ok/Err discrimination in match).
-pub function op_opt_make(tag: i32): Op { return Op { kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_opt_make(tag: i32): Op { return Op { decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 // 8-byte (i64 / f64) payload variant: width 64 selects an 8-byte store, and
 // `unsigned` picks i64.store (set) vs f64.store (clear). The wasm box widens its
 // payload slot to 8 bytes (matching the register backends, which already do).
-pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op { return Op { kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
+pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op { return Op { decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 pub function op_opt_none(): Op { return op0("opt_none"); }
 pub function op_opt_tag(): Op { return op0("opt_tag"); }
 // `opt_payload` pops [box] → the payload at offset 8 (x86/arm64) / 4 (wasm);
 // used to bind a Some/Ok/Err pattern's payload.
 pub function op_opt_payload(): Op { return op0("opt_payload"); }
 // 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
-pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
+pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 // keykind 2 = struct/enum key: `fns` packs the derived "K.hash|K.eq" so the
 // wasm backend can thread their funcref-table indices into the hash-map box
 // (its hk/keq dispatch them via call_indirect). x86-64 ignores it — its
 // linear-scan map is key-type-agnostic and dispatches eq per op. "" otherwise.
-pub function op_map_new(keykind: i32, fns: string): Op { return Op { kind_tag: 124, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: fns }; }
+pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1, kind_tag: 124, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: fns }; }
 // op_map_set: `i32_imm` is the KEY kind (0 = string, 1 = i32 — the x86-64
 // runtime's string-eq-vs-int loop selector); `unsigned` carries the VALUE
 // pointerness (the wasm runtime's `vis` RC-retain flag — true when the value
@@ -767,7 +776,7 @@ pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsu
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
+    return Op { decl: 0 - 1, kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
 }
 pub function op_map_len(): Op { return op0("map_len"); }
 // `print_int` pops an i32 and writes its decimal text to stdout (no newline),
@@ -970,9 +979,9 @@ pub function op_map_get(keykind: i32, eqfn: string, widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { kind_tag: 127, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
+    return Op { decl: 0 - 1, kind_tag: 127, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
 }
-pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { decl: 0 - 1, kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
 // `widekind` (i64_imm) is the twin of op_map_set's: 0 narrow, 1 i64/u64, 2 f64.
 // The register backends return the value full-width regardless; on wasm widekind 1
@@ -982,12 +991,12 @@ pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { kind_tag: 129, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
+    return Op { decl: 0 - 1, kind_tag: 129, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
 }
 // `map_delete` pops [map, key] → the map with that key removed (Fern's functional
 // `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
 // Key kind in i32_imm.
-pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
+pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { decl: 0 - 1, kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn }; }
 // `map_keys` / `map_values` pop [map] → the array of live keys / values.
 // `i32_imm` is the ELEMENT-kind flag (#4353 counted-reads slice 1+2):
 //   0 = scalar (i32) column → the register backends (x86-64 / arm64) SNAPSHOT
@@ -1001,7 +1010,7 @@ pub function op_map_delete(keykind: i32, eqfn: string): Op { return Op { kind_ta
 //       (today's historical behaviour; the string-column snapshot is slice 3).
 // wasm always snapshots (hash map, no raw column) and ignores the flag.
 // Order is backend-defined, so consumers must be order-independent.
-pub function op_map_keys(elemptr: i32): Op { return Op { kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
+pub function op_map_keys(elemptr: i32): Op { return Op { decl: 0 - 1, kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" }; }
 // op_map_values: `widekind` (i64_imm) marks an 8-byte VALUE column — the twin of
 // op_map_set's: 0 narrow, 1 i64/u64, 2 f64. The register backends read the column
 // with the 8-byte forms regardless and ignore it. On wasm, widekind 1 snapshots
@@ -1011,7 +1020,7 @@ pub function op_map_values(elemptr: i32, widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { kind_tag: 132, i32_imm: elemptr, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 132, i32_imm: elemptr, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
 // [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
@@ -1028,7 +1037,7 @@ pub function op_map_iter(widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
     if (widekind == 2) { vw = 2; }
-    return Op { kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
 pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
@@ -1038,7 +1047,7 @@ pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
 pub function op_mapiter_value(valwide: boolean): Op {
     var vw: i64 = 0;
     if (valwide) { vw = 1; }
-    return Op { kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 
@@ -1053,8 +1062,12 @@ pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 // (i32/boolean) structs only and is leak-only (no RC / drop) — exit-code-
 // equivalent to every backend's AST path since the value is read before any
 // free; rc-tracked fields + drop specialization are later slices.
-pub function op_struct_make(type_name: string, nfields: i32): Op {
-    return Op { kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+// op_struct_make builds a struct / enum-variant box from nfields values on the
+// stack. `decl_index` identifies WHICH decl `type_name` names: the backends read
+// each field's store width off it, and for a variant name two enums share the
+// by-name answer is the wrong enum's (see Op.decl).
+pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): Op {
+    return Op { decl: decl_index, kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 // const_struct is struct_make's compile-time twin: an aggregate literal whose
 // every field is a scalar LITERAL (`TypeI32 { is_char: false, width: 32,
@@ -1074,7 +1087,7 @@ pub function op_struct_make(type_name: string, nfields: i32): Op {
 // allocation rather than writing through it. With E048 forbidding field
 // assignment, a shared constant box cannot be observed to change.
 pub function op_const_struct(type_name: string, nfields: i32, values: string): Op {
-    return Op { kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
+    return Op { decl: 0 - 1, kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
 }
 
 // const_struct_type / const_struct_values split an op_const_struct's packed
@@ -1121,13 +1134,13 @@ pub function const_struct_values(packed: string): string[] {
 // (struct_copy_eligible): the fresh box's rc header is 1 (from __fern_arr_box),
 // matching struct_make. Layout-agnostic: the helper copies `nfields`+1 words.
 pub function op_struct_copy(nfields: i32): Op {
-    return Op { kind_tag: 198, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 198, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // width selects the field's load/store size on width-typed backends (wasm): 64
 // for an f64 field, 0 (i32-shaped) otherwise. The register backends use 8-byte
 // slots for every field and ignore it.
 pub function op_struct_get(field_index: i32, width: i32): Op {
-    return Op { kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 // struct_set pops [struct, value] and stores value into field `field_index`
@@ -1135,17 +1148,17 @@ pub function op_struct_get(field_index: i32, width: i32): Op {
 // the box is shared by reference, so aliases observe the write — matching the
 // AST path. Layout-agnostic: each backend writes at its own field offset.
 pub function op_struct_set(field_index: i32, width: i32): Op {
-    return Op { kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 // i64-field struct ops: an 8-byte field like f64, but the wasm backend uses
 // i64.load / i64.store (an INTEGER 8-byte slot). The `unsigned` flag carries the
 // "8-byte field is i64, not f64" distinction (width 64 + unsigned => i64). The
 // register backends use 8-byte slots for every field and ignore it.
 pub function op_struct_get_i64(field_index: i32): Op {
-    return Op { kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 pub function op_struct_set_i64(field_index: i32): Op {
-    return Op { kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 // struct_set_shape pops [box] and writes `type_name`'s interned shape (the SAME
@@ -1157,7 +1170,7 @@ pub function op_struct_set_i64(field_index: i32): Op {
 // backend writes its own offset-0 identity (.S label on x86/arm64, type-id i32 on
 // wasm), reusing exactly the struct_make shape-write.
 pub function op_struct_set_shape(type_name: string): Op {
-    return Op { kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+    return Op { decl: 0 - 1, kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 // high-level tuple ops — layout-agnostic, like the struct ops, but a tuple box
@@ -1167,17 +1180,17 @@ pub function op_struct_set_shape(type_name: string): Op {
 // `tuple_get` pops [tuple] and pushes element `i32_imm`. Scalar elements only
 // (leak-only), so no RC.
 pub function op_tuple_make(n: i32): Op {
-    return Op { kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // op_tuple_make_k carries the comma-joined element KINDS (e.g. "i32,i64,f64") in
 // `str` so the wasm backend uses a uniform 8-byte slot per element and stores
 // each with the matching instruction (i64.store for "i64", f64.store for "f64",
 // else i32.store). The register backends already use 8-byte slots and ignore it.
 pub function op_tuple_make_k(n: i32, kinds: string): Op {
-    return Op { kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+    return Op { decl: 0 - 1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
 }
 pub function op_tuple_get(idx: i32): Op {
-    return Op { kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // `tuple_set` pops [tuple, value] and stores value into element `i32_imm` at
 // offset idx*8 (tuples have NO shape slot — element i lives at data+i*8, unlike
@@ -1189,18 +1202,18 @@ pub function op_tuple_get(idx: i32): Op {
 // EVERY element kind (element values ride the operand stack as 8 bytes), so they
 // ignore width — only wasm distinguishes it.
 pub function op_tuple_set(idx: i32): Op {
-    return Op { kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // 8-byte tuple element writes (the write mirror of op_tuple_get_w): width 64
 // selects an 8-byte wasm store; `unsigned` picks i64.store (set) vs f64.store
 // (clear). The register backends store 8 bytes for every element and ignore it.
 pub function op_tuple_set_w(idx: i32, width: i32, is_i64: boolean): Op {
-    return Op { kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 // 8-byte tuple element reads: width 64 selects an 8-byte load; `unsigned` picks
 // i64.load (set) vs f64.load (clear). Offsets are a uniform 8-byte stride.
 pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
-    return Op { kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 // variant_is pops an enum-variant box and pushes 1 if it is the variant named
@@ -1211,12 +1224,12 @@ pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
 // on x86/arm64, the struct type id on wasm. Layout-agnostic, like the other
 // high-level ops — each backend resolves the identity for its own layout.
 pub function op_variant_is(name: string): Op {
-    return Op { kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+    return Op { decl: 0 - 1, kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 // calls — i32_imm is the arg count; str is the callee for call_direct
 pub function op_call_direct(callee: string, argc: i32): Op {
-    return Op { kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+    return Op { decl: 0 - 1, kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
 // op_dyn_dispatch is a `dyn Trait` method call. The receiver (arg 0) + args
 // have been spilled into argc CONSECUTIVE local slots starting at `base_slot`
@@ -1226,7 +1239,7 @@ pub function op_call_direct(callee: string, argc: i32): Op {
 // chain over the trait's impl types, mirroring the AST emitter. `str` is the
 // method name; `i32_imm` is base_slot; `width` is argc (1 + nargs).
 pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
-    return Op { kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
+    return Op { decl: 0 - 1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: method };
 }
 // op_dyn_box heap-boxes a PRIMITIVE/string value coerced into a `dyn Trait`
 // slot (docs/DYN-TRAITS.md §4.2.3). A struct/enum value already carries its
@@ -1240,7 +1253,7 @@ pub function op_dyn_dispatch(method: string, base_slot: i32, argc: i32): Op {
 // `str` is the primitive type name. Dispatch (op_dyn_dispatch) reads offset 0,
 // matches a primitive arm, and reloads the value from offset 8 (UNBOX).
 pub function op_dyn_box(type_name: string): Op {
-    return Op { kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+    return Op { decl: 0 - 1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 // op_dyn_downcast is the `e as? T` fallible downcast (docs/DYN-TRAITS.md §9).
 // The `dyn Trait` value (a heap pointer carrying its concrete shape at offset 0)
@@ -1253,10 +1266,10 @@ pub function op_dyn_box(type_name: string): Op {
 // Option with. `str` is the target concrete type name T. No new shape metadata:
 // the downcast is a single shape read + compare, mirroring the dispatch chain.
 pub function op_dyn_downcast(target: string): Op {
-    return Op { kind_tag: 148, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: target };
+    return Op { decl: 0 - 1, kind_tag: 148, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: target };
 }
 pub function op_call_indirect(argc: i32): Op {
-    return Op { kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 // op_call_indirect_sig is op_call_indirect carrying the funcref SIGNATURE the
 // call dispatches through ("wl_w" — one width char per parameter, then '_',
@@ -1268,30 +1281,30 @@ pub function op_call_indirect(argc: i32): Op {
 // op_call_indirect — every all-i32 and every erased-generic call site keeps
 // its previous op, byte for byte.
 pub function op_call_indirect_sig(argc: i32, sig: string): Op {
-    return Op { kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+    return Op { decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
 }
 pub function op_call_closure(argc: i32): Op {
-    return Op { kind_tag: 151, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 151, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // structured control flow — i32_imm is the block-type (block/loop/if) or
 // the relative branch depth (br/brif), mirroring native exactly.
 pub function op_block(blocktype: i32): Op {
-    return Op { kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_loop(blocktype: i32): Op {
-    return Op { kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_if(blocktype: i32): Op {
-    return Op { kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_else(): Op { return op0("else"); }
 pub function op_end(): Op { return op0("end"); }
 pub function op_br(depth: i32): Op {
-    return Op { kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_brif(depth: i32): Op {
-    return Op { kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_drop(): Op { return op0("drop"); }

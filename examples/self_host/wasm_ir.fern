@@ -4033,7 +4033,12 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
             var em: i32 = nf - 1;
             while (em >= 0) {
                 var emoff: i32 = 8 + em * 8;
-                var emft: string = irlower.decl_field_type_at(structs, o.str, em);
+                // Off the op's resolved DECL, not its name: two enums may declare
+                // one variant name, and the by-name answer is the first-declared
+                // one's — storing an f64 payload through i32.store, which wasm
+                // rejects outright (the register backends store every field as
+                // 8 bytes, so they never saw it).
+                var emft: string = irlower.decl_at_field_type(structs, o.decl, em);
                 if (emft == "i64" || emft == "u64") {
                     out = out + "    local.set " + util.i32_to_string(i64tmp) + "\n";
                     out = out + "    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n";

@@ -190,7 +190,7 @@ function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
 // within it — a pass that charges a reuse-paired site would report every real
 // `fbip` function, which is the failure mode that matters here.
 function fip_checks(): i32 {
-    var fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2)];
+    var fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2, 0 - 1)];
     var paired_struct: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(3), ir.op_call_direct("__fern_alloc_reuse", 2)];
 
     // ---- 1. the budget -------------------------------------------------
@@ -217,7 +217,7 @@ function fip_checks(): i32 {
     // ---- 3. the counted ops --------------------------------------------
     // Each constructor op the lowering emits for a fresh site, and the two
     // E053 never admits under any grading.
-    if (fip_problems("fbip", 0, [ir.op_struct_make("P", 2)]) != 1) { return 130; }
+    if (fip_problems("fbip", 0, [ir.op_struct_make("P", 2, 0 - 1)]) != 1) { return 130; }
     if (fip_problems("fbip", 0, [ir.op_struct_copy(2)]) != 1) { return 131; }
     if (fip_problems("fbip", 0, [ir.op_tuple_make(2)]) != 1) { return 132; }
     if (fip_problems("fbip", 0, [ir.op_arr_make(3, 32)]) != 1) { return 133; }
@@ -238,7 +238,7 @@ function fip_checks(): i32 {
     // ---- 4. the census -------------------------------------------------
     // Counts are reported whether or not the claim is exceeded, so a caller
     // can tell "constructs nothing" from "pairs everything".
-    var mixed: ir.Op[] = [ir.op_struct_make("P", 2), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
+    var mixed: ir.Op[] = [ir.op_struct_make("P", 2, 0 - 1), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
     var mr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
     if (mr.fresh != 2 || mr.paired != 1) { return 140; }
     if (mr.problems.len() != 0) { return 141; }

@@ -130,7 +130,7 @@ function fn_specs(name: string): FnSpec[] {
         return [
             FnSpec { name: "main", nparams: 0, nslots: 1, ops: [
                 ir.op_const_i32(10), ir.op_const_i32(32),
-                ir.op_struct_make("P", 2), ir.op_store_local(0),
+                ir.op_struct_make("P", 2, 0 - 1), ir.op_store_local(0),
                 ir.op_load_local(0), ir.op_struct_get(0, 0),
                 ir.op_load_local(0), ir.op_struct_get(1, 0), ir.op_bin("add", 0, false),
                 ir.op_return()
