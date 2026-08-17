@@ -28354,15 +28354,20 @@ function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boo
 // LOCAL, proven by the same three predicates reclaimable_names_of runs over one:
 //
 //   - body_unsafe_for — the box itself does not escape (`return self`, a
-//     container store, an alias, a non-borrowable arg). An identity return is
-//     refused here: its result aliases the receiver's box, and nothing at the
-//     call site yet proves the caller does not retain it;
+//     container store, an alias, a non-borrowable arg);
 //   - moves_fields_stmts — no receiver-POSITION hazard inside, i.e. `self.m2()`
 //     disqualifies. That is what keeps this non-circular: no method that calls
 //     through its own receiver enters the registry, so no entry rests on
 //     another;
 //   - optstruct_body_moves_field — no field of `self` reaches a bind / assign /
 //     return value, a non-borrowable call argument, or a container element.
+//
+// A method whose ONLY escape is a bare `return self` — the `if (t.len() == 0)
+// { return b; }` shape every builder-ish method opens with — earns the weaker
+// "RECVIDENT:" key instead. Its result MAY be the receiver's own box, so the
+// deep drop is sound only where nothing that outlives the receiver holds that
+// result. That is a call-site question and recv_ident_methods_of answers it;
+// the key carries the callee half.
 //
 // Struct receivers only: the marker it feeds is the struct deep drop.
 pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
@@ -28373,16 +28378,88 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
         var fn: parser.FuncDecl = funcs[k];
         if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
             var rty: string = util.base_type_name(fn.receiver_type);
-            if (decl_is_struct(structs, rty)
-                && !body_unsafe_for(fn.body, fn.receiver_name, borrowable)
-                && !moves_fields_stmts(fn.body, fn.receiver_name, none)
-                && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
-                out = out.append(rty + "." + fn.name);
+            if (decl_is_struct(structs, rty)) {
+                // "RECVRET:" is the widest and the only UNCONDITIONAL class: the
+                // body returns the bare receiver somewhere, so the result MAY be
+                // the receiver's own box. Independent of the other two
+                // predicates — a method that also moves a field can still hand
+                // its receiver back, and the caller's credit gate has to know.
+                if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
+                    out = out.append("RECVRET:" + rty + "." + fn.name);
+                }
+                if (!moves_fields_stmts(fn.body, fn.receiver_name, none)
+                    && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
+                    if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable)) {
+                        out = out.append(rty + "." + fn.name);
+                    }
+                    // Second tier: the ONLY escape is that bare `return self`.
+                    // Sound for the caller wherever nothing outliving the
+                    // receiver holds the result, which is a call-site question —
+                    // the key carries the callee half and recv_ident_methods_of
+                    // decides the rest.
+                    else if (!body_unsafe_for_allow_ret(fn.body, fn.receiver_name, borrowable)) {
+                        out = out.append("RECVIDENT:" + rty + "." + fn.name);
+                    }
+                }
             }
         }
         k = k + 1;
     }
     return out;
+}
+
+// body_returns_bare_ident: some `return name;` in `stmts` hands `name` itself
+// back, rather than a value derived from it.
+function body_returns_bare_ident(stmts: parser.Stmt[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (stmt_returns_bare_ident(stmts[i], name)) { return true; } i = i + 1; }
+    return false;
+}
+function stmt_returns_bare_ident(st: parser.Stmt, name: string): boolean {
+    match (st) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(rid) => { return rid.name == name; },
+                _ => { return false; }
+            }
+        },
+        parser.StmtIf(f) => {
+            return body_returns_bare_ident(f.then_body, name) || body_returns_bare_ident(f.else_body, name);
+        },
+        parser.StmtWhile(w) => { return body_returns_bare_ident(w.body, name); },
+        parser.StmtFor(fo) => { return body_returns_bare_ident(fo.body, name); },
+        parser.StmtMatch(m) => {
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) { if (body_returns_bare_ident(m.arms[ai].body, name)) { return true; } ai = ai + 1; }
+            return false;
+        },
+        parser.StmtDefer(d) => { return stmt_returns_bare_ident(d.action, name); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// recv_borrow_escapes_via_result: `name` is credited on the strength of a
+// method RECEIVER being a borrow, but a method that hands its receiver BACK
+// turns that call into a move — `keep = b.me()` leaves `keep` holding b's own
+// box, and b's per-rebind reclaim then frees memory `keep` still reads
+// (measured: __rc_underflow() ticks, over-release not leak).
+//
+// So the borrow reading is only good while no "RECVRET:" method's result on
+// `name` reaches a move position. This is the CREDIT gate; the NODEEP
+// exemption asks the narrower recv_ident_methods_of question separately.
+function recv_borrow_escapes_via_result(recv_borrow: string[], sty: string, body: parser.Stmt[], name: string, borrowable: string[]): boolean {
+    if (sty.len() == 0) { return false; }
+    var pfx: string = "RECVRET:" + sty + ".";
+    var i: i32 = 0;
+    while (i < recv_borrow.len()) {
+        if (recv_borrow[i].len() > pfx.len() && recv_borrow[i][0 : pfx.len()] == pfx) {
+            var m: string = recv_borrow[i][pfx.len() : recv_borrow[i].len()] + "";
+            if (method_result_moved_stmts(body, name, m, borrowable)) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // recv_borrow_methods_of names the methods in `recv_borrow` declared on struct
@@ -28400,6 +28477,151 @@ function recv_borrow_methods_of(recv_borrow: string[], sty: string): string[] {
         i = i + 1;
     }
     return out;
+}
+
+// recv_ident_methods_of is recv_borrow_methods_of for the "RECVIDENT:" tier,
+// filtered by the CALL-SITE half those keys are missing: an identity-returning
+// method's result may be the receiver's own box, so `name` keeps its deep drop
+// only while no call of that method in `body` hands the result to something
+// that outlives `name`.
+//
+// `t = t + b.relabel("x").tag.len()` is the admitted shape — the result is read
+// through and dies. `var c = b.relabel("x")` is not: `c` outlives nothing here
+// but IS a live alias of b's box at b's death, and relabel is in no fresh-ret
+// registry so `c` is never separately credited, which makes the deep drop a
+// dangle rather than a leak.
+//
+// The refused positions are exactly fieldmove's move vocabulary — a bind /
+// assign / return value, a call argument, a container element — asked of the
+// CALL expression rather than of a field chain.
+function recv_ident_methods_of(recv_borrow: string[], sty: string, body: parser.Stmt[], name: string, borrowable: string[]): string[] {
+    var out: string[] = [];
+    if (sty.len() == 0) { return out; }
+    var pfx: string = "RECVIDENT:" + sty + ".";
+    var i: i32 = 0;
+    while (i < recv_borrow.len()) {
+        if (recv_borrow[i].len() > pfx.len() && recv_borrow[i][0 : pfx.len()] == pfx) {
+            var m: string = recv_borrow[i][pfx.len() : recv_borrow[i].len()] + "";
+            if (!method_result_moved_stmts(body, name, m, borrowable)) { out = out.append(m); }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// method_result_moved_expr: does the RESULT of `name.<method>(...)` reach a
+// move position anywhere in `e`? `is_val` says whether `e` itself sits in one,
+// so the call is checked against its own position and the recursion re-answers
+// it per sub-expression.
+function method_result_moved_expr(e: parser.Expr, name: string, method: string, is_val: boolean, borrowable: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            var is_target: boolean = false;
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    match (fa.obj) {
+                        parser.ExprIdent(rid) => { is_target = rid.name == name && fa.field == method; },
+                        _ => {}
+                    }
+                },
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
+                _ => {}
+            }
+            if (is_target && is_val) { return true; }
+            if (!is_target && method_result_moved_expr(c.callee, name, method, false, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                // An ARGUMENT is a move position unless the callee's param is
+                // BORROWABLE — the same registry and the same reading
+                // fieldmove_expr applies, and for the same reason: a borrowable
+                // param provably never returns, stores, slices or captures its
+                // argument, so the result still dies in this expression. Free
+                // calls only; a method param is not in the free-function-keyed
+                // half of the registry, so a method arg keeps marking.
+                var arg_moves: boolean = callee_name.len() == 0 || !param_is_borrowable(borrowable, callee_name, ai);
+                if (method_result_moved_expr(c.args[ai], name, method, arg_moves, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        // Read-through positions: the result dies in the expression.
+        parser.ExprFieldAccess(fa2) => { return method_result_moved_expr(fa2.obj, name, method, false, borrowable); },
+        parser.ExprBinary(b) => {
+            return method_result_moved_expr(b.left, name, method, false, borrowable)
+                || method_result_moved_expr(b.right, name, method, false, borrowable);
+        },
+        parser.ExprUnary(u) => { return method_result_moved_expr(u.operand, name, method, false, borrowable); },
+        parser.ExprIndex(ix) => {
+            return method_result_moved_expr(ix.array, name, method, false, borrowable)
+                || method_result_moved_expr(ix.index, name, method, false, borrowable);
+        },
+        parser.ExprSlice(sl) => {
+            return method_result_moved_expr(sl.array, name, method, false, borrowable)
+                || method_result_moved_expr(sl.start, name, method, false, borrowable)
+                || method_result_moved_expr(sl.end, name, method, false, borrowable);
+        },
+        // Container positions: every element is a move.
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (method_result_moved_expr(a.elements[i], name, method, true, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (method_result_moved_expr(t.elements[i], name, method, true, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprStructLit(sl2) => {
+            if (sl2.has_base && method_result_moved_expr(sl2.base, name, method, true, borrowable)) { return true; }
+            var i: i32 = 0;
+            while (i < sl2.field_values.len()) { if (method_result_moved_expr(sl2.field_values[i], name, method, true, borrowable)) { return true; } i = i + 1; }
+            return false;
+        },
+        parser.ExprLambda(lm) => { return method_result_moved_stmts(lm.body, name, method, borrowable); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function method_result_moved_stmts(stmts: parser.Stmt[], name: string, method: string, borrowable: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (method_result_moved_stmt(stmts[i], name, method, borrowable)) { return true; } i = i + 1; }
+    return false;
+}
+function method_result_moved_stmt(st: parser.Stmt, name: string, method: string, borrowable: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return method_result_moved_expr(v.init, name, method, true, borrowable); },
+        parser.StmtAssign(a) => { return method_result_moved_expr(a.value, name, method, true, borrowable); },
+        parser.StmtReturn(r) => { return method_result_moved_expr(r.value, name, method, true, borrowable); },
+        parser.StmtExpr(e) => { return method_result_moved_expr(e.value, name, method, false, borrowable); },
+        parser.StmtIf(f) => {
+            if (method_result_moved_expr(f.cond, name, method, false, borrowable)) { return true; }
+            return method_result_moved_stmts(f.then_body, name, method, borrowable)
+                || method_result_moved_stmts(f.else_body, name, method, borrowable);
+        },
+        parser.StmtWhile(w) => {
+            if (method_result_moved_expr(w.cond, name, method, false, borrowable)) { return true; }
+            return method_result_moved_stmts(w.body, name, method, borrowable);
+        },
+        parser.StmtFor(fo) => {
+            if (method_result_moved_expr(fo.iter, name, method, true, borrowable)) { return true; }
+            return method_result_moved_stmts(fo.body, name, method, borrowable);
+        },
+        parser.StmtMatch(m) => {
+            if (method_result_moved_expr(m.scrutinee, name, method, false, borrowable)) { return true; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && method_result_moved_expr(m.arms[ai].guard, name, method, false, borrowable)) { return true; }
+                if (method_result_moved_stmts(m.arms[ai].body, name, method, borrowable)) { return true; }
+                ai = ai + 1;
+            }
+            return false;
+        },
+        parser.StmtDefer(d) => { return method_result_moved_stmt(d.action, name, method, borrowable); },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // reassigned_from_alias reports whether `name` is ever the TARGET of an
@@ -28478,7 +28700,14 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // Also exclude locals reassigned from an ALIAS (`lam = l` / `= x.f` /
         // `= xs[i]`): after the rebind they hold a BORROW, so reclaiming them
         // would free memory the aliased container still owns (#3425 stage-2).
-        if (!body_unsafe_for(body, fresh[i], borrowable) && !reassigned_from_alias(body, fresh[i])) { out = out.append(fresh[i]); }
+        // The borrow reading of a method RECEIVER above is only good while no
+        // method HANDS THE RECEIVER BACK into something longer-lived — see
+        // recv_borrow_escapes_via_result. Without that gate `keep = b.me()`
+        // left `keep` on b's own box and b's per-rebind reclaim freed it
+        // underneath, which is an over-release rather than a leak.
+        if (!body_unsafe_for(body, fresh[i], borrowable) && !reassigned_from_alias(body, fresh[i])
+            && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fresh[i], structs), body, fresh[i], borrowable)
+            && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fresh[i]), body, fresh[i], borrowable)) { out = out.append(fresh[i]); }
         i = i + 1;
     }
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
@@ -28515,6 +28744,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var mvsty: string = mvty;
         if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
+        mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, out[mvi], borrowable));
         if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
         var mv_moves: boolean = moves_fields_stmts(body, out[mvi], mvnm);
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a

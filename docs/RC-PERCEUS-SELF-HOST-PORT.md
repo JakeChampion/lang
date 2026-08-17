@@ -8110,3 +8110,67 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   entry's process note names, and the right one here: this widens deep drops
   across the self-host compiler's own sources, which is exactly the #3425 blast
   radius. Refs #6544 #3425 #4451.
+
+- 2026-08-17 (struct half, second slice): **Identity-returning methods admitted
+  where the result dies inline, and a pre-existing OVER-RELEASE closed on the
+  way (#6544).**
+
+  The previous slice refused a method whose receiver escapes, which includes the
+  `if (t.len() == 0) { return b; }` opening every builder-ish method has — the
+  conformance case's own `relabel`. The refusal was right but too wide: the
+  result aliases the receiver's box only in the sense that *someone might keep
+  it*, and whether anyone does is a CALL-SITE fact.
+
+  So the registry gained tiers. `body_unsafe_for_allow_ret` already existed —
+  `body_unsafe_for` with exactly one use forgiven, a bare `return name` — so a
+  method passing the other two predicates and failing only on that earns
+  `"RECVIDENT:"`. `recv_ident_methods_of` then supplies the caller half:
+  `name.<m>(...)` must not appear in a MOVE position, which is fieldmove's own
+  vocabulary (a bind / assign / return value, a non-borrowable call argument, a
+  container element) asked of the CALL rather than of a field chain.
+
+  **The borrowable-param check in that walker is not a refinement, it is the
+  difference between better and worse.** An intermediate marked every argument a
+  move, and `take(b.me())` went from 22 B/round to 72 — the local lost its whole
+  credit instead of just its deep drop. Consulting `param_is_borrowable` the way
+  `fieldmove_expr` does takes it to 0.
+
+  **The over-release.** Probing the refused shapes found `keep = b.me()` ticking
+  `__rc_underflow()` on the PARENT — main today, not something this slice
+  introduced. `b` is credited on the strength of "a method receiver is a
+  borrow", but a method that hands the receiver BACK turns that call into a
+  move: `keep` ends up on b's own box and b's per-rebind reclaim frees it
+  underneath. The free-function analogue (`keep = pick(b)`) is already safe,
+  because a param that escapes is not borrowable and `b` is then not credited at
+  all — so the bug is exactly the receiver position's borrow exemption, missing
+  the matching result check.
+
+  Hence a third and widest class, `"RECVRET:"`, emitted for ANY method with a
+  bare `return self` regardless of the other two predicates — a method that also
+  moves a field can still hand its receiver back — and consumed by the CREDIT
+  gate rather than the NODEEP one.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `b.me().tag.len()`, identity return consumed inline | 22 | 0 |
+  | `take(b.me())`, borrowable param | 22 | 0 |
+  | `keep = b.me()` (outer name) | **over-release** | 0, balanced |
+  | `keep = pick(b)`, free-function control | 0 | 0 |
+  | `b.bump().tag.len()`, fresh struct return | 71 | 71 |
+  | the whole `alloc_flat_method_identity_return` case | 142 | 117 |
+
+  What remains on the case is the FRESH struct result of a method consumed by a
+  field read — the struct analogue of the string chain, and the next slice.
+
+  VERIFIED: `recvident-inline-result-flat` and `recvident-borrowable-arg-flat`
+  fail at 98 on the parent; `recvret-rebound-outer-no-over-release` fails at
+  **99** there, which is the over-release itself and the reason that row asserts
+  balance rather than flatness. `recvret-returned-result-safe` and
+  `recvret-container-result-safe` guard the other two move positions. A first
+  cut of the over-release row used a `while` loop in `main` and passed on the
+  parent — it took the probe's own shape (the loop in its own function, `for i
+  in 0..n`) to reproduce, which is worth remembering: a regression test that
+  does not fail on the parent is not yet a regression test. Plus the whole
+  `internal/e2eselfhost` package. Refs #6544 #3425 #4451.
