@@ -135,11 +135,55 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// it, which the back-edge reaches after the write.
 		"kp_frame_write_in_loop: const_i32 7 ; store_local 1 ; loop ; load_local 1 ; drop ; str_slice frame:1 ; drop ; end ; load_local 1\n" +
 		"kp_idempotent=1\n" +
-		// The payoff, through optimize_ops: the constant crosses the if, and the fold
-		// behind it collapses the arm's arithmetic to a single const. The dead
-		// `store_local 0` stays because rewriting a dead store to a drop is the half
-		// of propagate_copies deliberately not ported (it needs slot types).
-		"kp_in_optimize: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; const_i32 10 ; drop ; end ; return\n"
+		// The payoff, through optimize_ops, and the clearest example of the battery
+		// composing: pruning the decided `if` leaves the store and load ADJACENT, so
+		// fuse_tee fires where it previously could not reach, propagate_copies then
+		// drops the tee as dead, and the fold collapses what is left. Nine ops to
+		// three, none of which any single pass could have done alone.
+		"kp_in_optimize: const_i32 10 ; drop ; return\n" +
+		// #6638 the unary fold. `not` is LOGICAL in this IR — i32.eqz on wasm, setz on
+		// x86, cset eq on arm64, bool_not in eval_ops — so zero folds to 1 and
+		// anything else to 0. There is no bitwise complement in the vocabulary.
+		"nf_zero: const_i32 1\n" +
+		"nf_nonzero: const_i32 0\n" +
+		"nf_text: const_i32 1\n" +
+		"nf_hex_refused: const_i32_text 0x10 ; not\n" +
+		"nf_opaque_refused: load_local 0 ; not\n" +
+		// The two folds compose: `while (true)`'s exit test is `const 1 ; not ; brif`,
+		// and a loop that never exits needs no exit check, so the line is empty.
+		"nf_while_true_test_gone: \n" +
+		// Folding at the very end of the list, which the three-op window cannot reach.
+		"nf_at_tail: load_local 0 ; drop ; const_i32 1\n" +
+		// #6638 constant-branch pruning. A decided `if` keeps the arm that runs and
+		// drops the condition, the scope, and the other arm.
+		"pi_true_arm: const_i32 7 ; drop ; return\n" +
+		"pi_false_arm: const_i32 8 ; drop ; return\n" +
+		"pi_false_no_else: return\n" +
+		// The wrap pair, and the reason it counts depth instead of looking for a
+		// branch. pi_escaping_wrapped's `br 1` leaves the arm, so the arm keeps a
+		// scope of its own and the depth still resolves to the same outer block —
+		// this is the COMMON case, since every `break` inside an `if` is one.
+		// pi_local_branch_bare's branch targets the arm's own block, so a wrap there
+		// would be the bug: it would push every depth in the arm out by one.
+		"pi_escaping_wrapped: block ; block ; br 1 ; end ; end ; return\n" +
+		"pi_local_branch_bare: block ; br 0 ; end ; return\n" +
+		// Refusals: the shared const_i32_readable guard, a non-void if (whose end
+		// would carry a value that deleting the scope strands), and an unbalanced
+		// list, which is left alone rather than half-rewritten.
+		"pi_hex_refused: const_i32_text 0x10 ; if ; const_i32 7 ; drop ; end\n" +
+		"pi_typed_refused: const_i32 1 ; if ; const_i32 7 ; end\n" +
+		"pi_unclosed_refused: const_i32 1 ; if ; const_i32 7 ; drop\n" +
+		// The decided `brif`. The dead tail after the new `br` survives here because
+		// this calls the fold directly; optimize_ops sweeps it in finish_ops, which is
+		// why that second dead-code pass exists.
+		"pb_zero_dropped: block ; const_i32 7 ; drop ; end\n" +
+		"pb_one_becomes_br: block ; br 0 ; const_i32 7 ; drop ; end\n" +
+		// Two nested ifs and the arithmetic behind them, all in one call, because the
+		// fold self-iterates.
+		"pi_nested_cascade: const_i32 5 ; drop ; return\n" +
+		"pi_idempotent=1\n" +
+		// End to end: `while (true)` keeps its body and loses its exit test.
+		"pw_while_true_in_optimize: loop ; const_i32 7 ; drop ; br 0 ; end ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

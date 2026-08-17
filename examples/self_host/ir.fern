@@ -1941,7 +1941,80 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 // would have to reproduce that exactly, and getting it wrong is a silent
 // wrong answer rather than a crash. Leaving them to the backend keeps one
 // implementation of the rule.
+// IfSpan locates an `if`'s arms. else_at is -1 when the if has no else; end_at is
+// -1 when the scope never closes, which is a malformed list this refuses to touch.
+struct IfSpan {
+    else_at: i32,
+    end_at: i32,
+}
+
+// scan_if_block finds the `else` and `end` belonging to the `if` AT `if_at`,
+// honouring nesting. The scan starts one past it, so the if's own scope is the
+// depth-0 one — counting the `if` as an opener finds the enclosing scope's `end`
+// instead, which splices the wrong arm and eats a scope. irlower's
+// find_matching_else / find_matching_end do the same job for the backends, but
+// irlower imports THIS module, so it cannot be the shared home without a cycle.
+function scan_if_block(ops: Op[], if_at: i32): IfSpan {
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_if: i32 = kind_id("if");
+    var k_else: i32 = kind_id("else");
+    var k_end: i32 = kind_id("end");
+    var else_at: i32 = 0 - 1;
+    var d: i32 = 0;
+    var i: i32 = if_at + 1;
+    while (i < ops.len()) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_block || t == k_loop || t == k_if) {
+            d = d + 1;
+        } else if (t == k_end) {
+            if (d == 0) { return IfSpan { else_at: else_at, end_at: i }; }
+            d = d - 1;
+        } else if (t == k_else && d == 0 && else_at < 0) {
+            else_at = i;
+        }
+        i = i + 1;
+    }
+    return IfSpan { else_at: else_at, end_at: 0 - 1 };
+}
+
+// arm_escapes_scope reports whether the ops in [lo, hi) hold a branch that LEAVES
+// the arm — a relative depth at or past the arm's own nesting. Deleting the
+// enclosing `if` shifts every such depth by one, so an arm that has one keeps a
+// scope of its own. This has to count depth rather than just look for a branch:
+// a match arm's `brif 0` into its own block is arm-local and must not force a
+// wrap, while a `break` is a `br` straight out and must.
+//
+// Escaping branches are the common case in this lowering, not the exception —
+// every `break` / `continue` inside an `if` is one, and so is the `br depth-1`
+// tco_self_tail leaves in a tail-recursive guard.
+function arm_escapes_scope(ops: Op[], lo: i32, hi: i32): boolean {
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_if: i32 = kind_id("if");
+    var k_end: i32 = kind_id("end");
+    var k_br: i32 = kind_id("br");
+    var k_brif: i32 = kind_id("brif");
+    var d: i32 = 0;
+    var i: i32 = lo;
+    while (i < hi) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_block || t == k_loop || t == k_if) {
+            d = d + 1;
+        } else if (t == k_end) {
+            if (d > 0) { d = d - 1; }
+        } else if (t == k_br || t == k_brif) {
+            if (ops[i].i32_imm >= d) { return true; }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 pub function fold_const_binaries(ops: Op[]): Op[] {
+    var k_not: i32 = kind_id("not");
+    var k_if: i32 = kind_id("if");
+    var k_brif: i32 = kind_id("brif");
     var cur: Op[] = ops;
     var changed: boolean = true;
     while (changed) {
@@ -1949,6 +2022,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         var out: Op[] = [];
         var i: i32 = 0;
         while (i < cur.len()) {
+            var folded: boolean = false;
             if (i + 2 < cur.len()) {
                 var a: Op = cur[i];
                 var b: Op = cur[i + 1];
@@ -1959,11 +2033,64 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
                     out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(a), const_i32_value(b))));
                     i = i + 3;
                     changed = true;
-                } else {
-                    out = out.append(cur[i]);
-                    i = i + 1;
+                    folded = true;
                 }
-            } else {
+            }
+            // `const ; not` is the unary case, and `not` is LOGICAL here — every
+            // backend emits it as i32.eqz / setz / cset eq, and eval_ops agrees via
+            // bool_not — so the result is 1 for zero and 0 for anything else. There
+            // is no bitwise complement anywhere in this IR to confuse it with.
+            if (!folded && i + 1 < cur.len()
+                    && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_not) {
+                var nv: i32 = 0;
+                if (const_i32_value(cur[i]) == 0) { nv = 1; }
+                out = out.append(op_const_i32(nv));
+                i = i + 2;
+                changed = true;
+                folded = true;
+            }
+            // A decided `if`: splice the arm that runs and drop the rest, including
+            // the condition and the scope itself. Only a VOID if — every scope this
+            // lowering opens is void, and a typed one would carry a value out of its
+            // end that deleting the scope would strand.
+            if (!folded && i + 1 < cur.len() && const_i32_readable(cur[i])
+                    && cur[i + 1].kind_tag == k_if && cur[i + 1].i32_imm == 0) {
+                var span: IfSpan = scan_if_block(cur, i + 1);
+                if (span.end_at >= 0) {
+                    var lo: i32 = i + 2;
+                    var hi: i32 = span.end_at;
+                    if (const_i32_value(cur[i]) != 0) {
+                        if (span.else_at >= 0) { hi = span.else_at; }
+                    } else if (span.else_at >= 0) {
+                        lo = span.else_at + 1;
+                    } else {
+                        // No else and the condition is false: the whole construct
+                        // goes. `const` pushes one and `if` pops it, so removing the
+                        // pair is stack-neutral, and the arm was void.
+                        lo = span.end_at;
+                    }
+                    var wrap: boolean = arm_escapes_scope(cur, lo, hi);
+                    if (wrap) { out = out.append(op_block(0)); }
+                    var j: i32 = lo;
+                    while (j < hi) { out = out.append(cur[j]); j = j + 1; }
+                    if (wrap) { out = out.append(op_end()); }
+                    i = span.end_at + 1;
+                    changed = true;
+                    folded = true;
+                }
+            }
+            // A decided `brif`: zero leaves only the fall-through, so both ops go;
+            // nonzero always branches, so it becomes the unconditional form. Both
+            // are stack-neutral — brif pops the condition the const pushed, and `br`
+            // touches neither.
+            if (!folded && i + 1 < cur.len()
+                    && const_i32_readable(cur[i]) && cur[i + 1].kind_tag == k_brif) {
+                if (const_i32_value(cur[i]) != 0) { out = out.append(op_br(cur[i + 1].i32_imm)); }
+                i = i + 2;
+                changed = true;
+                folded = true;
+            }
+            if (!folded) {
                 out = out.append(cur[i]);
                 i = i + 1;
             }
@@ -2233,27 +2360,36 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
     return out;
 }
 
-// optimize_ops runs the op-list peepholes to a fixpoint, then drops what the
-// result cannot reach. The first two feed each other: folding makes a constant
-// adjacent to the op that consumes it, and a strength rewrite's
-// `drop ; const_i32 0` puts a fresh constant next to whatever constant
-// follows. fold_const_binaries already self-iterates, so a strength pass that
-// rewrote nothing is the fixpoint; the round cap is defensive.
+// finish_ops is the post-fixpoint tail, in one place because optimize_ops reaches
+// it from two: drop what cannot be reached, fuse the store/load round trips,
+// propagate constants and copies over the result, fold once more, then drop again.
 //
-// Dead-code elimination runs LAST and once: it only removes ops, so it can
-// neither create a foldable adjacency (the ops it drops are unreachable, and
-// the ops around the hole were never adjacent in any executed path) nor
-// benefit from another round of itself — it is idempotent by construction.
+// The SECOND dead-code sweep is what the fold's branch pruning needs. Dropping a
+// decided `brif` in favour of an unconditional `br` turns everything after it in
+// that scope unreachable, and pruning a decided `if` can splice an arm ending in a
+// `return` into the middle of one — so the terminal fold creates dead code rather
+// than merely failing to remove it, and a sweep that ran before it cannot see
+// that. Both sweeps are the same idempotent pass; running it twice costs a linear
+// walk and removes the ordering trap.
+function finish_ops(cur: Op[]): Op[] {
+    return eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+}
+
+// optimize_ops runs the op-list peepholes to a fixpoint, then finishes. The first
+// two feed each other: folding makes a constant adjacent to the op that consumes
+// it, and a strength rewrite's `drop ; const_i32 0` puts a fresh constant next to
+// whatever constant follows. fold_const_binaries already self-iterates, so a
+// strength pass that rewrote nothing is the fixpoint; the round cap is defensive.
 pub function optimize_ops(ops: Op[]): Op[] {
     var cur: Op[] = fold_const_binaries(ops);
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))); }
+        if (!r.changed) { return finish_ops(cur); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur)))));
+    return finish_ops(cur);
 }
 
 // ---- tee fusion --------------------------------------------------------
