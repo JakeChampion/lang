@@ -2418,6 +2418,7 @@ function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
     var k_loop: i32 = kind_id("loop");
     var k_if: i32 = kind_id("if");
     var k_end: i32 = kind_id("end");
+    var k_str_slice: i32 = kind_id("str_slice");
     var d: i32 = 0;
     var j: i32 = at + 1;
     while (j < ops.len()) {
@@ -2430,6 +2431,16 @@ function cp_loop_body_kill(ops: Op[], at: i32, has: boolean[]): boolean[] {
         } else if (t == k_store || t == k_tee) {
             var sl: i32 = ops[j].i32_imm;
             if (sl >= 0 && sl < has.len()) { has = has.with(sl, false); }
+        } else if (t == k_str_slice && ops[j].i32_imm > 0) {
+            // The same three frame slots the main walk unbinds, on the same
+            // reasoning: this scan is the loop's half of the write model, and a
+            // write it cannot see is a binding assumed across a back-edge.
+            var fb: i32 = ops[j].i32_imm - 1;
+            var fk: i32 = 0;
+            while (fk < 3) {
+                if (fb + fk >= 0 && fb + fk < has.len()) { has = has.with(fb + fk, false); }
+                fk = fk + 1;
+            }
         }
         j = j + 1;
     }

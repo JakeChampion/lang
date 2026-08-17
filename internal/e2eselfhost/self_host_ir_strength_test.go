@@ -130,6 +130,10 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// so the pass is sound on its own reasoning rather than on that convention.
 		"kp_frame_write: const_i32 7 ; store_local 1 ; str_slice frame:1 ; drop ; load_local 1\n" +
 		"kp_heap_slice_kept: const_i32 7 ; store_local 1 ; str_slice ; drop ; const_i32 7\n" +
+		// The loop's body scan is the other half of that model: a frame write inside a
+		// body ends the binding for the whole loop, including the load that precedes
+		// it, which the back-edge reaches after the write.
+		"kp_frame_write_in_loop: const_i32 7 ; store_local 1 ; loop ; load_local 1 ; drop ; str_slice frame:1 ; drop ; end ; load_local 1\n" +
 		"kp_idempotent=1\n" +
 		// The payoff, through optimize_ops: the constant crosses the if, and the fold
 		// behind it collapses the arm's arithmetic to a single const. The dead
