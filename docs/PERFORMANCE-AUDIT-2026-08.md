@@ -373,7 +373,7 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~Decode the reclaim registry without slicing~~ — **done**, #7020 | `irlower.fern` | §4d.4 — −12.7% self-compile user; indexing the surviving walk is worth ~5 s more |
+| 10 | ~~Decode the reclaim and sig registries without slicing~~ — **done**, #7020 + #7026 | `irlower.fern` | §4d.4 — −35% self-compile user between them; indexing the surviving walks is what is left |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -784,6 +784,27 @@ underlying fact: a leaf share tells you where a frame *is*, and an allocating
 probe spends most of its time in `__fern_alloc_rc1` / `__fern_memcpy`, which are
 somebody else's leaves. Read frames #1 and #2, then size it with a clock — in
 whichever direction the sample count turns out to be wrong.
+
+**The module-wide twin was worth twice as much (#7026).** The re-profile after
+#7020 put `callee_param_is_typevar` (13 samples), `_may_grow` (7) and
+`_is_dyn_arr` (7) under `lower_call_named`, and they read the SIG registries —
+`fn_param_sigs`, `opt_ret_fns`, `i64_ret_fns`, `struct_ret_fns`,
+`tuple_ret_fns`, `map_ret_fns`, `arrtup_ret_fns` — which hold one
+`"<name>|<value>"` row per module function, ~4,600 of them, against
+`reclaimable_names`'s per-function handful. Sixteen decoders sliced
+`e[0:bar] == name` out of every candidate, and `lower_call_named` runs eight of
+those probes per call ARGUMENT. Routing them through #7020's
+`tagged_value_start` (plus `bytes_at` for the `optfresh_*` prefix tests) took
+the self-compile **67.8 s → 51.2 s user, −24.5%**, byte-identical again.
+
+`sys` fell with it, 52.5 s → 43.1 s, which is the first direct evidence for
+§4d's kernel third: those allocations were dirtying arena pages the kernel then
+had to zero, so removing them shows up on both sides of the clock.
+
+Across #7020 + #7026 the self-compile is **78.8 s → 51.2 s user (−35%)**. What
+remains of this shape is the walk itself: the registries are still linear, and
+`fn_param_sigs` at ~4,600 rows is now the one worth indexing rather than
+decoding faster.
 
 ## 8. Reproducing any of this
 
