@@ -6133,6 +6133,97 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
     return "";
 }
 
+// peephole_push_pop_arm64 folds the stack machine's operand round-trips out of
+// the emitted text — the arm64 twin of asm_ir.peephole_push_pop, which had no
+// counterpart here even though this backend emits the same push/pop discipline
+// (232 `str x0, [sp, #-16]!` sites) and the NATIVE arm64 backend has the pass.
+//
+// `ldr DST, [sp], #16` reads back exactly what the line above pushed, which makes
+// the pair `DST := SRC` whatever either line was meant for — so no clobber
+// analysis is needed, same as on x86-64.
+//
+// The shapes are matched EXACTLY, which is what keeps the frame saves out of it:
+// `stp`/`ldp` push and pop register PAIRS through the same `[sp, #-16]!` /
+// `[sp], #16` addressing, and a prefix match on `str `/`ldr ` never sees them.
+// The `ldr x0, [sp]` peek (the tee_local idiom, 136 sites) is likewise a
+// different shape — no writeback — so it is never mistaken for a pop.
+//
+// Removing an ADJACENT balanced pair leaves sp unchanged for every instruction
+// after it, so the sp-relative reads elsewhere (`ldr w0, [sp, #96]` and friends)
+// keep their offsets. That is the same argument the x86-64 pass rests on.
+//
+// x8 and x16 are excluded as destinations. `darwinize` keys the Mach-O syscall
+// rewrite off a literal `ldr x8, [sp], #16`, and folding that line away would
+// silently strip the marker — the number register would stay x8 and the trap
+// would stay `svc #0` in a Mach-O binary. Today the syscall ops always emit that
+// line after another pop, so it could not fold anyway; the guard is what keeps
+// that true if the emitter changes.
+function peephole_push_pop_arm64(asm: string): string {
+    strbuf_reset();
+    var n: i32 = asm.len();
+    // Untouched bytes are copied in RUNS, not per line — see the x86-64 twin,
+    // where line-at-a-time copying cost 28% of total compile time.
+    var run_start: i32 = 0;
+    var push_at: i32 = 0 - 1;
+    var src_lo: i32 = 0;
+    var src_hi: i32 = 0;
+    var ln: i32 = 0;
+    var i: i32 = 0;
+    while (i <= n) {
+        if (i == n || asm[i] == 10) {
+            var bs: i32 = ln;
+            while (bs < i && asm[bs] == 32) { bs = bs + 1; }
+            var folded: boolean = false;
+            if (push_at >= 0 && asm_ir.pp_at(asm, bs, i, "ldr ")) {
+                // `ldr DST, [sp], #16` — DST runs from bs+4 to the comma.
+                var dlo: i32 = bs + 4;
+                var dhi: i32 = dlo;
+                while (dhi < i && asm[dhi] != 44) { dhi = dhi + 1; }
+                if (asm_ir.pp_at(asm, dhi, i, ", [sp], #16") && dhi + 11 == i && !pp_arm64_marker_reg(asm, dlo, dhi)) {
+                    if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                    if (!asm_ir.pp_eq_bytes(asm, src_lo, src_hi, dlo, dhi)) {
+                        strbuf_append("    mov ");
+                        strbuf_append(asm[dlo:dhi]);
+                        strbuf_append(", ");
+                        strbuf_append(asm[src_lo:src_hi]);
+                        strbuf_append("\n");
+                    }
+                    run_start = i + 1;
+                    push_at = 0 - 1;
+                    folded = true;
+                }
+            }
+            if (!folded) {
+                push_at = 0 - 1;
+                if (asm_ir.pp_at(asm, bs, i, "str ")) {
+                    // `str SRC, [sp, #-16]!` — SRC runs from bs+4 to the comma.
+                    var slo: i32 = bs + 4;
+                    var shi: i32 = slo;
+                    while (shi < i && asm[shi] != 44) { shi = shi + 1; }
+                    if (asm_ir.pp_at(asm, shi, i, ", [sp, #-16]!") && shi + 13 == i) {
+                        push_at = ln;
+                        src_lo = slo;
+                        src_hi = shi;
+                    }
+                }
+            }
+            ln = i + 1;
+        }
+        i = i + 1;
+    }
+    if (run_start < n) { strbuf_append(asm[run_start:n]); }
+    return strbuf_take();
+}
+
+// pp_arm64_marker_reg reports whether the popped register is one darwinize keys
+// on (x8, its generic-syscall number marker, and x16, the same line after the
+// Mach-O rewrite).
+function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
+    if (hi - lo == 2 && asm[lo] == 120 && asm[lo + 1] == 56) { return true; }
+    if (hi - lo == 3 && asm[lo] == 120 && asm[lo + 1] == 49 && asm[lo + 2] == 54) { return true; }
+    return false;
+}
+
 pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
@@ -6158,7 +6249,7 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
     s = emit_ir_runtime(s, darwin);
-    return strbuf_take();
+    return peephole_push_pop_arm64(strbuf_take());
 }
 
 // emit_module_ir_unit_arm64 is the arm64 mirror of asm_ir.emit_module_ir_unit
@@ -6261,7 +6352,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     } else {
         s = emit_rodata_pools_arm64(s);
     }
-    return strbuf_take();
+    return peephole_push_pop_arm64(strbuf_take());
 }
 
 // ===================== arm64-darwin post-processor =====================

@@ -6575,7 +6575,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // allocates, and this runs twice per emitted line. Going through slices here
 // cost a minute of system time on the compiler's own source, all of it arena
 // growth for temporaries the comparison drops immediately.
-function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
+pub function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
     var m: i32 = lit.len();
     if (lo + m > hi) { return false; }
     var k: i32 = 0;
@@ -6587,7 +6587,7 @@ function pp_at(asm: string, lo: i32, hi: i32, lit: string): boolean {
 }
 
 // pp_eq_bytes reports whether asm[a:a_end] and asm[b:b_end] hold the same bytes.
-function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
+pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): boolean {
     if (a_end - a != b_end - b) { return false; }
     var k: i32 = 0;
     while (a + k < a_end) {
