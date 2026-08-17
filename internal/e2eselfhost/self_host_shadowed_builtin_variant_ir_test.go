@@ -70,6 +70,51 @@ function main(): i32 { match (f(9)) { Ok(v) => { return v; }, Err(e) => { return
 	{"builtin-result-err", `function f(x: i32): Result[i32, string] { if (x > 0) { return Ok(x); } return Err("neg"); }
 function main(): i32 { match (f(0 - 1)) { Ok(v) => { return v; }, Err(e) => { return 6; } } }`},
 	{"builtin-bool", `function main(): i32 { var b: boolean = true; match (b) { true => { return 8; }, _ => { return 2; } } }`},
+
+	// Qualified construction of a shadowing payload-less variant. This is the
+	// oracle-checkable half of the construction story — native accepts it
+	// because both sides name the enum.
+	{"qualified-user-none-idx-2", `enum E { Aa(i32), Bb(i32), None }
+function main(): i32 { var e: E = E.None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`},
+	{"qualified-user-none-idx-0", `enum E { None, Aa(i32), Bb(i32) }
+function main(): i32 { var e: E = E.None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`},
+	// Genuine Option `None` in the same positions, so the reordering below
+	// cannot have stolen the builtin's path.
+	{"builtin-none-return", `function f(): Option[i32] { return None; }
+function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } }`},
+	{"builtin-none-var-init", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
+}
+
+// Bare-name construction of a shadowing payload-less variant — `var e: E = None`
+// where the user enum declares `None`.
+//
+// The ident lowering tested `id.name == "None"` BEFORE the declared-struct case,
+// the inverse of the call arm's order, so this built an Option box with tag 1
+// instead of the user's variant. It then matched no variant index at all and the
+// program silently returned the wildcard's value.
+//
+// These cannot be oracle-checked: native REJECTS a bare colliding name outright
+// (`E036: variant "None" is declared in multiple enums … qualify the reference`),
+// so there is no native answer to compare against. The self-host computes the
+// same E036 but drops it — `is_build_gate_code` (checker.fern) gates only the
+// immutability codes and P002 — so it compiles the program instead. Making E036
+// gate the build is the right convergence and is a separate change: it is
+// blocked on a pre-existing false positive, `conformance/cases/derive_default`,
+// where a derive-synthesised `Status.default()` is misread as a bad qualified
+// variant.
+//
+// Until then the value it produces should at least be the USER's variant, which
+// is what these pin. When E036 starts gating, these become compile errors and
+// this test moves to asserting the diagnostic.
+var selfHostBareShadowedConstructionCases = []struct {
+	name string
+	src  string
+	exit int
+}{
+	{"bare-user-none-idx-2", `enum E { Aa(i32), Bb(i32), None }
+function main(): i32 { var e: E = None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`, 7},
+	{"bare-user-none-idx-0", `enum E { None, Aa(i32), Bb(i32) }
+function main(): i32 { var e: E = None; match (e) { E.None => { return 7; }, _ => { return 4; } } }`, 7},
 }
 
 func TestSelfHostShadowedBuiltinVariantIRX86_64(t *testing.T) {
@@ -104,6 +149,40 @@ func TestSelfHostShadowedBuiltinVariantIRX86_64(t *testing.T) {
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostBareShadowedConstructionIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile(filepath.Join("../../examples/self_host", "asm_run.fern"))
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	for _, tc := range selfHostBareShadowedConstructionCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
+			if len(asm) == 0 {
+				t.Fatal("self-host compiler emitted 0 bytes")
+			}
+			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+				t.Errorf("%s exited %d, want %d (the USER enum's variant, not the builtin Option)", tc.name, code, tc.exit)
 			}
 		})
 	}
