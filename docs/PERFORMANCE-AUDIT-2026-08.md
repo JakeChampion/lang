@@ -492,23 +492,18 @@ chain.
 | 800 | 23 MB | 13.4 GB |
 | 1600 | 31 MB | **OOM-killed** |
 
-Native is linear. The self-host multiplies by 4.5–7.3x per doubling — worse than
-quadratic — is 580x native's footprint at 800 arms, and **cannot compile 1,600
-arms at all**. So this is a bug with a memory cliff, not only a slow path.
+Native is linear. The self-host multiplied by 4.5–7.3x per doubling — worse than
+quadratic — was 580x native's footprint at 800 arms, and **could not compile
+1,600 arms at all**. So it was a bug with a memory cliff, not only a slow path.
+The table above is the BEFORE; the fix and its after-numbers are below, and
+`scripts/depth-repro` reproduces either.
 
 **It is not the rc==1 append cliff.** `FERN_CLIFF_REPORT=1` over a whole-compiler
 self-compile reports 1,056 crossings / 4,792 bytes; the appends grow in place.
 
-**Two hypotheses are already ruled out by experiment**, so do not re-spend them:
+Huge pages are not it either — §4d above.
 
-- *`irlower.body_assign_targets`.* It appears ~4x per stack in a gdb sample of
-  the 400-arm case, which is recursion DEPTH, not hotness — an easy misread. Its
-  recursion did copy each child's whole result via `append_all`, so threading one
-  `own` accumulator through it looked obvious; that change made the 400-arm case
-  **worse** (1.83 GB → 2.53 GB) and left 800 arms OOMing. Reverted.
-- *Huge pages* — §4d above.
-
-**It is also not the whole-body pre-walks — §5's hypothesis is ruled out.**
+**It is not the whole-body pre-walks either — §5's hypothesis is ruled out.**
 `lower_func` opens with fourteen of them (`reclaimable_names_of`,
 `snapshot_param_names_of`, `aliased_array_names_of`, `precise_drop_names`,
 `consumed_scalar_enum_frees`, `trmc_eligible`, …), each handed the whole body,
@@ -517,7 +512,8 @@ with `__heap_bump_bytes()` on the 400-arm function, **all fourteen together
 allocate about 300 bytes**. The function's 458 MB lands entirely AFTER the last
 of them — in the statement lowering itself.
 
-**It IS `lower_block`'s per-block pre-scans.** The same fourteen-pass shape, one
+**FIXED — it was `body_assign_targets`, reached through `lower_block`'s
+per-block pre-scans.** The same fourteen-pass shape, one
 level down and without the "once per function" that made the fn-level copy
 harmless. `lower_block` opens by running six whole-subtree analyses over the
 statement list it was handed — `self_overwrite_reuse_sites`, `cross_reuse_sites`,
@@ -538,15 +534,35 @@ The call count doubles — the recursion itself is linear — while the bytes go
 **7.3x**, which is the whole compile's scaling signature. At 400 arms these six
 scans are 265 MB of the function's 458 MB.
 
-**The fix direction the code itself suggests.** Each of those analyses is
-documented as applying to "THIS block's own statement list", and `lower_block`
-already runs for every nested body — so a walk that recurses into nested bodies
-is both redundant with the nested call and the source of the quadratic. Either
-stop them at the block's own statements, or hoist them to one per-function pass
-keyed by statement position, the way the fn-level family already works. Check
-each of the six against its own gates before changing it: several of them exist
-precisely because a fn-level-only scan MISSED nested blocks (#4353 item 2,
-#6127), so "scan only this list" has to keep meaning what those fixes needed.
+Probed individually, two of the six are the whole 265 MB and the other four are
+0.4 MB between them: `consumed_rcpayload_option_frees` (132.5 MB) and
+`consumed_scalar_enum_frees` (132.4 MB). Both open with the same line —
+`var reassigned: string[] = body_assign_targets(body);` — computed
+unconditionally, before either has looked for a candidate. So does
+`consumed_rcpayload_enum_frees`.
+
+And `body_assign_targets` returned a fresh array per nesting level for its
+caller to copy in with `append_all`, making it O(depth²) on its own. Threading
+one accumulator instead makes it linear:
+
+| arms | before | after |
+|---|---|---|
+| 200 | 278 MB | 54 MB |
+| 400 | 1.83 GB | **147 MB** |
+| 800 | 13.4 GB | **495 MB** |
+| 1600 | OOM-killed | **1.84 GB, compiles** |
+
+12.5x at 400 arms, 27x at 800, and the program that could not be compiled now
+compiles. On the whole-compiler self-compile: 1 m 29 s → 1 m 21 s, byte-identical
+output, with system time 31.4 s → 23.2 s — the predicted shape, since the win is
+pages never touched rather than instructions never run.
+
+**One trap inside the fix.** The accumulator parameter must NOT be `own`. The
+first attempt threaded it as `own out: string[]`, which type-checks (the
+recursion is the self-reassign shape E051 admits) and measured **worse** than the
+copying version it replaced — 1.83 GB → 2.53 GB at 400 arms. A plain parameter
+gives the numbers above. That result is why the second attempt was measured
+rather than assumed.
 
 Item 5 (symbol interning, #4394) should be re-measured on this subject before
 scoping: a third of what `strcmp` was has already gone with the two indexes.
