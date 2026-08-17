@@ -5428,49 +5428,49 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 	}
 }
 
+// resolveTypesInBlock resolves every type a function body declares:
+// local `var` annotations, nested `function` signatures, and
+// expression-position lambdas. It walks expressions as well as
+// statements because all three nest inside expressions — a lambda in a
+// call argument, a `var` in a value block or a match-expression arm —
+// and a declaration the walk misses keeps the parser's provisional
+// `StructType{Name}` for a name that is really an enum, a union or a
+// resource. Two spellings of one type then print identically and
+// compare unequal (#6996).
 func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 	if b == nil {
 		return
 	}
-	for _, st := range b.Stmts {
-		switch x := st.(type) {
-		case *ast.Block:
-			c.resolveTypesInBlock(x, params)
-		case *ast.If:
-			c.resolveTypesInBlock(asBlock(x.Then), params)
-			c.resolveTypesInBlock(asBlock(x.Else), params)
-		case *ast.While:
-			c.resolveTypesInBlock(asBlock(x.Body), params)
-		case *ast.Loop:
-			c.resolveTypesInBlock(asBlock(x.Body), params)
-		case *ast.For:
-			c.resolveTypesInBlock(asBlock(x.Body), params)
+	// ast.Walk forbids restructuring the tree mid-traversal; rewriting
+	// a positionless Type field is not traversal state, and Walk never
+	// visits those fields itself.
+	ast.Walk(b, func(n ast.Node) bool {
+		switch x := n.(type) {
 		case *ast.Var:
 			c.resolveType(&x.Type, params, x.P)
-		case *ast.Match:
-			for _, arm := range x.Arms {
-				c.resolveTypesInBlock(arm.Body, params)
-			}
 		case *ast.FuncDecl:
-			// Nested function declarations (closures, hoisted
-			// inner functions). Their own type-params would
-			// shadow the outer scope's; the typical inner
-			// function has no type-params and just sees the
-			// outer params, so passing the surrounding `params`
-			// set is the conservative right answer here.
+			// A nested function's own type-params would shadow the
+			// outer scope's; the typical inner function has none and
+			// just sees the outer params, so passing the surrounding
+			// `params` set is the conservative right answer here.
 			for i := range x.Params {
 				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
 			}
 			c.resolveType(&x.ReturnType, params, x.P)
-			c.resolveTypesInBlock(x.Body, params)
+		case *ast.Lambda:
+			for i := range x.Params {
+				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
+			}
+			c.resolveType(&x.ReturnType, params, x.P)
 		}
-	}
+		return true
+	})
 }
 
 // asBlock turns a Stmt into a *Block where possible — used to
-// reuse resolveTypesInBlock for the if/while/for body slots,
-// which are typed as Stmt but in practice always Block. Returns
-// nil otherwise so the caller skips.
+// reuse walkVarTypes for the if/while/for body slots, which are
+// typed as Stmt but in practice always Block. Returns nil
+// otherwise so the caller skips.
 func asBlock(s ast.Stmt) *ast.Block {
 	if b, ok := s.(*ast.Block); ok {
 		return b
@@ -13091,29 +13091,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// `return` statements inside the lambda body type-check
 		// against the LAMBDA's return type, not the enclosing
 		// function's. The Lambda's type is the FuncType built
-		// from its declared params + return type.
-		//
-		// Resolve the lambda's declared param + return types
-		// against the enclosing function's type parameters. The
-		// `resolveTypesInBlock` pre-pass walks statement-level
-		// types but doesn't descend into expression-position
-		// Lambda nodes, so `T` in `function (x: T): T { ... }`
-		// would otherwise stay as `StructType{T}` and fail to
-		// match the outer's `ParamType{T}` at the return-type
-		// check. Pulling the enclosing FuncDecl's TypeParams set
-		// off `c.current` is sufficient — nested local fns
-		// inherit their host's params via this same channel.
-		var lambdaParams map[string]bool
-		if c.current != nil && len(c.current.TypeParams) > 0 {
-			lambdaParams = make(map[string]bool, len(c.current.TypeParams))
-			for _, tp := range c.current.TypeParams {
-				lambdaParams[tp] = true
-			}
-			for i := range n.Params {
-				c.resolveType(&n.Params[i].Type, lambdaParams, orPos(n.Params[i].NamePos, n.P))
-			}
-			c.resolveType(&n.ReturnType, lambdaParams, n.P)
-		}
+		// from its declared params + return type. Its declared
+		// types arrived resolved from the resolveTypesInBlock
+		// pre-pass, on the same footing as every other declaration.
 		root := newScope(nil)
 		for _, p := range n.Params {
 			if _, dup := root.names[p.Name]; dup {

@@ -1,0 +1,20 @@
+// A lambda whose parameter is annotated with a union alias, passed as a
+// function value and bound to one — the shapes #6996 rejected as
+// "expected (Expr) => i32, got (Expr) => i32".
+struct Add { l: i32, r: i32 }
+struct Lit { v: i32 }
+type Expr = Add | Lit;
+
+function eval(e: Expr): i32 {
+    match (e) {
+        Add(a) => { return a.l + a.r; },
+        Lit(l) => { return l.v; }
+    }
+}
+
+function apply(e: Expr, f: (Expr) => i32): i32 { return f(e); }
+
+function main(): i32 {
+    var g: (Expr) => i32 = ((e: Expr) => eval(e));
+    return apply(Add { l: 30, r: 10 }, (e: Expr) => eval(e)) + g(Lit { v: 2 });
+}
