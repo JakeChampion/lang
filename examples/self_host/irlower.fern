@@ -4374,6 +4374,24 @@ pub function lower_dyn_arg(e: parser.Expr, s: LowerState): LowerState {
     return ls.emit(ir.op_dyn_box(prim));
 }
 
+// lower_dyn_array_lit lowers an array LITERAL every element of which coerces to
+// `dyn Trait` — lower_dyn_arg per element, then the buffer — leaving the array
+// on the stack. The two positions such a literal can appear in share it: the
+// `var xs: dyn Trait[] = […]` binding and an argument at a `dyn Trait[]` param
+// (#6906). Without the second, a primitive/string element flowed in RAW and the
+// callee's op_dyn_dispatch read a shape pointer out of a scalar — a segfault on
+// the register backends, a validation failure on wasm.
+pub function lower_dyn_array_lit(a: parser.ExprArray, s: LowerState): LowerState {
+    var das: LowerState = s;
+    var i: i32 = 0;
+    while (i < a.elements.len()) {
+        das = lower_dyn_arg(a.elements[i], das);
+        if (!das.ok) { return das; }
+        i = i + 1;
+    }
+    return das.emit(ir.op_arr_make(a.elements.len(), 32));
+}
+
 // expr_is_nonscalar conservatively reports whether `e` evaluates to a non-scalar
 // (heap) value — a string, array, struct, tuple, variant box, or anything that
 // might (a call). Used to keep tuple elements (and other scalar-only contexts)
@@ -9300,8 +9318,20 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         // function value from a `const` reference (both are bare
         // idents naming a zero-arg-shaped function).
         var fvn: string = fn_value_arg_name(c.args[ai], sc);
+        // An array LITERAL at a `dyn Trait[]` param — the third coercion site
+        // (#6906). Only the literal form: every other argument is an
+        // already-built array whose elements were coerced where it was built.
+        var dynlit: boolean = false;
+        if (sc.callee_param_is_dyn_arr(cid.name, ai)) {
+            match (c.args[ai]) { parser.ExprArray(_) => { dynlit = true; }, _ => {} }
+        }
         if (fvn.len() > 0 && sc.callee_param_is_fn(cid.name, ai)) {
             sc = sc.emit(ir.op_const_func(0, fvn));
+        } else if (dynlit) {
+            match (c.args[ai]) {
+                parser.ExprArray(dla) => { sc = lower_dyn_array_lit(dla, sc); },
+                _ => {}
+            }
         } else if (sc.callee_param_is_dyn(cid.name, ai)) {
             // A primitive/string arg coerced into a `dyn Trait`
             // param: lower the value, then heap-box it into a `dyn`
@@ -16575,14 +16605,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         if (dab_ok) {
             match (v.init) {
                 parser.ExprArray(darr) => {
-                    var das: LowerState = s;
-                    var dei: i32 = 0;
-                    while (dei < darr.elements.len()) {
-                        das = lower_dyn_arg(darr.elements[dei], das);
-                        if (!das.ok) { return das; }
-                        dei = dei + 1;
-                    }
-                    das = das.emit(ir.op_arr_make(darr.elements.len(), 32));
+                    var das: LowerState = lower_dyn_array_lit(darr, s);
+                    if (!das.ok) { return das; }
                     var dab: LowerState = das.add_local(v.name);
                     var daslot: i32 = dab.slot_of(v.name);
                     dab = dab.mark_arr(daslot, true);
@@ -45689,12 +45713,18 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // here is heap-boxed into a `dyn` cell at the call site (op_dyn_box) so
             // the receiver carries a shape pointer (docs/DYN-TRAITS.md §4.2.3).
             // '2' is distinct from the fn flag '1', so callee_param_is_fn is
-            // unaffected; callee_param_is_dyn reads '2'. A `dyn Trait[]` param
-            // (an ARRAY) is NOT flagged: it receives an already-built array whose
-            // primitive elements were boxed at the array literal, so the array
-            // pointer flows in one word unchanged (no per-call box).
+            // unaffected; callee_param_is_dyn reads '2'.
             else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
                      && !is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "2"; any = true; }
+            // A `dyn Trait[]` (ARRAY) param: flag '8'. The array pointer itself
+            // flows in one word — what needs coercing is each ELEMENT, and only
+            // when the argument is an array LITERAL written at the call
+            // (`render([1, 2])`, #6906): a literal bound to a local first was
+            // already boxed at its `var xs: dyn Trait[] = […]` binding, and any
+            // other argument form is an already-built array. callee_param_is_dyn
+            // reads '2' only, so the scalar-arg boxing is unaffected.
+            else if (funcs[k].params[pj].type_name.len() > 4 && funcs[k].params[pj].type_name[0:4] == "dyn "
+                     && is_array_type_name(funcs[k].params[pj].type_name)) { flags = flags + "8"; any = true; }
             // An fn-ARRAY param (`((T) => R)[]`, coarsed "fn[]") whose every
             // call site provably passes a closure ARRAY: flag '3' (proven by
             // the caparams fixpoint above). lower_func marks the param slot
@@ -49336,6 +49366,25 @@ pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolea
         if (bar < e.len() && e[0:bar] == name) {
             var pos: i32 = bar + 1 + idx;
             return pos < e.len() && e[pos] == 50;   // 50 = '2'
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// callee_param_is_dyn_arr reports whether callee `name`'s param `idx` is a
+// `dyn Trait[]` ARRAY type (flag '8' in fn_param_sigs) — so an array LITERAL
+// argument there must have each element coerced to `dyn` before the buffer is
+// built (docs/DYN-TRAITS.md §4.3, #6906).
+pub function (s: LowerState) callee_param_is_dyn_arr(name: string, idx: i32): boolean {
+    var i: i32 = 0;
+    while (i < s.sigs.fn_param_sigs.len()) {
+        var e: string = s.sigs.fn_param_sigs[i];
+        var bar: i32 = 0;
+        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
+        if (bar < e.len() && e[0:bar] == name) {
+            var pos: i32 = bar + 1 + idx;
+            return pos < e.len() && e[pos] == 56;   // 56 = '8'
         }
         i = i + 1;
     }

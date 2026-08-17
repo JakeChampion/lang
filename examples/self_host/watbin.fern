@@ -659,6 +659,33 @@ function collect_func_names(mod: SExpr): string[] {
     return names;
 }
 
+// func_header_end returns the index of a `(func …)` node's FIRST body item:
+// the `(param …)` / `(result …)` / `(local …)` declarations are a PREFIX, and
+// everything from here on is an instruction.
+//
+// It has to be a prefix scan rather than a filter over the whole node. In FLAT
+// (unfolded) WAT a value-producing `if (result i32)` — what emit_dyn_dispatch
+// writes — leaves a `(result …)` node sitting in the instruction stream at the
+// func's top level. A filter counted that as a SECOND function result and, in
+// body_instrs, dropped it from the body, so the `if` encoded with the empty
+// blocktype 0x40: the function's declared type gained a phantom result and the
+// arms' values had nowhere to go ("values remaining on stack at end of block").
+// The WAT itself was valid the whole time — only this encoder disagreed with it
+// (#6906).
+//
+// The scan starts at 2 so a leading `$name` atom is never mistaken for a body
+// item; the signature readers below tolerate index 1 for the unnamed
+// `(func …)` inside a `(type $c (func …))` declaration, which has no body.
+function func_header_end(fnode: SExpr): i32 {
+    var i: i32 = 2;
+    while (i < fnode.items.len()) {
+        var h: string = node_head(fnode.items[i]);
+        if (h != "param" && h != "result" && h != "local") { return i; }
+        i = i + 1;
+    }
+    return fnode.items.len();
+}
+
 // func_param_types / func_result_types read a func node's signature.
 // They scan from items[1] (skipping a leading `$name` atom if present, so
 // they also work on the unnamed `(func …)` inside a `(type $c (func …))`
@@ -666,8 +693,9 @@ function collect_func_names(mod: SExpr): string[] {
 // a run of bare types (`(param i32 i32 …)`, the import / type-decl form).
 function func_param_types(fnode: SExpr): string[] {
     var out: string[] = [];
+    var stop: i32 = func_header_end(fnode);
     var i: i32 = 1;
-    while (i < fnode.items.len()) {
+    while (i < stop) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "param") {
             if (c.items.len() >= 2 && c.items[1].text[0] == 36) {
@@ -685,8 +713,9 @@ function func_param_types(fnode: SExpr): string[] {
 
 function func_result_types(fnode: SExpr): string[] {
     var out: string[] = [];
+    var stop: i32 = func_header_end(fnode);
     var i: i32 = 1;
-    while (i < fnode.items.len()) {
+    while (i < stop) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "result") {
             var j: i32 = 1;
@@ -701,8 +730,9 @@ function func_result_types(fnode: SExpr): string[] {
 // (named), then `(local $name type)` decls.
 function local_names(fnode: SExpr): string[] {
     var out: string[] = [];
+    var stop: i32 = func_header_end(fnode);
     var i: i32 = 2;
-    while (i < fnode.items.len()) {
+    while (i < stop) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "param") {
             if (c.items.len() >= 2 && c.items[1].text[0] == 36) { out = out.append(c.items[1].text); }
@@ -710,7 +740,7 @@ function local_names(fnode: SExpr): string[] {
         i = i + 1;
     }
     i = 2;
-    while (i < fnode.items.len()) {
+    while (i < stop) {
         var c2: SExpr = fnode.items[i];
         // Only NAMED locals (`(local $name type)`) enter the name space; the
         // abbreviated unnamed form is referenced by numeric index (the flat
@@ -729,8 +759,9 @@ function local_names(fnode: SExpr): string[] {
 // in one node (the stack-IR emitter's form, which uses numeric local indices).
 function local_decl_types(fnode: SExpr): string[] {
     var out: string[] = [];
+    var stop: i32 = func_header_end(fnode);
     var i: i32 = 2;
-    while (i < fnode.items.len()) {
+    while (i < stop) {
         var c: SExpr = fnode.items[i];
         if (node_head(c) == "local") {
             if (c.items.len() >= 3 && c.items[1].text.len() > 0 && c.items[1].text[0] == 36) {
@@ -1293,17 +1324,20 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             out = out.append(13);
             out = leb_u32(out, parse_dec(instrs[i + 1].text));
             i = i + 2;
-        } else if (op == "block") {
-            out = out.append(2);
-            out = out.append(64);   // 0x40 empty blocktype
-            i = i + 1;
-        } else if (op == "loop") {
-            out = out.append(3);
-            out = out.append(64);
-            i = i + 1;
-        } else if (op == "if") {
-            out = out.append(4);
-            out = out.append(64);
+        } else if (op == "block" || op == "loop" || op == "if") {
+            // A flat block carries its own blocktype as the NEXT item when it
+            // produces a value: `if (result i32)` (emit_dyn_dispatch's
+            // value-producing dispatch). Encoding the empty 0x40 there instead
+            // left the arms' values stranded at the block's end (#6906).
+            if (op == "block") { out = out.append(2); }
+            else if (op == "loop") { out = out.append(3); }
+            else { out = out.append(4); }
+            var bt: i32 = 64;   // 0x40 empty blocktype
+            if (i + 1 < instrs.len() && node_head(instrs[i + 1]) == "result") {
+                bt = valtype_byte(instrs[i + 1].items[1].text);
+                i = i + 1;
+            }
+            out = out.append(bt);
             i = i + 1;
         } else if (op == "else") {
             out = out.append(5);
@@ -1395,15 +1429,15 @@ function enc_functype(params: string[], results: string[]): i32[] {
     return o;
 }
 
-// body_instrs returns a defined func's body instruction nodes (skipping
-// the param/result/local declarations).
+// body_instrs returns a defined func's body instruction nodes — everything
+// after the param/result/local declaration PREFIX (func_header_end). A
+// `(result …)` inside the body is a flat block's own blocktype and belongs to
+// the instruction stream, so it is kept rather than filtered out.
 function body_instrs(fnode: SExpr): SExpr[] {
     var out: SExpr[] = [];
-    var i: i32 = 2;
+    var i: i32 = func_header_end(fnode);
     while (i < fnode.items.len()) {
-        var c: SExpr = fnode.items[i];
-        var h: string = node_head(c);
-        if (h != "param" && h != "result" && h != "local") { out = out.append(c); }
+        out = out.append(fnode.items[i]);
         i = i + 1;
     }
     return out;
