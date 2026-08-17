@@ -1,0 +1,1 @@
+`drop` is a finalizer, not a method to call: the runtime runs Sink's `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized
