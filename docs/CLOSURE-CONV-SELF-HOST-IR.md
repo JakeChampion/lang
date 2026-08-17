@@ -124,3 +124,66 @@ fixpoint green)
 guards. The Stage-2 fixpoint (`TestSelfHostFixpoint` /
 `TestSelfHostStage2FixedPoint`) must stay byte-identical at every phase (expected,
 per §3).
+
+## 8. Closure-call census (2026-08-17) — and why `defunctionalise` is not built
+
+#6638 tracked porting native's IR optimiser passes to the self-host, one of
+which was `defunctionalise`: rewrite an indirect closure dispatch into a direct
+call when the target can be proven. Before building it, the population it would
+rewrite was measured.
+
+`irlower_run -clocensus` counts a module's env-first dispatches — the
+`load_local S ; const_i32 0 ; arr_get 32 ; call_indirect(argc+1)` tail §2
+describes — over the ops the backends see (lift_lambdas, then `lower_module`),
+and splits them by where the env box comes from, since that decides how much
+analysis resolving the site would need. Over the conformance corpus, the stdlib,
+and the self-hosted compiler's own 91 modules:
+
+| corpus | lowered fns | ops | env-first sites |
+|---|---:|---:|---:|
+| conformance (479 cases) | 994 | 46,820 | 23 |
+| stdlib (64 modules) | 2,095 | 97,057 | 68 |
+| self-host (91 modules) | 3,493 | 391,373 | **0** |
+| **total** | **6,582** | **535,250** | **91** |
+
+(The self-host row is measured a module at a time with no import resolution, so
+1,484 of its functions bail out of the lowered subset and contribute no ops. The
+zero above is therefore over 70% of that corpus, and the source-level check
+below is what settles the rest.)
+
+91 sites in 535k ops is 0.017%, and the split says the pass would not reach most
+of them:
+
+| provenance | sites | what resolving it needs |
+|---|---:|---|
+| `env_param` | 73 | whole-program: specialise the callee per call site |
+| `env_call` | 8 | read one closure-returning callee's returns |
+| `env_other` | 8 | points-to analysis |
+| `env_local` | 2 | nothing — the op stream names the target |
+
+Two findings decide it.
+
+**The locally decidable case is already handled.** `env_local` is 2 because
+`try_lift_binding` direct-calls a lambda that is only ever called, so it never
+reaches an indirect dispatch at all. The 2 residual sites are a lambda that
+escapes *and* is called locally, where the escape blocks the direct call. A
+`defunctionalise` pass would be built to win those two sites.
+
+**The self-hosted compiler contains no closure calls at all.** Not a lowering
+artifact: across 91 modules its sources declare exactly two fn-typed parameters
+— `astwalk.fern`'s `fold_expr` / `fold_stmt`, which nothing outside that module
+calls — and bind no lambdas anywhere. The largest Fern program in existence
+would gain nothing.
+
+The remaining 73 `env_param` sites are the stdlib combinators (`array.map`,
+`option.map`, `result.map`, `sort`, `test`). Devirtualising those means
+specialising each combinator to its callback — callee specialisation or
+inlining, a different pass from defunctionalisation, and one whose case would
+have to be made on its own numbers.
+
+So the row is closed as measured-not-worth-building rather than deferred. The
+census driver mode and `internal/e2eselfhost/self_host_closure_census_test.go`
+stay, which is what keeps the decision honest: the bucket test fails if
+`try_lift_binding` stops direct-calling called-only lambdas, and the population
+sweep fails if Fern code starts dispatching through closures at a rate this
+conclusion was not measured against.

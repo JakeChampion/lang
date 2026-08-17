@@ -22,6 +22,11 @@
 // table lines. The Go-side gate diffs this against ir.RcPlanHook's output
 // for the same source.
 //
+// `-clocensus` (#6638): print one line counting this module's closure call
+// sites — the population a defunctionalisation pass would devirtualise, split
+// by how decidable each site is. Measurement only; nothing on the emit path
+// reads it.
+//
 // `-str-own` (#4297 CS4): print each function's slot-carried string-
 // ownership facts (irlower.str_own_dump — `p/v/r <name>: <ownership>` lines,
 // codes mirroring native ast.Ownership) instead of evaluating; pinned by the
@@ -122,6 +127,159 @@ function verify_fip_all(funcs: parser.FuncDecl[], fns: irlower.LoweredFn[]): Fip
     return FipSweep { problems: out, census: census };
 }
 
+// clo_env_slot answers whether the call_indirect at `at` is reached through the
+// env-first closure tail every closure dispatch emits:
+//
+//     load_local S ; const_i32 0 ; arr_get 32 ; call_indirect(argc + 1)
+//
+// The env box is loaded TWICE at such a site — once as the `__env` first
+// argument, once again here to read `box[0]` as the call target — and it is the
+// second load this matches. A plain fn-pointer call ends `load_local S ;
+// call_indirect(argc)` with no box read, so the two dispatch shapes are
+// distinguishable from the op stream alone. Returns the box slot, or -1.
+function clo_env_slot(ops: ir.Op[], at: i32, k_load: i32, k_const: i32, k_arrget: i32): i32 {
+    if (at < 3) { return 0 - 1; }
+    if (ops[at - 1].kind_tag != k_arrget || ops[at - 1].width != 32) { return 0 - 1; }
+    if (ops[at - 2].kind_tag != k_const || ops[at - 2].i32_imm != 0) { return 0 - 1; }
+    if (ops[at - 3].kind_tag != k_load) { return 0 - 1; }
+    return ops[at - 3].i32_imm;
+}
+
+// clo_sole_store returns the index of the ONLY write to `slot`, or -1 when the
+// slot is written zero times or more than once. A slot written twice can carry
+// two different closures to the one call site, which is precisely what a
+// devirtualising rewrite may not assume away. Both store_local and tee_local
+// write: a `var f = mk(); f(x)` binding lowers to a tee, so counting only
+// store_local would classify the commonest closure binding as unwritten.
+function clo_sole_store(ops: ir.Op[], slot: i32, k_store: i32, k_tee: i32): i32 {
+    var found: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (ops[i].kind_tag == k_store || ops[i].kind_tag == k_tee) {
+            if (ops[i].i32_imm == slot) {
+                if (found >= 0) { return 0 - 1; }
+                found = i;
+            }
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+// clo_flat_box answers whether ops[m] closes a closure-box construction of the
+// shape both constructors emit — `const_func <fn> ; load_local … ; arr_make(k, 32)`
+// — and so names exactly one call target. A construction whose captures are
+// expressions rather than plain loads is NOT recognised: deciding those needs an
+// operand-stack walk, so the provable figure this yields is a floor.
+function clo_flat_box(ops: ir.Op[], m: i32, k_make: i32, k_load: i32, k_func: i32): boolean {
+    if (m < 0) { return false; }
+    if (ops[m].kind_tag != k_make || ops[m].width != 32) { return false; }
+    var k: i32 = ops[m].i32_imm;
+    if (k < 1 || m - k < 0) { return false; }
+    if (ops[m - k].kind_tag != k_func) { return false; }
+    var i: i32 = m - k + 1;
+    while (i < m) {
+        if (ops[i].kind_tag != k_load) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// clo_census renders one module's closure-call-site population (#6638
+// defunctionalise S0) as a single line, over the ops the BACKENDS see.
+//
+// The whole population is `env`, partitioned by where the env box the site
+// dispatches through comes FROM — which is what decides how much analysis a
+// devirtualising rewrite would need to resolve it:
+//
+//   env_local a box built in this same function, single-assigned to the slot,
+//             by the flat `const_func <fn> ; load_local … ; arr_make` shape:
+//             one named target, decidable with no analysis beyond the op
+//             stream. Expected to be near zero, and that is not a measurement
+//             error — try_lift_binding already direct-calls a lambda that is
+//             only ever called, so a site in this bucket is one that escaped it
+//   env_call  a box single-assigned from an adjacent `call_direct`: a
+//             closure-RETURNING callee, resolvable by looking at that one
+//             function's returns
+//   env_param a box arriving as a PARAMETER: the higher-order case, undecidable
+//             inside the function and needing a whole-program pass
+//   env_other multiply-assigned slots and every other provenance: what no
+//             rewrite short of a full points-to analysis can name
+//
+//   plain     plain fn-pointer call_indirect sites, which carry no env box and
+//             are a different rewrite entirely
+//
+// `bail` is the honest denominator: a function outside the lowered subset
+// contributes no ops, so a census over a module that mostly bailed is a census
+// over almost nothing.
+function clo_census(fns: irlower.LoweredFn[]): string {
+    var k_load: i32 = ir.kind_id("load_local");
+    var k_store: i32 = ir.kind_id("store_local");
+    var k_tee: i32 = ir.kind_id("tee_local");
+    var k_const: i32 = ir.kind_id("const_i32");
+    var k_func: i32 = ir.kind_id("const_func");
+    var k_arrget: i32 = ir.kind_id("arr_get");
+    var k_make: i32 = ir.kind_id("arr_make");
+    var k_ind: i32 = ir.kind_id("call_indirect");
+    var k_calld: i32 = ir.kind_id("call_direct");
+
+    var n_fns: i32 = 0;
+    var n_bail: i32 = 0;
+    var n_ops: i32 = 0;
+    var n_env: i32 = 0;
+    var n_local: i32 = 0;
+    var n_call: i32 = 0;
+    var n_param: i32 = 0;
+    var n_other: i32 = 0;
+    var n_plain: i32 = 0;
+
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (!fns[i].ok) {
+            n_bail = n_bail + 1;
+            i = i + 1;
+            continue;
+        }
+        n_fns = n_fns + 1;
+        var ops: ir.Op[] = fns[i].ops;
+        n_ops = n_ops + ops.len();
+        var j: i32 = 0;
+        while (j < ops.len()) {
+            if (ops[j].kind_tag == k_ind) {
+                var slot: i32 = clo_env_slot(ops, j, k_load, k_const, k_arrget);
+                if (slot < 0) {
+                    n_plain = n_plain + 1;
+                } else {
+                    n_env = n_env + 1;
+                    if (slot < fns[i].n_params) {
+                        n_param = n_param + 1;
+                    } else {
+                        var st: i32 = clo_sole_store(ops, slot, k_store, k_tee);
+                        if (st > 0 && clo_flat_box(ops, st - 1, k_make, k_load, k_func)) {
+                            n_local = n_local + 1;
+                        } else if (st > 0 && ops[st - 1].kind_tag == k_calld) {
+                            n_call = n_call + 1;
+                        } else {
+                            n_other = n_other + 1;
+                        }
+                    }
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return "clocensus: fns=" + util.i32_to_string(n_fns)
+        + " bail=" + util.i32_to_string(n_bail)
+        + " ops=" + util.i32_to_string(n_ops)
+        + " env=" + util.i32_to_string(n_env)
+        + " env_local=" + util.i32_to_string(n_local)
+        + " env_call=" + util.i32_to_string(n_call)
+        + " env_param=" + util.i32_to_string(n_param)
+        + " env_other=" + util.i32_to_string(n_other)
+        + " plain=" + util.i32_to_string(n_plain) + "\n";
+}
+
 // slot_line renders one slot class, or nothing when the class is empty — so a
 // function with no strings has no `str` line rather than an empty one.
 function slot_line(kind: string, slots: i32[]): string {
@@ -144,6 +302,7 @@ function main(): i32 {
     var want_vstack: boolean = false;
     var want_vfip: boolean = false;
     var want_slots: boolean = false;
+    var want_clocensus: boolean = false;
     // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
     // The verifiers report per function, so the follow-up question is always
     // "show me the ops of the one it named".
@@ -161,6 +320,7 @@ function main(): i32 {
         if (av[ai] == "-verifystack") { want_vstack = true; }
         if (av[ai] == "-verifyfip") { want_vfip = true; }
         if (av[ai] == "-slots") { want_slots = true; }
+        if (av[ai] == "-clocensus") { want_clocensus = true; }
         ai = ai + 1;
     }
 
@@ -202,6 +362,18 @@ function main(): i32 {
         write(out);
         return 0;
     }
+    // `-clocensus` (#6638): count this module's closure call sites instead of
+    // evaluating. Lowered the way the BACKENDS lower — lift_lambdas (which
+    // fills defaults and hoists every capturing lambda to a `$clo` /
+    // `__mkclo$` pair) over a builtin-enum-injected struct table, exactly as
+    // asm_ir.lift_lambdas does. Lowering the raw module instead would count
+    // closure sites that lambda lifting has not created yet.
+    if (want_clocensus) {
+        var cmod: parser.Module = irlower.lift_lambdas(mod);
+        write(clo_census(irlower.lower_module(cmod.funcs, parser.inject_builtin_enums(cmod.structs))));
+        return 0;
+    }
+
     var fns: irlower.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
 
     // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
