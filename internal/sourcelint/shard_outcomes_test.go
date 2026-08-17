@@ -133,8 +133,62 @@ func TestVerifyShardOutcomesVanishedTolerated(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("want exit 0 under tolerate, got %d: %s", code, out)
 	}
-	if !strings.Contains(out, "tolerating 1 vanished shard") {
+	if !strings.Contains(out, "tolerating 1 shard(s) that reported no result") {
 		t.Errorf("missing tolerate note: %s", out)
+	}
+}
+
+// `skipped` means the shard's TEST STEP never executed — a step before it
+// failed, so the record step (which is `if: !cancelled()`) still wrote a
+// marker. No tests ran, so it is not a verdict on the code and must not be
+// reported as one. Fatal by default all the same: a shard that ran nothing
+// must never read as green.
+func TestVerifyShardOutcomesSkippedIsNotATestFailure(t *testing.T) {
+	m := allSuccess("x86_64", 4)
+	m["x86_64-2"] = "skipped\n"
+	code, out := runVerify(t, m, false, "x86_64=4")
+	if code != 1 {
+		t.Fatalf("want exit 1, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "NEVER RAN: x86_64 shard2") {
+		t.Errorf("skipped shard not reported as never-ran: %s", out)
+	}
+	// The regression this guards: a GitHub codeload outage reported as a real
+	// test failure, sending the reader to a log holding only a download error.
+	if strings.Contains(out, "FAILED: x86_64 shard2") {
+		t.Errorf("a shard that ran no tests was called a test failure: %s", out)
+	}
+	if strings.Contains(out, "3 passed, 1 failed") {
+		t.Errorf("never-ran shard counted in the failed tally: %s", out)
+	}
+}
+
+// It shares the vanished dial, because it is the same fact: no signal from
+// this shard, and either cause can be a stochastic infrastructure event.
+func TestVerifyShardOutcomesSkippedTolerated(t *testing.T) {
+	m := allSuccess("x86_64", 4)
+	m["x86_64-1"] = "skipped"
+	code, out := runVerify(t, m, true, "x86_64=4")
+	if code != 0 {
+		t.Fatalf("want exit 0 under tolerate, got %d: %s", code, out)
+	}
+	if !strings.Contains(out, "reported no result") {
+		t.Errorf("missing tolerate note: %s", out)
+	}
+}
+
+// A real failure alongside a never-ran shard still fails, and the two are
+// reported as the different things they are.
+func TestVerifyShardOutcomesSkippedAndFailureAreDistinct(t *testing.T) {
+	m := allSuccess("x86_64", 4)
+	m["x86_64-1"] = "skipped"
+	m["x86_64-2"] = "failure"
+	code, out := runVerify(t, m, true, "x86_64=4")
+	if code != 1 {
+		t.Fatalf("tolerate must not absorb a real failure; got exit %d: %s", code, out)
+	}
+	if !strings.Contains(out, "NEVER RAN: x86_64 shard1") || !strings.Contains(out, "FAILED: x86_64 shard2") {
+		t.Errorf("want both classes named separately: %s", out)
 	}
 }
 
@@ -381,14 +435,23 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("abs: %v", err)
 	}
-	// 20m17s (over a 20m budget), 4m10s cancelled (reclaimed), 3m0s failure.
+	// 20m17s (over a 20m budget), 4m10s cancelled (reclaimed), 3m0s failure in
+	// the test step, and 1m19s failure in a SETUP step (the 2026-08-17 codeload
+	// outage shape: the action tarball never downloaded, so no test ran).
 	const jobs = `{"jobs":[
 	  {"name":"test-e2e-selfhost-x86_64-shard2","conclusion":"cancelled",
 	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T16:14:10Z"},
 	  {"name":"test-e2e-selfhost-x86_64-shard7","conclusion":"cancelled",
 	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:58:03Z"},
 	  {"name":"test-e2e-selfhost-aarch64-shard1","conclusion":"failure",
-	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:56:53Z"},
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:56:53Z",
+	   "steps":[{"name":"Set up job","conclusion":"success"},
+	            {"name":"run self-host shard 1/2 (prebuilt binary, streaming)","conclusion":"failure"}]},
+	  {"name":"test-e2e-selfhost-x86_64-shard9","conclusion":"failure",
+	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:55:12Z",
+	   "steps":[{"name":"Set up job","conclusion":"success"},
+	            {"name":"Set up Go","conclusion":"failure"},
+	            {"name":"run self-host shard 9/16 (prebuilt binary, streaming)","conclusion":"skipped"}]},
 	  {"name":"test-e2e-selfhost-x86_64-shard0","conclusion":"success",
 	   "started_at":"2026-08-07T15:53:53Z","completed_at":"2026-08-07T15:54:53Z"},
 	  {"name":"cli-driver-tests-x86_64","conclusion":"failure",
@@ -410,6 +473,7 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 		"shard2: cancelled after 20m17s — EXCEEDED ITS 20m BUDGET",
 		"shard7: cancelled after 4m10s, well inside the budget — RUNNER RECLAIM",
 		"aarch64-shard1: failure after 3m0s — died on its own terms",
+		`shard9: failure after 1m19s in step "Set up Go" — SETUP FAILED BEFORE THE TESTS RAN`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing verdict %q in:\n%s", want, out)
@@ -422,5 +486,31 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("unexpectedly reported %q in:\n%s", unwanted, out)
 		}
+	}
+}
+
+// The classifier tells "a setup step failed" from "the tests failed" by
+// comparing the failing step's name against a prefix it hard-codes. That
+// prefix names a step in the workflow, so a rename there would silently
+// return every infrastructure death to the "died on its own terms, READ ITS
+// LOG" verdict this split exists to stop. Pin the two together.
+func TestClassifierTestStepPrefixMatchesWorkflow(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci-classify-vanished-shards"))
+	if err != nil {
+		t.Fatalf("read classifier: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^TEST_STEP="([^"]+)"`).FindSubmatch(script)
+	if m == nil {
+		t.Fatal("classifier no longer defines TEST_STEP; this guard needs updating with it")
+	}
+	prefix := string(m[1])
+
+	wf, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "test-e2e-selfhost.yml"))
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	if !regexp.MustCompile(`(?m)^\s*-\s*name:\s*` + regexp.QuoteMeta(prefix)).Match(wf) {
+		t.Errorf("no step in test-e2e-selfhost.yml starts with TEST_STEP %q — "+
+			"the classifier would call every setup failure a test failure", prefix)
 	}
 }
