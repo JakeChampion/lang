@@ -7979,3 +7979,64 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   struct field, both the result's and the receiver's tag re-read) are the
   refusal controls and pass on both. Arm64 and wasm siblings gained the same
   rows. Refs #6544 #4355 #4451.
+
+- 2026-08-17 (last): **The chain's INTERMEDIATE box was attempted and ABANDONED
+  — the route needs a widening four negative tests forbid (#6544).** Recorded so
+  the next attempt starts from the evidence rather than repeating it.
+
+  The remaining 22 B/round on `base.tail(4).to_owned().len()` is the view box the
+  outer link was built from. Releasing a method's RECEIVER needs a key stricter
+  than `SFRRECV:` — the callee must neither return a view of the receiver (the
+  result would point into freed bytes) nor let it escape. That key is buildable:
+  every return fresh (`body_has_nonfresh_str_return`, the un-widened predicate)
+  plus the receiver passing the three-part conjunction `borrowable_params_of`
+  applies to a param.
+
+  **Built, measured, and it closed nothing.** std/string's `to_owned` is
+  `return s + ""`, and `expr_unsafe_for` reads a bare-ident OPERAND of any binary
+  expression as an escape, so the receiver failed the conjunction and the key was
+  never emitted. A receiver-ignoring body (`return "xy" + "zw"`) and a
+  producer-method body (`return s.to_ascii_upper()`) both qualified; the concat
+  did not.
+
+  Widening `expr_unsafe_for` so a bare-ident operand is a BORROW does close it —
+  22 -> 0 B/round on x86-64, arm64 and wasm, case 142 -> 118 — and the two halves
+  are inseparable: with the widening in and the release disabled every probe read
+  exactly as before, so the widening buys nothing alone.
+
+  **What stopped it: the widening trips FOUR author-written negative tests**,
+  all asserting some string is NOT reclaimed.
+
+  | test | asserts |
+  |---|---|
+  | `TestSelfHostStrReclaimIRX86_64/aliased-not-reclaimed` | zero reclaim sites |
+  | `TestSelfHostStrReclaimIRX86_64/returned-not-reclaimed` | zero reclaim sites |
+  | `TestSelfHostStrConcatTempIRX86_64/ident-operands-result-only` | exactly ONE — "extra sites mean an aliased operand was mis-freed" |
+  | `TestSelfHostStrAccumIRX86_64/accum-nonfresh-reassign-not-reclaimed` | not reclaimed |
+
+  The safety question was probed and came out in the widening's favour: with
+  `var c = a;` making an operand genuinely aliased and both read after the
+  concat, 100k rounds under `-sanitize` gave NO over-release, `__rc_underflow()`
+  0, and leaks only (`allocs=400004 frees=299999`). The escape walker still
+  refuses a name with any other escaping use, so the invariant these tests encode
+  — "ident operands are never freed" — is strictly stronger than the property
+  they protect — "ALIASED operands are never freed".
+
+  **That is not enough to move four of them.** The fourth was found only by the
+  98-minute whole-package `internal/e2eselfhost` run, after the targeted suites
+  were green and a recommendation had already been formed off a probe that
+  sampled shapes chosen by the same person who wrote the change. One probe
+  showing safety on shapes I thought of is a weaker statement than four
+  independent tests written by people who had reasons not reconstructed here.
+
+  **If this is picked up again**, the shape to try is a NARROW admission —
+  reclaim an operand only where the concat is that name's sole use — rather than
+  a blanket "a binary operand is a borrow" in a predicate feeding
+  `borrowable_params_of` and the snapshot analyses. It needs its own slice and
+  its own reckoning with all four tests, ideally with whoever wrote them.
+
+  **Process note worth more than the slice.** Both regressions were invisible to
+  the targeted suites and to `make selfhost-cli`; only the whole-package run saw
+  them. For a change to a predicate this widely consumed, the full sweep is the
+  gate, not the follow-up — "open the PR early" is right in general and was wrong
+  here. Refs #6544 #4451.
