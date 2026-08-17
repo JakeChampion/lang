@@ -56,22 +56,22 @@ func textSizes(t *testing.T, src string) (ssaBytes, smBytes int) {
 // regression such as losing the result-into-home coalescing or the
 // call-clobber-aware caller-save. See docs/SSA-REGALLOC-PLAN.md.
 //
-// On straight-line arithmetic and a counted loop the SSA backend still emits
-// materially less code than the stack machine: measured arith 64.2%, loop
-// 61.5%. Those legs stay a cross-backend comparison.
+// On straight-line arithmetic and a counted loop the SSA backend emits
+// materially less code than the stack machine: measured arith 64.2%, loop 61.5%.
+// Those legs stay a cross-backend comparison.
 //
-// The large mixed program does NOT: measured 140.4% (SSA 22,377 vs stack
-// machine 15,933), and 133.6% at n=25 against 63.2% at n=1. That is a SHAPE
-// MIX effect — genMixedProgram cycles four shapes and the loop /
-// nested-conditional / two-call-combiner ones are where the stack machine's
-// packed 8-byte operand stack (#4111) pays, cutting it from 24,029 to 15,933
-// bytes here while the SSA .text stayed byte-identical at 22,377. So the
-// stack machine now wins that mix, and no cross-backend bound on it would
-// measure the SSA backend rather than the other side's density.
+// They are also both ONE-FUNCTION programs, which is the whole reason the large
+// leg below is pinned differently. A ratio at n=1 is dominated by fixed overhead
+// and does not generalise: the two backends differ by a constant per function,
+// so the same reduce shape measures 52.8% of the stack machine at n=1, 102.2% at
+// n=10 and 139.2% at n=100. Only a slope shows that, which is what
+// TestCodeSizeMarginalPerFunction measures.
 //
-// The large leg is therefore pinned to the SSA backend's own deterministic
-// byte count instead. Both sides come from the in-process assembler, so a
-// tight tolerance cannot flake; widen it only with a re-measurement.
+// The large mixed program is pinned to the SSA backend's own deterministic byte
+// count rather than to a ratio, because a cross-backend bound there would track
+// the stack machine's packed 8-byte operand stack (#4111) as much as anything
+// this backend does. Both sides come from the in-process assembler, so a tight
+// tolerance cannot flake; widen it only with a re-measurement.
 func TestCodeSizeSmallerThanStackMachine(t *testing.T) {
 	// Straight-line and loop code — where register allocation wins clearly.
 	local := map[string]string{
@@ -86,7 +86,7 @@ func TestCodeSizeSmallerThanStackMachine(t *testing.T) {
 	}
 
 	// A large program of many varied functions — the shape a real codebase has.
-	const ssaLargeText = 22377 // measured; deterministic per commit
+	const ssaLargeText = 17761 // measured after #6956; deterministic per commit
 	ssaB, smB := textSizes(t, genMixedProgram(100))
 	if grew := float64(ssaB)/float64(ssaLargeText) - 1; grew > 0.02 {
 		t.Errorf("large program: SSA .text=%d is %.1f%% above the pinned %d — emit-quality regression?",
