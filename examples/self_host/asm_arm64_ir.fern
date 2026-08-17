@@ -6206,6 +6206,18 @@ function peephole_push_pop_arm64(asm: string): string {
                     folded = true;
                 }
             }
+            if (!folded && push_at >= 0 && asm_ir.pp_at(asm, bs, i, "add sp, sp, #16")
+                    && bs + 15 == i && !pp_arm64_marker_reg(asm, src_lo, src_hi)) {
+                // The push is dead: this line discards exactly what it wrote.
+                // `add sp, sp, #16` is what a `drop` lowers to, and the length
+                // check keeps it off any other sp adjustment. Both lines go.
+                // A `str` source is always a register, so unlike the x86-64 twin
+                // there is no memory operand to worry about dropping a load for.
+                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
+                run_start = i + 1;
+                push_at = 0 - 1;
+                folded = true;
+            }
             if (!folded) {
                 push_at = 0 - 1;
                 if (asm_ir.pp_at(asm, bs, i, "str ")) {
@@ -6228,9 +6240,11 @@ function peephole_push_pop_arm64(asm: string): string {
     return strbuf_take();
 }
 
-// pp_arm64_marker_reg reports whether the popped register is one darwinize keys
-// on (x8, its generic-syscall number marker, and x16, the same line after the
-// Mach-O rewrite).
+// pp_arm64_marker_reg reports whether the register is one darwinize keys on
+// (x8, its generic-syscall number marker, and x16, the same line after the
+// Mach-O rewrite). Checked on the popped register when folding a round trip, and
+// on the pushed one when dropping a dead push — either way the line darwinize
+// looks for has to survive.
 function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
     if (hi - lo == 2 && asm[lo] == 120 && asm[lo + 1] == 56) { return true; }
     if (hi - lo == 3 && asm[lo] == 120 && asm[lo + 1] == 49 && asm[lo + 2] == 54) { return true; }
