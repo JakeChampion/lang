@@ -10280,11 +10280,31 @@ func AsmFnName(name string) string { return symname.Fn(name) }
 // one namespace whether it is a function the program defines or a runtime
 // helper this backend provides. A defined function is the mangled symbol; a
 // helper is its own bare name.
+//
+// Membership in g.funcs is the discriminator for every call site EXCEPT an
+// OpCallDirect the lowering marked `Runtime` — see callSym, which the ops that
+// carry that flag must go through instead.
 func (g *generator) sym(target string) string {
 	if _, ok := g.funcs[target]; ok {
 		return AsmFnName(target)
 	}
 	return target
+}
+
+// callSym is sym for an OpCallDirect, which is the one site where the two
+// namespaces genuinely overlap: the lowering calls its own helpers by plain
+// name (`__fern_str_append`, `__memcpy`, …) and a program may define a
+// function called the same thing. `op.Runtime` records which the lowering
+// meant, so neither has to be guessed from the name.
+//
+// `target` is the callee after this backend's own rewrites (the
+// `__method_Map_*` → `__map_*_impl` family). A rewritten target names an
+// emitted helper by construction, so it is never mangled either.
+func (g *generator) callSym(op ir.Op, target string) string {
+	if op.Runtime || target != op.Str {
+		return target
+	}
+	return g.sym(target)
 }
 
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
@@ -12312,7 +12332,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", g.sym(op.Str))
+		g.emit("bl %s", g.callSym(op, op.Str))
 		g.emitCallArgsCleanup(slotCount)
 		if returnIsVoid(g, op.Str) {
 			break
@@ -12354,7 +12374,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// back to the call in functions too large to absorb the inline bloat.
 		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
-			g.emit("bl %s", g.sym(op.Str))
+			g.emit("bl %s", op.Str)
 			g.push()
 			return nil
 		}
@@ -12392,7 +12412,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.usesRcIsUnique = true // keep the helper emitted (RcFreeDebug / large-fn bl)
 		if ast.RcFreeDebug || !g.rcInlineOK {
 			g.pop()
-			g.emit("bl %s", g.sym(op.Str))
+			g.emit("bl %s", op.Str)
 			g.push()
 			return nil
 		}
@@ -13039,7 +13059,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", g.sym(target))
+		g.emit("bl %s", g.callSym(op, target))
 		g.emitCallArgsCleanup(slotCount)
 		// Push return value(s). String-returning user fns return
 		// (data, len) in (x0, x1) under the two-word ABI; push
@@ -13095,7 +13115,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			}
 		}
 		g.emitCallArgsLoad(slotCount)
-		g.emit("bl %s", g.sym(op.Str))
+		g.emit("bl %s", g.callSym(op, op.Str))
 		g.emitCallArgsCleanup(slotCount)
 		g.emit("mov x16, x1") // stash payload (x1 may be clobbered)
 		g.push()              // push x0 (tag)
