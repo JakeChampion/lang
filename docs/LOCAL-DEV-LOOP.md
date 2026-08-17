@@ -233,6 +233,13 @@ to 97 s, while lifting the code buffer out of the struct for the two `.with`
 patch loops moved the cliff not at all and took the same compile to 19 s. Read a
 flat cliff line as "no append regressed", never as "nothing is copying".
 
+**And the bytes are not the cost either — the ELEMENT TYPE is.** A crossing on
+a `string[]` memcpys the buffer *and* inc's every element, and the copy it
+discards dec's every element back. #6911's last 3.07 GB was mostly one such
+queue: 3 GB of memcpy, but 33% of the compile in the rc traffic around it, and
+removing it took 19 s to 9.3 s. Rank by weight, but read the element type before
+estimating what a site is worth.
+
 **Attribute crossings by source instrumentation, not gdb.** Frame #2 resolves to
 `??` above the runtime helpers — they are hand-written asm with no frame pointers
 — so breaking on the counter bump cannot name the Fern caller. What works:

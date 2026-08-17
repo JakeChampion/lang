@@ -10,10 +10,12 @@
 # 188 crossings / 812 bytes on 2026-08-04 and called it noise. By 2026-08-16 it
 # was 77,985 crossings and 21.4 GB — a seven-order-of-magnitude regression that
 # went twelve days unnoticed because nothing measured it outside a human typing
-# an env var (#6911). The numbers below are a CEILING to keep ratcheting down,
-# not a target: 21.4 GB fell to 3.07 GB when the x86 assembler's state parameter
-# became `own` (#6911), and the remaining 3.07 GB is still ~2,170x the emitted
-# binary, so there is more to take.
+# an env var (#6911). The numbers below are a CEILING to keep ratcheting down.
+# 21.4 GB fell to 3.07 GB when the x86 assembler's state parameter became `own`,
+# and 3.07 GB fell to 988 bytes when `fieldPlaceAppendCopies` stopped treating a
+# container handed to a SCALAR-returning call as captured (#6911). That is the
+# healthy state this workload had on 2026-08-04, restored — so a move upward
+# here is a regression, not a ceiling being approached.
 #
 # BYTES ARE THE RANKING KEY. The count is recorded too, but never scope work
 # against it alone — docs/LOCAL-DEV-LOOP.md has two rounds of `own`-conversion
@@ -24,11 +26,15 @@
 #
 # APPENDS ONLY. Both metrics come from `__fern_arr_push`'s un-share path, so a
 # quadratic `.with` (copy-on-write through `__fern_arr_cow_inplace`) is INVISIBLE
-# here — it moves neither number. #6911's two halves make the point: `own` on the
-# assembler state took the bytes down 85.7% and the wall clock not at all, while
-# lifting the buffer out of the struct for the `.with` patch loops moved nothing
-# on this gate and took the compile from 97 s to 19 s. A flat line here is not a
-# statement about copying in general.
+# here — it moves neither number. #6911 makes the point: lifting the buffer out
+# of the struct for the `.with` patch loops moved nothing on this gate and took
+# the compile from 97 s to 19 s. A flat line here is not a statement about
+# copying in general.
+#
+# NOR IS THE BYTE COUNT A COST. The last 3.07 GB was on a `string[]`, so every
+# crossing also inc'd each element and the discarded copy dec'd each one back:
+# 3 GB of memcpy, but ~30% of the compile in rc traffic around it. Weigh the
+# ELEMENT TYPE, not just the weight.
 #
 # EXACT, so the 1% default tolerance is a significance threshold rather than a
 # noise floor: two runs on one commit reproduce these to the digit (verified
@@ -39,5 +45,5 @@
 # and the aarch64 lane does not yet build a self-host compiler for it. An
 # unbaselined arch reports UNBASELINED rather than failing.
 
-x86_64/checker.cliff_bytes	3070832588
-x86_64/checker.cliff_count	36002
+x86_64/checker.cliff_bytes	988
+x86_64/checker.cliff_count	221

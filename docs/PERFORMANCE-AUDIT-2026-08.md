@@ -269,31 +269,44 @@ separate cleanly on this:
 |---|---|---|
 | `own` on the 31 `X86Asm` state params | 21.4 GB → 3.07 GB | 97 s → 97 s |
 | buffer lifted out of the struct for the `.with` patch loops | 3.07 GB → 3.07 GB | 97 s → **19 s** |
+| `bindingHoldsContainer` in `fieldPlaceAppendCopies` | 3.07 GB → **988 B** | 19 s → **9.3 s** |
 
 So a flat cliff line means "no append regressed", never "nothing is copying",
 and the converse holds too: a large cliff number is not by itself evidence of
-where the *time* goes. The 3.07 GB still outstanding is worth roughly 0.4 s of
-the 19 s — real, but no longer the headline it was at 21.4 GB.
+where the *time* goes.
 
-**What the residual 3.07 GB is: a borrow costs the caller its reuse token.**
-All of it is `x86_fixup_or_patch`'s two queue appends, reached once per forward
-branch. The parameter is `own`, so the spread should reuse the struct in place
-— and it does, right up until the function passes `a` to a *borrowing* helper
-(`x86_label_off`). Minimal repro, native compiler, 4-field struct:
+**Nor is the byte count a cost.** The 3.07 GB left after the `own` conversion
+was all `x86_fixup_or_patch`'s two queue appends, one per forward branch — and
+one of those queues is a `string[]`. A crossing there memcpys the buffer AND
+inc's every element, and the discarded copy dec's every element back. 3 GB of
+memcpy, but a leaf profile put `__fern_rc_inc` (100% of it under
+`__fern_arr_push_grow_ptr`) plus `__fern_str_dec` (95% under
+`__fern_drop_arr_str`, all of it under `x86_fixup_or_patch`) at **33% of the
+whole compile**, stable across two runs. Weigh the ELEMENT TYPE, not just the
+weight.
+
+**The cause was `fieldPlaceAppendCopies` (#6665), and it is fixed.** That
+analysis forces a field-receiver append to copy when the container can still be
+read through afterwards. Its `capturing` set marked any bare read of the root
+under a `var` initialiser — without checking that the binding could hold the
+container. `var target: i32 = x86_label_off(a, name)` hands `a` to a call that
+gives back an i32, and an i32 names nothing; the append two lines later cloned
+the queue anyway. Minimal repro, two fields:
 
 ```fern
-function z(own a: T, name: string): T {
-    var t: i32 = look(a, name);          // look(a: T, …) — a plain borrow
-    a = T { ...a, fo: a.fo.append(0) };  // crosses: one full clone of fo
-    a = T { ...a, fnm: a.fnm.append(name) };
+function m(own a: T, v: i32): T {
+    var t: i32 = borrow(a);              // borrow(a: T): i32
+    a = T { ...a, xs: a.xs.append(v) };  // cloned xs, once per call
     return a;
 }
 ```
 
-Delete the `look(a, …)` line and the crossings go to zero; the borrow itself is
-what costs it. This is a native Perceus gap, not a self-host one, so a fix in
-`internal/ir` would pay for every Fern program — but it is a separate change
-from #6911 and is not scoped here.
+`bindingHoldsContainer` now gates the mark on the binding's type — a whitelist
+of the scalars, because a `Map` handle carries a container while
+`ast.IsPointerType` says it does not. On `checker.fern` that took the cliff from
+3.07 GB to **988 bytes** (221 crossings — the healthy 2026-08-04 figure) and the
+compile from 19 s to **9.3 s**, with byte-identical output. It is a native
+Perceus fix, so it pays for every Fern program, not just the self-host.
 
 Attribution: frame #2 resolves to `??` above the runtime helpers (hand-written
 asm, no frame pointers), so gdb cannot name the Fern caller — §4b's instrument
@@ -356,11 +369,21 @@ contradict comments in the tree:
 historical. 8 is where the time is; 5 is the only pre-existing item still
 measuring near its original attribution; 4 is the multi-PR track.
 
-**8 has paid once already and is not finished.** #6911 gave the x86 in-process
-assembler the `own` treatment `arm64_native.fern` got in #6011: a `checker.fern`
-self-host compile went 97 s → 19 s and the append cliff 21.4 GB → 3.07 GB, all
-from one file. The remaining 3.07 GB still copies ~2,170× the emitted binary, so
-the next increment is in the same place — see §4c for how to find it.
+**8 is done for this workload — and it was worth 10x.** #6911 landed in two
+parts: the x86 in-process assembler got the `own` treatment `arm64_native.fern`
+got in #6011 (97 s → 19 s), and `fieldPlaceAppendCopies` stopped treating a
+container handed to a scalar-returning call as captured (19 s → 9.3 s). The
+append cliff on `checker.fern` went 21.4 GB → 988 bytes, output byte-identical
+throughout. §4c has the mechanism and the minimal repro.
+
+**The ranking is stale again — re-profile before picking the next one.** Two
+200-sample runs on the 19 s build (i.e. before the second half landed) put the
+rc/alloc cluster at 33.0% / 33.5% and `__fern_strcmp` at 22.0% / 16.5%; most of
+that rc traffic was the copying item 8 has now removed, so both shares have
+moved. What the same runs showed and item 8 does *not* touch:
+`x86_native__x86_label_idx` at 5.0% / 3.0%, all of it in `strcmp` — the
+assembler's label table is a linear scan, the same shape as item 3's `Scope`
+tables. Item 5 (symbol interning, #4394) remains the best-evidenced open item.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
