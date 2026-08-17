@@ -272,7 +272,28 @@ separate cleanly on this:
 
 So a flat cliff line means "no append regressed", never "nothing is copying",
 and the converse holds too: a large cliff number is not by itself evidence of
-where the *time* goes.
+where the *time* goes. The 3.07 GB still outstanding is worth roughly 0.4 s of
+the 19 s — real, but no longer the headline it was at 21.4 GB.
+
+**What the residual 3.07 GB is: a borrow costs the caller its reuse token.**
+All of it is `x86_fixup_or_patch`'s two queue appends, reached once per forward
+branch. The parameter is `own`, so the spread should reuse the struct in place
+— and it does, right up until the function passes `a` to a *borrowing* helper
+(`x86_label_off`). Minimal repro, native compiler, 4-field struct:
+
+```fern
+function z(own a: T, name: string): T {
+    var t: i32 = look(a, name);          // look(a: T, …) — a plain borrow
+    a = T { ...a, fo: a.fo.append(0) };  // crosses: one full clone of fo
+    a = T { ...a, fnm: a.fnm.append(name) };
+    return a;
+}
+```
+
+Delete the `look(a, …)` line and the crossings go to zero; the borrow itself is
+what costs it. This is a native Perceus gap, not a self-host one, so a fix in
+`internal/ir` would pay for every Fern program — but it is a separate change
+from #6911 and is not scoped here.
 
 Attribution: frame #2 resolves to `??` above the runtime helpers (hand-written
 asm, no frame pointers), so gdb cannot name the Fern caller — §4b's instrument
