@@ -62,20 +62,22 @@ func emitAsm(t *testing.T, src string) string {
 	return asm
 }
 
-// TestCalleeSavedCoverage is the safety net calleeSavedUsed's comment points at.
+// TestCalleeSavedCoverage checks the saved set from outside the emitter.
 //
-// calleeSavedUsed decides the saved set by walking the register-bearing fields
-// of the Program. That enumeration is closed against the emitter as it stands,
-// but it is a list, and a list can fall behind: a new Inst field holding a
-// register, or a line helper reaching for one, would silently drop a save and
-// hand the caller back a clobbered register. Nothing about that shows up as a
-// failing compile — it is a wrong answer in whatever ran next.
+// calleeSavedIn scans the text the emitter just produced, which is complete by
+// construction — but only for the pass that produced it. This asserts the
+// property on the FINISHED function instead: for every function, each
+// callee-saved register mentioned anywhere in the body must be one the prologue
+// saved. So it catches a probe pass that drifts out of step with the real one
+// (a helper emitting a register only on the second pass, or a save whose slot
+// or ordering is wrong), which the scan alone cannot see.
 //
-// So this re-derives the answer from the other end: the EMITTED TEXT. For every
-// function, each callee-saved register mentioned anywhere in the body must be
-// one the prologue saved. That is deliberately stricter than the ABI (a pure
-// read needs no save), which is the right direction — it fails loudly on drift
-// rather than quietly on a clobber.
+// It matters because the failure is silent. Dropping a save does not break the
+// compile; it returns a clobbered register to the caller and surfaces as a wrong
+// answer somewhere unrelated.
+//
+// Deliberately stricter than the ABI — a register the function only reads still
+// has to be saved here. That direction fails loudly rather than quietly.
 func TestCalleeSavedCoverage(t *testing.T) {
 	srcs := map[string]string{
 		"leaf":        `function f(a: i32): i32 { return a + 1; } function main(): i32 { return f(7); }`,
@@ -100,12 +102,10 @@ func TestCalleeSavedCoverage(t *testing.T) {
 			inPrologue := false
 			checked := 0
 
-			finish := func() {}
 			for _, line := range strings.Split(asm, "\n") {
 				trimmed := strings.TrimSpace(line)
 				// A function label: `fn_<name>:` at column 0.
 				if strings.HasPrefix(line, "fn_") && strings.HasSuffix(trimmed, ":") {
-					finish()
 					fn = strings.TrimSuffix(trimmed, ":")
 					savedSet = map[string]bool{}
 					inPrologue = true
