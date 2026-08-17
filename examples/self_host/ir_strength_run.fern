@@ -349,6 +349,14 @@ function main(): i32 {
                             ir.op_drop(), ir.op_load_local(1)];
     out = out + "kp_heap_slice_kept: " + render(ir.const_propagate(kp_heap)) + "\n";
 
+    // 14e-ii. The loop's body scan is the other half of that model, so a frame write
+    //         inside a body ends the binding for the whole loop — including the load
+    //         that PRECEDES it, which the back-edge reaches after the write.
+    var kp_view_loop: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_loop(0),
+                                 ir.op_load_local(1), ir.op_drop(), ir.op_str_slice_frame(1),
+                                 ir.op_drop(), ir.op_end(), ir.op_load_local(1)];
+    out = out + "kp_frame_write_in_loop: " + render(ir.const_propagate(kp_view_loop)) + "\n";
+
     // 14f. Idempotent: the second walk has no load left to rewrite. A merge rule
     //      that kept growing its own output would loop inside optimize_ops.
     var kp_once: ir.Op[] = ir.const_propagate(kp_deep);
