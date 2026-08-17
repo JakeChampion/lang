@@ -3689,6 +3689,18 @@ pub function is_builtin_pattern(name: string): boolean {
         || name == "true" || name == "false";
 }
 
+// is_builtin_variant_pattern answers the question the match lowering actually
+// has: does this arm name a BUILT-IN variant, or a user enum's variant that
+// merely shares the name? A user enum may declare `Ok` / `Some` / `Err` /
+// `None`, and the name alone cannot tell them apart. The parser desugars each
+// user variant into a struct carrying `enum_owner` while the builtins are not
+// declared structs, so ownership separates them — the same test the qualified
+// `E.Ok` path already relies on.
+pub function is_builtin_variant_pattern(structs: parser.StructDecl[], name: string): boolean {
+    if (!is_builtin_pattern(name)) { return false; }
+    return variant_enum_owner(structs, name) == "";
+}
+
 pub function decl_field_count(structs: parser.StructDecl[], struct_name: string): i32 {
     var i: i32 = 0;
     while (i < structs.len()) {
@@ -19235,7 +19247,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
         }
         match (arm.pattern) {
             parser.PatVariant(pv) => {
-                if (is_builtin_pattern(pv.type_name)) {
+                if (is_builtin_variant_pattern(ms.structs, pv.type_name)) {
                     // A `true`/`false` boolean pattern: the scrutinee is
                     // already a 0/1 value in scrut_slot (no tag to extract),
                     // so the arm tests it directly — skip on mismatch, run the
@@ -38907,10 +38919,13 @@ function inarm_reuse_match_ok(arms: parser.MatchArm[], enum_name: string, want: 
         if (arm.has_guard) { return false; }
         match (arm.pattern) {
             parser.PatVariant(pv) => {
-                // No qualified names / builtin patterns in this slice.
+                // No qualified names in this slice. Builtins need no separate
+                // rejection: they own no enum, and `enum_name` is non-empty at
+                // every call, so the ownership test below already excludes them
+                // — while letting a user enum that happens to name a variant
+                // `Ok` / `Some` keep the reuse.
                 var vld: i32 = 0;
                 while (vld < pv.type_name.len()) { if (pv.type_name[vld] == 46) { return false; } vld = vld + 1; }
-                if (is_builtin_pattern(pv.type_name)) { return false; }
                 if (variant_enum_owner(structs, pv.type_name) != enum_name) { return false; }
                 if (!enum_variant_reuse_payload_ok(structs, pv.type_name)) { return false; }
                 // The matched variant's SCALAR payload fields are read into temps at
