@@ -311,32 +311,37 @@ forms cannot both claim one name.
   unchanged), `scale_f64(arr, k)` (scalar multiply), `add_f64(a, b)`
   (element-wise sum, runs to the shorter length).
 
-- **generic `[T]` combinators** (free + method forms, so pipelines read
+- **generic `[T]` combinators, free + method form** (so pipelines read
   left-to-right — `xs.map(f).filter(g)`): `is_empty`, `first`/`last`
   (→ `Option[T]`, `None` when empty), `get(i)` (bounds-checked →
   `Option[T]`, negative index → `None`), `map`, `filter`, `fold`, `reduce`,
-  `any`, `all`, `none` (complement of `any`), `find`, `find_map`
-  (first `Some` of a projection returning `Option[U]`), `position` (index of
-  the first element satisfying a PREDICATE — the value-driven form is
-  `first_index_of`), `find_last`, `rposition`, `count_where` (tally matching
-  a predicate), `sum_by` (sum of an i32 projection over any element type),
-  `max_index`/`min_index` (index of the extremal element by `Ord` →
-  `Option[i32]`), `take_while`/`drop_while`, `take_last`/`drop_last`,
-  `slice`, `chunks`, `chunks_exact`, `windows`, `zip`, `enumerate`,
-  `concat`, `rotate_left`/`rotate_right` (cyclic shift by n mod len;
-  negative n rotates the other way), `step_by`, `intersperse`, `flat_map`,
-  `flatten` (`T[][]` → `T[]`), `partition` (→ `(kept, rejected)`), `scan`
-  (running left fold, same length as input), `max_by_i32_key`/
-  `min_by_i32_key` (extremum by an i32 projection), `max_by`/`min_by`
-  (extremum under a `sort_by`-style comparator; first on a tie, `None` when
-  empty), `sort_by`.
+  `any`, `all`, `none` (complement of `any`), `find`, `find_last`,
+  `position` (index of the first element satisfying a PREDICATE — the
+  value-driven form is `first_index_of`), `rposition`, `count_where` (tally
+  matching a predicate), `sum_by` (sum of an i32 projection over any element
+  type), `enumerate`, `concat`, `chunks`, `chunks_exact`, `windows`, `zip`,
+  `flat_map`, `partition` (→ `(kept, rejected)`), `scan` (running left fold,
+  same length as input), `intersperse`, `step_by`, `rotate_left`/
+  `rotate_right` (cyclic shift by n mod len; negative n rotates the other
+  way), `max_by`/`min_by` (extremum under a `sort_by`-style comparator;
+  first on a tie, `None` when empty), `sort_by`.
   Eq/Ord-bounded: `contains`, `index_of`, `index_of_last`, `dedup`
   (collapse consecutive runs — single-pass complement of `distinct`),
   `binary_search` (O(log n) → `Option[i32]` over an ascending-sorted array),
   `all_equal` (≤ 1 distinct value), `is_sorted`, `equal`,
-  `starts_with`/`ends_with`, `union`/`intersection`/`difference`. Every
-  Eq-bounded verb compares through the bound's `eq` method, so a
-  `@derive(Eq)` struct or enum element works as well as a primitive one.
+  `starts_with`/`ends_with`. Every Eq-bounded verb compares through the
+  bound's `eq` method, so a `@derive(Eq)` struct or enum element works as
+  well as a primitive one.
+
+- **generic `[T]`, FREE FUNCTION ONLY** — no `xs.verb()` form, call as
+  `array.verb(xs, …)`: `find_map` (first `Some` of a projection returning
+  `Option[U]`), `find_indices`, `take_while`/`drop_while`,
+  `take_last`/`drop_last`, `slice`, `max_by_i32_key`/`min_by_i32_key`
+  (extremum by an i32 projection), `running_max`/`running_min`, and the
+  Eq-bounded set algebra `union`/`intersection`/`difference`. `flatten`
+  (`T[][]` → `T[]`) is free-only structurally: an array-receiver method must
+  be element-polymorphic `(xs: T[])`, and a nested-array receiver is
+  rejected by E021.
 
 ### `std/unicode`
 
