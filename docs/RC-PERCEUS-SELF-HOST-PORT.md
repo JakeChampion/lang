@@ -7758,3 +7758,47 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   outside it.
 
   Refs #6544 #4451.
+- 2026-08-17 (later still): **First drop site landed on the fresh-or-RECEIVER
+  route — `.len()` receiver, string-returning methods (#6544).** The previous
+  entry named two options; this takes the cheap one and it works.
+
+  `str_fresh_ret_fns_of` now also emits `SFRRECV:<Recv>.<method>` for a
+  string-shaped METHOD whose every return is fresh OR the bare receiver ident
+  (`body_has_nonfreshrecv_str_return`, which is `body_has_nonfresh_str_return`
+  widened by exactly that one shape). At a `.len()` receiver the lowering keeps
+  the result in a scratch, reads the length into a second scratch, and frees the
+  result ONLY when its pointer differs from the receiver's slot. A fresh box is
+  never the receiver's pointer and an identity return always is, so the compare
+  decides at runtime what no static analysis could — and **no return-transfer
+  inc is involved**, which is what keeps it clear of the whole-surface pairing
+  that inc would demand.
+
+  `"long-enough-payload-" + (i % 8).to_string()` then `.tails(4).len()`, 50/100
+  rounds, x86-64: **2504/4848 → 152/48 bytes**, against native's 64/0. The
+  identity control (`.tails(0).len()` with the receiver read afterwards) stays
+  flat and `__rc_underflow()` stays 0.
+
+  **Scope, and the next site.** This closes the row for a method declared
+  `: string`. The conformance case's own `tail` and std/string's `drop` are
+  declared `: str`, and `expr_is_str` keys `str_ret_fns_of` on
+  `ret_type == "string"` only — so a `str`-returning method never reaches this
+  arm at all (`str_recv` is false and the read falls through to the array-length
+  path). Admitting `str` there changes method-call TYPE dispatch across the
+  compiler, so it is its own slice with its own measurement, not a widening to
+  fold in here.
+
+  **A harness fact worth keeping.** Heap flatness is asserted on the x86-64 leg
+  only. The wasm leg of these tests runs the WAT driver (`wasm_ir_run`), and
+  every wasm sibling in the package asserts the over-release detector rather
+  than heap growth — the driver pipeline is not the instrument for leaks.
+  Flatness on wasm was confirmed separately through the CLI
+  (`-target wasm32-wasi`): under 128 bytes across 5000 rounds, and identical
+  with the change reverted, so the wasm reclaim is real. Checking that before
+  relaxing the assertion is what distinguished "the instrument is wrong here"
+  from "the change does not work on wasm".
+
+  VERIFIED: new `TestSelfHostFreshRecvLenReclaim{X86_64,Wasm}` — the
+  `freshrecv-len-leak-flat` case FAILS on the parent commit; `identity-alias-safe`
+  and `alternating` (both paths chosen per iteration by a runtime compare) are
+  the over-release controls on both legs. Plus the str / rc / fixpoint /
+  bootstrap subset of `internal/e2eselfhost`. Refs #6544 #4451.
