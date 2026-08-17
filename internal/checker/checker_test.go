@@ -3202,10 +3202,8 @@ func TestStructFieldSubPatternChecks(t *testing.T) {
 		"variant field covering every variant plus a fallback": `function f(w: W): i32 {
   match (w) { W { e: A(v), n } => { return v + n; }, W { e: B(), n } => { return n; } }
 }`,
-		// The fallback is spelled as a SIBLING struct arm, not `_`. A struct
-		// has one shape, so the merged arm matches every value and a trailing
-		// `_` is unreachable (E026) — see TestStructFieldSubPatternFallbackGap
-		// for the interaction that still needs resolving.
+		// A sibling struct arm is a fallback too, not just `_`
+		// (TestStructFieldSubPatternAcceptsWildcardFallback covers that one).
 		"sub-pattern binds in the arm scope": `function f(w: W): i32 {
   match (w) { W { e: A(v), n } => { return v + n; }, W { e, n } => { return n; } }
 }`,
@@ -3222,28 +3220,41 @@ func TestStructFieldSubPatternChecks(t *testing.T) {
 	}
 }
 
-// PINS AN UNRESOLVED INTERACTION, not desired behaviour. With a refutable
-// field sub-pattern, a trailing `_` is the natural catch-all — but a struct
-// has one shape, so the merged arm matches every value and E026 calls the `_`
-// unreachable, while dropping it makes the inner match non-exhaustive (E030).
-// Only a sibling struct arm works today. Payload nesting does not hit this
-// because a `_` there still covers the enum's other variants.
-//
-// The fix belongs in reachability: a merged arm whose inner match can fall
-// through does not match every value. Written as an assertion so it fails the
-// moment that lands, rather than sitting as a comment nobody re-reads.
-func TestStructFieldSubPatternFallbackGap(t *testing.T) {
-	const src = `enum E { A(i32), B }
-struct W { e: E, n: i32 }
-function f(w: W): i32 {
+// A trailing `_` is the natural catch-all for a refutable field sub-pattern,
+// and it must be accepted. It is dead by construction — a struct has one
+// shape, so the merged arm matches every value — but only because the desugar
+// COPIED its body into the merged arm's inner match, which is what makes that
+// match total. Reporting it unreachable would leave no way to spell the
+// fallback at all: without the `_` the inner match is non-exhaustive (E030),
+// with it the arm was E026. ast.MatchArm.FallConsumed marks the copy so
+// reachability can tell the two apart.
+func TestStructFieldSubPatternAcceptsWildcardFallback(t *testing.T) {
+	const decls = "enum E { A(i32), B }\nstruct W { e: E, n: i32 }\nstruct P { x: i32, y: i32 }\n"
+	for name, body := range map[string]string{
+		"statement form": `function f(w: W): i32 {
   match (w) { W { e: A(v), n } => { return v + n; }, _ => { return 0; } }
-}`
-	err := checkSource(t, src)
+}`,
+		"expression form": `function f(p: P): i32 {
+  return match (p) { P { x: 0, y } => y, _ => 0 };
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("the `_` fallback should be accepted, got: %v", err)
+			}
+		})
+	}
+
+	// The suppression is narrow: a `_` after an ordinary irrefutable struct
+	// arm is still unreachable, because no desugar copied its body anywhere.
+	err := checkSource(t, decls+`function f(p: P): i32 {
+  match (p) { P { x, y } => { return x + y; }, _ => { return 0; } }
+}`)
 	if err == nil {
-		t.Fatal("E026 no longer fires — the fallback gap is fixed; delete this test and accept `_` in TestStructFieldSubPatternChecks")
+		t.Fatal("want E026 for a `_` after a plain irrefutable struct arm, got none")
 	}
 	if code := firstErrCode(err); code != "E026" {
-		t.Errorf("code = %q, want E026 (the pinned gap): %v", code, err)
+		t.Errorf("code = %q, want E026: %v", code, err)
 	}
 }
 

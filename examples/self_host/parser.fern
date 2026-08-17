@@ -3096,7 +3096,14 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 // desugars at parse time, like build_tuple_match, into the `done`-flag chain
 // with per-field `var bind = tmp.field;` binds — no checker/irlower changes:
 // the field reads + ifs lower through the ordinary paths.
-struct StructArm { is_wild: boolean, binds: string[], fields: string[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+// field_kinds / field_lits / field_pats run parallel to binds / fields and
+// carry a field SUB-PATTERN (`P { x: 0, y }`), using the same encoding TupArm
+// uses for tuple elements: 0 = plain binder or rename, 2 = literal (tested as
+// a condition, because the IR lowers a literal match only through the
+// parse-time literal desugar), 3 = variant sub-pattern (the arm's matched path
+// nests inside a match on the field). A slot carrying a sub-pattern binds
+// nothing itself — its pattern introduces the bindings.
+struct StructArm { is_wild: boolean, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields) or
 // `S { x: a, y: b }` (renamed: field `x` bound to local `a`); a trailing
@@ -3104,9 +3111,12 @@ struct StructArm { is_wild: boolean, binds: string[], fields: string[], at_bindi
 // parallel binding + field name lists (fields[i] is the projected field,
 // binds[i] the local it binds). The struct name is not retained — the
 // scrutinee's type drives field resolution at lowering.
-function parse_struct_arm_pattern(p: Par): (string[], string[], boolean, Par) {
+function parse_struct_arm_pattern(p: Par): (string[], string[], i32[], Expr[], Pattern[], boolean, Par) {
     var binds: string[] = [];
     var fields: string[] = [];
+    var kinds: i32[] = [];
+    var lits: Expr[] = [];
+    var pats: Pattern[] = [];
     var ok: boolean = true;
     if (p.peek_ident().len() > 0) { p = p.advance(); } // struct name
     if (p.peek_punct() == "{") { p = p.advance(); }
@@ -3124,18 +3134,54 @@ function parse_struct_arm_pattern(p: Par): (string[], string[], boolean, Par) {
         }
         p = p.advance();
         var bind: string = fld;
+        var fkind: i32 = 0;
+        var flit: Expr = e_bool(true);
+        var fpat: Pattern = p_wildcard();
         if (p.peek_punct() == ":") {
             p = p.advance();
-            var lc: string = p.peek_ident();
-            if (lc.len() > 0) { p = p.advance(); }
-            bind = lc;
+            // `field: <x>` is a rename when x is a plain local — an ident
+            // followed by `,` or `}` — and a SUB-PATTERN otherwise. The same
+            // line the native parser draws, so the two agree on what recurses.
+            if (p.peek_is_pat_literal()) {
+                var (le_expr, le_p) = parse_expr(p);
+                p = le_p;
+                fkind = 2;
+                flit = le_expr;
+                bind = "";
+            } else if (struct_field_variant_start(p)) {
+                var (fp, fpp) = parse_pattern(p);
+                p = fpp;
+                fkind = 3;
+                fpat = fp;
+                bind = "";
+            } else {
+                var lc: string = p.peek_ident();
+                if (lc.len() > 0) { p = p.advance(); }
+                bind = lc;
+            }
         }
         binds = binds.append(bind);
         fields = fields.append(fld);
+        kinds = kinds.append(fkind);
+        lits = lits.append(flit);
+        pats = pats.append(fpat);
         if (p.peek_punct() == ",") { p = p.advance(); }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (binds, fields, ok, p);
+    return (binds, fields, kinds, lits, pats, ok, p);
+}
+
+// struct_field_variant_start reports whether the cursor (just past a
+// `field:`) opens a VARIANT sub-pattern rather than naming a rename local. A
+// rename is a bare ident followed by `,` or `}`, so `(` (payload list, empty
+// for a payload-less variant) and `.` (a `mod.` qualifier) both say variant.
+function struct_field_variant_start(p: Par): boolean {
+    var n: string = p.peek_ident();
+    if (n.len() > 0 && n != "_") {
+        var nx: string = p.peek_punct_at(1);
+        if (nx == "(" || nx == ".") { return true; }
+    }
+    return false;
 }
 
 function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: i32): Stmt {
@@ -3160,6 +3206,17 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
             ai = ai + 1;
             continue;
         }
+        // A LITERAL field is an equality test folded into the arm condition —
+        // the same treatment a literal tuple element gets, and the reason it
+        // is not a nested match: the IR lowers a literal match only through
+        // the parse-time literal desugar, not from a raw match node.
+        var lk: i32 = 0;
+        while (lk < a.field_kinds.len()) {
+            if (a.field_kinds[lk] == 2) {
+                cond = e_binary("&&", cond, e_binary("==", e_field_access_at(e_ident(tmp), a.fields[lk], a.line, a.col), a.field_lits[lk]));
+            }
+            lk = lk + 1;
+        }
         var binds: Stmt[] = [];
         // `@` binding: bind the whole matched struct (the cached scrutinee
         // `tmp`) to the at-name, in scope for the guard + body.
@@ -3168,7 +3225,11 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
         }
         var bk: i32 = 0;
         while (bk < a.binds.len()) {
-            binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+            // A field carrying a sub-pattern binds nothing itself — the
+            // wrap below matches it and its pattern introduces the bindings.
+            if (a.binds[bk].len() > 0) {
+                binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+            }
             bk = bk + 1;
         }
         if (a.has_guard) {
@@ -3186,10 +3247,42 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
             var ab: i32 = 0;
             while (ab < a.body.len()) { inner = inner.append(a.body[ab]); ab = ab + 1; }
         }
+        // A field sub-pattern (`P { x: 0, y }`) tests the field and binds
+        // whatever its pattern binds — which is what a match arm already
+        // does, so the arm's whole matched path nests inside one match per
+        // such field (innermost = last field). The `done` flag is set inside,
+        // so a failing field falls through to the next arm.
+        inner = wrap_struct_fields(inner, a, tmp);
         outer = outer.append(s_if(cond, inner, []));
         ai = ai + 1;
     }
     return s_if(e_bool(true), outer, []);
+}
+
+// wrap_struct_fields nests the arm's matched path inside a match on each
+// field that carries a sub-pattern, innermost field last.
+function wrap_struct_fields(path: Stmt[], a: StructArm, tmp: string): Stmt[] {
+    var cur: Stmt[] = path;
+    var wi: i32 = a.field_kinds.len() - 1;
+    while (wi >= 0) {
+        if (a.field_kinds[wi] == 3) {
+            var mk_arms: MatchArm[] = [];
+            mk_arms = mk_arms.append(MatchArm { pattern: a.field_pats[wi], body: cur, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+            var mk_skip: Stmt[] = [];
+            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+            // Match on an IDENT holding the field, not on the field access
+            // itself: the scrutinee is read once, and the IR lowers a match on
+            // a local where a match on a field expression bails to the AST
+            // emitter (which no longer exists).
+            var fv: string = tmp + "_f" + util.i32_to_string(wi);
+            var mk_wrap: Stmt[] = [];
+            mk_wrap = mk_wrap.append(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col));
+            mk_wrap = mk_wrap.append(s_match_at(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col));
+            cur = mk_wrap;
+        }
+        wi = wi - 1;
+    }
+    return cur;
 }
 
 // is_struct_pattern_arm reports whether the arm the cursor sits on destructures
@@ -3220,6 +3313,9 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
         var s_wild: boolean = false;
         var s_binds: string[] = [];
         var s_fields: string[] = [];
+        var s_field_kinds: i32[] = [];
+        var s_field_lits: Expr[] = [];
+        var s_field_pats: Pattern[] = [];
         var s_at: string = "";
         // Optional `name @` prefix: bind the whole matched struct to `name`
         // while destructuring its fields (`w @ Point { x, y }`).
@@ -3232,10 +3328,13 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             p = p.advance();
             s_wild = true;
         } else {
-            var (spb, spf, spok, spp) = parse_struct_arm_pattern(p);
+            var (spb, spf, spkinds, splits, sppats, spok, spp) = parse_struct_arm_pattern(p);
             p = spp;
             s_binds = spb;
             s_fields = spf;
+            s_field_kinds = spkinds;
+            s_field_lits = splits;
+            s_field_pats = sppats;
             if (!spok) { all_ok = false; }
         }
         var s_guard: Expr = e_bool(true);
@@ -3268,7 +3367,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             sbody = sblk_body;
         }
         if (first) { rt = sbrt; first = false; }
-        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -3617,7 +3716,7 @@ function parse_match_expr(p: Par): IfChain {
         var smvi: i32 = 0;
         while (smvi < smarms.len()) {
             var smva: StructArm = smarms[smvi];
-            smvarms = smvarms.append(StructArm { is_wild: smva.is_wild, binds: smva.binds, fields: smva.fields, at_binding: smva.at_binding, guard: smva.guard, has_guard: smva.has_guard, body: value_arm_body(smva.body, smval), line: smva.line, col: smva.col });
+            smvarms = smvarms.append(StructArm { is_wild: smva.is_wild, binds: smva.binds, fields: smva.fields, field_kinds: smva.field_kinds, field_lits: smva.field_lits, field_pats: smva.field_pats, at_binding: smva.at_binding, guard: smva.guard, has_guard: smva.has_guard, body: value_arm_body(smva.body, smval), line: smva.line, col: smva.col });
             smvi = smvi + 1;
         }
         return IfChain { par: p, stmt: build_struct_match(sr_expr, smvarms, mkline, mkcol), rt: smrt, needs_default_return: false, value_local: smval };
@@ -5088,7 +5187,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     p = p.advance();
                     p = p.advance();
                 }
-                var (ils_binds, ils_fields, ils_ok, ils_pp) = parse_struct_arm_pattern(p);
+                var (ils_binds, ils_fields, ils_field_kinds, ils_field_lits, ils_field_pats, ils_ok, ils_pp) = parse_struct_arm_pattern(p);
                 p = ils_pp;
                 if (!ils_ok) { return (s_unknown("a struct pattern binds field names"), p); }
                 if (p.peek_punct() == "=") { p = p.advance(); }
@@ -5105,10 +5204,13 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     ils_else = ils_eb;
                 }
                 var ils_arms: StructArm[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: false, binds: ils_binds, fields: ils_fields, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: false, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
                 var ils_nb: string[] = [];
+                var ils_no_pats: Pattern[] = [];
+                var ils_no_kinds: i32[] = [];
+                var ils_no_lits: Expr[] = [];
                 var ils_nf: string[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: true, binds: ils_nb, fields: ils_nf, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: true, binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
                 return (build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), p);
             }
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);

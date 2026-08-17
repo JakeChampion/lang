@@ -2808,6 +2808,15 @@ type MatchArm struct {
 	// rule to it — a merged sibling reaches the checker as a wildcard, not
 	// as a payload binding. Inert everywhere else.
 	SlotBinderName string
+	// FallConsumed marks a trailing unguarded `_` arm whose body the
+	// nested-pattern desugar also COPIED into a preceding merged arm's
+	// inner match, as that match's wildcard. When the merged arm's own
+	// pattern covers every value — a struct pattern always does, a struct
+	// having one shape — this arm is then dead by construction of the
+	// desugar rather than by anything the programmer wrote, so the
+	// reachability check must not call it unreachable. It still counts
+	// for exhaustiveness: the copy is what makes the inner match total.
+	FallConsumed bool
 	Body           *Block
 }
 
@@ -2863,6 +2872,15 @@ type MatchExprArm struct {
 	// rule to it — a merged sibling reaches the checker as a wildcard, not
 	// as a payload binding. Inert everywhere else.
 	SlotBinderName string
+	// FallConsumed marks a trailing unguarded `_` arm whose body the
+	// nested-pattern desugar also COPIED into a preceding merged arm's
+	// inner match, as that match's wildcard. When the merged arm's own
+	// pattern covers every value — a struct pattern always does, a struct
+	// having one shape — this arm is then dead by construction of the
+	// desugar rather than by anything the programmer wrote, so the
+	// reachability check must not call it unreachable. It still counts
+	// for exhaustiveness: the copy is what makes the inner match total.
+	FallConsumed bool
 	Body           Expr
 }
 

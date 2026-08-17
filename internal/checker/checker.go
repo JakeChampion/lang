@@ -10371,7 +10371,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 	sawIrrefutable := false
 	for i, arm := range n.Arms {
-		if sawIrrefutable && !syntheticElseArm(n, i) {
+		if sawIrrefutable && !syntheticElseArm(n, i) && !arm.FallConsumed {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -10450,7 +10450,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 	}
 	sawIrrefutable := false
 	for i, arm := range n.Arms {
-		if sawIrrefutable && !syntheticElseArm(n, i) {
+		if sawIrrefutable && !syntheticElseArm(n, i) && !arm.FallConsumed {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -10677,7 +10677,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
 	for _, arm := range n.Arms {
-		if sawIrrefutable {
+		if sawIrrefutable && !arm.FallConsumed {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -10775,7 +10775,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		}
 	}
 	for _, arm := range n.Arms {
-		if sawIrrefutable {
+		if sawIrrefutable && !arm.FallConsumed {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {

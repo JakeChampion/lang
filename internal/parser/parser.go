@@ -3837,6 +3837,7 @@ func (p *parser) desugarNestedStmtArms(raw []stmtRawArm) ([]*ast.MatchArm, error
 		fall = raw[n-1].body
 	}
 	var out []*ast.MatchArm
+	anyMerged := false
 	i := 0
 	for i < len(raw) {
 		a := raw[i]
@@ -3875,7 +3876,16 @@ func (p *parser) desugarNestedStmtArms(raw []stmtRawArm) ([]*ast.MatchArm, error
 			return nil, err
 		}
 		out = append(out, merged)
+		anyMerged = true
 		i = j
+	}
+	// The trailing `_` body now also lives inside each merged arm's inner
+	// match. Flag it so reachability does not call it unreachable when a
+	// merged arm's own pattern covers every value — see ast.FallConsumed.
+	if anyMerged && fall != nil && len(out) > 0 {
+		if last := out[len(out)-1]; last.IsWildcard && last.Guard == nil {
+			last.FallConsumed = true
+		}
 	}
 	return out, nil
 }
@@ -4621,6 +4631,7 @@ func (p *parser) desugarNestedExprArms(raw []exprRawArm) ([]*ast.MatchExprArm, e
 		fall = raw[n-1].body
 	}
 	var out []*ast.MatchExprArm
+	anyMerged := false
 	i := 0
 	for i < len(raw) {
 		a := raw[i]
@@ -4659,7 +4670,15 @@ func (p *parser) desugarNestedExprArms(raw []exprRawArm) ([]*ast.MatchExprArm, e
 			return nil, err
 		}
 		out = append(out, merged)
+		anyMerged = true
 		i = j
+	}
+	// See desugarNestedStmtArms: the trailing `_` value now also lives inside
+	// each merged arm's inner match.
+	if anyMerged && fall != nil && len(out) > 0 {
+		if last := out[len(out)-1]; last.IsWildcard && last.Guard == nil {
+			last.FallConsumed = true
+		}
 	}
 	return out, nil
 }

@@ -1,0 +1,128 @@
+// A SUB-PATTERN in a struct-pattern FIELD: `P { x: 0, y }`.
+//
+// A named field could bind a local of the same name (`P { x }`) or rename one
+// (`P { x: nx }`); it can now also carry a pattern matched against the field's
+// value. `field: local` still reads as a rename — only an unambiguous pattern
+// recurses, the same line a payload slot draws.
+//
+// On native this is the payload-slot mechanism reused: the field binds a
+// synthetic temp and the arm's body nests inside a match on it, exactly as
+// `Some(Ok(n))` already did, so exhaustiveness falls out — a refutable field
+// makes the inner match non-exhaustive. The merged arm keeps NamedFields and
+// FieldNames so it still projects by field rather than positionally.
+//
+// The self-host reaches the same place from the other side: its struct match
+// is a done-flag chain built at parse time, so a LITERAL field folds into the
+// arm's condition (the IR lowers a literal match only through the parse-time
+// literal desugar, never from a raw match node) and a VARIANT field nests the
+// arm's matched path inside a match on the field — the same split the tuple
+// element kinds use.
+
+import "std/i32";
+
+enum E { A(i32), B, C(i32, i32) }
+
+struct P { x: i32, y: i32 }
+struct W { e: E, n: i32 }
+struct S { tag: string, n: i32 }
+
+// The headline: a literal field beside a plain binder field, with an
+// irrefutable sibling arm as the fallback.
+function lit(p: P): i32 {
+    match (p) {
+        P { x: 0, y } => { return 100 + y; },
+        P { x, y } => { return x + y; },
+    }
+}
+
+// A variant field: the tag is tested and the payloads bind, under the same
+// rules an arm-position `A(v) => …` follows.
+function variant(w: W): i32 {
+    match (w) {
+        W { e: A(v), n } => { return v + n; },
+        W { e: B(), n } => { return 200 + n; },
+        W { e: C(q, r), n } => { return q * r + n; },
+    }
+}
+
+// A refutable field with a trailing `_` fallback. The `_` is dead by
+// construction — a struct has one shape, so the merged arm matches every
+// value — but only because the desugar copied its body into that arm's inner
+// match, which is what makes the match total. Reporting it unreachable would
+// leave the fallback unspellable.
+function fallback(w: W): i32 {
+    match (w) {
+        W { e: A(v), n } => { return v + n; },
+        _ => { return 0 - 1; },
+    }
+}
+
+// A string literal field, so the comparison settles the way a literal match
+// does (OpStrEq, and the two-word string ABI where it applies).
+function tagged(s: S): i32 {
+    match (s) {
+        S { tag: "go", n } => { return 10 + n; },
+        S { tag: "stop", n } => { return 20 + n; },
+        S { tag, n } => { return n; },
+    }
+}
+
+// Successive arms testing the SAME field, so the merged group has to keep
+// each arm's own inner pattern rather than collapsing them.
+function both(p: P): i32 {
+    match (p) {
+        P { x: 1, y } => { return 100 + y; },
+        P { x: 2, y } => { return 200 + y; },
+        P { x, y } => { return x + y; },
+    }
+}
+
+// A rename still binds, beside a sub-pattern field.
+function renamed(w: W): i32 {
+    match (w) {
+        W { e: A(v), n: count } => { return v * count; },
+        W { e, n: count } => { return count; },
+    }
+}
+
+// A guard sees the field sub-pattern's OWN bindings. It cannot yet see a
+// sibling plain field (`when v > n`): the desugar rebinds those inside the
+// arm body, after the guard runs. That is pre-existing — a payload slot's
+// guard cannot see a sibling slot either (`Wrap(Ok2(n), m) when n > m`) — and
+// is not specific to fields, so it is left to its own fix rather than worked
+// around here.
+function guarded(w: W): i32 {
+    match (w) {
+        W { e: A(v), n } when v > 5 => { return v; },
+        W { e: A(v), n } => { return n; },
+        _ => { return 0; },
+    }
+}
+
+function main(): i32 {
+    print(lit(P { x: 0, y: 5 }).to_string());
+    print(lit(P { x: 3, y: 4 }).to_string());
+
+    print(variant(W { e: E.A(7), n: 1 }).to_string());
+    print(variant(W { e: E.B, n: 1 }).to_string());
+    print(variant(W { e: E.C(3, 4), n: 1 }).to_string());
+
+    print(fallback(W { e: E.A(5), n: 2 }).to_string());
+    print(fallback(W { e: E.B, n: 2 }).to_string());
+
+    print(tagged(S { tag: "go", n: 1 }).to_string());
+    print(tagged(S { tag: "stop", n: 1 }).to_string());
+    print(tagged(S { tag: "other", n: 7 }).to_string());
+
+    print(both(P { x: 1, y: 9 }).to_string());
+    print(both(P { x: 2, y: 9 }).to_string());
+    print(both(P { x: 5, y: 6 }).to_string());
+
+    print(renamed(W { e: E.A(3), n: 4 }).to_string());
+    print(renamed(W { e: E.B, n: 4 }).to_string());
+
+    print(guarded(W { e: E.A(9), n: 1 }).to_string());
+    print(guarded(W { e: E.A(1), n: 9 }).to_string());
+    print(guarded(W { e: E.B, n: 9 }).to_string());
+    return 0;
+}
