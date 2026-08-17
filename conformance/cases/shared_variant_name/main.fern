@@ -1,0 +1,40 @@
+// Two enums may declare the SAME variant name. A match arm means the
+// variant of ITS scrutinee, so the same name resolves to a different
+// ordinal in each enum — and the lowering used to resolve arms by
+// scanning every enum in the program, taking whichever the scan reached
+// first. Since that scan runs over a Go map, the winner varied per
+// compile: the same source produced correct code on some runs and a
+// silently wrong tag test on others.
+//
+// `Zed` sits at index 0 in A and index 1 in B, so a cross-enum resolution
+// picks a real-but-wrong slot rather than failing to find one.
+enum A { Zed, Xx(i32) }
+enum B { Yy(i32), Zed }
+
+function a_of(v: A): i32 {
+    match (v) {
+        A.Zed => { return 1; },
+        A.Xx(n) => { return n; },
+    }
+}
+
+function b_of(v: B): i32 {
+    match (v) {
+        B.Zed => { return 4; },
+        B.Yy(n) => { return n * 10; },
+    }
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + a_of(A.Zed);      // 1
+    total = total + a_of(A.Xx(2));    // 3
+    total = total + b_of(B.Zed);      // 7
+    total = total + b_of(B.Yy(1));    // 17 — the arm that fired wrongly
+
+    // A qualified construction resolved correctly while the arms did not,
+    // so NO arm matched and control fell out of the match entirely.
+    var v: B = B.Zed;
+    total = total + b_of(v);          // 21
+    return total;
+}

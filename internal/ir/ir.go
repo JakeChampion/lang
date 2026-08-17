@@ -5500,11 +5500,28 @@ func needsImplicitReturn(ops []Op) bool {
 
 // lookupVariant looks for a variant with the given name across
 // every enum in the program. Returns the owning enum's name, the
-// variant index, and the payload count. Ambiguity (same variant
-// name in two enums) was already rejected by the checker, so the
-// first hit is authoritative.
+// variant index, and the payload count.
+//
+// The scan is over a Go map, so with two enums declaring one variant
+// name the winner varies per process — DO NOT use this where a wrong
+// answer is possible. Match arms in particular are resolved against
+// the SCRUTINEE, not globally, so an arm name that is ambiguous across
+// the program is still legitimate; use scrutineeEnumName + lookupVariantOn
+// there.
 func (b *builder) lookupVariant(name string) (enumName string, varIdx int, payloadCount int, ok bool) {
 	return b.lookupVariantOn(name, "")
+}
+
+// scrutineeEnumName is the enum a match's scrutinee statically has, or ""
+// when it is not an enum type. Arms are resolved against it: a variant name
+// two enums share resolves to a different ordinal in each, and the arm means
+// the scrutinee's. "" preserves the global-scan behaviour for the shapes that
+// have no static enum type.
+func (b *builder) scrutineeEnumName(scrut ast.Expr) string {
+	if et, isEnum := b.exprStaticType(scrut).(ast.EnumType); isEnum {
+		return et.Name
+	}
+	return ""
 }
 
 // lookupVariantOn resolves a variant by name, optionally restricted
@@ -7882,8 +7899,10 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.brTo(matchEndD, false)
 				continue
 			}
-			// Resolve variant index by name.
-			_, varIdx, _, ok := b.lookupVariant(arm.VariantName)
+			// Resolve the variant index against the SCRUTINEE's enum: two
+			// enums may declare one variant name at different ordinals, and
+			// the arm means this scrutinee's.
+			_, varIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(n.Tag))
 			if !ok {
 				return fmt.Errorf("ir: match arm references unknown variant %q", arm.VariantName)
 			}
@@ -8673,7 +8692,8 @@ func (b *builder) expr(e ast.Expr) error {
 				b.brTo(matchEndD, false)
 				continue
 			}
-			_, varIdx, _, ok := b.lookupVariant(arm.VariantName)
+			// Same scrutinee-relative resolution as the statement form.
+			_, varIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(n.Tag))
 			if !ok {
 				return fmt.Errorf("ir: match-expression arm references unknown variant %q", arm.VariantName)
 			}
