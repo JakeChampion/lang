@@ -782,6 +782,11 @@ function wasm_helper_symbol(name: string): string {
     // (data-section, below heap_base) is a guarded no-op. Double frees are caught
     // by the rc-underflow detector, unlike the asm path.
     if (name == "__fern_str_free") { return "$__fern_arr_dec"; }
+    // string VIEW reclaim (#6544): the register backends need a dedicated helper
+    // because `s[a:b]` there is a rc-immortal box over the source's bytes, which
+    // no rc path may free. $__fern_substr COPIES, so a wasm slice result is an
+    // ordinary rc-headered block and the plain $__fern_arr_dec already frees it.
+    if (name == "__fern_str_view_free") { return "$__fern_arr_dec"; }
     // string[] ELEMENT reclaim (#4355): route to $__fern_arr_dec_ptr, the wasm
     // AST path's pointer-element walk (heap_alloc_helpers, always emitted with
     // the heap runtime): at rc==1 it $__fern_arr_dec's every element — which IS

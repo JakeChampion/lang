@@ -24,10 +24,17 @@ import (
 // an identity return always is. So the read frees only when they differ — no
 // inc anywhere.
 //
-// Both directions are pinned. The churn case proves the fresh box IS freed
-// (heap-bump flat); the identity case proves the aliased one is NOT (the
-// receiver survives being read afterwards, and __rc_underflow() stays 0 — a
-// mis-free would either corrupt the value or tick the detector).
+// The third admitted shape is a SLICE of the receiver, which is what
+// `(s: string) drop(n)` and std/string's take / trim actually return. On the
+// register backends that is a 24-byte rc-IMMORTAL box over the receiver's own
+// bytes, so the release goes through __fern_str_view_free: the box returns to
+// the freelist, the shared data is never touched. On wasm the slice copies, so
+// the same call is an ordinary block release.
+//
+// Both directions are pinned. The churn cases prove the fresh box and the view
+// box ARE freed (heap-bump flat); the identity and alias cases prove the shared
+// ones are NOT — the receiver survives being read afterwards, its BYTES are
+// re-read after thousands of view releases, and __rc_underflow() stays 0.
 var freshRecvLenCases = []struct {
 	name     string
 	src      string
@@ -91,17 +98,89 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// A SLICE-of-receiver return, read back through the receiver. On the
+	// register backends the released box's data pointer is `b`'s buffer + 4,
+	// which is not even an allocation boundary — freeing it would push a
+	// mid-block address onto the freelist, so the byte re-read after 3000
+	// releases is the direct witness that only the box goes.
+	{"freshrecv-len-view-alias-safe", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 3000) {
+        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        if (b.tails(4).len() != 17) { return 96; }
+        if (b.len() != 21) { return 95; }
+        if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// All three admitted shapes in one callee, chosen per iteration by a
+	// runtime compare: the receiver, a fresh literal box, and a view.
+	{"freshrecv-len-view-alternating", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 5000) {
+        var b3: string = "long-enough-payload-" + (i % 8).to_string();
+        acc = (acc + b3.tails((i % 3) * 40 - 40).len()) % 251;
+        if (b3.len() != 21) { return 96; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// The REFUSAL control. `pick` also returns a bare non-receiver param, which
+	// is neither fresh nor the receiver nor a view of it, so the whole callee
+	// earns no SFRRECV key and nothing here is released. Admitting it would
+	// free `alt` — whose pointer differs from the receiver's — while the caller
+	// still owns it.
+	{"freshrecv-len-view-nonrecv-return-refused", `function (s: string) pick(n: i32, alt: string): str {
+    if (n < 0) { return alt; }
+    if (n == 0) { return s; }
+    return s[n:s.len()];
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 2000) {
+        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        var alt: string = "alternate-payload-" + (i % 8).to_string();
+        if (b.pick(0 - 1, alt).len() != 19) { return 96; }
+        if (alt.len() != 19) { return 95; }
+        if (b.len() != 21) { return 94; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
-// freshRecvLenLeakCase is the LEAK half, x86-64 only. Heap flatness is asserted
-// here rather than in the shared table because the wasm leg runs the WAT driver
-// (wasm_ir_run), and every wasm sibling in this package asserts the
+// freshRecvLenLeakCases are the LEAK half, x86-64 only. Heap flatness is
+// asserted here rather than in the shared table because the wasm leg runs the
+// WAT driver (wasm_ir_run), and every wasm sibling in this package asserts the
 // over-release detector rather than heap growth for that reason. Flatness on
 // wasm was checked separately through the CLI pipeline (`-target wasm32-wasi`),
-// where this churn moves the bump pointer by under 128 bytes across 5000
-// rounds; the shared cases below carry wasm's half, which is that nothing is
+// where both churns move the bump pointer by under 128 bytes across 5000
+// rounds; the shared cases carry wasm's half, which is that nothing is
 // over-released and the aliased receiver survives.
-const freshRecvLenLeakCase = `function (s: string) tails(n: i32): string {
+var freshRecvLenLeakCases = []struct {
+	name string
+	src  string
+}{
+	// A FRESH box return.
+	{"freshrecv-len-leak-flat", `function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -119,7 +198,33 @@ function main(): i32 {
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
-}`
+}`},
+	// A VIEW return — the 24-byte immortal box `s[n:sLen]` allocates per call.
+	// This is std/string's `drop` shape and the conformance case's own `tail`;
+	// it leaked one box a round before __fern_str_view_free existed. `drop`
+	// itself cannot be a row here — this driver resolves no imports — and was
+	// measured flat through the CLI instead (docs/RC-PERCEUS-SELF-HOST-PORT.md
+	// §9).
+	{"freshrecv-len-view-leak-flat", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { var b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).len()) % 251; w = w + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+}
 
 // TestSelfHostFreshRecvLenReclaimX86_64 runs each case through the self-hosted
 // x86-64 driver, plus the leak case. Exit 0 = reclaimed and safe; 98 = the
@@ -140,7 +245,14 @@ func TestSelfHostFreshRecvLenReclaimX86_64(t *testing.T) {
 		name     string
 		src      string
 		expected int
-	}{{"freshrecv-len-leak-flat", freshRecvLenLeakCase, 0}}, freshRecvLenCases...)
+	}{}, freshRecvLenCases...)
+	for _, lc := range freshRecvLenLeakCases {
+		cases = append(cases, struct {
+			name     string
+			src      string
+			expected int
+		}{lc.name, lc.src, 0})
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))

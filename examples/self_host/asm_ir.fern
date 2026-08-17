@@ -97,6 +97,14 @@ pub function is_fern_helper(name: string): boolean {
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
         // only the irlower reclaim sites emit the call.
         || name == "__fern_str_free"
+        // string VIEW reclaim (#6544): __fern_str_free plus the one case it
+        // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
+        // because its bytes belong to the source. At a site that has proved the
+        // view is dead this returns the 24-byte box alone to the freelist.
+        // Default ir_helper_symbol maps it to __fn___fern_str_view_free; wasm
+        // routes it to $__fern_arr_dec (its slices copy, so there is no view
+        // box). Never user-callable — only the irlower reclaim sites emit it.
+        || name == "__fern_str_view_free"
         // string[] ELEMENT reclaim (#4355): the element-walking sibling of the
         // shallow array dec — at rc==1 it __fern_str_free's every element box,
         // then frees the buffer; rc>1 decs; rc<0 (immortal) skips; rc==0 ticks
@@ -1514,6 +1522,50 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    incl __fern_rc_underflow(%rip)\n");
     s = s.write(san_underflow_abort());
     s = s.write(".Lstrfree_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_view_free(box) — release a string result that may be a zero-copy
+    // VIEW (#6544). `s[a:b]` builds a 24-byte box over the SOURCE's bytes and
+    // stamps rc = -1, the immortal sentinel, precisely so no reclaim path frees
+    // the shared data. That leaves the box itself unreclaimable by any helper,
+    // and a borrowing string method (`(s: string) drop(n)`) allocates one per
+    // call.
+    //
+    // This helper is __fern_str_free with that one case added: an IMMORTAL rc
+    // frees the 24-byte box ALONE (class 3), data untouched; every other rc
+    // tail-jumps to __fern_str_free unchanged, so a fresh box still frees data +
+    // box. Only an emit site that has proved the view is dead may call it — the
+    // immortal rc means a second holder is uncounted and undetectable.
+    //
+    // The heap-range guard on the BOX BASE is what makes the sentinel an exact
+    // test for a view: the other immortal producers are the frame form of this
+    // same op (a box in the caller's stack frame) and emit_const_agg_data's
+    // `.data` blocks, neither of which is in the arena.
+    s = s.write("__fn___fern_str_view_free:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");        // box
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lstrvfree_ret\n");
+    s = s.write("    testb $1, %al\n");             // tagged / SSO sentinel (defensive)
+    s = s.write("    jnz .Lstrvfree_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
+    s = s.write("    jb .Lstrvfree_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lstrvfree_view\n");        // negative = immortal -> the view case
+    s = s.write("    jmp __fn___fern_str_free\n");  // otherwise: the ordinary rc-aware release
+    s = s.write(".Lstrvfree_view:\n");
+    s = s.write("    leaq -8(%rax), %rdx\n");       // base = box-8
+    s = s.write("    movq __fern_heap_base(%rip), %rsi\n");
+    s = s.write("    cmpq %rsi, %rdx\n");           // base < heap_base -> frame / .data box, skip
+    s = s.write("    jb .Lstrvfree_ret\n");
+    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
+    s = s.write("    jae .Lstrvfree_ret\n");        // base >= heap_end -> not our arena, skip
+    s = s.write("    movl $0, -8(%rax)\n");         // rc = 0 (defensive vs a re-free)
+    s = hev_free(s, "%rdx", "$3");
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq 24(%r8), %rsi\n");        // freelist[3] (24-byte block = 3 words)
+    s = s.write("    movq %rsi, (%rdx)\n");         // *base = old head
+    s = s.write("    movq %rdx, 24(%r8)\n");        // freelist[3] = base
+    s = s.write(".Lstrvfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the
     // element-walking sibling of __fn___fern_arr_dec. rc word at [arr-8]:

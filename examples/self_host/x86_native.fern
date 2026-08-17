@@ -222,6 +222,15 @@ function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
     return buf;
 }
 
+// x86_test_r32_r32: `testl <a>, <b>` — 0x85 /r with NO REX.W, so the flags
+// come from the 32-bit values. REX appears only to reach r8d..r15d.
+function x86_test_r32_r32(buf: i32[], a: i32, b: i32): i32[] {
+    if (a >= 8 || b >= 8) { buf = buf.append(x86_rex(0, b, 0, a)); }
+    buf = buf.append(133); // 0x85
+    buf = buf.append(x86_modrm(3, b, a));
+    return buf;
+}
+
 // x86_test_r64_imm32: `testq $imm32, <reg>` — REX.W F7 /0 id. GNU as picks
 // the shorter A9 form for rax; F7 /0 encodes every register uniformly.
 function x86_test_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
@@ -2838,13 +2847,13 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
         return a;
     }
-    // testl (32-bit test reg,reg) — asm.fern emits it for zero/nonzero checks on
-    // 32-bit values (map bucket counts / indices, all zero-extended). Was
-    // unhandled, so the test was dropped and the following jz/jnz read stale
-    // flags → the string-keyed-map lookup took the wrong branch and dereferenced
-    // a null key (SIGSEGV). The operands are zero-extended, so the full-width
-    // testq gives the same ZF; route to it (as movzbl routes to movzbq).
-    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
+    // testl (32-bit test reg,reg). It must NOT route to the 64-bit encoder: an
+    // operand loaded with `movl` is zero-extended, so ZF agrees but SF does not
+    // — a negative 32-bit rc reads as a large positive at 64 bits and the
+    // `js` guarding every "negative = immortal, skip" arm of the rc runtime
+    // (__fern_rc_inc, __fern_arr_dec, __fern_str_free, …) falls through to the
+    // decrement / underflow path instead.
+    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     // Either `%cl` (variable count, D3 /slash) or an immediate (C1 /slash).
     // Anything else is recorded: a register name read through the immediate
     // parser yields 0, i.e. a silent shift by zero.

@@ -190,6 +190,28 @@ Worth knowing so you do not assume coverage you do not have:
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
   binary and input). It returns i64 — bind it to an `i64` and narrow with an
   explicit `as i32` only where the value has to become an exit code.
+- **The self-host's own x86-64 assembler, on any real program.**
+  `-target x86-64-linux` assembles and links IN-PROCESS (`x86_native.fern` +
+  `elf.fern`) — but every `internal/e2eselfhost` program test asks the driver
+  for `-emit asm` and hands the text to gcc, and so does the x86-64 fixtures
+  leg. What reaches `x86_native.fern` is `TestSelfHostX86{Encode,Gas,Capstone}`
+  (byte-level, one instruction at a time) plus a few small `-o` CLI tests
+  (transitive deps, `pub` visibility, a rip-relative store). No rc-shaped or
+  allocation-shaped program runs through it at all.
+
+  So an encoding bug there is invisible to the whole corpus, and one was:
+  `testl %ecx, %ecx` was assembled as `testq %rcx, %rcx` on the argument that
+  the operands are zero-extended and ZF agrees. SF does not — a 32-bit -1 read
+  by `movl` is a large positive at 64 bits — so the `js` on every "negative rc =
+  immortal, skip" arm of the rc runtime fell through to the decrement path, and
+  a program that handed any immortal block to `__fern_str_free` tripped the
+  over-release detector (#6544). Both compilers agreed through gcc.
+
+  **When a change touches asm the runtime emits, run the program BOTH ways** —
+  `bin/fern-selfhost -o prog` and `-emit asm` into gcc — and treat a
+  disagreement as the assembler until proven otherwise. Adding the shape to
+  `TestSelfHostX86GasGroundTruth` (bytes from `as` + objdump, never from a
+  reading of the manual) is what keeps it fixed.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
   as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
   `FERN_RC_TRACE=1` names the alloc site it came from (both below, on the
