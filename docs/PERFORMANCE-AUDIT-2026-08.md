@@ -368,7 +368,8 @@ contradict comments in the tree:
 | 2 | ~~Peephole the push-then-discard triple~~ — **done**, P3 | `x86_64.go:peepholeTail`, arm64 twin | §2 — was 12.1% of emitted instructions; measured −13.0% on the checker driver |
 | 3 | Hash the self-host `Scope` tables — miss-allocation half landed in #6899 | `examples/self_host/checker.fern` | **§4b — 2.5–6%, not §4's 17%** |
 | 4 | Register allocation (#4112) | `internal/ssa` → new native emit | §2 — 36.5% of emitted instructions |
-| 5 | Symbol interning (#4394 lever 1) | `lexer.fern`, `flatten.fern` | §4b — **18.0% in `strcmp`, in both runs** |
+| 5 | ~~Symbol interning (#4394 lever 1)~~ — **do not scope**: §4d.3 | `lexer.fern`, `flatten.fern` | §4d.3 — `strcmp` is still 21.3%, but 18.5% of the run is one linear scan an INDEX removes |
+| 9 | Index `mfuncs` for the closure-lift predicates | `irlower.fern` `lift_callee_*` | §4d.3 — 74/400 samples under `lift_inline_closures_expr` |
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
@@ -646,8 +647,62 @@ shortens that window. It is the boundary `computePreciseDrops` deliberately
 draws by gating on `freeEligible`, so crossing it is its own slice with its own
 differential run.
 
-Item 5 (symbol interning, #4394) should be re-measured on this subject before
-scoping: a third of what `strcmp` was has already gone with the two indexes.
+### 4d.3 Item 5 re-measured — `strcmp` survives, but interning is not the lever
+
+400 gdb samples of the whole compiler compiling itself, `-g` build, on merged
+main (post-#6988). `__fern_strcmp` is **21.3% (85/400)** of leaf frames, so it
+did NOT evaporate with #6948 / #6953 — it is still the largest single leaf, in
+line with §4b's 18.0%.
+
+That looks like a mandate for item 5 (symbol interning, #4394) and is not one.
+Reading frames #1 and #2 says where the compares actually are:
+
+| leaf | samples |
+|---|---|
+| `__fern_strcmp` | 85 |
+| `irlower__lift_callee_param_is_fn` | 23 |
+| `irlower__lift_callee_is_typevar_passthrough` | 22 |
+| `__fern_memcpy` | 31 |
+
+The two `lift_callee_*` predicates are simultaneously the #2 and #3 leaves AND
+the top two `strcmp` callers (15 + 14 of the 85), and frame #2 puts **all 29** of
+those `strcmp` samples under a single caller,
+`irlower__lift_inline_closures_expr`. Together that is **74 / 400 = 18.5% of the
+whole self-compile in one pass**.
+
+Both predicates are §4's shape in a third file:
+
+```fern
+function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
+    while (i < mfuncs.len()) {
+        if (mfuncs[i].name == callee && … ) { return true; }
+```
+
+a full scan of the ~4,600-entry module function table with a string compare per
+entry. `lift_inline_closures_expr`'s per-argument `else if` chain runs up to
+THREE such scans per call argument — `lift_callee_param_is_fn` on the callee
+name, `lift_callee_is_typevar_passthrough` on the same name, and
+`lift_callee_param_is_fn` again on the method name — plus the `lift_arg_is_fn_*`
+family. The callee name is CONSTANT across the argument loop, so the same table
+is walked for the same key once per argument.
+
+**So item 5 stays unscoped, on its own evidence and on this.**
+`docs/SELFHOST-SYMBOL-INTERNING.md` already concludes the naive per-op `sym` id
+REGRESSES memory (`Op.str` is double-duty, so the box grows and the bodies it
+would remove are already `.rodata` or deduped), and this profile says the time
+half of the case is a linear scan an index removes, not a comparison an id
+removes. Interning would leave the ~4,600-entry walk in place and only make each
+step cheaper.
+
+**The fix is the one #6948 and #6953 already established**: a chained name index
+(`head` / `next` over the existing array, the `checker.SigTable` idiom) so each
+predicate walks one bucket. It must be a chain and not a single slot — both
+predicates today keep scanning past a name match and return true if ANY
+same-named decl satisfies the extra conditions, so the index has to preserve
+every entry for a key, in array order. The index belongs ON the threaded value
+rather than beside it: `mfuncs: parser.FuncDecl[]` is passed through ~40 lift-pass
+signatures, so adding a parallel parameter is the side-channel the engineering bar
+forbids — carry the decls and their index in one struct instead.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
