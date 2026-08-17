@@ -76,6 +76,56 @@ var strConcatTempIRCases = []struct {
 	{"tostring-cast-operand-len",
 		`function main(): i32 { var k: i32 = 12; return ("v" + (k as u32).to_string()).len(); }`,
 		3, -1},
+	// Arithmetic receiver `(i % 8).to_string()` — the scalar proof is inductive
+	// over the operator, so a COMBINATION of scalars admits exactly as a bare
+	// slot does. Before that arm existed the operand leaked one box per
+	// evaluation, which is 32 bytes per iteration of the dominant `"lit" +
+	// (i % 8).to_string()` shape (#6544).
+	{"arith-tostring-operand-churn",
+		`function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { var r: string = "n" + (w % 8).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    while (i < 5000) { var r2: string = "n" + (i % 8).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`,
+		0, -1},
+	// Unary negation is the same proof. "v" + "-12" = len 4.
+	{"neg-tostring-operand-churn",
+		`function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 1;
+    while (w < 200) { var r: string = "v" + (-w).to_string(); acc = (acc + r.len()) % 251; w = w + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 1;
+    while (i < 5000) { var r2: string = "v" + (-i).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`,
+		0, -1},
+	// NEGATIVE: a `+` whose operands are STRINGS is not an arithmetic
+	// combination of scalars — `("a" + s).to_string()` is the identity, whose
+	// result aliases the concat's box. Freeing it as an operand would release a
+	// box the outer concat still reads; the underflow detector is the direct
+	// witness.
+	{"arith-tostring-string-operand-alias-safe",
+		`function main(): i32 {
+    var s: string = "abcd";
+    if (("x" + ("a" + s).to_string()).len() != 6) { return 97; }
+    if (s.len() != 4) { return 96; }
+    if (__rc_underflow() != 0) { return 95; }
+    return 0;
+}`,
+		0, -1},
 	// NEGATIVE: a STRING-receiver `.to_string()` is the identity case — its
 	// result aliases the receiver, so the operand must NOT be freed. Exactly
 	// 2 sites: the inline-consumed result temp + the "x" literal operand (3

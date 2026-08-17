@@ -76,6 +76,11 @@ func TestSelfHostStrConcatTempWasmIR(t *testing.T) {
 		// that gap before re-widening — the whole-compiler test is the gate
 		// that catches it, not this one.
 		{"call-operand-borrowed-return", `function mk(s: string): string { return s + "!"; } function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; } function main(): i32 { var a: string = mk("abcdefg"); var b: string = "xy"; var i: i32 = 0; while (i < 2000) { var r: string = "[" + pick(a, b); if (r.len() != 9) { return 96; } i = i + 1; } if (a != "abcdefg!") { return 97; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
+		// An ARITHMETIC `.to_string()` receiver (`(i % 8).to_string()`) is the
+		// builtin scalar producer just as a bare slot is, so its operand box is
+		// freed each iteration. wasm's $__fern_arr_dec ticks the over-release
+		// detector if that free were ever applied to an alias (#6544).
+		{"arith-tostring-operand-churn", `function churn(n: i32): i32 { var t: i32 = 0; var i: i32 = 0; while (i < n) { var r: string = "n" + (i % 8).to_string(); if (r.len() != 2) { t = 1; } i = i + 1; } return t; } function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -5394,11 +5394,12 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
 
 // tostring_recv_is_scalar: the receiver of a `.to_string()` is provably a
 // scalar — a number literal, a scalar cast (`x as u32` — any as_* except the
-// pointer-shaped string/array hops), or a local/param slot carrying NO
-// pointer-shape marker (not string / array / struct / enum / dyn / map /
-// tuple / Option — params mark all of these at entry, so an unmarked slot is
-// an i32/i64/u32/u64/f64/f32/bool/subword scalar). Scalar to_string always
-// allocates fresh; anything else may be a user method returning an alias.
+// pointer-shaped string/array hops), an ARITHMETIC combination of scalars, or
+// a local/param slot carrying NO pointer-shape marker (not string / array /
+// struct / enum / dyn / map / tuple / Option — params mark all of these at
+// entry, so an unmarked slot is an i32/i64/u32/u64/f64/f32/bool/subword
+// scalar). Scalar to_string always allocates fresh; anything else may be a
+// user method returning an alias.
 function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprNumber(_) => { return true; },
@@ -5407,6 +5408,24 @@ function tostring_recv_is_scalar(e: parser.Expr, s: LowerState): boolean {
                 var tgt: string = u.op[3:u.op.len()] + "";
                 return tgt == "i32" || tgt == "i64" || tgt == "u32" || tgt == "u64"
                     || tgt == "f64" || tgt == "f32" || tgt == "u8" || tgt == "usize";
+            }
+            // Negation / bitwise-not of a scalar is a scalar. `!` is excluded:
+            // it yields a boolean, whose `to_string` is a source-declared method
+            // this predicate makes no claim about.
+            if (u.op == "-" || u.op == "~") { return tostring_recv_is_scalar(u.operand, s); }
+            return false;
+        },
+        // `(i % 8).to_string()` — an arithmetic operator over operands this
+        // predicate already proves scalar yields a scalar, so the receiver is
+        // the builtin producer's just as a bare slot is. Only the plain
+        // operators: `+?` / `+|` and the comparisons produce an Option resp. a
+        // boolean, neither of which this claim covers. A string `+` cannot slip
+        // through — a string operand is a slot or an ExprString, and neither
+        // arm admits one.
+        parser.ExprBinary(b) => {
+            if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%"
+                    || b.op == "&" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>") {
+                return tostring_recv_is_scalar(b.left, s) && tostring_recv_is_scalar(b.right, s);
             }
             return false;
         },
