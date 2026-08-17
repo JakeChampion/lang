@@ -120,9 +120,10 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// FAILURE telling you to delete its entry, so the list cannot rot into a
 	// silent skip list (which is how the whole exec half of this test went
 	// unrun for as long as it did).
-	darwinKnownGaps := map[string]string{
-		"udp_send": "returns 94, not the sent byte count",
-	}
+	// Empty since #6917. Its one entry was udp_send, "returns 94, not the sent
+	// byte count" — 94 being whatever was in the result register, because the op
+	// had no backend case and the emitter dropped the call. It has a handler now.
+	darwinKnownGaps := map[string]string{}
 
 	// runCase: emit `src` via the self-host CLI for arm64-darwin straight to
 	// a Mach-O binary, assert it's a valid arm64 Mach-O, and (on Apple
@@ -367,11 +368,13 @@ function main(): i32 { var e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 }`,
 		7)
 
-	// udp_send — exercises the Darwin socket(97)/sendto(133)/close(6)
-	// path and the dotted-quad host parse. UDP is connectionless, so a
-	// sendto to a local port with no receiver still succeeds and returns
-	// the byte count (the datagram is simply dropped). Returns the 3
-	// payload bytes iff socket→parse→sendto→close all worked.
+	// udp_send — exercises the Darwin socket(97)/connect(98)/write(4)/close(6)
+	// path and the dotted-quad host parse. On a datagram socket connect only
+	// records the peer, so connect-then-write sends the same packet as sendto
+	// while staying within __syscall3. UDP is connectionless, so a send to a
+	// local port with no receiver still succeeds and returns the byte count
+	// (the datagram is simply dropped). Returns the 3 payload bytes iff
+	// socket→parse→connect→write→close all worked.
 	runCase("udp_send",
 		`function main(): i32 { return udp_send("127.0.0.1", 39518, "abc"); }`,
 		3)

@@ -490,26 +490,53 @@ remainder splits three ways:
   inside the heap block with `has_need("reader")` never tested on that backend at
   all, so any allocating program carried them.
 
-- **`udp_send`** is what is left of the "still-migratable" list, and it is
-  worse than recorded here before. The
-  entry said its hand-asm exists only on arm64 and that `asm_ir.fern` has no
-  `kind_tag == 208` case, implying arm64 lowers it. **Neither backend does.**
-  Measured: `udp_send("127.0.0.1", 9999, "hi")` emits `unsupported bin udp_send`
-  on x86-64 *and* on arm64; the arm64 hand-asm body is emitted and `.globl`-ed
-  with nothing anywhere calling it. So it is not a migration target at all until
-  it has an op handler — dead runtime on one target, a dropped call on both.
+- **`udp_send` has since moved too, and closing the hole it sat in was the
+  larger half of that change (#6917).**
 
-  **The failure mode both `udp_send` and `print_i64` share is worth more than
-  either op.** An op with no case in the emitter's binary dispatch falls through
-  to `ir_bin_asm`'s last line, which returns `"    # ir: unsupported bin " +
-  kind_name(tag)` — a COMMENT where an instruction belongs. The call is silently
-  dropped and the program runs on. That path does not consult `strict_ir_on()`,
-  so `FERN_STRICT_IR=1` exits 0 and says nothing (measured, not inferred). Goal
-  1's guarantee — "a module outside the IR subset is a diagnostic naming the bail
-  site, not a silent fall-through" — has a hole exactly here, and it is what let
-  `print_i64` sit unnoticed. Closing it means making that fallback refuse, which
-  turns every currently-dropped op into a hard error and so needs its own change
-  rather than riding along with a migration slice.
+  The entry here used to say its hand-asm existed only on arm64 and that
+  `asm_ir.fern` had no `kind_tag == 208` case, implying arm64 lowered it.
+  Neither backend did. The op had no case anywhere, so it fell through the
+  emitter's dispatch to `ir_bin_asm`'s last line, which returned
+  `"    # ir: unsupported bin " + kind_name(tag)` — a COMMENT where an
+  instruction belongs. The call was dropped and the program ran on with whatever
+  was in the result register. On x86-64 the terminal `else` had already popped
+  two operands, so the operand stack went net −1 as well. Meanwhile arm64 emitted
+  and `.globl`-ed a hand-written body that nothing branched to.
+
+  **Two recorded mysteries were this bug.** `TestSelfHostUdpSendArm64` was
+  skipped under qemu on the reading that qemu-user's socket emulation was at
+  fault, cause "not established" — it delivered nothing and exited 225 / 248
+  rather than 14. And `self_host_macho_test.go`'s `darwinKnownGaps` carried
+  `udp_send: "returns 94, not the sent byte count"`. 225, 248 and 94 are all the
+  same thing: an uninitialised result register. Both are unskipped and the gaps
+  map is empty.
+
+  The helper needs no `__syscall6` despite `sendto` taking six arguments: on a
+  datagram socket `connect` only records the peer, so connect-then-write sends
+  the same packet with two three-argument calls.
+
+  **The fallback now refuses**, unconditionally rather than under
+  `FERN_STRICT_IR` — there is no AST emitter left to degrade into, so an op that
+  reaches it is always a miscompile. Ordering mattered: with `udp_send` handled
+  first, the refusal has a blast radius of exactly zero on the register backends.
+  The only ops left uncovered there are `load` (67), `store` (68) and
+  `call_closure_direct` (151), all dead constructors with no lowering site, which
+  no Fern program can produce. `emit_str_op`'s `str_cmp` tail was the same shape
+  — unguarded, so a tag added to `ir.is_str_op_kind` without a branch would have
+  emitted a `__fern_str_cmp` call for it — and is guarded now.
+
+  Neither existing guard rail could see this class: `FERN_STRICT_IR` only gates
+  module/function eligibility, and `FERN_IR_VERIFY` passes because
+  `irverifystack` models the op correctly. The IR was well formed; only the
+  emitter was deficient.
+
+  **The wasm twins are still open.** `wasm_binop` and `wasm_binop_w` have the
+  same comment fallback, and eleven live ops reach them — the `__raw_*` /
+  `__syscall*` floor primitives, which exist for the register-backend runtime and
+  have no wasm handlers. That failure is at least loud (the emitted WAT fails
+  validation) rather than silent, and the fix is a `wasm_unsupported_builtin`
+  entry rather than a refusal, so it is tracked separately.
+
 - **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
   exec, drain and reap in one body), `map_delete`, `strbuf_append`.
 - **Not builtins at all**: `_start`, `alloc`'s `mmap`, and the abort paths
