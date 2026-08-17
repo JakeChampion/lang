@@ -16,14 +16,14 @@ import (
 // call_direct to a symbol that is not a __fern_* helper, not a C call and not a
 // module function, and made the WHOLE module IR-ineligible.
 //
-// The op lowers to each register backend's __fern_read_all_stdin
-// (__fern_read_all_stdin_rc on arm64). Both build the result with
-// __fern_str_box rather than the AST path's bare __fern_alloc(16): on the IR
-// path this is a reclaimable string the program holds directly, and
-// __fern_str_free reads the rc word at box-8, which a headerless box does not
-// have. wasm gets $__fern_read_all_stdin, an fd_read loop over the same preview1
-// scratch idiom read_line uses, reading straight into the [len][bytes] result
-// block rather than into a scratch buffer that is copied afterwards.
+// On both register backends the op lowers to __fn___fern_read_all_stdin, the
+// mangled name of the Fern runtime helper (asmcore.rt_src_read_all_stdin,
+// #2649). Its result comes from __raw_string, so the box carries the rc word at
+// box-8 that __fern_str_free reads — this is a reclaimable string the program
+// holds directly. wasm gets $__fern_read_all_stdin, an fd_read loop over the
+// same preview1 scratch idiom read_line uses, reading straight into the
+// [len][bytes] result block rather than into a scratch buffer that is copied
+// afterwards.
 //
 // TestSelfHostReadAllStdinX86_64 already pins the byte counts through the same
 // driver; these cases add the routing assertion and the shapes that exercise
@@ -74,12 +74,11 @@ func runReadAllStdinIR(t *testing.T, target, src string, in []byte) int {
 	t.Helper()
 	var runner, runPrefix, extra []string
 	var driverBin, linkGcc string
-	// The runtime symbol that only the IR path emits. On arm64 the IR body is a
-	// distinct symbol (the AST path keeps its headerless-box __fern_read_all_stdin),
-	// so its presence alone proves the routing; on x86-64 both paths share the
-	// name, which is why TestSelfHostReadAllStdinIRRoutingX86_64 asserts the
-	// routing separately.
-	wantSym := "__fern_read_all_stdin"
+	// The mangled name of the Fern runtime helper, in full: a bare
+	// __fern_read_all_stdin substring is a prefix of it and would match either
+	// side of a rename. Routing is asserted separately by
+	// TestSelfHostReadAllStdinIRRoutingX86_64.
+	wantSym := "__fn___fern_read_all_stdin"
 	if target == "arm64-linux" {
 		var qemu string
 		_, runner, driverBin = buildModloadArm64DriverX86(t)
@@ -88,7 +87,6 @@ func runReadAllStdinIR(t *testing.T, target, src string, in []byte) int {
 			runPrefix = []string{qemu}
 		}
 		extra = []string{"-target", "arm64-linux"}
-		wantSym = "__fern_read_all_stdin_rc:"
 	} else {
 		linkGcc, runner, driverBin = buildModloadDriverX86(t)
 		runPrefix = runner

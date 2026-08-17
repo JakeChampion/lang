@@ -76,6 +76,10 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    print_int(1);\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
+		// The two stdin leaves. Emitted, not run, so the empty stdin of a build
+		// machine is irrelevant — this only has to make the ops lower.
+		"    if (read_int() < (0 as i64)) { return 24; }\n" +
+		"    if (read_all_stdin().len() != 0) { return 25; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_ir.fern")
@@ -148,7 +152,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// op_print_int and op_print_i64 — and the reason the group needed
 		// __raw_scratch: putchar and print_int staged their bytes in a stack
 		// slot, which is the one thing a Fern helper cannot name.
-		"print_str", "print_int", "putchar", "eprint_str"} {
+		"print_str", "print_int", "putchar", "eprint_str",
+		// The stdin pair (#2649), read(2) to the stdout four's write(2). Neither
+		// returns an Option, so neither carries a box-layout question: read_int
+		// parses out of __raw_scratch and read_all_stdin boxes with __raw_string.
+		// arm64 shed more here than the other targets — the dead AST
+		// __fern_read_all_stdin body and its __fern_read_all_stdin_rc IR twin both
+		// went with the migration.
+		"read_int", "read_all_stdin"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -276,6 +287,10 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    print_int(1);\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
+		// The two stdin leaves, likewise called for effect so their read(2)
+		// number can be inspected below.
+		"    if (read_int() < (0 as i64)) { return 18; }\n" +
+		"    if (read_all_stdin().len() != 0) { return 19; }\n" +
 		"    return b.len();\n" +
 		"}\n"
 	srcFile := filepath.Join(t.TempDir(), "rb_darwin.fern")
@@ -372,6 +387,32 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
 		}
 	}
+	// The read(2) users (#2649), Darwin number 3. Same reason for body-scoping,
+	// only more so: `mov x0, #3` followed by the operand push occurs seven times
+	// across this emit, so a file-wide match would pass whatever asmcore.sysno's
+	// `read` row said. The number reaches the trap as a pushed operand rather than
+	// the `mov x8, #N` darwinize rewrites, so a wrong row is invisible everywhere
+	// else — Linux's 63 would simply be issued against the BSD vector.
+	//
+	// tcp_recv is in this loop rather than the constant table for the same reason,
+	// and it used to assert only that the helper was Fern at all: scoping to the
+	// body is what makes its number checkable.
+	for _, sym := range []string{"__fn___fern_read_int", "__fn___fern_read_all_stdin", "__fn___fern_tcp_recv"} {
+		body := extractFuncBody(asm, sym)
+		if body == "" {
+			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)
+			continue
+		}
+		if !strings.Contains(body, "    mov x0, #3\n    str x0, [sp, #-16]!\n") {
+			t.Errorf("%s does not push Darwin's read number (3)", sym)
+		}
+		if strings.Contains(body, "    mov x0, #63\n    str x0, [sp, #-16]!\n") {
+			t.Errorf("%s pushes Linux's read number (63) in Mach-O output", sym)
+		}
+		if strings.Contains(asm, "\n"+strings.TrimPrefix(sym, "__fn_")+":") {
+			t.Errorf("the register-ABI hand-asm %s is back", strings.TrimPrefix(sym, "__fn_"))
+		}
+	}
 	if strings.Contains(asm, "ldr x8, [sp], #16") {
 		t.Error("darwinize left the __syscall3 number load on x8 (Linux form) in Mach-O output")
 	}
@@ -413,16 +454,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern clock did not lower for Darwin", leaf)
 		}
-	}
-	// tcp_recv gets no row in the constant table above: its number is Darwin's
-	// `read` = 3, and `mov x0, #3` matches any literal 3 in the program, so the
-	// assertion would pass whatever the sysno row said. Pin that the helper is
-	// Fern here at all instead.
-	if !strings.Contains(asm, "__fn___fern_tcp_recv:") {
-		t.Error("__fn___fern_tcp_recv not defined — the Fern helper did not lower for Darwin")
-	}
-	if strings.Contains(asm, "\n__fern_tcp_recv:") {
-		t.Error("the register-ABI hand-asm __fern_tcp_recv is back")
 	}
 	// proc_fork is the second helper after monotonic_ns that stays hand-written
 	// on Darwin for want of an expressible form rather than a syscall number.

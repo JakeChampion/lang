@@ -179,9 +179,9 @@ The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
 > the gate `asm_ir` already used (`clocks || stat`).
 >
 > What remains hand-written (the residue tracked by
-> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the stdin /
-> Reader leaves, Darwin's `monotonic_ns` and `fork`, the wasm bundles,
-> `__fern_alloc` itself, and the map/array mutator core.
+> [#2649](https://github.com/JakeChampion/lang/issues/2649)) is the three
+> Option-returning Reader leaves, Darwin's `monotonic_ns` and `fork`, the wasm
+> bundles, `__fern_alloc` itself, and the map/array mutator core.
 >
 > **Status update (2026-07, user-typed returns): `stat` migrated.** `stat` is the
 > first leaf returning a **user-typed** value — `Result[FileStat, IoError]` — and
@@ -423,14 +423,16 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    wasm keeps its WASI bundles — it has no generic syscall.
 6. **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
    `eprint_str`. **Done on all three native targets**, needing no new primitive.
-7. **The stdin / Reader leaves** — `read_int`, `read_line`, `read_all_stdin`
-   (+`_rc`), `reader_read_chunk`, `reader_close`. The syscall side is as cheap
-   as step 6; the work is the returned box. `read_line` and `reader_read_chunk`
-   hand-build an `Option[string]` over a **headerless** raw 16-byte strbox, where
-   `__raw_string` yields the rc-headered one, so a Fern rewrite changes what the
-   consumer sees. `read_int` also has a bug to fix on the way: its end pointer is
-   `buf + n` with no negative check, so a failed `read` walks uninitialised
-   memory on both targets.
+7. **The stdin / Reader leaves.** Split by whether the helper returns a box.
+   **Done:** `read_int` and `read_all_stdin`, which return a bare integer and a
+   bare string — no Option, so no layout question. Each fixed an unchecked
+   syscall return used as a bound (a failed `read` walking uninitialised stack;
+   a 32 MiB buffer with no cursor bound), and the arm64 dead `read_all_stdin`
+   twin went with them.
+   **Left:** `read_line`, `reader_read_chunk`, `reader_close`. These hand-build
+   an `Option[string]` over a **headerless** raw 16-byte strbox where
+   `__raw_string` yields the rc-headered one — safe only because nothing decs
+   them, so ordinary Fern lowering is the fix rather than the risk.
 
 Each slice ships with IR lock-in tests (the helper compiles from Fern, the
 hand-asm label is gone) and reuses the existing behavioural coverage, and

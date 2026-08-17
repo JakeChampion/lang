@@ -329,6 +329,25 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			"__fn___fern_eprint_str",
 			[]string{"\n__fern_eprint_str:"},
 		},
+		{
+			// read_int — the stdin half of the write(2)/read(2) pair (#2649). The
+			// old hand-asm body (__fern_read_int:) and its digit loop's local
+			// labels (.Lri_*) are gone; op_read_int calls the stack-ABI
+			// __fn___fern_read_int, whose body parses out of __raw_scratch.
+			"read_int",
+			`function main(): i32 { return read_int(); }`,
+			"__fn___fern_read_int",
+			[]string{"\n__fern_read_int:", ".Lri_loop"},
+		},
+		{
+			// read_all_stdin — fd 0 drained to EOF into one box. The old hand-asm
+			// body (__fern_read_all_stdin: / .Lras_loop) is gone; op_read_all_stdin
+			// calls __fn___fern_read_all_stdin, which boxes with __raw_string.
+			"read_all_stdin",
+			`function main(): i32 { return read_all_stdin().len(); }`,
+			"__fn___fern_read_all_stdin",
+			[]string{"\n__fern_read_all_stdin:", ".Lras_loop"},
+		},
 	}
 
 	for _, tc := range cases {

@@ -425,20 +425,60 @@ remainder splits three ways:
   print_i64` and printed nothing. Not a diagnostic — a silently dropped call,
   which `FERN_STRICT_IR=1` did not catch either.
 
-- **Still-migratable leaves**, in the same shape and not yet attempted:
-  `read_line`, `read_int`, `read_all_stdin` (+`_rc`), `reader_read_chunk`,
-  `reader_close`, and `udp_send`. These are plain `read`/`close` calls and the
-  syscall side of each is as cheap as the write leaves just done.
+- **The two stdin leaves that return no box** — `read_int` and `read_all_stdin`
+  — **have since moved**, on both register backends. Splitting them out from the
+  Option-returning three is what made them cheap: neither has a box-layout
+  question, so each is an ordinary source with the `read` number substituted.
+  `read_all_stdin` already built its result with `__fern_str_box` by hand, which
+  is exactly what `__raw_string` lowers to, so its output is byte-identical.
 
-  What is NOT cheap about the first four is the box they return, and that is the
-  real content of the next slice rather than the syscall: `read_line` and
-  `reader_read_chunk` hand-build an `Option[string]` whose inner strbox is a
-  **headerless** raw `__fern_alloc(16)`, while `__raw_string` produces the
-  rc-headered box. A Fern rewrite goes through the normal enum + string lowering
-  and therefore changes the layout the consumer sees. `read_int` carries a
-  pre-existing bug to fix on the way: it computes its end pointer as
-  `buf + n` with no negative check, so a failed `read` walks uninitialised
-  memory on both targets.
+  Each fixed a bug that was on every target, and both are the same kind of bug —
+  an unchecked syscall return used as a bound:
+
+  - `read_int` computed its end pointer as `buf + n` from the RAW `read` return.
+    A failed read (fd 0 closed → `-EBADF`) put the end BEHIND the start, and
+    since the loop tests pointer *equality* and only ever advances, it could
+    never reach it: it walked uninitialised stack until it happened to hit a
+    non-digit, and a leading `-` in the garbage flipped the sign. Witnessed
+    returning **9999** out of a dead frame. The Fern helper clamps `n < 0` to 0.
+  - `read_all_stdin`'s only loop exit was `read <= 0` — nothing compared the
+    write cursor against the end of its 32 MiB block. That does not fault,
+    because the block sits in the 16 GiB `MAP_NORESERVE` arena, so the writes
+    land in mapped memory and corrupt what follows, including the string box
+    allocated immediately after the buffer. Witnessed: 33 MiB of input reported
+    `len=34603008` and exited 0. Input past the cap is now truncated.
+
+  arm64 also carried a **dead** `__fern_read_all_stdin` next to the `_rc` one it
+  actually called — the AST body outlived the AST emitter, gated on
+  `str_read_line` so any line-reading module emitted 30 instructions nothing
+  branched to. Both are gone; the survivor drops the `_rc` suffix, which only
+  existed to avoid a label collision with the corpse.
+
+- **Still-migratable leaves**, in the same shape and not yet attempted:
+  `read_line`, `reader_read_chunk`, `reader_close`, and `udp_send`.
+
+  These three are where the box question lives, and it is not a layout
+  preference — it is a latent RC bug. `read_line` and `reader_read_chunk`
+  hand-build an `Option[string]` whose inner strbox is a **headerless** raw
+  `__fern_alloc(16)`, and `reader_read_chunk` makes its OUTER Option headerless
+  too. `__fn___fern_str_free` / `__fn___fern_arr_dec` read the refcount at
+  `box-8`, so a dec of one of these reads the last word of the *previous*
+  allocation; if that word is 1, the block is pushed onto a freelist bin chosen
+  from another garbage word. Heap corruption, not a clean crash.
+
+  It is safe today only because **nothing decs them**: the match lowering frees a
+  scrutinee box only for a `map.get` scrutinee, and the `optret_pending` drop
+  machinery only fires for a direct `Some(...)` ctor or a function in the
+  OPTFRESH registry — an op is in neither set. So the boxes simply leak. The
+  nearest miss is `std/io`'s `chunks.append(chunk)`: had `chunks` qualified for
+  element reclaim, the exit sweep would `__fern_str_free` each headerless
+  element. It does not qualify only because a bare ident may alias, which
+  disqualifies the array. That is one predicate away from being live.
+
+  So the Fern rewrite is the fix, not a risk: ordinary `Some(__raw_string(...))`
+  lowering keeps offsets 0 and 8 exactly where they are and puts a real `rc=1`
+  at `box-8`. Nothing reads the header today, and everything that might later
+  would read a valid one.
 
   `udp_send` is the odd one, and it is worse than recorded here before. The
   entry said its hand-asm exists only on arm64 and that `asm_ir.fern` has no

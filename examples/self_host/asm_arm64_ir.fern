@@ -1051,16 +1051,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("str_print");
             s = s.write("    bl __fn___fern_print_str\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 167) {  // read_int
-            // no args -> read an i32 from stdin (asm_arm64.emit_runtime's
-            // __fern_read_int, reused via the read_int need). Push x0 (the value).
+            // no args -> call the Fern-compiled __fn___fern_read_int (#2649) and
+            // push x0 (the value). A zero-arg helper's stack and register
+            // conventions coincide, so there is nothing to marshal.
             s = s.need("read_int");
-            s = s.write("    bl __fern_read_int\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_read_int\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 209) {  // read_all_stdin
-            // no args -> read fd 0 to EOF into ONE fresh rc-headered string box
-            // (asm_arm64.emit_runtime's __fern_read_all_stdin_rc, reused via the
-            // read_all_stdin need). Push x0 (the box).
+            // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
+            // fd 0 to EOF in ONE fresh rc-headered string box, pushed in x0. The
+            // _rc name is gone with the AST body it was distinguished from.
             s = s.need("heap"); s = s.need("read_all_stdin");
-            s = s.write("    bl __fern_read_all_stdin_rc\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_read_all_stdin\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 168) {  // read_line
             // no args -> read one line from stdin into a fresh string box
             // (asm_arm64.emit_runtime's __fern_read_line, reused via str_read_line).
@@ -2498,8 +2499,14 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
+    }
+    if (s.has_need("read_int")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_int(ctgt), s.struct_decls, s);
+    }
+    if (s.has_need("read_all_stdin")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin(ctgt), s.struct_decls, s);
     }
     if (s.has_need("str_print")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str(ctgt), s.struct_decls, s);
@@ -2602,9 +2609,6 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
         s = s.write("    ret\n");
         s = s.write(".size __fern_wasm_poll, .-__fern_wasm_poll\n");
     }
-    // __fern_read_int helper: reads up to 16 bytes from stdin
-    // into a stack buffer, parses an optional leading `-`
-    // followed by decimal digits, returns the value in x0.
     return s;
 }
 
@@ -2612,52 +2616,10 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
 // str_print, putchar, concat / eq / cmp / search, the int-to-string family,
 // chr, case folding, repeat, eprint.
 function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
-    if (s.has_need("read_int")) {
-        s = s.write("__fern_read_int:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    sub sp, sp, #32\n");
-        s = s.write("    mov x0, #0\n");             // fd 0
-        s = s.write("    sub x1, x29, #16\n");
-        s = s.write("    mov x2, #16\n");
-        s = s.write("    mov x8, #63\n");            // sys_read
-        s = s.write("    svc #0\n");
-        s = s.write("    sub x9, x29, #16\n");       // cursor
-        s = s.write("    sub x10, x29, #16\n");
-        s = s.write("    add x10, x10, x0\n");       // end ptr
-        s = s.write("    mov x11, #0\n");            // accumulator
-        s = s.write("    mov x12, #0\n");            // neg flag
-        s = s.write("    cmp x9, x10\n");
-        s = s.write("    beq .Lri_done\n");
-        s = s.write("    ldrb w0, [x9]\n");
-        s = s.write("    cmp w0, #45\n");            // '-'
-        s = s.write("    bne .Lri_loop\n");
-        s = s.write("    mov x12, #1\n");
-        s = s.write("    add x9, x9, #1\n");
-        s = s.write(".Lri_loop:\n");
-        s = s.write("    cmp x9, x10\n");
-        s = s.write("    beq .Lri_done\n");
-        s = s.write("    ldrb w0, [x9]\n");
-        s = s.write("    sub x0, x0, #48\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    blt .Lri_done\n");
-        s = s.write("    cmp x0, #9\n");
-        s = s.write("    bgt .Lri_done\n");
-        s = s.write("    mov x13, #10\n");
-        s = s.write("    mul x11, x11, x13\n");
-        s = s.write("    add x11, x11, x0\n");
-        s = s.write("    add x9, x9, #1\n");
-        s = s.write("    b .Lri_loop\n");
-        s = s.write(".Lri_done:\n");
-        s = s.write("    cmp x12, #0\n");
-        s = s.write("    beq .Lri_no_neg\n");
-        s = s.write("    neg x11, x11\n");
-        s = s.write(".Lri_no_neg:\n");
-        s = s.write("    mov x0, x11\n");
-        s = s.write("    mov sp, x29\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
+    // __fern_read_int and __fern_read_all_stdin are Fern runtime functions (#2649):
+    // asmcore.rt_src_read_int / rt_src_read_all_stdin, emitted with the clocks in
+    // emit_rt_clock_and_print, which is where the per-target syscall number is
+    // available.
     // __fern_print_str and __fern_putchar are Fern runtime functions (#2649):
     // asmcore.rt_src_print_str / rt_src_putchar, emitted with the clocks in
     // emit_rt_clock_and_print, which is where the per-target syscall number is
@@ -2742,77 +2704,6 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    str x1, [x0]\n");     // tag=1 None
         s = s.write(".Lrl_ret:\n");
         s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-        // __fern_read_all_stdin: read fd 0 to EOF into one box.
-        // Loops sys_read appending into a 32 MiB buffer; returns a
-        // 16-byte box [data, total_len]. Mirrors the x86-64 builtin.
-        s = s.write("__fern_read_all_stdin:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    str x21, [sp, #-16]!\n");
-        s = s.write("    ldr x0, =33554432\n");   // 32 MiB buffer
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x19, x0\n");          // buf base
-        s = s.write("    mov x20, x0\n");          // write ptr
-        s = s.write("    mov x21, #0\n");          // total
-        s = s.write(".Lras_loop:\n");
-        s = s.write("    mov x0, #0\n");           // fd 0
-        s = s.write("    mov x1, x20\n");          // dst
-        s = s.write("    ldr x2, =1048576\n");     // up to 1 MiB per read
-        s = s.write("    mov x8, #63\n");          // sys_read
-        s = s.write("    svc #0\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    b.le .Lras_done\n");      // 0 = EOF, <0 = error
-        s = s.write("    add x21, x21, x0\n");
-        s = s.write("    add x20, x20, x0\n");
-        s = s.write("    b .Lras_loop\n");
-        s = s.write(".Lras_done:\n");
-        s = s.write("    mov x0, #16\n");
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    str x19, [x0]\n");
-        s = s.write("    str x21, [x0, #8]\n");
-        s = s.write("    ldr x21, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
-    }
-    // __fern_read_all_stdin_rc: the IR path's read_all_stdin (#5623). Same
-    // sys_read-to-EOF loop as the AST __fern_read_all_stdin above, but the result
-    // is boxed by __fern_str_box so it carries the rc header at box-8 that
-    // __fern_str_free reads. The AST body keeps its headerless raw-16 box so its
-    // emitted bytes are unchanged; the two are separate symbols for the same
-    // reason asm.fern and asm_ir.fern keep parallel runtimes on x86-64. Labels are
-    // suffixed _rc so they can't collide when both bodies are emitted.
-    if (s.has_need("read_all_stdin")) {
-        s = s.write("__fern_read_all_stdin_rc:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    str x21, [sp, #-16]!\n");
-        s = s.write("    ldr x0, =33554432\n");   // 32 MiB buffer
-        s = s.write("    bl __fern_alloc\n");
-        s = s.write("    mov x19, x0\n");          // buf base
-        s = s.write("    mov x20, x0\n");          // write ptr
-        s = s.write("    mov x21, #0\n");          // total
-        s = s.write(".Lras_rc_loop:\n");
-        s = s.write("    mov x0, #0\n");           // fd 0
-        s = s.write("    mov x1, x20\n");          // dst
-        s = s.write("    ldr x2, =1048576\n");     // up to 1 MiB per read
-        s = s.write("    mov x8, #63\n");          // sys_read
-        s = s.write("    svc #0\n");
-        s = s.write("    cmp x0, #0\n");
-        s = s.write("    b.le .Lras_rc_done\n");   // 0 = EOF, <0 = error
-        s = s.write("    add x21, x21, x0\n");
-        s = s.write("    add x20, x20, x0\n");
-        s = s.write("    b .Lras_rc_loop\n");
-        s = s.write(".Lras_rc_done:\n");
-        s = s.write("    mov x0, x19\n");          // data
-        s = s.write("    mov x1, x21\n");          // len
-        s = s.write("    bl __fern_str_box\n");    // rc-headered string box
-        s = s.write("    ldr x21, [sp], #16\n");
         s = s.write("    ldp x19, x20, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
@@ -5816,10 +5707,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         // header at box-8 that __fern_str_free reads. __fern_arg_at above keeps
         // its headerless raw-16 box: that shape is fine for the elements of the
         // string[] __fern_args builds (the array owns them; they are never
-        // str-freed individually) and keeps the AST path's bytes unchanged, but a
-        // bare `arg_at(i)` on the IR path is a reclaimable string the program
-        // holds DIRECTLY. Two symbols for the same accessor, exactly as
-        // __fern_read_all_stdin / __fern_read_all_stdin_rc split. Gated on its own
+        // str-freed individually), but a bare `arg_at(i)` on the IR path is a
+        // reclaimable string the program holds DIRECTLY. Two symbols for one
+        // accessor — the last such pair, now that read_all_stdin's has collapsed
+        // to a single Fern helper. Gated on its own
         // need INSIDE the args block (it reads __fern_argv, declared here), so a
         // program that only calls args() emits exactly what it did before.
         if (s.has_need("arg_at")) {
