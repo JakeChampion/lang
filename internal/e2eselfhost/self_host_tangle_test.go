@@ -155,6 +155,39 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 		}
 	})
 
+	// A `file=` root naming a subdirectory writes into it, creating the
+	// directory on the way. The self-host driver used to refuse this outright
+	// — it predates `create_dir_all` (#6749) and still said so — so a document
+	// that tangled fine under native failed under the self-host with a
+	// diagnostic about a builtin that by then existed.
+	t.Run("output-dir-nested-path", func(t *testing.T) {
+		tmp := t.TempDir()
+		doc := filepath.Join(tmp, "doc.fern.md")
+		if err := os.WriteFile(doc, []byte("```fern file=sub/lib.fern\npub function tag(): i32 { return 5; }\n```\n\n```fern file=main.fern entry\nimport \"./sub/lib\";\nfunction main(): i32 { return lib.tag(); }\n```\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		nativeDir, selfDir := filepath.Join(tmp, "native"), filepath.Join(tmp, "selfhost")
+		if err := exec.Command(nativeBin, "-tangle", "-o", nativeDir, doc).Run(); err != nil {
+			t.Fatalf("native -tangle -o DIR: %v", err)
+		}
+		if err := exec.Command(driverBin, "-tangle", "-o", selfDir, doc).Run(); err != nil {
+			t.Fatalf("self-host -tangle -o DIR: %v", err)
+		}
+		for _, name := range []string{"main.fern", filepath.Join("sub", "lib.fern")} {
+			want, err := os.ReadFile(filepath.Join(nativeDir, name))
+			if err != nil {
+				t.Fatalf("native did not write %s: %v", name, err)
+			}
+			got, err := os.ReadFile(filepath.Join(selfDir, name))
+			if err != nil {
+				t.Fatalf("self-host did not write %s: %v", name, err)
+			}
+			if string(want) != string(got) {
+				t.Errorf("%s differs:\n--- native ---\n%q\n--- self-host ---\n%q", name, want, got)
+			}
+		}
+	})
+
 	// `-o` writes the tangled source instead of printing it, and writes the
 	// same bytes stdout would have carried.
 	t.Run("output-file", func(t *testing.T) {

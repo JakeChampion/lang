@@ -45,22 +45,19 @@
 // spelled at all without the parameter names. Verbatim keeps the written
 // spelling, which is the same reason the formatter needs it.
 //
-// # What is not here yet
+// # Consts arrive as functions
 //
-// Two gaps, neither fixable here:
+// `const NAME: T = EXPR;` is desugared by `parse_const_decl` into a zero-arg
+// `FuncDecl` returning EXPR, so the only thing separating a const from a
+// hand-written zero-arg function is `FuncDecl.is_const`. This file reads that
+// marker rather than the shape, for the reason `print_const_decl` states: the
+// two AST shapes are identical, so guessing from shape rewrites real functions
+// into consts.
 //
-//   - `trait` blocks are not reachable from a Module. `parser.TraitDecl` holds
-//     everything a page needs — name, type params, supertraits, methods in
-//     source order, and `is_pub` — but `parse_trait_decl` hands it out
-//     separately and only the formatter takes it (`format_module`'s `traits`
-//     parameter). It is not a field on `Module`, which is what this generator
-//     renders from, so `pub trait` cannot be reached. Plumbing, not erasure:
-//     putting `trait_decls` on `Module` closes it.
-//   - `const` desugars to a zero-arg function (`FuncDecl.is_const`) rather than
-//     surviving as its own declaration.
-//
-// The page differential lists exactly which stdlib module each of these costs,
-// and fails if one is fixed without the list being updated.
+// It also means consts are in `Module.funcs` rather than a list of their own,
+// which is where native's `__`-prefix filter stops applying — native drops a
+// `__` function and keeps a `__` const, because the filter is on the funcs
+// list it does not share.
 
 import "./lexer";
 import "./parser";
@@ -199,7 +196,11 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
-        if (fd.is_pub && !starts_with_dunder(fd.name)) {
+        if (fd.is_const) {
+            if (fd.is_pub) {
+                out = insert_sorted(out, DocDecl { kind: "const", name: fd.name, line: fd.line, col: fd.col, doc: "" });
+            }
+        } else if (fd.is_pub && !starts_with_dunder(fd.name)) {
             out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, doc: "" });
         }
         i = i + 1;
@@ -425,6 +426,20 @@ function render_func(fd: parser.FuncDecl, doc: string): string {
     return out + doc_block(doc);
 }
 
+// render_const mirrors cmd/ferndoc's renderConst. The initialiser is NOT
+// rendered — native reads `cd.Name` and `cd.Type` and never `cd.Value`, so the
+// page documents what a const IS rather than what it currently equals.
+//
+// The type goes out raw rather than through type_str: an unannotated const has
+// no `ast.Type` on native's side and renders with no `: T` clause at all, which
+// is a different fact from type_str's `?` for a position that should have had
+// one.
+function render_const(fd: parser.FuncDecl, doc: string): string {
+    var out: string = "## `const " + fd.name + "`\n\n```fern\npub const " + fd.name;
+    if (fd.ret_type.len() > 0) { out = out + ": " + fd.ret_type; }
+    return out + "\n```\n\n" + doc_block(doc);
+}
+
 function render_struct(sd: parser.StructDecl, doc: string): string {
     var out: string = "## `struct " + sd.name + "`\n\n```fern\npub struct "
         + sd.name + join_type_params(sd.type_params) + " { ";
@@ -604,6 +619,7 @@ pub function render_page(src: string, mod_path: string): string {
     while (i < decls.len()) {
         var d: DocDecl = decls[i];
         if (d.kind == "function") { out = out + render_func(func_named(mod, d.name, d.line), d.doc); }
+        else if (d.kind == "const") { out = out + render_const(func_named(mod, d.name, d.line), d.doc); }
         else if (d.kind == "struct") { out = out + render_struct(struct_named(mod, d.name, d.line), d.doc); }
         else if (d.kind == "enum") { out = out + render_enum(enum_named(mod, d.name, d.line), mod.structs, d.doc); }
         else if (d.kind == "trait") { out = out + render_trait(trait_named(mod, d.name, d.line), d.doc); }

@@ -182,6 +182,40 @@ function self_checks(): i32 {
     if (dm3.decls.len() != 1) { return 70; }
     if (dm3.decls[0].name != "shown" || dm3.decls[0].doc != "Shown.") { return 71; }
 
+    // A const arrives as a zero-arg FuncDecl, so the only thing separating it
+    // from the function below it is `is_const`. Both directions matter: the
+    // const must not be reported as a function, and the function must not be
+    // swept up as a const.
+    var src4: string = "// Limit.\n"
+        + "pub const MAX: i32 = 10;\n"
+        + "// Zero.\n"
+        + "pub function zero(): i32 { return 0; }\n"
+        + "// Private, and skipped.\n"
+        + "const HIDDEN: i32 = 1;\n";
+    var dm4: ferndoc.DocModule = ferndoc.docs_of(src4);
+    if (dm4.decls.len() != 2) { return 80; }
+    if (dm4.decls[0].kind != "const" || dm4.decls[0].name != "MAX") { return 81; }
+    if (dm4.decls[0].doc != "Limit.") { return 82; }
+    if (dm4.decls[1].kind != "function" || dm4.decls[1].name != "zero") { return 83; }
+    if (dm4.decls[1].doc != "Zero.") { return 84; }
+
+    // The `__` filter is native's, and native applies it to its funcs list
+    // alone — a `__`-prefixed const has no such filter and is documented.
+    var src5: string = "// Kept.\n"
+        + "pub const __RAW: i32 = 2;\n";
+    var dm5: ferndoc.DocModule = ferndoc.docs_of(src5);
+    if (dm5.decls.len() != 1) { return 85; }
+    if (dm5.decls[0].kind != "const" || dm5.decls[0].name != "__RAW") { return 86; }
+
+    // A page renders `pub const NAME: T` with no initialiser, and drops the
+    // type clause entirely when the source did not write one — `?` is what an
+    // absent type renders as elsewhere, and a const without one is a different
+    // fact.
+    var page: string = ferndoc.render_page("pub const A: i32 = 1;\npub const B = 2;\n", "std/x");
+    if (!util.contains(page, "## `const A`\n\n```fern\npub const A: i32\n```\n")) { return 87; }
+    if (!util.contains(page, "## `const B`\n\n```fern\npub const B\n```\n")) { return 88; }
+    if (util.contains(page, "= 1")) { return 89; }
+
     return 0;
 }
 

@@ -18,6 +18,7 @@
 //     fern -targets                         list the targets + capabilities
 //     fern -resolve <ABS-DIR>               run MVS; write fern.lock
 //     fern -tangle <doc.fern.md>            literate: emit the tangled source
+//     fern -doc <module.fern | DIR>         Markdown reference pages
 //     fern -add NAME SPEC <ABS-DIR>         declare a dependency
 //     fern -vendor <ABS-DIR>                flatten the dep graph into vendor/
 //
@@ -106,6 +107,7 @@ import "./modloader";
 import "./visibility";
 import "./fern_toml";
 import "./literate";
+import "./ferndoc";
 import "./mvs";
 import "./treeshake";
 import "./arm64_native";
@@ -368,6 +370,8 @@ function usage(): i32 {
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
     eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
+    eprint("       fern -doc <module.fern> [-o OUT]             (Markdown reference page; stdout without -o)\n");
+    eprint("       fern -doc <DIR> -o OUTDIR                    (one page per module under DIR)\n");
     eprint("       fern -add NAME SPEC <ABS-DIR>                (declare a dependency: path:DIR | workspace)\n");
     eprint("       fern -vendor <ABS-DIR>                       (flatten the dependency graph into vendor/)\n");
     return 2;
@@ -1494,6 +1498,19 @@ function tangle_emit(code: string, out_path: string): i32 {
         write(code);
         return 0;
     }
+    // Parents are created, matching native's writeGeneratedFile: a `file=`
+    // root naming `sub/util.fern` writes into a subdirectory the document
+    // describes and the caller has no reason to have made.
+    var parent: string = dir_of(out_path);
+    if (parent.len() > 0) {
+        match (create_dir_all(parent)) {
+            Ok(u) => { },
+            Err(e) => {
+                eprint("fern: cannot create output directory: " + parent);
+                return 1;
+            },
+        }
+    }
     match (write_file(out_path, code)) {
         Ok(u) => {
             eprint("wrote " + out_path);
@@ -1506,20 +1523,12 @@ function tangle_emit(code: string, out_path: string): i32 {
     }
 }
 
-// tangle_write_files writes one module per `file=PATH` root into `dir`.
-//
-// A path with a directory segment is refused rather than written to the
-// wrong place: creating the parent needs a directory-creating builtin the
-// language does not have (#6749), and silently flattening `a/b.fern` to
-// `b.fern` would produce a tree that compiles differently from native's.
+// tangle_write_files writes one module per `file=PATH` root into `dir`,
+// subdirectory layout preserved — tangle_emit creates the parents.
 function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
     var i: i32 = 0;
     while (i < files.len()) {
         var rel: string = files[i].path;
-        if (util.contains(rel, "/")) {
-            eprint("fern: -tangle -o: " + rel + " needs a subdirectory, which this driver cannot create yet (#6749)");
-            return 1;
-        }
         // Written verbatim, NOT newline-terminated: native's per-module
         // files end where the chunk does, even though its stdout form
         // terminates the last line. Parity is on what native writes.
@@ -1528,6 +1537,159 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
         i = i + 1;
     }
     return 0;
+}
+
+// run_doc implements `-doc`: cmd/ferndoc's Markdown reference pages, generated
+// from sources on disk rather than from a stdlib embedded at build time.
+//
+// A page is titled with a module PATH, not a file path, and the namespace half
+// of it is the containing directory's own name — `internal/stdlib/std/io.fern`
+// documents `std/io`. That is native's rule as well (its roots ARE the
+// directory names `std` and `core`), which is what makes
+//
+//     fern -doc internal/stdlib/std -o D && fern -doc internal/stdlib/core -o D
+//
+// reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
+// to carry it.
+function run_doc(path: string, out_path: string): i32 {
+    if (is_dir(path)) { return doc_tree(path, out_path); }
+    var src: string = "";
+    var read_ok: boolean = false;
+    match (read_file(path)) { Ok(s) => { src = s; read_ok = true; }, Err(e) => { } }
+    if (!read_ok) {
+        eprint("fern: -doc: cannot read " + path);
+        return 1;
+    }
+    var page: string = ferndoc.render_page(src, doc_module_path(path_base(dir_of(path)), doc_stem(path_base(path))));
+    if (out_path.len() == 0) {
+        write(page);
+        return 0;
+    }
+    match (write_file(out_path, page)) {
+        Ok(u) => { return 0; },
+        Err(e) => {
+            eprint("fern: -doc: cannot write " + out_path);
+            return 1;
+        },
+    }
+}
+
+// doc_tree walks `dir` for modules and writes one page each into `out_dir`.
+//
+// The page filename flattens a subdirectory with `_` — `wasm/convert` becomes
+// `wasm_convert.md` — so every page of a namespace is one flat directory and
+// two modules with the same basename in different subdirectories cannot
+// clobber each other. Native does the same, for the same reason.
+function doc_tree(dir: string, out_dir: string): i32 {
+    if (out_dir.len() == 0) {
+        eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
+        return 2;
+    }
+    match (create_dir_all(out_dir)) {
+        Ok(u) => { },
+        Err(e) => {
+            eprint("fern: -doc: cannot create " + out_dir);
+            return 1;
+        },
+    }
+    var ns: string = path_base(dir);
+    // Relative subdirectories still to visit, "" being `dir` itself. A worklist
+    // rather than recursion, matching copy_package's walk.
+    var rels: string[] = [""];
+    var ri: i32 = 0;
+    while (ri < rels.len()) {
+        var rel: string = rels[ri];
+        ri = ri + 1;
+        var sdir: string = dir;
+        if (rel.len() > 0) { sdir = dir + "/" + rel; }
+        var entries: string[] = [];
+        var listed: boolean = false;
+        match (read_dir(sdir)) { Ok(ns2) => { entries = ns2; listed = true; }, Err(e) => { } }
+        if (!listed) {
+            eprint("fern: -doc: cannot read " + sdir);
+            return 1;
+        }
+        var i: i32 = 0;
+        while (i < entries.len()) {
+            var name: string = entries[i];
+            i = i + 1;
+            var child_rel: string = name + "";
+            if (rel.len() > 0) { child_rel = rel + "/" + name; }
+            var child: string = dir + "/" + child_rel;
+            if (is_dir(child)) {
+                if (name.len() > 0 && name[0] == 46) { continue; }   // '.', and so `.` / `..`
+                rels = rels.append(child_rel + "");
+                continue;
+            }
+            if (!is_doc_module(name)) { continue; }
+            var src: string = "";
+            var read_ok: boolean = false;
+            match (read_file(child)) { Ok(s) => { src = s; read_ok = true; }, Err(e) => { } }
+            if (!read_ok) {
+                eprint("fern: -doc: cannot read " + child);
+                return 1;
+            }
+            var stem: string = doc_stem(child_rel);
+            var page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
+            // A module with nothing public gets no page at all rather than a
+            // heading with no content under it.
+            if (page.len() == 0) { continue; }
+            var dest: string = out_dir + "/" + flatten_path(stem) + ".md";
+            match (write_file(dest, page)) {
+                Ok(u) => { },
+                Err(e) => {
+                    eprint("fern: -doc: cannot write " + dest);
+                    return 1;
+                },
+            }
+        }
+    }
+    return 0;
+}
+
+// is_doc_module selects the files a reference page is generated from: Fern
+// modules, minus the `_test_` stubs, which are fixtures rather than API.
+// `.fern.md` is excluded by the same suffix test that admits `.fern`.
+function is_doc_module(name: string): boolean {
+    if (name.len() < 6 || name[name.len() - 5:name.len()] != ".fern") { return false; }
+    return !(name.len() >= 6 && name[0:6] == "_test_");
+}
+
+// doc_stem drops a trailing `.fern`, leaving the module's path relative to its
+// namespace.
+function doc_stem(p: string): string {
+    if (p.len() >= 5 && p[p.len() - 5:p.len()] == ".fern") { return p[0:p.len() - 5] + ""; }
+    return p;
+}
+
+// doc_module_path joins the namespace to the module stem. A module with no
+// containing directory to name — `fern -doc io.fern` from inside it — is
+// documented under its bare name rather than under a leading slash.
+function doc_module_path(ns: string, stem: string): string {
+    if (ns.len() == 0) { return stem; }
+    return ns + "/" + stem;
+}
+
+// path_base is the final segment of a path, trailing slashes ignored so
+// `-doc std/` names the same namespace as `-doc std`.
+function path_base(p: string): string {
+    var end: i32 = p.len();
+    while (end > 0 && p[end - 1] == 47) { end = end - 1; }   // '/'
+    var start: i32 = end;
+    while (start > 0 && p[start - 1] != 47) { start = start - 1; }
+    return p[start:end] + "";
+}
+
+// flatten_path replaces `/` with `_` so a nested module's page is a single
+// file in the output directory.
+function flatten_path(p: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < p.len()) {
+        if (p[i] == 47) { out = out + "_"; } else { out = out + p[i:i + 1]; }
+        i = i + 1;
+    }
+    return out;
 }
 
 // read_stdin reads the whole of stdin, which is how `-` names a program with
@@ -1733,6 +1895,7 @@ function run(): i32 {
     var mode_resolve: boolean = false;
     var mode_tangle: boolean = false;
     var chunk: string = "";
+    var mode_doc: boolean = false;
     var mode_add: boolean = false;
     var mode_vendor: boolean = false;
     // Every non-flag argument, in order. The compile modes read the first two
@@ -1789,6 +1952,10 @@ function run(): i32 {
             // Literate: expand a .fern.md document's chunks into Fern source.
             // It reads a document, not a module, so it never loads imports.
             mode_tangle = true;
+        } else if (a == "-doc") {
+            // Reference pages. Like -tangle it reads sources and compiles
+            // nothing, so it takes a path rather than an entry module.
+            mode_doc = true;
         } else if (a == "-add") {
             // Manifest editing: append a declared dependency. Takes NAME SPEC
             // DIR positionally, not an entry module.
@@ -1857,6 +2024,13 @@ function run(): i32 {
     if (mode_tangle) {
         if (!have_entry) { return usage(); }
         return run_tangle(entry_path, out_path, chunk);
+    }
+
+    // `-doc` reads sources for their declarations and comments and compiles
+    // nothing.
+    if (mode_doc) {
+        if (!have_entry) { return usage(); }
+        return run_doc(entry_path, out_path);
     }
 
     // `-add` edits a manifest and compiles nothing.
