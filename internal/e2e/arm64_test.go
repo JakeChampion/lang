@@ -28,6 +28,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // First arm64 e2e: `function main(): i32 { return 42; }`
@@ -10111,8 +10112,8 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if got := strings.Count(asm, "bl sum_to"); got != 1 {
-		t.Errorf("`bl sum_to` appearances = %d, want 1 (only from main); TCO didn't fire", got)
+	if bl := "bl " + symname.Fn("sum_to"); strings.Count(asm, bl) != 1 {
+		t.Errorf("`%s` appearances = %d, want 1 (only from main); TCO didn't fire", bl, strings.Count(asm, bl))
 	}
 
 	dir := t.TempDir()

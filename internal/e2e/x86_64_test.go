@@ -33,6 +33,7 @@ import (
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // `function main(): i32 { return N; }` is the smallest
@@ -763,8 +764,8 @@ function main(): i32 {
 	// Exactly one `call sum_to` survives — the one in
 	// `main` — and the recursive site became `jmp <loop
 	// top>`. If TCO didn't fire we'd see two.
-	if got := strings.Count(asm, "call sum_to"); got != 1 {
-		t.Errorf("`call sum_to` appearances = %d, want 1 (only from main); TCO didn't fire", got)
+	if call := "call " + symname.Fn("sum_to"); strings.Count(asm, call) != 1 {
+		t.Errorf("`%s` appearances = %d, want 1 (only from main); TCO didn't fire", call, strings.Count(asm, call))
 	}
 
 	dir := t.TempDir()
