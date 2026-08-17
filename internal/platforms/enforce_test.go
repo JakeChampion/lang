@@ -45,7 +45,7 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	if httpDropMain {
 		extras = append(extras, "handle", "__method_HeaderMap_append")
 	}
-	treeshake.Run(prog, extras...)
+	treeshake.Run(prog, info, extras...)
 	return prog
 }
 

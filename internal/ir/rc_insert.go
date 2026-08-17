@@ -1784,7 +1784,7 @@ func userDropFnName(info *checker.Info, typeName string) (string, bool) {
 		if simple != "Drop" {
 			continue
 		}
-		if fn := info.Methods[typeName+".drop"]; fn != "" {
+		if fn, _, ok := info.ResolveMethod(typeName, "drop", []string{trait}); ok && fn != "" {
 			return fn, true
 		}
 		return "__method_" + typeName + "_drop", true

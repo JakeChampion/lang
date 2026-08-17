@@ -1919,6 +1919,13 @@ type MethodCallSite struct {
 	Field    string
 	FieldPos Position
 	Receiver Type
+	// OwnerTrait is the (mangled) trait that provided the
+	// implementation dispatch resolved to, empty for an inherent
+	// method or a builtin. Every later reader that has to land on the
+	// SAME implementation — the move/borrow analysis's own-flag
+	// lookup above all — re-resolves with this as its preference
+	// rather than re-deriving one.
+	OwnerTrait string
 }
 
 // ModuleCallSite is the cross-module analogue of MethodCallSite:

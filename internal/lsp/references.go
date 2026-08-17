@@ -278,7 +278,7 @@ func collectMethod(state *docState, m *ast.MethodCallSite) []occurrence {
 	if !ok {
 		return nil
 	}
-	mangled, ok := state.info.Methods[receiverName+"."+m.Field]
+	mangled, _, ok := state.info.ResolveMethod(receiverName, m.Field, []string{m.OwnerTrait})
 	if !ok {
 		return nil
 	}

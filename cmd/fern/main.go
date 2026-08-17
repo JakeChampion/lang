@@ -1138,7 +1138,7 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 			extras = append(extras, fn.Name)
 		}
 	}
-	treeshake.Run(prog, extras...)
+	treeshake.Run(prog, info, extras...)
 	vs := platforms.Enforce(prog, target)
 	if len(vs) == 0 {
 		return nil

@@ -17,10 +17,11 @@ func runShake(t *testing.T, src string, extras ...string) []string {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	treeshake.Run(prog, extras...)
+	treeshake.Run(prog, info, extras...)
 	names := make([]string, 0, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		names = append(names, fn.Name)
@@ -104,15 +105,16 @@ function main(): i32 { return used(); }`
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	treeshake.Run(prog)
+	treeshake.Run(prog, info)
 	afterFirst := make([]string, 0, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		afterFirst = append(afterFirst, fn.Name)
 	}
-	treeshake.Run(prog)
+	treeshake.Run(prog, info)
 	afterSecond := make([]string, 0, len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		afterSecond = append(afterSecond, fn.Name)
@@ -133,7 +135,7 @@ function main(): i32 { return used(); }`
 // upstream, but tree-shake is the last fail-safe).
 func TestShakeNoOpOnEmptyProgram(t *testing.T) {
 	prog := &ast.Program{}
-	treeshake.Run(prog)
+	treeshake.Run(prog, nil)
 	if len(prog.Funcs) != 0 {
 		t.Errorf("expected 0 funcs, got %d", len(prog.Funcs))
 	}

@@ -256,17 +256,16 @@ func lookupVariant(info *checker.Info, name string) (string, ast.EnumVariant, bo
 }
 
 // describeMethodCall formats the hover for a `target.method()`
-// site. Pulls the mangled implementation name from Info.Methods
-// (keyed by "ReceiverTypeName.method") and looks its signature up
-// in FuncSigs. Falls through to ok=false if the receiver type isn't
-// a struct/enum/builtin we can name, or the method isn't registered.
+// site. Resolves the implementation the call site dispatched to and
+// looks its signature up in FuncSigs. Falls through to ok=false if the
+// receiver type isn't a struct/enum/builtin we can name, or the method
+// isn't registered.
 func describeMethodCall(info *checker.Info, call *ast.Call) (string, bool) {
 	receiverName, ok := receiverTypeKey(call.Method.Receiver)
 	if !ok {
 		return "", false
 	}
-	key := receiverName + "." + call.Method.Field
-	mangled, ok := info.Methods[key]
+	mangled, _, ok := info.ResolveMethod(receiverName, call.Method.Field, []string{call.Method.OwnerTrait})
 	if !ok {
 		return "", false
 	}

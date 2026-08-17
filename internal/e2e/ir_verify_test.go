@@ -94,7 +94,7 @@ func corpusPrograms(t *testing.T, fn func(name string, ptrW int, ip *ir.Program)
 			}
 			roots := append(treeshake.DynCoercionImplMethods(info),
 				treeshake.DowncastImplMethods(p, info)...)
-			treeshake.Run(p, roots...)
+			treeshake.Run(p, info, roots...)
 			var opts []ir.LowerOption
 			if w == 8 {
 				opts = append(opts, ir.DynSupported(), ir.DynRcSupported())

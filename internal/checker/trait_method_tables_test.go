@@ -201,3 +201,88 @@ func TestMethodOwnersSorted(t *testing.T) {
 		t.Errorf(`TraitMethods["Apple.P.go"] = %q, want "__method_P__Apple__go"`, got)
 	}
 }
+
+// resolveMethod is the single lookup every trait-aware reader goes
+// through. With no preference it reproduces the flat `Methods` answer
+// exactly; with one it selects that trait's own registration.
+func TestResolveMethodPrefersNamedTrait(t *testing.T) {
+	info := checkInfo(t, `struct P { x: i32 }
+trait Area { function area(self: Self): i32; }
+impl Area for P { function area(self: Self): i32 { return self.x; } }
+function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+
+	for _, prefer := range [][]string{nil, {"Area"}, {""}, {"Unrelated"}} {
+		mangled, owner, ok := info.ResolveMethod("P", "area", prefer)
+		if !ok || mangled != "__method_P_area" || owner != "Area" {
+			t.Errorf("ResolveMethod(P, area, %v) = %q, %q, %v; want __method_P_area, Area, true", prefer, mangled, owner, ok)
+		}
+	}
+	if _, _, ok := info.ResolveMethod("P", "perimeter", nil); ok {
+		t.Error("ResolveMethod resolved a method that does not exist")
+	}
+}
+
+// An inherent method resolves with an empty owner — that is what tells a
+// caller the implementation came from no trait.
+func TestResolveMethodInherentHasNoOwner(t *testing.T) {
+	info := checkInfo(t, `struct P { x: i32 }
+function (p: P) area(): i32 { return p.x; }
+function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
+
+	mangled, owner, ok := info.ResolveMethod("P", "area", []string{"Area"})
+	if !ok || mangled != "__method_P_area" || owner != "" {
+		t.Errorf("ResolveMethod(P, area) = %q, %q, %v; want __method_P_area, \"\", true", mangled, owner, ok)
+	}
+}
+
+// A preference is matched by SIMPLE name, so a caller can ask for `Ord`
+// without knowing the trait arrives module-mangled as `cmp__Ord`.
+func TestResolveMethodPreferenceIgnoresModuleMangling(t *testing.T) {
+	c := &checker{info: &Info{
+		Methods:       map[string]string{},
+		TraitMethods:  map[string]string{},
+		MethodOwners:  map[string][]string{},
+		MethodSources: map[string]string{},
+	}}
+	c.registerMethod("P", "cmp", "cmp__Ord", "__method_P_cmp", "")
+
+	for _, prefer := range []string{"Ord", "cmp__Ord"} {
+		mangled, owner, ok := c.resolveMethod("P", "cmp", []string{prefer})
+		if !ok || mangled != "__method_P_cmp" || owner != "cmp__Ord" {
+			t.Errorf("resolveMethod(prefer %q) = %q, %q, %v; want __method_P_cmp, cmp__Ord, true", prefer, mangled, owner, ok)
+		}
+	}
+}
+
+// The property the move/borrow analysis rests on: the owner reported for
+// an unpreferred lookup, fed back in as the preference, returns the SAME
+// implementation. Without it `methodConsumesReceiver` could read the
+// `own` flags of an impl the call site did not dispatch to.
+func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
+	c := &checker{info: &Info{
+		Methods:       map[string]string{},
+		TraitMethods:  map[string]string{},
+		MethodOwners:  map[string][]string{},
+		MethodSources: map[string]string{},
+	}}
+	for _, trait := range []string{"Zebra", "Mango", "Apple"} {
+		c.registerMethod("P", "go", trait, c.mangleMethodName("__method_", "P", "go", trait), "")
+	}
+
+	mangled, owner, ok := c.resolveMethod("P", "go", nil)
+	if !ok || mangled != "__method_P_go" || owner != "Zebra" {
+		t.Fatalf("resolveMethod(P, go, nil) = %q, %q, %v; want __method_P_go, Zebra, true", mangled, owner, ok)
+	}
+	again, _, ok := c.resolveMethod("P", "go", []string{owner})
+	if !ok || again != mangled {
+		t.Errorf("re-resolving with owner %q gave %q, want %q", owner, again, mangled)
+	}
+	// And each other trait's own registration stays individually
+	// addressable — the point of the split index.
+	for trait, want := range map[string]string{"Mango": "__method_P__Mango__go", "Apple": "__method_P__Apple__go"} {
+		got, gotOwner, ok := c.resolveMethod("P", "go", []string{trait})
+		if !ok || got != want || gotOwner != trait {
+			t.Errorf("resolveMethod(P, go, [%s]) = %q, %q, %v; want %q, %s, true", trait, got, gotOwner, ok, want, trait)
+		}
+	}
+}

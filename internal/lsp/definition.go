@@ -112,14 +112,14 @@ func locateDefinition(info *checker.Info, prog *ast.Program, hit *nameHit, fallb
 }
 
 // locateMethod resolves a method-call hit to the FuncDecl position
-// of the implementation. Looks the mangled name up in Info.Methods
-// + scans prog.Funcs for the matching decl.
+// of the implementation the call site dispatched to, then scans
+// prog.Funcs for the matching decl.
 func locateMethod(info *checker.Info, prog *ast.Program, call *ast.Call) (ast.Position, string, bool) {
 	receiverName, ok := receiverTypeKey(call.Method.Receiver)
 	if !ok {
 		return ast.Position{}, "", false
 	}
-	mangled, ok := info.Methods[receiverName+"."+call.Method.Field]
+	mangled, _, ok := info.ResolveMethod(receiverName, call.Method.Field, []string{call.Method.OwnerTrait})
 	if !ok {
 		return ast.Position{}, "", false
 	}

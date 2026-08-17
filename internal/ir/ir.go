@@ -1641,6 +1641,11 @@ type VtableDecl struct {
 type VtableMethod struct {
 	Method string // trait method name (slot identity)
 	Func   string // mangled impl function, e.g. "__method_Circle_area"
+	// Trait is the (mangled) trait that DECLARES this slot. A merged
+	// `dyn A + B` table concatenates two traits' slots, so the decl's
+	// own Trait field can't say which one a given slot came from —
+	// resolving the slot's implementation needs this.
+	Trait string
 }
 
 // String prints the program in a textual form useful for tests and
@@ -2135,17 +2140,14 @@ func traitVtableSlots(info *checker.Info, td *ast.TraitDecl, concrete string, pr
 			continue
 		}
 		if prim {
-			methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name)})
+			methods = append(methods, VtableMethod{Method: m.Name, Func: dynboxWrapperName(concrete, m.Name), Trait: td.Name})
 			continue
 		}
-		fn := info.Methods[concrete+"."+m.Name]
-		if fn == "" {
-			// Fall back to the conventional mangled name the
-			// receiver-hoist produces; an empty entry would make
-			// the slot un-dispatchable.
-			fn = "__method_" + concrete + "_" + m.Name
-		}
-		methods = append(methods, VtableMethod{Method: m.Name, Func: fn})
+		methods = append(methods, VtableMethod{
+			Method: m.Name,
+			Func:   realImplMethodName(info, concrete, m.Name, td.Name),
+			Trait:  td.Name,
+		})
 	}
 	return methods
 }
@@ -2285,17 +2287,18 @@ func vtableDispatchedMethods(info *checker.Info, vts []VtableDecl) map[string]bo
 	for _, vt := range vts {
 		for _, m := range vt.Methods {
 			out[m.Func] = true
-			out[realImplMethodName(info, vt.Concrete, m.Method)] = true
+			out[realImplMethodName(info, vt.Concrete, m.Method, m.Trait)] = true
 		}
 	}
 	return out
 }
 
 // realImplMethodName resolves the mangled receiver-method a (concrete,
-// method) slot dispatches to — `info.Methods[C.m]`, falling back to the
-// conventional `__method_<C>_<m>` (mirrors collectVtables' resolution).
-func realImplMethodName(info *checker.Info, concrete, method string) string {
-	if fn := info.Methods[concrete+"."+method]; fn != "" {
+// method) slot dispatches to, preferring the impl `trait` declared the
+// slot provides and falling back to the conventional `__method_<C>_<m>`
+// — an empty entry would make the slot un-dispatchable.
+func realImplMethodName(info *checker.Info, concrete, method, trait string) string {
+	if fn, _, ok := info.ResolveMethod(concrete, method, []string{trait}); ok && fn != "" {
 		return fn
 	}
 	return "__method_" + concrete + "_" + method
@@ -2395,7 +2398,7 @@ func buildDynboxWrappers(info *checker.Info, ptrW int, vtables []VtableDecl) ([]
 			callArgTypes = append(callArgTypes, argTypes...)
 			emit(Op{
 				Kind: OpCallDirect,
-				Str:  realImplMethodName(info, vt.Concrete, vm.Method),
+				Str:  realImplMethodName(info, vt.Concrete, vm.Method, vm.Trait),
 				I32:  int32(1 + len(argTypes)),
 				Ext:  &OpExt{ArgTypes: callArgTypes},
 			})
@@ -18646,8 +18649,8 @@ func (b *builder) keyedMapFnsFor(kType ast.Type) (keyedMapFns, bool) {
 		return keyedMapFns{}, false
 	}
 	return keyedMapFns{
-		hash: "__method_" + name + "_hash",
-		eq:   "__method_" + name + "_eq",
+		hash: realImplMethodName(b.info, name, "hash", "Hash"),
+		eq:   realImplMethodName(b.info, name, "eq", "Eq"),
 	}, true
 }
 
