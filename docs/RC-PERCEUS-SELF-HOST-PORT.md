@@ -8040,3 +8040,73 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   them. For a change to a predicate this widely consumed, the full sweep is the
   gate, not the follow-up — "open the PR early" is right in general and was wrong
   here. Refs #6544 #4451.
+
+- 2026-08-17 (struct half, first slice): **A struct local lost its DEEP drop to
+  any method call on it; a borrowing callee now keeps it (#6544).** The 22
+  B/round that sits under every method row in the entries above.
+
+  `moves_fields_expr` marks EVERY method receiver as a field-move hazard, so
+  `b.score()` earns `b` a `NODEEP:` marker and the exit sweep degrades to a
+  box-only dec — the struct's own string / array fields are stranded for the
+  rest of the scope. The mark is not paranoia: a method body genuinely can carry
+  a receiver field into its result with no counted reference (`ops:
+  self.ops.append(op)` — an in-place append hands the receiver's rc==1 buffer
+  straight to the result), and that is the #3425 residual it was added for. But
+  it is a CALLER-side guess about a CALLEE, made with the callee in hand.
+
+  `recv_borrow_fns_of` answers it on the callee side, emitting a
+  `"<Type>.<method>"` key when the receiver behaves exactly like a
+  deep-drop-worthy LOCAL — proven by the same three predicates
+  `reclaimable_names_of` runs over one:
+
+  | predicate | refuses |
+  |---|---|
+  | `body_unsafe_for` | the box escapes: `return self`, a container store, an alias, a non-borrowable arg |
+  | `moves_fields_stmts` | a receiver-POSITION use inside, i.e. `self.m2()` |
+  | `optstruct_body_moves_field` | a field reaching a bind / assign / return value, a non-borrowable argument, or a container element |
+
+  The middle one is what keeps the registry NON-CIRCULAR: no method that calls
+  through its own receiver is admitted, so no entry rests on another and there
+  is no fixpoint to iterate. Struct receivers only — the marker it feeds is the
+  struct deep drop.
+
+  Consumed where the marker is decided: `reclaimable_names_of` resolves the
+  local's struct type (the literal init, else the declaration) and passes the
+  admitted method names to `moves_fields_expr` alongside the fn-typed field
+  names it already exempted. The two are one concept — call names in
+  `name.<f>(...)` position that provably move nothing — so they share the
+  parameter, renamed `fnfields` -> `nomove`.
+
+  Per round, self-host x86-64 (`Box { tag: string, … }`, one method call per
+  round):
+
+  | probe | before | after | native |
+  |---|---|---|---|
+  | `b.score()` reading a scalar field | 22 | 0 | 0 |
+  | same over an rc-ARRAY field (`b.items.len()`) | 70 | 0 | 0 |
+  | struct built + field read, no method (control) | 0 | 0 | 0 |
+  | `b.me().tag.len()`, identity return | 22 | 22 | 0 |
+  | `b.bump().tag.len()`, fresh struct return | 71 | 71 | 0 |
+  | the whole `alloc_flat_method_identity_return` case | 142 | 142 | 0 |
+
+  **The conformance row does not move, and that is the correct verdict.** Its
+  `relabel` is `if (t.len() == 0) { return b; }` — an identity return, so
+  `body_unsafe_for` refuses it. Admitting one needs a CALLER-side proof the
+  registry cannot carry: the result aliases the receiver's box, so a caller that
+  BINDS it (`var c = b.relabel(x)`) holds a live alias past b's death, and
+  `relabel` is not in any fresh-ret registry so `c` is never separately
+  credited. Granting the deep drop there would dangle rather than leak. The next
+  slice is that proof — admit an identity-returning method only where every call
+  site consumes the result inline — and after it the row's remaining ~48 is the
+  fresh STRUCT result at a field read, the struct analogue of the entries above.
+
+  VERIFIED: new `TestSelfHostRecvBorrowDeepDrop{X86_64,Arm64,Wasm}`. The two
+  flatness rows (`recvborrow-deep-drop-flat`, `recvborrow-array-field-flat`)
+  FAIL at 98 on the parent; the four refusal rows pass on both parent and child
+  and each re-reads the value the refusal protects after 4000 further rounds
+  have recycled the freelist, so a wrongly granted deep drop returns garbage
+  rather than merely leaking. Flatness is register-backend only, per the trap
+  above. Plus the whole `internal/e2eselfhost` package — the gate the previous
+  entry's process note names, and the right one here: this widens deep drops
+  across the self-host compiler's own sources, which is exactly the #3425 blast
+  radius. Refs #6544 #3425 #4451.

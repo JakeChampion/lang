@@ -374,6 +374,10 @@ pub struct FnSigs {
     // field buffer. Lets the ExprStructLit construction-inc skip retaining a
     // nested-struct field bound from such a call.
     return_fresh_struct_ret_fns: string[],
+    // recv_borrow_fns: "<Type>.<method>" keys whose RECEIVER is a pure borrow,
+    // so a caller's struct local keeps its deep drop across the call
+    // (recv_borrow_fns_of).
+    recv_borrow_fns: string[],
     // str_fresh_ret_fns: functions returning a fresh, sole-owned string box
     // (see str_producer_ownership).
     str_fresh_ret_fns: string[],
@@ -28165,47 +28169,52 @@ function stmt_darr_unsafe_for(st: parser.Stmt, name: string, borrowable: string[
 // reclaims. The recursion is exhaustive over every Expr variant (leaves return
 // false), so a receiver buried in a nested sub-expression / lambda body is
 // still found.
-// `fnfields` lists the fn-typed FIELD names of `name`'s own struct type (the
-// clofld slice): `name.f(args)` where f is such a field is a FIELD-CLOSURE
-// CALL, not a user method — the closure sees only its args + captures (built
-// before `name` existed), so it cannot move `name`'s fields into its result.
-// Exempting it keeps a struct with a called fn field deep-drop-worthy. Pass []
-// when the receiver's type is unknown (every method receiver marks, as before).
-function moves_fields_expr(e: parser.Expr, name: string, fnfields: string[]): boolean {
+// `nomove` lists the call names in `name.<f>(...)` position that provably move
+// nothing, so the receiver hazard does not apply to them. Two sources feed it,
+// both computed at the call site from `name`'s struct type:
+//
+//   - the fn-typed FIELD names (clo_field_names_of): `name.f(args)` where f is
+//     such a field is a FIELD-CLOSURE CALL, not a user method — the closure sees
+//     only its args + captures (built before `name` existed), so it cannot move
+//     `name`'s fields into its result;
+//   - the METHOD names whose receiver recv_borrow_fns_of proved a pure borrow.
+//
+// Pass [] when the receiver's type is unknown (every method receiver marks).
+function moves_fields_expr(e: parser.Expr, name: string, nomove: string[]): boolean {
     match (e) {
-        parser.ExprBinary(b) => { return moves_fields_expr(b.left, name, fnfields) || moves_fields_expr(b.right, name, fnfields); },
-        parser.ExprUnary(u) => { return moves_fields_expr(u.operand, name, fnfields); },
-        parser.ExprIndex(ix) => { return moves_fields_expr(ix.array, name, fnfields) || moves_fields_expr(ix.index, name, fnfields); },
-        parser.ExprSlice(sl) => { return moves_fields_expr(sl.array, name, fnfields) || moves_fields_expr(sl.start, name, fnfields) || moves_fields_expr(sl.end, name, fnfields); },
-        parser.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name, fnfields); },
+        parser.ExprBinary(b) => { return moves_fields_expr(b.left, name, nomove) || moves_fields_expr(b.right, name, nomove); },
+        parser.ExprUnary(u) => { return moves_fields_expr(u.operand, name, nomove); },
+        parser.ExprIndex(ix) => { return moves_fields_expr(ix.array, name, nomove) || moves_fields_expr(ix.index, name, nomove); },
+        parser.ExprSlice(sl) => { return moves_fields_expr(sl.array, name, nomove) || moves_fields_expr(sl.start, name, nomove) || moves_fields_expr(sl.end, name, nomove); },
+        parser.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name, nomove); },
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         parser.ExprIdent(rid) => {
                             // method receiver — the hazard (except a field-closure call)
-                            if (rid.name == name && util.index_of_str(fnfields, fa.field) < 0) { return true; }
+                            if (rid.name == name && util.index_of_str(nomove, fa.field) < 0) { return true; }
                         },
-                        _ => { if (moves_fields_expr(fa.obj, name, fnfields)) { return true; } }
+                        _ => { if (moves_fields_expr(fa.obj, name, nomove)) { return true; } }
                     }
                 },
-                _ => { if (moves_fields_expr(c.callee, name, fnfields)) { return true; } }
+                _ => { if (moves_fields_expr(c.callee, name, nomove)) { return true; } }
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (moves_fields_expr(c.args[ai], name, fnfields)) { return true; }   // a receiver nested inside an arg
+                if (moves_fields_expr(c.args[ai], name, nomove)) { return true; }   // a receiver nested inside an arg
                 ai = ai + 1;
             }
             return false;
         },
         parser.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name, fnfields)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name, nomove)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name, fnfields)) { return true; } i = i + 1; }
+            while (i < t.elements.len()) { if (moves_fields_expr(t.elements[i], name, nomove)) { return true; } i = i + 1; }
             return false;
         },
         parser.ExprStructLit(sl) => {
@@ -28220,29 +28229,29 @@ function moves_fields_expr(e: parser.Expr, name: string, fnfields: string[]): bo
             if (sl.has_base) {
                 match (sl.base) {
                     parser.ExprIdent(bid) => { if (bid.name == name) { return true; } },
-                    _ => { if (moves_fields_expr(sl.base, name, fnfields)) { return true; } }
+                    _ => { if (moves_fields_expr(sl.base, name, nomove)) { return true; } }
                 }
             }
             var i: i32 = 0;
-            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name, fnfields)) { return true; } i = i + 1; }
+            while (i < sl.field_values.len()) { if (moves_fields_expr(sl.field_values[i], name, nomove)) { return true; } i = i + 1; }
             return false;
         },
-        parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, fnfields); },   // a receiver used inside the closure body
+        parser.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, nomove); },   // a receiver used inside the closure body
         _ => { return false; }   // ExprIdent / ExprNumber / ExprString / ExprBool / ExprUnknown — leaves, no move
     }
     return false;
 }
 
-function moves_fields_stmts(stmts: parser.Stmt[], name: string, fnfields: string[]): boolean {
+function moves_fields_stmts(stmts: parser.Stmt[], name: string, nomove: string[]): boolean {
     var i: i32 = 0;
-    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name, fnfields)) { return true; } i = i + 1; }
+    while (i < stmts.len()) { if (moves_fields_stmt(stmts[i], name, nomove)) { return true; } i = i + 1; }
     return false;
 }
-function moves_fields_stmt(st: parser.Stmt, name: string, fnfields: string[]): boolean {
+function moves_fields_stmt(st: parser.Stmt, name: string, nomove: string[]): boolean {
     match (st) {
-        parser.StmtVar(v) => { return moves_fields_expr(v.init, name, fnfields); },
-        parser.StmtReturn(r) => { return moves_fields_expr(r.value, name, fnfields); },
-        parser.StmtExpr(e) => { return moves_fields_expr(e.value, name, fnfields); },
+        parser.StmtVar(v) => { return moves_fields_expr(v.init, name, nomove); },
+        parser.StmtReturn(r) => { return moves_fields_expr(r.value, name, nomove); },
+        parser.StmtExpr(e) => { return moves_fields_expr(e.value, name, nomove); },
         parser.StmtAssign(a) => {
             // SELF-rebind exemption: `name = name.emit(op)` / `name = f(name)`
             // (the #3456 builder chain) keeps its per-rebind reclaim — the cow
@@ -28259,16 +28268,16 @@ function moves_fields_stmt(st: parser.Stmt, name: string, fnfields: string[]): b
                             parser.ExprFieldAccess(sfa) => {
                                 match (sfa.obj) {
                                     parser.ExprIdent(_) => {},
-                                    _ => { if (moves_fields_expr(sfa.obj, name, fnfields)) { deep_move = true; } }
+                                    _ => { if (moves_fields_expr(sfa.obj, name, nomove)) { deep_move = true; } }
                                 }
                             },
-                            _ => { if (moves_fields_expr(sc.callee, name, fnfields)) { deep_move = true; } }
+                            _ => { if (moves_fields_expr(sc.callee, name, nomove)) { deep_move = true; } }
                         }
                         var sai: i32 = 0;
                         while (sai < sc.args.len()) {
                             match (sc.args[sai]) {
                                 parser.ExprIdent(_) => {},
-                                _ => { if (moves_fields_expr(sc.args[sai], name, fnfields)) { deep_move = true; } }
+                                _ => { if (moves_fields_expr(sc.args[sai], name, nomove)) { deep_move = true; } }
                             }
                             sai = sai + 1;
                         }
@@ -28289,45 +28298,108 @@ function moves_fields_stmt(st: parser.Stmt, name: string, fnfields: string[]): b
                                 _ => {}
                             }
                         }
-                        if (!base_self) { return moves_fields_expr(a.value, name, fnfields); }
+                        if (!base_self) { return moves_fields_expr(a.value, name, nomove); }
                         var sfi: i32 = 0;
                         while (sfi < ssl.field_values.len()) {
-                            if (moves_fields_expr(ssl.field_values[sfi], name, fnfields)) { return true; }
+                            if (moves_fields_expr(ssl.field_values[sfi], name, nomove)) { return true; }
                             sfi = sfi + 1;
                         }
                         return false;
                     },
-                    _ => { return moves_fields_expr(a.value, name, fnfields); }
+                    _ => { return moves_fields_expr(a.value, name, nomove); }
                 }
             }
-            return moves_fields_expr(a.value, name, fnfields);
+            return moves_fields_expr(a.value, name, nomove);
         },
         parser.StmtIf(f) => {
-            if (moves_fields_expr(f.cond, name, fnfields)) { return true; }
-            return moves_fields_stmts(f.then_body, name, fnfields) || moves_fields_stmts(f.else_body, name, fnfields);
+            if (moves_fields_expr(f.cond, name, nomove)) { return true; }
+            return moves_fields_stmts(f.then_body, name, nomove) || moves_fields_stmts(f.else_body, name, nomove);
         },
         parser.StmtWhile(w) => {
-            if (moves_fields_expr(w.cond, name, fnfields)) { return true; }
-            return moves_fields_stmts(w.body, name, fnfields);
+            if (moves_fields_expr(w.cond, name, nomove)) { return true; }
+            return moves_fields_stmts(w.body, name, nomove);
         },
         parser.StmtFor(fo) => {
-            if (moves_fields_expr(fo.iter, name, fnfields)) { return true; }
-            return moves_fields_stmts(fo.body, name, fnfields);
+            if (moves_fields_expr(fo.iter, name, nomove)) { return true; }
+            return moves_fields_stmts(fo.body, name, nomove);
         },
         parser.StmtMatch(m) => {
-            if (moves_fields_expr(m.scrutinee, name, fnfields)) { return true; }
+            if (moves_fields_expr(m.scrutinee, name, nomove)) { return true; }
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard && moves_fields_expr(m.arms[ai].guard, name, fnfields)) { return true; }
-                if (moves_fields_stmts(m.arms[ai].body, name, fnfields)) { return true; }
+                if (m.arms[ai].has_guard && moves_fields_expr(m.arms[ai].guard, name, nomove)) { return true; }
+                if (moves_fields_stmts(m.arms[ai].body, name, nomove)) { return true; }
                 ai = ai + 1;
             }
             return false;
         },
-        parser.StmtDefer(d) => { return moves_fields_stmt(d.action, name, fnfields); },
+        parser.StmtDefer(d) => { return moves_fields_stmt(d.action, name, nomove); },
         _ => { return false; }
     }
     return false;
+}
+
+// recv_borrow_fns_of: the "<Type>.<method>" keys whose RECEIVER is a pure
+// BORROW — the callee-side answer to the hazard moves_fields_expr guards
+// against caller-side.
+//
+// `b.score()` costs `b` its DEEP drop today: moves_fields_expr marks every
+// method receiver, because a method body CAN carry a receiver field into its
+// result with no counted reference. Most cannot, and each one that cannot
+// strands the receiver's rc fields for the whole scope — 22 bytes per round on
+// a one-string struct, and the shared cost under every method row in
+// docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
+//
+// A method qualifies when its receiver behaves exactly like a deep-drop-worthy
+// LOCAL, proven by the same three predicates reclaimable_names_of runs over one:
+//
+//   - body_unsafe_for — the box itself does not escape (`return self`, a
+//     container store, an alias, a non-borrowable arg). An identity return is
+//     refused here: its result aliases the receiver's box, and nothing at the
+//     call site yet proves the caller does not retain it;
+//   - moves_fields_stmts — no receiver-POSITION hazard inside, i.e. `self.m2()`
+//     disqualifies. That is what keeps this non-circular: no method that calls
+//     through its own receiver enters the registry, so no entry rests on
+//     another;
+//   - optstruct_body_moves_field — no field of `self` reaches a bind / assign /
+//     return value, a non-borrowable call argument, or a container element.
+//
+// Struct receivers only: the marker it feeds is the struct deep drop.
+pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], borrowable: string[]): string[] {
+    var out: string[] = [];
+    var none: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var fn: parser.FuncDecl = funcs[k];
+        if (fn.receiver_type.len() > 0 && fn.receiver_name.len() > 0) {
+            var rty: string = util.base_type_name(fn.receiver_type);
+            if (decl_is_struct(structs, rty)
+                && !body_unsafe_for(fn.body, fn.receiver_name, borrowable)
+                && !moves_fields_stmts(fn.body, fn.receiver_name, none)
+                && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
+                out = out.append(rty + "." + fn.name);
+            }
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// recv_borrow_methods_of names the methods in `recv_borrow` declared on struct
+// type `sty`, as the bare method names moves_fields_expr compares a
+// `name.<f>(...)` call against.
+function recv_borrow_methods_of(recv_borrow: string[], sty: string): string[] {
+    var out: string[] = [];
+    if (sty.len() == 0) { return out; }
+    var pfx: string = sty + ".";
+    var i: i32 = 0;
+    while (i < recv_borrow.len()) {
+        if (recv_borrow[i].len() > pfx.len() && recv_borrow[i][0 : pfx.len()] == pfx) {
+            out = out.append(recv_borrow[i][pfx.len() : recv_borrow[i].len()] + "");
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // reassigned_from_alias reports whether `name` is ever the TARGET of an
@@ -28378,7 +28450,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -28433,10 +28505,18 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // fresh_struct_lit_type returned "" for those, so a loop-local
         // fn-field struct was wrongly NODEEP'd and its per-iteration
         // reinit stayed box-only — the env box leaked every rebind).
+        //
+        // Exempt METHODS whose receiver recv_borrow_fns_of proved a pure borrow
+        // too — `b.score()` reading only scalars moves nothing, so the receiver
+        // keeps the deep drop that releases its string / array fields. Keyed on
+        // the declared type as well as the literal one, since a local bound from
+        // a call has no struct-literal init to read a type off.
         var mvty: string = fresh_struct_lit_type_deep(body, out[mvi]);
-        var mvff: string[] = [];
-        if (mvty != "") { mvff = clo_field_names_of(structs, mvty); }
-        var mv_moves: boolean = moves_fields_stmts(body, out[mvi], mvff);
+        var mvsty: string = mvty;
+        if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
+        var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
+        if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
+        var mv_moves: boolean = moves_fields_stmts(body, out[mvi], mvnm);
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
         // ExprFieldAccess arm only recurses into the object, and a bare ExprIdent
@@ -28451,8 +28531,6 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // reporting every field read and exempting borrows — see its header for why
         // that polarity matters. Only when the local's struct type is known, so an
         // untyped local keeps its prior verdict exactly.
-        var mvsty: string = mvty;
-        if (mvsty == "") { mvsty = declared_struct_type_of(body, out[mvi], structs); }
         if (!mv_moves && mvsty != "" && optstruct_body_moves_field(body, out[mvi], mvsty, structs, borrowable)) { mv_moves = true; }
         if (mv_moves) { out = out.append("NODEEP:" + out[mvi]); }
         // "FLDCHECKED:" — the field-move scan actually RAN for this name, i.e. its
@@ -40921,7 +40999,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // now dump-only. The append-built ARRSTRUCT credit consults it to decide
     // whether a BOUND element may be admitted: a moved local hands its single
     // reference to the buffer, so the buffer's deep walk is the one release.
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs));
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -46895,8 +46973,8 @@ pub function i64_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     var e: string[] = [];
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
-        return_fresh_struct_ret_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: e,
-        strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e };
+        return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
+        opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -46908,8 +46986,8 @@ pub function fn_sigs_empty(): FnSigs {
         f64_ret_fns: e, f64arr_ret_fns: e, i64arr_ret_fns: e, erased_elem_ret_fns: e, fn_param_sigs: e, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
-        str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e,
-        move_arr_params: e, trmc_consume_fns: e };
+        recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e,
+        tuple_fresh_ret_fns: e, move_arr_params: e, trmc_consume_fns: e };
 }
 
 // array_ret_fn_names is the plain "return type is an array" scan — the default
@@ -46969,6 +47047,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs),
+        recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: opt_fresh_ret_fns_of(funcs, structs),
         strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs, bparams),
