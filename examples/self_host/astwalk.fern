@@ -16,9 +16,8 @@ import "./util";
 // a new parser node is covered everywhere the moment it is covered here (#6993).
 //
 // `visit` reaches it as a nested named function closing over whatever context
-// the consumer needs — see collect_calls_stmt. It cannot be an arrow lambda:
-// native rejects a union-typed lambda parameter with "expected Expr, got Expr"
-// (#6996).
+// the consumer needs — see collect_calls_stmt. An arrow lambda works too since
+// #6996; the named form is kept because it reads better at the call site.
 pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T): T {
     acc = visit(e, acc);
     match (e) {

@@ -195,13 +195,17 @@ on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
 per-module fixpoint is unaffected. Two things it hit that the next conversion
 will hit too:
 
-- **The visitor cannot be an arrow lambda.** A lambda's declared parameter types
-  are resolved only when the enclosing function is generic (`checker.go`'s
-  `resolveTypesInBlock` does not descend into expression-position lambdas), so a
-  `parser.Expr`-annotated lambda parameter stays an unresolved struct name and
-  every use of it reports `expected Expr, got Expr` — #6996. A nested named
-  function — which resolves, and captures just the same — is the spelling that
-  works.
+- **The visitor could not be an arrow lambda — until it could.** A lambda's
+  declared parameter types were resolved only when the enclosing function was
+  generic (`checker.go`'s `resolveTypesInBlock` did not descend into
+  expression-position lambdas), so a `parser.Expr`-annotated lambda parameter
+  stayed an unresolved struct name and every use of it reported
+  `expected Expr, got Expr`. The first conversion worked around it with a nested
+  named function, which resolves and captures identically. #6996 then fixed the
+  cause — and the bug turned out to be neither union-specific nor lambda-specific,
+  reaching `var`s in expression position too. Its real cost was the ratchet's:
+  nothing exercised closures here, so the one genuine bug in the path went
+  unfound.
 - **A visitor with no descent control cannot express every walk.**
   `collect_calls_*` converted cleanly because a node it does not record
   contributes nothing on its own, so a uniform pre-order walk is equivalent to
@@ -373,7 +377,10 @@ mean `u32`?" for `u8`. Both are real, type-checking Fern types (§7) — `str` i
 `ast.StrType`, `u8` is a `NumberType` — so the branches were dead and would have
 given wrong advice if they ever fired. Both entries are gone.
 
-### 4.5 The append cliff: one alias turns amortised O(1) into O(n²), silently
+### 4.5 The append cliff is correct, invisible, and inexpressible
+
+This one is **not a bug** — it is filed here because the *language* offers no way
+to see it or to say what you meant.
 
 ```fern
 var xs: i32[] = [];
@@ -384,7 +391,7 @@ while (i < n) { xs = xs.append(i); i = i + 1; }        // 200,000 appends: 4 ms
 while (i < n) {
     var keep: i32[] = xs;                              // ← the only change
     xs = xs.append(i);
-    if (keep.len() > n) { return 7; }
+    if (keep.len() > n) { return 7; }                  // keep is LIVE here
     i = i + 1;
 }
 ```
@@ -395,16 +402,24 @@ while (i < n) {
 | 50,000 | 116 ms |
 | 100,000 | 455 ms |
 
-Exactly quadratic (4× time per 2× n), from a one-line change, with no
-diagnostic, no annotation to opt out of, and no way to ask the compiler whether
-a given site took the in-place path. This is the user-facing face of §2.1:
-`LowerState.aliased_names` is the analysis, and when it says "aliased" the
-program silently gets a different complexity class. The compiler knows; the
-language gives it no way to tell you.
+Exactly quadratic (4× time per 2× n), from a one-line change. And **the copies
+are mandatory**: `keep` is read after the append, so it observes the old buffer
+and in-place growth would corrupt it. #6024 established exactly this split —
+a *dead* alias forcing a copy was the bug (fixed in #6026); a *live* one is the
+semantics working.
 
-The self-host's own reclaim registries exist to keep *itself* off this cliff —
-which is why the workaround shows up as a data-model choice (parallel arrays,
-flat `Piece` lists) rather than as an algorithm choice.
+Which is the point. The complexity class of a loop turns on whether a binding
+three lines away is read again, the compiler computes that precisely
+(`LowerState.aliased_names` on the self-host, `computePreciseDrops` on native),
+and then it tells nobody. There is no diagnostic mode that reports which
+`.append` / `.with` sites took the copying path, no annotation that says "I want
+a snapshot here, charge me for it" or "this must stay in-place, error if it
+cannot", and no way to assert either in a test. A performance property this
+sharp should not be invisible in the source and unpinnable in CI.
+
+The self-host stays off this cliff by shaping its *data* around it — parallel
+arrays, flat `Piece` lists — rather than by writing the algorithm it wanted,
+because shaping the data is the only lever the language actually gives it.
 
 ### 4.6 The variant namespace is flat, and the self-host pays for it
 
@@ -478,9 +493,9 @@ Ordered by (unblocking value) ÷ (cost), not by size.
 7. **Multi-file packages, or intra-package import cycles** (§2.3). The largest
    language change here, and the only fix for a 56,702-line file and a 397-file
    staging edit. Worth scoping even if it is not worth doing yet.
-8. **Surface the append cliff** (§4.5). At minimum a diagnostic mode that
-   reports which `.append` / `.with` sites took the copying path — the analysis
-   already exists in `LowerState.aliased_names`, it just has no output.
+8. **Surface the append cliff** (§4.5). A diagnostic mode reporting which
+   `.append` / `.with` sites took the copying path, and a way to assert it in a
+   test. The analysis already exists on both compilers; it has no output.
 9. **Pin the nested-array codegen bug** (§3.6). `literate.fern:36` documents a
    reproducible segfault/corruption that has been routed around rather than
    fixed. A workaround with an unknown trigger is a bug with a countdown.
