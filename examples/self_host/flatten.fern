@@ -654,7 +654,9 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         var fd: parser.FuncDecl = mod.funcs[i];
         // Non-receiver functions get name-mangled; receiver methods
         // keep their name (dispatched by receiver type) but the
-        // receiver type itself is rewritten.
+        // receiver type itself is rewritten. bound_traits carries
+        // through untouched: those are TRAIT names, and the trait
+        // namespace is not rewritten (see mangle_impls).
         var new_name: string = fd.name;
         if (fd.receiver_type == "") {
             new_name = mangle_bare(fd.name, ctx);
@@ -676,7 +678,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ret_type: rewrite_type_name(fd.ret_type, ctx),
             body: rewrite_block(fd.body, bctx),
             line: fd.line, col: fd.col,
-            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
+            import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: fd.bound_traits, fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async,
             is_pub: true
        , is_const: fd.is_const });
         i = i + 1;
@@ -949,6 +951,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         while (mii < m.impls.len()) { impls = impls.append(m.impls[mii]); mii = mii + 1; }
         var mti: i32 = 0;
         while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(m.trait_reqs[mti]); mti = mti + 1; }
+        var mdi: i32 = 0;
+        while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;
     }
     var e: parser.Module = flatten_qualified(entry, ivar_names, ivar_mangled, rx.keys, rx.targets);
@@ -964,6 +968,8 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     while (eii < e.impls.len()) { impls = impls.append(e.impls[eii]); eii = eii + 1; }
     var eti: i32 = 0;
     while (eti < e.trait_reqs.len()) { trait_reqs = trait_reqs.append(e.trait_reqs[eti]); eti = eti + 1; }
+    var edi: i32 = 0;
+    while (edi < e.trait_decls.len()) { trait_decls = trait_decls.append(e.trait_decls[edi]); edi = edi + 1; }
     var no_imports: parser.Import[] = [];
     return parser.Module {
         funcs: funcs,

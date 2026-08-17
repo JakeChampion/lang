@@ -809,6 +809,14 @@ pub struct Scope {
   // flagged. Empty on every other scope (the check no-ops).
   impls: parser.ImplInfo[],
   trait_reqs: parser.TraitReq[],
+  // tparams / tbounds are the enclosing function's declared type
+  // parameters and their `+`-joined trait bounds, running parallel
+  // (parser.parse_type_param_list). Populated by build_func_scope; they let
+  // an associated call through a bounded type parameter (`T.zero()`)
+  // resolve against the bound rather than be read as a value (#6933).
+  // Empty on every other scope.
+  tparams: string[],
+  tbounds: string[],
 }
 
 // SigTable is the module's function signature table plus a bucket index over
@@ -927,26 +935,32 @@ function new_scope(): Scope {
   var ss: StructSig[] = [];
   var us: UnionSig[] = [];
   var ms: MethodSig[] = [];
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: ss, unions: us, methods: ms, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
   var ns: string[] = [];
   var ts: Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, methods: methods, loop_depth: 0, ret_type: t_unknown("no enclosing function"), impls: [], trait_reqs: [], tparams: [], tbounds: [] };
 }
 
 function (s: Scope) bind(name: string, t: Type): Scope {
   var ns: string[] = s.names.append(name);
   var ts: Type[] = s.types.append(t);
-  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs };
+  return Scope { names: ns, types: ts, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
 }
 
 // with_impls attaches the module's impl table + trait requirement records
 // to a scope so call_diags can run the E021 generic-bound conformance
 // check (#4842). Applied to the func-body scope in check_module.
 function (s: Scope) with_impls(impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: impls, trait_reqs: trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
+}
+
+// with_tparams attaches the enclosing function's type parameters and their
+// trait bounds. Read by assoc_call_req to resolve `T.zero()`.
+function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: tparams, tbounds: tbounds };
 }
 
 // defines reports whether `name` is bound in scope (param, receiver,
@@ -1156,11 +1170,11 @@ function for_iter_is_range(iter: parser.Expr): boolean {
 }
 
 function (s: Scope) enter_loop(): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth + 1, ret_type: s.ret_type, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
 }
 
 function (s: Scope) with_ret_type(rt: Type): Scope {
-  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs };
+  return Scope { names: s.names, types: s.types, sigs: s.sigs, structs: s.structs, unions: s.unions, methods: s.methods, loop_depth: s.loop_depth, ret_type: rt, impls: s.impls, trait_reqs: s.trait_reqs, tparams: s.tparams, tbounds: s.tbounds };
 }
 
 // Linear scan — newest binding wins so shadowing works
@@ -1929,6 +1943,18 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
             return t_union(cqu);
           }
           return t_union(cqe);
+        }
+      }
+      // An ASSOCIATED (receiver-less) call on a TYPE — `i32.zero()`, or
+      // `T.zero()` through a bounded type parameter (#6933). There is no
+      // receiver value to dispatch on, so it must be typed from the trait
+      // requirement before the method path reads the object as a value and
+      // returns unknown. A generic `T` still erases to unknown; a concrete
+      // one gives the real type, so a non-generic body isn't over-rejected.
+      if (!qhandled) {
+        var ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
+        if (ah.found) {
+          return assoc_hit_type(ah, fa.obj, s);
         }
       }
       if (!qhandled) {
@@ -3604,6 +3630,7 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): Scope {
   var s: Scope = new_scope_full(st, structs, unions, methods);
+  s = s.with_tparams(fd.type_params, fd.bound_traits);
   if (fd.ret_type.len() > 0) {
     s = s.with_ret_type(type_from_name_with_structs_unions(fd.ret_type, structs, unions));
   }
@@ -3618,8 +3645,8 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructSig[
   return s;
 }
 
-function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[]): boolean {
-  var s: Scope = build_func_scope(fd, st, structs, unions, methods);
+function check_func_body(fd: parser.FuncDecl, st: SigTable, structs: StructSig[], unions: UnionSig[], methods: MethodSig[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): boolean {
+  var s: Scope = build_func_scope(fd, st, structs, unions, methods).with_impls(impls, trait_reqs);
   // A GENERIC function's body operates on opaque-typed values — its type
   // parameters erase to unknown in this partial type system, so `v: T`
   // binds `v` to unknown and any expression over it infers unknown. That's
@@ -6144,6 +6171,173 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
   return mx_builtin_enum_of(field) == en;
 }
 
+// AssocHit is an associated-call resolution: whether `Type.f(…)` names a
+// receiver-less function at all, and — when the trait requirement that
+// provides it is in scope — that requirement's declared return-type
+// spelling, still written in `Self`. An empty `ret` means "resolved, but the
+// return type is not recoverable here" and types to unknown.
+struct AssocHit { found: boolean, ret: string }
+
+function assoc_miss(): AssocHit {
+  return AssocHit { found: false, ret: "" };
+}
+
+// trait_req_idx resolves a bound's trait SPELLING to its requirement record.
+// TraitReq stores the simple name (parse_trait_decl runs derive_simple_name),
+// while a bound may be written module-qualified (`T: num.Zero`) — try the
+// spelling first, then its simple name.
+function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
+  var i: i32 = e021_trait_idx(tr, reqs);
+  if (i >= 0) {
+    return i;
+  }
+  var simple: string = parser.derive_simple_name(tr);
+  if (simple == tr) {
+    return 0 - 1;
+  }
+  return e021_trait_idx(simple, reqs);
+}
+
+// trait_assoc_req resolves trait `tr`'s ASSOCIATED (receiver-less)
+// requirement named `field` — `trait Zero { function zero(): Self; }`. A
+// required method whose first parameter is `self` is a receiver method and
+// does not answer a `Type.f()` call. Supertraits are followed, so `T: Num`
+// reaches `Zero.zero` when `trait Num: Zero`; `depth` bounds a cyclic
+// supertrait chain.
+function trait_assoc_req(s: Scope, tr: string, field: string, depth: i32): AssocHit {
+  if (depth > 8) {
+    return assoc_miss();
+  }
+  var idx: i32 = trait_req_idx(tr, s.trait_reqs);
+  if (idx < 0) {
+    return assoc_miss();
+  }
+  var req: parser.TraitReq = s.trait_reqs[idx];
+  var i: i32 = 0;
+  while (i < req.req_sigs.len()) {
+    var rs: parser.FuncDecl = req.req_sigs[i];
+    if (rs.name == field) {
+      if (rs.params.len() == 0) {
+        return AssocHit { found: true, ret: rs.ret_type };
+      }
+      if (rs.params[0].name != "self") {
+        return AssocHit { found: true, ret: rs.ret_type };
+      }
+    }
+    i = i + 1;
+  }
+  var si: i32 = 0;
+  while (si < req.supertraits.len()) {
+    var sh: AssocHit = trait_assoc_req(s, req.supertraits[si], field, depth + 1);
+    if (sh.found) {
+      return sh;
+    }
+    si = si + 1;
+  }
+  return assoc_miss();
+}
+
+// tp_assoc_req resolves `T.field(…)` against type parameter `T`'s declared
+// bounds: a hit when one of the `+`-joined bound traits requires `field` as
+// an associated function. Mirrors the gate on native checker.go's generic
+// associated-dispatch arm (resolveTraitMethodForParam + `tm.Assoc`), so
+// `T.nope()` — no bound providing it — stays the E001 native reports.
+function tp_assoc_req(s: Scope, tname: string, field: string): AssocHit {
+  var k: i32 = util.index_of_str(s.tparams, tname);
+  if (k < 0) {
+    return assoc_miss();
+  }
+  var bound: string = "";
+  if (k < s.tbounds.len()) {
+    bound = s.tbounds[k];
+  }
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i <= bound.len()) {
+    if (i == bound.len() || bound[i] == 43) {
+      if (i > start) {
+        var tr: str = bound[start:i];
+        var h: AssocHit = trait_assoc_req(s, tr, field, 0);
+        if (h.found) {
+          return h;
+        }
+      }
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return assoc_miss();
+}
+
+// type_assoc_req resolves a CONCRETE `i32.zero()` / `Point.origin()`: some
+// `impl … for <tyname>` in the module lists `field`, and `field` is not a
+// receiver method on that type (parse_impl_decl gives an associated function
+// an empty receiver_name, so collect_method_sigs never records it — absence
+// from the method table is what makes it associated). A `self`-taking method
+// of the same name is `v.f()`, not `Type.f()`, and is left alone. The return
+// type comes from the trait requirement when the impl names a declared trait;
+// an inherent impl resolves with no return type (unknown).
+function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
+  var i: i32 = 0;
+  while (i < s.impls.len()) {
+    if (s.impls[i].impl_type == tyname && util.has_str(s.impls[i].method_names, field)) {
+      if (s.lookup_method(field, tyname).name.len() == 0) {
+        var h: AssocHit = trait_assoc_req(s, s.impls[i].trait_name, field, 0);
+        if (h.found) {
+          return h;
+        }
+        return AssocHit { found: true, ret: "" };
+      }
+    }
+    i = i + 1;
+  }
+  return assoc_miss();
+}
+
+// assoc_call_req resolves the callee `obj.field(…)` as an ASSOCIATED
+// (receiver-less) call on a TYPE rather than a method call on a value:
+// `T.zero()` through a bounded type parameter, or `i32.zero()` on a concrete
+// type. The object is a type qualifier with no value behind it, so walking it
+// reports E001 "undefined name" on a call native accepts (#6933). A value
+// binding of the same name shadows the type and makes it a genuine method
+// call.
+function assoc_call_req(obj: parser.Expr, field: string, s: Scope): AssocHit {
+  match (obj) {
+    parser.ExprIdent(oid) => {
+      if (!is_unknown(s.lookup(oid.name))) {
+        return assoc_miss();
+      }
+      var h: AssocHit = tp_assoc_req(s, oid.name, field);
+      if (h.found) {
+        return h;
+      }
+      return type_assoc_req(s, oid.name, field);
+    },
+    _ => {
+      return assoc_miss();
+    }
+  }
+  return assoc_miss();
+}
+
+// assoc_hit_type is assoc_call_req's typing half: the associated call's
+// result type, with the requirement's `Self` resolved to the object — the
+// type parameter for `T.zero()` (which erases to unknown, as every generic
+// body's types do here) and the concrete name for `i32.zero()`.
+function assoc_hit_type(h: AssocHit, obj: parser.Expr, s: Scope): Type {
+  if (h.ret.len() == 0) {
+    return t_unknown("associated call: return type not recoverable");
+  }
+  var self_name: string = "";
+  match (obj) {
+    parser.ExprIdent(oid) => {
+      self_name = oid.name;
+    },
+    _ => {}
+  }
+  return type_from_name_with_structs_unions(parser.subst_self(h.ret, self_name), s.structs, s.unions);
+}
+
 function call_diags(e: parser.Expr, s: Scope): Diag[] {
   var out: Diag[] = [];
   match (e) {
@@ -6176,6 +6370,20 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
             while (qai < c.args.len()) {
               out = append_diags(out, call_diags(c.args[qai], s));
               qai = qai + 1;
+            }
+            return out;
+          }
+          // An ASSOCIATED (receiver-less) call on a type — `T.zero()` on a
+          // bounded type parameter, `i32.zero()` on a concrete type. Like
+          // the qualified variant above, the object is a type QUALIFIER,
+          // so it must be diverted before the recursion reads it as a
+          // value and reports E001 (#6933). The arguments are still
+          // walked.
+          if (assoc_call_req(mfa.obj, mfa.field, s).found) {
+            var aai: i32 = 0;
+            while (aai < c.args.len()) {
+              out = append_diags(out, call_diags(c.args[aai], s));
+              aai = aai + 1;
             }
             return out;
           }
@@ -10355,11 +10563,20 @@ function e021_recv_method_idx(mod: parser.Module, ty: string, m: string): i32 {
 //     associated functions (Default.default etc.) are skipped;
 //   - a generic trait method OR impl method (type params present) is skipped,
 //     since a bare type-name string compare can't see the erased params;
+//   - a requirement of a generic TRAIT (`trait Iterator[T]`) is skipped for the
+//     same reason one step out: its signature is written in the trait's type
+//     parameters (`next(self: Self): Option[(T, Self)]`), and ImplInfo keeps
+//     only the trait's bare name — `impl Iterator[i32] for Range` discards the
+//     `[i32]` — so there is nothing to substitute `T` with and every such impl
+//     compared as a mismatch;
 // otherwise the trait's post-`self` param type list + return type (each rewritten
 // Self -> impl_type via the same parser.subst_self finalize_impl_method used on
 // the impl side) must equal the impl method's params + return, or it's a
 // mismatch (native E021 "wrong signature").
-function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string): boolean {
+function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_type: string, trait_generic: boolean): boolean {
+  if (trait_generic) {
+    return true;
+  }
   if (req.type_params.len() > 0 || req.type_param_count > 0) {
     return true;
   }
@@ -10389,6 +10606,22 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
     return false;
   }
   return true;
+}
+
+// e021_trait_is_generic reports whether trait `trait_name` declares type
+// parameters (`trait Iterator[T]`). TraitReq drops them, so the written
+// TraitDecl is the only record.
+function e021_trait_is_generic(mod: parser.Module, trait_name: string): boolean {
+  var i: i32 = 0;
+  while (i < mod.trait_decls.len()) {
+    if (parser.derive_simple_name(mod.trait_decls[i].name) == trait_name) {
+      if (mod.trait_decls[i].type_params.len() > 0) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  return false;
 }
 
 // e021_has_impl reports whether the module contains an `impl <trait_name> for
@@ -10424,6 +10657,7 @@ function e021_diags(mod: parser.Module): Diag[] {
         }
         var reqs: string[] = mod.trait_reqs[ti].methods;
         var sigs: parser.FuncDecl[] = mod.trait_reqs[ti].req_sigs;
+        var tgen: boolean = e021_trait_is_generic(mod, im.trait_name);
         var ri: i32 = 0;
         while (ri < reqs.len()) {
           // Satisfied if the impl block writes it OR the type already
@@ -10435,7 +10669,7 @@ function e021_diags(mod: parser.Module): Diag[] {
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type)) {
+            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im.impl_type, tgen)) {
               out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
             }
           }
@@ -11190,7 +11424,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       i = i + 1;
       continue;
     }
-    if (!check_func_body(mod.funcs[i], st, structs, unions, methods)) {
+    if (!check_func_body(mod.funcs[i], st, structs, unions, methods, mod.impls, mod.trait_reqs)) {
       well_typed = false;
     }
     var dbody: parser.Stmt[] = mod.funcs[i].body;
@@ -11509,7 +11743,7 @@ pub function ill_typed_hint(mod: parser.Module): Diag[] {
   var methods: MethodSig[] = collect_method_sigs(mod.funcs, structs, unions);
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (!check_func_body(mod.funcs[i], st, structs, unions, methods)) {
+    if (!check_func_body(mod.funcs[i], st, structs, unions, methods, mod.impls, mod.trait_reqs)) {
       return [dg_at("type", "\"" + mod.funcs[i].name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", mod.funcs[i].line, mod.funcs[i].col)];
     }
     i = i + 1;
