@@ -1108,8 +1108,20 @@ happened to exist. An un-rewritten array-method call is dispatched by irlower as
 array receiver — so `ss.rotate_left(1)` on a `string[]` resolved to std/i32's
 BITWISE `(n: i32) rotate_left`, silently handing it an array pointer. Strict-IR
 was satisfied because a symbol of that name existed. That the `i32` fall-through
-can turn an unresolved element type into wrong code rather than a diagnostic is a
-latent hazard independent of this guard, and wants its own fix.
+can turn an unresolved element type into wrong code rather than a diagnostic was
+a latent hazard independent of this guard, and is **fixed (#6934)**:
+`expr_recv_prim_type` now returns `""` for an array receiver rather than falling
+through to `expr_scalar_type`, so a call the fold declined bails the module with
+a named site instead of capturing whatever integer routine shares the verb.
+
+Removing the guard closed the known trigger but not the hazard — a method
+carrying a bounded EXTRA type param is still declined by
+`is_generic_array_method`, and that is the shape
+`TestSelfHostArrayRecvMisdispatchRefuses` uses to pin the refusal: a user
+`(xs: T[]) pow[T: Ord, U: Ord]` against std/i32's `(n: i32) pow`, which before
+the fix compiled clean under strict-IR and returned 0 where the interpreter says
+103. The test asserts the module is NOT IR-eligible, because on this shape a
+lowered answer is by definition the wrong one.
 
 `Insts.ihas_other` and `arrm_has_bare_elem_param` (the exemption that let a
 method with a bare `T`-typed value param clone per element type after all) are

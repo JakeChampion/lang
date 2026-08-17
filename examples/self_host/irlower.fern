@@ -4266,6 +4266,23 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     }
     // Arrays / tuples / maps aren't primitive receivers either; their builtin
     // methods (.len / .append / map ops) are intercepted before this fallback.
+    //
+    // An ARRAY receiver that gets this far has NOT been intercepted, which
+    // means the monomorphiser failed to rewrite the call into its folded
+    // `__arrm_<m>` form (a method carrying a bounded EXTRA type param is
+    // excluded from the fold, for instance). Falling through would answer
+    // "i32" for it — expr_scalar_type's last resort — and dispatch
+    // `i32.<m>`. When std/i32 happens to own that verb the call SILENTLY
+    // lands on the integer routine with an array pointer as its receiver:
+    // strict-IR is satisfied because a symbol of that name resolved, so
+    // nothing reports it and only an oracle comparison sees the wrong
+    // answer. Refusing bails the module with a diagnostic naming the site
+    // instead. Same failure this function's u8 / expr_scalar_type's u32 and
+    // u64 branches exist to prevent, one receiver kind further out.
+    if (expr_is_arr_src(e, s) || expr_is_strarr(e, s)
+        || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) {
+        return "";
+    }
     return expr_scalar_type(e, s);
 }
 
