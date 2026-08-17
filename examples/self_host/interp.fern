@@ -55,7 +55,13 @@ pub struct VFloat { v: f64 }
 // then the result rounds to single precision via f32_round, and the
 // f32 tag stays sticky through operator chains.
 pub struct VFloat32 { v: f64 }
-pub struct VArr { elements: Value[] }
+// VArr holds an array value. `elem` names its declared element type, which
+// coerce_int_width stamps from the annotation an array is bound under — the
+// value plane is untyped, so an EMPTY array has no element to read the type
+// off, and a `T[]` parameter would have nothing to pin `T` to. Empty for an
+// array that never passed through an annotation; only type-argument inference
+// reads it.
+pub struct VArr { elements: Value[], elem: string }
 // VTuple holds an immutable fixed-arity sequence of values.
 // Each slot's runtime type stays whatever the source emitted;
 // `.0` / `.1` / … indices read positionally.
@@ -108,9 +114,16 @@ pub struct VCellF { c: Cell[f64] }
 // far. Distinct from VErr: an unwind is a normal result of a correct program,
 // not a diagnostic.
 pub struct VTry { box: Value }
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr | VTry;
+// VType is a TYPE standing in for a value — the object of a receiver-less
+// ("associated") trait call, which dispatches on the type itself rather than
+// on a receiver: `i32.zero()`, or `T.zero()` inside a generic whose `T` this
+// frame pinned to a concrete type. It carries no payload; only call_method
+// reads it, to pick the associated FuncDecl.
+pub struct VType { name: string }
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr | VTry | VType;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
+function v_type(n: string): Value { return VType { name: n }; }
 // v_wide packs a 64-bit pattern into a VInt64's two i32 halves; unpack_i64
 // rebuilds it. `lo` keeps the low 32 bits (masked so a negative low half isn't
 // sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
@@ -186,6 +199,19 @@ function coerce_int_width(val: Value, type_name: string): Value {
             VFloat(f) => { return v_float32(f.v); },
             VInt(i) => { return v_float32(i.v as f64); },
             VInt64(i) => { return v_float32(wide_as_f64(i)); },
+            _ => { return val; }
+        }
+    }
+    // A declared array type stamps an EMPTY array with its element type, the
+    // only place that type can enter an untyped value plane (see VArr.elem).
+    // A non-empty array needs no stamp — its elements name the type.
+    if (name_ends_with(type_name, "[]")) {
+        match (val) {
+            VArr(a) => {
+                if (a.elements.len() == 0 && a.elem.len() == 0) {
+                    return v_arr_of(a.elements, type_name[0 : type_name.len() - 2] + "");
+                }
+            },
             _ => { return val; }
         }
     }
@@ -268,7 +294,8 @@ function v_float(n: f64): Value { return VFloat { v: n }; }
 // backend treats float→f32 `as` casts as no-ops.
 function f32_round(x: f64): f64 { return (f32_from_bits(f32_bits(x as f32))) as f64; }
 function v_float32(x: f64): Value { return VFloat32 { v: f32_round(x) }; }
-function v_arr(elements: Value[]): Value { return VArr { elements: elements }; }
+function v_arr(elements: Value[]): Value { return VArr { elements: elements, elem: "" }; }
+function v_arr_of(elements: Value[], elem: string): Value { return VArr { elements: elements, elem: elem }; }
 function v_tuple(elements: Value[]): Value { return VTuple { elements: elements }; }
 function v_map(keys: Value[], values: Value[]): Value { return VMap { keys: keys, values: values }; }
 function v_map_new(): Value {
@@ -1525,6 +1552,7 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         // eval path). Anything with a real object value is a
                         // method call.
                         var variant_call: boolean = false;
+                        var static_type: string = "";
                         match (fa.obj) {
                             parser.ExprIdent(oid) => {
                                 // Ask the same question the ident evaluator
@@ -1535,7 +1563,22 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                                 // construction and built a variant named
                                 // `len` instead of dispatching a method.
                                 var probe: Value = resolve_ident_value(oid.name, env);
-                                if (is_err(probe)) { variant_call = true; }
+                                if (is_err(probe)) {
+                                    variant_call = true;
+                                    // `i32.zero()` / `Point.default()` — the object
+                                    // names a TYPE carrying an associated function,
+                                    // which has no runtime value either. Without
+                                    // this the call built a variant named after the
+                                    // FUNCTION (`zero`), and the next method
+                                    // dispatched on that. A real variant still wins,
+                                    // and its arity probe is the cheap test, so the
+                                    // function-table scan only runs for a field no
+                                    // variant answers to.
+                                    if (variant_arity(fa.field, env.variants) < 0 && assoc_index(env.funcs, oid.name, fa.field) >= 0) {
+                                        variant_call = false;
+                                        static_type = oid.name;
+                                    }
+                                }
                             },
                             _ => { }
                         }
@@ -1545,8 +1588,12 @@ function eval_expr(e: parser.Expr, env: Env): Value {
                         } else {
                             name = fa.field;
                             is_method = true;
-                            recv = eval_expr(fa.obj, env);
-                            if (is_err(recv)) { return recv; }
+                            if (static_type.len() > 0) {
+                                recv = v_type(static_type);
+                            } else {
+                                recv = eval_expr(fa.obj, env);
+                                if (is_err(recv)) { return recv; }
+                            }
                         }
                     }
                 },
@@ -1915,7 +1962,109 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     return unwrap_try(step.ret);
 }
 
+// assoc_index finds the receiver-LESS associated function `<type_name>.<name>`
+// — what `impl Zero for i32 { function zero(): Self { … } }` desugars to: an
+// empty receiver_name with receiver_type naming the impl type. flatten leaves
+// such a function's name unmangled (it keys mangling off receiver_type), so
+// the pair is the whole key. -1 when there is none.
+function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type == type_name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// call_assoc runs `<type_name>.<name>(args)`. The declared return type is the
+// impl type (`Self` was rewritten to it at parse time), so coercing the result
+// to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
+// body literally evaluates to.
+function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+    var ai: i32 = assoc_index(funcs, type_name, name);
+    if (ai < 0) { return v_err("undefined associated function `" + name + "` on `" + type_name + "`"); }
+    var fd: parser.FuncDecl = funcs[ai];
+    if (args.len() != fd.params.len()) { return v_err("arity mismatch calling `" + type_name + "." + name + "`"); }
+    var env: Env = new_module_env(funcs, aliases, variants);
+    var j: i32 = 0;
+    while (j < fd.params.len()) {
+        env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
+        j = j + 1;
+    }
+    var step: StepResult = eval_block(fd.body, env);
+    if (step.sig != 1) { return v_err("associated function `" + name + "` reached end without `return`"); }
+    return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+}
+
+// tyarg_of_value names the type a runtime value pins a type parameter to —
+// the primitive keyword for a scalar, the declared name for a struct. "" when
+// the value carries no name to dispatch on.
+function tyarg_of_value(v: Value): string {
+    match (v) {
+        VInt(_) => { return "i32"; },
+        VInt64(w) => { if (w.unsigned) { return "u64"; } return "i64"; },
+        VUint(_) => { return "u32"; },
+        VBool(_) => { return "boolean"; },
+        VString(_) => { return "string"; },
+        VFloat(_) => { return "f64"; },
+        VFloat32(_) => { return "f32"; },
+        VStruct(sv) => { return sv.type_name; },
+        _ => { return ""; }
+    }
+}
+
+// tyarg_match reads the concrete type a type parameter takes from ONE
+// declared/actual pair: a parameter declared `T` takes the argument's own
+// type, one declared `T[]` its first element's (its stamped element type when
+// it is empty). "" when the declaration does not mention `tp`, or the value
+// names no type.
+function tyarg_match(decl: string, tp: string, v: Value): string {
+    if (decl == tp) { return tyarg_of_value(v); }
+    if (decl == tp + "[]") {
+        match (v) {
+            VArr(a) => {
+                if (a.elements.len() > 0) { return tyarg_of_value(a.elements[0]); }
+                return a.elem;
+            },
+            _ => {}
+        }
+    }
+    return "";
+}
+
+// bind_tyargs binds each of a generic function's bounded type parameters to
+// the type its receiver / arguments carry. Generics are otherwise ERASED in
+// this engine — the binding exists so a receiver-less trait call in the body
+// (`var acc: T = T.zero();`) has a type to dispatch on, which no runtime value
+// supplies. A parameter nothing pins stays unbound and that call still errors.
+// Bound BEFORE the parameters so a value parameter of the same name shadows it.
+function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Value, args: Value[]): Env {
+    var e: Env = env;
+    var t: i32 = 0;
+    while (t < fd.type_params.len()) {
+        var tp: string = fd.type_params[t];
+        var concrete: string = "";
+        if (has_recv) { concrete = tyarg_match(fd.receiver_type, tp, recv); }
+        var j: i32 = 0;
+        while (j < fd.params.len() && j < args.len()) {
+            if (concrete.len() == 0) { concrete = tyarg_match(fd.params[j].type_name, tp, args[j]); }
+            j = j + 1;
+        }
+        // A parameter cannot pin itself: an empty array reaching a generic
+        // from another generic carries THAT one's abstract element spelling.
+        if (concrete.len() > 0 && !util.has_str(fd.type_params, concrete)) { e = e.bind(tp, v_type(concrete)); }
+        t = t + 1;
+    }
+    return e;
+}
+
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], variants: parser.StructDecl[]): Value {
+    // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
+    // value-receiver method can match and only the associated table applies.
+    match (recv) {
+        VType(tv) => { return call_assoc(tv.name, name, args, funcs, aliases, variants); },
+        _ => {}
+    }
     // Built-in VMap methods are dispatched ahead of the user
     // FuncDecl walk — set / get_or / has / delete / len /
     // keys / values are baked in rather than user-defined.
@@ -2116,6 +2265,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                 return v_err("arity mismatch calling method `" + name + "`");
             }
             var env: Env = new_module_env(funcs, aliases, variants);
+            env = bind_tyargs(env, fd, true, recv, args);
             env = env.bind(fd.receiver_name, recv);
             var j: i32 = 0;
             while (j < fd.params.len()) {
@@ -2312,6 +2462,8 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
                 return v_err("arity mismatch calling `" + name + "`");
             }
             var env: Env = new_module_env(funcs, aliases, variants);
+            var no_recv: Value = v_err("__noreceiver__");
+            env = bind_tyargs(env, fd, false, no_recv, args);
             var j: i32 = 0;
             while (j < fd.params.len()) {
                 env = env.bind(fd.params[j].name, coerce_int_width(args[j], fd.params[j].type_name));
@@ -2454,7 +2606,10 @@ function value_eq(a: Value, b: Value): boolean {
         // both abrupt, and an abrupt value never reaches an ordinary operand
         // position (is_err short-circuits ahead of every comparison).
         VErr(_) => { return false; },
-        VTry(_) => { return false; }
+        VTry(_) => { return false; },
+        // A type is not a value: it only ever sits in the object position of
+        // an associated call, never in an operand one.
+        VType(_) => { return false; }
     }
     return false;
 }
