@@ -221,6 +221,265 @@ function main(): i32 {
     while (i < hs.len()) { sum = sum + hs[i].v; i = i + 1; }
     return sum + hs.len();
 }`, 13},
+	// --- descent control (#6993 slice two) ----------------------------------
+	//
+	// `astwalk.fold_expr` is now a thin wrapper over a `fold_expr_pruned` that
+	// takes a SECOND fn-typed parameter deciding whether a visited node's
+	// children are walked. Three things about that shape are new and none of
+	// them are covered by the cases above: a generic forwarding a fn value to
+	// another generic, two fn-typed parameters live in one call, and a
+	// predicate whose answer changes the result.
+	//
+	// The prune is a plain `(Expr) => boolean` rather than a `(T, boolean)`
+	// return or a `Visit[T]` box because it is asked once per AST node, and a
+	// boxed answer would be an allocation per node on the compiler's hottest
+	// walk.
+
+	// The predicate decides the answer: the same tree and the same visitor,
+	// folded once unpruned and once pruned at the lambda. A `descend` that was
+	// ignored, or whose value was dropped crossing the generic boundary, gives
+	// the same number twice and cannot produce 73.
+	{"pruned-fold-descent-decides-the-answer", `struct ENum { v: i32 }
+struct EAdd { left: Expr, right: Expr }
+struct ELam { body: Expr }
+type Expr = ENum | EAdd | ELam;
+
+function descend_all(e: Expr): boolean { return true; }
+
+function not_lambda(e: Expr): boolean {
+    match (e) {
+        ELam(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
+}
+
+function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
+    return fold_expr_pruned(e, acc, visit, descend_all);
+}
+
+function fold_expr_pruned[T](e: Expr, acc: T, visit: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        ENum(_) => { return acc; },
+        EAdd(nd) => {
+            acc = fold_expr_pruned(nd.left, acc, visit, descend);
+            return fold_expr_pruned(nd.right, acc, visit, descend);
+        },
+        ELam(nd) => { return fold_expr_pruned(nd.body, acc, visit, descend); }
+    }
+    return acc;
+}
+
+function sum_num(e: Expr, acc: i32): i32 {
+    match (e) {
+        ENum(x) => { return acc + x.v; },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var e: Expr = EAdd { left: ENum { v: 3i32 }, right: ELam { body: ENum { v: 4i32 } } };
+    return fold_expr(e, 0i32, sum_num) * 10i32 + fold_expr_pruned(e, 0i32, sum_num, not_lambda);
+}`, 73},
+	// astwalk's `collect_idents_expr` shape exactly: the visitor's contribution
+	// for a lambda is computed by folding the lambda's own body — mutual
+	// recursion between a top-level visitor and the generic fold — and the prune
+	// is what stops the walk re-adding, at the outer level, the very names that
+	// subtraction removed. Pruned reports 2 free variables (`z`, `x`); the
+	// unpruned fold over the identical visitor reports 4, `y` among them, which
+	// is the capture bug the arm exists to prevent.
+	{"prune-computes-its-own-subtree", `struct EIdent { name: string }
+struct EAdd { left: Expr, right: Expr }
+struct ELam { param: string, body: Expr }
+type Expr = EIdent | EAdd | ELam;
+
+function descend_all(e: Expr): boolean { return true; }
+
+function not_lambda(e: Expr): boolean {
+    match (e) {
+        ELam(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
+}
+
+function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
+    return fold_expr_pruned(e, acc, visit, descend_all);
+}
+
+function fold_expr_pruned[T](e: Expr, acc: T, visit: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        EIdent(_) => { return acc; },
+        EAdd(nd) => {
+            acc = fold_expr_pruned(nd.left, acc, visit, descend);
+            return fold_expr_pruned(nd.right, acc, visit, descend);
+        },
+        ELam(nd) => { return fold_expr_pruned(nd.body, acc, visit, descend); }
+    }
+    return acc;
+}
+
+function free_of(e: Expr, acc: string[]): string[] {
+    match (e) {
+        EIdent(id) => { return acc.append(id.name); },
+        ELam(lm) => {
+            var inner: string[] = free_vars(lm.body);
+            var i: i32 = 0;
+            while (i < inner.len()) {
+                if (inner[i] != lm.param) { acc = acc.append(inner[i]); }
+                i = i + 1;
+            }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function free_vars(e: Expr): string[] {
+    var seed: string[] = [];
+    return fold_expr_pruned(e, seed, free_of, not_lambda);
+}
+
+function main(): i32 {
+    var lam: Expr = ELam { param: "y", body: EAdd { left: EIdent { name: "x" }, right: EIdent { name: "y" } } };
+    var e: Expr = EAdd { left: EIdent { name: "z" }, right: lam };
+    var seed: string[] = [];
+    return free_vars(e).len() * 10i32 + fold_expr(e, seed, free_of).len();
+}`, 24},
+	// Prune and CAPTURE composed: a nested capturing visitor and a top-level
+	// prune predicate reach the same call. Two `want` values through the same
+	// fold prove the capture is live (2 and 0 — a dropped env cannot give both),
+	// and the unpruned leg proves the prune is (`y` is 1 there, 0 here).
+	{"prune-with-a-capturing-visitor", `struct EIdent { name: string }
+struct EAdd { left: Expr, right: Expr }
+struct ELam { body: Expr }
+type Expr = EIdent | EAdd | ELam;
+
+function descend_all(e: Expr): boolean { return true; }
+
+function not_lambda(e: Expr): boolean {
+    match (e) {
+        ELam(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
+}
+
+function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
+    return fold_expr_pruned(e, acc, visit, descend_all);
+}
+
+function fold_expr_pruned[T](e: Expr, acc: T, visit: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        EIdent(_) => { return acc; },
+        EAdd(nd) => {
+            acc = fold_expr_pruned(nd.left, acc, visit, descend);
+            return fold_expr_pruned(nd.right, acc, visit, descend);
+        },
+        ELam(nd) => { return fold_expr_pruned(nd.body, acc, visit, descend); }
+    }
+    return acc;
+}
+
+function count_named(e: Expr, want: string): i32 {
+    function hit(n: Expr, acc: i32): i32 {
+        match (n) {
+            EIdent(id) => {
+                if (id.name == want) { return acc + 1i32; }
+                return acc;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    return fold_expr_pruned(e, 0i32, hit, not_lambda);
+}
+
+function count_named_all(e: Expr, want: string): i32 {
+    function hit(n: Expr, acc: i32): i32 {
+        match (n) {
+            EIdent(id) => {
+                if (id.name == want) { return acc + 1i32; }
+                return acc;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    return fold_expr(e, 0i32, hit);
+}
+
+function main(): i32 {
+    var e: Expr = EAdd { left: EIdent { name: "x" }, right: EAdd { left: EIdent { name: "x" }, right: ELam { body: EIdent { name: "y" } } } };
+    return count_named(e, "x") * 10i32 + count_named_all(e, "y") * 3i32 + count_named(e, "y");
+}`, 23},
+	// The monomorphisation profile astwalk actually has: ONE generic fold, three
+	// instantiations (i32, string[], struct-array), and a match binding the SAME
+	// NAME in every arm — fold_expr's `ExprSlice` and `ExprStructLit` arms both
+	// bind `sl`. Native mis-lowered that combination, its clone sharing one
+	// pattern-binding array across instantiations while each got its own body;
+	// this leg holds the self-host compiler to the same standard.
+	{"three-instantiations-sharing-a-binding-name", `struct ENum { v: i32 }
+struct EStr { s: string }
+struct EAdd { left: Expr, right: Expr }
+type Expr = ENum | EStr | EAdd;
+
+struct Hit { v: i32 }
+
+function descend_all(e: Expr): boolean { return true; }
+
+function fold_expr[T](e: Expr, acc: T, visit: (Expr, T) => T): T {
+    return fold_expr_pruned(e, acc, visit, descend_all);
+}
+
+function fold_expr_pruned[T](e: Expr, acc: T, visit: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        ENum(nd) => { return acc; },
+        EStr(nd) => { return acc; },
+        EAdd(nd) => {
+            acc = fold_expr_pruned(nd.left, acc, visit, descend);
+            return fold_expr_pruned(nd.right, acc, visit, descend);
+        }
+    }
+    return acc;
+}
+
+function count_node(e: Expr, acc: i32): i32 { return acc + 1i32; }
+
+function name_of(e: Expr, acc: string[]): string[] {
+    match (e) {
+        EStr(nd) => { return acc.append(nd.s); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function hit_of(e: Expr, acc: Hit[]): Hit[] {
+    match (e) {
+        ENum(nd) => { return acc.append(Hit { v: nd.v }); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var e: Expr = EAdd { left: ENum { v: 5i32 }, right: EStr { s: "a" } };
+    var s0: string[] = [];
+    var h0: Hit[] = [];
+    var ns: string[] = fold_expr(e, s0, name_of);
+    var hs: Hit[] = fold_expr(e, h0, hit_of);
+    return fold_expr(e, 0i32, count_node) * 10i32 + ns.len() * 2i32 + hs[0].v;
+}`, 37},
 }
 
 // TestSelfHostGenericASTFoldIRX86_64 drives the production x86-64 IR path.
