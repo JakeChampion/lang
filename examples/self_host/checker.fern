@@ -5770,7 +5770,49 @@ function record_pattern_diags(pv: parser.PatVariant, structs: StructSig[], line:
   return out;
 }
 
-function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
+// payload_slot_type_name is the declared type SPELLING of a variant's payload
+// slot `idx` — the `__ev` / `__ev<idx>` field of its synthesized struct — or
+// "" when the variant or the slot is unknown.
+function payload_slot_type_name(ss: StructSig, idx: i32): string {
+  var want: string = "__ev";
+  if (idx > 0) { want = "__ev" + util.i32_to_string(idx); }
+  var i: i32 = 0;
+  while (i < ss.field_names.len()) {
+    if (ss.field_names[i] == want && i < ss.field_type_names.len()) {
+      return util.base_type_name(ss.field_type_names[i]);
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// payloadless_binder_diags reports a bare payload-LESS variant name used as a
+// payload binder: `Wrap(Er2)` binds the payload under the name `Er2` and so
+// matches every value, where the author plainly meant to test for Er2. The
+// spelling that does test the tag is `Wrap(Er2())`. Native rejects the same
+// shape (resolveVariantBindings); this is that rule, scoped the same way — the
+// name must be a variant of the enum THIS slot holds, so an unrelated binder
+// that happens to share a variant's name elsewhere is untouched.
+function payloadless_binder_diags(pv: parser.PatVariant, structs: StructSig[], unions: UnionSig[], line: i32, col: i32): Diag[] {
+  var out: Diag[] = [];
+  var ss: StructSig = find_struct_sig(structs, pv.type_name);
+  if (ss.name.len() == 0) { return out; }
+  var slot: i32 = 0;
+  while (slot < pv.extra_bindings.len() + 1) {
+    var nm: string = pv.binding;
+    if (slot > 0) { nm = pv.extra_bindings[slot - 1]; }
+    if (nm.len() > 0 && nm != "_") {
+      var pt: string = payload_slot_type_name(ss, slot);
+      if (pt.len() > 0 && union_of_variant(nm, unions) == pt && variant_payload_count(nm, structs) < 0) {
+        out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + pt + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
+      }
+    }
+    slot = slot + 1;
+  }
+  return out;
+}
+
+function match_diags(stmts: parser.Stmt[], structs: StructSig[], unions: UnionSig[]): Diag[] {
   var out: Diag[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
@@ -5786,6 +5828,7 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
               }
             },
             parser.PatVariant(pv) => {
+              out = append_diags(out, payloadless_binder_diags(pv, structs, unions, m.arms[a].line, m.arms[a].col));
               if (pv.type_name.len() > 0) {
                 if (util.has_str(seen, pv.type_name)) {
                   out = out.append(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
@@ -5819,23 +5862,23 @@ function match_diags(stmts: parser.Stmt[], structs: StructSig[]): Diag[] {
               }
             }
           }
-          out = append_diags(out, match_diags(m.arms[a].body, structs));
+          out = append_diags(out, match_diags(m.arms[a].body, structs, unions));
           a = a + 1;
         }
       },
       parser.StmtIf(f) => {
-        out = append_diags(out, match_diags(f.then_body, structs));
-        out = append_diags(out, match_diags(f.else_body, structs));
+        out = append_diags(out, match_diags(f.then_body, structs, unions));
+        out = append_diags(out, match_diags(f.else_body, structs, unions));
       },
       parser.StmtWhile(w) => {
-        out = append_diags(out, match_diags(w.body, structs));
+        out = append_diags(out, match_diags(w.body, structs, unions));
       },
       parser.StmtFor(fr) => {
-        out = append_diags(out, match_diags(fr.body, structs));
+        out = append_diags(out, match_diags(fr.body, structs, unions));
       },
       parser.StmtDefer(d) => {
         var one: parser.Stmt[] = [d.action];
-        out = append_diags(out, match_diags(one, structs));
+        out = append_diags(out, match_diags(one, structs, unions));
       },
       _ => {}
     }
@@ -11486,7 +11529,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     body_diags = append_diags(body_diags, dupvar_diags(dbody));
     // E026 / E028: structural match-arm errors (wildcard order, dup
     // variant).
-    body_diags = append_diags(body_diags, match_diags(dbody, structs));
+    body_diags = append_diags(body_diags, match_diags(dbody, structs, unions));
     // P002 in a parameter's DEFAULT value. Nothing evaluates a default
     // until a call site omits the argument, so it sits outside the body
     // walk above — but native rejects the literal at parse time whether
@@ -11536,7 +11579,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   }
   body_diags = append_diags(body_diags, loop_diags(dtop, false, []));
   body_diags = append_diags(body_diags, dupvar_diags(dtop));
-  body_diags = append_diags(body_diags, match_diags(dtop, structs));
+  body_diags = append_diags(body_diags, match_diags(dtop, structs, unions));
   // E019: generic-struct type-argument arity in struct field types.
   var sfi: i32 = 0;
   while (sfi < mod.structs.len()) {
