@@ -8174,3 +8174,67 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   in 0..n`) to reproduce, which is worth remembering: a regression test that
   does not fail on the parent is not yet a regression test. Plus the whole
   `internal/e2eselfhost` package. Refs #6544 #3425 #4451.
+
+- 2026-08-17 (struct half, third slice): **A method that returns a fresh struct
+  is a strict-fresh producer at the READ, so the temp it leaves behind is
+  reclaimed (#6544).**
+
+  The two entries above credit the RECEIVER. This one is about the RESULT: the
+  read-site reclaim (#6491) frees the container `mk().k` / `boxed(i).name`
+  leaves behind, and it never asked a method. `owned_fresh_call_callee` matched
+  a bare-ident callee only, so `b.bump().tag` — same producer, same proof, one
+  receiver away — stranded the whole box every evaluation.
+
+  The registry already keys a method as `"<Base>.<method>"`, so the callee half
+  is a lookup, not a new analysis: the receiver's struct type plus the method
+  name. The receiver must be a bare LOCAL — `expr_struct_type` reports a
+  struct-ARRAY-returning call's ELEMENT type (the `mk()[i].field` recovery), so
+  a call receiver could name a method of a type the value is only an array OF,
+  where a slot lookup cannot. A struct FIELD of the method's name is a fn-typed
+  field call and names no method at all, so it is refused too. `"STRFLDF:"` (the
+  string-field MOVE form) drops its free-function-only gate on the same terms:
+  every return being a strict-fresh LITERAL already refuses `return b`, and
+  `body_strfields_all_fresh` refuses a literal built out of `b.tag` — the two
+  shapes in which the result could carry the receiver's own box.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `b.bump().tag.len()`, fresh struct + fresh string field | 96 | 0 |
+  | `p.bump().k`, scalar field off a string-free struct | 48 | 0 |
+  | `b.relabel(t).tag.len()` (the conformance case) | 96 | 96 |
+
+  **The conformance row still does not move, and the reason is precise.**
+  `relabel` opens `if (t.len() == 0) { return b; }`, so it is not strict-fresh
+  on every path and no whole-body registry can admit it. The string side solved
+  exactly this with a RUNTIME discriminator (SFRRECV: release the result only
+  when its pointer differs from the chain root's), and the struct analogue is
+  that same compare — with one extra question the string side does not have:
+  the fresh path's `Box { tag: t, … }` takes its string from a PARAMETER, so
+  the temp box does not own that field and the release has to stay the bare box
+  dec. That is the next slice, and it is a different mechanism from this one,
+  not a widening of it.
+
+  Two other residuals this slice names rather than closes. A SCALAR read off a
+  string-bearing struct still strands the strings: the bare registry entry
+  proves a fresh literal, not that the box owns its string buffers, and the
+  entry that does carry that proof (`"STRFLDF:"`) is not consulted on the
+  scalar path — `__struct_drop_<T>`'s string arm is `strfldok:<T>`-gated and
+  pairing the two is its own reckoning. And `owned_container_read_str_binding`,
+  the credit half of the pointer triple, still reads bare-ident callees only, so
+  `var f: string = b.bump().tag;` frees the box and leaks the moved-out string
+  where the free-function form frees both; that walker has no LowerState, so
+  resolving a receiver's type there needs the declared-type approximation
+  `is_fresh_ret_binding` uses.
+
+  VERIFIED: new `fresh-struct-method-field-string` and
+  `fresh-struct-method-field-scalar` in the #6491 read-reclaim file, both
+  failing at 92 (the growth) on the parent. Two refusals guard the admission
+  from the other side and pass on both: `method-identity-return-refused`
+  (`me()` hands the receiver back, so the "temp" would be `keep`'s own box) and
+  `method-receiver-field-value-refused` (`same()` wraps `b.tag`, so the moved-out
+  string would be `keep`'s), each re-reading the value the refusal protects
+  after churn has recycled the freed bytes. Plus the whole `internal/e2eselfhost`
+  package — the gate the 2026-08-16 process note names, and the right one for a
+  registry the self-host's own sources consume. Refs #6544 #6491 #4451.
