@@ -9470,6 +9470,20 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 	return bindings, outTypes
 }
 
+// checkMergedSiblingBinder applies the payload-less-variant rule to a flat
+// sibling arm the nested-pattern desugar merged into an inner match. Such an
+// arm reaches the checker as a WILDCARD carrying the name it bound the slot
+// to, so resolveVariantBindings never sees it as a payload binding.
+func (c *checker) checkMergedSiblingBinder(pos ast.Position, name string, scrut ast.Type) {
+	if name == "" {
+		return
+	}
+	if en, clash := c.payloadlessVariantNamed(name, scrut); clash {
+		c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a payload slot is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
+			name, en, name)
+	}
+}
+
 // payloadlessVariantNamed reports whether name is a payload-less variant of
 // t's enum, naming the enum. A payload slot spelled with such a name parses
 // as a binder, so the arm matches every value of the slot instead of testing
@@ -9595,6 +9609,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	sawWildcard := false
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
+			c.checkMergedSiblingBinder(arm.P, arm.SlotBinderName, et)
 			if i != len(n.Arms)-1 {
 				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}
@@ -10392,6 +10407,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	}
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
+			c.checkMergedSiblingBinder(arm.P, arm.SlotBinderName, et)
 			if i != len(n.Arms)-1 {
 				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
 			}

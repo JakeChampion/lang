@@ -2741,7 +2741,14 @@ type MatchArm struct {
 	// matched value is also bound to `n` (with the scrutinee's type) in the
 	// arm scope, alongside whatever <pattern> binds. Empty for plain patterns.
 	AtBinding string
-	Body      *Block
+	// SlotBinderName is set only on the synthetic inner-match wildcard arm
+	// the nested-pattern desugar builds for a flat sibling (`Wrap(x)` beside
+	// `Wrap(Ok2(n))`): it is the name that sibling bound the whole payload
+	// slot to. Carried so the checker can apply the payload-less-variant
+	// rule to it — a merged sibling reaches the checker as a wildcard, not
+	// as a payload binding. Inert everywhere else.
+	SlotBinderName string
+	Body           *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2789,7 +2796,14 @@ type MatchExprArm struct {
 	Guard      Expr
 	// AtBinding — the `n` in `n @ <pattern>`; see MatchArm.AtBinding.
 	AtBinding string
-	Body      Expr
+	// SlotBinderName is set only on the synthetic inner-match wildcard arm
+	// the nested-pattern desugar builds for a flat sibling (`Wrap(x)` beside
+	// `Wrap(Ok2(n))`): it is the name that sibling bound the whole payload
+	// slot to. Carried so the checker can apply the payload-less-variant
+	// rule to it — a merged sibling reaches the checker as a wildcard, not
+	// as a payload binding. Inert everywhere else.
+	SlotBinderName string
+	Body           Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }

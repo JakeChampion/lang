@@ -5766,6 +5766,23 @@ enum Two { Pair(Res, i32), Nil }
   match (t) { Pair(Err2, k) => { return k; }, _ => { return 1; } }
   return 0;
 }`,
+		// Merged sibling: when another arm of the SAME outer variant nests,
+		// the desugar folds this one into the inner match as a wildcard plus
+		// a synthesised `var Err2 = __nest0;`, so it is no longer a payload
+		// binding by the time the checker runs. It reaches the rule through
+		// ast.MatchArm.SlotBinderName instead. Before that it returned 9 for
+		// `Wrap(Third)`.
+		"merged sibling of a nested arm": `function f(w: Nest): i32 {
+  match (w) {
+    Wrap(Ok2(n)) => { return n; },
+    Wrap(Err2) => { return 9; },
+    _ => { return 1; },
+  }
+  return 0;
+}`,
+		"merged sibling, expression form": `function f(w: Nest): i32 {
+  return match (w) { Wrap(Ok2(n)) => n, Wrap(Err2) => 9i32, _ => 1i32 };
+}`,
 	}
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {

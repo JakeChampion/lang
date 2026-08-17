@@ -3781,7 +3781,8 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
+		SlotBinderName: pat.slotBinder, Guard: guard, Body: body,
 	}
 }
 
@@ -3913,8 +3914,10 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 			innerPat = *g.pat.subPats[pos]
 		} else {
 			// A flat sibling (`Some(x)`): matches any payload here — an inner
-			// wildcard that rebinds the whole slot to the sibling's name.
-			innerPat = matchPattern{P: g.pat.P, IsWildcard: true}
+			// wildcard that rebinds the whole slot to the sibling's name. The
+			// name rides along so the checker can still tell whether it was
+			// meant as a variant rather than a binder.
+			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
 		}
 		if innerPat.IsWildcard && g.guard == nil {
 			hasInnerWild = true
@@ -3940,6 +3943,18 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 		Bindings:      tmps,
 		Body:          &ast.Block{P: gp, Stmts: []ast.Stmt{innerMatch}},
 	}, nil
+}
+
+// slotBinderOf is the name a flat sibling arm bound the merged slot to, or
+// "" when it bound nothing there (`Some(_)`).
+func slotBinderOf(pat matchPattern, pos int) string {
+	if pos >= len(pat.Bindings) {
+		return ""
+	}
+	if name := pat.Bindings[pos]; name != "_" {
+		return name
+	}
+	return ""
 }
 
 // rebindStmtBody prepends `var name = __nestK;` binders for every payload
@@ -4044,6 +4059,10 @@ type matchPattern struct {
 	// fieldNames runs parallel to Bindings for a named-field pattern:
 	// the field projected for each binding (== Bindings for shorthand).
 	fieldNames []string
+	// slotBinder is set on the inner wildcard the merge desugar builds for a
+	// flat sibling arm: the name that sibling bound the whole payload slot
+	// to. See ast.MatchArm.SlotBinderName.
+	slotBinder string
 }
 
 // hasNestedSub reports whether any payload slot of this pattern is a
@@ -4404,7 +4423,8 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
-		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames, Guard: guard, Body: body,
+		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
+		SlotBinderName: pat.slotBinder, Guard: guard, Body: body,
 	}
 }
 
@@ -4486,7 +4506,7 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 		if g.pat.subPats[pos] != nil {
 			innerPat = *g.pat.subPats[pos]
 		} else {
-			innerPat = matchPattern{P: g.pat.P, IsWildcard: true}
+			innerPat = matchPattern{P: g.pat.P, IsWildcard: true, slotBinder: slotBinderOf(g.pat, pos)}
 		}
 		if innerPat.IsWildcard && g.guard == nil {
 			hasInnerWild = true
