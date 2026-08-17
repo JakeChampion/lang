@@ -907,6 +907,48 @@ function churn(n: i32): i32 {
 		maxRatio: 130,
 	},
 	{
+		// A state record threaded through a CHAIN OF DISTINCT LOCALS, each
+		// link appending to an array field — the shape every lowering and
+		// emit function in the self-host compiler is written in
+		// (`var s1 = sc.emit(op); var s2 = lower_block(body, s1);`).
+		//
+		// It was quadratic, at 4x per doubling, and the reason was entirely
+		// caller-side. #4873's containment bracket incs an argument's field
+		// buffers across a call the callee may grow in place, so the grow
+		// takes its copy path; it is skipped only for an argument that DIES at
+		// the call, and that test recognised the self-reassign / return /
+		// sole-occurrence shapes. A chain link is none of those — `a` is read
+		// once at `a.emit(op)`, but the param before it and the local after it
+		// mean neither `occurrences == 1` nor a reassign holds — so every link
+		// copied the whole accumulated buffer. Rewritten as
+		// `s = s.emit(op)` the identical work was flat, which is what made it
+		// easy to walk past.
+		//
+		// 80,000 appends could not be compiled at all: the arena filled
+		// (exit 125) somewhere past 13.7 GB. They now cost 28 MB.
+		name: "state-threading-chain",
+		decls: `struct Op { tag: i32, note: string }
+struct St { ops: Op[], names: string[], ctrl: i32, who: string }
+function (s: St) emit(op: Op): St {
+    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };
+}
+function step(s: St, k: i32): St {
+    var a: St = s.emit(Op { tag: k, note: "" });
+    var b: St = a.emit(Op { tag: k + 1, note: "" });
+    var c: St = b.emit(Op { tag: k + 2, note: "" });
+    var d: St = c.emit(Op { tag: k + 3, note: "" });
+    return d;
+}
+function churn(n: i32): i32 {
+    var s: St = St { ops: [], names: [], ctrl: 0, who: "x" };
+    var i: i32 = 0;
+    while (i < n) { s = step(s, i * 4); i = i + 1; }
+    return s.ops.len() + s.ctrl;
+}`,
+		n:        400,
+		maxRatio: 220,
+	},
+	{
 		// CALIBRATION: naive left-fold string concatenation, which is
 		// inherently quadratic — every `+` copies the whole accumulated
 		// prefix. This is not a bug to fix; it is the control that proves the

@@ -874,6 +874,14 @@ func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.I
 			for _, f := range x.Fields {
 				markSlotValue(f.Value)
 			}
+			// A struct-update SPREAD base is a counted retention like a field
+			// slot: the literal copies each un-overridden field out of the base
+			// and inc's every pointer one, so the new box owns references of its
+			// own. Without this the functional-update threading method
+			// `S { ...s, f: … }` — the shape the self-host lowering is written
+			// in — could never be credited, and its caller kept the
+			// conservative taint on every intermediate.
+			markSlotValue(x.Base)
 		case *ast.TupleLit:
 			for _, el := range x.Elems {
 				markSlotValue(el)
@@ -911,6 +919,14 @@ func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.I
 			// arguments stay uncredited (the map-mutator receiver guard).
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
+					markSlotValue(x.Args[0])
+				}
+				// `p.f.append(v)` retains the field buffer COUNTED whichever
+				// path the grow helper takes: in place it sets the buffer's rc
+				// to 2 so the result co-owns it alongside `p.f`, and on the copy
+				// path it allocates a fresh buffer and leaves the receiver's
+				// count untouched.
+				if id.Name == "__method_Array_push" && len(x.Args) == 2 {
 					markSlotValue(x.Args[0])
 				}
 				if cs, ok := summary[id.Name]; ok {
@@ -3354,10 +3370,28 @@ func (b *builder) initMayAliasLive(e ast.Expr) bool {
 		// alias risk is a pointer-shaped ARGUMENT / receiver the result could
 		// be (`id(v2)` returns its arg); a scalar-only-arg call (`fill(100)`)
 		// returns a fresh value.
-		for _, a := range x.Args {
-			if b.mayAliasResult(a) {
-				return true
+		//
+		// An argument in a COUNTED-RETAIN position (paramCountedRetain) is not
+		// that risk: whatever of it the result carries, it carries under a
+		// reference of its own, so the precise drop decs rather than freeing
+		// through to a live source — the same admission the counted-alias
+		// inits (`var y = x` / `x.field`) already get, and what lets a
+		// functional-update threading chain release each dead intermediate at
+		// its last read instead of at scope exit.
+		var counted []bool
+		if id, isID := x.Callee.(*ast.Ident); isID {
+			if _, isLocal := b.locals[id.Name]; !isLocal {
+				counted = b.paramCountedRetain[id.Name]
 			}
+		}
+		for i, a := range x.Args {
+			if !b.mayAliasResult(a) {
+				continue
+			}
+			if i < len(counted) && counted[i] {
+				continue
+			}
+			return true
 		}
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok && b.mayAliasResult(fa.Target) {
 			return true
@@ -4594,7 +4628,7 @@ const (
 
 // callArgDeaths marks, per call node, the ident arguments whose value can
 // no longer be observed through that binding in this function after the
-// call, so the #4873 bracket may skip them. Three shapes qualify:
+// call, so the #4873 bracket may skip them. Four shapes qualify:
 //
 //   - the strict self-reassign `x = f(.., x, ..)`: the RHS is exactly the
 //     call and x occurs in it exactly once, directly as an argument — the
@@ -4611,29 +4645,36 @@ const (
 //     what covers `var t = f(b, v); return t;` and the inner call of
 //     `return f(f(b, v), v + 1)`, neither of which is a reassign or a
 //     direct return argument, yet both of which were paying one
-//     full-buffer copy per call.
+//     full-buffer copy per call;
+//   - the LAST-OCCURRENCE shape: the read at this call is the binding's
+//     textually last (identOrder.isLast) and the call is enclosed by no
+//     loop or lambda body, so control passes it once and nothing reads the
+//     binding again. Admitted for a param and for a `var` local whose
+//     initialiser is a direct call to a named function — the state-
+//     threading chain `var a = s.emit(o); var b = a.emit(o); return b;`,
+//     where every receiver is at its last use. Each of those was paying a
+//     full-buffer copy per link, which is O(n²) bytes over a chain: the
+//     self-host lowering threads its LowerState this way and one 400-arm
+//     `else if` chain bumped 40 MB in `emit` alone.
 //
-// A textually-last occurrence is deliberately NOT sufficient: inside a
-// loop the "last" occurrence re-executes, and an unbracketed in-place
-// growth would be observed by the next iteration (interp copies). That is
-// exactly why the sole-occurrence shape is restricted to a position no
-// loop or lambda body encloses — a single textual read inside a repeating
-// construct is still many dynamic reads, and the next one would observe
-// the previous iteration's in-place growth.
+// The last-occurrence test needs the no-loop gate to be sound at all:
+// inside a loop the "last" occurrence re-executes, and an unbracketed
+// in-place growth would be observed by the next iteration (interp
+// copies). A name read inside a defer or a lambda is excluded outright —
+// those run after the syntactic position that looks final.
 //
-// It is restricted to PARAMS deliberately, and that restriction is free:
-// every probe in #6036 that this rule rescues is rescued through the
-// param, so widening it to other bindings measurably buys nothing. What
-// it costs is the need to re-establish safety for binding forms whose
-// ownership is less clear-cut than a param's. A param is bound once per
-// frame from the caller, and the caller's own bracket already contains
-// what the callee does to it (that is the whole shape of #4873's
-// caller-side containment), so a param that dies here is a complete
-// account of this frame's interest in the buffer. A match-arm payload
-// binding is a view into a scrutinee that outlives the arm, and the
-// #4402 borrowed-view exemption means not every `var` local takes the
-// retain that would push a callee onto its copy path — neither was shown
-// to break under the wider rule, and neither is worth the argument.
+// For a LOCAL the death verdict also needs the binding not to be an alias
+// of something else still live: `var t = holder; f(t)` makes `t`'s last
+// use unbracketed while `holder` still reads the same field buffers, and
+// binding a struct incs the BOX, not the buffers inside it. A direct-call
+// initialiser cannot be that: its result is either freshly allocated or
+// shares a buffer with an argument, and an argument shares only when the
+// callee grew it in place — which required that argument to have died at
+// ITS call, so nothing observes the sharing. That is the same induction
+// #4873's caller-side containment already rests on, and the transitive
+// closure in computeGrowParams consults this map, so a buffer passed on
+// unbracketed propagates as a growable position of the enclosing
+// function's own parameter.
 func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
@@ -4650,6 +4691,30 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 	isParam := map[string]bool{}
 	for _, p := range fn.Params {
 		isParam[p.Name] = true
+	}
+	// Locals bound from a direct call to a named function — the only local
+	// binding form the last-occurrence shape admits (see above). A name
+	// declared more than once is dropped: the occurrence order cannot tell
+	// the two bindings apart.
+	callInitLocal := map[string]bool{}
+	declCount := map[string]int{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, isVar := n.(*ast.Var)
+		if !isVar {
+			return true
+		}
+		declCount[v.Name]++
+		if c, isCall := v.Init.(*ast.Call); isCall {
+			if _, named := c.Callee.(*ast.Ident); named {
+				callInitLocal[v.Name] = true
+			}
+		}
+		return true
+	})
+	for name, n := range declCount {
+		if n > 1 {
+			delete(callInitLocal, name)
+		}
 	}
 	markOnce := func(c *ast.Call, name string) {
 		direct := 0
@@ -4729,6 +4794,29 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 				out[c] = map[string]bool{}
 			}
 			out[c][aid.Name] = true
+		}
+		return true
+	})
+	// Last-occurrence shape. Same no-loop / no-lambda gate as above, plus the
+	// defer-and-lambda exclusion (a capture is read when the closure runs, not
+	// where it is written) and markOnce's exactly-once-in-this-call rule, so a
+	// second read inside the same call cannot observe the first's growth.
+	escaping := deferOrLambdaNames(body)
+	order := identOrderOf(body)
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || repeating[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || escaping[aid.Name] || !order.isLast(aid) {
+				continue
+			}
+			if !isParam[aid.Name] && !callInitLocal[aid.Name] {
+				continue
+			}
+			markOnce(c, aid.Name)
 		}
 		return true
 	})
