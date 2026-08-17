@@ -514,3 +514,58 @@ func TestClassifierTestStepPrefixMatchesWorkflow(t *testing.T) {
 			"the classifier would call every setup failure a test failure", prefix)
 	}
 }
+
+// `ir.Op.Runtime` marks a callee as one the BACKEND provides. Marking a name
+// the stdlib defines in Fern would invert the bug it exists to fix: the
+// emitters would skip mangling and emit a bare reference to a symbol that only
+// exists mangled, so the program would fail to link.
+//
+// The marking was derived from ir.providedSigs, which is not quite the same
+// set — `internal/stdlib/core/map.fern` defines `__map_lookup_val`,
+// `__map_drop_values` and friends as ordinary Fern functions. This pins the
+// part that has to hold.
+func TestRuntimeMarkedCalleesAreNotFernFunctions(t *testing.T) {
+	root := filepath.Join("..", "..")
+	irFiles, err := filepath.Glob(filepath.Join(root, "internal", "ir", "*.go"))
+	if err != nil || len(irFiles) == 0 {
+		t.Fatalf("glob internal/ir: %v", err)
+	}
+	marked := map[string]bool{}
+	re := regexp.MustCompile(`Runtime: true, Str: "([^"]+)"`)
+	for _, f := range irFiles {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range re.FindAllSubmatch(b, -1) {
+			marked[string(m[1])] = true
+		}
+	}
+	if len(marked) == 0 {
+		t.Fatal("no Runtime-marked callees found; this guard needs updating with the marking")
+	}
+
+	var fern []string
+	err = filepath.Walk(filepath.Join(root, "internal", "stdlib"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.HasSuffix(p, ".fern") {
+			fern = append(fern, p)
+		}
+		return nil
+	})
+	if err != nil || len(fern) == 0 {
+		t.Fatalf("walk internal/stdlib: %v (%d files)", err, len(fern))
+	}
+	decl := regexp.MustCompile(`(?m)^\s*(?:pub\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)`)
+	for _, f := range fern {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range decl.FindAllSubmatch(b, -1) {
+			if name := string(m[1]); marked[name] {
+				t.Errorf("%s defines %q in Fern, but the IR marks calls to it Runtime: "+
+					"the emitters would emit it unmangled and the link would fail", f, name)
+			}
+		}
+	}
+}

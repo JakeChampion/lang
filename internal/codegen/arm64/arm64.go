@@ -10298,11 +10298,13 @@ func (g *generator) sym(target string) string {
 // meant, so neither has to be guessed from the name.
 //
 // `target` is the callee after this backend's own rewrites (the
-// `__method_Map_*` → `__map_*_impl` family). A rewritten target names an
-// emitted helper by construction, so it is never mangled either.
+// `__method_Map_*` → `__map_*_impl` family). A rewrite REPLACES the callee, so
+// the flag no longer describes it: `__map_set_impl` and friends are Fern
+// functions in internal/stdlib/core/map.fern and must be mangled like any
+// other. Only an unrewritten target is the one the lowering marked.
 func (g *generator) callSym(op ir.Op, target string) string {
-	if op.Runtime || target != op.Str {
-		return target
+	if op.Runtime && target == op.Str {
+		return op.Str
 	}
 	return g.sym(target)
 }
