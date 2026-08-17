@@ -554,27 +554,42 @@ dyn-type detection is added. The self-host checker (`checker.fern`) still
 does not enforce object-safety or the coercion rule; the Go checker is
 the strict gate until it retires.
 
-**A third unwired coercion site: a `dyn Trait[]` array literal in ARGUMENT
-position.** The two wired sites detect a `dyn` destination from a scalar
-parameter's signature and from a `var xs: dyn Show[] = […]` annotation.
-`render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is
-neither: the destination is an ARRAY-typed parameter, so the elements are
-never boxed. With primitive/string elements they flow in as raw scalars
-and the dispatch chain reads a shape pointer out of one — the program
-compiles clean and segfaults at run time on x86-64 and arm64, and fails
-validation on wasm. Struct/enum elements are unaffected (they carry their
-own shape), which is why the existing self-host `dyn` tests pass; so is
-the same literal bound to a local first. The `lower_dyn_arg` helper drops
-into this site too once an array-typed parameter's element type is
-consulted for `dyn`-ness.
+**A `dyn Trait[]` array literal in ARGUMENT position — wired (#6906).**
+`render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is the
+third site: the destination is an ARRAY-typed parameter, which neither of
+the two detectors above sees, so the elements were built into the buffer
+raw. A struct/enum element carries its own shape and so survived that
+(which is why the existing `dyn` tests passed); a primitive/string element
+does not, and the callee's dispatch read a shape pointer out of a scalar
+— SIGSEGV on the register backends, a validation failure on wasm.
+`fn_param_sigs` now carries a `'8'` flag for a `dyn Trait[]` param, and an
+array-LITERAL argument at such a position lowers through the shared
+`lower_dyn_array_lit`, the same helper the `var xs: dyn Show[] = […]`
+binding uses. Only the literal form needs it: every other argument is an
+already-built array whose elements were coerced where it was built.
 
-This gap is why `std/format`'s Display-accepting entry points are
-`[T: cmp.Display]` bounds rather than `dyn cmp.Display[]` (#2684):
-`format(fmt, [40, 2, 42])` is exactly the unwired shape, and the stdlib
-is compiled by the self-host, so it cannot use one the self-host
-miscompiles. Bounded generics monomorphise and work on every backend and
-both compilers. Flipping the signature is the natural follow-up once this
-site is wired.
+That gap was why `std/format`'s Display-accepting entry points are
+`[T: cmp.Display]` bounds rather than `dyn cmp.Display[]` (#2684) —
+`format(fmt, [40, 2, 42])` is exactly this shape, and the stdlib is
+compiled by the self-host. Flipping the signature is now unblocked;
+bounded generics monomorphise and work either way, so it is a choice
+rather than a workaround.
+
+Closing it needed a second fix, in the WAT→binary assembler rather than in
+lowering. `emit_dyn_dispatch` writes a value-producing `if (result i32)`,
+and in FLAT (unfolded) WAT that blocktype is a `(result …)` node sitting
+in the instruction stream at the function's top level. `watbin.fern`'s
+flat encoder hardcoded the empty blocktype `0x40` for every
+`block`/`loop`/`if`, and its header readers filtered `(result …)` over the
+whole func node — so the block's own type was both dropped from the body
+and counted as a second FUNCTION result. A module the WAT path ran fine as
+text failed to validate once assembled ("values remaining on stack at end
+of block"). The declarations are now read as a PREFIX (`func_header_end`)
+and a flat block consumes its own blocktype. This affected EVERY
+`dyn Trait[]` program on the binary path, including the already-wired
+local-binding site, so it is independent of the argument position — and
+invisible to the WAT-based tests, which hand the text to wasmtime
+directly. `TestSelfHostWasmBinary` is the leg that sees it.
 
 The **wasm**
 self-host backend (static-dispatch, no runtime shape-compare) handles

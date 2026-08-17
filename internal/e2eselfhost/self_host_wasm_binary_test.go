@@ -152,6 +152,14 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// exit(code): preview1 proc_exit. exit(0) terminates early -> stdout
 		// "a" only (the "b" after exit is unreachable), exit code 0.
 		{"exit", "function main(): i32 { write(\"a\"); exit(0); write(\"b\"); return 0; }", 0},
+		// A VALUE-PRODUCING flat block — `if (result i32)`, which is what
+		// emit_dyn_dispatch writes. The encoder hardcoded the empty blocktype
+		// 0x40 for every flat block/loop/if and the header readers counted the
+		// `(result i32)` node as a second FUNCTION result, so the module the
+		// WAT path ran fine as text failed to validate once assembled: the
+		// declared type grew a phantom result and the arms' values had nowhere
+		// to go (#6906). (3+1) + (4+1) + (14+1) = 24.
+		{"dyn-dispatch-blocktype", "trait Sh { function area(self: Self): i32; } impl Sh for i32 { function area(self: Self): i32 { return self + 1; } } function total(xs: dyn Sh[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { return total([3, 4, 14]); }", 24},
 	}
 
 	for _, tc := range cases {
