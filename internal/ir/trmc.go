@@ -132,7 +132,9 @@ func (b *builder) detectTrmc() *trmcShape {
 		if !ok || ret.Value == nil {
 			return nil
 		}
-		_, scrutVarIdx, _, ok := b.lookupVariant(arm.VariantName)
+		// Scrutinee-relative, like the two match lowerings: a variant name
+		// two enums share has a different ordinal in each.
+		_, scrutVarIdx, _, ok := b.lookupVariantOn(arm.VariantName, b.scrutineeEnumName(m.Tag))
 		if !ok {
 			return nil
 		}
