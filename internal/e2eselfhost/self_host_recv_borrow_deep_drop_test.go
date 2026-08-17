@@ -36,11 +36,10 @@ var recvBorrowDeepDropCases = []struct {
 	src      string
 	expected int
 }{
-	// REFUSED — identity return. `keep()` hands back the receiver's own box, so
-	// the result aliases `b`. Nothing at the call site yet proves the caller
-	// does not retain that alias past b's death, so the registry declines and
-	// the receiver keeps its box-only release. The alias is read after 4000
-	// further rounds; a granted deep drop would have freed its tag.
+	// REFUSED at the CALL SITE — an identity-returning method whose result is
+	// BOUND (`var alias = held.keep()`). The result may be the receiver's own
+	// box, so `held` keeps its box-only release; the alias is read after 4000
+	// further rounds, and a granted deep drop would have freed its tag.
 	{"recvborrow-identity-return-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) keep(): Box { return b; }
 function main(): i32 {
@@ -109,6 +108,58 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// THE OVER-RELEASE the "RECVRET:" credit gate closes. `keep = b.me()`
+	// assigns the receiver's own box to a name that outlives the loop body, and
+	// `b` was credited anyway — on the strength of a method receiver counting as
+	// a borrow — so its per-rebind reclaim freed the box `keep` still reads.
+	// Measured on the parent as a genuine over-release (__rc_underflow() ticked,
+	// not a leak), which is why this row asserts 0 and not merely flatness:
+	// exit 99 is the pre-fix outcome.
+	{"recvret-rebound-outer-no-over-release", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function rounds(n: i32): i32 {
+    var t: i32 = 0;
+    var keep: Box = Box { tag: "outer-tag-value", n: 0 };
+    for i in 0..n { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; keep = b.me(); t = (t + b.n) % 251; }
+    return t + keep.tag.len();
+}
+function main(): i32 {
+    var acc: i32 = rounds(4000);
+    if (acc < 15) { return 95; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// The same gate through a RETURN: `me()`'s result leaves the function, so
+	// `b` cannot keep a credit that would free it on the way out.
+	{"recvret-returned-result-safe", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function mk(k: i32): Box { var b: Box = Box { tag: "start-tag-value", n: k }; return b.me(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4000) { var r: Box = mk(i % 8); if (r.tag.len() != 15) { return 95; } acc = (acc + r.n) % 251; i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
+	// The same gate through a CONTAINER: the result is stored into an array
+	// literal, which outlives nothing here but is a move position all the same.
+	{"recvret-container-result-safe", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4000) {
+        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        var xs: Box[] = [b.me()];
+        if (xs[0].tag.len() != 15) { return 95; }
+        acc = (acc + xs[0].n) % 251;
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
 	// ADMITTED with an rc-ARRAY field: the deep drop walks `items` as well as
 	// `tag`. Read through the method and directly, both must stay valid.
 	{"recvborrow-array-field-safe", `struct Box { tag: string, items: i32[] }
@@ -139,6 +190,51 @@ function rounds(n: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.score()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// The IDENTITY-return tier ("RECVIDENT:"): `me()` hands the receiver back on
+	// its only path, and the result is consumed INLINE — read through to a
+	// `.len()` and dead. Nothing outliving `b` holds it, so `b` keeps its deep
+	// drop. 22 B/round before.
+	{"recvident-inline-result-flat", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + b.me().tag.len()) % 251; i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var acc: i32 = rounds(200);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    acc = acc + rounds(5000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// A BORROWABLE param is not a move position, so `take(b.me())` keeps the
+	// credit too — the same registry and reading fieldmove_expr already applies
+	// to a field chain. Marking every argument cost this shape 72 B/round in an
+	// intermediate of this slice, worse than the 22 it started at.
+	{"recvident-borrowable-arg-flat", `struct Box { tag: string, n: i32 }
+function (b: Box) me(): Box { return b; }
+function take(x: Box): i32 { return x.n; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; acc = (acc + take(b.me())) % 251; i = i + 1; }
     return acc;
 }
 function main(): i32 {
