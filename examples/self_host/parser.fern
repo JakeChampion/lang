@@ -583,7 +583,12 @@ function parse_struct_destructure(p: Par, struct_name: string, line: i32, col: i
     while (p.peek_punct() != "}" && !p.at_end()) {
         if (p.peek_punct() == "..") { p = p.advance(); break; }
         var fld: string = p.peek_ident();
-        if (fld.len() > 0) { p = p.advance(); }
+        // Same finiteness argument as the tuple loop: nothing below consumes
+        // a non-ident field token, so it has to end the parse.
+        if (fld.len() == 0) {
+            return (s_unknown("a struct destructuring pattern binds field names"), p);
+        }
+        p = p.advance();
         var bind: string = fld;
         if (p.peek_punct() == ":") {
             p = p.advance();
@@ -2881,15 +2886,25 @@ struct StructArm { is_wild: boolean, binds: string[], fields: string[], at_bindi
 // parallel binding + field name lists (fields[i] is the projected field,
 // binds[i] the local it binds). The struct name is not retained — the
 // scrutinee's type drives field resolution at lowering.
-function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
+function parse_struct_arm_pattern(p: Par): (string[], string[], boolean, Par) {
     var binds: string[] = [];
     var fields: string[] = [];
+    var ok: boolean = true;
     if (p.peek_ident().len() > 0) { p = p.advance(); } // struct name
     if (p.peek_punct() == "{") { p = p.advance(); }
     while (p.peek_punct() != "}" && !p.at_end()) {
         if (p.peek_punct() == "..") { p = p.advance(); break; }
         var fld: string = p.peek_ident();
-        if (fld.len() > 0) { p = p.advance(); }
+        // Nothing below consumes a non-ident field token, so the loop stops on
+        // one or it spins. The arm is malformed, and `ok` is what says so —
+        // dropping the token instead would compile a pattern binding less
+        // than the source asked for.
+        if (fld.len() == 0) {
+            p = p.advance();
+            ok = false;
+            break;
+        }
+        p = p.advance();
         var bind: string = fld;
         if (p.peek_punct() == ":") {
             p = p.advance();
@@ -2902,7 +2917,7 @@ function parse_struct_arm_pattern(p: Par): (string[], string[], Par) {
         if (p.peek_punct() == ",") { p = p.advance(); }
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (binds, fields, p);
+    return (binds, fields, ok, p);
 }
 
 function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: i32): Stmt {
@@ -2976,10 +2991,11 @@ function is_struct_pattern_arm(p: Par): boolean {
 // Shared by the statement and expression forms: expr_form=true parses each arm
 // body as a value branch (`parse_branch_body` / a bare tail expr, so the IIFE
 // wrapper yields it); expr_form=false parses a statement block (`parse_block`).
-function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], string, Par) {
+function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], string, boolean, Par) {
     var arms: StructArm[] = [];
     var rt: string = "i32";
     var first: boolean = true;
+    var all_ok: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
         var sline: i32 = p.peek_line();
         var scol: i32 = p.peek_col();
@@ -2998,10 +3014,11 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             p = p.advance();
             s_wild = true;
         } else {
-            var (spb, spf, spp) = parse_struct_arm_pattern(p);
+            var (spb, spf, spok, spp) = parse_struct_arm_pattern(p);
             p = spp;
             s_binds = spb;
             s_fields = spf;
+            if (!spok) { all_ok = false; }
         }
         var s_guard: Expr = e_bool(true);
         var s_has_guard: boolean = false;
@@ -3038,7 +3055,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    return (arms, rt, p);
+    return (arms, rt, all_ok, p);
 }
 
 // parse_branch_body yields a parsed if/match value-branch body: the
@@ -3366,8 +3383,11 @@ function parse_match_expr(p: Par): IfChain {
     // but needs the variant path's tag test): desugar to the field-bind flag
     // chain (build_struct_match).
     if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
-        var (smarms, smrt, smp) = parse_struct_match_arms(p, true);
+        var (smarms, smrt, smok, smp) = parse_struct_match_arms(p, true);
         p = smp;
+        if (!smok) {
+            return IfChain { par: p, stmt: s_unknown("a struct pattern binds field names"), rt: smrt, needs_default_return: false, value_local: "" };
+        }
         // Same value-local routing as the tuple desugar above: build_struct_match
         // splices arm bodies into the same done-flag if-chain shape.
         // `_r`, not `_v`: build_struct_match already uses `<base>_v` for its
@@ -4091,8 +4111,9 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
     // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
     // parse_match_expr) — desugar to the field-bind flag chain.
     if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
-        var (smarms, smrt, smp) = parse_struct_match_arms(p, false);
+        var (smarms, smrt, smok, smp) = parse_struct_match_arms(p, false);
         p = smp;
+        if (!smok) { return (s_unknown("a struct pattern binds field names"), p); }
         return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
     }
     // A literal at the FIRST arm's pattern position marks a match on a
@@ -4675,8 +4696,9 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     p = p.advance();
                     p = p.advance();
                 }
-                var (ils_binds, ils_fields, ils_pp) = parse_struct_arm_pattern(p);
+                var (ils_binds, ils_fields, ils_ok, ils_pp) = parse_struct_arm_pattern(p);
                 p = ils_pp;
+                if (!ils_ok) { return (s_unknown("a struct pattern binds field names"), p); }
                 if (p.peek_punct() == "=") { p = p.advance(); }
                 var ils_saved: boolean = p.no_struct;
                 var (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
@@ -4812,7 +4834,14 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var tdfirst: boolean = true;
             while (p.peek_punct() != ")" && !p.at_end()) {
                 var tdn: string = p.peek_ident();
-                if (tdn.len() > 0) { p = p.advance(); }
+                // A non-binder here (a literal, say) is consumed by neither
+                // branch below, so returning is what keeps the loop finite.
+                // Native rejects the same shape: a literal element can fail to
+                // match, and a destructuring bind has no else branch to take.
+                if (tdn.len() == 0) {
+                    return (s_unknown("a tuple destructuring pattern binds names, not literals"), p);
+                }
+                p = p.advance();
                 if (!tdfirst) { tdnames = tdnames + ","; }
                 tdnames = tdnames + tdn;
                 tdfirst = false;
