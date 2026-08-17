@@ -7244,6 +7244,26 @@ func (c *checker) requireValue(e ast.Expr, t ast.Type) {
 		"a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value")
 }
 
+// hasDropImpl reports whether typeName has a `core/mem.Drop` impl, i.e. a
+// finalizer the RC runtime calls from the generated drop glue. Trait names in
+// info.Impls are module-mangled (`mem__Drop`), so the match is on the simple
+// name — the same demangling ir.userDropFnName and treeshake.DropImplMethods do.
+func (c *checker) hasDropImpl(typeName string) bool {
+	for trait, types := range c.info.Impls {
+		if !types[typeName] {
+			continue
+		}
+		simple := trait
+		if i := strings.LastIndex(simple, "__"); i >= 0 {
+			simple = simple[i+2:]
+		}
+		if simple == "Drop" {
+			return true
+		}
+	}
+	return false
+}
+
 // pureCollectionMutators maps each value-returning collection mutator's
 // mangled lowering to its source-level spelling. These are the operations
 // that return a (possibly fresh) collection rather than mutating in place;
@@ -11657,6 +11677,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if typeName != "" {
 				key := typeName + "." + fa.Field
 				if mangled, ok := c.info.Methods[key]; ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+					if fa.Field == "drop" && c.hasDropImpl(typeName) {
+						c.errfCode(fa.FieldPos, "E073",
+							"`drop` is a finalizer, not a method to call: the runtime runs %s's `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized", typeName)
+					}
 					// Preserve the source-level call site so the LSP
 					// can resolve hover / goto-def on `area` in
 					// `p.area()` after we rewrite the AST to a
