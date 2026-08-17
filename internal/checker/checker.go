@@ -9741,13 +9741,18 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 				}
 			}
 		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched value, at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tagT
+		}
 		if arm.Guard != nil {
-			gt := c.checkExpr(arm.Guard, s)
+			gt := c.checkExpr(arm.Guard, armScope)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		c.checkBlock(arm.Body, s)
+		c.checkBlock(arm.Body, armScope)
 	}
 	if !sawWildcard {
 		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
@@ -10036,13 +10041,18 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 				}
 			}
 		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched value, at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tagT
+		}
 		if arm.Guard != nil {
-			gt := c.checkExpr(arm.Guard, s)
+			gt := c.checkExpr(arm.Guard, armScope)
 			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExpr(arm.Body, s), arm.P)
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
 	}
 	if !sawWildcard {
 		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")

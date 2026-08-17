@@ -3437,3 +3437,68 @@ func TestParseStrViewType(t *testing.T) {
 		t.Errorf("str.Foo: got %#v, want StructType{Name: \"str.Foo\"}", prog2.Funcs[0].Params[0].Type)
 	}
 }
+
+// `@` bindings work over literal and range sub-patterns, not just over
+// variant / struct / tuple ones — `n @ 1..10` is the form the unified
+// pattern grammar is specified around. Only `_` stays rejected: a wildcard
+// arm is the unconditional default at every downstream stage, with no
+// pattern to bind alongside.
+func TestParseAtBindingOnLiteralAndRange(t *testing.T) {
+	for _, tc := range []struct{ name, src, wantAt string }{
+		{"range_exclusive", `function f(n: i32): i32 { match (n) { k @ 1..10 => { return k; }, _ => { return 0; } } }`, "k"},
+		{"range_inclusive", `function f(n: i32): i32 { match (n) { k @ 1..=10 => { return k; }, _ => { return 0; } } }`, "k"},
+		{"plain_literal", `function f(n: i32): i32 { match (n) { k @ 7 => { return k; }, _ => { return 0; } } }`, "k"},
+		{"negative_literal", `function f(n: i32): i32 { match (n) { k @ -7 => { return k; }, _ => { return 0; } } }`, "k"},
+		{"string_literal", `function f(s: string): i32 { match (s) { k @ "yes" => { return 1; }, _ => { return 0; } } }`, "k"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+			if !ok {
+				t.Fatalf("stmt 0 is %T, want *ast.Match", prog.Funcs[0].Body.Stmts[0])
+			}
+			if got := m.Arms[0].AtBinding; got != tc.wantAt {
+				t.Errorf("AtBinding = %q, want %q", got, tc.wantAt)
+			}
+			if m.Arms[0].Literal == nil {
+				t.Errorf("arm lost its literal low bound")
+			}
+		})
+	}
+
+	// `_` is the one sub-pattern an `@` cannot carry.
+	if _, err := Parse(`function f(n: i32): i32 { match (n) { k @ _ => { return k; } } }`); err == nil {
+		t.Errorf("`k @ _` parsed, want a diagnostic")
+	} else if !strings.Contains(err.Error(), "`_` pattern") {
+		t.Errorf("`k @ _` diagnostic = %v, want it to name the `_` pattern", err)
+	}
+}
+
+// A negative literal pattern is an ast.Unary wrapping a positive literal,
+// not a NumberLit with a negated Value: a negative Value is how the tree
+// spells an unsigned magnitude above i64::MAX, and folding the sign in made
+// the two indistinguishable downstream.
+func TestParseNegativeLiteralPatternShape(t *testing.T) {
+	prog, err := Parse(`function f(n: i32): i32 { match (n) { -1 => { return 7; }, _ => { return 0; } } }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	m := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	un, ok := m.Arms[0].Literal.(*ast.Unary)
+	if !ok {
+		t.Fatalf("literal is %T, want *ast.Unary", m.Arms[0].Literal)
+	}
+	if un.Op != "-" {
+		t.Errorf("Op = %q, want \"-\"", un.Op)
+	}
+	num, ok := un.Operand.(*ast.NumberLit)
+	if !ok {
+		t.Fatalf("operand is %T, want *ast.NumberLit", un.Operand)
+	}
+	if num.Value != 1 {
+		t.Errorf("operand Value = %d, want 1 (the sign belongs to the Unary)", num.Value)
+	}
+}

@@ -3066,6 +3066,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 				}
 			}
 			armEnv := newEnv(e)
+			if arm.AtBinding != "" {
+				armEnv.declare(arm.AtBinding, tag)
+			}
 			if arm.Guard != nil {
 				gv, err := i.evalExpr(arm.Guard, armEnv)
 				if err != nil {
@@ -3786,6 +3789,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				}
 			}
 			armEnv := newEnv(env)
+			if arm.AtBinding != "" {
+				armEnv.declare(arm.AtBinding, tag)
+			}
 			if arm.Guard != nil {
 				gv, err := i.evalExpr(arm.Guard, armEnv)
 				if err != nil {
