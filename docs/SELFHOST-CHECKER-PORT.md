@@ -1278,6 +1278,30 @@ deleted: it documented a bare `len(x)` builtin that no longer exists
 (`len` is a method), so `fern explain E039` described a construct the
 language does not have.
 
+## 2026-08-17 — a bare `const` reference gets a type
+
+A top-level `const` reaches the parser as a zero-parameter `FuncDecl` carrying
+`is_const`, so `collect_func_sigs` files it in the SIG table while an
+identifier is resolved against the VALUE scope. The two never met: every
+program that READ a const was rejected by `-check` as un-inferable under #4346,
+including `function main(): i32 { return N; }` over `const N: i32 = 41;`.
+
+`FuncSig` now carries `is_const`, and `check_expr`'s ident case falls back to
+the sig's return type for one. The flag is what makes it safe — a bare
+reference to a plain zero-argument FUNCTION is a function value, not its return
+type, so resolving on arity alone would mistype it.
+
+Nothing here was a lowering problem: the rejected programs compiled and ran
+correctly, which is why the fixpoint never saw it — the fixpoint compiles the
+compiler, it does not `-check` it. The gate is
+`TestSelfHostConstRefCheckX86_64`, an accept/reject differential against
+native rather than a message comparison, so a case native rejects for its own
+reasons cannot pass by being rejected here for the wrong one.
+
+Two shapes in the same neighbourhood remain un-inferable and are NOT part of
+this: a method call on a `string` local (`s.len()`) and a function-typed local
+(`var f: (i32) => i32 = twice;`). Both fail with no const involved.
+
 ## The one front-end code: P002
 
 An out-of-range float literal is a FRONT-END rejection on both engines
