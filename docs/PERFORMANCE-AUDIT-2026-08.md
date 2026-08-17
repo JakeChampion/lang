@@ -373,6 +373,7 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
+| 10 | ~~Decode the reclaim registry without slicing~~ — **done**, #7020 | `irlower.fern` | §4d.4 — −12.7% self-compile user; indexing the surviving walk is worth ~5 s more |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -752,6 +753,37 @@ outline *into*, and its emit is already 3.1× denser than the Go path's, so the
 duplication 1 deleted is not there to delete. Bringing the self-host to
 native's memory-management parity is roadmap goal 2, tracked in
 `docs/RC-PERCEUS-SELF-HOST-PORT.md`, not a performance item.
+
+### 4d.4 The reclaim registry: the cost was the SLICE, not the scan
+
+`dyn_reclaim_concrete_of` was §4d.3's leftover — 30 of 400 samples (12 direct,
+18 of `__fern_strcmp`'s) and the largest single identifiable site on post-#7008
+main. It is §4's shape again, a `string[]` of `"<PFX><name>|<value>"` entries
+scanned linearly, and it has seven siblings reading the same array:
+`darr_kinds_of`, `clo_cap_kinds_of`, `fn_value_sig` / `fn_value_ret` /
+`fn_arg_is_dyn`, `slot_enum_reassign_reclaim`, and (already allocation-free)
+`call_arg_borrowable`.
+
+The obvious read is "index it, like #6948 / #6953 / #7008". The A/B says
+otherwise. Stubbing the two #4351 decoders to `return ""` — the ceiling for any
+indexing work — takes the self-compile from **78.8 s to 63.4 s user**. Making
+the decode allocation-free while KEEPING the linear scan takes it to **68.8 s**
+(#7020). So two thirds of the prize was never the scan: it was `e[0:4] ==
+"DYN:"` and `e[0 : pfx.len()] + "" == pfx` allocating a slice, copying into it
+and strcmp-ing it once per entry per probe — with the probes running per local
+slot (`arr_slots_of` consults twelve of these predicates per local), so the
+allocation was quadratic in the function's size. `slot_enum_reassign_reclaim`
+sliced once per CHARACTER (`r[k:k+1] != ":"`).
+
+Byte-identical on `fern.fern` and `checker.fern`. The remaining ~5 s is the walk
+itself and is what an index would buy.
+
+**This inverts §4d.3's caveat rather than repeating it.** There, 18.5% of
+samples was worth 6% of the clock; here 7.5% was worth 12.7%. Both are the same
+underlying fact: a leaf share tells you where a frame *is*, and an allocating
+probe spends most of its time in `__fern_alloc_rc1` / `__fern_memcpy`, which are
+somebody else's leaves. Read frames #1 and #2, then size it with a clock — in
+whichever direction the sample count turns out to be wrong.
 
 ## 8. Reproducing any of this
 
