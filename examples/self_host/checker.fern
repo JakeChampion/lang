@@ -8034,42 +8034,45 @@ pub struct ModuleTypes { sigs: FuncSig[], top_tys: Type[], all_well_typed: boole
 // render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md.
 pub struct Diag { code: string, message: string, line: i32, col: i32 }
 
-// is_immutability_code reports whether `code` is one of the immutable-data
-// cycle rules — E048 (field assign), E049 (reference-capture write-back),
-// E055 (discarded pure-collection result), E056 (subscript assign), E057
-// (Cell[T] element must be cycle-free — a composite/reference element could
-// reconstruct a cycle). They are the cycle-rule half of what the self-host
-// compiler enforces before codegen; is_build_gate_code below is the whole set,
-// and it stays narrow because the rest of the checker is a partial port and may
-// false-positive. E057 belongs here for the same cycle-freedom reason as the
-// others, and matches the native compiler, which rejects a Cell[composite]
-// before codegen via its full pre-codegen check.
-// See docs/IMMUTABILITY-MIGRATION-PLAN.md §4.
-pub function is_immutability_code(code: string): boolean {
-  return code == "E048" || code == "E049" || code == "E055" || code == "E056" || code == "E057";
-}
-
-// filter_immutability keeps only the immutable-data cycle diagnostics.
-pub function filter_immutability(diags: Diag[]): Diag[] {
-  var out: Diag[] = [];
-  var i: i32 = 0;
-  while (i < diags.len()) {
-    if (is_immutability_code(diags[i].code)) {
-      out = out.append(diags[i]);
-    }
+// is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
+// `P` followed by three digits. The checker also emits the pseudo-code "type"
+// (ill_typed_hint's marker for an expression it cannot represent yet, #4346)
+// and leaves `code` empty on the uncoded diagnostics. Neither states that the
+// program is wrong, so neither can reject a build.
+function is_diagnostic_code(code: string): boolean {
+  if (code.len() != 4) { return false; }
+  var head: i32 = (code[0] as i32);
+  if (head != 69 && head != 80) { return false; }
+  var i: i32 = 1;
+  while (i < 4) {
+    var b: i32 = (code[i] as i32);
+    if (b < 48 || b > 57) { return false; }
     i = i + 1;
   }
-  return out;
+  return true;
+}
+
+// is_partial_checker_gap_code reports whether `code` is one this checker still
+// raises on programs the native compiler accepts. The port is partial (#4346):
+// where it cannot model a type it guesses, and these are the rules measured to
+// guess wrong. Each is a bug, not a permanent carve-out — deleting a line here
+// is how one gets finished. The corpora and per-code counts behind the list are
+// in docs/SELFHOST-CHECKER-PORT.md; re-measure before adding or removing one.
+function is_partial_checker_gap_code(code: string): boolean {
+  return code == "E001" || code == "E004" || code == "E009" || code == "E013"
+      || code == "E018" || code == "E019" || code == "E021" || code == "E024"
+      || code == "E031" || code == "E034" || code == "E036" || code == "E038"
+      || code == "E040" || code == "E041" || code == "E042" || code == "E043"
+      || code == "E044" || code == "E051" || code == "E052" || code == "E064";
 }
 
 // is_build_gate_code reports whether `code` must reject a program before
-// codegen: the immutability cycle rules above, plus the front end's P002 (a
-// float literal too large for f64, #6842). P002 belongs on this side of the
-// false-positive line for the same reason the cycle rules do: it is decided by
-// the literal's own spelling, so it cannot mistake a valid program for an
-// invalid one, and native rejects the same source in its parser.
+// codegen. A coded diagnostic rejects unless it is a known gap above, so a rule
+// ported for parity gates the compile path the day it lands instead of being
+// reachable only through `-check` (#6961).
 pub function is_build_gate_code(code: string): boolean {
-  return is_immutability_code(code) || code == "P002";
+  if (!is_diagnostic_code(code)) { return false; }
+  return !is_partial_checker_gap_code(code);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.

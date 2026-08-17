@@ -124,12 +124,12 @@ function main(): i32 { var o: O2 = O2.None; var r: Option[i32] = Option.Some(3);
 // These cannot be oracle-checked: native REJECTS a bare colliding name outright
 // (`E036: variant "None" is declared in multiple enums … qualify the reference`),
 // so there is no native answer to compare against. The self-host computes the
-// same E036 but drops it — `is_build_gate_code` (checker.fern) gates only the
-// immutability codes and P002 — so it compiles the program instead. Making E036
-// gate the build is the right convergence and is a separate change: it is
-// blocked on a pre-existing false positive, `conformance/cases/derive_default`,
-// where a derive-synthesised `Status.default()` is misread as a bad qualified
-// variant.
+// same E036 but drops it, so it compiles the program instead. The build gate
+// now enforces every coded diagnostic EXCEPT the partial-port rules measured to
+// false-positive (#6961), and E036 is one of those exclusions: it still misreads
+// a derive-synthesised `Status.default()` in `conformance/cases/derive_default`
+// as a bad qualified variant. Making E036 gate means fixing that misreading and
+// deleting its line from `is_partial_checker_gap_code` (checker.fern).
 //
 // Until then the value it produces should at least be the USER's variant, which
 // is what these pin. When E036 starts gating, these become compile errors and

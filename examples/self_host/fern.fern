@@ -2195,19 +2195,17 @@ function run(): i32 {
         return 254;
     }
 
-    // Build gate: reject the immutable-data cycle rules (E048 field
-    // assign / E049 reference-capture write-back / E055 discarded pure-
-    // collection result / E056 subscript assign / E057 Cell[composite]
-    // element) and the front end's P002 (a float literal too large for f64,
-    // #6842) BEFORE codegen, so the compiler is not MORE permissive than
-    // the native compiler / `-check`
-    // (issue #2825 — the SSA / IR / AST codegen paths previously compiled
-    // forbidden field mutation like `p.x = v` straight to a working binary).
-    // Native always type-checks ahead of codegen; this is the matching gate
-    // for the self-host CLI's compile path. Filtered to the codes that cannot
-    // false-positive-reject a valid program (or this very source under
-    // fixpoint), since the rest of the checker is a partial port, and reported
-    // with the same `line:col: error[CODE]: message` shape as `-check`.
+    // Build gate: reject what the checker rejects BEFORE codegen, so the
+    // compiler is not MORE permissive than the native compiler / `-check`
+    // (issue #2825 — the codegen paths previously compiled forbidden field
+    // mutation like `p.x = v` straight to a working binary; #6961 — every
+    // other coded rule was reachable only through `-check`, so a checker rule
+    // ported for parity did not gate a build). Native always type-checks ahead
+    // of codegen; this is the matching gate for the self-host CLI's compile
+    // path. checker.is_build_gate_code decides the set — every coded
+    // diagnostic except the partial-port rules measured to false-positive —
+    // and a hit is reported with the same `line:col: error[CODE]: message`
+    // shape as `-check`.
     var gated: checker.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
     if (gated.len() > 0) {
         var ii: i32 = 0;

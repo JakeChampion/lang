@@ -1296,3 +1296,66 @@ FRONT end. The E-code differential cannot cover this class: its oracle is the Go
 CHECKER, which never runs for a program the Go parser rejects, so a front-end
 divergence reads there as agreement. That is how #6842 stayed hidden while
 `1e309` compiled to +Inf.
+
+## 2026-08-17 — the build gate becomes an exclusion list (#6961)
+
+Until this change the self-host `-target` path enforced six codes: the five
+immutability cycle rules plus P002. Every other coded rule was reachable only
+through `-check`, so `bin/fern-selfhost -check` reported `E003` on a source that
+`bin/fern-selfhost -target` then compiled to a working binary — and a checker
+rule ported for parity did not gate a build the day it landed.
+
+`is_build_gate_code` (checker.fern) is now the inverse: a well-formed `E###` /
+`P###` code rejects the build unless it is listed in
+`is_partial_checker_gap_code`. The pseudo-code `"type"` — `ill_typed_hint`'s
+#4346 marker for an expression this checker cannot represent — is not a
+well-formed code and so never gates, which is what keeps the partial port from
+refusing valid programs it merely cannot model.
+
+### The exclusion list, and how it was measured
+
+A code is excluded iff the self-host checker emits it for a program the NATIVE
+compiler accepts. Measured over every such program in four corpora:
+
+| corpus | programs native accepts |
+|---|---|
+| `conformance/cases` | 415 of 481 |
+| `examples/` + `internal/stdlib` | ~1,400 |
+| the 512 fernsmith differential seeds (`GenMain`, seeds 0–511) | 512 of 512 |
+| `examples/self_host/*.fern` (the compiler's own sources) | all |
+
+Twenty codes false-positive and are excluded:
+
+```
+E001 E004 E009 E013 E018 E019 E021 E024 E031 E034
+E036 E038 E040 E041 E042 E043 E044 E051 E052 E064
+```
+
+Three of them are why the sweep has to span all four corpora rather than the
+conformance corpus alone: **E034** and **E019** are clean across conformance and
+first appear in `examples/`, and **E042** first appears in the differential
+seeds. **E064** ("unknown type") fires on the compiler's own sources, so gating
+it would break the fixpoint — it is the entry that makes the self-host corpus
+non-optional. **E044** ("captured variable has unsupported type") fires on all
+512 seeds, since any lambda capturing a value whose type the partial checker
+cannot resolve draws it.
+
+Each entry is a bug, not a permanent carve-out. E043 is #7011 (`type_eq` ignores
+integer width); E036 is the `derive_default` misreading recorded in
+`self_host_shadowed_builtin_variant_ir_test.go`. Deleting a line from
+`is_partial_checker_gap_code` is how one of these gets finished — re-run the
+sweep above before doing it.
+
+### Reproducing the sweep
+
+For each program the native compiler accepts, compare what the self-host
+checker says:
+
+```
+./bin/fern -check "$f" >/dev/null 2>&1 || continue     # native must accept
+./bin/fern-selfhost -check "$f" internal/stdlib 2>&1 | grep -oE 'error\[[EP][0-9]+\]'
+```
+
+Any code that appears is a false positive and belongs in the exclusion list.
+The end-to-end direction — that a gating code actually stops `-target` — is
+`TestSelfHostBuildGate{,MatchesCheck}X86_64` in `internal/e2eselfhost`.

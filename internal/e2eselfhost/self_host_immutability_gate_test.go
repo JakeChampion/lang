@@ -17,8 +17,9 @@ import (
 // the self-host drivers to gate. The valid (functional-update / scalar-Cell)
 // forms compile cleanly. This is the self-host enforcement that the Go
 // reference compiler has via its checker (docs/IMMUTABILITY-MIGRATION-PLAN.md
-// §4); the gate filters check_module to the cycle rules so the partial
-// checker's other rules can't false-positive-reject a valid program.
+// §4). These five were the first codes the gate enforced; it now enforces every
+// coded diagnostic except the partial-port rules measured to false-positive
+// (#6961), so this test pins the cycle-rule half of a wider set.
 func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
