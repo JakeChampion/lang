@@ -2036,8 +2036,12 @@ function parse_postfix(p: Par, base: Expr): (Expr, Par) {
 // (balanced braces, inner string literals skipped), so a fresh
 // tokenize + parse_expr round-trip recovers the AST. Mirrors the Go
 // parser's parseExprFromText.
-function parse_expr_from_text(text: string): Expr {
-    var toks: lexer.Token[] = lexer.tokenize(text);
+//
+// `base_line` / `base_col` are where `text` starts in the enclosing
+// file. The re-lex numbers `text` from 1:1, so the tokens are rebased
+// before parsing and every node the parse produces names the file.
+function parse_expr_from_text(text: string, base_line: i32, base_col: i32): Expr {
+    var toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
     var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
@@ -2374,7 +2378,7 @@ function parse_primary(p: Par): (Expr, Par) {
                     vflags = vflags.append(vpart.is_expr);
                     if (vpart.is_expr) {
                         vlits = vlits.append("");
-                        vexprs = vexprs.append(parse_expr_from_text(vpart.expr));
+                        vexprs = vexprs.append(parse_expr_from_text(vpart.expr, vpart.line, vpart.col));
                     } else {
                         vlits = vlits.append(vpart.lit);
                         vexprs = vexprs.append(e_unknown("fstring-literal-part"));
@@ -2395,7 +2399,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var piece: Expr = e_string(part.lit);
                 if (part.is_expr) {
                     var no_args: Expr[] = [];
-                    piece = e_call(e_field_access(parse_expr_from_text(part.expr), "to_string"), no_args);
+                    piece = e_call(e_field_access(parse_expr_from_text(part.expr, part.line, part.col), "to_string"), no_args);
                 }
                 if (!has) {
                     built = piece;

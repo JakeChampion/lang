@@ -1,6 +1,10 @@
 package lexer
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 func TestKeywordsAndIdentifiers(t *testing.T) {
 	toks, _, err := Tokenize("function foo if returnFoo")
@@ -162,9 +166,11 @@ func TestFStringLiteralUTF8(t *testing.T) {
 		src  string
 		want []FStringPart
 	}{
-		{src: `f"café {x}"`, want: []FStringPart{{Lit: "café "}, {Expr: "x"}}},
-		{src: `f"{x} 日本語"`, want: []FStringPart{{Expr: "x"}, {Lit: " 日本語"}}},
-		{src: `f"∃ {n} items"`, want: []FStringPart{{Lit: "∃ "}, {Expr: "n"}, {Lit: " items"}}},
+		// Columns advance per byte, so a multi-byte literal segment
+		// shifts the interpolant's column by its encoded length.
+		{src: `f"café {x}"`, want: []FStringPart{{Lit: "café "}, {Expr: "x", Pos: ast.Position{Line: 1, Col: 10}}}},
+		{src: `f"{x} 日本語"`, want: []FStringPart{{Expr: "x", Pos: ast.Position{Line: 1, Col: 4}}, {Lit: " 日本語"}}},
+		{src: `f"∃ {n} items"`, want: []FStringPart{{Lit: "∃ "}, {Expr: "n", Pos: ast.Position{Line: 1, Col: 8}}, {Lit: " items"}}},
 		{src: `f"héllo"`, want: []FStringPart{{Lit: "héllo"}}},
 	}
 	for _, c := range cases {
@@ -206,7 +212,10 @@ func TestStringLiteralUnknownEscape(t *testing.T) {
 // trailing interpolation, `{{` and `}}` brace escapes, escape
 // sequences in literal segments, an interpolant containing a
 // string literal (so the boundary scanner has to skip past the
-// inner quotes).
+// inner quotes). Each interpolant also carries the source position
+// of its first byte — the parser rebases the sub-parse onto it, so a
+// wrong position here lands every diagnostic inside the f-string at
+// the wrong place.
 func TestFStringParts(t *testing.T) {
 	cases := []struct {
 		src  string
@@ -214,13 +223,14 @@ func TestFStringParts(t *testing.T) {
 	}{
 		{src: `f""`, want: nil},
 		{src: `f"plain"`, want: []FStringPart{{Lit: "plain"}}},
-		{src: `f"{x}"`, want: []FStringPart{{Expr: "x"}}},
-		{src: `f"a{x}b"`, want: []FStringPart{{Lit: "a"}, {Expr: "x"}, {Lit: "b"}}},
-		{src: `f"{a}{b}"`, want: []FStringPart{{Expr: "a"}, {Expr: "b"}}},
+		{src: `f"{x}"`, want: []FStringPart{{Expr: "x", Pos: ast.Position{Line: 1, Col: 4}}}},
+		{src: `f"a{x}b"`, want: []FStringPart{{Lit: "a"}, {Expr: "x", Pos: ast.Position{Line: 1, Col: 5}}, {Lit: "b"}}},
+		{src: `f"{a}{b}"`, want: []FStringPart{{Expr: "a", Pos: ast.Position{Line: 1, Col: 4}}, {Expr: "b", Pos: ast.Position{Line: 1, Col: 7}}}},
 		{src: `f"{{lit}}"`, want: []FStringPart{{Lit: "{lit}"}}},
 		{src: `f"hi\nthere"`, want: []FStringPart{{Lit: "hi\nthere"}}},
-		{src: `f"k={"x"}"`, want: []FStringPart{{Lit: "k="}, {Expr: `"x"`}}},
-		{src: `f"sum {a + b}"`, want: []FStringPart{{Lit: "sum "}, {Expr: "a + b"}}},
+		{src: `f"k={"x"}"`, want: []FStringPart{{Lit: "k="}, {Expr: `"x"`, Pos: ast.Position{Line: 1, Col: 6}}}},
+		{src: `f"sum {a + b}"`, want: []FStringPart{{Lit: "sum "}, {Expr: "a + b", Pos: ast.Position{Line: 1, Col: 8}}}},
+		{src: "\n\nf\"{x}\"", want: []FStringPart{{Expr: "x", Pos: ast.Position{Line: 3, Col: 4}}}},
 	}
 	for _, c := range cases {
 		toks, _, err := Tokenize(c.src)
