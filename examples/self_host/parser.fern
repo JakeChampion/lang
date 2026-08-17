@@ -2496,13 +2496,20 @@ function value_arm_body(body: Stmt[], val: string): Stmt[] {
 }
 
 // zero_expr_for builds a throwaway value of scalar return-type `rt` for the
-// synthetic terminal return above. if_expr_rt only ever yields these four tags,
-// so this is total for the match-expr rt; a richer tag falls to i32 0, which at
-// worst re-bails the (already-AST) module rather than miscompiling.
+// synthetic terminal return above.
+//
+// A 64-BIT integer width rides on the zero as a literal suffix. The value local
+// is declared unannotated, so a bare `var v = 0` gives it an i32 slot and the
+// arm store `v = 5000000000i64` then has nowhere to go — the module bails with
+// "assignment to `…_r` from number literal". The narrower integer tags need no
+// suffix: they already fit the i32 slot. Anything else (rt is whatever
+// if_expr_rt read off the first arm, including a literal's own suffix) falls to
+// i32 0, which at worst re-bails rather than miscompiling.
 function zero_expr_for(rt: string): Expr {
     if (rt == "string") { return e_string(""); }
     if (rt == "bool") { return e_bool(false); }
     if (rt == "f64") { return e_number("0", "", true); }
+    if (rt == "i64" || rt == "u64") { return e_number("0", rt, false); }
     return e_number("0", "", false);
 }
 
@@ -3571,8 +3578,41 @@ function parse_match_expr(p: Par): IfChain {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    // A TUPLE sub-pattern (`Pr((a, b))`) makes build_merged_arm splice the arm
+    // bodies into build_tuple_match's done-flag chain, where an arm's `return`
+    // leaves the enclosing function instead of yielding the expression's value.
+    // That is the same shape the tuple- and struct-SCRUTINEE desugars above hit,
+    // so it takes the same cure: route the arm values through a value local
+    // (see IfChain.value_local). A variant sub-pattern needs none of this — its
+    // inner match is a StmtMatch, whose arm returns lower_iife_match rewrites.
+    if (arms_have_tuple_subpattern(arms)) {
+        var ntval: string = "__nt" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
+        var ntarms: MatchArm[] = [];
+        var nti: i32 = 0;
+        while (nti < arms.len()) {
+            var nta: MatchArm = arms[nti];
+            ntarms = ntarms.append(MatchArm { pattern: nta.pattern, body: value_arm_body(nta.body, ntval), line: nta.line, col: nta.col, guard: nta.guard, has_guard: nta.has_guard });
+            nti = nti + 1;
+        }
+        return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
+    }
     arms = desugar_nested_arms(arms, 0);
     return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
+}
+
+// arms_have_tuple_subpattern reports whether any arm holds a tuple sub-pattern
+// in its payload slot — the arms that build_merged_arm routes through
+// build_tuple_match rather than through a variant inner match.
+function arms_have_tuple_subpattern(arms: MatchArm[]): boolean {
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        match (arms[i].pattern) {
+            PatVariant(pv) => { if (pv.tup_kinds.len() > 0) { return true; } },
+            PatWildcard(w) => {}
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // pipe_prepend builds [head] ++ tail — the argument list for a piped
