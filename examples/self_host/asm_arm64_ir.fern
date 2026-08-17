@@ -3511,16 +3511,14 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    lsl x2, x1, #3\n");           // bytes = idx * 8
     s = s.write("    sub x1, x0, #16\n");          // base = data - 16
     s = s.write("    b __fern_large_push\n");
-    // __fern_str_free(box) — reclaim a FRESH, sole-owned HEAP string (#2649
-    // string RC), the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime.
-    // A self-host string is a header-LESS 16-byte box {data@0, len@8}, so it
-    // carries no rc word and cannot ride __fern_arr_dec. Frees BOTH the data
-    // buffer (class = ceil(len/8) words, matching its __fern_alloc(len)) AND the
-    // 16-byte box (class 2), returning each to the size-classed freelist. Called
-    // ONLY on compile-time-proven fresh, non-escaping, non-aliased heap string
-    // temporaries (irlower slot_is_reclaimable_str) — single-ownership, so the
-    // exactly-once free, is guaranteed by the emit site, not here (no rc word to
-    // detect a double free). x0=box, x1=data, x2=len/words, x3=freelist, x9/x10 scratch.
+    // __fern_str_free(box) — RC-AWARE release of a HEAP string box (#2649), the
+    // arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime. A self-host
+    // heap string is the 24-byte block __fern_str_box builds ({rc@base,
+    // data@base+8, len@base+16}, box = base+8), so rc<0 = immortal/view (skip),
+    // rc>1 = shared (dec, keep), rc==1 = sole owner (free the data buffer at
+    // class ceil(len/8) words AND the box at class 3), rc==0 = double free
+    // (underflow counter, no heap corruption). Safe to call on any string box.
+    // x0=box, x1=data, x2=len/words, x3=freelist, x9/x10 scratch.
     s = s.write("__fn___fern_str_free:\n");
     s = s.write("    ldr x0, [sp]\n");             // box
     s = s.write("    cbz x0, .Lstrfree_ret\n");
@@ -3591,6 +3589,48 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add w3, w3, #1\n");
     s = s.write("    str w3, [x2]\n");
     s = s.write(".Lstrfree_ret:\n");
+    s = s.write("    ret\n");
+    // __fern_str_view_free(box) — release a string result that may be a zero-copy
+    // VIEW (#6544), the arm64 sibling of the x86-64 body in
+    // asm_ir.emit_ir_runtime. `s[a:b]` builds a 24-byte box over the SOURCE's
+    // bytes and stamps rc = -1, the immortal sentinel, precisely so no reclaim
+    // path frees the shared data — which leaves the box itself unreclaimable,
+    // one per call of every borrowing string method.
+    //
+    // An IMMORTAL rc frees the 24-byte box ALONE (class 3), data untouched; any
+    // other rc tail-branches to __fn___fern_str_free (x30 flows through, as at
+    // .Larrdec_large). The heap-range guard on the BOX BASE is what makes the
+    // sentinel exact: the frame form of this op and the `.data` const-aggregate
+    // blocks carry the same sentinel and are outside the arena.
+    s = s.write("__fn___fern_str_view_free:\n");
+    s = s.write("    ldr x0, [sp]\n");             // box
+    s = s.write("    cbz x0, .Lstrvfree_ret\n");
+    s = s.write("    tbnz x0, #0, .Lstrvfree_ret\n");  // tagged / SSO sentinel (defensive)
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .Lstrvfree_ret\n");       // low-addr guard
+    s = s.write("    ldur w4, [x0, #-8]\n");       // rc
+    s = s.write("    tbnz w4, #31, .Lstrvfree_view\n");  // negative = immortal -> the view case
+    s = s.write("    b __fn___fern_str_free\n");   // otherwise: the ordinary rc-aware release
+    s = s.write(".Lstrvfree_view:\n");
+    s = s.write("    sub x1, x0, #8\n");           // base = box-8
+    s = s.write("    adrp x11, __fern_heap_base\n");
+    s = s.write("    add x11, x11, :lo12:__fern_heap_base\n");
+    s = s.write("    ldr x11, [x11]\n");
+    s = s.write("    cmp x1, x11\n");              // base < heap_base -> frame / .data box, skip
+    s = s.write("    blo .Lstrvfree_ret\n");
+    s = s.write("    adrp x12, __fern_heap_end\n");
+    s = s.write("    add x12, x12, :lo12:__fern_heap_end\n");
+    s = s.write("    ldr x12, [x12]\n");
+    s = s.write("    cmp x1, x12\n");              // base >= heap_end -> not our arena, skip
+    s = s.write("    bhs .Lstrvfree_ret\n");
+    s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0 (defensive vs a re-free)
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x10, [x3, #24]\n");       // freelist[3] (24-byte block = 3 words)
+    s = s.write("    str x10, [x1]\n");            // *base = old head
+    s = s.write("    str x1, [x3, #24]\n");        // freelist[3] = base
+    s = s.write(".Lstrvfree_ret:\n");
     s = s.write("    ret\n");
     // __fern_str_arr_free(arr) — string[] ELEMENT reclaim (#4355), the arm64
     // sibling of the x86-64 body in asm_ir.emit_ir_runtime and the element-

@@ -7802,3 +7802,83 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   and `alternating` (both paths chosen per iteration by a runtime compare) are
   the over-release controls on both legs. Plus the str / rc / fixpoint /
   bootstrap subset of `internal/e2eselfhost`. Refs #6544 #4451.
+
+- 2026-08-17 (later still): **The 24 B/round row is closed — and `str` vs
+  `string` had nothing to do with it (#6544).** The previous entry named the
+  next slice as "admit `str`-RETURNING methods", on the reading that
+  `expr_is_str` keys `str_ret_fns_of` on `ret_type == "string"` only, so a
+  method declared `: str` never reaches the reclaim arm. Measured first, and
+  that reading is wrong: `parse_type_name` erases a bare `str` to `"string"`
+  outside `-fmt` (`parser.fern:5704`), so both spellings key identically, and a
+  `str`-declared method with a fresh return already measured FLAT before this
+  slice.
+
+  What the row is actually about is the RETURN SHAPE. `(s: string) drop(n)`
+  ends `return s[n:sLen]`, and on the register backends `s[a:b]` is a 24-byte
+  box over the RECEIVER'S OWN BYTES carrying rc = -1, the immortal sentinel —
+  written precisely so no reclaim path frees the shared data. That also makes
+  the box unfreeable by every helper the compiler has, and a borrowing string
+  method allocates one per call. Per round, self-host x86-64:
+
+  | probe | before | after | native |
+  |---|---|---|---|
+  | `base.tails(4).len()`, `tails` returning `s[n:sLen]` | 22 | 0 | 0 |
+  | std/string `base.drop(2).len()` | 22 | 0 | 0 |
+  | same, wasm | 30 | 0 | 0 |
+  | `base.tails(4).len()`, `tails` returning `s[n:sLen] + ""` (control) | 0 | 0 | 0 |
+  | the whole `alloc_flat_method_identity_return` case | 216 | 190 | 0 |
+
+  Two halves. `body_has_nonfreshrecv_str_return` admits one more return shape —
+  a direct slice whose array is the receiver ident — which is what makes `drop`
+  / `take` / `trim` / the case's own `tail` earn an `SFRRECV:` key. And the
+  `.len()` receiver site releases through a new **`__fern_str_view_free`**
+  instead of `__fern_str_free`: an immortal rc frees the 24-byte box ALONE
+  (class 3, data untouched), any other rc tail-jumps to `__fern_str_free`
+  unchanged. On wasm `$__fern_substr` COPIES, so the slice result is an ordinary
+  rc-headered block and the helper maps to the same `$__fern_arr_dec`.
+
+  The heap-range guard on the BOX BASE is what makes the sentinel an exact test
+  for a view: the other two immortal producers are the FRAME form of the same op
+  (`view_frame_temp_ok`, a box in the caller's stack frame) and
+  `emit_const_agg_data`'s `.data` blocks, and neither is in the arena. The slice
+  must be a direct return expression over the receiver — a slice of a callee
+  LOCAL views a buffer that local's own sweep frees, and one bound to a name
+  first could have been stored somewhere on the way out.
+
+  **This is still the fresh-or-RECEIVER route, not native's.** No
+  return-transfer inc is involved, so the whole-surface pairing the inc would
+  demand (entry above) stays out of scope.
+
+  **A trap that cost an hour, and a real bug behind it.** The first measurement
+  of the change reported the leak UNCHANGED and `__rc_underflow()` newly
+  non-zero — but only through `bin/fern-selfhost -o prog`, never through
+  `-emit asm` piped to gcc. The self-host's in-process x86-64 assembler encoded
+  `testl %ecx, %ecx` as `testq %rcx, %rcx` (a deliberate substitution: ZF agrees
+  on zero-extended operands). SF does not agree — a 32-bit -1 loaded with `movl`
+  is a large POSITIVE at 64 bits — so the `js` guarding every "negative rc =
+  immortal, skip" arm of the rc runtime (`__fern_rc_inc`, `__fern_arr_dec`,
+  `__fern_str_free`, `__fern_str_arr_free`, …) fell through to the decrement /
+  underflow path. Fixed in `x86_native.fern` with a real 32-bit `test`
+  (`85 /r`, REX only to reach `r8d..r15d`). Nothing in the program corpus
+  covered it: every `internal/e2eselfhost` program test routes the emitted `.s`
+  through gcc — see the new `docs/TEST-GATES.md` entry.
+
+  Remaining on the case, unchanged and unstarted: the `.to_owned()` receiver
+  (measured 71 B/round) and the struct-field read after a method,
+  `b.relabel(..).tag.len()` (measured 119 B/round). Its three
+  `alloc_flat_method_identity_return` divergence rows therefore REMAIN listed.
+
+  VERIFIED: new `freshrecv-len-view-leak-flat` row in
+  `TestSelfHostFreshRecvLenReclaimX86_64` (FAILS on the parent commit);
+  `freshrecv-len-view-alias-safe` re-reads the receiver's BYTE at the offset the
+  released view covered, after 3000 releases — on the register backends that
+  box's data pointer is `b`'s buffer + 4, not even an allocation boundary;
+  `freshrecv-len-view-alternating` (receiver / fresh literal / view chosen per
+  iteration by a runtime compare) and
+  `freshrecv-len-view-nonrecv-return-refused` (a callee that also returns a bare
+  non-receiver param earns no key, so nothing is released) are the controls, on
+  both legs. The assembler fix has three new rows in
+  `TestSelfHostX86GasGroundTruth`, byte-exact against `as` + objdump, also
+  mutation-checked. std/string's `drop` cannot be a row in the reclaim test —
+  that driver resolves no imports — and was measured flat through the CLI on
+  x86-64, arm64 (qemu) and wasm instead. Refs #6544 #4451.

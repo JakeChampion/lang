@@ -71,6 +71,7 @@ pub function provided_names(): string[] {
         "__fern_arr_share_dec",
         // reclaim: strings, arrays of them, arrays of arrays, maps
         "__fern_str_free",
+        "__fern_str_view_free",
         "__fern_str_arr_free",
         "__fern_arrarr_free",
         "__fern_strarrarr_free",
