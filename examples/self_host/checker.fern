@@ -820,6 +820,40 @@ pub struct SigTable {
   sigs: FuncSig[],
   head: i32[],
   next: i32[],
+  // A second index over the same array, keyed by the ARRAY-METHOD suffix
+  // (am_key) rather than the whole name — the key `has_array_method` and
+  // `array_method_ret_type` match on. Only signatures that carry such a
+  // suffix appear in it, which is a few dozen of the ~4,600.
+  am_head: i32[],
+  am_next: i32[],
+}
+
+// am_prefix is the convention name an array method is declared under: the
+// std/array helpers are free functions called `__method_Array_<field>`, and
+// the bundler's mangled form is `<mod>__method_Array_<field>`.
+function am_prefix(): string { return "__method_Array_"; }
+
+// am_key_at returns the offset of the LAST occurrence of am_prefix() in
+// `name`, or -1 when there is none. The substring from there to the end is the
+// key the two array-method lookups match on — taken as an offset rather than a
+// string so indexing the table allocates nothing per signature.
+//
+// A name matches `__method_Array_<field>` when it ENDS with it, which places an
+// am_prefix() occurrence at name.len() - target.len(); no method name contains
+// am_prefix() itself, so that occurrence is always the last one. Keying on the
+// last occurrence therefore selects exactly the candidates the suffix compare
+// would, and that compare still runs on each of them.
+function am_key_at(name: string): i32 {
+  var pre: string = am_prefix();
+  var pn: i32 = pre.len();
+  var i: i32 = name.len() - pn;
+  while (i >= 0) {
+    if (name[i:i + pn] == pre) {
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
 }
 
 // sig_buckets is the bucket count of the signature index. Prime, so unrelated
@@ -831,8 +865,15 @@ function sig_buckets(): i32 { return 4093; }
 // at every step rather than at the end, so the accumulator stays small and the
 // hash needs no wrapping arithmetic.
 function sig_name_bucket(name: string): i32 {
+  return sig_bucket_from(name, 0);
+}
+
+// sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
+// `from`. One hash body for both indexes, so a suffix key and the whole-string
+// key it must match can never drift apart.
+function sig_bucket_from(name: string, from: i32): i32 {
   var h: i32 = 0;
-  var i: i32 = 0;
+  var i: i32 = from;
   var n: i32 = name.len();
   while (i < n) {
     h = ((h * 131) + (name[i] as i32)) % 4093;
@@ -846,26 +887,37 @@ function sig_name_bucket(name: string): i32 {
 // ascending index order without needing a per-bucket tail.
 function sig_table(sigs: FuncSig[]): SigTable {
   var head: i32[] = [];
+  var am_head: i32[] = [];
   var b: i32 = 0;
   var nb: i32 = sig_buckets();
   while (b < nb) {
     head = head.append(0 - 1);
+    am_head = am_head.append(0 - 1);
     b = b + 1;
   }
   var next: i32[] = [];
+  var am_next: i32[] = [];
   var j: i32 = 0;
   while (j < sigs.len()) {
     next = next.append(0 - 1);
+    am_next = am_next.append(0 - 1);
     j = j + 1;
   }
   var k: i32 = sigs.len() - 1;
   while (k >= 0) {
-    var bk: i32 = sig_name_bucket(sigs[k].name);
+    var nm: string = sigs[k].name;
+    var bk: i32 = sig_name_bucket(nm);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
+    var amat: i32 = am_key_at(nm);
+    if (amat >= 0) {
+      var ab: i32 = sig_bucket_from(nm, amat);
+      am_next = am_next.with(k, am_head[ab]);
+      am_head = am_head.with(ab, k);
+    }
     k = k - 1;
   }
-  return SigTable { sigs: sigs, head: head, next: next };
+  return SigTable { sigs: sigs, head: head, next: next, am_head: am_head, am_next: am_next };
 }
 
 function new_scope(): Scope {
@@ -1322,8 +1374,8 @@ function (s: Scope) array_recv_method(field: string): MethodSig {
 function (s: Scope) has_array_method(field: string): boolean {
   var target: string = "__method_Array_" + field;
   var tn: i32 = target.len();
-  var i: i32 = 0;
-  while (i < s.sigs.sigs.len()) {
+  var i: i32 = s.sigs.am_head[sig_name_bucket(target)];
+  while (i >= 0) {
     var nm: string = s.sigs.sigs[i].name;
     if (nm == target) {
       return true;
@@ -1331,7 +1383,7 @@ function (s: Scope) has_array_method(field: string): boolean {
     if (nm.len() > tn && nm[nm.len() - tn:nm.len()] == target) {
       return true;
     }
-    i = i + 1;
+    i = s.sigs.am_next[i];
   }
   return s.has_array_recv_method(field);
 }
@@ -1356,8 +1408,8 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
       }
       var target: string = "__method_Array_" + field;
       var tn: i32 = target.len();
-      var i: i32 = 0;
-      while (i < s.sigs.sigs.len()) {
+      var i: i32 = s.sigs.am_head[sig_name_bucket(target)];
+      while (i >= 0) {
         var nm: string = s.sigs.sigs[i].name;
         if (nm == target) {
           return s.sigs.sigs[i].ret_type;
@@ -1365,7 +1417,7 @@ function (s: Scope) array_method_ret_type(recv_ty: Type, field: string): Type {
         if (nm.len() > tn && nm[nm.len() - tn:nm.len()] == target) {
           return s.sigs.sigs[i].ret_type;
         }
-        i = i + 1;
+        i = s.sigs.am_next[i];
       }
       var arm: MethodSig = s.array_recv_method(field);
       if (arm.name.len() > 0) {

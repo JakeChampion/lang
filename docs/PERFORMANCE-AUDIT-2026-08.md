@@ -277,6 +277,7 @@ And on the whole-compiler self-compile, the subject that actually ranks item 3:
 | change | wall clock |
 |---|---|
 | name-indexing `Scope.sigs` | 2 m 13 s → **1 m 44 s** |
+| suffix-indexing the array-method lookups | 1 m 50 s → **1 m 31 s** |
 
 So a flat cliff line means "no append regressed", never "nothing is copying",
 and the converse holds too: a large cliff number is not by itself evidence of
@@ -405,12 +406,20 @@ whole-compiler self-compile rank these items differently, and the audit had been
 reading the first while the roadmap cares about the second. `lookup_sig` was
 0.5% of the `checker.fern` run and 62% of the self-compile.
 
-**What is next, measured on the 1 m 44 s build (400 samples):**
-`Scope.array_method_ret_type` is **35%** (52 direct + 89 of `__fern_strcmp`'s
-120). It is the same table scanned the same way, but by SUFFIX
-(`nm` ends with `__method_Array_<field>`), so the exact-name index does not
-apply — it needs its own key. `lookup_sig` is down to 11/400. Item 5 (symbol
-interning, #4394) should be re-measured on this subject before scoping.
+`Scope.array_method_ret_type` was next, at **35%** of the 1 m 44 s build (52
+direct + 89 of `__fern_strcmp`'s 120): the same table, scanned by SUFFIX
+(`nm` ends with `__method_Array_<field>`), which the exact-name index cannot
+answer. A second index over the same array, keyed on the substring from the
+LAST `__method_Array_` occurrence, took the self-compile to **1 m 31 s**
+(user 74.4 s → 57.9 s).
+
+**What is next.** User time is now 57.9 s of a 91 s wall — **36% of the run is
+SYSTEM time**, and it has not moved once across every change in this sequence
+(35.6 s → 33.3 s while user time nearly halved). That is the allocator and its
+page faults, not anything a leaf profile of user code will show; it is now the
+largest single block. Item 5 (symbol interning, #4394) should be re-measured on
+this subject before scoping — a third of what `strcmp` was has already gone with
+the two indexes.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
