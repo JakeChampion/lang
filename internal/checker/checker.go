@@ -8260,6 +8260,24 @@ func (s *scope) lookup(name string) (ast.Type, bool) {
 	return nil, false
 }
 
+// poison binds a name whose type could not be worked out, its
+// initialiser having already reported an error. The nil type is the
+// same "erroneous, already reported" value checkExpr returns, so every
+// later use of the name stays quiet instead of reporting a second,
+// spurious E001 apiece.
+func (s *scope) poison(name string) {
+	s.names[name] = nil
+}
+
+// poisonAll poisons every name a pattern would have bound had it
+// checked — a destructure binds several at once, and dropping the whole
+// group reports one error per name at every later use.
+func (s *scope) poisonAll(names []string) {
+	for _, n := range names {
+		s.poison(n)
+	}
+}
+
 // capturedType reports whether `name` is NOT a local of the current
 // function's scope `s` but DOES resolve in an enclosing function's
 // scope via the captureChain — i.e. it's a closure capture — and if
@@ -9648,6 +9666,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		}
 		if n.Type == nil {
 			if got == nil {
+				s.poison(n.Name)
 				return
 			}
 			// Polymorphic empty array `[]` with no annotation
@@ -9656,6 +9675,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			// recording a nil-elem type.
 			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
 				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
+				s.poison(n.Name)
 				return
 			}
 			// An unannotated binding whose init is a bare integer
@@ -9703,10 +9723,12 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			if got != nil {
 				c.errfCode(n.P, "E024", "tuple destructure needs a tuple expression, got %s", got)
 			}
+			s.poisonAll(n.Names)
 			return
 		}
 		if len(tup.Elems) != len(n.Names) {
 			c.errfCode(n.P, "E024", "tuple has %d elements, but %d names given", len(tup.Elems), len(n.Names))
+			s.poisonAll(n.Names)
 			return
 		}
 		// Hidden temp holds the tuple pointer between the
@@ -9752,15 +9774,18 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 		if got != nil {
 			c.errfCode(n.P, "E024", "struct destructure needs a struct expression, got %s", got)
 		}
+		s.poisonAll(n.Names)
 		return
 	}
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
 		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		s.poisonAll(n.Names)
 		return
 	}
 	if n.StructName != "" && n.StructName != st.Name {
 		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
+		s.poisonAll(n.Names)
 		return
 	}
 	c.checkOpaqueAccess(sd, n.P, "destructure a field of")
@@ -9797,6 +9822,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 				declared = append(declared, df.Name)
 			}
 			c.errUnknownField(n.P, n.P, st.Name, field, declared)
+			s.poison(name)
 			continue
 		}
 		if _, dup := s.names[name]; dup {
@@ -11772,6 +11798,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				continue
 			}
 			c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemT)
+		}
+		if elemT == nil {
+			// The first element failed to check and reported. Return the
+			// erroneous type rather than `ArrayType{Elem: nil}` — that is
+			// the polymorphic-EMPTY marker, so handing it back here makes
+			// the var site demand an annotation for an "empty array
+			// literal" that has elements.
+			return nil
 		}
 		n.ElemType = elemT
 		return ast.ArrayType{Elem: elemT}

@@ -1,6 +1,3 @@
 E024_tuple_destructure.fern:1:24: error[E024]: tuple destructure needs a tuple expression, got i32
     function main(): i32 { var (a, b) = 5; return a; }
                            ^
-E024_tuple_destructure.fern:1:47: error[E001]: undefined identifier "a"
-    function main(): i32 { var (a, b) = 5; return a; }
-                                                  ^

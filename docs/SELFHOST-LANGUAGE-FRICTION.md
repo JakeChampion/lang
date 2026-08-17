@@ -317,38 +317,24 @@ what makes §2.1's inference load-bearing rather than a nice-to-have.
 
 ## 4. Existing features that are wrong or half-built
 
-Each of these reproduces on `cmd/fern` at this commit. §7 lists them.
+Each of these reproduced on `cmd/fern` when this was written; the ones still
+marked open reproduce today. §7 lists the probes.
 
-### 4.1 f-string interpolants have no source positions
+### 4.1 f-string interpolants had no source positions — fixed (#6997)
 
-```fern
-import "std/i32";
-function main(): i32 {
-    print(f"{zzz}\n");
-    return 0;
-}
-```
+Every AST node inside every f-string carried a position measured from the
+interpolant's own text, so `print(f"{zzz}\n")` put the caret on line 1 column 1
+— the file's first token — while the same expression outside an f-string
+reported correctly. `parseExprFromText` (`internal/parser/parser.go`) re-lexes
+the interpolant with a fresh parser numbering from 1:1; it now rebases every
+token onto the enclosing file before parsing, so both the AST nodes and any
+parse error inside the interpolant land where the reader wrote them.
+`lexer.fern`'s `rebase_parts` does the same on the self-host side.
 
-```
-g1.fern:1:1: error[E001]: undefined identifier "zzz"
-    import "std/i32";
-    ^~~
-```
+The census row it plausibly explains has not moved: the self-host still uses 235
+f-strings against 11,914 string-literal `+` concatenations.
 
-The caret is on the import. The control without the f-string reports `2:11`,
-correctly. Cause: `parseExprFromText` (`internal/parser/parser.go:100`) re-lexes
-the interpolant from raw text with a fresh parser whose positions start at 1:1,
-and never rebases them onto the enclosing file. Every AST node inside every
-f-string in every Fern program carries a bogus position.
-
-This is a first-order defect for a project whose stated position is that "the
-compiler is the only thing that teaches the user about their own language". It
-also plausibly explains a census row: the self-host uses 235 f-strings against
-11,914 string-literal `+` concatenations. The self-host's own lexer mirrors the same
-design (`lexer.fern`'s `FStringPart { expr: string }` hands raw text on), so it
-will inherit the bug when it grows position rendering.
-
-### 4.2 A failed `var` inference deletes the binding, cascading E001 everywhere
+### 4.2 A failed `var` inference deleted the binding, cascading E001 everywhere — fixed (#5317)
 
 ```fern
 function main(): i32 {
@@ -357,10 +343,20 @@ function main(): i32 {
 }
 ```
 
-With `var b: i32 = nosuch();` there is exactly one error. So the recovery path
-for an un-annotated `var` drops the binding instead of poisoning it, and every
-later use produces noise. Against 96% annotated locals in the self-host, this
-looks less like a coincidence than a habit the compiler taught.
+With `var b: i32 = nosuch();` there was exactly one error: the recovery path for
+an un-annotated `var` dropped the binding instead of poisoning it, so every
+later use was a fresh, genuine-looking "undefined identifier". Against 96%
+annotated locals in the self-host, that looks less like a coincidence than a
+habit the compiler taught.
+
+The binding is now registered at the erroneous type (`scope.poison`), which is
+the state `s.lookup` already models as "reported, ask no further questions" —
+and is what the self-host checker has always done (`check_stmt` binds whatever
+`check_expr` returned, unknown included). `let (a, b) = …` and
+`let S { f } = …` had the same hole, multiplied by the pattern's width, and
+poison the whole group on every path that gives up. This is the *binding* half
+of #5317; the tainted-symbols set that stops a type-MISMATCH fanning out is
+still open.
 
 ### 4.3 The derive hints told you to write something that does not work — fixed (#6990)
 
@@ -471,16 +467,16 @@ Worth stating, because effort has gone the wrong way here before.
 
 Ordered by (unblocking value) ÷ (cost), not by size.
 
-1. **Fix f-string positions** (§4.1). Hours. Rebase interpolant positions onto
-   the enclosing file in `parseExprFromText`, mirror in `lexer.fern`. Unblocks
-   trusting any diagnostic inside an f-string, and removes a reason to keep
-   writing `+` chains.
+1. ~~**Fix f-string positions** (§4.1)~~ — done (#6997), on both compilers.
+   Diagnostics inside an f-string can now be trusted, which removes one reason
+   to keep writing `+` chains.
 2. ~~**Character literals** (§3.3)~~ — the syntax is in (#6991), on both
    compilers. What remains is the mechanical pass that converts the 342 magic
    constants and the `as i32` casts they force.
-3. **Poison, don't delete, a failed `var` binding** (§4.2). Small, and removes a
-   paper cut that has shaped self-host style. The derive hints (§4.3) and the
-   dead `unknownTypeHint` branches (§4.4) were the same size and are done.
+3. ~~**Poison, don't delete, a failed `var` binding** (§4.2)~~ — done (#5317),
+   along with the derive hints (§4.3) and the dead `unknownTypeHint` branches
+   (§4.4). The rest of #5317 — suppressing the *type-mismatch* fan-out with a
+   tainted-symbols set — is the same size again and still open.
 4. **Break the fixpoint ratchet deliberately** (§2.4). Pick one self-host module
    and one feature — closures are the highest-value, per §3.1 — adopt it there,
    and gate it on `internal/e2eselfhost` rather than the fixpoint. This is a
@@ -515,8 +511,8 @@ commit, on `-interp` and `-target x86-64-linux`. Reproductions:
 
 | Claim | Probe |
 |---|---|
-| §4.1 f-string positions | `print(f"{zzz}\n")` vs `print(zzz)` — 1:1 vs 2:11 |
-| §4.2 cascading E001 | `var b = nosuch(); return b;` vs the annotated form |
+| §4.1 f-string positions | `print(f"{zzz}\n")` vs `print(zzz)` — both on the interpolant since #6997 |
+| §4.2 cascading E001 | `var b = nosuch(); return b;` — one diagnostic, matching the annotated form |
 | §4.3 derive hint | `@derive(Eq, Hash)` vs `@derive(cmp.Eq, cmp.Hash)` + `import "core/cmp"` |
 | §4.4 dead hints | `var t: str = s[1:3];` and `var b: u8 = 3;` both check clean |
 | §4.5 append cliff | the two loops in §4.5 at n = 25k/50k/100k |
