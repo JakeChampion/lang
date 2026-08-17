@@ -1509,17 +1509,19 @@ function bytes_at(e: string, at: i32, s: string): boolean {
     return true;
 }
 
-// tagged_value_start: for a reclaim entry `e` shaped "<pfx><name>|<value>" with
-// a non-empty value, the index at which <value> begins; -1 for any other entry.
+// tagged_value_start: for a registry entry `e` shaped "<pfx><name>|<value>",
+// the index at which <value> begins; -1 for any other entry. An entry whose
+// value is EMPTY still matches, at `e.len()` — the sig registries record a name
+// with no payload, and callers that read an empty value as "absent" test for it.
 //
 // Byte compares only. These scans run inside the per-function emit, whose bump
 // arena never frees, so slicing a candidate to compare it allocated once or
-// twice for every entry of every probe — and the probes run per local slot, so
-// the allocation was quadratic in the function's size.
+// twice for every entry of every probe — and the probes run per local slot or
+// per call argument, over registries that are module-wide.
 function tagged_value_start(e: string, pfx: string, name: string): i32 {
     var pl: i32 = pfx.len();
     var nl: i32 = name.len();
-    if (e.len() <= pl + nl + 1) { return 0 - 1; }
+    if (e.len() < pl + nl + 1) { return 0 - 1; }
     // Prefix first: it discriminates on the first byte for most of the list,
     // where the bar test reads a far offset the entry usually does not reach.
     if (!bytes_at(e, 0, pfx)) { return 0 - 1; }
@@ -1537,18 +1539,52 @@ function tagged_value_start(e: string, pfx: string, name: string): i32 {
 }
 
 // tagged_value_of: the <value> of the first "<pfx><name>|<value>" entry in
-// `names`, or "" when none carries one. Every caller reads "" as "not
-// registered", which is what an empty value would mean too, so
-// tagged_value_start skips those rather than returning an empty match.
+// `names` that carries a non-empty one. Every reclaim caller reads "" as "not
+// registered", which is what an empty value would mean too, so the scan passes
+// those by rather than stopping on them.
 function tagged_value_of(names: string[], pfx: string, name: string): string {
     var i: i32 = 0;
     while (i < names.len()) {
         var e: string = names[i];
         var st: i32 = tagged_value_start(e, pfx, name);
+        if (st >= 0 && st < e.len()) { return e[st : e.len()] + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// sig_value_of: the <value> of the first "<name>|<value>" entry in a sig
+// registry, or "" when the name is absent. An entry with an empty value ENDS
+// the scan here rather than being passed over — a registry records one entry
+// per function, so a matching name is the answer whether or not it carries a
+// payload.
+function sig_value_of(reg: string[], name: string): string {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var e: string = reg[i];
+        var st: i32 = tagged_value_start(e, "", name);
         if (st >= 0) { return e[st : e.len()] + ""; }
         i = i + 1;
     }
     return "";
+}
+
+// sig_flag_at: the flag character recorded for parameter `idx` of `name` in a
+// "<name>|<flags>" registry — one character per parameter position — or 0 when
+// the name is absent, or records no flag that far out.
+function sig_flag_at(reg: string[], name: string, idx: i32): i32 {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var e: string = reg[i];
+        var st: i32 = tagged_value_start(e, "", name);
+        if (st >= 0) {
+            var pos: i32 = st + idx;
+            if (pos < e.len()) { return e[pos] as i32; }
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
 }
 
 // fn_value_sig returns the funcref signature tag seeded for the fn-value named
@@ -1599,7 +1635,7 @@ pub function (s: LowerState) fn_arg_is_dyn(name: string, ai: i32): boolean {
     while (i < s.reclaimable_names.len()) {
         var e: string = s.reclaimable_names[i];
         var st: i32 = tagged_value_start(e, "FNDYN:", name);
-        if (st >= 0) {
+        if (st >= 0 && st < e.len()) {
             // The tail is a comma-separated list of dyn positions ("0" / "0,2").
             // Parse each number numerically and test membership of `ai`.
             var cur: i32 = 0;
@@ -25334,7 +25370,7 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
     while (i < s.reclaimable_names.len()) {
         var ent: string = s.reclaimable_names[i];
         var st: i32 = tagged_value_start(ent, "BORROW:", callee);
-        if (st >= 0) {
+        if (st >= 0 && st < ent.len()) {
             if (st + ai < ent.len()) { return ent[st + ai] == 49; }   // 49 = '1'
             return false;
         }
@@ -30492,7 +30528,7 @@ function optfresh_names_of(reclaim: string[]): string[] {
     var i: i32 = 0;
     while (i < reclaim.len()) {
         var e: string = reclaim[i];
-        if (e.len() > 9 && e[0:9] == "OPTFRESH:") { out = out.append(e[9:e.len()] + ""); }
+        if (e.len() > 9 && bytes_at(e, 0, "OPTFRESH:")) { out = out.append(e[9:e.len()] + ""); }
         i = i + 1;
     }
     return out;
@@ -30507,8 +30543,8 @@ function optfresh_call_names_of(entries: string[]): string[] {
     var i: i32 = 0;
     while (i < entries.len()) {
         var e: string = entries[i];
-        var tagged: boolean = (e.len() > 4 && e[0:4] == "RCE:") || (e.len() > 4 && e[0:4] == "AAC:")
-            || (e.len() > 9 && e[0:9] == "ERRFRESH:");
+        var tagged: boolean = (e.len() > 4 && bytes_at(e, 0, "RCE:")) || (e.len() > 4 && bytes_at(e, 0, "AAC:"))
+            || (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:"));
         if (!tagged) {
             var bar: i32 = 0;
             while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
@@ -30523,8 +30559,8 @@ function optfresh_call_names_of(entries: string[]): string[] {
 // carry the "f" flag — every success payload a static literal or a fresh string
 // producer? Tagged rows ("RCE:" / "AAC:") have no flag field and are refused.
 function optfresh_entry_payload_is_fresh(e: string): boolean {
-    if (e.len() > 4 && (e[0:4] == "RCE:" || e[0:4] == "AAC:")) { return false; }
-    if (e.len() > 9 && e[0:9] == "ERRFRESH:") { return false; }
+    if (e.len() > 4 && (bytes_at(e, 0, "RCE:") || bytes_at(e, 0, "AAC:"))) { return false; }
+    if (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:")) { return false; }
     var i: i32 = e.len() - 2;
     if (i < 0) { return false; }
     return e[i] == 124 && e[i + 1:e.len()] == "f";   // 124 = '|'
@@ -30538,7 +30574,7 @@ function optfresh_fresh_names_of(reclaim: string[]): string[] {
     var i: i32 = 0;
     while (i < reclaim.len()) {
         var e: string = reclaim[i];
-        if (e.len() > 10 && e[0:10] == "OPTFRESHF:") { out = out.append(e[10:e.len()] + ""); }
+        if (e.len() > 10 && bytes_at(e, 0, "OPTFRESHF:")) { out = out.append(e[10:e.len()] + ""); }
         i = i + 1;
     }
     return out;
@@ -30552,7 +30588,7 @@ function opterrfresh_call_names_of(entries: string[]): string[] {
     var i: i32 = 0;
     while (i < entries.len()) {
         var e: string = entries[i];
-        if (e.len() > 9 && e[0:9] == "ERRFRESH:") { out = out.append(e[9:e.len()] + ""); }
+        if (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:")) { out = out.append(e[9:e.len()] + ""); }
         i = i + 1;
     }
     return out;
@@ -30563,7 +30599,7 @@ function opterrfresh_names_of(reclaim: string[]): string[] {
     var i: i32 = 0;
     while (i < reclaim.len()) {
         var e: string = reclaim[i];
-        if (e.len() > 12 && e[0:12] == "OPTERRFRESH:") { out = out.append(e[12:e.len()] + ""); }
+        if (e.len() > 12 && bytes_at(e, 0, "OPTERRFRESH:")) { out = out.append(e[12:e.len()] + ""); }
         i = i + 1;
     }
     return out;
@@ -40167,15 +40203,7 @@ function emit_inarm_match_reuse(y_name: string, init: parser.Expr, donor_name: s
 // sibling of (s).struct_ret_type, used by the binding-time scan below where no
 // LowerState exists yet.
 function fnv_lookup_struct_ret(reg: string[], name: string): string {
-    var i: i32 = 0;
-    while (i < reg.len()) {
-        var e: string = reg[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0 : bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
-    return "";
+    return sig_value_of(reg, name);
 }
 
 // register_fnvalue_local_struct_rets augments `reg` with a `f|S` entry for each
@@ -41452,7 +41480,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // ERR-side sibling (#6360): the producer's every Err payload is a fresh
         // string, which the flag above cannot say. Its rows are tagged, so the
         // bar-scan never reaches them and they seed under their own prefix.
-        if (ofr_e.len() > 9 && ofr_e[0:9] == "ERRFRESH:") {
+        if (ofr_e.len() > 9 && bytes_at(ofr_e, 0, "ERRFRESH:")) {
             reclaim = reclaim.append("OPTERRFRESH:" + ofr_e[9:ofr_e.len()]);
         }
         if (optfresh_entry_payload_is_fresh(ofr_e)) {
@@ -45121,15 +45149,7 @@ function irl_type_has_var(ty: string): boolean {
 // arrtup_ret_type returns the ELEMENT TUPLE spelling of an array-of-tuples
 // returning function `name`, or "" if it isn't one.
 pub function (s: LowerState) arrtup_ret_type(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.arrtup_ret_fns.len()) {
-        var e: string = s.sigs.arrtup_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
-    return "";
+    return sig_value_of(s.sigs.arrtup_ret_fns, name);
 }
 
 pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
@@ -49786,15 +49806,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
 // i64_sig_of returns the "<ret><params>" flag string for `name`, or "" if the
 // function has no i64 signature entry.
 pub function (s: LowerState) i64_sig_of(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.i64_ret_fns.len()) {
-        var e: string = s.sigs.i64_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
-    return "";
+    return sig_value_of(s.sigs.i64_ret_fns, name);
 }
 // is_i64_ret_fn reports whether `name` returns a 64-bit integer (i64 OR u64) —
 // the ret flag of its sig is '1' (i64) or '2' (u64). Both are i64-wide, so this
@@ -49906,18 +49918,7 @@ pub function (s: LowerState) param_is_f64(name: string, idx: i32): boolean {
 // (const_func), not a call. Mirrors asmcore.callee_param_is_fn, reading the
 // fn_param_sigs registry ("callee|<flags>").
 pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 49;   // 49 = '1'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 49;   // 49 = '1'
 }
 
 // erased_wide_stmts / erased_wide_expr: the post-lowering scan behind
@@ -50142,36 +50143,15 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
 // takes the full 8-byte value on the register backends). Accepting both keeps
 // the register i64-arg path identical regardless of the pass-through split.
 pub function (s: LowerState) callee_param_is_typevar(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && (e[pos] == 53 || e[pos] == 54);   // 53 = '5', 54 = '6'
-        }
-        i = i + 1;
-    }
-    return false;
+    var f: i32 = sig_flag_at(s.sigs.fn_param_sigs, name, idx);
+    return f == 53 || f == 54;   // 53 = '5', 54 = '6'
 }
 
 // callee_param_is_erased_array reports whether callee `name`'s param `idx` is an
 // erased typevar ARRAY param — flag '7'. Drives the wasm erased-wide refusal for
 // a wide-ELEMENT array argument.
 pub function (s: LowerState) callee_param_is_erased_array(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 55;   // 55 = '7'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 55;   // 55 = '7'
 }
 
 // callee_param_is_erased_widened reports whether callee `name`'s param `idx` is
@@ -50181,18 +50161,7 @@ pub function (s: LowerState) callee_param_is_erased_array(name: string, idx: i32
 // a container return — flag '5') is NOT widened and its module defers on a wide
 // instantiation instead of miscompiling.
 pub function (s: LowerState) callee_param_is_erased_widened(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 54;   // 54 = '6'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 54;   // 54 = '6'
 }
 
 // callee_param_is_dyn reports whether callee `name`'s param `idx` is a
@@ -50200,18 +50169,7 @@ pub function (s: LowerState) callee_param_is_erased_widened(name: string, idx: i
 // there must be heap-boxed into a `dyn` cell (op_dyn_box) before the call
 // (docs/DYN-TRAITS.md §4.2.3). Same registry/format as callee_param_is_fn.
 pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 50;   // 50 = '2'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 50;   // 50 = '2'
 }
 
 // callee_param_is_dyn_arr reports whether callee `name`'s param `idx` is a
@@ -50219,31 +50177,14 @@ pub function (s: LowerState) callee_param_is_dyn(name: string, idx: i32): boolea
 // argument there must have each element coerced to `dyn` before the buffer is
 // built (docs/DYN-TRAITS.md §4.3, #6906).
 pub function (s: LowerState) callee_param_is_dyn_arr(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var pos: i32 = bar + 1 + idx;
-            return pos < e.len() && e[pos] == 56;   // 56 = '8'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 56;   // 56 = '8'
 }
 
 // opt_ret_type returns the recorded ret_type for a function name in opt_ret_fns
 // ("Option[T]"/"Result[T, E]"), or "" if not an Option/Result-returning fn.
 pub function (s: LowerState) opt_ret_type(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.opt_ret_fns.len()) {
-        var e: string = s.sigs.opt_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
+    var v: string = sig_value_of(s.sigs.opt_ret_fns, name);
+    if (v.len() > 0) { return v; }
     // Built-in I/O functions return a fixed Option/Result the lowering must
     // recognise so a `match (read_file(p)) { Ok => .., Err => .. }` scrutinee or a
     // `var r = read_file(p)` binding resolves the result type (read_file lowers to
@@ -50270,39 +50211,20 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
 // free function `name` (e.g. "i32,string,i32"), ready to drop into a slot's
 // local_tuple_elems, or "" if `name` isn't a (lowered) tuple-returning function.
 pub function (s: LowerState) tuple_ret_type(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.tuple_ret_fns.len()) {
-        var e: string = s.sigs.tuple_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
-    return "";
+    return sig_value_of(s.sigs.tuple_ret_fns, name);
 }
 
 // struct_ret_type returns the struct type name returned by free function `name`,
 // or "" if `name` isn't a (lowered) struct-returning function.
 pub function (s: LowerState) struct_ret_type(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.struct_ret_fns.len()) {
-        var e: string = s.sigs.struct_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var v: str = e[bar + 1 : e.len()];
-            // Skip a POSITIONAL "$arg<i>" entry (the erased-generic `T[]` return,
-            // read by struct_ret_argref): it is an argument INDEX, not a struct
-            // name. Unlike the string-side registries — where the '|' makes an
-            // argref invisible to a bare exact-name membership scan — '|' is this
-            // registry's field SEPARATOR, so without this guard `var s = idf(xs)`
-            // would take "$arg0" as its struct type.
-            if (v.len() > 4 && v[0:4] == "$arg") { return ""; }
-            return v + "";
-        }
-        i = i + 1;
-    }
-    return "";
+    var v: string = sig_value_of(s.sigs.struct_ret_fns, name);
+    // Skip a POSITIONAL "$arg<i>" entry (the erased-generic `T[]` return, read by
+    // struct_ret_argref): it is an argument INDEX, not a struct name. Unlike the
+    // string-side registries — where the '|' makes an argref invisible to a bare
+    // exact-name membership scan — '|' is this registry's field SEPARATOR, so
+    // without this guard `var s = idf(xs)` would take "$arg0" as its struct type.
+    if (v.len() > 4 && bytes_at(v, 0, "$arg")) { return ""; }
+    return v;
 }
 
 // map_ret_type returns the Map[K,V] type a function `name` returns (keyed bare
@@ -50310,15 +50232,7 @@ pub function (s: LowerState) struct_ret_type(name: string): string {
 // recovers the map type for method dispatch without an annotation. Mirrors
 // struct_ret_type. #3317.
 pub function (s: LowerState) map_ret_type(name: string): string {
-    var i: i32 = 0;
-    while (i < s.sigs.map_ret_fns.len()) {
-        var e: string = s.sigs.map_ret_fns[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-        if (bar < e.len() && e[0:bar] == name) { return e[bar + 1 : e.len()] + ""; }
-        i = i + 1;
-    }
-    return "";
+    return sig_value_of(s.sigs.map_ret_fns, name);
 }
 
 // opt_payload_type parses a "Option[T]" / "Result[T, E]" ret_type and the bound
@@ -57011,18 +56925,7 @@ pub function grow_param_flags_of(funcs: parser.FuncDecl[]): string[] {
 // callee_param_may_grow reads flag '4' — the may-grow array param positions
 // merged into fn_param_sigs by fn_param_sigs_of.
 pub function (s: LowerState) callee_param_may_grow(name: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < s.sigs.fn_param_sigs.len()) {
-        var e: string = s.sigs.fn_param_sigs[i];
-        var bar: i32 = 0;
-        while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // '|'
-        if (bar < e.len() && e[0:bar] == name) {
-            var fi: i32 = bar + 1 + idx;
-            return fi < e.len() && e[fi] == 52;   // '4'
-        }
-        i = i + 1;
-    }
-    return false;
+    return sig_flag_at(s.sigs.fn_param_sigs, name, idx) == 52;   // '4'
 }
 
 // grow_exempt_names_of_stmt returns the ident args exempt from the grow
