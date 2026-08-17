@@ -371,6 +371,111 @@ function main(): i32 {
                            ir.op_drop(), ir.op_end(), ir.op_return()];
     out = out + "kp_in_optimize: " + render(ir.optimize_ops(kp_opt)) + "\n";
 
+    // 15. The unary fold (#6638, native fold.go's `OpConstI32 a ; OpNot` arm).
+    //     `not` is LOGICAL in this IR — i32.eqz on wasm, setz on x86, cset eq on
+    //     arm64, bool_not in eval_ops — so zero folds to 1 and everything else to 0.
+    //     There is no bitwise complement in the vocabulary to confuse it with.
+    var nf_zero: ir.Op[] = [ir.op_const_i32(0), ir.op_bin("not", 0, false)];
+    out = out + "nf_zero: " + render(ir.fold_const_binaries(nf_zero)) + "\n";
+    var nf_nonzero: ir.Op[] = [ir.op_const_i32(7), ir.op_bin("not", 0, false)];
+    out = out + "nf_nonzero: " + render(ir.fold_const_binaries(nf_nonzero)) + "\n";
+
+    // 15a. The source-text shape folds too, and the non-decimal one is refused by
+    //      the same shared predicate the binary fold uses.
+    var nf_text: ir.Op[] = [ir.op_const_i32_text("0"), ir.op_bin("not", 0, false)];
+    out = out + "nf_text: " + render(ir.fold_const_binaries(nf_text)) + "\n";
+    var nf_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_bin("not", 0, false)];
+    out = out + "nf_hex_refused: " + render(ir.fold_const_binaries(nf_hex)) + "\n";
+
+    // 15b. An opaque operand is left alone — the fold is not a rewrite of `not`.
+    var nf_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_bin("not", 0, false)];
+    out = out + "nf_opaque_refused: " + render(ir.fold_const_binaries(nf_opaque)) + "\n";
+
+    // 15c. The shape this actually pays off on, and the two folds compose on it:
+    //      `while (true)` lowers its exit test to `const_i32 1 ; not ; brif`, the
+    //      unary fold decides the condition, and the brif arm then removes the whole
+    //      test — an empty list, because a loop that never exits needs no exit check.
+    var nf_while: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("not", 0, false), ir.op_brif(1)];
+    out = out + "nf_while_true_test_gone: " + render(ir.fold_const_binaries(nf_while)) + "\n";
+
+    // 15d. Folding at the very END of the list, where the three-op window cannot
+    //      reach — the restructure that made room for a two-op window.
+    var nf_tail: ir.Op[] = [ir.op_load_local(0), ir.op_drop(), ir.op_const_i32(0), ir.op_bin("not", 0, false)];
+    out = out + "nf_at_tail: " + render(ir.fold_const_binaries(nf_tail)) + "\n";
+
+    // 16. Constant-branch pruning (#6638, native fold.go's pruneConstIf + the
+    //     const-brif arm). A decided `if` keeps the arm that runs and drops the
+    //     condition, the scope and the other arm.
+    var pi_true: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
+                            ir.op_else(), ir.op_const_i32(8), ir.op_drop(), ir.op_end(), ir.op_return()];
+    out = out + "pi_true_arm: " + render(ir.fold_const_binaries(pi_true)) + "\n";
+    var pi_false: ir.Op[] = [ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
+                             ir.op_else(), ir.op_const_i32(8), ir.op_drop(), ir.op_end(), ir.op_return()];
+    out = out + "pi_false_arm: " + render(ir.fold_const_binaries(pi_false)) + "\n";
+
+    // 16a. No else and a false condition: the whole construct evaporates. `const`
+    //      pushes one and `if` pops it, so the pair is stack-neutral to remove.
+    var pi_none: ir.Op[] = [ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
+                            ir.op_end(), ir.op_return()];
+    out = out + "pi_false_no_else: " + render(ir.fold_const_binaries(pi_none)) + "\n";
+
+    // 16b. An arm holding an ESCAPING branch keeps a scope of its own, or every
+    //      relative depth in it would shift by one when the if goes. This is the
+    //      common case in real lowered code — every `break` inside an `if` is one.
+    var pi_esc: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_if(0),
+                           ir.op_br(1), ir.op_end(), ir.op_end(), ir.op_return()];
+    out = out + "pi_escaping_wrapped: " + render(ir.fold_const_binaries(pi_esc)) + "\n";
+
+    // 16c. An arm-LOCAL branch does not: the `brif 0` targets the arm's own block,
+    //      so splicing it bare keeps its depth correct. Depth counting is what
+    //      separates this from the case above.
+    var pi_local: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_block(0), ir.op_const_i32(1),
+                             ir.op_brif(0), ir.op_end(), ir.op_end(), ir.op_return()];
+    out = out + "pi_local_branch_bare: " + render(ir.fold_const_binaries(pi_local)) + "\n";
+
+    // 16d. Refusals: a non-decimal text condition (the shared predicate), and a
+    //      NON-VOID if, which would carry a value out of its end that deleting the
+    //      scope would strand. Nothing in this lowering emits one; the guard is what
+    //      keeps that true rather than assumed.
+    var pi_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_if(0), ir.op_const_i32(7),
+                           ir.op_drop(), ir.op_end()];
+    out = out + "pi_hex_refused: " + render(ir.fold_const_binaries(pi_hex)) + "\n";
+    var pi_typed: ir.Op[] = [ir.op_const_i32(1), ir.op_if(1), ir.op_const_i32(7), ir.op_end()];
+    out = out + "pi_typed_refused: " + render(ir.fold_const_binaries(pi_typed)) + "\n";
+
+    // 16e. An unbalanced list is left alone rather than half-rewritten.
+    var pi_open: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(7), ir.op_drop()];
+    out = out + "pi_unclosed_refused: " + render(ir.fold_const_binaries(pi_open)) + "\n";
+
+    // 16f. The decided `brif`, both ways: zero leaves only the fall-through, and
+    //      nonzero becomes the unconditional branch.
+    var pb_zero: ir.Op[] = [ir.op_block(0), ir.op_const_i32(0), ir.op_brif(0),
+                            ir.op_const_i32(7), ir.op_drop(), ir.op_end()];
+    out = out + "pb_zero_dropped: " + render(ir.fold_const_binaries(pb_zero)) + "\n";
+    var pb_one: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_brif(0),
+                           ir.op_const_i32(7), ir.op_drop(), ir.op_end()];
+    out = out + "pb_one_becomes_br: " + render(ir.fold_const_binaries(pb_one)) + "\n";
+
+    // 16g. Nested pruning cascades in one call, since the fold self-iterates.
+    var pi_nest: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0),
+                            ir.op_const_i32(0), ir.op_if(0), ir.op_const_i32(7), ir.op_drop(),
+                            ir.op_else(), ir.op_const_i32(2), ir.op_const_i32(3),
+                            ir.op_bin("add", 0, false), ir.op_drop(), ir.op_end(),
+                            ir.op_end(), ir.op_return()];
+    out = out + "pi_nested_cascade: " + render(ir.fold_const_binaries(pi_nest)) + "\n";
+
+    // 16h. Idempotent, and through the whole pipeline: `while (true)`'s exit test
+    //      lowers to `const_i32 1 ; not ; brif`, so the unary fold decides it and
+    //      the brif arm removes the test altogether.
+    var pi_once: ir.Op[] = ir.fold_const_binaries(pi_nest);
+    var pi_stable: i32 = 0;
+    if (render(ir.fold_const_binaries(pi_once)) == render(pi_once)) { pi_stable = 1; }
+    out = out + "pi_idempotent=" + util.i32_to_string(pi_stable) + "\n";
+    var pw_loop: ir.Op[] = [ir.op_loop(0), ir.op_const_i32(1), ir.op_bin("not", 0, false),
+                            ir.op_brif(1), ir.op_const_i32(7), ir.op_drop(), ir.op_br(0),
+                            ir.op_end(), ir.op_return()];
+    out = out + "pw_while_true_in_optimize: " + render(ir.optimize_ops(pw_loop)) + "\n";
+
     write(out);
 
     // Exit code: 0 when the fixpoint held.
