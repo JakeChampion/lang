@@ -57,6 +57,8 @@ pub struct GuardedOpen { d: i32 }
 function eat_guarded(own g: Guarded): i32 { return g.d; }
 pub function take_open(own g: GuardedOpen): i32 { return g.d; }
 pub function own_guarded(): i32 { return eat_guarded(Guarded { d: 6 }); }
+const HIDDEN_N: i32 = 8;
+pub const SHOWN_N: i32 = 9;
 `
 	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
 		t.Fatalf("write lib.fern: %v", err)
@@ -116,6 +118,23 @@ pub function own_guarded(): i32 { return eat_guarded(Guarded { d: 6 }); }
 	// inferred from the mangled name.
 	check(t, "own_private",
 		"import \"./lib\";\nfunction main(): i32 { return lib.uses_own_private(); }\n",
+		0, "")
+
+	// REJECT: a private CONST. A const reaches the parser as a FuncDecl, so the
+	// rule finds it either way; what the case pins is the KEYWORD. Native reads
+	// its own `allConsts` to say `pub const`, and a reader told to write
+	// `pub function HIDDEN_N` over a `const HIDDEN_N` is sent nowhere — the same
+	// harm the private-enum case above exists to prevent.
+	check(t, "private_const",
+		"import \"./lib\";\nfunction main(): i32 { return lib.HIDDEN_N - 8; }\n",
+		1, "lib.HIDDEN_N is not exported (declare it as `pub const HIDDEN_N …` to make it accessible from other modules)")
+
+	// ACCEPT: the exported const — the half that proves the rule reads `pub` on
+	// a const rather than rejecting every qualified const reference. It also
+	// carries the checker half: a bare reference to a const now has a type, so
+	// the program passes `-check` rather than being rejected as un-inferable.
+	check(t, "public_const",
+		"import \"./lib\";\nfunction main(): i32 { return lib.SHOWN_N - 9; }\n",
 		0, "")
 
 	// --- #6723: the same rule for TYPES ---------------------------------

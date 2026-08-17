@@ -117,9 +117,33 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
     return out;
 }
 
+// private_const_keys is private_keys' const subset. The keyword the message
+// tells the reader to write has to name the declaration they will find: a
+// `const` told to become a `pub function` sends them nowhere, the same way a
+// private enum told to become a `pub struct` would. A const reaches the parser
+// as a FuncDecl carrying `is_const`, so it is in private_keys already; this
+// picks it out.
+function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < loaded.len()) {
+        var lm: flatten.LoadedModule = loaded[i];
+        var fi: i32 = 0;
+        while (fi < lm.mod.funcs.len()) {
+            var f: parser.FuncDecl = lm.mod.funcs[fi];
+            if (f.is_const && !f.is_pub && f.receiver_name.len() == 0 && f.name.len() > 0) {
+                out = out.append(lm.name + "." + f.name);
+            }
+            fi = fi + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // module_diags reports every `<qual>.<name>` in `src`'s own functions that names
-// a private top-level function of the module `qual` resolves to.
-function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: string[]): checker.Diag[] {
+// a private top-level declaration of the module `qual` resolves to.
+function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: string[], priv_consts: string[]): checker.Diag[] {
     var out: checker.Diag[] = [];
     var quals: string[] = import_quals(src);
     if (quals.len() == 0) { return out; }
@@ -136,10 +160,13 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
     var ri: i32 = 0;
     while (ri < refs.len()) {
         var r: astwalk.QualRef = refs[ri];
-        if (util.has_str(priv, r.qual + "." + r.name)) {
+        var key: string = r.qual + "." + r.name;
+        if (util.has_str(priv, key)) {
+            var kw: string = "function";
+            if (util.has_str(priv_consts, key)) { kw = "const"; }
             out = out.append(checker.Diag {
                 code: "",
-                message: r.qual + "." + r.name + " is not exported (declare it as `pub function " + r.name + " …` to make it accessible from other modules)",
+                message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
                 line: r.line,
                 col: r.col
             });
@@ -157,13 +184,14 @@ function module_diags(src: parser.Module, loaded: flatten.LoadedModule[], priv: 
 pub function export_diags(entry: parser.Module, loaded: flatten.LoadedModule[]): checker.Diag[] {
     var priv: string[] = private_keys(loaded);
     if (priv.len() == 0) { return []; }
-    var out: checker.Diag[] = module_diags(entry, loaded, priv);
+    var priv_consts: string[] = private_const_keys(loaded);
+    var out: checker.Diag[] = module_diags(entry, loaded, priv, priv_consts);
     var td: checker.Diag[] = type_diags(entry, loaded, priv);
     var ti: i32 = 0;
     while (ti < td.len()) { out = out.append(td[ti]); ti = ti + 1; }
     var i: i32 = 0;
     while (i < loaded.len()) {
-        var ds: checker.Diag[] = module_diags(loaded[i].mod, loaded, priv);
+        var ds: checker.Diag[] = module_diags(loaded[i].mod, loaded, priv, priv_consts);
         var di: i32 = 0;
         while (di < ds.len()) { out = out.append(ds[di]); di = di + 1; }
         var ts: checker.Diag[] = type_diags(loaded[i].mod, loaded, priv);
