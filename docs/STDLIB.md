@@ -274,13 +274,17 @@ forms cannot both claim one name.
   `reversed` vs `reverse`, `sorted_asc` vs `sorted_str_asc`). Those dodged
   names are gone (#2663); use the single generic verb.
 
-  `sum` and `product` are the holdouts: the generic form
-  (`[T: num.Add + num.Zero]` delegating to `num.sum`) works on native and on
-  the self-host compiler, but `num.sum` reaches its identity through
-  `T.zero()` — a receiver-less trait function called through a type
-  parameter — which the self-host INTERPRETER cannot dispatch. That gap
-  predates the collapse (`num.sum(xs)` fails there directly too), so both
-  stay pinned to `i32[]` for now.
+  `sum` and `product` are the holdouts, and what blocks them is trait-method
+  namespacing rather than anything about arrays. The generic form
+  (`[T: num.Add + num.Zero]` delegating to `num.sum`) needs `std/array` to
+  import `std/num`, and since `std/string` imports `std/array` that puts
+  `impl Add for i32` in the transitive closure of nearly every program. A
+  trait impl's methods land in one flat `i32.<name>` namespace, so num's
+  `Add::add` collides with a USER trait that also provides `add` for i32 —
+  `E006: method "add" on i32 redeclared`, pointing into stdlib source the
+  program never imported. Two traits providing the same method name for one
+  type is legal and should stay legal, so widening the numeric surface waits
+  on per-trait method namespacing in the checker.
 
 - **i32[]-specific:** `sum`, `product`, `avg`, `range`, `gcd_all`, `lcm_all`, `abs_each`,
   `pairwise_diffs`, `min_max`, `every_positive`, `cumsum`, `sum_squared`,
