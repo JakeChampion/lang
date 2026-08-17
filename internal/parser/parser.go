@@ -4197,6 +4197,62 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 	return err
 }
 
+// parseTuplePatElems consumes `(p0, p1, …)` with the cursor on the opening
+// `(`, returning one TuplePatElem per element. An element is a binder name,
+// `_`, a literal, a variant sub-pattern `A(x)` / `mod.A(x)` / `A()`, or a
+// nested tuple pattern — which recurses here, so `(a, (b, (c, d)))` nests to
+// any depth. At least 2 elements at every level (no-singleton-tuples rule).
+func (p *parser) parseTuplePatElems() ([]ast.TuplePatElem, error) {
+	open := p.peek().Pos
+	p.advance() // `(`
+	var elems []ast.TuplePatElem
+	for {
+		et := p.peek()
+		var elem ast.TuplePatElem
+		switch {
+		case et.Kind == lexer.Ident && et.Text == "_":
+			p.advance()
+			elem.IsWildcard = true
+		case et.Kind == lexer.Punct && et.Text == "(":
+			nested, err := p.parseTuplePatElems()
+			if err != nil {
+				return nil, err
+			}
+			elem.Nested = nested
+		case p.atLiteralPattern():
+			lit, err := p.parseLiteralPattern()
+			if err != nil {
+				return nil, err
+			}
+			elem.Literal = lit
+		case et.Kind == lexer.Ident && p.tupleElemVariantStart():
+			if err := p.parseTupleElemVariant(&elem); err != nil {
+				return nil, err
+			}
+		case et.Kind == lexer.Ident:
+			p.advance()
+			elem.Name = et.Text
+		default:
+			return nil, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, nested tuple pattern, or `_` in tuple pattern, got %s", et.Text)
+		}
+		elems = append(elems, elem)
+		if _, ok := p.accept(lexer.Punct, ","); ok {
+			if p.match(lexer.Punct, ")") {
+				break
+			}
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return nil, err
+	}
+	if len(elems) < 2 {
+		return nil, p.errorfCode(open, "P001", "tuple pattern needs at least 2 elements")
+	}
+	return elems, nil
+}
+
 // parseMatchPattern parses a single pattern (wildcard / literal / variant
 // with optional `mod.` qualifier and positional or named bindings),
 // leaving the cursor at the optional `|`, `when`, or `=>` that follows.
@@ -4232,49 +4288,13 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		pat.IsWildcard = true
 	} else if t.Kind == lexer.Punct && t.Text == "(" {
 		// Tuple pattern: `(p0, p1, …) => …` on a tuple-typed scrutinee.
-		// Each element is a binder name, `_`, a literal (compared by
-		// equality), or a variant sub-pattern `A(x)` / `mod.A(x)` / `A()`.
-		// At least 2 elements (no-singleton-tuples rule). The checker
-		// validates the arity against the scrutinee tuple and types each
-		// element.
-		p.advance()
-		for {
-			et := p.peek()
-			var elem ast.TuplePatElem
-			if et.Kind == lexer.Ident && et.Text == "_" {
-				p.advance()
-				elem.IsWildcard = true
-			} else if p.atLiteralPattern() {
-				lit, err := p.parseLiteralPattern()
-				if err != nil {
-					return pat, err
-				}
-				elem.Literal = lit
-			} else if et.Kind == lexer.Ident && p.tupleElemVariantStart() {
-				if err := p.parseTupleElemVariant(&elem); err != nil {
-					return pat, err
-				}
-			} else if et.Kind == lexer.Ident {
-				p.advance()
-				elem.Name = et.Text
-			} else {
-				return pat, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, or `_` in tuple pattern, got %s", et.Text)
-			}
-			pat.TupleElems = append(pat.TupleElems, elem)
-			if _, ok := p.accept(lexer.Punct, ","); ok {
-				if p.match(lexer.Punct, ")") {
-					break
-				}
-				continue
-			}
-			break
-		}
-		if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		// The checker validates the arity against the scrutinee tuple and
+		// types each element.
+		elems, err := p.parseTuplePatElems()
+		if err != nil {
 			return pat, err
 		}
-		if len(pat.TupleElems) < 2 {
-			return pat, p.errorfCode(t.Pos, "P001", "tuple pattern needs at least 2 elements")
-		}
+		pat.TupleElems = elems
 	} else if p.atLiteralPattern() {
 		// Literal pattern: `0 => …`, `"yes" => …`, `true => …`,
 		// `1.5f64 => …`. Dispatched via equality comparison
@@ -5126,6 +5146,12 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 				return nil, p.refutableBindErr(pos, "a literal tuple element", site)
 			case el.VariantName != "":
 				return nil, p.refutableBindErr(pos, "a variant tuple element", site)
+			case el.Nested != nil:
+				// A nested tuple element always matches, so this is not the
+				// refutable-element diagnostic: the limit is that a
+				// destructure binds one flat level of a single tuple box.
+				return nil, p.errorfCode(pos, "P001",
+					"a nested tuple element is not supported in a %s pattern — bind the inner tuple to a name here and destructure it on the next line, or `match` on the value", site)
 			case el.Name != "":
 				names[i] = el.Name
 			default:

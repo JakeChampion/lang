@@ -3120,6 +3120,52 @@ function main(): i32 {
 	}
 }
 
+// The `dyn` object-safety check reaches a local `var` wherever it nests.
+// walkVarTypes used to recurse by hand and descend only into blocks, so it
+// never saw a declaration in an else-if chain (an *ast.If sits directly in the
+// Else slot, not a Block) or in any expression-nested position — E021 was
+// silently NOT reported there. It now walks the tree the same way
+// resolveTypesInBlock does after #6996.
+//
+// Each case must be the trait's only mention: the check dedupes per trait, so
+// a second occurrence in a plain `if` would mask the miss.
+func TestObjectSafetyReachesNestedVarDecls(t *testing.T) {
+	const trait = "trait Eq { function eq(self: Self, other: Self): boolean; }\n"
+	for name, src := range map[string]string{
+		"else if branch": `function pick(n: i32): i32 {
+    if (n == 0) {
+        return 7;
+    } else if (n == 1) {
+        var b: dyn Eq[] = [];
+        return b.len();
+    }
+    return 0;
+}
+function main(): i32 { return pick(1); }`,
+		"lambda body": `function pick(n: i32): i32 {
+    var f = (k: i32): i32 => {
+        var b: dyn Eq[] = [];
+        return b.len() + k;
+    };
+    return f(n);
+}
+function main(): i32 { return pick(1); }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, trait+src)
+			if err == nil {
+				t.Fatalf("want E021, got none")
+			}
+			if code := firstErrCode(err); code != "E021" {
+				t.Errorf("code = %q, want E021: %v", code, err)
+			}
+			if !strings.Contains(err.Error(), "not object-safe") {
+				t.Errorf("want the object-safety diagnostic, got: %v", err)
+			}
+		})
+	}
+}
+
 // A struct that implements all of a trait's methods with matching
 // signatures type-checks, and the impl is recorded in Info.Impls.
 // See docs/TRAITS.md.
@@ -5971,6 +6017,84 @@ func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
 	}
 }
 
+// TestNestedTuplePatternChecks covers the nested tuple element `(a, (b, c))`:
+// the element's own type must be a tuple of the matching arity, every element
+// rule then applies recursively at that depth, and the nested elements decide
+// the arm's refutability.
+func TestNestedTuplePatternChecks(t *testing.T) {
+	const decls = "enum E { A(i32), B }\n"
+	bad := map[string]struct{ src, code string }{
+		"element is not a tuple": {`function f(t: (i32, i32)): i32 {
+  match (t) { (a, (b, c)) => { return a; } }
+  return 0;
+}`, "E035"},
+		"nested arity mismatch": {`function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, (b, c, d)) => { return a; } }
+  return 0;
+}`, "E035"},
+		"nested literal type mismatch": {`function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, ("x", c)) => { return a; }, _ => { return 0; } }
+  return 0;
+}`, "E035"},
+		"nested binder collides with an outer one": {`function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, (a, c)) => { return c; } }
+  return 0;
+}`, "E013"},
+		// A nested literal is refutable, so the arm cannot make the match
+		// exhaustive on its own — the same rule a top-level literal follows.
+		"nested literal needs a wildcard arm": {`function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, (1, c)) => { return a + c; } }
+  return 0;
+}`, "E030"},
+		"nested payload-less variant name is a binder": {`function f(t: (i32, (E, i32))): i32 {
+  match (t) { (a, (B, c)) => { return a + c; } }
+  return 0;
+}`, "E015"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+c.src)
+			if err == nil {
+				t.Fatalf("want %s, got none", c.code)
+			}
+			if code := firstErrCode(err); code != c.code {
+				t.Errorf("code = %q, want %s: %v", code, c.code, err)
+			}
+		})
+	}
+
+	ok := map[string]string{
+		// All-binder nesting is irrefutable, so it needs no wildcard arm.
+		"nested binders are irrefutable": `function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, (b, c)) => { return a + b + c; } }
+  return 0;
+}`,
+		"nesting to depth three": `function f(t: (i32, (i32, (i32, string)))): i32 {
+  match (t) { (a, (b, (c, s))) => { return a + b + c + s.len(); } }
+  return 0;
+}`,
+		"nested wildcards and literals with a fallback": `function f(t: ((i32, string), (i32, i32))): i32 {
+  match (t) { ((1, "a"), (_, c)) => { return c; }, _ => { return 0; } }
+  return 0;
+}`,
+		"guard sees the nested binds": `function f(t: (i32, (i32, i32))): i32 {
+  match (t) { (a, (b, c)) when b > c => { return a; }, _ => { return 0; } }
+  return 0;
+}`,
+		"expression form nests too": `function f(t: (i32, (i32, i32))): i32 {
+  var v = match (t) { (a, (b, c)) => a + b + c };
+  return v;
+}`,
+	}
+	for name, body := range ok {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
 // TestTupleElemVariantPatternChecks covers the variant sub-pattern element
 // `(A(x), y)`: payload arity, tag/type agreement and binder scoping follow the
 // same rules an arm-position `A(x) => …` follows, because both route through
@@ -6015,6 +6139,10 @@ func TestTupleElemVariantPatternChecks(t *testing.T) {
 	ok := map[string]string{
 		"payload binds at the element's type": `function f(t: (E, i32)): i32 {
   match (t) { (C(n, s), y) => { return n + y + s.len(); }, _ => { return 0; } }
+  return 0;
+}`,
+		"a variant nests inside a nested tuple element": `function f(t: (i32, (E, i32))): i32 {
+  match (t) { (n, (A(x), y)) => { return n + x + y; }, _ => { return 0; } }
   return 0;
 }`,
 		"payload-less spelled with empty parens": `function f(t: (E, i32)): i32 {

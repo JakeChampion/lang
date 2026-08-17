@@ -2997,29 +2997,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(e)
 				if !arm.IsWildcard {
-					if len(arm.TupleElems) != len(arr) {
-						continue
-					}
-					matched := true
-					for k, el := range arm.TupleElems {
-						if el.VariantName != "" {
-							if !tupleElemVariantMatches(arr[k], el.VariantName) {
-								matched = false
-								break
-							}
-							continue
-						}
-						if el.Literal == nil {
-							continue
-						}
-						lv, err := i.evalExpr(el.Literal, e)
-						if err != nil {
-							return result{}, err
-						}
-						if !valuesEqual(arr[k], lv) {
-							matched = false
-							break
-						}
+					matched, err := i.tupleElemsMatch(arm.TupleElems, arr, e)
+					if err != nil {
+						return result{}, err
 					}
 					if !matched {
 						continue
@@ -3158,10 +3138,60 @@ func tupleElemVariantMatches(v Value, variantName string) bool {
 	return isEnum && ev.VariantName == variantName
 }
 
+// tupleElemsMatch reports whether the tuple value arr satisfies a tuple
+// pattern's refutable elements — literals by equality, variant sub-patterns by
+// tag, and a nested tuple element by recursing into its own elements. Binders
+// and `_` always match. Mirrors the compiled backend's tupleMatchArmTest, and
+// is shared by the statement and expression match forms.
+func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (bool, error) {
+	if len(elems) != len(arr) {
+		return false, nil
+	}
+	for k, el := range elems {
+		switch {
+		case el.Nested != nil:
+			sub, isArr := arr[k].(Array)
+			if !isArr {
+				return false, nil
+			}
+			ok, err := i.tupleElemsMatch(el.Nested, sub, e)
+			if err != nil || !ok {
+				return false, err
+			}
+		case el.VariantName != "":
+			if !tupleElemVariantMatches(arr[k], el.VariantName) {
+				return false, nil
+			}
+		case el.Literal != nil:
+			lv, err := i.evalExpr(el.Literal, e)
+			if err != nil {
+				return false, err
+			}
+			if !valuesEqual(arr[k], lv) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
 // bindTupleElem declares whatever a tuple-pattern element binds: the element
-// itself for a binder, or the named variant's payloads for a sub-pattern.
-// Literal and `_` elements bind nothing.
+// itself for a binder, the named variant's payloads for a sub-pattern, or
+// whatever a nested tuple pattern binds, recursively. Literal and `_` elements
+// bind nothing.
 func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
+	if el.Nested != nil {
+		sub, isArr := v.(Array)
+		if !isArr {
+			return
+		}
+		for k, nel := range el.Nested {
+			if k < len(sub) {
+				bindTupleElem(armEnv, nel, sub[k])
+			}
+		}
+		return
+	}
 	if el.VariantName != "" {
 		ev, isEnum := v.(*Enum)
 		if !isEnum {
@@ -3771,29 +3801,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			for _, arm := range x.Arms {
 				armEnv := newEnv(env)
 				if !arm.IsWildcard {
-					if len(arm.TupleElems) != len(arr) {
-						continue
-					}
-					matched := true
-					for k, el := range arm.TupleElems {
-						if el.VariantName != "" {
-							if !tupleElemVariantMatches(arr[k], el.VariantName) {
-								matched = false
-								break
-							}
-							continue
-						}
-						if el.Literal == nil {
-							continue
-						}
-						lv, err := i.evalExpr(el.Literal, env)
-						if err != nil {
-							return nil, err
-						}
-						if !valuesEqual(arr[k], lv) {
-							matched = false
-							break
-						}
+					matched, err := i.tupleElemsMatch(arm.TupleElems, arr, env)
+					if err != nil {
+						return nil, err
 					}
 					if !matched {
 						continue

@@ -1337,6 +1337,8 @@ func TestFormatMatchExprArmPatterns(t *testing.T) {
 function f(t: (E, i32)): i32 { return match (t) { (A(x), y) => x + y, (B(), _) => 1, _ => 0 }; }`, "(A(x), y) =>"},
 		{"tuple_variant_elem_payloadless", `enum E { A(i32), B }
 function f(t: (E, i32)): i32 { return match (t) { (B(), y) => y, _ => 0 }; }`, "(B(), y) =>"},
+		{"tuple_nested_elem", `function f(t: (i32, (i32, i32))): i32 { return match (t) { (a, (b, c)) => a + b + c }; }`, "(a, (b, c)) =>"},
+		{"tuple_nested_elem_depth3", `function f(t: ((i32, string), (i32, (i32, i32)))): i32 { return match (t) { ((1, "a"), (b, (c, _))) => b + c, _ => 0 }; }`, `((1, "a"), (b, (c, _))) =>`},
 		{"struct_rename", `struct P { x: i32, y: i32 }
 function f(p: P): i32 { return match (p) { P { x: a, y: b } => a + b }; }`, "P { x: a, y: b } =>"},
 	} {

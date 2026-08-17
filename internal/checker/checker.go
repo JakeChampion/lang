@@ -3487,32 +3487,22 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 }
 
 // walkVarTypes invokes visit on every local `var` declaration's
-// annotated type within a block (recursing into nested blocks).
+// annotated type within a block, wherever it nests. The hand-rolled
+// statement recursion this replaced descended only into blocks, so it
+// missed a `var` in an else-if chain (an *ast.If sits directly in the
+// Else slot, not a Block) and in every expression-nested position — the
+// same class of gap #6996 found in resolveTypesInBlock, which is why
+// both now walk the tree the same way.
 func (c *checker) walkVarTypes(b *ast.Block, visit func(ast.Type, ast.Position)) {
 	if b == nil {
 		return
 	}
-	for _, st := range b.Stmts {
-		switch x := st.(type) {
-		case *ast.Var:
-			visit(x.Type, x.P)
-		case *ast.Block:
-			c.walkVarTypes(x, visit)
-		case *ast.If:
-			c.walkVarTypes(asBlock(x.Then), visit)
-			c.walkVarTypes(asBlock(x.Else), visit)
-		case *ast.While:
-			c.walkVarTypes(asBlock(x.Body), visit)
-		case *ast.Loop:
-			c.walkVarTypes(asBlock(x.Body), visit)
-		case *ast.For:
-			c.walkVarTypes(asBlock(x.Body), visit)
-		case *ast.Match:
-			for _, arm := range x.Arms {
-				c.walkVarTypes(arm.Body, visit)
-			}
+	ast.Walk(b, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok {
+			visit(v.Type, v.P)
 		}
-	}
+		return true
+	})
 }
 
 // mentionsSelf reports whether `Self` appears anywhere in a type —
@@ -5465,17 +5455,6 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 		}
 		return true
 	})
-}
-
-// asBlock turns a Stmt into a *Block where possible — used to
-// reuse walkVarTypes for the if/while/for body slots, which are
-// typed as Stmt but in practice always Block. Returns nil
-// otherwise so the caller skips.
-func asBlock(s ast.Stmt) *ast.Block {
-	if b, ok := s.(*ast.Block); ok {
-		return b
-	}
-	return nil
 }
 
 // blockDiverges reports whether every control-flow path
@@ -9920,8 +9899,10 @@ func (c *checker) errPayloadlessVariantBinder(pos ast.Position, name, enum, wher
 
 // checkTuplePatElem types tuple-pattern element k against the scrutinee's
 // element type and binds whatever it binds into armScope. It reports whether
-// the element is REFUTABLE: a literal element can make the arm fail to match,
-// a binder or `_` cannot, and that is what decides tuple-arm exhaustiveness.
+// the element is REFUTABLE: a literal or variant element can make the arm fail
+// to match, a binder or `_` cannot, and a nested tuple is refutable exactly
+// when one of its own elements is. That is what decides tuple-arm
+// exhaustiveness.
 //
 // Both tuple-match forms (statement and expression) route through here so the
 // element rules are stated once. They were verbatim copies before, which is
@@ -9929,6 +9910,9 @@ func (c *checker) errPayloadlessVariantBinder(pos ast.Position, name, enum, wher
 func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, bindingTypes []ast.Type, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
 	el := &elems[k]
 	bindingTypes[k] = elT
+	if el.Nested != nil {
+		return c.checkTuplePatNestedElem(pos, el, k, elT, s, armScope, seen)
+	}
 	if el.VariantName != "" {
 		c.checkTuplePatVariantElem(pos, el, k, elT, armScope, seen)
 		return true
@@ -9957,6 +9941,31 @@ func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, 
 	}
 	armScope.names[el.Name] = elT
 	return false
+}
+
+// checkTuplePatNestedElem validates a nested tuple pattern on element k
+// (`(a, (b, c))`) and binds whatever it binds into armScope. The element type
+// must be a tuple of the same arity; each nested element then goes back
+// through checkTuplePatElem, so every element rule — including this one —
+// applies at every depth. Refutable when any nested element is.
+func (c *checker) checkTuplePatNestedElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
+	tup, isTuple := elT.(ast.TupleType)
+	if !isTuple {
+		c.errfCode(pos, "E035", "nested tuple pattern on tuple element %d, but the element has type %s", k, elT)
+		return true
+	}
+	if len(el.Nested) != len(tup.Elems) {
+		c.errfCode(pos, "E035", "nested tuple pattern on element %d has %d elements, but that element is a tuple of %d", k, len(el.Nested), len(tup.Elems))
+		return true
+	}
+	el.NestedTypes = make([]ast.Type, len(el.Nested))
+	refutable := false
+	for j := range el.Nested {
+		if c.checkTuplePatElem(pos, el.Nested, el.NestedTypes, j, tup.Elems[j], s, armScope, seen) {
+			refutable = true
+		}
+	}
+	return refutable
 }
 
 // checkTuplePatVariantElem validates a variant sub-pattern on tuple element k

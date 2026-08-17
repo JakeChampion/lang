@@ -2703,8 +2703,9 @@ type Match struct {
 // TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
 // match arm — exactly one of: a binder name (binds the element in the
 // arm's scope), the `_` wildcard (element ignored), a literal (element
-// compared by equality), or a variant sub-pattern (element tested
-// against a variant tag, its payloads bound). See MatchArm.TupleElems.
+// compared by equality), a variant sub-pattern (element tested
+// against a variant tag, its payloads bound), or a nested tuple pattern
+// (element destructured recursively). See MatchArm.TupleElems.
 type TuplePatElem struct {
 	Name       string // binder; empty unless this is the binder form
 	IsWildcard bool   // `_` element
@@ -2725,6 +2726,15 @@ type TuplePatElem struct {
 	// per-payload load width.
 	VariantBindings     []string
 	VariantBindingTypes []Type
+	// Nested is a tuple pattern on the element itself — `(a, (b, c))` on
+	// a `(i32, (i32, string))` scrutinee. The element type must be a
+	// tuple of the same arity, and each entry follows the same element
+	// rules recursively, so nesting has no depth limit. NestedTypes is
+	// filled by the checker with the nested element types (parallel to
+	// Nested, the way MatchArm.BindingTypes parallels TupleElems) so the
+	// IR picks the right per-element load width. Nil for the other forms.
+	Nested      []TuplePatElem
+	NestedTypes []Type
 }
 
 // MatchArm is one pattern → body pair. The Bindings are the

@@ -1,0 +1,125 @@
+// A NESTED TUPLE pattern in a tuple ELEMENT: `(a, (b, c))`.
+//
+// The element grammar was binder / `_` / literal / variant sub-pattern; an
+// element can now be a tuple pattern of its own, recursively, so nesting has
+// no depth limit and every element rule applies at every depth.
+//
+// The lowering is where the work was. Both compilers addressed a tuple
+// element as one hop from the cached scrutinee pointer — add the element's
+// offset, load with the element's width — and a variant element's payload as
+// a second, hand-rolled hop. Nesting turns that into a PATH: every position
+// inside the box is a sequence of (offset, width) hops, so the binder, the
+// literal scratch local, the tag test and the payload bind all address
+// through one emitter and nesting is just another hop. The self-host reaches
+// the same place from the other side: its tuple match is a done-flag chain
+// built at parse time, so a nested element hoists an extra irrefutable
+// destructure of the element temp and the nested tests/binds then read those
+// temps like any other element.
+
+import "std/i32";
+
+enum Sh { A(i32), B, C(i32, i32) }
+enum Wrap { P((i32, (i32, i32))), Q }
+
+// The headline: binders at depth 2, mixed with a binder at depth 1.
+function add3(t: (i32, (i32, i32))): i32 {
+    match (t) {
+        (a, (b, c)) => { return a + b + c; },
+    }
+}
+
+// A LITERAL inside the nested element makes the arm refutable, so the tests
+// at both depths have to AND into one condition and a fallback arm is
+// required. The string literal also pins that the nested scratch local
+// settles the comparison the way a top-level element's does (OpStrEq, and
+// the two-word string ABI on the targets that use it).
+function classify(t: ((i32, string), (i32, i32))): i32 {
+    match (t) {
+        ((1, "a"), (b, c)) => { return b + c; },
+        ((1, s), (b, _)) => { return b + s.len(); },
+        ((n, "z"), (_, c)) => { return n * c; },
+        _ => { return 0 - 1; },
+    }
+}
+
+// Depth three, with wildcards discarding at two different levels.
+function deep(t: (i32, (i32, (i32, string)))): i32 {
+    match (t) {
+        (a, (_, (c, s))) => { return a + c + s.len(); },
+    }
+}
+
+// A VARIANT sub-pattern inside a nested element: the tag test happens at a
+// two-hop path and its payloads bind at a three-hop one.
+function tagged(t: (i32, (Sh, i32))): i32 {
+    match (t) {
+        (n, (A(x), y)) => { return n + x + y; },
+        (n, (B(), y)) => { return 100 + n + y; },
+        (n, (C(p, q), _)) => { return n + p * q; },
+        _ => { return 0 - 1; },
+    }
+}
+
+// A guard sees binds from every depth, and an `@` binding still names the
+// whole outer tuple.
+function guarded(t: (i32, (i32, i32))): i32 {
+    match (t) {
+        (a, (b, c)) when b > c => { return a + b; },
+        whole @ (_, (_, c)) => { return whole.0 + c; },
+    }
+}
+
+// Expression form: same element rules, arm bodies are expressions.
+function pick(t: ((i32, i32), (i32, i32))): i32 {
+    return match (t) {
+        ((0, b), (c, _)) => b * 10 + c,
+        ((a, _), (_, d)) => a + d,
+    };
+}
+
+// Nesting on BOTH elements at once, so two independent paths are walked in
+// one arm.
+function both(t: ((i32, i32), (i32, i32))): i32 {
+    match (t) {
+        ((a, b), (c, d)) => { return a * 1000 + b * 100 + c * 10 + d; },
+    }
+}
+
+// A nested tuple element inside a tuple sub-pattern in a PAYLOAD slot — the
+// two nesting forms composed. The payload slot's inner tuple match is built by
+// the same code path, so this comes along with the element grammar.
+function payload(w: Wrap): i32 {
+    match (w) {
+        P((a, (1, c))) => { return a + c; },
+        P((a, (b, c))) => { return a * b * c; },
+        Q => { return 0 - 1; },
+    }
+}
+
+function main(): i32 {
+    print(add3((1, (2, 3))).to_string());
+
+    print(classify(((1, "a"), (4, 5))).to_string());
+    print(classify(((1, "bb"), (4, 5))).to_string());
+    print(classify(((3, "z"), (4, 5))).to_string());
+    print(classify(((3, "q"), (4, 5))).to_string());
+
+    print(deep((1, (9, (2, "abc")))).to_string());
+
+    print(tagged((1, (Sh.A(5), 3))).to_string());
+    print(tagged((1, (Sh.B, 3))).to_string());
+    print(tagged((1, (Sh.C(6, 7), 3))).to_string());
+
+    print(guarded((1, (5, 2))).to_string());
+    print(guarded((1, (2, 5))).to_string());
+
+    print(pick(((0, 4), (5, 6))).to_string());
+    print(pick(((7, 4), (5, 6))).to_string());
+
+    print(both(((1, 2), (3, 4))).to_string());
+
+    print(payload(Wrap.P((2, (1, 5)))).to_string());
+    print(payload(Wrap.P((2, (3, 5)))).to_string());
+    print(payload(Wrap.Q).to_string());
+    return 0;
+}
