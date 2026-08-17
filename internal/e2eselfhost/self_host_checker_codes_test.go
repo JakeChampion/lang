@@ -1656,6 +1656,29 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// name-only type system), so both checkers agree the bundle is clean.
 		{"match-method-option-payload-assign-ok", "import \"std/string\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
 		{"match-method-option-payload-assign-array-ok", "import \"std/array\";\nfunction trig(base: i32): i32 { var result: i32 = 1; match (result.checked_mul(base)) { Some(v) => { result = v; }, None => { return 0; } } return result; }\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; return a.sum(); }\n"},
+		// #6933: an ASSOCIATED (receiver-less) trait function reached through a
+		// bound type parameter — `T.zero()` in std/num's `sum[T: Add + Zero]`.
+		// The object is a TYPE, not a value, so walking it reported E001
+		// "undefined name T" at every such site in std/num while the Go checker
+		// was clean — importing std/num at all poisoned the code set. Merely
+		// importing std/num also pulled `impl Iterator[i32] for Range` in via
+		// core/iter, whose generic-trait requirement signature the E021
+		// conformance check compared unsubstituted and always called a
+		// mismatch, so both diagnostics ride on this one case.
+		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
+		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [2, 3]; return num.product(xs); }\n"},
+		// The same shape written by the USER, so the bound comes from the
+		// program rather than from the imported module.
+		{"assoc-tp-user-generic-ok", "import \"std/num\";\npub function total[T: num.Add + num.Zero](xs: T[]): T { var acc: T = T.zero(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
+		// The gate is the BOUND, not "any name that looks like a type": a
+		// method no bound provides is still the E001 the Go checker reports.
+		{"assoc-tp-unbound-e001", "import \"std/num\";\npub function total[T: num.Add + num.Zero](xs: T[]): T { var acc: T = T.nope(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
+		// The CONCRETE spelling of the same call — what a monomorphised
+		// `T.zero()` becomes — on a primitive and on a user type. Both must
+		// resolve AND type: an unknown result would trip the self-host's
+		// uncoded over-reject in a non-generic body.
+		{"assoc-concrete-primitive-ok", "import \"std/num\";\nfunction main(): i32 { var z: i32 = i32.zero(); return z; }\n"},
+		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { var p: P = P.zero(); return p.x; }\n"},
 	}
 
 	for _, tc := range progs {

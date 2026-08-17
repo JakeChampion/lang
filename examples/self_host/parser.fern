@@ -418,20 +418,17 @@ pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias
 // the trait's declaration (Self resolves to the impl type at the check site).
 pub struct TraitReq { trait_name: string, methods: string[], req_sigs: FuncDecl[], supertraits: string[] }
 
-// TraitDecl is the `trait` block as WRITTEN, retained for the formatter alone
-// (#6773). The compile path reads two DERIVED views of it and neither can be
-// printed from: TraitReq keeps the abstract method set for E021, with names
-// simplified past any `mod.` qualifier, and TraitDefault keeps the bodied
-// methods so they can be synthesised onto impls that omit them. Between them
-// they drop the `pub`, the type parameters, the source position, and the order
-// the methods were written in — so a formatted file lost its `trait` blocks
-// entirely and every `impl` of one then named a trait the file no longer
-// declared. A method's body is empty when it was written abstract.
-//
-// It rides beside Module rather than on it: 101 Module literals across the
-// self-host would each have to carry a list none of them reads, which is the
-// #6693 shape. The formatter already takes its comment and blank-line maps the
-// same way.
+// TraitDecl is the `trait` block as WRITTEN, retained for the formatter
+// (#6773) and, since it is the only record of a trait's TYPE PARAMETERS, for
+// the E021 conformance check. The compile path reads two DERIVED views of it
+// and neither can be printed from: TraitReq keeps the abstract method set for
+// E021, with names simplified past any `mod.` qualifier, and TraitDefault
+// keeps the bodied methods so they can be synthesised onto impls that omit
+// them. Between them they drop the `pub`, the type parameters, the source
+// position, and the order the methods were written in — so a formatted file
+// lost its `trait` blocks entirely and every `impl` of one then named a trait
+// the file no longer declared. A method's body is empty when it was written
+// abstract.
 pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean }
 
 // ImplDecl is an `impl` block as WRITTEN, retained for the formatter (#6783) for
