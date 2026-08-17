@@ -674,6 +674,38 @@ function main(): i32 {
     if (e2.code.len() != 7 || e2.code[0] != 72 || e2.code[1] != 139 || e2.code[2] != 5) { return 13; }
     e2 = x86_mov_store_rip_label(e2, x86_rcx(), "G");
     if (e2.code[7] != 72 || e2.code[8] != 137 || e2.code[9] != 13) { return 14; }
+
+    // A repeated label name resolves to its FIRST definition. The label table
+    // is bucket-indexed, and a bucket that chained newest-first would answer
+    // with the second one — so this pins the insertion-order walk, not a
+    // property of the input.
+    var f: X86Asm = x86_asm_new();
+    f.code = x86_ret(f.code);
+    f = x86_label(f, "dup");
+    f.code = x86_ret(f.code);
+    f = x86_label(f, "dup");
+    if (x86_label_off(f, "dup") != 1) { return 15; }
+
+    // 676 names spread across the buckets: every one must still be found, and
+    // a name that was never placed must still miss. One byte of .text per
+    // label, so "aa" sits at 1 and the k-th name at k+1.
+    var g: X86Asm = x86_asm_new();
+    var alpha: string = "abcdefghijklmnopqrstuvwxyz";
+    var i: i32 = 0;
+    while (i < 26) {
+        var j: i32 = 0;
+        while (j < 26) {
+            g.code = g.code.append(0);
+            g = x86_label(g, alpha[i:i + 1] + alpha[j:j + 1]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if (g.lab_names.len() != 676) { return 16; }
+    if (x86_label_off(g, "aa") != 1) { return 17; }
+    if (x86_label_off(g, "zz") != 676) { return 18; }
+    if (x86_label_off(g, "mm") != 325) { return 19; }
+    if (x86_label_off(g, "zzz") != (0 - 1)) { return 20; }
     return 0;
 }
 `
