@@ -413,13 +413,68 @@ answer. A second index over the same array, keyed on the substring from the
 LAST `__method_Array_` occurrence, took the self-compile to **1 m 31 s**
 (user 74.4 s → 57.9 s).
 
-**What is next.** User time is now 57.9 s of a 91 s wall — **36% of the run is
-SYSTEM time**, and it has not moved once across every change in this sequence
-(35.6 s → 33.3 s while user time nearly halved). That is the allocator and its
-page faults, not anything a leaf profile of user code will show; it is now the
-largest single block. Item 5 (symbol interning, #4394) should be re-measured on
-this subject before scoping — a third of what `strcmp` was has already gone with
-the two indexes.
+## 4d. The kernel third: zeroing, not page faults
+
+User time is now 57.9 s of a 91 s wall — **36% of the run is SYSTEM time**, and
+it did not move once across this whole sequence (35.6 s → 33.3 s while user time
+nearly halved). It is now the largest single block, and no leaf profile of user
+code will show it.
+
+It is not syscalls: `strace -c` over a whole self-compile counts **29 syscalls**,
+0.9 ms, one of them the arena's `mmap`. It is the arena's first-touch faults —
+1,414,760 minor, 0 major, against a resident set that climbs past 6.5 GB.
+
+**Huge pages are not the fix, and the experiment is worth not repeating.** THP
+is `[madvise]` on typical hosts, so the arena gets 4 KiB pages; adding
+`madvise(base, len, MADV_HUGEPAGE)` after the mmap works exactly as advertised —
+`AnonHugePages` goes 0 → 6.7 GB and the fault count **1,414,760 → 3,562, a 397x
+cut**. System time moved **0.2 s**. Wall clock improved ~2.5 s (2.7%, consistent
+over two A/B rounds) and peak RSS rose 5.68 GB → 6.72 GB from 2 MiB rounding.
+
+So the kernel time is not fault *count*, it is the **zeroing** the kernel owes
+for every fresh page — identical work whether it arrives as 1.4 M 4-KiB pages or
+3.5 k 2-MiB ones. ~6.7 GB at this container's memory bandwidth is the whole
+34 s. The lever is allocating less, not mapping differently. (The 2.7% is real
+but it buys a global +18% RSS on every binary including the small CLI tools, so
+it is a project trade rather than a codegen tweak — not taken here.)
+
+**Where the allocation is.** `__heap_bump_bytes()` bracketed around the driver's
+phases, whole compiler compiling itself:
+
+| phase | cumulative | of which |
+|---|---|---|
+| lex + parse + flatten (`load_bundle`) | 383 MB | 378 MB |
+| type check | 1.470 GB | 1.087 GB |
+| `annotate_module` | 1.520 GB | 50 MB |
+| `module_with_builtins` | 1.534 GB | 14 MB |
+| **`asm_ir.emit_module_or_error`** | **9.628 GB** | **8.094 GB** |
+| in-process assemble + link | 10.116 GB | 488 MB |
+
+**80% of every byte the compiler bumps is the IR lowering + x86 emit.** It is
+not the output text: the emitted assembly is ~19 MB, so even a doubling string
+builder accounts for under 40 MB of it.
+
+One level in, with the same probe inside `emit_module_ir_gated`:
+
+| step | of the emit's 8.094 GB |
+|---|---|
+| `script_normalized` | 264 MB |
+| `infer_ret_types_module` | ~0 |
+| side tables (`array_ret_fns_of`, `borrowable_params_interproc`, `fn_sigs*`, `consume_safe_params`) | 147 MB |
+| **the `irlower.lower_func` loop** | **6.550 GB** |
+| `emit_module_ir_unit` (IR → asm text) | 1.132 GB |
+
+So **65% of the whole compiler's allocation is one loop**: lowering each
+function's AST to IR ops. The side tables — the interprocedural fixpoints §5
+flags as repeated whole-program walks — are 147 MB between them, i.e. not where
+the memory goes either.
+
+That is roadmap goal 2's territory (the self-host's memory management) rather
+than another index, and it should be scoped by measuring allocation per lowered
+function before anything is changed.
+
+Item 5 (symbol interning, #4394) should be re-measured on this subject before
+scoping: a third of what `strcmp` was has already gone with the two indexes.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
