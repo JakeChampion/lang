@@ -14,9 +14,15 @@ import (
 // shares one pool at the end of .text and the early functions' loads cannot
 // reach it.
 //
-// nFuncs*nVars is sized so the emitted .text lands around 1.3 MB — ~30% past
-// the reach, enough that the fixture keeps failing as codegen shifts, without
-// making the emit expensive (~10s).
+// nFuncs*nVars is sized so the emitted .text lands well past the reach, with
+// enough margin that the fixture keeps failing as codegen shifts.
+//
+// "~30% past" was the original margin and it did not survive one codegen
+// improvement: the arm64 push/pop peephole cut 18% of emitted lines and dropped
+// this fixture to 237,639 words, inside the 262,143-word reach, at which point
+// it was measuring nothing. The margin is wider now, and the test logs its word
+// count on success so the drift is visible before it becomes a failure rather
+// than after.
 func litPoolFixture(nFuncs, nVars int) (src string, wantExit int) {
 	var b strings.Builder
 	sum := 0
@@ -64,7 +70,7 @@ func TestSelfHostArm64LitPoolRange(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
 
-	const nFuncs, nVars = 400, 120
+	const nFuncs, nVars = 400, 190
 	src, wantExit := litPoolFixture(nFuncs, nVars)
 	asm, progDir := compileFilesModload(t, x86runner, driverBin,
 		map[string]string{"main.fern": src}, "-target", "arm64-linux")
@@ -88,10 +94,15 @@ func TestSelfHostArm64LitPoolRange(t *testing.T) {
 		}
 	}
 	words += 2 * strings.Count(asm, ", =")
-	if words <= 262143 {
+	const ldrLiteralReach = 262143
+	if words <= ldrLiteralReach {
 		t.Fatalf("fixture emits %d words of .text, inside the %d-word LDR-literal reach — "+
-			"it no longer exercises the pool-distance bug; raise nFuncs/nVars", words, 262143)
+			"it no longer exercises the pool-distance bug; raise nFuncs/nVars", words, ldrLiteralReach)
 	}
+	// Logged on success too: this fixture went vacuous once because the only
+	// way to see the number was to make it fail.
+	t.Logf("fixture .text = %d words, %.1f%% past the %d-word LDR-literal reach",
+		words, 100*float64(words-ldrLiteralReach)/float64(ldrLiteralReach), ldrLiteralReach)
 	if n := strings.Count(asm, "\n    .ltorg\n"); n < nFuncs {
 		t.Errorf("emitted asm has %d `.ltorg` flushes for %d functions — "+
 			"asm_arm64_ir must flush the literal pool at every function boundary", n, nFuncs)
