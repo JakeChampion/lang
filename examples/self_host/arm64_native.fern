@@ -4070,21 +4070,31 @@ function macho_text_off(has_data: boolean): i32 {
     return 32 + macho_load_cmds_len(has_data);
 }
 
+// macho_needs_data decides whether the image gets a __DATA segment. Zero-init
+// bss counts: it needs mapped writable pages just as initialized data does,
+// and it is the segment's vmsize rather than its filesize that covers it.
+//
+// Every layout decision keyed on this must use this one function — the
+// address of the first code byte moves with it (a __DATA segment adds its
+// load commands ahead of the code), so a caller disagreeing about whether
+// there is data disagrees about every address in the image.
+function macho_needs_data(data_len: i32, bss: i32): boolean {
+    return data_len > 0 || bss > 0;
+}
+
 // macho_text_vaddr returns the address of the first code byte (== entry)
-// for the given code/data sizes.
-pub function macho_text_vaddr(text_len: i32, data_len: i32): i64 {
-    var has_data: boolean = data_len > 0;
-    return macho_base_vaddr() + (macho_text_off(has_data) as i64);
+// for the given code/data/bss sizes.
+pub function macho_text_vaddr(text_len: i32, data_len: i32, bss: i32): i64 {
+    return macho_base_vaddr() + (macho_text_off(macho_needs_data(data_len, bss)) as i64);
 }
 
 // macho_data_vaddr returns the __DATA segment base for the given
-// code/data sizes (0 if there is no data).
-pub function macho_data_vaddr(text_len: i32, data_len: i32): i64 {
-    if (data_len <= 0) {
+// code/data/bss sizes (0 when the image has neither).
+pub function macho_data_vaddr(text_len: i32, data_len: i32, bss: i32): i64 {
+    if (!macho_needs_data(data_len, bss)) {
         return 0;
     }
-    var has_data: boolean = true;
-    var text_off: i32 = macho_text_off(has_data);
+    var text_off: i32 = macho_text_off(true);
     var text_vmsize: i32 = macho_align_up(text_off + text_len, macho_page_size());
     return macho_base_vaddr() + (text_vmsize as i64);
 }
@@ -4361,10 +4371,13 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // affected symbols sit at the tail, the failure looks like a bug in
 // whatever runtime helper happens to touch one first.
 //
-// bss is only honoured when there IS data, matching macho_data_vaddr's
-// has_data test so the linker and the container agree on the layout. The
-// arm64 emitter always emits initialized data (rodata pools + globals)
-// alongside its bss, so a bss-only image cannot arise here.
+// bss alone is enough to get a __DATA segment (macho_needs_data), and the
+// linker uses the same test so the two agree on the layout. A bss-only image
+// is reachable: a program that touches __fern_scratch but has no initialized
+// data emits one, and while the arm64 emitter's unconditional f64 constant
+// pool masked that, gating the pool on its need made it ordinary. Without
+// this, such an image gets no writable segment at all and the first write to
+// a .bss symbol faults.
 //
 // `rebase_offs` names every 8-byte slot in `data` that holds an ABSOLUTE
 // address (arm64_gas_rebase_offs — the assembler's `.quad <symbol>` slots).
@@ -4372,9 +4385,9 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
 pub function macho_executable(text: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
-    var has_data: boolean = data.len() > 0;
     var text_len: i32 = text.len();
     var data_len: i32 = data.len();
+    var has_data: boolean = macho_needs_data(data_len, bss);
     var text_off: i32 = macho_text_off(has_data);
     var page: i32 = macho_page_size();
     var text_vmsize: i32 = macho_align_up(text_off + text_len, page);

@@ -98,8 +98,8 @@ function main(): i32 {
 
     var tlen: i32 = code.len();
     var dlen: i32 = data.len();
-    var text_vaddr: i64 = macho_text_vaddr(tlen, dlen);
-    var data_vaddr: i64 = macho_data_vaddr(tlen, dlen);
+    var text_vaddr: i64 = macho_text_vaddr(tlen, dlen, 0);
+    var data_vaddr: i64 = macho_data_vaddr(tlen, dlen, 0);
     var answer: i64 = data_vaddr;       // answer is at __DATA offset 0
     var adrp_at: i64 = text_vaddr;      // adrp is at __TEXT offset 0
     code = arm64_patch_adrp(code, 0, arm64_page_delta(answer, adrp_at));
