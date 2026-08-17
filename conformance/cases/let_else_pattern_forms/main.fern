@@ -1,0 +1,43 @@
+// `let … else` beyond a plain variant binding: an `@` binding over the
+// matched value, and or-patterns whose alternatives share the success
+// path. The head goes through the same pattern parser the match arms and
+// `if let` use, so these are the forms it inherits.
+//
+// A conformance case rather than a Go-inline test so the SELF-HOST
+// compiler is held to it on every target: the head parsed its own
+// bindings until recently, and nothing else gates a form the two
+// compilers read differently.
+//
+// The total stays under 126: WASI cannot express an exit code at or above
+// that, so the wasm leg would report 1 for anything larger.
+enum E { Aa(i32), Bb(i32), Cc(i32) }
+
+function whole(e: E): i32 {
+    match (e) {
+        Aa(v) => { return v; },
+        Bb(v) => { return v * 2; },
+        Cc(v) => { return v * 3; },
+    }
+}
+
+// `@` binds the whole value alongside the payload.
+function at_head(e: E): i32 {
+    let w @ Aa(x) = e else { return 30; };
+    return whole(w) + x;
+}
+
+// Or-pattern: either alternative continues into the rest of the block.
+function or_head(e: E): i32 {
+    let Aa(x) | Bb(x) = e else { return 15; };
+    return x;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + at_head(E.Aa(4));   // 8   (4 + 4)
+    total = total + at_head(E.Bb(1));   // 38 — else path
+    total = total + or_head(E.Aa(3));   // 41
+    total = total + or_head(E.Bb(5));   // 46
+    total = total + or_head(E.Cc(9));   // 61 — else path
+    return total;
+}

@@ -3692,13 +3692,22 @@ pub function is_builtin_pattern(name: string): boolean {
 // is_builtin_variant_pattern answers the question the match lowering actually
 // has: does this arm name a BUILT-IN variant, or a user enum's variant that
 // merely shares the name? A user enum may declare `Ok` / `Some` / `Err` /
-// `None`, and the name alone cannot tell them apart. The parser desugars each
-// user variant into a struct carrying `enum_owner` while the builtins are not
-// declared structs, so ownership separates them — the same test the qualified
-// `E.Ok` path already relies on.
-pub function is_builtin_variant_pattern(structs: parser.StructDecl[], name: string): boolean {
+// `None`, and the name alone cannot tell them apart.
+//
+// Ownership alone cannot either, and getting that wrong is worse than the bug
+// it fixes: once ANY enum in the program declares `Some`, a name-owned test
+// sends every `Some` arm down the user path — including one matching a genuine
+// `Option`, which then silently answers wrong.
+//
+// So it takes the SCRUTINEE. `scrut_struct` is the scrutinee's struct/enum type
+// (`expr_struct_type`), which is empty for a real Option/Result — those locals
+// carry an `opt_type` instead. A shadowing user variant is preferred only when
+// the value being matched is a struct-typed enum value; anything else keeps the
+// builtin tag-test shape.
+pub function is_builtin_variant_pattern(structs: parser.StructDecl[], name: string, scrut_struct: string): boolean {
     if (!is_builtin_pattern(name)) { return false; }
-    return variant_enum_owner(structs, name) == "";
+    if (variant_enum_owner(structs, name) == "") { return true; }
+    return scrut_struct == "";
 }
 
 pub function decl_field_count(structs: parser.StructDecl[], struct_name: string): i32 {
@@ -19296,7 +19305,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
         }
         match (arm.pattern) {
             parser.PatVariant(pv) => {
-                if (is_builtin_variant_pattern(ms.structs, pv.type_name)) {
+                if (is_builtin_variant_pattern(ms.structs, pv.type_name, expr_struct_type(m.scrutinee, ms))) {
                     // A `true`/`false` boolean pattern: the scrutinee is
                     // already a 0/1 value in scrut_slot (no tag to extract),
                     // so the arm tests it directly — skip on mismatch, run the

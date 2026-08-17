@@ -83,6 +83,34 @@ function main(): i32 { var e: E = E.None; match (e) { E.None => { return 7; }, _
 	{"builtin-none-return", `function f(): Option[i32] { return None; }
 function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } }`},
 	{"builtin-none-var-init", `function main(): i32 { var o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
+
+	// The control that matters most, and the one the first cut of this fix
+	// did not have: a GENUINE Option matched while a shadowing user enum is
+	// merely DECLARED elsewhere in the program.
+	//
+	// Deciding the builtin-vs-user question by variant ownership alone is not
+	// enough — ownership is a property of the name across the whole module, so
+	// one `enum O2 { Some(i32), None }` anywhere sent every `Some` arm down the
+	// user path, including these, which then answered wrong with no diagnostic.
+	// The scrutinee is what settles it: a real Option/Result local carries an
+	// `opt_type` and no struct type.
+	{"genuine-option-with-shadow-declared", `enum O2 { Some(i32), None }
+function main(): i32 { var r: Option[i32] = Option.Some(3); match (r) { Some(v) => { return v; }, None => { return 99; } } }`},
+	{"genuine-option-none-with-shadow-declared", `enum O2 { Some(i32), None }
+function main(): i32 { var r: Option[i32] = Option.None; match (r) { Some(v) => { return v; }, None => { return 99; } } }`},
+	// The constructions are qualified because `R2` makes the bare names
+	// ambiguous (E036) — the arm patterns need no qualifying, since the
+	// scrutinee's type settles them, which is the asymmetry under test.
+	{"genuine-result-with-shadow-declared", `enum R2 { Ok(i32), Err(i32) }
+function f(x: i32): Result[i32, string] { if (x > 0) { return Result.Ok(x); } return Result.Err("neg"); }
+function main(): i32 { match (f(4)) { Ok(v) => { return v; }, Err(e) => { return 99; } } }`},
+	// Both kinds of enum matched in ONE program, so the two paths have to
+	// coexist rather than one winning globally.
+	{"user-enum-and-genuine-option-together", `enum O2 { Some(i32), None }
+function main(): i32 { var o: O2 = O2.None; var r: Option[i32] = Option.Some(3); var t: i32 = 0;
+    match (o) { O2.Some(n) => { t = n; }, O2.None => { t = 7; } }
+    match (r) { Some(v) => { t = t + v; }, None => { t = t + 99; } }
+    return t; }`},
 }
 
 // Bare-name construction of a shadowing payload-less variant — `var e: E = None`

@@ -1,0 +1,37 @@
+// The pattern forms `if let` accepts beyond a plain variant binding:
+// or-patterns, and struct patterns with shorthand, `field: local`
+// renaming, `..` rest and an `@` binding over the whole struct.
+//
+// Written as a conformance case rather than a Go-inline test so the
+// SELF-HOST compiler is held to it on every target, not just x86-64 —
+// these forms reached the self-host parser only recently, and a form the
+// two compilers read differently is gated by nothing else.
+//
+// The total stays under 126: WASI cannot express an exit code at or above
+// that, so the wasm leg would report 1 for anything larger.
+enum E { Aa(i32), Bb(i32), Cc(i32) }
+struct P { x: i32, y: i32 }
+struct P3 { x: i32, y: i32, z: i32 }
+
+// Or-pattern: both alternatives share the then-block and the binding.
+function or_head(e: E): i32 {
+    if let Aa(v) | Bb(v) = e { return v; }
+    return 20;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    total = total + or_head(E.Aa(1));      // 1
+    total = total + or_head(E.Bb(2));      // 3
+    total = total + or_head(E.Cc(9));      // 23 — falls past the if-let
+
+    var p: P = P { x: 3, y: 4 };
+    if let P { x, y } = p { total = total + x + y; }               // 30
+    if let P { x: a, y: b } = p { total = total + a * 10 + b; }    // 64
+    if let w @ P { x, y } = p { total = total + w.x + y; }         // 71
+
+    var q: P3 = P3 { x: 5, y: 6, z: 7 };
+    if let P3 { x, .. } = q { total = total + x; }                 // 76
+
+    return total;
+}
