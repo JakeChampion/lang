@@ -434,18 +434,14 @@ function main(): i32 {
         return 0;
     }
 
-    // Immutability gate: reject the immutable-data cycle rules
-    // (E048 field assign / E049 capture write-back / E055 discarded pure
-    // result / E056 subscript assign / E057 Cell[composite] element) before
-    // codegen — the self-host
-    // enforcement of the immutable-data model (docs/IMMUTABILITY-MIGRATION-
-    // PLAN.md §4). Filtered to the cycle rules so the rest of the partial
-    // checker can't false-positive-reject a valid program (or this very
-    // source under fixpoint). A hit prints the diagnostic to stderr and
-    // fails the build.
-    var imm: checker.Diag[] = checker.filter_immutability(checker.check_module(merged).diags);
-    if (imm.len() > 0) {
-        eprint(checker.format_diags(imm));
+    // Build gate: reject a program the checker rejects before codegen, so this
+    // driver is not more permissive than `-check` or the native compiler
+    // (#6961). checker.is_build_gate_code decides the set — every coded
+    // diagnostic except the partial-port rules measured to false-positive.
+    // A hit prints the diagnostic to stderr and fails the build.
+    var gated: checker.Diag[] = checker.filter_build_gate(checker.check_module(merged).diags);
+    if (gated.len() > 0) {
+        eprint(checker.format_diags(gated));
         return 1;
     }
 
