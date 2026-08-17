@@ -73,8 +73,15 @@ runs:
           echo "ld.lld already present: $(ld.lld --version | head -1)"
           exit 0
         fi
-        sudo apt-get update -qq && sudo apt-get install -y -qq lld || {
-          echo "lld install failed; driver links fall back to bfd" >&2
+        # A FAILED install is tolerable — the fallback below links with bfd. A
+        # HUNG one was not: apt stalling on a mirror holds the step until the
+        # JOB's timeout-minutes kills it, which reports every real step as
+        # `skipped` and the job as `cancelled` rather than as a test failure.
+        # `timeout` turns the hang back into the failure this fallback already
+        # handles. It runs under sudo, not over it, so the signal reaches apt
+        # rather than the sudo wrapper.
+        sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq lld || {
+          echo "lld install failed or timed out; driver links fall back to bfd" >&2
           exit 0
         }
         command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
