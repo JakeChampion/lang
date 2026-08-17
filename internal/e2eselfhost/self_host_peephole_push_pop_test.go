@@ -131,7 +131,6 @@ func TestSelfHostPeepholePushPopX86_64(t *testing.T) {
 		})
 	}
 
-
 	// The fold is not allowed to eat a `pushq` that sets up a stack argument.
 	// Those are consumed by a `call`, so they must survive — if the pass ever
 	// grew a window that reached past intervening instructions, this is what
