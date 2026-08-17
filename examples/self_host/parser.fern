@@ -4658,6 +4658,45 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         // has no parenthesised condition.
         if (p.peek_keyword() == "let") {
             p = p.advance();  // consume `let`
+            // A STRUCT-pattern head (`if let P { x, y } = e`) takes the
+            // field-bind flag chain instead, the same build_struct_match the
+            // match arms use — parse_pattern's `IDENT {` is the record-form
+            // VARIANT pattern, a different shape. `structnames` is what tells
+            // the two apart, exactly as is_struct_pattern_arm does for arms.
+            // The pattern is irrefutable, so the wildcard arm carrying the
+            // else is unreachable; it is still emitted so an `else` written
+            // here parses and the shape matches the refutable path.
+            if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
+                var ils_line: i32 = p.peek_line();
+                var ils_col: i32 = p.peek_col();
+                var ils_at: string = "";
+                if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
+                    ils_at = p.peek_ident();
+                    p = p.advance();
+                    p = p.advance();
+                }
+                var (ils_binds, ils_fields, ils_pp) = parse_struct_arm_pattern(p);
+                p = ils_pp;
+                if (p.peek_punct() == "=") { p = p.advance(); }
+                var ils_saved: boolean = p.no_struct;
+                var (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
+                p = (ils_sp).with_no_struct(ils_saved);
+                var (ils_then, ils_tp) = parse_block(p);
+                p = ils_tp;
+                var ils_else: Stmt[] = [];
+                if (p.peek_keyword() == "else") {
+                    p = p.advance();
+                    var (ils_eb, ils_ep) = parse_block(p);
+                    p = ils_ep;
+                    ils_else = ils_eb;
+                }
+                var ils_arms: StructArm[] = [];
+                ils_arms = ils_arms.append(StructArm { is_wild: false, binds: ils_binds, fields: ils_fields, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+                var ils_nb: string[] = [];
+                var ils_nf: string[] = [];
+                ils_arms = ils_arms.append(StructArm { is_wild: true, binds: ils_nb, fields: ils_nf, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+                return (build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), p);
+            }
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);
             p = ilpat_p;
             // Or-patterns: `if let A(x) | B(x) = e { … }` — one arm per
