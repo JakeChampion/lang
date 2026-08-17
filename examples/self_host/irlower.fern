@@ -51695,7 +51695,7 @@ function pat_variant_payload_field_s(pv: parser.PatVariant, name: string, struct
 // function call (`for x in s.get()`, `match (pop(i)) { … }`): a call binder
 // used to resolve "" and decline the closure lift (#5193 / #5200). Returns ""
 // when no matching decl is found (a miss only declines the lift).
-function callee_ret_type(mfuncs: parser.FuncDecl[], recv_ty: string, fname: string): string {
+function callee_ret_type(mfuncs: MFuncs, recv_ty: string, fname: string): string {
     var base: string = recv_ty;
     var bi: i32 = 0;
     while (bi < recv_ty.len()) {
@@ -51703,17 +51703,17 @@ function callee_ret_type(mfuncs: parser.FuncDecl[], recv_ty: string, fname: stri
         bi = bi + 1;
     }
     var i: i32 = 0;
-    while (i < mfuncs.len()) {
-        if (mfuncs[i].name == fname) {
-            if (recv_ty.len() == 0 && mfuncs[i].receiver_type.len() == 0) { return mfuncs[i].ret_type; }
-            if (recv_ty.len() > 0 && mfuncs[i].receiver_type == base) { return mfuncs[i].ret_type; }
+    while (i < mfuncs.decls.len()) {
+        if (mfuncs.decls[i].name == fname) {
+            if (recv_ty.len() == 0 && mfuncs.decls[i].receiver_type.len() == 0) { return mfuncs.decls[i].ret_type; }
+            if (recv_ty.len() > 0 && mfuncs.decls[i].receiver_type == base) { return mfuncs.decls[i].ret_type; }
         }
         i = i + 1;
     }
     return "";
 }
 
-function cap_type(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
+function cap_type(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): string {
     return cap_type_at(name, fd, 4, structs, mfuncs);
 }
 
@@ -51784,7 +51784,7 @@ function cap_local_init(body: parser.Stmt[], name: string): parser.Expr {
 // produces a module the loader rejects, or an `indirect call type mismatch` at
 // runtime. Copy where possible, reconstruct only from an unambiguous source,
 // decline otherwise.
-function cap_param_for(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.ParamDecl {
+function cap_param_for(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): parser.ParamDecl {
     var declined: parser.ParamDecl = parser.ParamDecl { name: name, type_name: "", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
     var pi: i32 = 0;
     while (pi < fd.params.len()) {
@@ -51810,8 +51810,8 @@ function cap_param_for(name: string, fd: parser.FuncDecl, structs: parser.Struct
                     if (mkid.name.len() <= 8 || mkid.name[0:8] != "__mkclo$") { return declined; }
                     var tgt: string = mkid.name[8 : mkid.name.len()] + "";
                     var fi: i32 = 0;
-                    while (fi < mfuncs.len()) {
-                        if (mfuncs[fi].name == tgt) { return fn_param_from_func(name, mfuncs[fi], 1); }
+                    while (fi < mfuncs.decls.len()) {
+                        if (mfuncs.decls[fi].name == tgt) { return fn_param_from_func(name, mfuncs.decls[fi], 1); }
                         fi = fi + 1;
                     }
                     return declined;
@@ -51825,7 +51825,7 @@ function cap_param_for(name: string, fd: parser.FuncDecl, structs: parser.Struct
     return declined;
 }
 
-function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
+function cap_type_at(name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: MFuncs): string {
     // The receiver binds like a param (see lambda_captures), so resolve it first.
     if (fd.receiver_name.len() > 0 && fd.receiver_name == name) { return fd.receiver_type; }
     var pi: i32 = 0;
@@ -51890,7 +51890,7 @@ function map_kv_type(mty: string, want_key: boolean): string {
     return inner[vstart : inner.len()] + "";
 }
 
-function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
+function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: MFuncs): string {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
@@ -52125,7 +52125,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
 // other pointer-shaped type, so declining it only forced the module onto the
 // legacy AST path, which miscompiles the capturing-tuple shape). Every other
 // operator still requires both sides i32.
-function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): string {
+function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: MFuncs): string {
     var lt: string = lit_init_type(e);
     if (lt.len() > 0) { return lt; }
     if (depth <= 0) { return ""; }
@@ -52384,7 +52384,7 @@ struct ClosureLift { body: parser.Stmt[], acc: LiftAcc, changed: boolean }
 // try_lift_binding attempts to lift the capturing lambda bound at body[idx] to
 // fname. Returns changed=true with the rewritten body + appended lifted fn when
 // every guard holds, else the inputs unchanged.
-function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): ClosureLift {
+function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: parser.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): ClosureLift {
     var caps: string[] = lambda_captures(lam, fd);
     // A capture-FREE lambda binding (`var f = function(x){…}; f(a)`) is lifted
     // the same way, with no capture args — `f(a)` becomes a direct call to the
@@ -52472,7 +52472,7 @@ function cl_replace_at(body: parser.Stmt[], at: i32, ns: parser.Stmt): parser.St
 // capturing closure (`while (…) { var f = function(n){ return n + base; }; …
 // f(i) … }`) was never lifted and the whole module fell to the AST path
 // (correct, but off the IR path — the loop-local capturing-closure IR gap).
-function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): ClosureLift {
+function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): ClosureLift {
     var assigns: string[] = body_assign_targets(body);
     var i: i32 = 0;
     while (i < body.len()) {
@@ -52578,7 +52578,7 @@ function cap_slot_ok(t: string): boolean {
 // structural, so the call inside the hoisted body needs the widths to pick its
 // type and to push its arguments (#6862). A fn capture whose signature
 // cap_param_for cannot recover declines, leaving the module on its honest bail.
-function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): HoistResult {
+function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): HoistResult {
     var none: parser.FuncDecl = fd;
     var caps: string[] = lambda_captures(lam, fd);
     if (caps.len() == 0) { return HoistResult { func: none, ok: false }; }
@@ -52622,7 +52622,7 @@ function make_clo_func(lam: parser.ExprLambda, cloname: string, fd: parser.FuncD
 // lambda body to `<fd>$clo(__env: i32[], origparams…)` via make_clo_func (each
 // i32 capture read from the env box). The lambda STAYS at the return site —
 // irlower lowers it to a make_closure box (const_func(<fd>$clo) + caps → i32[]).
-function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): HoistResult {
+function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): HoistResult {
     var none: parser.FuncDecl = fd;
     if (fd.body.len() == 0) { return HoistResult { func: none, ok: false }; }
     match (fd.body[fd.body.len() - 1]) {
@@ -52662,7 +52662,7 @@ struct InlineCloRes { expr: parser.Expr, funcs: parser.FuncDecl[], counter: i32 
 // try_inline_closure attempts to hoist one capturing inline lambda `lam` found in
 // aggregate position. On success returns the `__mkclo$<name>(caps…)` marker plus
 // the hoisted function appended; on decline returns the lambda unchanged.
-function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
+function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     var caps: string[] = lambda_captures(lam, fd);
     if (caps.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
     var cloname: string = fd.name + "$clo" + util.i32_to_string(counter);
@@ -52712,12 +52712,12 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
 // p1…); }`, reusing the target function's parameter list / return type (looked
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails to AST.
-function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.FuncDecl[]): HoistResult {
+function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
     var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: true };
     var fi: i32 = 0;
-    while (fi < mfuncs.len()) {
-        if (mfuncs[fi].name == fnname && mfuncs[fi].receiver_type.len() == 0) {
-            var tgt: parser.FuncDecl = mfuncs[fi];
+    while (fi < mfuncs.decls.len()) {
+        if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
+            var tgt: parser.FuncDecl = mfuncs.decls[fi];
             var ps: parser.ParamDecl[] = [parser.ParamDecl { name: "__env", type_name: "i32[]", own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: parser.Expr[] = [];
             var pj: i32 = 0;
@@ -52755,7 +52755,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: parser.F
 // / non-i32-capture lambda) declines: the value is returned unchanged so the
 // module bails to AST (correctness preserved). The marker arg list is empty for
 // the wrap cases, so __mkclo$ lowering emits a 1-slot box [const_func($wrapN)].
-function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloRes {
     match (e) {
         parser.ExprLambda(lam) => {
             var caps: string[] = lambda_captures(lam, fd);
@@ -53026,7 +53026,7 @@ function iife_arm_lambda_captures_in(stmts: parser.Stmt[], fd: parser.FuncDecl):
 // Only the condition / scrutinee is walked, and only through the ordinary
 // expression lift: the returns belong to the paths that own them, and running
 // both over the same node would box an arm value twice.
-function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloStmts {
+function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
@@ -53066,7 +53066,7 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
 // try_fn_field_value — box_iife_arm_array_elems one container in, for an IIFE
 // whose arms yield the fn value itself rather than an array of them. A nested
 // IIFE arm recurses through try_fn_field_value's own IIFE case.
-function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloStmts {
+function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
@@ -53106,7 +53106,7 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
 // arr_elem_forces_box reports whether an array element makes the whole literal an
 // env-box array: a capturing lambda, or a generic-passthrough call carrying a fn
 // value (the lift boxes that argument unconditionally, so the call yields a box).
-function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     match (e) {
         parser.ExprLambda(el) => { return lambda_captures(el, fd).len() > 0; },
         parser.ExprCall(ec) => {
@@ -53138,7 +53138,7 @@ function arr_elem_forces_box(e: parser.Expr, fd: parser.FuncDecl, mfuncs: parser
 // else { [id(<lambda>)] })` handed back a bare fn-pointer array down one path
 // and an env-box array down the other, and the caller env-first-dispatched
 // whichever arm ran — compiled clean, SIGSEGV.
-function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     var rets: parser.Expr[] = collect_returns(fd.body, []);
     var i: i32 = 0;
     while (i < rets.len()) {
@@ -53159,7 +53159,7 @@ function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: parser.FuncDecl[
 
 // array_holds_fn_value reports whether the literal has any fn-VALUED element, so
 // the uniformity rule above applies to it at all (an i32[] never does).
-function array_holds_fn_value(arr: parser.ExprArray, mfuncs: parser.FuncDecl[]): boolean {
+function array_holds_fn_value(arr: parser.ExprArray, mfuncs: MFuncs): boolean {
     var i: i32 = 0;
     while (i < arr.elements.len()) {
         match (arr.elements[i]) {
@@ -53223,6 +53223,82 @@ function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32
     return false;
 }
 
+// MFuncs is the module function table plus a name index over it. The
+// lift_callee_* predicates below answer "what does this callee look like?" once
+// per call ARGUMENT, and they used to scan the whole table — ~4,600 entries on a
+// whole-compiler module, with a string compare each — for a callee name that is
+// constant across the argument loop. That was 74 of 400 profile samples, 18.5%
+// of a self-compile, all under lift_inline_closures_expr
+// (docs/PERFORMANCE-AUDIT-2026-08.md §4d.3).
+//
+// The index is a chain and not a single slot deliberately: a predicate keeps
+// looking past a name match and answers true if ANY same-named decl satisfies
+// its remaining conditions, so collapsing a name to one entry would change the
+// verdict wherever two decls share a name.
+pub struct MFuncs {
+    decls: parser.FuncDecl[],
+    // head[b] is the first decls index in bucket b (-1 when empty); next[i]
+    // chains to the next index in the same bucket, ascending. head.len() IS the
+    // bucket count, so the lookups cannot hash against a different modulus than
+    // the build did.
+    head: i32[],
+    next: i32[],
+}
+
+// mfuncs_buckets is the bucket count of the name index. Prime, so unrelated
+// hash strides do not alias onto one bucket, and sized so a whole-compiler
+// module's ~4,600 functions sit at roughly one per bucket.
+function mfuncs_buckets(): i32 { return 4093; }
+
+// mfuncs_table indexes `decls` by name. Built by walking BACKWARD and pushing
+// each entry onto the front of its bucket, which leaves every chain in
+// ascending index order without a per-bucket tail — the same order the linear
+// scan visited, so a chain walk and a full scan agree on which same-named decl
+// answers first. Mirrors checker.sig_table.
+pub function mfuncs_table(decls: parser.FuncDecl[]): MFuncs {
+    var head: i32[] = [];
+    var b: i32 = 0;
+    var nb: i32 = mfuncs_buckets();
+    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
+    var next: i32[] = [];
+    var j: i32 = 0;
+    while (j < decls.len()) { next = next.append(0 - 1); j = j + 1; }
+    var k: i32 = decls.len() - 1;
+    while (k >= 0) {
+        var bk: i32 = util.hash_bucket(decls[k].name, nb);
+        next = next.with(k, head[bk]);
+        head = head.with(bk, k);
+        k = k - 1;
+    }
+    return MFuncs { decls: decls, head: head, next: next };
+}
+
+// mfuncs_extend appends `extra` to an existing table and indexes only those, so
+// growing the signature list for one worklist entry costs O(extra) instead of
+// re-seeding all mfuncs_buckets() heads — which, done per entry, would be more
+// work than the scan this index replaces.
+//
+// The appended entries land at the FRONT of their buckets, so an extended chain
+// is not globally ascending. The two indexed predicates answer a BOOLEAN over
+// "any same-named decl", so visit order cannot change their verdict; nothing
+// else reads the chains.
+pub function mfuncs_extend(base: MFuncs, extra: parser.FuncDecl[]): MFuncs {
+    var decls: parser.FuncDecl[] = base.decls;
+    var head: i32[] = base.head;
+    var next: i32[] = base.next;
+    var i: i32 = 0;
+    while (i < extra.len()) {
+        var k: i32 = decls.len();
+        decls = decls.append(extra[i]);
+        next = next.append(0 - 1);
+        var bk: i32 = util.hash_bucket(extra[i].name, head.len());
+        next = next.with(k, head[bk]);
+        head = head.with(bk, k);
+        i = i + 1;
+    }
+    return MFuncs { decls: decls, head: head, next: next };
+}
+
 // lift_callee_is_typevar_passthrough reports whether free function `callee`
 // takes an ERASED type-var parameter at `idx` and returns that same type var —
 // the `id[T](x: T): T` shape. An unbounded type param is erased rather than
@@ -53235,27 +53311,27 @@ function lift_local_fn_param_is_fn(fd: parser.FuncDecl, callee: string, idx: i32
 // argument unchanged, so whatever representation the argument has is the
 // representation the result has. A generic that CONSUMES the value would need
 // the env box to mean something to it.
-function lift_callee_is_typevar_passthrough(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < mfuncs.len()) {
-        if (mfuncs[i].name == callee && mfuncs[i].type_param_count > 0
-                && idx < mfuncs[i].params.len()
-                && mfuncs[i].params[idx].type_name.len() > 0
-                && mfuncs[i].params[idx].type_name == mfuncs[i].ret_type) {
+function lift_callee_is_typevar_passthrough(mfuncs: MFuncs, callee: string, idx: i32): boolean {
+    var i: i32 = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
+    while (i >= 0) {
+        if (mfuncs.decls[i].name == callee && mfuncs.decls[i].type_param_count > 0
+                && idx < mfuncs.decls[i].params.len()
+                && mfuncs.decls[i].params[idx].type_name.len() > 0
+                && mfuncs.decls[i].params[idx].type_name == mfuncs.decls[i].ret_type) {
             return true;
         }
-        i = i + 1;
+        i = mfuncs.next[i];
     }
     return false;
 }
 
-function lift_callee_param_is_fn(mfuncs: parser.FuncDecl[], callee: string, idx: i32): boolean {
-    var i: i32 = 0;
-    while (i < mfuncs.len()) {
-        if (mfuncs[i].name == callee && idx < mfuncs[i].params.len() && mfuncs[i].params[idx].type_name == "fn") {
+function lift_callee_param_is_fn(mfuncs: MFuncs, callee: string, idx: i32): boolean {
+    var i: i32 = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
+    while (i >= 0) {
+        if (mfuncs.decls[i].name == callee && idx < mfuncs.decls[i].params.len() && mfuncs.decls[i].params[idx].type_name == "fn") {
             return true;
         }
-        i = i + 1;
+        i = mfuncs.next[i];
     }
     return false;
 }
@@ -53291,10 +53367,10 @@ function lift_ident_is_param(fd: parser.FuncDecl, name: string): boolean {
 // function `name`, or -1 if no such function exists. Used to recognise a bare
 // fn-VALUE ident (a function name with >= 1 param, distinct from a zero-arg
 // `const`) so it can be env-boxed at a fn-value binding / argument position.
-function lift_module_fn_arity(mfuncs: parser.FuncDecl[], name: string): i32 {
+function lift_module_fn_arity(mfuncs: MFuncs, name: string): i32 {
     var i: i32 = 0;
-    while (i < mfuncs.len()) {
-        if (mfuncs[i].name == name && mfuncs[i].receiver_type.len() == 0) { return mfuncs[i].params.len(); }
+    while (i < mfuncs.decls.len()) {
+        if (mfuncs.decls[i].name == name && mfuncs.decls[i].receiver_type.len() == 0) { return mfuncs.decls[i].params.len(); }
         i = i + 1;
     }
     return 0 - 1;
@@ -53308,7 +53384,7 @@ function lift_module_fn_arity(mfuncs: parser.FuncDecl[], name: string): i32 {
 // boxed fn-value local, a non-fn payload) is left alone — try_fn_field_value
 // also declines those, but checking here keeps the Some/Ok/Err detection from
 // firing on ordinary non-fn payloads.
-function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: parser.FuncDecl[]): boolean {
+function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: MFuncs): boolean {
     match (arg) {
         parser.ExprLambda(_) => { return true; },
         parser.ExprIdent(id) => { return lift_module_fn_arity(mfuncs, id.name) >= 1; },
@@ -53324,7 +53400,7 @@ function lift_arg_is_fn_value(arg: parser.Expr, mfuncs: parser.FuncDecl[]): bool
 // reading as its VALUE, and a declared fn field rules that reading out. Without
 // this, `enum E { Wrap(() => i32) }` + `Wrap(a1)` left the payload unboxed while
 // the match-arm bind dispatched it env-first, and SIGSEGV'd (#5834's family).
-function lift_arg_is_fn_value_declared(arg: parser.Expr, mfuncs: parser.FuncDecl[]): boolean {
+function lift_arg_is_fn_value_declared(arg: parser.Expr, mfuncs: MFuncs): boolean {
     match (arg) {
         parser.ExprLambda(_) => { return true; },
         parser.ExprIdent(id) => { return lift_module_fn_arity(mfuncs, id.name) >= 0; },
@@ -53349,7 +53425,7 @@ function lift_arg_is_fn_value_declared(arg: parser.Expr, mfuncs: parser.FuncDecl
 //     uniform-ABI unification for user-method fn-args stays a deferred slice.
 // Only an inline lambda qualifies (a bare fn-name to a builtin value slot is not
 // a shape that arises for map values and would need the deferred work). #3445.
-function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfuncs: parser.FuncDecl[]): boolean {
+function lift_method_arg_is_fn(arg: parser.Expr, mfield: string, idx: i32, mfuncs: MFuncs): boolean {
     match (arg) {
         parser.ExprLambda(_) => { return !lift_callee_param_is_fn(mfuncs, mfield, idx); },
         _ => {}
@@ -53607,7 +53683,7 @@ function iife_arms_have_lambda(stmts: parser.Stmt[]): boolean {
     return false;
 }
 
-function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): boolean {
+function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -53646,7 +53722,7 @@ function iife_arms_hold_fn_value(stmts: parser.Stmt[], fd: parser.FuncDecl, stru
 // arrays holds a capturing lambda. It is the gate on rewriting the arms into
 // uniform env boxes: below the "every arm" half the binding would carry two
 // dispatch ABIs, and without the "some capture" half there is nothing to fix.
-function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl, mfuncs: parser.FuncDecl[]): boolean {
+function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     var seen: i32 = iife_arm_arrays_capturing(stmts, fd, 0, mfuncs);
     return seen > 0;
 }
@@ -53654,7 +53730,7 @@ function iife_arms_are_arrays_with_capturing_lambda(stmts: parser.Stmt[], fd: pa
 // Returns the number of capturing lambda elements found, or -1 as soon as an arm
 // returns something that is neither an array literal nor a nested value-position
 // if/match whose own arms satisfy the same test.
-function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: parser.FuncDecl[]): i32 {
+function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -53711,7 +53787,7 @@ function iife_arm_arrays_capturing(stmts: parser.Stmt[], fd: parser.FuncDecl, se
 // env box, a no-capture lambda / bare fn name a `$wrapN` trampoline box, an
 // already-boxed value flows through. Same uniform-box treatment #5071 gives one
 // mixed array literal, applied across the arms because they share a binding.
-function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
+function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
@@ -53780,7 +53856,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
 // returns the direct call that replaces it. Declines — signalled by returning
 // the counter unchanged — when any capture's type does not resolve, leaving the
 // IIFE exactly as it was so the module bails as before.
-function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
+function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     var caps: string[] = lambda_captures(lam, fd);
     var ps: parser.ParamDecl[] = [];
     var args: parser.Expr[] = [];
@@ -53841,7 +53917,7 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
 // reached; a bare lambda in any other position is left untouched (handled by the
 // other lift passes or kept on AST). Returns the rewritten expr plus the
 // accumulated hoisted funcs.
-function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloRes {
+function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     match (e) {
         parser.ExprCall(call) => {
             // Wrap each fn-typed-param argument into an env box; recurse the rest
@@ -54127,8 +54203,8 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         if (has_cap_lam && util.index_of_str(abound, aid.name) < 0) {
                             var afnok: boolean = false;
                             var ami: i32 = 0;
-                            while (ami < mfuncs.len()) {
-                                if (mfuncs[ami].name == aid.name && mfuncs[ami].receiver_type.len() == 0 && mfuncs[ami].params.len() > 0) { afnok = true; }
+                            while (ami < mfuncs.decls.len()) {
+                                if (mfuncs.decls[ami].name == aid.name && mfuncs.decls[ami].receiver_type.len() == 0 && mfuncs.decls[ami].params.len() > 0) { afnok = true; }
                                 ami = ami + 1;
                             }
                             if (afnok) {
@@ -54182,8 +54258,8 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         if (util.index_of_str(tbound, ttid.name) < 0) {
                             var tfnok: boolean = false;
                             var tmi: i32 = 0;
-                            while (tmi < mfuncs.len()) {
-                                if (mfuncs[tmi].name == ttid.name && mfuncs[tmi].receiver_type.len() == 0 && mfuncs[tmi].params.len() > 0) { tfnok = true; }
+                            while (tmi < mfuncs.decls.len()) {
+                                if (mfuncs.decls[tmi].name == ttid.name && mfuncs.decls[tmi].receiver_type.len() == 0 && mfuncs.decls[tmi].params.len() > 0) { tfnok = true; }
                                 tmi = tmi + 1;
                             }
                             if (tfnok) {
@@ -54414,7 +54490,7 @@ function stmts_value_use(stmts: parser.Stmt[], name: string): boolean {
 //
 // A name bound by a param or anywhere in the body shadows the module function and
 // is left alone, mirroring the shadowing test the tuple walk makes.
-function wrap_ann_fn_tuple_elems(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+function wrap_ann_fn_tuple_elems(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloRes {
     var tty: string = ann;
     var is_arr: boolean = false;
     if (tty.len() > 2 && tty[tty.len() - 2 : tty.len()] == "[]") {
@@ -54451,7 +54527,7 @@ function wrap_ann_fn_tuple_elems(e: parser.Expr, ann: string, fd: parser.FuncDec
 
 // wrap_one_ann_tuple applies the boxing to ONE tuple literal against the tuple
 // type `tty`. A non-tuple expression passes through untouched.
-function wrap_one_ann_tuple(e: parser.Expr, tty: string, bound: string[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+function wrap_one_ann_tuple(e: parser.Expr, tty: string, bound: string[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloRes {
     match (e) {
         parser.ExprTuple(tl) => {
             var fs: parser.FuncDecl[] = funcs;
@@ -54501,7 +54577,7 @@ function wrap_one_ann_tuple(e: parser.Expr, tty: string, bound: string[], fd: pa
 // `Ok` takes Result's first type arg, `Err` its second; `Some` takes Option's
 // only one. A payload that is not a bare unshadowed zero-arg module fn is left
 // to the ordinary walk, which already handles lambdas and >= 1-param names.
-function wrap_ann_fn_variant_payload(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: parser.FuncDecl[], structs: parser.StructDecl[]): InlineCloRes {
+function wrap_ann_fn_variant_payload(e: parser.Expr, ann: string, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloRes {
     var r: parser.TypeRef = parser.parse_type_ref(ann);
     if (r.array_depth != 0 || r.is_tuple) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
     if (r.base != "Option" && r.base != "Result") { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
@@ -54549,7 +54625,7 @@ function wrap_ann_fn_variant_payload(e: parser.Expr, ann: string, fd: parser.Fun
     return InlineCloRes { expr: e, funcs: funcs, counter: counter };
 }
 
-function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
+function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloStmts {
     var fs: parser.FuncDecl[] = funcs;
     var ct: i32 = counter;
     var out: parser.Stmt[] = [];
@@ -54785,7 +54861,7 @@ struct InlineCloStmts { stmts: parser.Stmt[], funcs: parser.FuncDecl[], counter:
 // aggregate position to `<fd>$cloN` funcs (returned in `funcs`). When nothing is
 // hoisted, fd is returned unchanged and funcs is empty so lambda-free / unaffected
 // functions serialize byte-identically (fixpoint-safe).
-function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): InlineCloStmts {
+function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloStmts {
     var r: InlineCloStmts = lift_inline_closures_stmts(fd.body, fd, [], 0, gfns, structs, mfuncs);
     if (r.funcs.len() == 0) { return InlineCloStmts { stmts: fd.body, funcs: [], counter: 0 }; }
     return r;
@@ -55139,7 +55215,7 @@ function wcap_cell_read(c: string, ty: string): parser.Stmt {
 // the caller can emit their cell decls before the enclosing statement. Mirrors
 // box_rewrite_expr's recursion set — the proven list of forms a lambda can hide
 // in. Collection and rewriting are fused so the tree is walked once.
-function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], acc: WCaps, atargets: string[]): WCapExpr {
+function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, acc: WCaps, atargets: string[]): WCapExpr {
     match (e) {
         parser.ExprLambda(lm) => {
             // This lambda's own wide captures, in lambda_captures order.
@@ -55275,7 +55351,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
 // nested block (if / while / for / match / defer) has that block rewritten by
 // box_wide_captures_stmts, which places its cells INSIDE the block — a capture
 // declared in the block must not have its cell hoisted out of scope.
-function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], acc: WCaps, atargets: string[]): WCapStmt {
+function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, acc: WCaps, atargets: string[]): WCapStmt {
     match (st) {
         parser.StmtVar(v) => {
             var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
@@ -55361,7 +55437,7 @@ function wcap_stmt_needs_env_box(stmts: parser.Stmt[], i: i32): boolean {
 // box_wide_captures_stmts rewrites a statement list, emitting each statement's
 // wide-capture cell decls immediately before it — so the cell is created after
 // everything it reads is in scope, and inside whatever block that is.
-function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): WCapBody {
+function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, atargets: string[]): WCapBody {
     var out: parser.Stmt[] = [];
     var changed: boolean = false;
     var i: i32 = 0;
@@ -55399,7 +55475,7 @@ function box_wide_captures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns
 // the whole compiler AST once per function and exhausted the 16 GiB arena
 // (exit 125) long before it reached a function that needed rewriting. Detect
 // first, rebuild only where it pays.
-function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, atargets: string[]): boolean {
     match (e) {
         parser.ExprLambda(lm) => {
             var caps: string[] = lambda_captures(lm, fd);
@@ -55477,7 +55553,7 @@ function has_wide_cap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], 
     return false;
 }
 
-function has_wide_cap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+function has_wide_cap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, atargets: string[]): boolean {
     match (st) {
         parser.StmtVar(v) => { return has_wide_cap_expr(v.init, fd, gfns, structs, mfuncs, atargets); },
         parser.StmtAssign(a) => { return has_wide_cap_expr(a.value, fd, gfns, structs, mfuncs, atargets); },
@@ -55501,7 +55577,7 @@ function has_wide_cap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[],
     return false;
 }
 
-function has_wide_cap_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], atargets: string[]): boolean {
+function has_wide_cap_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs, atargets: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         if (has_wide_cap_stmt(stmts[i], fd, gfns, structs, mfuncs, atargets)) { return true; }
@@ -55515,7 +55591,7 @@ function has_wide_cap_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, gfns: str
 // every node it visits, so it must only run on a function that actually has a
 // wide capture — otherwise it copies the entire compiler AST function by
 // function and exhausts the arena.
-function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.FuncDecl {
+function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): parser.FuncDecl {
     var atargets: string[] = body_assign_targets(fd.body);
     if (!has_wide_cap_stmts(fd.body, fd, gfns, structs, mfuncs, atargets)) { return fd; }
     var b: WCapBody = box_wide_captures_stmts(fd.body, fd, gfns, structs, mfuncs, atargets);
@@ -55528,7 +55604,7 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.
 // (#2850), and — for ESCAPING bindings — captures of any type that the outer
 // body reassigns (#5394). Returns `fd` unchanged when none qualify (lambda-free
 // and read-only-capture functions stay byte-identical).
-function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: parser.FuncDecl[]): parser.FuncDecl {
+function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): parser.FuncDecl {
     var otargets: string[] = body_assign_targets(fd.body);
     var dvars: string[] = body_var_decl_names(fd.body);
     var acc: BoxScan = box_scan_stmts(fd.body, fd, structs, mfuncs, otargets, dvars, BoxScan { names: [], types: [] });
@@ -55555,7 +55631,7 @@ struct BoxScan { names: string[], types: string[] }
 // boxed, and boxing an already-correct read-only capture is a representation
 // change rather than a behaviour one, so a block-local answer is the
 // conservative direction here.
-function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
     var boxed: string[] = acc.names;
     var btypes: string[] = acc.types;
     var i: i32 = 0;
@@ -55659,7 +55735,7 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
 // #2850 (an i32/boolean the LAMBDA body writes) and #5394 (any type the OUTER
 // body reassigns, for an escaping binding). Shared by the statement-shape path
 // and the operand-position path so the two cannot drift.
-function box_apply_lambda(lam: parser.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: parser.FuncDecl[], otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
+function box_apply_lambda(lam: parser.ExprLambda, esc: boolean, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs, otargets: string[], dvars: string[], acc: BoxScan): BoxScan {
     var boxed: string[] = acc.names;
     var btypes: string[] = acc.types;
     var caps: string[] = lambda_captures(lam, fd);
@@ -55804,6 +55880,9 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     // the module's own functions (identical to the pre-view behaviour).
     var sigs: parser.FuncDecl[] = mod.funcs;
     if (view.len() > 0) { sigs = view; }
+    // Indexed once here: sigs is settled before the drain and never changes
+    // across its rounds, so every lift_callee_* lookup below shares one index.
+    var mf: MFuncs = mfuncs_table(sigs);
     var gfns: string[] = [];
     var gi: i32 = 0;
     while (gi < sigs.len()) {
@@ -55858,12 +55937,12 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // cells so they fit the env box's 32-bit slot (#6046). Must run BEFORE
         // the lifts so they see the `i64[]` cell — pointer-shaped, which
         // cap_slot_ok already accepts — instead of a wide scalar it declines.
-        fd = box_wide_captures(fd, gfns, mod.structs, sigs);
+        fd = box_wide_captures(fd, gfns, mod.structs, mf);
         // 0. Box captured-and-mutated scalar locals into 1-element array cells so
         // a closure's write to a captured outer scalar is shared by reference
         // (#2850). Must run BEFORE the closure lifts so they see the boxed cell
         // (an `i32[]` capture passed by pointer) instead of a by-value scalar.
-        fd = box_mutated_scalar_captures(fd, gfns, mod.structs, sigs);
+        fd = box_mutated_scalar_captures(fd, gfns, mod.structs, mf);
         var before: i32 = acc.funcs.len();
         // 0b. Capturing inline lambdas in array-element / struct-field-value
         // position (#2994): hoist each to a unique `<fd>$cloN` and rewrite the
@@ -55872,7 +55951,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // not a bare ExprLambda they'd skip. The hoisted funcs join `acc` so the
         // drain below re-processes them (their own nested lambdas lift in a later
         // round); a body with no such closure is returned unchanged (fixpoint-safe).
-        var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, sigs);
+        var ic: InlineCloStmts = lift_inline_closures(fd, gfns, mod.structs, mf);
         if (ic.funcs.len() > 0) {
             fd = parser.FuncDecl { name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type, type_params: fd.type_params, params: fd.params, ret_type: fd.ret_type, body: ic.stmts, line: fd.line, col: fd.col, import_iface: fd.import_iface, import_wit: fd.import_wit, type_param_count: fd.type_param_count, bound_traits: [], fip: fd.fip, fbip: fd.fbip, fip_allowance: fd.fip_allowance, ret_str: fd.ret_str, async: fd.async, is_const: fd.is_const, is_pub: fd.is_pub };
             var ici: i32 = 0;
@@ -55889,7 +55968,7 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
             var lgfns: string[] = gfns;
             var gj: i32 = 0;
             while (gj < acc.funcs.len()) { lgfns = lgfns.append(acc.funcs[gj].name); gj = gj + 1; }
-            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mod.structs, sigs);
+            var cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mod.structs, mf);
             cbody = cl.body;
             acc = cl.acc;
             more = cl.changed;
@@ -55905,9 +55984,8 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         // The functions lifted for THIS entry join the signature list: a capture
         // whose lambda the lift already replaced with an env-box marker resolves
         // its signature through the hoisted target (cap_param_for).
-        var hsigs: parser.FuncDecl[] = sigs;
-        var hj: i32 = 0;
-        while (hj < acc.funcs.len()) { hsigs = hsigs.append(acc.funcs[hj]); hj = hj + 1; }
+        var hsigs: MFuncs = mf;
+        if (acc.funcs.len() > 0) { hsigs = mfuncs_extend(mf, acc.funcs); }
         var hc: HoistResult = hoist_escaping_closure(fd, gfns, mod.structs, hsigs);
         if (hc.ok) { acc = LiftAcc { funcs: acc.funcs.append(hc.func), counter: acc.counter + 1 }; }
         // Drain the functions lifted by THIS iteration onto the worklist so their
