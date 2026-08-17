@@ -1,0 +1,71 @@
+// A TUPLE sub-pattern in a variant payload slot: `Pr((a, b))`.
+//
+// The slot binds a temp and the arm's inner match is a tuple match — the same
+// group-by-variant merge that a variant sub-pattern (`Some(Ok(n))`) uses, so
+// the form cost the native parser five lines. The self-host needed more: its
+// `Pattern` has no tuple case, so the elements ride on `PatVariant` and the
+// merge routes them through `build_tuple_match` instead of a variant inner
+// match.
+//
+// The arms below also pin what the merge has to get right beyond parsing: a
+// literal element must still discriminate, a flat sibling (`Pr(x)`) must
+// rebind the whole slot, and an all-binder tuple arm is IRREFUTABLE — so an
+// outer `_` must not be routed in after it, which would emit an arm that can
+// never run (native reported it as E026 against an arm nobody wrote).
+
+import "std/i32";
+
+enum T2 { Pr((i32, i32)), Non }
+enum T3 { Q((i32, i32)), R }
+
+// Literal element beside a binder element, on the same variant.
+function pick(t: T2): i32 {
+    match (t) {
+        Pr((1, b)) => { return 50 + b; },
+        Pr((a, b)) => { return a + b; },
+        Non => { return 0; },
+    }
+}
+
+// A flat sibling of the tuple arm: it binds the whole payload, so it has to
+// become a wildcard arm of the inner tuple match that rebinds the slot.
+function flat_sibling(t: T2): i32 {
+    match (t) {
+        Pr((9, b)) => { return 900 + b; },
+        Pr(whole) => { return whole.0 * 2 + whole.1; },
+        Non => { return 0; },
+    }
+}
+
+// An irrefutable tuple arm followed by an outer wildcard.
+function with_fallthrough(t: T3): i32 {
+    match (t) {
+        Q((a, b)) => { return a + b; },
+        _ => { return 7; },
+    }
+}
+
+// A guard on the tuple arm falls through to the next arm when false.
+function guarded(t: T2): i32 {
+    match (t) {
+        Pr((a, b)) when a > 2 => { return 100; },
+        Pr((a, b)) => { return a + b; },
+        Non => { return 0; },
+    }
+}
+
+function main(): i32 {
+    print(pick(T2.Pr((1, 2))).to_string());
+    print(pick(T2.Pr((3, 4))).to_string());
+    print(pick(T2.Non).to_string());
+
+    print(flat_sibling(T2.Pr((9, 1))).to_string());
+    print(flat_sibling(T2.Pr((3, 4))).to_string());
+
+    print(with_fallthrough(T3.Q((2, 3))).to_string());
+    print(with_fallthrough(T3.R).to_string());
+
+    print(guarded(T2.Pr((5, 1))).to_string());
+    print(guarded(T2.Pr((1, 2))).to_string());
+    return 0;
+}
