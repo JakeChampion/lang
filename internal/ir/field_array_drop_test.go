@@ -86,13 +86,10 @@ function main(): i32 { return from_call(2) + from_local(2) + no_spread(2); }
 	// constructs the same `r` per iteration and additionally owns the
 	// temporary `mk()` base, so it must release exactly one more R.
 	//
-	// This replaces a from_call-vs-from_local equality that was never true.
-	// from_local carries an extra named local (`b`), so it genuinely
-	// releases one more R than from_call; the old assertion passed only
-	// because dropStructCalls matched the exact name "__drop_struct_R" and
-	// was blind to the releases the sweep emitted inline. Counting every
-	// form makes the real asymmetry visible, so the comparison moved to a
-	// control that does not have it.
+	// A from_call-vs-from_local equality would not hold: from_local carries an
+	// extra named local (`b`), so it genuinely releases one more R. Counting
+	// every release form (allRReleases) makes that asymmetry visible, which is
+	// why the comparison is against a control that does not have it.
 	call := allRReleases(funcByName(ip, "from_call"))
 	plain := allRReleases(funcByName(ip, "no_spread"))
 	if call != plain+1 {
@@ -118,19 +115,6 @@ func allRReleases(fn *ir.Func) int {
 		}
 		// An inline sweep opens its release with the rc==1 guard.
 		if op.Kind == ir.OpRcIsUnique {
-			n++
-		}
-	}
-	return n
-}
-
-func dropStructCalls(fn *ir.Func, structName string) int {
-	if fn == nil {
-		return 0
-	}
-	n := 0
-	for _, op := range fn.Ops {
-		if op.Kind == ir.OpCallDirect && op.Str == "__drop_struct_"+structName {
 			n++
 		}
 	}
