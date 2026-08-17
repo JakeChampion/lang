@@ -263,6 +263,7 @@ forms cannot both claim one name.
 - **Element-polymorphic reductions** (one bounded generic each, so the same
   call works for i32 / i64 / u32 / u64 / f32 / f64 / string and
   `@derive(Ord)` / `@derive(Eq)` element types alike):
+  `sum` (`Add + Zero`) / `product` (`Mul + One`),
   `max` / `min` (`Ord` → `Option[T]`, `None`
   when empty), `sorted_asc` / `sorted_desc` (`Ord`, fresh array, input
   untouched), `count(target)` / `first_index_of(target)` (`Eq`; the latter
@@ -274,21 +275,20 @@ forms cannot both claim one name.
   `reversed` vs `reverse`, `sorted_asc` vs `sorted_str_asc`). Those dodged
   names are gone (#2663); use the single generic verb.
 
-  `sum` and `product` are the holdouts. The generic form
-  (`[T: num.Add + num.Zero]` delegating to `num.sum`) needs `std/array` to
-  import `std/num`, and since `std/string` imports `std/array` that puts
-  `impl Add for i32` in the transitive closure of nearly every program.
-  Trait methods used to land in one flat `i32.<name>` namespace, so num's
-  `Add::add` collided with a USER trait that also provided `add` for i32 —
-  `E006: method "add" on i32 redeclared`, pointing into stdlib source the
-  program never imported. Per-trait namespacing plus the call-site ranking
-  fixed that (#6931, docs/TRAITS.md §5.1): both impls register, and a
-  user's own trait outranks one that only arrived through the closure. What
-  the widening still waits on is the self-host compiler's mirror of that
-  resolution — until then the two front ends would disagree about the
-  stdlib.
+  `sum` and `product` joined last, and cost the most. Delegating to
+  `num.sum` / `num.product` needs `std/array` to import `std/num`, and since
+  `std/string` imports `std/array` that puts `impl Add for i32` in the
+  transitive closure of nearly every program. Trait methods used to land in
+  one flat `i32.<name>` namespace, so num's `Add::add` collided with a USER
+  trait that also provided `add` for i32 — `E006: method "add" on i32
+  redeclared`, pointing into stdlib source the program never imported.
+  Per-trait namespacing plus the call-site ranking fixed that (#6931,
+  docs/TRAITS.md §5.1): both impls register, and a user's own trait outranks
+  one that only arrived through the closure. Import `std/num` *directly*
+  alongside your own `add` for i32 and the two tie, which is `E074` — an
+  ambiguity naming both traits, not a redeclaration at your definition.
 
-- **i32[]-specific:** `sum`, `product`, `avg`, `range`, `gcd_all`, `lcm_all`, `abs_each`,
+- **i32[]-specific:** `avg`, `range`, `gcd_all`, `lcm_all`, `abs_each`,
   `pairwise_diffs`, `min_max`, `every_positive`, `cumsum`, `sum_squared`,
   `sum_abs`, `all_zero`, `median`, `mode`. These need integer division or an
   i32 identity, so they stay pinned to the element type.

@@ -659,8 +659,7 @@ func boolSliceEqual(a, b []bool) bool {
 // deliberately absent — those DO thread the receiver.
 func pureReadReceiverBuiltin(name string) bool {
 	switch name {
-	case "__method_string_len", "__method_Array_len", "__method_slice_len",
-		"__method_Array_sum":
+	case "__method_string_len", "__method_Array_len", "__method_slice_len":
 		return true
 	}
 	return false
