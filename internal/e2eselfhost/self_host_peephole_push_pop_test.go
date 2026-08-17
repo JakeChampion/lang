@@ -92,6 +92,14 @@ func TestSelfHostPeepholePushPopX86_64(t *testing.T) {
 		// Division routes through the guarded non-trapping sequence, which has
 		// its own labels — the fold must not reach across one.
 		{"divmod", "function main(): i32 { var a = 100; var b = 7; return a / b + a % b; }", 16},
+		// A discarded call result is the DEAD-push shape: the call's result is
+		// pushed and the following `drop` lowers to `addq $8, %rsp`, so both
+		// lines are removable. Statement-position expressions are where the IR
+		// produces these, and it produces a great many.
+		{"discarded-call", "function side(a: i32): i32 { return a + 1; } function main(): i32 { side(1); side(2); return 9; }", 9},
+		// Several drops in a row, interleaved with live values, so the pass has
+		// to remove exactly the dead ones and keep the rest.
+		{"drops-and-live", "function side(a: i32): i32 { return a * 2; } function main(): i32 { var t = 0; side(1); t = t + side(3); side(2); return t; }", 6},
 	}
 
 	for _, tc := range cases {
@@ -100,11 +108,29 @@ func TestSelfHostPeepholePushPopX86_64(t *testing.T) {
 			if n, first := adjacentPushPop(string(asm)); n != 0 {
 				t.Errorf("%d adjacent pushq/popq pair(s) survived the peephole; first at:\n%s", n, first)
 			}
+			// The dead-push postcondition travels with the round-trip one for the
+			// same reason: a push whose very next line discards it is removable,
+			// and stating it over the whole module cannot rot as instruction
+			// selection moves around it.
+			//
+			// It doubles as the tripwire for the rule's one precondition. The fold
+			// takes a register or immediate source only, because dropping a
+			// memory-operand push would drop a LOAD; every dead push the emitter
+			// makes today is `%rax`, `%rdx` or `$K`, so the precondition holds
+			// everywhere and this assertion is fully exercised. If instruction
+			// selection ever produces a memory-operand dead push, the pass will
+			// leave it and THIS line fails — which is the notification wanted,
+			// since whether that load can fault is a question for whoever
+			// introduces it.
+			if n, first := deadPushPairs(string(asm)); n != 0 {
+				t.Errorf("%d dead pushq/addq pair(s) survived the peephole; first at:\n%s", n, first)
+			}
 			if got := run(t, tc.name, asm); got != tc.want {
 				t.Errorf("exit = %d, want %d", got, tc.want)
 			}
 		})
 	}
+
 
 	// The fold is not allowed to eat a `pushq` that sets up a stack argument.
 	// Those are consumed by a `call`, so they must survive — if the pass ever
@@ -116,6 +142,26 @@ func TestSelfHostPeepholePushPopX86_64(t *testing.T) {
 			t.Errorf("no pushq left at all — the pass removed argument setup")
 		}
 	})
+}
+
+// deadPushPairs counts `pushq` lines immediately followed by `addq $8, %rsp` —
+// a value pushed and discarded by the next instruction — returning the count and
+// the first offending pair for the failure message.
+func deadPushPairs(asm string) (int, string) {
+	lines := strings.Split(asm, "\n")
+	n := 0
+	first := ""
+	for i := 0; i+1 < len(lines); i++ {
+		a := strings.TrimSpace(lines[i])
+		b := strings.TrimSpace(lines[i+1])
+		if strings.HasPrefix(a, "pushq ") && b == "addq $8, %rsp" {
+			n++
+			if first == "" {
+				first = "  " + a + "\n  " + b
+			}
+		}
+	}
+	return n, first
 }
 
 // adjacentPushPop counts `pushq` lines immediately followed by a `popq` line,

@@ -77,6 +77,9 @@ func TestSelfHostPeepholePushPopArm64(t *testing.T) {
 		{"loop", "function main(): i32 { var s = 0; var i = 0; while (i < 10) { s = s + i * 2; i = i + 1; } return s; }", 90},
 		{"call", "function add3(a: i32, b: i32, c: i32): i32 { return a + b + c; } function main(): i32 { return add3(20, 15, 7); }", 42},
 		{"divmod", "function main(): i32 { var a = 100; var b = 7; return a / b + a % b; }", 16},
+		// The dead-push shapes, matching the x86-64 test's additions.
+		{"discarded-call", "function side(a: i32): i32 { return a + 1; } function main(): i32 { side(1); side(2); return 9; }", 9},
+		{"drops-and-live", "function side(a: i32): i32 { return a * 2; } function main(): i32 { var t = 0; side(1); t = t + side(3); side(2); return t; }", 6},
 	}
 
 	for _, tc := range cases {
@@ -84,6 +87,12 @@ func TestSelfHostPeepholePushPopArm64(t *testing.T) {
 			asm := emit(t, tc.src)
 			if n, first := adjacentStrLdrArm64(string(asm)); n != 0 {
 				t.Errorf("%d adjacent str/ldr stack pair(s) survived the peephole; first at:\n%s", n, first)
+			}
+			// A `str` whose next line is the `add sp, sp, #16` a `drop` lowers to
+			// wrote a value nothing reads. Same postcondition as the x86-64 twin,
+			// stated over the whole module for the same reason.
+			if n, first := deadStrArm64(string(asm)); n != 0 {
+				t.Errorf("%d dead str/add pair(s) survived the peephole; first at:\n%s", n, first)
 			}
 			if got := run(t, tc.name, asm); got != tc.want {
 				t.Errorf("exit = %d, want %d", got, tc.want)
@@ -119,6 +128,26 @@ func TestSelfHostPeepholePushPopArm64(t *testing.T) {
 // adjacentStrLdrArm64 counts stack pushes immediately followed by a stack pop,
 // returning the count and the first offending pair for the failure message. The
 // suffixes are matched exactly so the stp/ldp frame saves are never counted.
+// deadStrArm64 counts `str SRC, [sp, #-16]!` lines immediately followed by the
+// `add sp, sp, #16` a `drop` lowers to — a value pushed and discarded by the next
+// instruction. `stp` is excluded by the prefix, as in the pass itself.
+func deadStrArm64(asm string) (int, string) {
+	lines := strings.Split(asm, "\n")
+	n := 0
+	first := ""
+	for i := 0; i+1 < len(lines); i++ {
+		a := strings.TrimSpace(lines[i])
+		b := strings.TrimSpace(lines[i+1])
+		if strings.HasPrefix(a, "str ") && strings.HasSuffix(a, ", [sp, #-16]!") && b == "add sp, sp, #16" {
+			n++
+			if first == "" {
+				first = "  " + a + "\n  " + b
+			}
+		}
+	}
+	return n, first
+}
+
 func adjacentStrLdrArm64(asm string) (int, string) {
 	lines := strings.Split(asm, "\n")
 	n := 0

@@ -6652,6 +6652,18 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
     return true;
 }
 
+// pp_has_mem reports whether asm[lo:hi] is a memory operand, i.e. carries a
+// `(`. A push of one is a LOAD, and the dead-push rule drops the push outright
+// rather than rewriting it, so it must leave those alone.
+pub function pp_has_mem(asm: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        if (asm[i] == 40) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // pp_has_rsp reports whether asm[lo:hi] names %rsp.
 function pp_has_rsp(asm: string, lo: i32, hi: i32): boolean {
     var i: i32 = lo;
@@ -6688,6 +6700,32 @@ function pp_has_rsp(asm: string, lo: i32, hi: i32): boolean {
 // non-adjacent case — a binary op's outer operand pair, one instruction apart
 // once the inner pair folds — is deliberately not handled: it needs the
 // clobber analysis this shape avoids.
+//
+// # The DEAD push
+//
+// The other adjacent shape is a push the very next line throws away:
+//
+//     pushq %rax        ->  (both lines dropped)
+//     addq $8, %rsp
+//
+// `addq $8, %rsp` is what a `drop` lowers to, and the IR drops a great deal —
+// every statement-position expression pushes a result nobody wants, and `exit`
+// is emitted as a call plus a dummy its following drop consumes. So this is not
+// a rare shape: ~545 pairs per module on the conformance corpus, 1.2% of all
+// emitted lines. Native's peepholeTail has had the rule for a while
+// (internal/codegen/x86_64/x86_64.go, P3); neither self-host register backend
+// did, which made it a plain parity gap rather than a new idea.
+//
+// Removing the pair is sound on the same adjacency argument as the fold above:
+// %rsp ends where it started, and the only other effects are a write below
+// %rsp that nothing reads back and the FLAGS the `addq` clobbers, which are
+// never live across an IR-op boundary here (the same invariant the const-zero
+// `xorl` relies on — see the const_i32 arm).
+//
+// It is restricted to a REGISTER or IMMEDIATE source. A memory operand would
+// make the push a load, and dropping a load is only safe if it cannot fault —
+// true for a frame slot but not worth asserting, especially as the corpus emits
+// no such pair at all (644 dead pushes, every one `%rax`, `%rdx` or `$K`).
 function peephole_push_pop(asm: string): string {
     // Re-entering strbuf is safe: `asm` is already materialised, so the buffer
     // is drained before this reset (same contract as arm64's darwinize).
@@ -6720,6 +6758,14 @@ function peephole_push_pop(asm: string): string {
                     strbuf_append(asm[dlo:i]);
                     strbuf_append("\n");
                 }
+                run_start = i + 1;
+                push_at = 0 - 1;
+                folded = true;
+            } else if (push_at >= 0 && pp_at(asm, bs, i, "addq $8, %rsp")
+                    && !pp_has_mem(asm, src_lo, src_hi)) {
+                // The push is dead: this line discards exactly what it wrote.
+                // Both lines go, and nothing is emitted in their place.
+                if (run_start < push_at) { strbuf_append(asm[run_start:push_at]); }
                 run_start = i + 1;
                 push_at = 0 - 1;
                 folded = true;
