@@ -27,36 +27,36 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
-x86_64/array_append.text	618
-x86_64/array_append.ir	97597508
-x86_64/array_index.text	582
-x86_64/array_index.ir	100303812
-x86_64/call_overhead.text	211
-x86_64/call_overhead.ir	63101700
-x86_64/closure_call.text	491
-x86_64/closure_call.ir	284520055
-x86_64/enum_match.text	820
-x86_64/enum_match.ir	261000071
-x86_64/int_loop.text	121
-x86_64/int_loop.ir	84000036
-x86_64/map_int.text	4028
-x86_64/map_int.ir	136339727
-x86_64/map_string.text	5346
-x86_64/map_string.ir	292500000	2
-x86_64/sort_inplace.text	1001
-x86_64/sort_inplace.ir	201915356
-x86_64/sort_ints.text	3321
-x86_64/sort_ints.ir	157651167
-x86_64/string_build.text	1467
-x86_64/string_build.ir	199336343
-x86_64/string_scan.text	1841
-x86_64/string_scan.ir	140977346
-x86_64/string_slice.text	511
-x86_64/string_slice.ir	196020101
-x86_64/struct_drop.text	2348
-x86_64/struct_drop.ir	682100167
-x86_64/tokenize.text	997
-x86_64/tokenize.ir	207560093
+x86_64/array_append.text	560
+x86_64/array_append.ir	81596022
+x86_64/array_index.text	528
+x86_64/array_index.ir	73942988
+x86_64/call_overhead.text	189
+x86_64/call_overhead.ir	50201404
+x86_64/closure_call.text	468
+x86_64/closure_call.ir	241236051
+x86_64/enum_match.text	735
+x86_64/enum_match.ir	228600067
+x86_64/int_loop.text	114
+x86_64/int_loop.ir	66000032
+x86_64/map_int.text	3337
+x86_64/map_int.ir	114365112
+x86_64/map_string.text	4475
+x86_64/map_string.ir	226404501	2
+x86_64/sort_inplace.text	874
+x86_64/sort_inplace.ir	153911104
+x86_64/sort_ints.text	2726
+x86_64/sort_ints.ir	128615368
+x86_64/string_build.text	1309
+x86_64/string_build.ir	186360139
+x86_64/string_scan.text	1628
+x86_64/string_scan.ir	121416710
+x86_64/string_slice.text	492
+x86_64/string_slice.ir	183780097
+x86_64/struct_drop.text	2088
+x86_64/struct_drop.ir	627380163
+x86_64/tokenize.text	895
+x86_64/tokenize.ir	168000089
 
 # aarch64, from the Perf workflow's own perf-aarch64 job — the arch this
 # project defaults to. Seeded from CI rather than measured here, because no

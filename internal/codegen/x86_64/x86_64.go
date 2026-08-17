@@ -20,11 +20,12 @@
 //   - Stack alignment: 16-byte at every call boundary
 //   - Syscalls:        rax = number, `syscall` instruction
 //
-// Operand stack: simulated on the physical rsp via paired
-// 16-byte slots (8 bytes value + 8 bytes pad). Matches the
-// arm64 backend's 16-byte slot discipline; keeps rsp
-// 16-aligned trivially without per-call padding. Cost is one
-// extra 8 bytes of stack per push.
+// Operand stack: simulated on the physical rsp via 8-byte
+// slots pushed and popped with real `push` / `pop`. One slot
+// per value, one byte of encoding per spill. Because an 8-byte
+// slot flips rsp's 16-alignment, the generator tracks the
+// operand depth in `opBytes` and pads to 16 at call boundaries
+// only — see callAligned.
 //
 // Frame layout per function (mirroring arm64):
 //
@@ -825,6 +826,14 @@ type generator struct {
 	// emitted logical lines (no trailing newline), held back from `out`
 	// until they can no longer participate in a rewrite. See put / flushPeep.
 	peepWin []string
+	// opBytes is how far rsp sits below the 16-aligned point the
+	// current function's prologue left it at — the live operand
+	// stack plus any body-level scratch. Only meaningful while a
+	// function body is being emitted (reset per function); the
+	// hand-written runtime helpers keep their own alignment and
+	// are entered at the canonical parity. callAligned reads it
+	// to decide whether a call site needs an 8-byte pad.
+	opBytes int
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -1765,6 +1774,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if localsSize > 0 {
 		g.emit(fmt.Sprintf("sub rsp, %d", localsSize))
 	}
+	// rsp is 16-aligned here: the call pushed 8, `push rbp` another
+	// 8, and localsSize is a 16-byte multiple. Operand depth is
+	// measured from this point, and the `mov rsp, rbp` epilogue
+	// discards whatever is left, so there is nothing to unwind.
+	g.opBytes = 0
 	// Param spill into local slots. Args 0..5 arrive in
 	// rdi/rsi/rdx/rcx/r8/r9; args 6+ come on the caller's
 	// stack at [rbp + 16 + 8*(i-6)] (rbp+0 is saved rbp,
@@ -1821,6 +1835,13 @@ type irScope struct {
 	endLabel  string
 	elseLabel string // OpIf only
 	hasElse   bool   // set when OpElse fires; OpEnd uses it to know whether elseLabel was wired up
+	// entryBytes is the operand depth (generator.opBytes) when the
+	// scope opened. The else-label and a no-else if's end-label are
+	// reached by the scope-opening branch, not by fall-through, so
+	// the depth there is this one — without restoring it, opBytes
+	// carries the then-branch's pushes into the else branch and the
+	// call-site alignment pad is computed against the wrong parity.
+	entryBytes int
 }
 
 // emitOp dispatches a single IR op. PR 2 scope: arithmetic
@@ -1959,7 +1980,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 
 	case ir.OpDrop:
 		// Skip the top operand-stack slot.
-		g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+		g.rspFree(slotBytes)
 
 	// -------- arithmetic --------
 	//
@@ -2430,12 +2451,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 
 	case ir.OpBlock:
 		endL := g.freshLabel("blkEnd")
-		*scope = append(*scope, irScope{kind: ir.OpBlock, brTarget: endL, endLabel: endL})
+		*scope = append(*scope, irScope{kind: ir.OpBlock, brTarget: endL, endLabel: endL, entryBytes: g.opBytes})
 	case ir.OpLoop:
 		startL := g.freshLabel("loopTop")
 		endL := g.freshLabel("loopEnd")
 		g.label(startL)
-		*scope = append(*scope, irScope{kind: ir.OpLoop, brTarget: startL, endLabel: endL})
+		*scope = append(*scope, irScope{kind: ir.OpLoop, brTarget: startL, endLabel: endL, entryBytes: g.opBytes})
 	case ir.OpIf:
 		// Pop cond; if zero, jump to else-label. test eax /
 		// jz mirrors arm64's `cbz w0` — only the low 32 bits
@@ -2446,12 +2467,13 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		endL := g.freshLabel("ifEnd")
 		g.emit("test eax, eax")
 		g.emit(fmt.Sprintf("jz %s", elseL))
-		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
+		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL, entryBytes: g.opBytes})
 	case ir.OpElse:
 		top := &(*scope)[len(*scope)-1]
 		top.hasElse = true
 		g.emit(fmt.Sprintf("jmp %s", top.endLabel))
 		g.label(top.elseLabel)
+		g.opBytes = top.entryBytes
 	case ir.OpEnd:
 		top := (*scope)[len(*scope)-1]
 		*scope = (*scope)[:len(*scope)-1]
@@ -2460,6 +2482,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// elseLabel, which we now alias as the end so a
 			// false condition simply skips the if body.
 			g.label(top.elseLabel)
+			// A no-else if yields no value, so both edges into the
+			// end label carry the scope-entry depth.
+			g.opBytes = top.entryBytes
 		}
 		g.label(top.endLabel)
 	case ir.OpBr:
@@ -2521,7 +2546,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// time so __fern_alloc actually gets emitted.
 		g.pop()
 		g.emit("mov rdi, rax")
-		g.emit("call __fern_alloc")
+		g.callAligned("__fern_alloc")
 		g.push()
 
 	case ir.OpStrConcat:
@@ -2534,7 +2559,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.binPop() // rcx = b, rax = a
 		g.emit("mov rdi, rax")
 		g.emit("mov rsi, rcx")
-		g.emit("call __fern_strcat")
+		g.callAligned("__fern_strcat")
 		g.push()
 
 	case ir.OpStrEq:
@@ -2543,7 +2568,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.binPop()
 		g.emit("mov rdi, rax")
 		g.emit("mov rsi, rcx")
-		g.emit("call __fern_strcmp")
+		g.callAligned("__fern_strcmp")
 		g.emit("test eax, eax")
 		g.emit("setz al")
 		g.emit("movzx eax, al")
@@ -2591,9 +2616,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// (args..., env_ptr) onto the operand stack — same
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		extra := g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(argc, extra)
 		g.push()
 
 	case ir.OpMakeClosure, ir.OpMakeEnv:
@@ -2623,17 +2648,15 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// body references the captured env block) read it
 		// from the same register.
 		argc := int(op.I32)
-		g.emit("mov r10, [rsp]") // r10 = pair pointer (caller-save scratch)
-		g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+		g.popReg("r10")              // r10 = pair pointer (caller-save scratch)
 		g.emit("mov r11, [r10]")     // r11 = fn_ptr (= [pair + 0])
 		g.emit("mov rax, [r10 + 8]") // rax = env_ptr (= [pair + 8])
 		// Push env_ptr onto the operand stack so the args-load
 		// helper picks it up in the (argc+1)th register slot.
-		g.emit(fmt.Sprintf("sub rsp, %d", slotBytes))
-		g.emit("mov [rsp], rax")
-		g.emitCallArgsLoad(argc + 1)
+		g.push()
+		pad := g.emitCallArgsLoad(argc + 1)
 		g.emit("call r11")
-		g.emitCallArgsCleanup(argc + 1)
+		g.emitCallArgsCleanup(argc+1, pad)
 		g.push()
 
 	case ir.OpConstVtable:
@@ -2677,16 +2700,16 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.pop()                // rax = vtable (top)
 		g.emit("mov rcx, rax") // rcx = vtable (caller-save; no call before the save)
 		g.pop()                // rax = data
-		g.emit("push rbx")     // save callee-saved (2 pushes keep rsp 16-aligned)
-		g.emit("push r12")
+		g.pushReg("rbx")       // save callee-saved
+		g.pushReg("r12")
 		g.emit("mov r12, rax") // r12 = data
 		g.emit("mov rbx, rcx") // rbx = vtable
 		g.emit("mov rdi, 16")  // cell size = 2 * ptrW
-		g.emit("call __fern_alloc")
+		g.callAligned("__fern_alloc")
 		g.emit("mov [rax], r12")     // cell[0] = data  (survived the call)
 		g.emit("mov [rax + 8], rbx") // cell[8] = vtable
-		g.emit("pop r12")            // restore callee-saved
-		g.emit("pop rbx")
+		g.popReg("r12")              // restore callee-saved
+		g.popReg("rbx")
 		g.push()
 
 	case ir.OpCallDyn:
@@ -2713,9 +2736,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// registers (emitCallArgsLoad consumes operand-stack slots, so
 		// r11 — a caller-save scratch the loader doesn't touch — is safe
 		// to hold across it).
-		g.emitCallArgsLoad(argc)
+		extra := g.emitCallArgsLoad(argc)
 		g.emit("call r11")
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(argc, extra)
 		if op.Sig().Result == nil {
 			break
 		}
@@ -2736,8 +2759,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// !rcInlineOK falls back to the call in functions too large to
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
-			g.emitCallArgsLoad(1)
+			extra := g.emitCallArgsLoad(1)
 			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
 		}
@@ -2781,8 +2805,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// oversized functions (see the rcInlineOK field). The pre-scan
 			// recorded the "__fern_rc_is_unique" use, so the helper is
 			// emitted regardless of inline-vs-call.
-			g.emitCallArgsLoad(1)
+			extra := g.emitCallArgsLoad(1)
 			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
 		}
@@ -2999,9 +3024,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__mapiter_advance_impl"
 		}
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		extra := g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", AsmFnName(target)))
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(argc, extra)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
 		// rax value on the operand stack that corrupts the
@@ -3029,9 +3054,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// (generic position) — the IR-level "two values post-
 		// call" contract is now register-backed.
 		argc := int(op.I32)
-		g.emitCallArgsLoad(argc)
+		extra := g.emitCallArgsLoad(argc)
 		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
-		g.emitCallArgsCleanup(argc)
+		g.emitCallArgsCleanup(argc, extra)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
 		g.emit("mov rax, r10")
@@ -3118,7 +3143,7 @@ func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 		// arm64's d0 convention for the same five helpers.
 		g.usesF64Trans = true
 		g.emit("movq xmm0, rax")
-		g.emit("call __fern_" + name[2:]) // "__sin_f64" → "__fern_sin_f64"
+		g.callAligned("__fern_" + name[2:]) // "__sin_f64" → "__fern_sin_f64"
 		g.emit("movq rax, xmm0")
 	}
 	return true
@@ -3132,7 +3157,7 @@ func (g *generator) emitF64Pow() {
 	g.usesF64Trans = true
 	g.emit("movq xmm0, rax") // x
 	g.emit("movq xmm1, rcx") // y
-	g.emit("call __fern_pow_f64")
+	g.callAligned("__fern_pow_f64")
 	g.emit("movq rax, xmm0")
 }
 
@@ -3251,7 +3276,7 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
 		g.emit(fmt.Sprintf("%s %s", jccMnemonic(cmp.Kind, cmp.Unsigned, whenTrue), elseL))
-		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
+		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL, entryBytes: g.opBytes})
 		return j - i, true
 	case ir.OpBrIf:
 		g.binPop()
@@ -3264,10 +3289,8 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 }
 
 func (g *generator) binPop() {
-	g.emit("mov rcx, [rsp]") // rhs (top of stack)
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
-	g.emit("mov rax, [rsp]") // lhs (next)
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+	g.popReg("rcx") // rhs (top of stack)
+	g.popReg("rax") // lhs (next)
 }
 
 // cmpForWidth emits a `cmp` whose operand size matches the
@@ -3517,10 +3540,8 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 // destination-first 2-op form (`addss xmm1, xmm0`) reads
 // `lhs += rhs`.
 func (g *generator) fbinPop(width int) {
-	g.emit("mov rcx, [rsp]") // rhs
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
-	g.emit("mov rax, [rsp]") // lhs
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+	g.popReg("rcx") // rhs
+	g.popReg("rax") // lhs
 	if width == 64 {
 		g.emit("movq xmm0, rcx")
 		g.emit("movq xmm1, rax")
@@ -3537,28 +3558,65 @@ func (g *generator) freshLabel(prefix string) string {
 	return fmt.Sprintf(".L%s_%d", prefix, g.fresh())
 }
 
-// slotBytes is the operand-stack slot size. 16 bytes today
-// (one i64 value + 8 bytes padding); the padding kept rsp
-// 16-byte aligned across every push/pop without a runtime
-// parity check, which the SysV calling convention requires
-// at every `call`. BACKEND-PARITY perf item #3 plans to halve
-// this to 8; the constant centralises the value so the flip
-// is a one-line change.
-const slotBytes = 16
+// slotBytes is the operand-stack slot size: one i64 value, no
+// padding. A slot flips rsp's 16-alignment, which System V
+// requires at every `call`, so the parity is tracked in
+// `opBytes` and restored by callAligned rather than paid for
+// on every push.
+const slotBytes = 8
 
-// push rax onto the operand stack — `slotBytes`-byte slot,
-// value at `[rsp]`. The upper bytes are dead today (because
-// `slotBytes == 16` and the value fits in 8); the flip in
-// step 2 of the packed-operand-stack plan will drop them.
-func (g *generator) push() {
-	g.emit(fmt.Sprintf("sub rsp, %d", slotBytes))
-	g.emit("mov [rsp], rax")
+// push rax onto the operand stack.
+func (g *generator) push() { g.pushReg("rax") }
+
+// pop into rax — one slot consumed.
+func (g *generator) pop() { g.popReg("rax") }
+
+// pushReg / popReg move one operand-stack slot and keep
+// `opBytes` in step. Every rsp movement inside a function body
+// goes through these or through rspAlloc / rspFree, so the
+// parity at a call site is known statically.
+func (g *generator) pushReg(reg string) {
+	g.emit("push " + reg)
+	g.opBytes += slotBytes
 }
 
-// pop into rax — one `slotBytes`-byte slot consumed.
-func (g *generator) pop() {
-	g.emit("mov rax, [rsp]")
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+func (g *generator) popReg(reg string) {
+	g.emit("pop " + reg)
+	g.opBytes -= slotBytes
+}
+
+// rspAlloc / rspFree reserve and release `n` bytes below rsp
+// inside a function body, tracked like a push.
+func (g *generator) rspAlloc(n int) {
+	if n == 0 {
+		return
+	}
+	g.emit(fmt.Sprintf("sub rsp, %d", n))
+	g.opBytes += n
+}
+
+func (g *generator) rspFree(n int) {
+	if n == 0 {
+		return
+	}
+	g.emit(fmt.Sprintf("add rsp, %d", n))
+	g.opBytes -= n
+}
+
+// callAligned emits `call target` with rsp 16-byte aligned, as
+// System V requires. The prologue leaves rsp aligned, so an odd
+// number of live operand slots is exactly the case that needs a
+// pad. `target` is a symbol or a register (`r11`).
+//
+// Callers that have already placed outgoing stack arguments at
+// [rsp] must not use this — the pad would move them. Those go
+// through emitCallArgsLoad, which folds the same parity fix into
+// the overflow area it allocates.
+func (g *generator) callAligned(target string) {
+	pad := g.padTo16()
+	g.rspAlloc(pad)
+	g.emit("call " + target)
+	g.rspFree(pad)
 }
 
 // emitStrLen loads the i32 length of the string whose data
@@ -3726,55 +3784,74 @@ func (g *generator) emitArrayLenStore(srcReg, dstReg string) {
 // emitCallArgsLoad places `argc` operand-stack values into
 // System V argument slots. First 6 args go to rdi/rsi/rdx/rcx/
 // r8/r9; the rest land on the call stack at [rsp+0], [rsp+8],
-// ... in source order. The operand stack uses `slotBytes`-byte
-// slots; the call stack always uses 8-byte slots, so overflow
-// args get compressed via a call-stack overflow area allocated
-// below the operand-stack args. (Today `slotBytes == 16` so
-// the compress is real; flipping it to 8 makes it a no-op.)
+// ... in source order. Operand slots and call-stack slots are
+// both 8 bytes, so an overflow arg is copied across without
+// re-packing.
 //
-// After this call returns, the caller is responsible for the
-// `call` / `call r11` and then `emitCallArgsCleanup` to drop
-// both the call-stack overflow AND the operand-stack args.
-func (g *generator) emitCallArgsLoad(argc int) {
+// It also leaves rsp 16-aligned for the `call`. With no
+// overflow that is a bare pad; with overflow the pad is folded
+// into the overflow area, because a pad emitted after it would
+// move the outgoing arguments out from under [rsp].
+//
+// After this returns, the caller is responsible for the
+// `call` / `call r11` and then `emitCallArgsCleanup` with the
+// returned byte count, to drop the call-stack overflow, the
+// pad, AND the operand-stack args.
+func (g *generator) emitCallArgsLoad(argc int) (extra int) {
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	if argc <= len(regs) {
 		for i := argc - 1; i >= 0; i-- {
-			g.emit(fmt.Sprintf("mov %s, [rsp]", regs[i]))
-			g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+			g.popReg(regs[i])
 		}
-		return
+		pad := g.padTo16()
+		g.rspAlloc(pad)
+		return pad
 	}
 	overflow := argc - len(regs)
-	// Round overflow*8 to a multiple of 16 to keep rsp
-	// 16-aligned at the call site (System V requirement).
-	stackSize := ((overflow*8 + 15) / 16) * 16
-	g.emit(fmt.Sprintf("sub rsp, %d", stackSize))
+	// The overflow area doubles as the alignment pad: grow it by
+	// one 8-byte slot when the live operand depth would otherwise
+	// leave rsp odd at the call.
+	stackSize := overflow * 8
+	if (g.opBytes+stackSize)%16 != 0 {
+		stackSize += 8
+	}
+	g.rspAlloc(stackSize)
 	// Register args: arg i at [rsp + stackSize + slotBytes*(argc-1-i)].
 	for i := 0; i < len(regs); i++ {
 		g.emit(fmt.Sprintf("mov %s, [rsp + %d]", regs[i], stackSize+slotBytes*(argc-1-i)))
 	}
-	// Overflow args: copy operand-slot value to call-stack 8-byte
-	// slot. arg i (i >= 6) at operand offset
-	// stackSize + slotBytes*(argc-1-i), goes to call-stack
-	// [rsp + 8*(i-6)].
+	// Overflow args: copy operand slot to call-stack slot. arg i
+	// (i >= 6) at operand offset stackSize + slotBytes*(argc-1-i),
+	// goes to call-stack [rsp + 8*(i-6)].
 	for i := len(regs); i < argc; i++ {
 		g.emit(fmt.Sprintf("mov rax, [rsp + %d]", stackSize+slotBytes*(argc-1-i)))
 		g.emit(fmt.Sprintf("mov [rsp + %d], rax", 8*(i-len(regs))))
 	}
+	return stackSize
 }
 
 // emitCallArgsCleanup undoes emitCallArgsLoad's stack
-// allocation. Caller passes the same argc.
-func (g *generator) emitCallArgsCleanup(argc int) {
-	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-	if argc <= len(regs) {
-		// Args were already popped via per-arg `add rsp, slotBytes`.
+// allocation. Caller passes the same argc and the byte count
+// emitCallArgsLoad returned.
+func (g *generator) emitCallArgsCleanup(argc, extra int) {
+	if argc <= 6 {
+		// Args were already popped one register at a time; only
+		// the alignment pad is left.
+		g.rspFree(extra)
 		return
 	}
-	overflow := argc - len(regs)
-	stackSize := ((overflow*8 + 15) / 16) * 16
 	// Drop call-stack overflow + operand-stack args.
-	g.emit(fmt.Sprintf("add rsp, %d", stackSize+slotBytes*argc))
+	g.rspFree(extra + slotBytes*argc)
+}
+
+// padTo16 is the byte count that would bring rsp back to 16-byte
+// alignment at the current operand depth: 0 or 8.
+func (g *generator) padTo16() int {
+	pad := g.opBytes % 16
+	if pad < 0 {
+		pad += 16
+	}
+	return pad
 }
 
 func (g *generator) line(s string) {
@@ -3833,45 +3910,37 @@ func (g *generator) peepholeTail() {
 	w := g.peepWin
 	n := len(w)
 
-	// P1 — redundant store/reload: a push immediately followed by the
-	// matching pop. push() emits `sub rsp, N` / `mov [rsp], rax`; pop()
-	// emits `mov DST, [rsp]` / `add rsp, N`. When adjacent, the slot is
-	// allocated and freed within the four lines and nothing else reads it,
-	// so the net effect is just `DST := rax`:
-	//   sub rsp, N / mov [rsp], rax / mov DST, [rsp] / add rsp, N
-	//     => mov DST, rax     (or nothing when DST == rax)
-	if n >= 4 {
-		if k, ok := matchRspDelta(w[n-4], "sub"); ok && w[n-3] == "\tmov [rsp], rax" {
-			if dst, ok2 := matchPopDst(w[n-2]); ok2 {
-				if k2, ok3 := matchRspDelta(w[n-1], "add"); ok3 && k2 == k {
-					if dst == "rax" {
-						g.peepWin = w[:n-4]
-					} else {
-						g.peepWin = append(w[:n-4], "\tmov "+dst+", rax")
-					}
-					return
-				}
+	// P1 — redundant store/reload: `push rax` immediately followed by the
+	// matching pop. The slot is allocated and freed within the two lines and
+	// nothing else reads it, so the net effect is just `DST := rax`:
+	//   push rax / pop DST   =>  mov DST, rax   (or nothing when DST is rax)
+	if n >= 2 && w[n-2] == "\tpush rax" {
+		if dst, ok := matchPopDst(w[n-1]); ok {
+			if dst == "rax" {
+				g.peepWin = w[:n-2]
+			} else {
+				g.peepWin = append(w[:n-2], "\tmov "+dst+", rax")
 			}
+			return
 		}
 	}
 
 	// P3 — dead push: a push whose slot is freed without ever being read.
 	// A statement-position expression still leaves its value on the operand
-	// stack, and the statement end simply pops it:
-	//   sub rsp, N / mov [rsp], rax / add rsp, N   =>  nothing
+	// stack, and the statement end simply drops it:
+	//   push rax / add rsp, 8   =>  nothing
 	// The store lands below the restored rsp, so nothing can observe it —
-	// this backend never reads below rsp, and the System V red zone is not
-	// used. rax is unchanged either way.
+	// this backend never reads below rsp outside a leaf helper that owns its
+	// own frame, and the System V red zone is not used across a spill. rax is
+	// unchanged either way.
 	//
-	// Checked after P1 so the four-line push/pop pair keeps its precedence;
-	// the two cannot both match (P1's third line is a pop, this one's is the
-	// stack restore).
-	if n >= 3 {
-		if k, ok := matchRspDelta(w[n-3], "sub"); ok && w[n-2] == "\tmov [rsp], rax" {
-			if k2, ok2 := matchRspDelta(w[n-1], "add"); ok2 && k2 == k {
-				g.peepWin = w[:n-3]
-				return
-			}
+	// Checked after P1 so the push/pop pair keeps its precedence; the two
+	// cannot both match (P1's second line is a pop, this one's is the stack
+	// restore).
+	if n >= 2 && w[n-2] == "\tpush rax" {
+		if k, ok := matchRspDelta(w[n-1], "add"); ok && k == fmt.Sprint(slotBytes) {
+			g.peepWin = w[:n-2]
+			return
 		}
 	}
 
@@ -3897,15 +3966,14 @@ func matchRspDelta(line, op string) (string, bool) {
 	return "", false
 }
 
-// matchPopDst matches a `\tmov <reg>, [rsp]` pop into a single register and
-// returns <reg>. rsp is excluded: `mov rsp, [rsp]` would not be equivalent to
-// `mov rsp, rax` once the trailing `add rsp, N` is removed.
+// matchPopDst matches a `\tpop <reg>` into a single register and returns
+// <reg>. rsp is excluded: `pop rsp` loads rsp from the slot rather than
+// discarding it, so it is not equivalent to `mov rsp, rax`.
 func matchPopDst(line string) (string, bool) {
-	const pfx = "\tmov "
-	const sfx = ", [rsp]"
-	if strings.HasPrefix(line, pfx) && strings.HasSuffix(line, sfx) {
-		reg := line[len(pfx) : len(line)-len(sfx)]
-		if reg != "" && reg != "rsp" && !strings.ContainsAny(reg, " []") {
+	const pfx = "\tpop "
+	if strings.HasPrefix(line, pfx) {
+		reg := line[len(pfx):]
+		if reg != "" && reg != "rsp" && !strings.ContainsAny(reg, " [],") {
 			return reg, true
 		}
 	}
@@ -3973,7 +4041,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		// a zero-capture closure has no env to free, so drop_fn
 		// is 0 (the generic drop guards drop_fn!=0).
 		g.emit("mov edi, 32")
-		g.emit("call __fern_alloc_rc1")
+		g.callAligned("__fern_alloc_rc1")
 		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
 		g.emit("mov [rax], rcx")
 		g.emit("mov qword ptr [rax + 8], 0")
@@ -4013,16 +4081,15 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// captures in pushed stack temps, alloc, then store from
 	// the stack into the env in declaration order.
 	//
-	// Actually the operand stack already holds them in
-	// 16-byte slots, ready for restamping. After alloc we
-	// have env_ptr in rax; reorder reads from operand stack
-	// slots (rsp + 16*offset).
+	// Actually the operand stack already holds them, ready for
+	// restamping. After alloc we have env_ptr in rax; reorder
+	// reads from operand stack slots.
 	g.emit(fmt.Sprintf("mov edi, %d", envSize))
 	// Save caller's r12 (env_ptr) + r13 (loop scratch) — we
 	// need them across __fern_alloc.
-	g.emit("push r12")
-	g.emit("push r13")
-	g.emit("call __fern_alloc_rc1")
+	g.pushReg("r12")
+	g.pushReg("r13")
+	g.callAligned("__fern_alloc_rc1")
 	g.emit("mov r12, rax") // r12 = env_ptr (= base + 8 header)
 	// Captures sit on the operand stack just above the
 	// pushed callee-saves: we pushed `r12` and `r13` above
@@ -4047,11 +4114,15 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 			g.emit(fmt.Sprintf("mov %s, eax", dst))
 		}
 	}
-	// Drop the N operand-stack slots we consumed.
-	g.emit(fmt.Sprintf("add rsp, %d", n*slotBytes))
 	g.emit("mov rax, r12") // env_ptr in rax
-	g.emit("pop r13")
-	g.emit("pop r12")
+	// Restore the callee-saves BEFORE dropping the captures:
+	// they sit below the capture slots, so a drop first would
+	// pop a capture value into r13 / r12 and hand the caller
+	// back registers System V says it may rely on.
+	g.popReg("r13")
+	g.popReg("r12")
+	// Drop the N operand-stack slots we consumed.
+	g.rspFree(n * slotBytes)
 
 	if envOnly {
 		g.push()
@@ -4059,13 +4130,13 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	}
 	// OpMakeClosure: also allocate the closure pair. Stash
 	// env_ptr on the operand stack via g.push() so the slot
-	// layout is uniform with everything else (slotBytes-aware).
+	// layout is uniform with everything else.
 	// __fern_alloc preserves callee-saves + rsp per SysV, so
 	// the saved value still sits at [rsp] when the call
 	// returns.
 	g.push() // env_ptr → operand stack
 	g.emit("mov edi, 32")
-	g.emit("call __fern_alloc_rc1")
+	g.callAligned("__fern_alloc_rc1")
 	// rax = pair ptr (= base + 8 header). Pair is 32 bytes:
 	// {fn_ptr, env_ptr, drop_fn, env_ptr}. The duplicated env_ptr
 	// at +24 makes {drop_fn@16, env@24} a callable sub-pair so a
@@ -4086,9 +4157,9 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	} else {
 		g.emit("mov qword ptr [rax + 16], 0")
 	}
-	g.emit("mov [rax + 24], rcx")                 // duplicate env_ptr
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes)) // drop env_ptr save
-	g.push()                                      // pair ptr
+	g.emit("mov [rax + 24], rcx") // duplicate env_ptr
+	g.rspFree(slotBytes)          // drop env_ptr save
+	g.push()                      // pair ptr
 	return nil
 }
 
@@ -4151,7 +4222,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	// Pop in the order the OpCallDirect dispatch would
 	// use: rhs (idx, top of stack) first, lhs (base, next)
 	// second.
-	g.emit("mov rcx, [rsp]") // idx
+	g.popReg("rcx") // idx
 	// Zero-extend the index to 32 bits. Fern indices are i32 and the bounds
 	// checks below compare the low 32 bits (`ecx`), but the address `lea`s
 	// use the full 64-bit `rcx`, so any stale garbage in bits 32..63 of the
@@ -4161,9 +4232,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	// #4377 `ir.Fold`-exposed miscompile), so mask it here. `mov ecx,ecx`
 	// zeroes rcx's upper 32 bits; a no-op for already-clean indices.
 	g.emit("mov ecx, ecx")
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
-	g.emit("mov rax, [rsp]") // base
-	g.emit(fmt.Sprintf("add rsp, %d", slotBytes))
+	g.popReg("rax") // base
 	switch name {
 	case "__str_idx":
 		// SSO-aware byte indexing. Heap strings: base + idx is
@@ -4747,6 +4816,12 @@ func (g *generator) emitAbortRuntime() {
 		g.emitAbortMessages(false)
 		return
 	}
+	// Abort sites reach here by `jmp`, so rsp arrives at the aborting
+	// function's alignment, which the operand stack makes arbitrary. Nothing
+	// here returns, so the cheapest fix is to take alignment rather than
+	// preserve it — otherwise `call __fern_print_hex` below is the one call
+	// in the program System V cannot vouch for.
+	g.emit("and rsp, -16")
 	g.emit("mov r15d, edi") // save exit code (r15 survives the writes below; we never return)
 	g.emit(fmt.Sprintf("mov eax, %d", sysWrite))
 	g.emit("mov edi, 2")             // fd = stderr

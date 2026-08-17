@@ -1,6 +1,6 @@
 # Packed-operand-stack migration plan
 
-> **Status: not started** — tracked as
+> **Status: x86-64 done, arm64 outstanding** — tracked as
 > [#4111](https://github.com/JakeChampion/lang/issues/4111) (8-byte stack
 > slots + real push/pop on the native backends).
 
@@ -12,17 +12,15 @@ PR carries unacceptable risk of subtle offset-arithmetic bugs.
 
 ## Status today
 
-Every operand-stack push uses a **16-byte slot** regardless
-of value width on both natives. The 16-byte slot was a
-16-byte-alignment hedge for `stp` / `ldp` on arm64 and SysV's
-pre-call alignment.
+x86-64 uses **8-byte slots** with real `push` / `pop`. arm64
+still pushes a **16-byte slot** per value (`str x0, [sp, #-16]!`)
+regardless of value width — the 16-byte slot was an alignment
+hedge for `stp` / `ldp`, and AAPCS64 wants sp 16-aligned for any
+sp-relative access, not only at calls, so the arm64 flip is not
+the same change x86-64's was.
 
-Hard-coded literal `16`s in the native codegens:
-
-- `internal/codegen/x86_64/x86_64.go`: ~80 references to
-  `rsp, 16` / `[rsp + 16*N]` / `[rsp + 16]` shapes.
-- `internal/codegen/arm64/arm64.go`: ~200 references to
-  `#16` (mostly slot arithmetic, some unrelated bit masks).
+`internal/codegen/arm64/arm64.go` has ~200 references to `#16`
+(mostly slot arithmetic, some unrelated bit masks).
 
 ## Target
 
@@ -48,18 +46,43 @@ single point of truth.
 Verification: full `go test ./...` green, no asm diff (the
 constant inlines to the same literal).
 
-### Step 2 — flip `slotBytes` to 8 on one backend (x86_64 first)
+### Step 2 — flip `slotBytes` to 8 on x86_64 ✅ done
 
-Change the constant on x86_64 only. Audit + fix every
-offset-calculation that assumed 16-byte slots. Add the static
-parity-tracking that pads sp to 16 before every call site.
+`slotBytes = 8`; `push()` / `pop()` emit `push rax` / `pop DST`;
+`binPop` / `fbinPop` / the inline index helper / the closure
+env builder pop registers directly. Parity is tracked in
+`generator.opBytes` — every body-level rsp movement goes through
+`pushReg` / `popReg` / `rspAlloc` / `rspFree`, and `irScope`
+carries the scope-entry depth so an else-branch does not inherit
+the then-branch's pushes. `callAligned` pads 8 bytes before a
+call when the depth is odd; `emitCallArgsLoad` folds the same
+pad into the stack-argument overflow area, because a pad emitted
+after it would move the outgoing arguments out from under
+`[rsp]`.
 
-Verification: full e2e suite green on x86_64; arm64 + wasm
-unchanged.
+The peephole moved with it: P1 is now `push rax` / `pop DST` =>
+`mov DST, rax`, P3 is `push rax` / `add rsp, 8` => nothing.
 
-### Step 3 — flip `slotBytes` to 8 on arm64
+Verification: `TestEmittedCallsAre16ByteAligned` re-derives rsp
+from the emitted text (not from the counter that produced it)
+and reports any call reached at an odd multiple of 8, over a
+shape corpus and all of `examples/`. Plus the native fixture
+suite with and without `FERN_NATIVE_ASM=1`, and the differential
+oracle.
 
-Same as step 2 for arm64.
+Measured on `examples/self_host/fern.fern` for `x86-64-linux`:
+executable segment 22,206,407 -> 17,692,055 bytes (-20.3%).
+Whole-binary is only -5.0%, because ~79% of that artifact is a
+64 MiB zero-fill `.bss` reservation the linker materialises in
+the file rather than machine code.
+
+### Step 3 — 8-byte slots on arm64
+
+NOT the same change as step 2. AAPCS64 requires a 16-byte-aligned
+sp for every sp-relative access, so unaligned 8-byte pushes are
+not merely a parity-tracking problem the way they are on x86-64.
+The realistic shape is pairing two 8-byte spills into one
+`stp` / `ldp` rather than halving the slot.
 
 ### Step 4 — verify across all callers
 
@@ -84,7 +107,8 @@ architecture.
 
 ## Estimated PR count
 
-4 PRs. Each is independently mergeable.
+4 PRs. Each is independently mergeable. Steps 1 and 2 have
+landed.
 
 ## Why this works even though SSO doesn't
 
