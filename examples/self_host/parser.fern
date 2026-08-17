@@ -4829,6 +4829,9 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         if (name.len() == 0) {
             return (s_unknown("missing var name"), p);
         }
+        // The cursor still ON the head, for the let-else pattern parse below —
+        // parse_pattern wants to read the name itself.
+        var le_pat_start: Par = p;
         p = p.advance();
         // Struct destructure `var Point { x, y } = E;` / `let Point { … } = E;`
         // — `name` is the struct type, the `{` opens the field pattern. A
@@ -4839,6 +4842,55 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         // parse_pattern.
         if (p.peek_punct() == "{") {
             return parse_struct_destructure(p, name, vline, vcol);
+        }
+        // `let PAT = E else { … }` with a pattern-shaped head takes the shared
+        // grammar: parse_pattern gives it nested payloads, `@` bindings and
+        // or-patterns, the same forms `if let` and the match arms accept.
+        //
+        // A head spelled `NAME(`, `NAME@` or `NAME|` is never a plain binding,
+        // but only an `else` makes it a let-else, and that keyword sits past
+        // the initializer. Par is a value, so the whole head is parsed
+        // speculatively and thrown away when no `else` follows, leaving the
+        // original cursor to the paths below.
+        if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|") {
+            var (lsp_pat, lsp_p) = parse_pattern(le_pat_start);
+            var lsp_pats: Pattern[] = [lsp_pat];
+            while (lsp_p.peek_punct() == "|") {
+                lsp_p = lsp_p.advance();
+                var (lsp_alt, lsp_ap) = parse_pattern(lsp_p);
+                lsp_p = lsp_ap;
+                lsp_pats = lsp_pats.append(lsp_alt);
+            }
+            if (lsp_p.peek_punct() == "=") {
+                lsp_p = lsp_p.advance();
+                var (lsp_init, lsp_ip) = parse_expr(lsp_p);
+                lsp_p = lsp_ip;
+                if (lsp_p.peek_keyword() == "else") {
+                    p = lsp_p.advance();  // consume `else`
+                    var (lsp_else, lsp_ep) = parse_block(p);
+                    p = lsp_ep;
+                    if (p.peek_punct() == ";") { p = p.advance(); }
+                    // The rest of the enclosing block is the success arm, so
+                    // the bindings stay live for it — see the note on the
+                    // single-binding path below.
+                    var lsp_rest: Stmt[] = [];
+                    while (p.peek_punct() != "}" && !p.at_end()) {
+                        var (lsp_rs, lsp_rp) = parse_stmt(p);
+                        if (lsp_rp.pos == p.pos) { p = p.advance(); continue; }
+                        p = lsp_rp;
+                        lsp_rest = lsp_rest.append(lsp_rs);
+                    }
+                    var lsp_arms: MatchArm[] = [];
+                    var lsp_i: i32 = 0;
+                    while (lsp_i < lsp_pats.len()) {
+                        lsp_arms = lsp_arms.append(MatchArm { pattern: lsp_pats[lsp_i], body: lsp_rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+                        lsp_i = lsp_i + 1;
+                    }
+                    lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+                    lsp_arms = desugar_nested_arms(lsp_arms, 0);
+                    return (s_match_origin(lsp_init, lsp_arms, vline, vcol, "let_else"), p);
+                }
+            }
         }
         // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
         // The first binding is `le_binding`; any further ones go to

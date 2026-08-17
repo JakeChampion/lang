@@ -28,6 +28,15 @@ var letElseIRCases = []struct {
 	{"opt-some", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"k\") else { return 1 + pad; } return v + pad; }", 42},
 	{"opt-none", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 42); let Some(v) = m.get(\"absent\") else { return 9 + pad; } return v + pad; }", 9},
 	{"rest-multi", "struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var m: Map[string,i32] = map_new(4); m = m.insert(\"k\", 40); let Some(v) = m.get(\"k\") else { return 1 + pad; } var w: i32 = v + 2 + pad; return w; }", 42},
+	// The head now goes through the shared parse_pattern rather than a
+	// hand-rolled binding list, so `@` and or-patterns work here as they do in
+	// a match arm and in `if let`.
+	{"at-binding", "enum E { A(i32), B(i32) } struct Point { x: i32, y: i32 } function whole(e: E): i32 { match (e) { A(v) => { return v; }, B(v) => { return 0; } } } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(6); let w @ A(x) = e else { return 1 + pad; } return whole(w) + x + pad; }", 12},
+	{"or-first-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
+	{"or-second-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = B(4); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 4},
+	// A variant outside the alternatives still reaches the else, so the
+	// wildcard arm survives the per-alternative expansion.
+	{"or-no-match-else", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(9); let A(x) | B(x) = e else { return 21 + pad; } return x + pad; }", 21},
 }
 
 // TestSelfHostLetElseIRX86_64 compiles each case through the self-hosted x86-64
