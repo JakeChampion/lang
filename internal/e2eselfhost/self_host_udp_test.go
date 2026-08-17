@@ -30,22 +30,16 @@ const udpSenderProgram = `function main(): i32 {
 // the byte count. CI-gated; skips cleanly without the cross toolchain.
 func TestSelfHostUdpSendArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	// The emitted sender does not deliver its datagram when run under
-	// qemu-user: the receiver times out and the sender exits nonzero (225 and
-	// 248 observed on two hosts, want 14). Reproduced on both qemu-aarch64 and
-	// qemu-aarch64-static, in CI and locally, so it is neither a CI artefact nor
-	// specific to the -static build.
+	// This ran unskipped for the first time once udp_send acquired a backend at
+	// all (#6917). It had been skipped under qemu on the reading that qemu-user's
+	// socket emulation was at fault, with the cause recorded as not established —
+	// the sender delivered nothing and exited 225 / 248 rather than 14.
 	//
-	// This is PRE-EXISTING and was simply never observed: the test needs the
-	// aarch64 cross toolchain, which no CI lane had until it was added to the
-	// x86 self-host shards, so this assertion had never executed anywhere.
-	// Whether the fault is the arm64 UDP lowering or qemu-user's socket
-	// emulation is NOT established — it has not been run on real arm64 hardware.
-	// Skipped under emulation rather than deleted so it still runs, and can be
-	// believed, on a native arm64 host.
-	if len(qemu) != 0 {
-		t.Skip("arm64 udp_send does not deliver under qemu-user (pre-existing, cause not yet isolated); needs a native arm64 host")
-	}
+	// The cause was not the emulation. `udp_send` had no kind_tag case on either
+	// register backend, so the op fell through to the emitter's comment fallback:
+	// the call was dropped and main returned whatever was in the result register,
+	// which is what those exit codes are. A datagram was never sent to time out
+	// waiting for.
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")

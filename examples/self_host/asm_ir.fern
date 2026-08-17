@@ -3572,6 +3572,24 @@ function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string
 // ir_bin_asm renders the asm for one IR binary op (lhs in %rax, rhs in %rcx,
 // result in %rax) — mirroring asm.fern's own ExprBinary sequences (64-bit,
 // signed i32 div/cmp) so the two paths agree exactly.
+// unsupported_op_refuse ends compilation for an IR op with no instruction
+// selection on this backend (#6917).
+//
+// It used to return "# ir: unsupported bin <name>" — a COMMENT where an
+// instruction belongs — so the operation was silently DROPPED and the program ran
+// on with whatever happened to be in the result register. That is how `print_i64`
+// printed nothing and `udp_send` sent nothing, each for as long as it took someone
+// to notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
+// either: this path never consulted it.
+//
+// There is no AST emitter left to degrade into, so an op reaching here is always a
+// miscompile. The refusal is therefore unconditional rather than strict-mode-only.
+function unsupported_op_refuse(tag: i32): string {
+    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") — refusing to emit a silently dropped operation (#6917)\n");
+    exit(3);
+    return "";
+}
+
 function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 21) { return "    addq %rcx, %rax\n"; }
     if (tag == 22) { return "    subq %rcx, %rax\n"; }
@@ -3611,7 +3629,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 42) { return "    cmpq %rcx, %rax\n    setbe %al\n    movzbq %al, %rax\n"; }
     if (tag == 43) { return "    cmpq %rcx, %rax\n    seta %al\n    movzbq %al, %rax\n"; }
     if (tag == 44) { return "    cmpq %rcx, %rax\n    setae %al\n    movzbq %al, %rax\n"; }
-    return "    # ir: unsupported bin " + ir.kind_name(tag) + "\n";
+    return unsupported_op_refuse(tag);
 }
 
 // ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
@@ -3916,7 +3934,7 @@ pub function emit_runtime_globls(s: asmcore.EmitState): asmcore.EmitState {
         "__fn___fern_timer_fd", "__fern_wasm_timer_pollable", "__fern_wasm_pollable_drop",
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
-        "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
+        "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
         "__fn___fern_open_fd",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fern_map_delete",
@@ -4175,11 +4193,20 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.mark_str_eq(); return s;
     }
-    // str_cmp: operand stack [box A, box B] (B on top); __fern_str_cmp is now a
-    // Fern runtime function (#2649) called via the __fn_ stack convention —
-    // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
-    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_cmp\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.mark_str_cmp(); return s;
+    if (o.kind_tag == 100) {  // str_cmp
+        // operand stack: [box A, box B] (B on top); __fern_str_cmp is now a Fern
+        // runtime function (#2649) called via the __fn_ stack convention —
+        // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
+        s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_cmp\n    addq $16, %rsp\n    pushq %rax\n");
+        s = s.mark_str_cmp(); return s;
+    }
+    // Guarded, so this tail is unreachable rather than a catch-all (#6917).
+    // str_cmp used to sit here unguarded, which meant a tag added to
+    // ir.is_str_op_kind without a branch here emitted a __fern_str_cmp call for
+    // it — wrong code that looks plausible, the same failure class as the
+    // comment fallback in ir_bin_asm.
+    unsupported_op_refuse(o.kind_tag);
+    return s;
 }
 
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
@@ -4643,6 +4670,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
             s = s.write("    call __fn___fern_tcp_send\n    addq $16, %rsp\n    pushq %rax\n");
             s = s.need("tcp_send");
+        } else if (o.kind_tag == 208) {  // udp_send
+            // [host, port, data] with data on top; the stack ABI wants param[0]
+            // (host) lowest, so pop and re-push reversed. Before #6917 this op had
+            // no case at all and fell through to the comment fallback, which
+            // dropped the call.
+            s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_udp_send\n    addq $24, %rsp\n    pushq %rax\n");
+            s = s.need("udp_send");
         } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max] with max on top; the stack ABI wants param[0] (fd)
             // lowest, so pop and re-push swapped.
@@ -6328,7 +6363,7 @@ pub function all_runtime_need_roots(): string[] {
         // stdin / argv:
         "read_all_stdin", "arg_at",
         // sockets + readiness (the edge-handler serve loop):
-        "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv",
+        "tcp_listen", "tcp_accept", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // wide-int stringifiers + the Option-returning i32 min/max:
@@ -7158,7 +7193,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // kept identical anyway — the cost is one unused .bss buffer in an x86-only
     // poll program, and a divergence here is a link failure, which is how this
     // list grew the last three entries.
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .text\n");
     }
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
@@ -7255,6 +7290,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("wasm_pollable_drop")) { s = emit_ir_wasm_pollable_drop(s); }
     if (s.has_need("wasm_block")) { s = emit_ir_wasm_block(s); }
     if (s.has_need("wasm_poll")) { s = emit_ir_wasm_poll(s); }
+    if (s.has_need("udp_send")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), all_structs, s);
+    }
     if (s.has_need("tcp_connect")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect("x86_64"), all_structs, s);

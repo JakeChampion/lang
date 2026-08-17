@@ -788,6 +788,27 @@ pub function rt_src_tcp_connect(t: string): string {
     return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, host_be & 255); __raw_store8(sa, 5, (host_be >> 8) & 255); __raw_store8(sa, 6, (host_be >> 16) & 255); __raw_store8(sa, 7, (host_be >> 24) & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { return rc; } return fd; }";
 }
 
+// rt_src_udp_send backs `udp_send(host, port, data)` (#2649, #6917) → the bytes
+// written, or -errno from whichever step failed.
+//
+// This op had NO backend case at all: it reached `ir_bin_asm`'s comment fallback
+// and the call was silently dropped on both register backends, while arm64 also
+// emitted a hand-written `__fern_udp_send` that nothing branched to. The dead
+// body is deleted and the op lowers here.
+//
+// The hand-asm used `sendto`, whose six arguments are past `__syscall5`. It needs
+// none: on a datagram socket `connect` only records the peer, so
+// connect-then-write sends exactly the same packet with two three-argument calls.
+// That is what keeps this slice free of a `__syscall6` and its kind-registry
+// churn. The fd is closed on both paths, so the one-shot leaks no descriptor.
+//
+// `host` is a dotted-quad LITERAL (irlower passes the string, unlike
+// tcp_connect's pre-packed i32), so the quad is parsed here — accumulate each
+// octet, store on '.', store the last after the loop.
+pub function rt_src_udp_send(t: string): string {
+    return "function __fern_udp_send(host: string, port: i32, data: string): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0); if (fd < 0) { return fd; } var sa: i32 = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i]; if (c == 46) { __raw_store8(sa, 4 + idx, oct & 255); idx = idx + 1; oct = 0; } else { oct = oct * 10 + (c - 48); } i = i + 1; } __raw_store8(sa, 4 + idx, oct & 255); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd, sa, 16); if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return rc; } var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_data(data), data.len()); __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return w; }";
+}
+
 // rt_src_tcp_send backs `tcp_send(fd, s)` (#2649, syscall-leaf) → bytes written
 // or -errno. A single write(2) straight out of the string's own buffer.
 //

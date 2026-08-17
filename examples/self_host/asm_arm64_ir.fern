@@ -88,6 +88,24 @@ function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState 
 // ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
 // result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
 // signed i32 div/rem via sdiv/msub) so the IR and AST paths agree.
+// unsupported_op_refuse ends compilation for an IR op with no instruction
+// selection on this backend (#6917).
+//
+// It used to return "// ir: unsupported bin <name>" — a COMMENT where an
+// instruction belongs — so the operation was silently DROPPED and the program ran
+// on with whatever happened to be in the result register. That is how `print_i64`
+// printed nothing and `udp_send` sent nothing, each for as long as it took someone
+// to notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
+// either: this path never consulted it.
+//
+// There is no AST emitter left to degrade into, so an op reaching here is always a
+// miscompile. The refusal is therefore unconditional rather than strict-mode-only.
+function unsupported_op_refuse(tag: i32): string {
+    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") — refusing to emit a silently dropped operation (#6917)\n");
+    exit(3);
+    return "";
+}
+
 function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 21) { return "    add x0, x0, x1\n"; }
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
@@ -139,7 +157,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 42) { return "    cmp x0, x1\n    cset x0, ls\n"; }
     if (tag == 43) { return "    cmp x0, x1\n    cset x0, hi\n"; }
     if (tag == 44) { return "    cmp x0, x1\n    cset x0, hs\n"; }
-    return "    // ir: unsupported bin " + ir.kind_name(tag) + "\n";
+    return unsupported_op_refuse(tag);
 }
 
 // ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
@@ -376,12 +394,17 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_eq();
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
     }
-    // str_cmp: operand stack [A, B] (B on top); __fern_str_cmp is now a Fern
-    // runtime function (#2649) called via the __fn_ stack convention — re-push so
-    // A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32]. The body is
-    // emitted by asm_arm64.emit_runtime (shared AST+IR runtime).
-    s = s.mark_str_cmp();
-    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_cmp\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
+    if (o.kind_tag == 100) {  // str_cmp
+        // operand stack [A, B] (B on top); __fern_str_cmp is now a Fern runtime
+        // function (#2649) called via the __fn_ stack convention — re-push so
+        // A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32].
+        s = s.mark_str_cmp();
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_cmp\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
+    }
+    // Guarded, so this tail is unreachable rather than a catch-all (#6917) —
+    // see the matching note in asm_ir.emit_str_op.
+    unsupported_op_refuse(o.kind_tag);
+    return s;
 }
 
 // movz_text_ok reports whether an integer literal's SOURCE TEXT can go
@@ -966,6 +989,15 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // the box is on top but param[0] is fd, so swap before the call.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_tcp_send\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+        } else if (o.kind_tag == 208) {  // udp_send
+            // [host, port, data] with data on top; the stack ABI wants param[0]
+            // (host) lowest, so pop and re-push reversed. Before #6917 this op had
+            // no case at all: the op fell through to the comment fallback, which
+            // dropped the call, while a hand-written body was emitted that nothing
+            // ever branched to.
+            s = s.need("udp_send");
+            s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_udp_send\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 195) {  // tcp_recv
             // [fd, max] -> __fern_tcp_recv(fd, max) -> string box. Allocates
             // (calls __fern_alloc), so the heap runtime must be present.
@@ -2501,7 +2533,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     // timing program referencing a slot nothing defined. Same gate as asm_ir's.
     var ctgt: string = "arm64-linux";
     if (darwin) { ctgt = "arm64-darwin"; }
-    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int")) {
+    if (s.has_need("monotonic_ns") || s.has_need("now_unix_ms") || s.has_need("now_ns") || s.has_need("stat") || s.has_need("random_i32") || s.has_need("sleep_ms") || s.has_need("poll") || s.has_need("proc_waitpid") || s.has_need("timer_fd") || s.has_need("tcp_listen") || s.has_need("tcp_connect") || s.has_need("print_int") || s.has_need("putchar") || s.has_need("eprint") || s.has_need("read_int") || s.has_need("udp_send")) {
         s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip 256\n    .section .text\n");
     }
     if (s.has_need("read_int")) {
@@ -4492,99 +4524,10 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("    ret\n");                    // fd already in x0
     s = s.write(".size __fern_tcp_pollable, .-__fern_tcp_pollable\n");
 
-    // __fern_udp_send(x0 = host box, x1 = port, x2 = data box) → i32.
-    // One-shot fire-and-forget IPv4 datagram (telemetry / syslog to a
-    // local agent): socket(AF_INET, SOCK_DGRAM); parse the dotted-quad
-    // host into sin_addr; sendto the bytes; close. Returns the bytes
-    // accepted or -errno. Linux aarch64: socket=198, sendto=206,
-    // close=57. Darwin remaps via darwin_sysno (97/133/6) and the
-    // sockaddr_in gets a leading sin_len byte.
-    s = s.write(".globl __fern_udp_send\n");
-    s = s.write(".type __fern_udp_send, %function\n");
-    s = s.write("__fern_udp_send:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    stp x21, x22, [sp, #-16]!\n");
-    s = s.write("    str x23, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");           // host box
-    s = s.write("    mov x20, x1\n");           // port
-    s = s.write("    mov x21, x2\n");           // data box
-    s = s.write("    mov x0, #2\n");            // AF_INET
-    s = s.write("    mov x1, #2\n");            // SOCK_DGRAM
-    s = s.write("    mov x2, #0\n");
-    s = s.write("    mov x8, #198\n");          // socket
-    s = s.write("    svc #0\n");
-    s = s.write("    cmp x0, #0\n");
-    s = s.write("    b.lt .Ludp_err\n");
-    s = s.write("    mov x22, x0\n");           // fd
-    s = s.write("    sub sp, sp, #16\n");       // sockaddr_in
-    if (darwin) {
-        s = s.write("    mov w0, #16\n");
-        s = s.write("    strb w0, [sp]\n");     // sin_len
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strb w0, [sp, #1]\n"); // sin_family
-    } else {
-        s = s.write("    mov w0, #2\n");
-        s = s.write("    strh w0, [sp]\n");     // sin_family (u16)
-    }
-    s = s.write("    rev16 w0, w20\n");         // htons(port)
-    s = s.write("    strh w0, [sp, #2]\n");
-    s = s.write("    str xzr, [sp, #8]\n");     // sin_zero
-    // Parse host "a.b.c.d" → 4 octet bytes into sin_addr (sp+4):
-    // acc = acc*10 + digit; on '.' store acc and advance; store the
-    // final octet after the loop. (Mirrors the wasm udp parser.)
-    s = s.write("    ldr x9, [x19]\n");         // host data
-    s = s.write("    ldr x10, [x19, #8]\n");    // host len
-    s = s.write("    mov x11, #0\n");           // i
-    s = s.write("    mov x12, #0\n");           // acc
-    s = s.write("    mov x13, #0\n");           // octIdx
-    s = s.write(".Ludp_pl:\n");
-    s = s.write("    cmp x11, x10\n");
-    s = s.write("    b.ge .Ludp_pld\n");
-    s = s.write("    ldrb w14, [x9, x11]\n");
-    s = s.write("    cmp w14, #46\n");          // '.'
-    s = s.write("    b.ne .Ludp_pdig\n");
-    s = s.write("    add x15, sp, #4\n");
-    s = s.write("    strb w12, [x15, x13]\n");  // store octet
-    s = s.write("    add x13, x13, #1\n");
-    s = s.write("    mov x12, #0\n");
-    s = s.write("    b .Ludp_pn\n");
-    s = s.write(".Ludp_pdig:\n");
-    s = s.write("    mov x15, #10\n");
-    s = s.write("    mul x12, x12, x15\n");
-    s = s.write("    sub w14, w14, #48\n");     // '0'
-    s = s.write("    add x12, x12, x14\n");
-    s = s.write(".Ludp_pn:\n");
-    s = s.write("    add x11, x11, #1\n");
-    s = s.write("    b .Ludp_pl\n");
-    s = s.write(".Ludp_pld:\n");
-    s = s.write("    add x15, sp, #4\n");
-    s = s.write("    strb w12, [x15, x13]\n");  // final octet
-    // sendto(fd, data, len, 0, &sa, 16).
-    s = s.write("    mov x0, x22\n");
-    s = s.write("    ldr x1, [x21]\n");         // data ptr
-    s = s.write("    ldr x2, [x21, #8]\n");     // data len
-    s = s.write("    mov x3, #0\n");            // flags
-    s = s.write("    mov x4, sp\n");            // &sockaddr
-    s = s.write("    mov x5, #16\n");           // addrlen
-    s = s.write("    mov x8, #206\n");          // sendto
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x23, x0\n");           // bytes sent / -errno
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    mov x0, x22\n");           // close(fd)
-    s = s.write("    mov x8, #57\n");
-    s = s.write("    svc #0\n");
-    s = s.write("    mov x0, x23\n");
-    s = s.write("    b .Ludp_ret\n");
-    s = s.write(".Ludp_err:\n");                // x0 holds -errno
-    s = s.write(".Ludp_ret:\n");
-    s = s.write("    ldr x23, [sp], #16\n");
-    s = s.write("    ldp x21, x22, [sp], #16\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_udp_send, .-__fern_udp_send\n");
+    // __fern_udp_send is a Fern runtime function (#2649, #6917):
+    // asmcore.rt_src_udp_send, emitted need-gated with the other net helpers. The
+    // hand-written body that used to sit here was emitted but never called — the
+    // op had no kind_tag case on either backend.
 
     // __fern_alloc_u8(x0 = n) → fresh n-element array (cap header,
     // 8-byte slots, returned base+8). Elements start zero (.bss).
@@ -5997,6 +5940,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen(tgt), s.struct_decls, s);
     }
     // tcp_connect: the same sockaddr_in as tcp_listen with the address filled in.
+    if (s.has_need("udp_send")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send(tgt), s.struct_decls, s);
+    }
     if (s.has_need("tcp_connect")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);
     }
