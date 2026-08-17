@@ -1398,6 +1398,15 @@ pub struct X86Asm {
     lab_names: string[],
     lab_secs: i32[],
     lab_offs: i32[],
+    // Name index over lab_names, so a lookup is a bucket walk rather than a
+    // scan of every label placed so far. lab_head/lab_tail hold the first and
+    // last lab_names index in each bucket (-1 when empty) and lab_next chains
+    // one entry to the next WITHIN a bucket, in insertion order — which is
+    // what keeps a duplicate name resolving to its FIRST definition, exactly
+    // as the linear scan did.
+    lab_head: i32[],
+    lab_tail: i32[],
+    lab_next: i32[],
     fix_offs: i32[],
     fix_names: string[],
     // Patch offsets whose instruction continues PAST the disp32 — an
@@ -1415,9 +1424,40 @@ pub struct X86Asm {
     unknown: string[],
 }
 
+// x86_label_buckets is the bucket count of the label-name index. Prime, so
+// unrelated hash strides do not alias onto one bucket. Sized for the ~14k
+// labels a whole-compiler module places: a few names per bucket.
+function x86_label_buckets(): i32 { return 4093; }
+
+// x86_name_bucket hashes a label name to a bucket. Folded by the modulus at
+// every step rather than at the end, so the accumulator stays under 2^20 and
+// the hash needs no wrapping arithmetic.
+function x86_name_bucket(name: string): i32 {
+    var h: i32 = 0;
+    var i: i32 = 0;
+    var n: i32 = name.len();
+    while (i < n) {
+        h = ((h * 131) + (name[i] as i32)) % 4093;
+        i = i + 1;
+    }
+    return h;
+}
+
+// x86_empty_buckets is a bucket array of `x86_label_buckets()` empty slots.
+function x86_empty_buckets(): i32[] {
+    var b: i32[] = [];
+    var i: i32 = 0;
+    var n: i32 = x86_label_buckets();
+    while (i < n) {
+        b = b.append(0 - 1);
+        i = i + 1;
+    }
+    return b;
+}
+
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], fix_offs: [], fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], unknown: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -1431,21 +1471,39 @@ function x86_align8(n: i32): i32 {
     return p;
 }
 
+// x86_add_label records `name` in section `sec` at in-section offset `off`,
+// appending to the parallel label arrays and threading the new entry onto the
+// TAIL of its name bucket. Appending at the tail (rather than the cheaper
+// push-front) is what makes x86_label_idx's bucket walk visit definitions in
+// the order they were placed, so a repeated name still resolves to the first.
+function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm {
+    var at: i32 = a.lab_names.len();
+    var b: i32 = x86_name_bucket(name);
+    var prev: i32 = a.lab_tail[b];
+    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
+    a = X86Asm { ...a, lab_secs: a.lab_secs.append(sec) };
+    a = X86Asm { ...a, lab_offs: a.lab_offs.append(off) };
+    a = X86Asm { ...a, lab_next: a.lab_next.append(0 - 1) };
+    if (prev < 0) {
+        a = X86Asm { ...a, lab_head: a.lab_head.with(b, at) };
+    } else {
+        a = X86Asm { ...a, lab_next: a.lab_next.with(prev, at) };
+    }
+    a = X86Asm { ...a, lab_tail: a.lab_tail.with(b, at) };
+    return a;
+}
+
 // x86_label records `name` at the current .text offset (section 0).
 function x86_label(own a: X86Asm, name: string): X86Asm {
-    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
-    a = X86Asm { ...a, lab_secs: a.lab_secs.append(0) };
-    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
-    return a;
+    var off: i32 = a.code.len();
+    return x86_add_label(a, name, 0, off);
 }
 
 // x86_rodata_label records `name` at the current .rodata offset (section
 // 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
 function x86_rodata_label(own a: X86Asm, name: string): X86Asm {
-    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
-    a = X86Asm { ...a, lab_secs: a.lab_secs.append(1) };
-    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.rodata.len()) };
-    return a;
+    var off: i32 = a.rodata.len();
+    return x86_add_label(a, name, 1, off);
 }
 
 // x86_rodata_quad appends `v` as 8 little-endian bytes to .rodata — a `.quad`
@@ -1460,10 +1518,8 @@ function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
 // .bss is zero-init memory not present in the file: only the running size
 // advances (x86_bss_skip), and the ELF sets p_memsz > p_filesz.
 function x86_bss_label(own a: X86Asm, name: string): X86Asm {
-    a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
-    a = X86Asm { ...a, lab_secs: a.lab_secs.append(2) };
-    a = X86Asm { ...a, lab_offs: a.lab_offs.append(a.bss_size) };
-    return a;
+    var off: i32 = a.bss_size;
+    return x86_add_label(a, name, 2, off);
 }
 
 // x86_bss_skip advances the .bss size by `n` bytes (a `.skip`/`.quad`/
@@ -1474,13 +1530,16 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
 }
 
 // x86_label_idx returns the index of `name` in the label table, or -1.
+// Walks that name's bucket rather than the whole table: the scan it replaces
+// was 37% of a whole-compiler assemble, one pass over ~14k names per branch
+// fixup and again per resolve (#6911).
 function x86_label_idx(a: X86Asm, name: string): i32 {
-    var i: i32 = 0;
-    while (i < a.lab_names.len()) {
+    var i: i32 = a.lab_head[x86_name_bucket(name)];
+    while (i >= 0) {
         if (a.lab_names[i] == name) {
             return i;
         }
-        i = i + 1;
+        i = a.lab_next[i];
     }
     return 0 - 1;
 }

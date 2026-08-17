@@ -270,6 +270,7 @@ separate cleanly on this:
 | `own` on the 31 `X86Asm` state params | 21.4 GB → 3.07 GB | 97 s → 97 s |
 | buffer lifted out of the struct for the `.with` patch loops | 3.07 GB → 3.07 GB | 97 s → **19 s** |
 | `bindingHoldsContainer` in `fieldPlaceAppendCopies` | 3.07 GB → **988 B** | 19 s → **9.3 s** |
+| bucket-indexing the assembler's label table | 988 B (flat) | 9.8 s → **5.9 s** |
 
 So a flat cliff line means "no append regressed", never "nothing is copying",
 and the converse holds too: a large cliff number is not by itself evidence of
@@ -369,21 +370,26 @@ contradict comments in the tree:
 historical. 8 is where the time is; 5 is the only pre-existing item still
 measuring near its original attribution; 4 is the multi-PR track.
 
-**8 is done for this workload — and it was worth 10x.** #6911 landed in two
+**8 is done for this workload — and it was worth 16x end to end.** #6911 landed in two
 parts: the x86 in-process assembler got the `own` treatment `arm64_native.fern`
 got in #6011 (97 s → 19 s), and `fieldPlaceAppendCopies` stopped treating a
 container handed to a scalar-returning call as captured (19 s → 9.3 s). The
 append cliff on `checker.fern` went 21.4 GB → 988 bytes, output byte-identical
 throughout. §4c has the mechanism and the minimal repro.
 
-**The ranking is stale again — re-profile before picking the next one.** Two
-200-sample runs on the 19 s build (i.e. before the second half landed) put the
-rc/alloc cluster at 33.0% / 33.5% and `__fern_strcmp` at 22.0% / 16.5%; most of
-that rc traffic was the copying item 8 has now removed, so both shares have
-moved. What the same runs showed and item 8 does *not* touch:
-`x86_native__x86_label_idx` at 5.0% / 3.0%, all of it in `strcmp` — the
-assembler's label table is a linear scan, the same shape as item 3's `Scope`
-tables. Item 5 (symbol interning, #4394) remains the best-evidenced open item.
+**Then the assembler's label table, which the same profiles surfaced.** With
+the rc traffic gone, a 200-sample run of the 9.3 s build put
+`x86_native__x86_label_idx` at 21.0% directly plus 32 of `__fern_strcmp`'s 56
+samples — **37% of the compile in one linear scan**, ~14k names walked per
+branch fixup and again per resolve. Bucket-indexing it by name took 9.8 s to
+**5.9 s**, byte-identical (#6911). It is item 3's shape (a flat table scanned
+per lookup) in a different file, and it was the larger of the two.
+
+**Re-profile before picking the next one — this list has now moved twice in a
+session.** `__fern_strcmp` was 22.0% / 16.5% on the 19 s build and is the
+obvious remaining leaf, but a third of it was `x86_label_idx`'s and is gone.
+Item 5 (symbol interning, #4394) is still the best-evidenced open item; measure
+it against the 5.9 s build before scoping it.
 
 **3 is much smaller than its rank suggests.** It measured 17% in §4 and 2.5–6%
 in §4b, because #6899 removed most of it. The linear scan is still real and
