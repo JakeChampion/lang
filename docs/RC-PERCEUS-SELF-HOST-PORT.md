@@ -7579,3 +7579,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Both rows stay listed. Their divergence text is unchanged: it describes the
   measured behaviour correctly even where the attributed CAUSE does not survive
   contact with the code.
+
+- 2026-08-16 (later): **#6544's remaining work is narrower than "extend a
+  registry" — the method-key MECHANISM already exists.** Reproduced first: the
+  case prints `flat` on native and `grows` on the self-host today, so the leak
+  is live.
+
+  `is_fresh_ret_binding` (`irlower.fern:29265`) already resolves a method key —
+  its `ExprFieldAccess` arm looks up `recv_type + "." + fa.field`. Nothing needs
+  inventing there. Two things stop it firing for strings:
+
+  1. The four registries never EMIT a method key. `str_fresh_ret_fns_of`
+     (`:25758`), `tuple_fresh_ret_fns_of` (`:25827`), `map_fresh_ret_fns_of`
+     (`:25939`) and `return_fresh_struct_ret_fns_of` (`:29181`) each gate on
+     `receiver_type.len() == 0` and append a bare `name`.
+  2. The string and tuple call sites pass `recv_type` as a literal `""`
+     (`:25550`, `:26110`, `:26134`), so the method arm short-circuits before the
+     lookup. The struct sites (`:11442`, `:26178`, `:29304`, `:36705`) pass
+     `v.type_name`.
+
+  The subtlety worth naming, because it is what the struct path is quietly
+  relying on: `v.type_name` is the BINDING's declared type, not the receiver's.
+  That coincides for an identity-returning method (`(b: Box) relabel(...): Box`),
+  which is every shape the struct path admits today. It does NOT coincide in
+  general, and the string shapes are where it first bites —
+  `(s: string) tail(n: i32): str` binds `str` while the key would have to be
+  `string.tail`. So the slice is: emit `<recv>.<name>` keys from the registries,
+  pass a real receiver type at the string/tuple sites, and normalise `str` to
+  `string` the way native's `ast.ReceiverTypeName` does — not simply widen the
+  `""`.
+
+  Measurement of record for the three shapes is the table above; it stands.
+  Refs #6544 #4451.
