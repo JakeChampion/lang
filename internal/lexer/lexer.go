@@ -56,6 +56,10 @@ func (k Kind) String() string {
 type FStringPart struct {
 	Lit  string
 	Expr string
+	// Pos is where Expr's first byte sits in the enclosing source, so
+	// the parser can rebase the sub-parsed expression's positions onto
+	// the file. Unset on Lit parts.
+	Pos ast.Position
 }
 
 type Token struct {
@@ -669,6 +673,7 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 			// nested braces inside the interpolant (e.g. struct
 			// literals) without losing the outer boundary.
 			exprStart := l.i
+			exprPos := l.pos()
 			depth := 1
 			for l.i < len(l.src) && depth > 0 {
 				switch l.src[l.i] {
@@ -709,7 +714,7 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 			if strings.TrimSpace(exprText) == "" {
 				return nil, &Error{Pos: start, Msg: "empty `{}` in f-string"}
 			}
-			parts = append(parts, FStringPart{Expr: exprText})
+			parts = append(parts, FStringPart{Expr: exprText, Pos: exprPos})
 			continue
 		}
 		if c == '}' {

@@ -53,8 +53,10 @@ pub struct TokError { msg: string, line: i32, col: i32 }
 // payload fields is meaningful, selected by `is_expr`: a literal
 // segment (escapes already processed) when false, or the raw
 // interpolant expression text (the parser sub-parses it) when
-// true. Mirrors `lexer.FStringPart` in the Go lexer.
-pub struct FStringPart { lit: string, expr: string, is_expr: boolean }
+// true. `line` / `col` locate `expr`'s first byte in the enclosing
+// source so the parser can rebase the sub-parse onto it; they are 0
+// on a literal part. Mirrors `lexer.FStringPart` in the Go lexer.
+pub struct FStringPart { lit: string, expr: string, is_expr: boolean, line: i32, col: i32 }
 pub struct TokFString { parts: FStringPart[], line: i32, col: i32 }
 
 pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokString | TokError | TokFString;
@@ -297,6 +299,62 @@ pub function error_tok(msg: string, line: i32, col: i32): Token {
 }
 pub function fstring_tok(parts: FStringPart[], line: i32, col: i32): Token {
     return TokFString { parts: parts, line: line, col: col };
+}
+
+// offset_line / offset_col map a position inside a re-lexed fragment
+// onto the enclosing source, given where the fragment starts. Only the
+// fragment's first line shares a line with the base, so only there does
+// the column shift. Mirrors the Go parser's offsetPos.
+function offset_line(base_line: i32, line: i32): i32 {
+    if (line <= 1) { return base_line; }
+    return base_line + line - 1;
+}
+function offset_col(base_col: i32, line: i32, col: i32): i32 {
+    if (line <= 1) { return base_col + col - 1; }
+    return col;
+}
+
+// rebase_parts renumbers an f-string's interpolant positions, which
+// are relative to the fragment the parts were lexed from.
+function rebase_parts(parts: FStringPart[], base_line: i32, base_col: i32): FStringPart[] {
+    var out: FStringPart[] = [];
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var p: FStringPart = parts[i];
+        if (p.is_expr) {
+            out = out.append(FStringPart { lit: p.lit, expr: p.expr, is_expr: true,
+                line: offset_line(base_line, p.line), col: offset_col(base_col, p.line, p.col) });
+        } else {
+            out = out.append(p);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// rebase_tokens renumbers a token stream lexed from a fragment of a
+// larger source so its positions name the enclosing file. The parser
+// needs it for f-string interpolants: they are re-lexed from raw text,
+// so tokenize numbers them from 1:1 and every diagnostic against the
+// resulting AST would otherwise land at the start of the file.
+pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[] {
+    var out: Token[] = [];
+    var i: i32 = 0;
+    while (i < toks.len()) {
+        var t: Token = toks[i];
+        match (t) {
+            TokEof(x) => { out = out.append(eof_tok(offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokNumber(x) => { out = out.append(number_tok(x.text, x.suffix, x.is_float, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokIdent(x) => { out = out.append(ident_tok(x.name, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokKeyword(x) => { out = out.append(keyword_tok(x.name, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokPunct(x) => { out = out.append(punct_tok(x.text, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokString(x) => { out = out.append(string_tok(x.value, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokError(x) => { out = out.append(error_tok(x.msg, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); },
+            TokFString(x) => { out = out.append(fstring_tok(rebase_parts(x.parts, base_line, base_col), offset_line(base_line, x.line), offset_col(base_col, x.line, x.col))); }
+        }
+        i = i + 1;
+    }
+    return out;
 }
 
 // is_blank_range — true if every byte of s is ASCII whitespace
@@ -543,7 +601,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
         if (c == 34) {   // closing "
             l = l.advance();
             if (have_lit) {
-                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false });
+                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false, line: 0, col: 0 });
             }
             return NumResult { lex: l, tok: fstring_tok(parts, start_line, start_col) };
         }
@@ -579,7 +637,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             }
             l = l.advance();   // opening {
             if (have_lit) {   // flush the literal accumulated so far
-                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false });
+                parts = parts.append(FStringPart { lit: lit, expr: "", is_expr: false, line: 0, col: 0 });
                 lit = "";
                 have_lit = false;
             }
@@ -588,6 +646,8 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             // is skipped wholesale so its quotes / braces don't move
             // the boundary.
             var expr_start: i32 = l.i;
+            var expr_line: i32 = l.line;
+            var expr_col: i32 = l.col;
             var depth: i32 = 1;
             while (!l.at_end() && depth > 0) {
                 var d: i32 = l.peek_byte();
@@ -623,7 +683,7 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
             if (is_blank_range(expr_text)) {
                 return NumResult { lex: l, tok: error_tok("empty `{}` in f-string", start_line, start_col) };
             }
-            parts = parts.append(FStringPart { lit: "", expr: expr_text + "", is_expr: true });
+            parts = parts.append(FStringPart { lit: "", expr: expr_text + "", is_expr: true, line: expr_line, col: expr_col });
             continue;
         }
         if (c == 125) {   // }
@@ -1044,9 +1104,11 @@ function test_unknown_char(): i32 {
 }
 
 // check_part — assert one FStringPart matches the expected kind +
-// text. `want_expr` selects which payload field to compare.
-function check_part(p: FStringPart, want_expr: boolean, want_text: string): boolean {
+// text + position. `want_expr` selects which payload field to compare;
+// a literal part carries no position, so both coordinates are 0 there.
+function check_part(p: FStringPart, want_expr: boolean, want_text: string, want_line: i32, want_col: i32): boolean {
     if (p.is_expr != want_expr) { return false; }
+    if (p.line != want_line || p.col != want_col) { return false; }
     if (want_expr) { return p.expr == want_text; }
     return p.lit == want_text;
 }
@@ -1067,7 +1129,7 @@ function test_fstring(): i32 {
     match (t1[0]) {
         TokFString(f) => {
             if (f.parts.len() != 1) { return 2010; }
-            if (!check_part(f.parts[0], false, "plain")) { return 2011; }
+            if (!check_part(f.parts[0], false, "plain", 0, 0)) { return 2011; }
         },
         _ => { return 2012; }
     }
@@ -1076,9 +1138,9 @@ function test_fstring(): i32 {
     match (t2[0]) {
         TokFString(f) => {
             if (f.parts.len() != 3) { return 2020; }
-            if (!check_part(f.parts[0], false, "a")) { return 2021; }
-            if (!check_part(f.parts[1], true, "x")) { return 2022; }
-            if (!check_part(f.parts[2], false, "b")) { return 2023; }
+            if (!check_part(f.parts[0], false, "a", 0, 0)) { return 2021; }
+            if (!check_part(f.parts[1], true, "x", 1, 5)) { return 2022; }
+            if (!check_part(f.parts[2], false, "b", 0, 0)) { return 2023; }
         },
         _ => { return 2024; }
     }
@@ -1087,7 +1149,7 @@ function test_fstring(): i32 {
     match (t3[0]) {
         TokFString(f) => {
             if (f.parts.len() != 1) { return 2030; }
-            if (!check_part(f.parts[0], false, "{lit}")) { return 2031; }
+            if (!check_part(f.parts[0], false, "{lit}", 0, 0)) { return 2031; }
         },
         _ => { return 2032; }
     }
@@ -1097,8 +1159,8 @@ function test_fstring(): i32 {
     match (t4[0]) {
         TokFString(f) => {
             if (f.parts.len() != 2) { return 2040; }
-            if (!check_part(f.parts[0], false, "k=")) { return 2041; }
-            if (!check_part(f.parts[1], true, "\"x\"")) { return 2042; }
+            if (!check_part(f.parts[0], false, "k=", 0, 0)) { return 2041; }
+            if (!check_part(f.parts[1], true, "\"x\"", 1, 6)) { return 2042; }
         },
         _ => { return 2043; }
     }
@@ -1107,8 +1169,8 @@ function test_fstring(): i32 {
     match (t5[0]) {
         TokFString(f) => {
             if (f.parts.len() != 2) { return 2050; }
-            if (!check_part(f.parts[0], false, "sum ")) { return 2051; }
-            if (!check_part(f.parts[1], true, "a + b")) { return 2052; }
+            if (!check_part(f.parts[0], false, "sum ", 0, 0)) { return 2051; }
+            if (!check_part(f.parts[1], true, "a + b", 1, 8)) { return 2052; }
         },
         _ => { return 2053; }
     }
@@ -1117,7 +1179,7 @@ function test_fstring(): i32 {
     match (t6[0]) {
         TokFString(f) => {
             if (f.parts.len() != 1) { return 2060; }
-            if (!check_part(f.parts[0], false, "hi\nthere")) { return 2061; }
+            if (!check_part(f.parts[0], false, "hi\nthere", 0, 0)) { return 2061; }
         },
         _ => { return 2062; }
     }
@@ -1126,6 +1188,41 @@ function test_fstring(): i32 {
     if (!has_error(tokenize("f\"with\nnewline\""))) { return 2071; }
     if (!has_error(tokenize("f\"bare}brace\""))) { return 2072; }
     if (!has_error(tokenize("f\"empty{}\""))) { return 2073; }
+    return 0;
+}
+
+// test_fstring_positions — each interpolant's own offset, and the
+// rebase the parser applies to the sub-lex. Two interpolants are the
+// discriminating case: rebasing onto the f-string's own start places
+// the first plausibly and every later one short (#6989).
+function test_fstring_positions(): i32 {
+    var t: Token[] = tokenize("var s = f\"a{aaa} b{bbb}\";");
+    match (t[3]) {
+        TokFString(f) => {
+            if (f.parts.len() != 4) { return 2080; }
+            if (!check_part(f.parts[1], true, "aaa", 1, 13)) { return 2081; }
+            if (!check_part(f.parts[3], true, "bbb", 1, 20)) { return 2082; }
+        },
+        _ => { return 2083; }
+    }
+    // An f-string on a later line keeps its own line number.
+    match (tokenize("var a = 1;\nvar s = f\"x{yy}\";")[8]) {
+        TokFString(f) => {
+            if (!check_part(f.parts[1], true, "yy", 2, 13)) { return 2090; }
+        },
+        _ => { return 2091; }
+    }
+    // rebase_tokens shifts the column only on the fragment's first
+    // line; a later line takes the fragment's own column.
+    var sub: Token[] = rebase_tokens(tokenize("a\nb"), 4, 10);
+    match (sub[0]) {
+        TokIdent(x) => { if (x.line != 4 || x.col != 10) { return 2092; } },
+        _ => { return 2093; }
+    }
+    match (sub[1]) {
+        TokIdent(x) => { if (x.line != 5 || x.col != 1) { return 2094; } },
+        _ => { return 2095; }
+    }
     return 0;
 }
 
@@ -1174,6 +1271,7 @@ function main(): i32 {
     c = test_string_errors();      if (c != 0) { return c; }
     c = test_unknown_char();       if (c != 0) { return c; }
     c = test_fstring();            if (c != 0) { return c; }
+    c = test_fstring_positions();  if (c != 0) { return c; }
     c = test_comments();           if (c != 0) { return c; }
     return 0;
 }

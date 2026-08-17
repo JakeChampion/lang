@@ -97,10 +97,21 @@ func blankLineNumbers(src string) []int {
 // — the lexer hands the raw expression text in for the parser to
 // turn into an AST. Anything beyond a single expression is an
 // error.
-func parseExprFromText(text string, pos ast.Position) (ast.Expr, error) {
+//
+// `base` is where `text` starts in the enclosing file. The re-lex
+// numbers `text` from 1:1, so every token is rebased onto `base`
+// before parsing — that way both the AST nodes and any parse error
+// carry file positions without a second traversal.
+func parseExprFromText(text string, base ast.Position) (ast.Expr, error) {
 	tokens, _, err := lexer.Tokenize(text)
 	if err != nil {
-		return nil, &Error{Pos: pos, Msg: fmt.Sprintf("f-string interpolation: %v", err)}
+		return nil, &Error{Pos: base, Msg: fmt.Sprintf("f-string interpolation: %v", err)}
+	}
+	for i := range tokens {
+		tokens[i].Pos = offsetPos(base, tokens[i].Pos)
+		for j := range tokens[i].FParts {
+			tokens[i].FParts[j].Pos = offsetPos(base, tokens[i].FParts[j].Pos)
+		}
 	}
 	p := &parser{tokens: tokens}
 	expr, err := p.parseExpr()
@@ -114,6 +125,17 @@ func parseExprFromText(text string, pos ast.Position) (ast.Expr, error) {
 		return nil, diag.Errors(p.errors)
 	}
 	return expr, nil
+}
+
+// offsetPos maps a position inside a sub-parsed fragment onto the
+// enclosing file, given where the fragment starts. Only the fragment's
+// first line shares a line with `base`, so only there does the column
+// shift.
+func offsetPos(base, in ast.Position) ast.Position {
+	if in.Line <= 1 {
+		return ast.Position{Line: base.Line, Col: base.Col + in.Col - 1}
+	}
+	return ast.Position{Line: base.Line + in.Line - 1, Col: in.Col}
 }
 
 type parser struct {
@@ -6080,7 +6102,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		var parts []ast.FStringPart
 		for _, fp := range t.FParts {
 			if fp.Expr != "" {
-				expr, err := parseExprFromText(fp.Expr, t.Pos)
+				expr, err := parseExprFromText(fp.Expr, fp.Pos)
 				if err != nil {
 					return nil, err
 				}
