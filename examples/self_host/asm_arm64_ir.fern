@@ -1850,10 +1850,11 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 64 || o.kind_tag == 65 || o.kind_tag == 62 || o.kind_tag == 63) {  // fsin, fcos, fexp, flog
             // f64 transcendentals (op_funary): arm64 has no transcendental
-            // instruction, so call the polynomial-approximation runtime helpers
-            // emit_runtime always emits (arg in d0, result in d0). Mirrors
-            // asm_arm64.fern's __sin_f64/etc. The entry unit's emit_runtime defines
-            // these `.globl`, so a sibling unit's `bl` extern resolves against it.
+            // instruction, so call the runtime helpers emit_runtime emits for the
+            // "float_transcendentals" need (arg in d0, result in d0). The entry
+            // unit's emit_runtime defines these `.globl`, so a sibling unit's `bl`
+            // extern resolves against it.
+            s = s.need("float_transcendentals");
             s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
             if (o.kind_tag == 64) { s = s.write("    bl __fern_sin_f64\n"); }  // fsin
             else if (o.kind_tag == 65) { s = s.write("    bl __fern_cos_f64\n"); }  // fcos
@@ -1862,7 +1863,9 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    fmov x0, d0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 66) {  // fpow
             // pow(x, y) = exp(y·log x) via the __fern_pow_f64 helper — d0 = x (lhs),
-            // d1 = y (rhs). fbin pops rhs (y) then lhs (x).
+            // d1 = y (rhs). fbin pops rhs (y) then lhs (x). __fern_pow_f64 itself
+            // calls log/exp, so the one need covers the whole bundle.
+            s = s.need("float_transcendentals");
             s = s.write("    ldr x9, [sp], #16\n    ldr x0, [sp], #16\n");
             s = s.write("    fmov d0, x0\n    fmov d1, x9\n");
             s = s.write("    bl __fern_pow_f64\n");
@@ -5078,430 +5081,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    ret\n");
         s = s.write(".size __fern_map_has, .-__fern_map_has\n");
     }
-    // f64 transcendental runtime (always emitted; arm64 has no transcendental
-    // instruction). These are fdlibm's kernels, and they replace polynomials whose
-    // own comment here claimed "<1e-5 against libm" while measuring 3.2e10 ulp for
-    // sin, 4.5e7 for exp and 9844 for log.
-    //
-    // Kept in lockstep with internal/codegen/arm64's emitFloatTranscendentalsRuntime
-    // — same constants, same order, same `frintn` (ties-to-EVEN, matching x86's
-    // `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
-    // disagree). internal/e2e/f64_ulp_test.go is the gate for the native pair.
-    //
-    // Two things that are corrections rather than refinements:
-    //
-    //   - pi/2 is carried as THREE 33-bit chunks (~99 bits). Two is not enough near
-    //     a zero of sine, where the reduced argument IS the answer, so the
-    //     reduction's absolute error becomes the result's relative error: sin(pi)
-    //     measured 285,696 ulp. A fourth chunk makes it worse, not better.
-    //   - Every function guards its domain. Without that, exp(1000) returned
-    //     -6.1e-183 rather than +Inf, because 2^k is assembled as (k+1023)<<52 and
-    //     k=1443 overflows the exponent field into the SIGN bit; log(0) returned
-    //     -709.09 and log(-1) returned 0.
-    //
-    // Arg in d0 (pow also d1), result in d0; x12 is emit_ldc's scratch.
-    s = s.write("    .section .rodata\n");
-    s = s.write("    .align 8\n");
-    s = s.write(".Lfc_one: .double 1.0\n");
-    s = s.write(".Lfc_half: .double 0.5\n");
-    s = s.write(".Lfc_two: .double 2.0\n");
-    s = s.write(".Lfc_sqrt2: .double 1.4142135623730951\n");
-    s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
-    s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
-    s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
-    s = s.write(".Lfc_twoopi: .double 6.36619772367581382433e-01\n");
-    s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
-    s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
-    s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
-    s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
-    s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
-    s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
-    s = s.write(".Lfc_s4: .double 2.75573137070700676789e-06\n");
-    s = s.write(".Lfc_s5: .double -2.50507602534068634195e-08\n");
-    s = s.write(".Lfc_s6: .double 1.58969099521155010221e-10\n");
-    s = s.write(".Lfc_c1: .double 4.16666666666666019037e-02\n");
-    s = s.write(".Lfc_c2: .double -1.38888888888741095749e-03\n");
-    s = s.write(".Lfc_c3: .double 2.48015872894767294178e-05\n");
-    s = s.write(".Lfc_c4: .double -2.75573143513906633035e-07\n");
-    s = s.write(".Lfc_c5: .double 2.08757232129817482790e-09\n");
-    s = s.write(".Lfc_c6: .double -1.13596475577881948265e-11\n");
-    s = s.write(".Lfc_p1: .double 1.66666666666666019037e-01\n");
-    s = s.write(".Lfc_p2: .double -2.77777777770155933842e-03\n");
-    s = s.write(".Lfc_p3: .double 6.61375632143793436117e-05\n");
-    s = s.write(".Lfc_p4: .double -1.65339022054652515390e-06\n");
-    s = s.write(".Lfc_p5: .double 4.13813679705723846039e-08\n");
-    s = s.write(".Lfc_lg1: .double 6.666666666666735130e-01\n");
-    s = s.write(".Lfc_lg2: .double 3.999999999940941908e-01\n");
-    s = s.write(".Lfc_lg3: .double 2.857142874366239149e-01\n");
-    s = s.write(".Lfc_lg4: .double 2.222219843214978396e-01\n");
-    s = s.write(".Lfc_lg5: .double 1.818357216161805012e-01\n");
-    s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
-    s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
-    s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
-    s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
-    s = s.write("    .text\n");
-    // __fern_ksin(d0=r, |r| <= pi/4) -> sin r. Internal: sin and cos both
-    // reach it after reduction, so the kernel exists once.
-    s = s.write("__fern_ksin:\n");
-    s = s.write("    fmul d1, d0, d0\n");
-    s = s.write("    fmul d2, d1, d0\n");
-    s = emit_ldc(s, "d3", ".Lfc_s6");
-    s = emit_ldc(s, "d20", ".Lfc_s5");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_s4");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_s3");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_s2");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_s1");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = s.write("    fmul d3, d3, d2\n");
-    s = s.write("    fadd d0, d0, d3\n");
-    s = s.write("    ret\n");
-    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz dance recovers the
-    // bits 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
-    s = s.write("__fern_kcos:\n");
-    s = s.write("    fmul d1, d0, d0\n");
-    s = emit_ldc(s, "d3", ".Lfc_c6");
-    s = emit_ldc(s, "d20", ".Lfc_c5");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_c4");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_c3");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_c2");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_c1");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fadd d3, d3, d20\n");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = s.write("    fmul d3, d3, d1\n");
-    s = emit_ldc(s, "d5", ".Lfc_half");
-    s = s.write("    fmul d4, d1, d5\n");
-    s = emit_ldc(s, "d5", ".Lfc_one");
-    s = s.write("    fsub d6, d5, d4\n");
-    s = s.write("    fsub d7, d5, d6\n");
-    s = s.write("    fsub d7, d7, d4\n");
-    s = s.write("    fadd d7, d7, d3\n");
-    s = s.write("    fadd d0, d6, d7\n");
-    s = s.write("    ret\n");
-    // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. Odd
-    // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
-    // ONE kernel runs where the old code evaluated both and selected.
-    s = s.write("    .global __fern_sin_f64\n");
-    s = s.write("    .type __fern_sin_f64, %function\n");
-    s = s.write("__fern_sin_f64:\n");
-    // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
-    // arms return without x29/x30 pushed behind them.
-    s = s.write("    fcmp d0, d0\n");
-    s = s.write("    b.vs .Lsin_gret\n");
-    s = s.write("    fmov x14, d0\n");
-    s = s.write("    lsl x14, x14, #1\n");
-    s = s.write("    ldr x15, =0xffe0000000000000\n");
-    s = s.write("    cmp x14, x15\n");
-    s = s.write("    b.eq .Lsin_gnan\n");
-    s = s.write("    b .Lsin_gok\n");
-    s = s.write(".Lsin_gret:\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lsin_gnan:\n");
-    s = s.write("    ldr x14, =0x7ff8000000000000\n");
-    s = s.write("    fmov d0, x14\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lsin_gok:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = emit_ldc(s, "d1", ".Lfc_twoopi");
-    s = s.write("    fmul d1, d1, d0\n");
-    s = s.write("    frintn d1, d1\n");
-    s = s.write("    fcvtzs x10, d1\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2h");
-    s = s.write("    fmul d2, d1, d2\n");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2m");
-    s = s.write("    fmul d2, d1, d2\n");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2l");
-    s = s.write("    fmul d1, d1, d2\n");
-    s = s.write("    fsub d0, d0, d1\n");
-    s = s.write("    and x10, x10, #3\n");
-    s = s.write("    and x13, x10, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.ne .Lsin_usecos\n");
-    s = s.write("    bl __fern_ksin\n");
-    s = s.write("    b .Lsin_neg\n");
-    s = s.write(".Lsin_usecos:\n");
-    s = s.write("    bl __fern_kcos\n");
-    s = s.write(".Lsin_neg:\n");
-    s = s.write("    cmp x10, #2\n");
-    s = s.write("    b.lt .Lsin_done\n");
-    s = s.write("    fneg d0, d0\n");
-    s = s.write(".Lsin_done:\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_sin_f64, .-__fern_sin_f64\n");
-    // __fern_cos_f64: quadrant 0..3 -> cos r, -sin r, -cos r, sin r.
-    s = s.write("    .global __fern_cos_f64\n");
-    s = s.write("    .type __fern_cos_f64, %function\n");
-    s = s.write("__fern_cos_f64:\n");
-    // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
-    // arms return without x29/x30 pushed behind them.
-    s = s.write("    fcmp d0, d0\n");
-    s = s.write("    b.vs .Lcos_gret\n");
-    s = s.write("    fmov x14, d0\n");
-    s = s.write("    lsl x14, x14, #1\n");
-    s = s.write("    ldr x15, =0xffe0000000000000\n");
-    s = s.write("    cmp x14, x15\n");
-    s = s.write("    b.eq .Lcos_gnan\n");
-    s = s.write("    b .Lcos_gok\n");
-    s = s.write(".Lcos_gret:\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lcos_gnan:\n");
-    s = s.write("    ldr x14, =0x7ff8000000000000\n");
-    s = s.write("    fmov d0, x14\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lcos_gok:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = emit_ldc(s, "d1", ".Lfc_twoopi");
-    s = s.write("    fmul d1, d1, d0\n");
-    s = s.write("    frintn d1, d1\n");
-    s = s.write("    fcvtzs x10, d1\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2h");
-    s = s.write("    fmul d2, d1, d2\n");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2m");
-    s = s.write("    fmul d2, d1, d2\n");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = emit_ldc(s, "d2", ".Lfc_pio2l");
-    s = s.write("    fmul d1, d1, d2\n");
-    s = s.write("    fsub d0, d0, d1\n");
-    s = s.write("    and x10, x10, #3\n");
-    s = s.write("    and x13, x10, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.ne .Lcos_usesin\n");
-    s = s.write("    bl __fern_kcos\n");
-    s = s.write("    b .Lcos_chk\n");
-    s = s.write(".Lcos_usesin:\n");
-    s = s.write("    bl __fern_ksin\n");
-    s = s.write(".Lcos_chk:\n");
-    s = s.write("    cmp x10, #1\n");
-    s = s.write("    b.lt .Lcos_done\n");
-    s = s.write("    cmp x10, #2\n");
-    s = s.write("    b.gt .Lcos_done\n");
-    s = s.write("    fneg d0, d0\n");
-    s = s.write(".Lcos_done:\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_cos_f64, .-__fern_cos_f64\n");
-    // __fern_exp_f64(d0=x) -> e^x. The division is deliberate: a division-free
-    // variant needs a degree-13 Taylor to reach 1 ulp, whose dependent chain is
-    // longer than the divide it avoids.
-    s = s.write("    .global __fern_exp_f64\n");
-    s = s.write("    .type __fern_exp_f64, %function\n");
-    s = s.write("__fern_exp_f64:\n");
-    s = s.write("    fcmp d0, d0\n");
-    s = s.write("    b.vs .Lexp_ret\n");
-    s = emit_ldc(s, "d1", ".Lfc_expovf");
-    s = s.write("    fcmp d0, d1\n");
-    s = s.write("    b.gt .Lexp_inf\n");
-    s = emit_ldc(s, "d1", ".Lfc_expunf");
-    s = s.write("    fcmp d0, d1\n");
-    s = s.write("    b.lt .Lexp_zero\n");
-    s = emit_ldc(s, "d1", ".Lfc_invln2");
-    s = s.write("    fmul d1, d1, d0\n");
-    s = s.write("    frintn d1, d1\n");
-    s = s.write("    fcvtzs x10, d1\n");
-    s = emit_ldc(s, "d2", ".Lfc_ln2hi");
-    s = s.write("    fmul d2, d1, d2\n");
-    s = s.write("    fsub d3, d0, d2\n");
-    s = emit_ldc(s, "d2", ".Lfc_ln2lo");
-    s = s.write("    fmul d1, d1, d2\n");
-    s = s.write("    fsub d0, d3, d1\n");
-    s = s.write("    fmul d4, d0, d0\n");
-    s = emit_ldc(s, "d5", ".Lfc_p5");
-    s = emit_ldc(s, "d20", ".Lfc_p4");
-    s = s.write("    fmul d5, d5, d4\n");
-    s = s.write("    fadd d5, d5, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_p3");
-    s = s.write("    fmul d5, d5, d4\n");
-    s = s.write("    fadd d5, d5, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_p2");
-    s = s.write("    fmul d5, d5, d4\n");
-    s = s.write("    fadd d5, d5, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_p1");
-    s = s.write("    fmul d5, d5, d4\n");
-    s = s.write("    fadd d5, d5, d20\n");
-    s = s.write("    fmul d5, d5, d4\n");
-    s = s.write("    fsub d6, d0, d5\n");
-    s = s.write("    fmul d7, d0, d6\n");
-    s = emit_ldc(s, "d2", ".Lfc_two");
-    s = s.write("    fsub d2, d2, d6\n");
-    s = s.write("    fdiv d7, d7, d2\n");
-    s = s.write("    fsub d2, d1, d7\n");
-    s = s.write("    fsub d2, d2, d3\n");
-    s = emit_ldc(s, "d0", ".Lfc_one");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = s.write("    add x10, x10, #1023\n");
-    s = s.write("    lsl x10, x10, #52\n");
-    s = s.write("    fmov d1, x10\n");
-    s = s.write("    fmul d0, d0, d1\n");
-    s = s.write(".Lexp_ret:\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lexp_inf:\n");
-    s = s.write("    ldr x14, =0x7ff0000000000000\n");
-    s = s.write("    fmov d0, x14\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lexp_zero:\n");
-    s = s.write("    fmov d0, xzr\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_exp_f64, .-__fern_exp_f64\n");
-    // __fern_log_f64(d0=x) -> ln x (x>0). R is two INDEPENDENT chains in w=z^2,
-    // so they issue in parallel instead of as one 7-deep Horner.
-    s = s.write("    .global __fern_log_f64\n");
-    s = s.write("    .type __fern_log_f64, %function\n");
-    s = s.write("__fern_log_f64:\n");
-    s = s.write("    fcmp d0, d0\n");
-    s = s.write("    b.vs .Llog_ret\n");
-    s = s.write("    fmov d1, xzr\n");
-    s = s.write("    fcmp d0, d1\n");
-    s = s.write("    b.lt .Llog_nan\n");
-    s = s.write("    b.eq .Llog_neginf\n");
-    s = s.write("    ldr x14, =0x7ff0000000000000\n");
-    s = s.write("    fmov d1, x14\n");
-    s = s.write("    fcmp d0, d1\n");
-    s = s.write("    b.eq .Llog_ret\n");
-    s = s.write("    fmov x10, d0\n");
-    s = s.write("    lsr x11, x10, #52\n");
-    s = s.write("    and x11, x11, #0x7ff\n");
-    s = s.write("    sub x11, x11, #1023\n");
-    s = s.write("    mov x13, #1\n");
-    s = s.write("    lsl x13, x13, #52\n");
-    s = s.write("    sub x13, x13, #1\n");
-    s = s.write("    and x10, x10, x13\n");
-    s = s.write("    mov x14, #1023\n");
-    s = s.write("    lsl x14, x14, #52\n");
-    s = s.write("    orr x10, x10, x14\n");
-    s = s.write("    fmov d1, x10\n");
-    s = emit_ldc(s, "d2", ".Lfc_sqrt2");
-    s = s.write("    fcmp d1, d2\n");
-    s = s.write("    b.lt .Llog_noadj\n");
-    s = emit_ldc(s, "d3", ".Lfc_half");
-    s = s.write("    fmul d1, d1, d3\n");
-    s = s.write("    add x11, x11, #1\n");
-    s = s.write(".Llog_noadj:\n");
-    s = emit_ldc(s, "d4", ".Lfc_one");
-    s = s.write("    fsub d1, d1, d4\n");
-    s = emit_ldc(s, "d2", ".Lfc_two");
-    s = s.write("    fadd d2, d2, d1\n");
-    s = s.write("    fdiv d3, d1, d2\n");
-    s = s.write("    fmul d4, d3, d3\n");
-    s = s.write("    fmul d5, d4, d4\n");
-    s = emit_ldc(s, "d6", ".Lfc_lg6");
-    s = emit_ldc(s, "d20", ".Lfc_lg4");
-    s = s.write("    fmul d6, d6, d5\n");
-    s = s.write("    fadd d6, d6, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_lg2");
-    s = s.write("    fmul d6, d6, d5\n");
-    s = s.write("    fadd d6, d6, d20\n");
-    s = s.write("    fmul d6, d6, d5\n");
-    s = emit_ldc(s, "d7", ".Lfc_lg7");
-    s = emit_ldc(s, "d20", ".Lfc_lg5");
-    s = s.write("    fmul d7, d7, d5\n");
-    s = s.write("    fadd d7, d7, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_lg3");
-    s = s.write("    fmul d7, d7, d5\n");
-    s = s.write("    fadd d7, d7, d20\n");
-    s = emit_ldc(s, "d20", ".Lfc_lg1");
-    s = s.write("    fmul d7, d7, d5\n");
-    s = s.write("    fadd d7, d7, d20\n");
-    s = s.write("    fmul d7, d7, d4\n");
-    s = s.write("    fadd d6, d6, d7\n");
-    s = s.write("    fmul d2, d1, d1\n");
-    s = emit_ldc(s, "d16", ".Lfc_half");
-    s = s.write("    fmul d2, d2, d16\n");
-    s = s.write("    scvtf d0, x11\n");
-    s = emit_ldc(s, "d16", ".Lfc_ln2lo");
-    s = s.write("    fmul d5, d0, d16\n");
-    s = s.write("    fadd d6, d6, d2\n");
-    s = s.write("    fmul d6, d6, d3\n");
-    s = s.write("    fadd d6, d6, d5\n");
-    s = s.write("    fsub d2, d2, d6\n");
-    s = s.write("    fsub d2, d2, d1\n");
-    s = emit_ldc(s, "d16", ".Lfc_ln2hi");
-    s = s.write("    fmul d0, d0, d16\n");
-    s = s.write("    fsub d0, d0, d2\n");
-    s = s.write(".Llog_ret:\n");
-    s = s.write("    ret\n");
-    s = s.write(".Llog_nan:\n");
-    s = s.write("    ldr x14, =0x7ff8000000000000\n");
-    s = s.write("    fmov d0, x14\n");
-    s = s.write("    ret\n");
-    s = s.write(".Llog_neginf:\n");
-    s = s.write("    ldr x14, =0xfff0000000000000\n");
-    s = s.write("    fmov d0, x14\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_log_f64, .-__fern_log_f64\n");
-    // __fern_pow_f64(d0=x, d1=y). Integer-exponent fast path: exp(y*ln x)
-    // CANNOT return exactly 9 for pow(3,2) — a 1-ulp error in ln 3, amplified by
-    // the exponential, lands just under, so `as i32` truncated to 8. Repeated
-    // squaring is exact wherever the result is representable. Integrality is an
-    // i64 round-trip, so a NaN or out-of-range y falls out as a huge |n| the range
-    // check rejects.
-    s = s.write("    .global __fern_pow_f64\n");
-    s = s.write("    .type __fern_pow_f64, %function\n");
-    s = s.write("__fern_pow_f64:\n");
-    s = s.write("    fcvtzs x10, d1\n");
-    s = s.write("    scvtf d2, x10\n");
-    s = s.write("    fcmp d2, d1\n");
-    s = s.write("    b.ne .Lpow_general\n");
-    s = s.write("    mov x11, x10\n");
-    s = s.write("    cmp x11, #0\n");
-    s = s.write("    b.ge .Lpow_abs\n");
-    s = s.write("    neg x11, x11\n");
-    s = s.write(".Lpow_abs:\n");
-    s = s.write("    cmp x11, #64\n");
-    s = s.write("    b.gt .Lpow_general\n");
-    s = emit_ldc(s, "d3", ".Lfc_one");
-    s = s.write("    fmov d4, d0\n");
-    s = s.write(".Lpow_loop:\n");
-    s = s.write("    and x13, x11, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.eq .Lpow_skip\n");
-    s = s.write("    fmul d3, d3, d4\n");
-    s = s.write(".Lpow_skip:\n");
-    s = s.write("    fmul d4, d4, d4\n");
-    s = s.write("    lsr x11, x11, #1\n");
-    s = s.write("    cmp x11, #0\n");
-    s = s.write("    b.ne .Lpow_loop\n");
-    s = s.write("    cmp x10, #0\n");
-    s = s.write("    b.ge .Lpow_done\n");
-    s = emit_ldc(s, "d5", ".Lfc_one");
-    s = s.write("    fdiv d3, d5, d3\n");
-    s = s.write(".Lpow_done:\n");
-    s = s.write("    fmov d0, d3\n");
-    s = s.write("    ret\n");
-    s = s.write(".Lpow_general:\n");
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    str d8, [sp, #-16]!\n");
-    s = s.write("    fmov d8, d1\n");
-    s = s.write("    bl __fern_log_f64\n");
-    s = s.write("    fmul d0, d8, d0\n");
-    s = s.write("    bl __fern_exp_f64\n");
-    s = s.write("    ldr d8, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");
-    s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
+    if (s.has_need("float_transcendentals")) {
+        s = emit_rt_float_transcendentals(s);
+    }
 
     // Command-line args. Mirror of asm.fern.
     if (s.has_need("args")) {
@@ -6062,6 +5644,437 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("arr_i32_min_max_opt")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), s.struct_decls, s);
     }
+    return s;
+}
+
+// emit_rt_float_transcendentals emits the f64 transcendental bundle — arm64 has
+// no transcendental instruction, so sin/cos/exp/log/pow are calls into these.
+// Gated on the "float_transcendentals" need, which the op_funary/op_fbin
+// lowerings mark; native arm64 gates the same bundle on usesFloatTranscendentals.
+// These are fdlibm's kernels, and they replace polynomials whose own comment
+// here claimed "<1e-5 against libm" while measuring 3.2e10 ulp for sin, 4.5e7
+// for exp and 9844 for log.
+//
+// Kept in lockstep with internal/codegen/arm64's emitFloatTranscendentalsRuntime
+// — same constants, same order, same `frintn` (ties-to-EVEN, matching x86's
+// `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
+// disagree). internal/e2e/f64_ulp_test.go is the gate for the native pair.
+//
+// Two things that are corrections rather than refinements:
+//
+//   - pi/2 is carried as THREE 33-bit chunks (~99 bits). Two is not enough near
+//     a zero of sine, where the reduced argument IS the answer, so the
+//     reduction's absolute error becomes the result's relative error: sin(pi)
+//     measured 285,696 ulp. A fourth chunk makes it worse, not better.
+//   - Every function guards its domain. Without that, exp(1000) returned
+//     -6.1e-183 rather than +Inf, because 2^k is assembled as (k+1023)<<52 and
+//     k=1443 overflows the exponent field into the SIGN bit; log(0) returned
+//     -709.09 and log(-1) returned 0.
+//
+// Arg in d0 (pow also d1), result in d0; x12 is emit_ldc's scratch.
+function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .rodata\n");
+    s = s.write("    .align 8\n");
+    s = s.write(".Lfc_one: .double 1.0\n");
+    s = s.write(".Lfc_half: .double 0.5\n");
+    s = s.write(".Lfc_two: .double 2.0\n");
+    s = s.write(".Lfc_sqrt2: .double 1.4142135623730951\n");
+    s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
+    s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
+    s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
+    s = s.write(".Lfc_twoopi: .double 6.36619772367581382433e-01\n");
+    s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
+    s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
+    s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
+    s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
+    s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
+    s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
+    s = s.write(".Lfc_s4: .double 2.75573137070700676789e-06\n");
+    s = s.write(".Lfc_s5: .double -2.50507602534068634195e-08\n");
+    s = s.write(".Lfc_s6: .double 1.58969099521155010221e-10\n");
+    s = s.write(".Lfc_c1: .double 4.16666666666666019037e-02\n");
+    s = s.write(".Lfc_c2: .double -1.38888888888741095749e-03\n");
+    s = s.write(".Lfc_c3: .double 2.48015872894767294178e-05\n");
+    s = s.write(".Lfc_c4: .double -2.75573143513906633035e-07\n");
+    s = s.write(".Lfc_c5: .double 2.08757232129817482790e-09\n");
+    s = s.write(".Lfc_c6: .double -1.13596475577881948265e-11\n");
+    s = s.write(".Lfc_p1: .double 1.66666666666666019037e-01\n");
+    s = s.write(".Lfc_p2: .double -2.77777777770155933842e-03\n");
+    s = s.write(".Lfc_p3: .double 6.61375632143793436117e-05\n");
+    s = s.write(".Lfc_p4: .double -1.65339022054652515390e-06\n");
+    s = s.write(".Lfc_p5: .double 4.13813679705723846039e-08\n");
+    s = s.write(".Lfc_lg1: .double 6.666666666666735130e-01\n");
+    s = s.write(".Lfc_lg2: .double 3.999999999940941908e-01\n");
+    s = s.write(".Lfc_lg3: .double 2.857142874366239149e-01\n");
+    s = s.write(".Lfc_lg4: .double 2.222219843214978396e-01\n");
+    s = s.write(".Lfc_lg5: .double 1.818357216161805012e-01\n");
+    s = s.write(".Lfc_lg6: .double 1.531383769920937332e-01\n");
+    s = s.write(".Lfc_lg7: .double 1.479819860511658591e-01\n");
+    s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
+    s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
+    s = s.write("    .text\n");
+    // __fern_ksin(d0=r, |r| <= pi/4) -> sin r. Internal: sin and cos both
+    // reach it after reduction, so the kernel exists once.
+    s = s.write("__fern_ksin:\n");
+    s = s.write("    fmul d1, d0, d0\n");
+    s = s.write("    fmul d2, d1, d0\n");
+    s = emit_ldc(s, "d3", ".Lfc_s6");
+    s = emit_ldc(s, "d20", ".Lfc_s5");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_s4");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_s3");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_s2");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_s1");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = s.write("    fmul d3, d3, d2\n");
+    s = s.write("    fadd d0, d0, d3\n");
+    s = s.write("    ret\n");
+    // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz dance recovers the
+    // bits 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
+    s = s.write("__fern_kcos:\n");
+    s = s.write("    fmul d1, d0, d0\n");
+    s = emit_ldc(s, "d3", ".Lfc_c6");
+    s = emit_ldc(s, "d20", ".Lfc_c5");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_c4");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_c3");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_c2");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_c1");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fadd d3, d3, d20\n");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = s.write("    fmul d3, d3, d1\n");
+    s = emit_ldc(s, "d5", ".Lfc_half");
+    s = s.write("    fmul d4, d1, d5\n");
+    s = emit_ldc(s, "d5", ".Lfc_one");
+    s = s.write("    fsub d6, d5, d4\n");
+    s = s.write("    fsub d7, d5, d6\n");
+    s = s.write("    fsub d7, d7, d4\n");
+    s = s.write("    fadd d7, d7, d3\n");
+    s = s.write("    fadd d0, d6, d7\n");
+    s = s.write("    ret\n");
+    // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. Odd
+    // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
+    // ONE kernel runs where the old code evaluated both and selected.
+    s = s.write("    .global __fern_sin_f64\n");
+    s = s.write("    .type __fern_sin_f64, %function\n");
+    s = s.write("__fern_sin_f64:\n");
+    // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
+    // arms return without x29/x30 pushed behind them.
+    s = s.write("    fcmp d0, d0\n");
+    s = s.write("    b.vs .Lsin_gret\n");
+    s = s.write("    fmov x14, d0\n");
+    s = s.write("    lsl x14, x14, #1\n");
+    s = s.write("    ldr x15, =0xffe0000000000000\n");
+    s = s.write("    cmp x14, x15\n");
+    s = s.write("    b.eq .Lsin_gnan\n");
+    s = s.write("    b .Lsin_gok\n");
+    s = s.write(".Lsin_gret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsin_gnan:\n");
+    s = s.write("    ldr x14, =0x7ff8000000000000\n");
+    s = s.write("    fmov d0, x14\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lsin_gok:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = emit_ldc(s, "d1", ".Lfc_twoopi");
+    s = s.write("    fmul d1, d1, d0\n");
+    s = s.write("    frintn d1, d1\n");
+    s = s.write("    fcvtzs x10, d1\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2h");
+    s = s.write("    fmul d2, d1, d2\n");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2m");
+    s = s.write("    fmul d2, d1, d2\n");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2l");
+    s = s.write("    fmul d1, d1, d2\n");
+    s = s.write("    fsub d0, d0, d1\n");
+    s = s.write("    and x10, x10, #3\n");
+    s = s.write("    and x13, x10, #1\n");
+    s = s.write("    cmp x13, #0\n");
+    s = s.write("    b.ne .Lsin_usecos\n");
+    s = s.write("    bl __fern_ksin\n");
+    s = s.write("    b .Lsin_neg\n");
+    s = s.write(".Lsin_usecos:\n");
+    s = s.write("    bl __fern_kcos\n");
+    s = s.write(".Lsin_neg:\n");
+    s = s.write("    cmp x10, #2\n");
+    s = s.write("    b.lt .Lsin_done\n");
+    s = s.write("    fneg d0, d0\n");
+    s = s.write(".Lsin_done:\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_sin_f64, .-__fern_sin_f64\n");
+    // __fern_cos_f64: quadrant 0..3 -> cos r, -sin r, -cos r, sin r.
+    s = s.write("    .global __fern_cos_f64\n");
+    s = s.write("    .type __fern_cos_f64, %function\n");
+    s = s.write("__fern_cos_f64:\n");
+    // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
+    // arms return without x29/x30 pushed behind them.
+    s = s.write("    fcmp d0, d0\n");
+    s = s.write("    b.vs .Lcos_gret\n");
+    s = s.write("    fmov x14, d0\n");
+    s = s.write("    lsl x14, x14, #1\n");
+    s = s.write("    ldr x15, =0xffe0000000000000\n");
+    s = s.write("    cmp x14, x15\n");
+    s = s.write("    b.eq .Lcos_gnan\n");
+    s = s.write("    b .Lcos_gok\n");
+    s = s.write(".Lcos_gret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lcos_gnan:\n");
+    s = s.write("    ldr x14, =0x7ff8000000000000\n");
+    s = s.write("    fmov d0, x14\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lcos_gok:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = emit_ldc(s, "d1", ".Lfc_twoopi");
+    s = s.write("    fmul d1, d1, d0\n");
+    s = s.write("    frintn d1, d1\n");
+    s = s.write("    fcvtzs x10, d1\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2h");
+    s = s.write("    fmul d2, d1, d2\n");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2m");
+    s = s.write("    fmul d2, d1, d2\n");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = emit_ldc(s, "d2", ".Lfc_pio2l");
+    s = s.write("    fmul d1, d1, d2\n");
+    s = s.write("    fsub d0, d0, d1\n");
+    s = s.write("    and x10, x10, #3\n");
+    s = s.write("    and x13, x10, #1\n");
+    s = s.write("    cmp x13, #0\n");
+    s = s.write("    b.ne .Lcos_usesin\n");
+    s = s.write("    bl __fern_kcos\n");
+    s = s.write("    b .Lcos_chk\n");
+    s = s.write(".Lcos_usesin:\n");
+    s = s.write("    bl __fern_ksin\n");
+    s = s.write(".Lcos_chk:\n");
+    s = s.write("    cmp x10, #1\n");
+    s = s.write("    b.lt .Lcos_done\n");
+    s = s.write("    cmp x10, #2\n");
+    s = s.write("    b.gt .Lcos_done\n");
+    s = s.write("    fneg d0, d0\n");
+    s = s.write(".Lcos_done:\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_cos_f64, .-__fern_cos_f64\n");
+    // __fern_exp_f64(d0=x) -> e^x. The division is deliberate: a division-free
+    // variant needs a degree-13 Taylor to reach 1 ulp, whose dependent chain is
+    // longer than the divide it avoids.
+    s = s.write("    .global __fern_exp_f64\n");
+    s = s.write("    .type __fern_exp_f64, %function\n");
+    s = s.write("__fern_exp_f64:\n");
+    s = s.write("    fcmp d0, d0\n");
+    s = s.write("    b.vs .Lexp_ret\n");
+    s = emit_ldc(s, "d1", ".Lfc_expovf");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.gt .Lexp_inf\n");
+    s = emit_ldc(s, "d1", ".Lfc_expunf");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.lt .Lexp_zero\n");
+    s = emit_ldc(s, "d1", ".Lfc_invln2");
+    s = s.write("    fmul d1, d1, d0\n");
+    s = s.write("    frintn d1, d1\n");
+    s = s.write("    fcvtzs x10, d1\n");
+    s = emit_ldc(s, "d2", ".Lfc_ln2hi");
+    s = s.write("    fmul d2, d1, d2\n");
+    s = s.write("    fsub d3, d0, d2\n");
+    s = emit_ldc(s, "d2", ".Lfc_ln2lo");
+    s = s.write("    fmul d1, d1, d2\n");
+    s = s.write("    fsub d0, d3, d1\n");
+    s = s.write("    fmul d4, d0, d0\n");
+    s = emit_ldc(s, "d5", ".Lfc_p5");
+    s = emit_ldc(s, "d20", ".Lfc_p4");
+    s = s.write("    fmul d5, d5, d4\n");
+    s = s.write("    fadd d5, d5, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_p3");
+    s = s.write("    fmul d5, d5, d4\n");
+    s = s.write("    fadd d5, d5, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_p2");
+    s = s.write("    fmul d5, d5, d4\n");
+    s = s.write("    fadd d5, d5, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_p1");
+    s = s.write("    fmul d5, d5, d4\n");
+    s = s.write("    fadd d5, d5, d20\n");
+    s = s.write("    fmul d5, d5, d4\n");
+    s = s.write("    fsub d6, d0, d5\n");
+    s = s.write("    fmul d7, d0, d6\n");
+    s = emit_ldc(s, "d2", ".Lfc_two");
+    s = s.write("    fsub d2, d2, d6\n");
+    s = s.write("    fdiv d7, d7, d2\n");
+    s = s.write("    fsub d2, d1, d7\n");
+    s = s.write("    fsub d2, d2, d3\n");
+    s = emit_ldc(s, "d0", ".Lfc_one");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = s.write("    add x10, x10, #1023\n");
+    s = s.write("    lsl x10, x10, #52\n");
+    s = s.write("    fmov d1, x10\n");
+    s = s.write("    fmul d0, d0, d1\n");
+    s = s.write(".Lexp_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lexp_inf:\n");
+    s = s.write("    ldr x14, =0x7ff0000000000000\n");
+    s = s.write("    fmov d0, x14\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lexp_zero:\n");
+    s = s.write("    fmov d0, xzr\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_exp_f64, .-__fern_exp_f64\n");
+    // __fern_log_f64(d0=x) -> ln x (x>0). R is two INDEPENDENT chains in w=z^2,
+    // so they issue in parallel instead of as one 7-deep Horner.
+    s = s.write("    .global __fern_log_f64\n");
+    s = s.write("    .type __fern_log_f64, %function\n");
+    s = s.write("__fern_log_f64:\n");
+    s = s.write("    fcmp d0, d0\n");
+    s = s.write("    b.vs .Llog_ret\n");
+    s = s.write("    fmov d1, xzr\n");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.lt .Llog_nan\n");
+    s = s.write("    b.eq .Llog_neginf\n");
+    s = s.write("    ldr x14, =0x7ff0000000000000\n");
+    s = s.write("    fmov d1, x14\n");
+    s = s.write("    fcmp d0, d1\n");
+    s = s.write("    b.eq .Llog_ret\n");
+    s = s.write("    fmov x10, d0\n");
+    s = s.write("    lsr x11, x10, #52\n");
+    s = s.write("    and x11, x11, #0x7ff\n");
+    s = s.write("    sub x11, x11, #1023\n");
+    s = s.write("    mov x13, #1\n");
+    s = s.write("    lsl x13, x13, #52\n");
+    s = s.write("    sub x13, x13, #1\n");
+    s = s.write("    and x10, x10, x13\n");
+    s = s.write("    mov x14, #1023\n");
+    s = s.write("    lsl x14, x14, #52\n");
+    s = s.write("    orr x10, x10, x14\n");
+    s = s.write("    fmov d1, x10\n");
+    s = emit_ldc(s, "d2", ".Lfc_sqrt2");
+    s = s.write("    fcmp d1, d2\n");
+    s = s.write("    b.lt .Llog_noadj\n");
+    s = emit_ldc(s, "d3", ".Lfc_half");
+    s = s.write("    fmul d1, d1, d3\n");
+    s = s.write("    add x11, x11, #1\n");
+    s = s.write(".Llog_noadj:\n");
+    s = emit_ldc(s, "d4", ".Lfc_one");
+    s = s.write("    fsub d1, d1, d4\n");
+    s = emit_ldc(s, "d2", ".Lfc_two");
+    s = s.write("    fadd d2, d2, d1\n");
+    s = s.write("    fdiv d3, d1, d2\n");
+    s = s.write("    fmul d4, d3, d3\n");
+    s = s.write("    fmul d5, d4, d4\n");
+    s = emit_ldc(s, "d6", ".Lfc_lg6");
+    s = emit_ldc(s, "d20", ".Lfc_lg4");
+    s = s.write("    fmul d6, d6, d5\n");
+    s = s.write("    fadd d6, d6, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_lg2");
+    s = s.write("    fmul d6, d6, d5\n");
+    s = s.write("    fadd d6, d6, d20\n");
+    s = s.write("    fmul d6, d6, d5\n");
+    s = emit_ldc(s, "d7", ".Lfc_lg7");
+    s = emit_ldc(s, "d20", ".Lfc_lg5");
+    s = s.write("    fmul d7, d7, d5\n");
+    s = s.write("    fadd d7, d7, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_lg3");
+    s = s.write("    fmul d7, d7, d5\n");
+    s = s.write("    fadd d7, d7, d20\n");
+    s = emit_ldc(s, "d20", ".Lfc_lg1");
+    s = s.write("    fmul d7, d7, d5\n");
+    s = s.write("    fadd d7, d7, d20\n");
+    s = s.write("    fmul d7, d7, d4\n");
+    s = s.write("    fadd d6, d6, d7\n");
+    s = s.write("    fmul d2, d1, d1\n");
+    s = emit_ldc(s, "d16", ".Lfc_half");
+    s = s.write("    fmul d2, d2, d16\n");
+    s = s.write("    scvtf d0, x11\n");
+    s = emit_ldc(s, "d16", ".Lfc_ln2lo");
+    s = s.write("    fmul d5, d0, d16\n");
+    s = s.write("    fadd d6, d6, d2\n");
+    s = s.write("    fmul d6, d6, d3\n");
+    s = s.write("    fadd d6, d6, d5\n");
+    s = s.write("    fsub d2, d2, d6\n");
+    s = s.write("    fsub d2, d2, d1\n");
+    s = emit_ldc(s, "d16", ".Lfc_ln2hi");
+    s = s.write("    fmul d0, d0, d16\n");
+    s = s.write("    fsub d0, d0, d2\n");
+    s = s.write(".Llog_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write(".Llog_nan:\n");
+    s = s.write("    ldr x14, =0x7ff8000000000000\n");
+    s = s.write("    fmov d0, x14\n");
+    s = s.write("    ret\n");
+    s = s.write(".Llog_neginf:\n");
+    s = s.write("    ldr x14, =0xfff0000000000000\n");
+    s = s.write("    fmov d0, x14\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_log_f64, .-__fern_log_f64\n");
+    // __fern_pow_f64(d0=x, d1=y). Integer-exponent fast path: exp(y*ln x)
+    // CANNOT return exactly 9 for pow(3,2) — a 1-ulp error in ln 3, amplified by
+    // the exponential, lands just under, so `as i32` truncated to 8. Repeated
+    // squaring is exact wherever the result is representable. Integrality is an
+    // i64 round-trip, so a NaN or out-of-range y falls out as a huge |n| the range
+    // check rejects.
+    s = s.write("    .global __fern_pow_f64\n");
+    s = s.write("    .type __fern_pow_f64, %function\n");
+    s = s.write("__fern_pow_f64:\n");
+    s = s.write("    fcvtzs x10, d1\n");
+    s = s.write("    scvtf d2, x10\n");
+    s = s.write("    fcmp d2, d1\n");
+    s = s.write("    b.ne .Lpow_general\n");
+    s = s.write("    mov x11, x10\n");
+    s = s.write("    cmp x11, #0\n");
+    s = s.write("    b.ge .Lpow_abs\n");
+    s = s.write("    neg x11, x11\n");
+    s = s.write(".Lpow_abs:\n");
+    s = s.write("    cmp x11, #64\n");
+    s = s.write("    b.gt .Lpow_general\n");
+    s = emit_ldc(s, "d3", ".Lfc_one");
+    s = s.write("    fmov d4, d0\n");
+    s = s.write(".Lpow_loop:\n");
+    s = s.write("    and x13, x11, #1\n");
+    s = s.write("    cmp x13, #0\n");
+    s = s.write("    b.eq .Lpow_skip\n");
+    s = s.write("    fmul d3, d3, d4\n");
+    s = s.write(".Lpow_skip:\n");
+    s = s.write("    fmul d4, d4, d4\n");
+    s = s.write("    lsr x11, x11, #1\n");
+    s = s.write("    cmp x11, #0\n");
+    s = s.write("    b.ne .Lpow_loop\n");
+    s = s.write("    cmp x10, #0\n");
+    s = s.write("    b.ge .Lpow_done\n");
+    s = emit_ldc(s, "d5", ".Lfc_one");
+    s = s.write("    fdiv d3, d5, d3\n");
+    s = s.write(".Lpow_done:\n");
+    s = s.write("    fmov d0, d3\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lpow_general:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str d8, [sp, #-16]!\n");
+    s = s.write("    fmov d8, d1\n");
+    s = s.write("    bl __fern_log_f64\n");
+    s = s.write("    fmul d0, d8, d0\n");
+    s = s.write("    bl __fern_exp_f64\n");
+    s = s.write("    ldr d8, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
     return s;
 }
 
