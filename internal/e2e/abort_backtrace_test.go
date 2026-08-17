@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 var backtraceHexRe = regexp.MustCompile(`0x[0-9a-f]{16}`)
@@ -62,9 +64,15 @@ function main(): i32 { var xs: i32[] = [1, 2, 3]; return mid(xs); }
 		t.Fatalf("Symbols() (expected .symtab under -g): %v", err)
 	}
 	sort.Slice(syms, func(i, j int) bool { return syms[i].Value < syms[j].Value })
+	// .symtab carries the emitted symbol, so resolving an address to a source
+	// name means demangling it — what any symbolising tool does with a mangled
+	// table. `_start` is not a Fern function and comes back untouched.
 	resolve := func(a uint64) string {
 		for _, s := range syms {
 			if s.Value <= a && a < s.Value+s.Size {
+				if src, ok := symname.Source(s.Name); ok {
+					return src
+				}
 				return s.Name
 			}
 		}
