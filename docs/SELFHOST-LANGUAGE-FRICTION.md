@@ -327,25 +327,26 @@ for an un-annotated `var` drops the binding instead of poisoning it, and every
 later use produces noise. Against 96% annotated locals in the self-host, this
 looks less like a coincidence than a habit the compiler taught.
 
-### 4.3 The E045 hint tells you to write something that does not work
+### 4.3 The derive hints told you to write something that does not work — fixed (#6990)
 
 ```
 error[E045]: map key type Key is not supported — a struct used as a key must
              derive Eq and Hash (`@derive(Eq, Hash)`)
 ```
 
-Following it verbatim gives `error[E021]: @derive(Eq): unknown trait`. The
-working spelling is `@derive(cmp.Eq, cmp.Hash)` **plus** `import "core/cmp";` —
-neither of which the hint mentions. A hint that does not compile is worse than
-no hint, and this is the prelude-less module system's sharpest edge: `Eq` is not
-a name until you import it.
+Following that verbatim gave `error[E021]: @derive(Eq): unknown trait`. The same
+defect ran through E041 (`Eq` / `Ord`) and E038 (`Display`): four sites naming a
+bare trait name that resolves to nothing. Every one now prints
+`@derive(cmp.Eq, cmp.Hash)` and names `import "core/cmp";` alongside it. This is
+still the prelude-less module system's sharpest edge — `Eq` is not a name until
+you import it — so a hint spelling a stdlib trait has to spell the import too.
 
-### 4.4 `unknownTypeHint` suggests replacing two types that exist
+### 4.4 `unknownTypeHint` suggested replacing two types that exist — fixed (#6990)
 
-`internal/checker/checker.go:5701` offers "did you mean `string`?" for `str` and
-"did you mean `u32`?" for `u8`. Both `str` and `u8` are real, type-checking Fern
-types (§7) — `str` is `ast.StrType`, `u8` is a `NumberType`. These
-branches are dead, and would give wrong advice if they ever fired.
+E064's respelling table offered "did you mean `string`?" for `str` and "did you
+mean `u32`?" for `u8`. Both are real, type-checking Fern types (§7) — `str` is
+`ast.StrType`, `u8` is a `NumberType` — so the branches were dead and would have
+given wrong advice if they ever fired. Both entries are gone.
 
 ### 4.5 The append cliff: one alias turns amortised O(1) into O(n²), silently
 
@@ -431,9 +432,9 @@ Ordered by (unblocking value) ÷ (cost), not by size.
 2. **Character literals** (§3.3). Days. Deletes 342 magic constants and a large
    share of 311 `as i32` casts on sight, and gives the already-shipped `char`
    type its first producer.
-3. **Poison, don't delete, a failed `var` binding** (§4.2) and **fix the E045
-   hint** (§4.3), and delete the two dead `unknownTypeHint` branches (§4.4).
-   Small, independent, each removes a paper cut that has shaped self-host style.
+3. **Poison, don't delete, a failed `var` binding** (§4.2). Small, and removes a
+   paper cut that has shaped self-host style. The derive hints (§4.3) and the
+   dead `unknownTypeHint` branches (§4.4) were the same size and are done.
 4. **Break the fixpoint ratchet deliberately** (§2.4). Pick one self-host module
    and one feature — closures are the highest-value, per §3.1 — adopt it there,
    and gate it on `internal/e2eselfhost` rather than the fixpoint. This is a

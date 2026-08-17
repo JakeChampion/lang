@@ -3776,11 +3776,13 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 	return ast.Equal(sig.Result, wantRet)
 }
 
-// demangle turns the first module-mangling `__` in a name back into a
-// `.` for user-facing diagnostics, so a cross-module trait/type/func
-// reads as `mod.Name` (how the user wrote it) rather than the internal
-// `mod__Name`. A no-op for single-file / same-module names. See
-// docs/TRAITS.md (Phase 3).
+// cmpImport is the import that brings core/cmp's derivable traits (Eq,
+// Ord, Hash, Display, Debug, Default) into scope. There is no prelude
+// and `@derive` / `impl` resolve a trait by the name as written, so a
+// hint that spells one of them must spell it qualified and name this
+// import too — a bare `@derive(Eq)` is E021 "unknown trait".
+const cmpImport = "`import \"core/cmp\";`"
+
 // deriveKind classifies a (possibly module-mangled) derived-trait name
 // by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
 // or "Debug". Returns "" for any other trait — only these are derivable.
@@ -3815,9 +3817,9 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 }
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
-// a Map key, or "" if it is a usable key. Usable keys are i32-sized
-// scalars, strings, and struct/enum types that implement both Eq and
-// Hash (#2671). A struct/enum that lacks the derives gets a message
+// a Map key, or "" if it is a usable key. Usable keys are integers,
+// strings, and struct/enum types that implement both Eq and Hash
+// (#2671). A struct/enum that lacks the derives gets a message
 // pointing at the fix; other composite types (tuple / array / slice /
 // float) keep the historical "not yet supported" wording. A type
 // parameter or polymorphic literal passes — it is resolved later (per
@@ -3830,14 +3832,14 @@ func (c *checker) mapKeyTypeError(k ast.Type) string {
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash (`@derive(Eq, Hash)`)", k)
+		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
 	case ast.EnumType:
 		if c.typeImplsEqAndHash(kt.Name) {
 			return ""
 		}
-		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash (`@derive(Eq, Hash)`)", k)
+		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: add `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
 	}
-	return fmt.Sprintf("map key type %s is not yet supported (use i32, string, or a struct/enum with `@derive(Eq, Hash)`)", k)
+	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", k, cmpImport)
 }
 
 // deriveConf answers "does type <tn> implement trait <dn>?" at
@@ -4986,6 +4988,11 @@ func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 	}
 }
 
+// demangle turns the first module-mangling `__` in a name back into a
+// `.` for user-facing diagnostics, so a cross-module trait/type/func
+// reads as `mod.Name` (how the user wrote it) rather than the internal
+// `mod__Name`. A no-op for single-file / same-module names. See
+// docs/TRAITS.md (Phase 3).
 func demangle(s string) string {
 	return strings.Replace(s, "__", ".", 1)
 }
@@ -5897,11 +5904,11 @@ func unknownTypeHint(name string) string {
 		return " (did you mean `boolean`?)"
 	case "int", "long":
 		return " (did you mean `i32`?)"
-	case "uint", "u8":
+	case "uint":
 		return " (did you mean `u32`?)"
 	case "double":
 		return " (did you mean `f64`?)"
-	case "str", "String":
+	case "String":
 		return " (did you mean `string`?)"
 	}
 	return ""
@@ -11813,8 +11820,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if !c.typeImplementsDisplay(at) {
 					c.errfCode(n.Args[0].Pos(), "E038",
-						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — add `@derive(Display)`, `impl Display for %s`, or import the module that provides it",
-						id.Name, at, at)
+						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or add `@derive(cmp.Display)` / `impl cmp.Display for %s`, which require %s",
+						id.Name, at, at, at, cmpImport)
 					return ast.VoidType{}
 				}
 				n.Args[0] = &ast.Call{
@@ -12821,7 +12828,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						n.CmpCall = cmpCall
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — add `@derive(Ord)` (or `impl Ord for %s`) so ordering can use structural comparison", lt, n.Op, tn)
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — add `@derive(cmp.Ord)` (or `impl cmp.Ord for %s`), which requires %s, so ordering can use structural comparison", lt, n.Op, tn, cmpImport)
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
@@ -12918,7 +12925,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						n.EqNegate = n.Op == "!="
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — add `@derive(Eq)` (or `impl Eq for %s`) so `==` can use structural equality", lt, n.Op, tn)
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for %s`), which requires %s, so `==` can use structural equality", lt, n.Op, tn, cmpImport)
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
@@ -13536,12 +13543,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if vt != nil {
 				valueType = vt
 			}
-			// Usable keys: i32-sized scalar, string, or a
-			// struct/enum that derives Eq + Hash (the keyed runtime
-			// dispatches through its hash/eq — #2671). Everything
-			// else (i64/float, tuple, array, slice, or an
-			// underived struct/enum) is rejected with a message
-			// pointing at the fix.
+			// Usable keys: integer, string, or a struct/enum that
+			// derives Eq + Hash (the keyed runtime dispatches
+			// through its hash/eq — #2671). Everything else
+			// (float, tuple, array, slice, or an underived
+			// struct/enum) is rejected with a message pointing at
+			// the fix.
 			if msg := c.mapKeyTypeError(keyType); msg != "" {
 				c.errfCode(n.Entries[0].Key.Pos(), "E045", "%s", msg)
 			}
@@ -13551,14 +13558,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// to the right width and same-type-must-be-same is
 		// enforced.
 		for i, ent := range n.Entries {
+			kt, vt := keyType, valueType
 			if i > 0 {
-				c.checkExpr(ent.Key, s)
-				c.checkExpr(ent.Value, s)
+				kt = c.checkExpr(ent.Key, s)
+				vt = c.checkExpr(ent.Value, s)
 			}
 			c.settleNumeric(ent.Key, keyType)
 			c.settleNumeric(ent.Value, valueType)
-			kt := c.postSettleType(ent.Key, keyType)
-			vt := c.postSettleType(ent.Value, valueType)
+			kt = c.postSettleType(ent.Key, kt)
+			vt = c.postSettleType(ent.Value, vt)
 			if kt != nil && !ast.Equal(kt, keyType) {
 				c.errfCode(ent.Key.Pos(), "E045", "map key type %s, expected %s", kt, keyType)
 			}

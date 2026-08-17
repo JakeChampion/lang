@@ -6785,7 +6785,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           if (eqrecv == "") {
             out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
           } else if (s.lookup_method("eq", eqrecv).name.len() == 0) {
-            out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": type does not implement `Eq` — add `@derive(Eq)` (or `impl Eq for " + eqrecv + "`) so `==` can use structural equality", b.line, b.col));
+            out = out.append(dg_at("E041", "cannot compare values of type " + type_label(elt) + " with \"" + b.op + "\": type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for " + eqrecv + "`), which requires `import \"core/cmp\";`, so `==` can use structural equality", b.line, b.col));
           }
         }
       }
@@ -6878,7 +6878,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
               if (ordrecv == "") {
                 out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
               } else if (s.lookup_method("cmp", ordrecv).name.len() == 0) {
-                out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": type does not implement `Ord` — add `@derive(Ord)` (or `impl Ord for " + ordrecv + "`) so ordering can use structural comparison", b.line, b.col));
+                out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": type does not implement `Ord` — add `@derive(cmp.Ord)` (or `impl cmp.Ord for " + ordrecv + "`), which requires `import \"core/cmp\";`, so ordering can use structural comparison", b.line, b.col));
               }
             } else {
               out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(olt) + " and " + type_label(ort), b.line, b.col));
