@@ -1,0 +1,1 @@
+ambiguous method "scale" on P: provided by trait Feet (declared at 16:19) and trait Meters (declared at 15:21)

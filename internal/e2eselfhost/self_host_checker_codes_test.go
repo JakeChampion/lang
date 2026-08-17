@@ -378,11 +378,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"as-downcast-prim-target", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? i32) { Some(x) => { return x; }, None => { return 0; } }\n}\n", []string{"E060"}},
 		{"as-downcast-impl-ok", "trait Shape { function area(self: Self): i32; }\nstruct Circle { r: i32 }\nimpl Shape for Circle { function area(self: Self): i32 { return self.r; } }\nfunction main(): i32 {\n    var d: dyn Shape = Circle { r: 3 };\n    match (d as? Circle) { Some(c) => { return c.r; }, None => { return 0; } }\n}\n", nil},
 		// E062 (#4347): `d.m()` on `dyn A + B` where BOTH traits declare m is
-		// ambiguous (the E006 rides along from the two impls both writing m on
-		// S; the impl bodies avoid `self` in the clashing method so the Go
-		// checker's post-E006 cascade emits no E001 and the sets match
-		// exactly). Distinct method names dispatch cleanly.
-		{"dyn-ambiguous-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m();\n}\n", []string{"E006", "E062"}},
+		// ambiguous. E006 no longer rides along: two DIFFERENT traits each
+		// providing `m` for S is a legitimate pair of providers since #6931,
+		// not a redeclaration, on both checkers. What is ambiguous is the
+		// dyn CALL, which is what E062 says. Distinct method names dispatch
+		// cleanly.
+		{"dyn-ambiguous-method", "trait A { function m(self: Self): i32; }\ntrait B { function m(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function m(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m();\n}\n", []string{"E062"}},
 		{"dyn-multi-trait-dispatch-ok", "trait A { function m(self: Self): i32; }\ntrait B { function n(self: Self): i32; }\nstruct S { v: i32 }\nimpl A for S { function m(self: Self): i32 { return self.v; } }\nimpl B for S { function n(self: Self): i32 { return 7; } }\nfunction main(): i32 {\n    var d: dyn A + B = S { v: 3 };\n    return d.m() + d.n();\n}\n", nil},
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},

@@ -2,8 +2,10 @@ package checker
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -13,6 +15,20 @@ import (
 // stays addressable. Every path that produces an impl method has to stamp
 // `FuncDecl.ImplTrait` for that to hold — the parser's impl desugar, the
 // checker's trait-default synthesis, and `@derive` expansion alike.
+
+// newTableChecker is a checker with just the method tables wired up, for
+// driving registerMethod / resolveMethod directly.
+func newTableChecker() *checker {
+	return &checker{info: &Info{
+		Methods:         map[string]string{},
+		TraitMethods:    map[string]string{},
+		MethodOwners:    map[string][]string{},
+		MethodSources:   map[string]string{},
+		MethodDeclSites: map[string]ast.Position{},
+		Traits:          map[string]*ast.TraitDecl{},
+		DirectImports:   map[string]map[string]bool{},
+	}}
+}
 
 // checkInfo parses + checks src and returns the resulting Info, failing
 // the test on any diagnostic.
@@ -158,10 +174,85 @@ function main(): i32 { var p = P.origin(); return p.get(); }`)
 	}
 }
 
-// Two traits providing the same method name for one type is STILL an E006
-// duplicate today — the trait-aware tables are plumbing for the ranked
-// resolution that will relax it, not the relaxation itself.
-func TestSameMethodFromTwoTraitsStillDuplicates(t *testing.T) {
+// Two DIFFERENT traits providing one method name for one type is no
+// longer a redeclaration: both register, each addressable under its own
+// trait. What the call site does with them is E074's business.
+func TestSameMethodFromTwoTraitsIsNotARedeclaration(t *testing.T) {
+	info := checkInfo(t, `struct P { x: i32 }
+trait A { function go(self: Self): i32; }
+trait B { function go(self: Self): i32; }
+impl A for P { function go(self: Self): i32 { return 1; } }
+impl B for P { function go(self: Self): i32 { return 2; } }
+function main(): i32 { var p = P { x: 1 }; return p.x; }`)
+
+	wantOwners(t, info, "P", "go", []string{"A", "B"})
+	if got := info.TraitMethods["A.P.go"]; got != "__method_P_go" {
+		t.Errorf(`TraitMethods["A.P.go"] = %q, want "__method_P_go"`, got)
+	}
+	if got := info.TraitMethods["B.P.go"]; got != "__method_P__B__go" {
+		t.Errorf(`TraitMethods["B.P.go"] = %q, want "__method_P__B__go"`, got)
+	}
+}
+
+// The SAME trait providing one method name twice for one type is still a
+// plain redeclaration, and so are two inherent declarations.
+func TestSameTraitTwiceStillRedeclares(t *testing.T) {
+	for name, src := range map[string]string{
+		"same trait twice": `struct P { x: i32 }
+trait A { function go(self: Self): i32; }
+impl A for P { function go(self: Self): i32 { return 1; } }
+impl A for P { function go(self: Self): i32 { return 2; } }
+function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+		"two inherent": `struct P { x: i32 }
+function (p: P) go(): i32 { return 1; }
+function (p: P) go(): i32 { return 2; }
+function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+		"same assoc fn twice": `struct P { x: i32 }
+impl P { function make(): P { return P { x: 1 }; } }
+impl P { function make(): P { return P { x: 2 }; } }
+function main(): i32 { return P.make().x; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("%s: expected E006, got none", name)
+		}
+		if !strings.Contains(err.Error(), "redeclared") {
+			t.Errorf("%s: want a redeclaration diagnostic, got %v", name, err)
+		}
+	}
+}
+
+// A type carrying BOTH an inherent method and a trait-provided one of the
+// same name is an ambiguity, not silent shadowing: otherwise `p.go()`
+// would mean the trait method inside a generic body (where dispatch goes
+// through the bound) and the inherent one at a concrete call site.
+func TestInherentAndTraitMethodCollide(t *testing.T) {
+	for name, src := range map[string]string{
+		"inherent declared second": `struct P { x: i32 }
+trait A { function go(self: Self): i32; }
+impl A for P { function go(self: Self): i32 { return 1; } }
+function (p: P) go(): i32 { return 2; }
+function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+		"inherent declared first": `struct P { x: i32 }
+function (p: P) go(): i32 { return 2; }
+trait A { function go(self: Self): i32; }
+impl A for P { function go(self: Self): i32 { return 1; } }
+function main(): i32 { var p = P { x: 1 }; return p.go(); }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("%s: expected E074, got none", name)
+		}
+		if !strings.Contains(err.Error(), "ambiguous method") || !strings.Contains(err.Error(), "an inherent method") {
+			t.Errorf("%s: want the inherent-vs-trait ambiguity, got %v", name, err)
+		}
+	}
+}
+
+// Two traits a module can both name is an ambiguity at the CALL site, and
+// the report has to identify each candidate well enough to act on: the
+// trait that provided it and where that impl was written.
+func TestAmbiguousCallSiteNamesBothTraitsAndPositions(t *testing.T) {
 	err := checkSource(t, `struct P { x: i32 }
 trait A { function go(self: Self): i32; }
 trait B { function go(self: Self): i32; }
@@ -169,24 +260,22 @@ impl A for P { function go(self: Self): i32 { return 1; } }
 impl B for P { function go(self: Self): i32 { return 2; } }
 function main(): i32 { var p = P { x: 1 }; return p.go(); }`)
 	if err == nil {
-		t.Fatal("expected E006 for a method two traits both provide, got none")
+		t.Fatal("expected E074 for a call with two equally-ranked candidates")
+	}
+	for _, want := range []string{`ambiguous method "go" on P`, "trait A (declared at 4:16)", "trait B (declared at 5:16)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("E074 text is missing %q:\n%v", want, err)
+		}
 	}
 }
 
 // MethodOwners values are sorted regardless of declaration order, so
-// nothing downstream inherits source or map-iteration order. Registration
-// order is exercised directly because the E006 gate above keeps the
-// two-trait case out of reach from source.
+// nothing downstream inherits source or map-iteration order.
 func TestMethodOwnersSorted(t *testing.T) {
-	c := &checker{info: &Info{
-		Methods:       map[string]string{},
-		TraitMethods:  map[string]string{},
-		MethodOwners:  map[string][]string{},
-		MethodSources: map[string]string{},
-	}}
+	c := newTableChecker()
 	for _, trait := range []string{"Zebra", "Mango", "Apple"} {
 		mangled := c.mangleMethodName("__method_", "P", "go", trait)
-		c.registerMethod("P", "go", trait, mangled, "")
+		c.registerMethod("P", "go", trait, mangled, "", ast.Position{})
 	}
 	wantOwners(t, c.info, "P", "go", []string{"Apple", "Mango", "Zebra"})
 
@@ -238,13 +327,8 @@ function main(): i32 { var p = P { x: 1 }; return p.area(); }`)
 // A preference is matched by SIMPLE name, so a caller can ask for `Ord`
 // without knowing the trait arrives module-mangled as `cmp__Ord`.
 func TestResolveMethodPreferenceIgnoresModuleMangling(t *testing.T) {
-	c := &checker{info: &Info{
-		Methods:       map[string]string{},
-		TraitMethods:  map[string]string{},
-		MethodOwners:  map[string][]string{},
-		MethodSources: map[string]string{},
-	}}
-	c.registerMethod("P", "cmp", "cmp__Ord", "__method_P_cmp", "")
+	c := newTableChecker()
+	c.registerMethod("P", "cmp", "cmp__Ord", "__method_P_cmp", "", ast.Position{})
 
 	for _, prefer := range []string{"Ord", "cmp__Ord"} {
 		mangled, owner, ok := c.resolveMethod("P", "cmp", []string{prefer})
@@ -259,14 +343,9 @@ func TestResolveMethodPreferenceIgnoresModuleMangling(t *testing.T) {
 // implementation. Without it `methodConsumesReceiver` could read the
 // `own` flags of an impl the call site did not dispatch to.
 func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
-	c := &checker{info: &Info{
-		Methods:       map[string]string{},
-		TraitMethods:  map[string]string{},
-		MethodOwners:  map[string][]string{},
-		MethodSources: map[string]string{},
-	}}
+	c := newTableChecker()
 	for _, trait := range []string{"Zebra", "Mango", "Apple"} {
-		c.registerMethod("P", "go", trait, c.mangleMethodName("__method_", "P", "go", trait), "")
+		c.registerMethod("P", "go", trait, c.mangleMethodName("__method_", "P", "go", trait), "", ast.Position{})
 	}
 
 	mangled, owner, ok := c.resolveMethod("P", "go", nil)

@@ -1,0 +1,21 @@
+// Pins E074: two traits declared right here both provide `scale` for P, so
+// neither outranks the other and `p.scale()` has no answer. Legal on its
+// own — a type may implement both traits — it is the CALL that has to be
+// unambiguous, and the report has to name both traits so the reader knows
+// which two impls are in play.
+//
+// The ranking that resolves the ordinary case (a trait the calling module
+// declares or imports directly beats one reachable only through somebody
+// else's imports) cannot separate these: both are declared in this file.
+struct P { x: i32 }
+
+trait Meters { function scale(self: Self): i32; }
+trait Feet { function scale(self: Self): i32; }
+
+impl Meters for P { function scale(self: Self): i32 { return self.x; } }
+impl Feet for P { function scale(self: Self): i32 { return self.x * 3; } }
+
+function main(): i32 {
+    var p: P = P { x: 2 };
+    return p.scale();               // error[E074]: Meters or Feet?
+}

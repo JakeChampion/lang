@@ -1473,3 +1473,102 @@ function main(): i32 { return util.stubbed() + helper(); }`,
 		t.Errorf("TodoSites[0].Line = %d, want 3 (the entry's todo)", prog.TodoSites[0].Line)
 	}
 }
+
+// Method dispatch when two traits provide one method name for one type
+// (#6931). The winner is decided by DIRECT imports, so these tests need a
+// real module graph — `Info.ModuleImports` is the transitive closure and
+// cannot tell "I named this trait" from "something I imported did".
+
+// A trait the calling module declares itself beats one that is only
+// reachable through another module's imports. Without the rank, `far.Far`
+// is just as "in scope" as `Near` and the call would be ambiguous — or,
+// worse, silently pick whichever impl registered first.
+func TestMethodRankPrefersLocallyDeclaredTrait(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"p.fern": `pub struct P { x: i32 }`,
+		"far.fern": `import "./p";
+pub trait Far { function scale(self: Self): i32; }
+impl Far for p.P { function scale(self: Self): i32 { return 1; } }`,
+		"mid.fern": `import "./far";
+pub function ping(): i32 { return 0; }`,
+		"main.fern": `import "./p";
+import "./mid";
+trait Near { function scale(self: Self): i32; }
+impl Near for p.P { function scale(self: Self): i32 { return 2; } }
+function main(): i32 { var v: p.P = p.P { x: 1 }; return v.scale() + mid.ping(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if owners := info.MethodOwners["p__P.scale"]; len(owners) != 2 {
+		t.Fatalf(`MethodOwners["p__P.scale"] = %v, want both traits registered`, owners)
+	}
+	want := info.TraitMethods["Near.p__P.scale"]
+	if want == "" {
+		t.Fatal(`TraitMethods["Near.p__P.scale"] is empty`)
+	}
+	if got := calleeOfFirstCall(t, prog, "main"); got != want {
+		t.Errorf("v.scale() resolved to %q, want the locally-declared trait's %q", got, want)
+	}
+}
+
+// Once the calling module imports the far trait's module directly, the
+// two rank the same and the call is E074 rather than a silent pick. The
+// only difference from the test above is that `far` is named here rather
+// than reached through `mid`.
+func TestMethodRankTieIsAmbiguous(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"p.fern": `pub struct P { x: i32 }`,
+		"far.fern": `import "./p";
+pub trait Far { function scale(self: Self): i32; }
+impl Far for p.P { function scale(self: Self): i32 { return 1; } }`,
+		"main.fern": `import "./p";
+import "./far";
+trait Near { function scale(self: Self): i32; }
+impl Near for p.P { function scale(self: Self): i32 { return 2; } }
+function main(): i32 { var v: p.P = p.P { x: 1 }; return v.scale(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = checker.Check(prog)
+	if err == nil {
+		t.Fatal("expected E074 once both traits are directly imported")
+	}
+	for _, want := range []string{"ambiguous method", "trait Near", "trait far.Far"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("E074 text is missing %q:\n%v", want, err)
+		}
+	}
+}
+
+// calleeOfFirstCall returns the mangled callee name the checker rewrote
+// the first method call in `fnName`'s body onto.
+func calleeOfFirstCall(t *testing.T, prog *ast.Program, fnName string) string {
+	t.Helper()
+	fn := findFunc(prog, fnName)
+	if fn == nil {
+		t.Fatalf("function %q not found", fnName)
+	}
+	var got string
+	ast.Walk(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.Call)
+		if !ok || got != "" || call.Method == nil {
+			return true
+		}
+		if id, ok := call.Callee.(*ast.Ident); ok {
+			got = id.Name
+		}
+		return true
+	})
+	if got == "" {
+		t.Fatalf("no rewritten method call found in %q", fnName)
+	}
+	return got
+}

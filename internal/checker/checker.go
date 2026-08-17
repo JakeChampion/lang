@@ -97,6 +97,14 @@ type Info struct {
 	// contributes no entry, so a missing key means "not from a trait"
 	// and a multi-entry value means the flat `Methods` key is ambiguous.
 	MethodOwners map[string][]string
+	// MethodDeclSites is where each registration was written, keyed like
+	// TraitMethods (`<Trait>.<Type>.<MethodName>`) for an impl-provided
+	// method and like Methods (`<Type>.<MethodName>`) for an inherent
+	// one — so the two keyings also tell an inherent declaration apart
+	// from a trait-provided one with the same name. An ambiguity report
+	// (E074) names both declarations, so it needs both positions; a
+	// built-in registration has no source declaration and no entry.
+	MethodDeclSites map[string]ast.Position
 	// MethodSources records the canonical source-module path each
 	// registered method's body came from. Mangled-name keys mirror
 	// the values in Methods (e.g. `__method_i32_abs` →
@@ -795,6 +803,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Methods:             map[string]string{},
 			TraitMethods:        map[string]string{},
 			MethodOwners:        map[string][]string{},
+			MethodDeclSites:     map[string]ast.Position{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
 			DirectImports:       prog.DirectImports,
@@ -2288,9 +2297,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// Name has been rewritten. Then fall through to the common
 			// FuncSig / GenericFuncs registration.
 			typeName := fn.AssocType
-			methodKey := typeName + "." + fn.Name
-			if _, dup := c.info.Methods[methodKey]; dup {
+			switch kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind {
+			case declDup:
 				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
+				continue
+			case declAmbiguous:
+				c.errAmbiguousMethod(fn.P, typeName, fn.Name,
+					[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
 				continue
 			}
 			simpleName := fn.Name
@@ -2298,7 +2311,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			fn.MethodSimpleName = simpleName
 			fn.Name = c.mangleMethodName("__assoc_", typeName, simpleName, fn.ImplTrait)
 			fn.AssocType = ""
-			c.registerMethod(typeName, simpleName, fn.ImplTrait, fn.Name, fn.SourceModule)
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		} else if fn.Receiver != nil {
 			var typeName string
 			switch rt := fn.Receiver.Type.(type) {
@@ -2355,9 +2368,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				}
 				typeName = n
 			}
-			methodKey := typeName + "." + fn.Name
-			if _, dup := c.info.Methods[methodKey]; dup {
-				c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
+			if kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind != declOK {
+				if kind == declDup {
+					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
+				} else {
+					c.errAmbiguousMethod(fn.P, typeName, fn.Name,
+						[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
+				}
 				// Hoist the receiver even though the declaration is rejected.
 				// Its BODY is still walked, and a receiver left off Params[0]
 				// makes that walk report a second `E001: undefined identifier
@@ -2386,7 +2403,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// handle method calls, so this is sound.
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
-			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule)
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
 		} else if fn.MethodRecv != "" {
 			// Already-hoisted method whose Receiver was consumed by a
 			// previous Check pass — this is what the monomorph
@@ -2396,7 +2413,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// names like `shapes__Square` that the name alone can't be
 			// split on). Idempotent: only fills a missing key.
 			// See docs/TRAITS.md §4.
-			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule)
+			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
@@ -2964,8 +2981,12 @@ func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string 
 // trait-keyed tables), and, when a trait provided it, the trait-aware
 // TraitMethods / MethodOwners pair. MethodOwners stays sorted so nothing
 // downstream inherits declaration or map-iteration order.
-func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string) {
+func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string, pos ast.Position) {
 	key := typeName + "." + name
+	site := declSiteKey(typeName, name, trait)
+	if _, exists := c.info.MethodDeclSites[site]; !exists {
+		c.info.MethodDeclSites[site] = pos
+	}
 	if _, exists := c.info.Methods[key]; !exists {
 		c.info.Methods[key] = mangled
 		c.info.MethodSources[mangled] = srcModule
@@ -2982,6 +3003,86 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	owners := append(c.info.MethodOwners[key], trait)
 	slices.Sort(owners)
 	c.info.MethodOwners[key] = owners
+}
+
+// declSiteKey is the MethodDeclSites key for one registration: the
+// TraitMethods keying for a trait-provided method, the flat Methods
+// keying for an inherent one.
+func declSiteKey(typeName, name, trait string) string {
+	if trait == "" {
+		return typeName + "." + name
+	}
+	return trait + "." + typeName + "." + name
+}
+
+// methodCand is one implementation of a `<Type>.<name>` method: the trait
+// that provided it ("" for an inherent declaration) and where it was
+// written.
+type methodCand struct {
+	Trait string
+	Pos   ast.Position
+}
+
+// How a pending method registration relates to what is already registered.
+const (
+	declOK        = iota // nothing else claims this (Type, name, trait)
+	declDup              // the SAME declaration again: E006
+	declAmbiguous        // a different provider of the same name: E074
+)
+
+// methodDeclConflict classifies a pending registration of `name` on
+// `typeName` from `trait` ("" for inherent) against what is already
+// registered, and returns the declaration it clashes with.
+//
+// Two DIFFERENT traits providing one method name for one type is not a
+// redeclaration — that is the whole point of the trait-keyed tables, and
+// the call site ranks between them. What stays E006 is a genuine repeat:
+// the same trait twice, two inherent declarations, or a declaration
+// shadowing a built-in registration (which has no source position to name
+// in an ambiguity report, and no trait to qualify a call with).
+//
+// Inherent-versus-trait is neither: it is reported as an ambiguity rather
+// than allowed to shadow silently, because a silent pick would give one
+// spelling two meanings — `p.m()` dispatching through the bound inside a
+// generic body but to the inherent method at a concrete call site.
+func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodCand) {
+	key := typeName + "." + name
+	if pos, dup := c.info.MethodDeclSites[declSiteKey(typeName, name, trait)]; dup {
+		return declDup, methodCand{Trait: trait, Pos: pos}
+	}
+	if trait == "" {
+		if owners := c.info.MethodOwners[key]; len(owners) > 0 {
+			return declAmbiguous, c.info.methodCands(typeName, name, owners[:1])[0]
+		}
+	} else if pos, inherent := c.info.MethodDeclSites[key]; inherent {
+		return declAmbiguous, methodCand{Pos: pos}
+	}
+	if _, taken := c.info.Methods[key]; taken && len(c.info.MethodOwners[key]) == 0 {
+		return declDup, methodCand{}
+	}
+	return declOK, methodCand{}
+}
+
+// errAmbiguousMethod reports E074: several visible implementations of one
+// method name on one type, with no rule that picks between them. Both
+// candidates are named with the trait that provided each (or "an inherent
+// method") and where it was declared, mirroring E062's shape for the
+// multi-trait-object case.
+func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, cands []methodCand) {
+	parts := make([]string, len(cands))
+	for i, cand := range cands {
+		what := "an inherent method"
+		if cand.Trait != "" {
+			what = "trait " + demangle(cand.Trait)
+		}
+		if cand.Pos == (ast.Position{}) {
+			parts[i] = what
+			continue
+		}
+		parts[i] = what + " (declared at " + cand.Pos.String() + ")"
+	}
+	c.errfCode(pos, "E074", "ambiguous method %q on %s: provided by %s",
+		name, demangle(typeName), strings.Join(parts, " and "))
 }
 
 // simpleTraitName strips a trait name's module mangling, so a caller can
@@ -3003,29 +3104,18 @@ func simpleTraitName(name string) string {
 // for an inherent method or a builtin.
 //
 // A preference only ever selects among registrations that already exist,
-// so it can neither invent a lookup that would otherwise fail nor, while
-// E006 still rejects two traits offering one method name for one type,
-// return a different implementation than the flat `Methods` key. Ranking
-// the candidates when that restriction lifts belongs here.
+// so it can neither invent a lookup that would otherwise fail nor return
+// a symbol the flat `Methods` key would not have. With no preference and
+// several providing traits the answer is the flat key's — see
+// ResolveMethodFrom for the module-ranked pick a call site needs.
 func (in *Info) ResolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
 	if in == nil {
 		return "", "", false
 	}
 	key := typeName + "." + name
 	owners := in.MethodOwners[key]
-	for _, want := range prefer {
-		if want == "" {
-			continue
-		}
-		want = simpleTraitName(want)
-		for _, o := range owners {
-			if simpleTraitName(o) != want {
-				continue
-			}
-			if m, found := in.TraitMethods[o+"."+key]; found {
-				return m, o, true
-			}
-		}
+	if m, o, found := in.preferredMethod(key, owners, prefer); found {
+		return m, o, true
 	}
 	mangled, ok = in.Methods[key]
 	if !ok {
@@ -3042,9 +3132,122 @@ func (in *Info) ResolveMethod(typeName, name string, prefer []string) (mangled, 
 	return mangled, "", true
 }
 
+// preferredMethod picks the registration belonging to the first of
+// `prefer` that actually provides `key`, matching on the simple trait
+// name so `Ord` and `cmp__Ord` both hit.
+func (in *Info) preferredMethod(key string, owners, prefer []string) (mangled, owner string, ok bool) {
+	for _, want := range prefer {
+		if want == "" {
+			continue
+		}
+		want = simpleTraitName(want)
+		for _, o := range owners {
+			if simpleTraitName(o) != want {
+				continue
+			}
+			if m, found := in.TraitMethods[o+"."+key]; found {
+				return m, o, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// traitInScope reports whether `fromModule` can name `trait` without a
+// transitive hop: the trait is declared in that same module, or the
+// module's own `import` list reaches the declaring one. DirectImports —
+// not the ModuleImports closure — is the whole point: the closure counts
+// std/num as "in scope" for a program that only ever wrote
+// `import "std/i32"`, which would tie a user's own trait with one they
+// never named.
+//
+// An unstamped module on either side passes, mirroring moduleSees: a
+// single-file program and a checker-synthesised trait are unconstrained.
+// So does stdlib-to-stdlib, whose import graph has cycles modload breaks
+// by clearing stamps rather than by recording an edge.
+func (in *Info) traitInScope(fromModule, trait string) bool {
+	td := in.Traits[trait]
+	if td == nil || fromModule == "" || td.SourceModule == "" || td.SourceModule == fromModule {
+		return true
+	}
+	if strings.HasPrefix(fromModule, "stdlib://") && strings.HasPrefix(td.SourceModule, "stdlib://") {
+		return true
+	}
+	return in.DirectImports[fromModule][td.SourceModule]
+}
+
+// ResolveMethodFrom is ResolveMethod as a call site in `fromModule` sees
+// it. When several traits provide `name` for `typeName`, the ones that
+// module can name directly outrank the rest, and exactly one candidate at
+// the best non-empty rank resolves.
+//
+// A lower-ranked trait stays a LIVE candidate, never a filtered-out one.
+// std/json's `(xs: T[]) to_json[T: Json]()` is re-checked by the
+// monomorphiser from std/json's module, where the user's module is not
+// imported; a hard visibility filter there would drop the only candidate
+// and break cross-module generic dispatch silently, at the re-check
+// rather than at the first check.
+//
+// `tied` is non-empty exactly when nothing separates two candidates at
+// the best rank — the caller reports E074. `mangled` is still filled in
+// with the first of them (MethodOwners is sorted, so that is stable) so
+// checking can carry on instead of cascading into unknown-method errors.
+func (in *Info) ResolveMethodFrom(fromModule, typeName, name string, prefer []string) (mangled, owner string, tied []string, ok bool) {
+	if in == nil {
+		return "", "", nil, false
+	}
+	key := typeName + "." + name
+	owners := in.MethodOwners[key]
+	if len(owners) < 2 {
+		mangled, owner, ok = in.ResolveMethod(typeName, name, prefer)
+		return mangled, owner, nil, ok
+	}
+	if m, o, found := in.preferredMethod(key, owners, prefer); found {
+		return m, o, nil, true
+	}
+	best := make([]string, 0, len(owners))
+	for _, o := range owners {
+		if in.traitInScope(fromModule, o) {
+			best = append(best, o)
+		}
+	}
+	if len(best) == 0 {
+		best = owners
+	}
+	m, found := in.TraitMethods[best[0]+"."+key]
+	if !found {
+		mangled, owner, ok = in.ResolveMethod(typeName, name, prefer)
+		return mangled, owner, nil, ok
+	}
+	if len(best) > 1 {
+		return m, best[0], best, true
+	}
+	return m, best[0], nil, true
+}
+
+// methodCands turns trait names into the candidate records E074 reports,
+// each with the position its impl of `typeName.name` was declared at.
+func (in *Info) methodCands(typeName, name string, traits []string) []methodCand {
+	out := make([]methodCand, len(traits))
+	for i, tr := range traits {
+		out[i] = methodCand{Trait: tr, Pos: in.MethodDeclSites[declSiteKey(typeName, name, tr)]}
+	}
+	return out
+}
+
 // resolveMethod is ResolveMethod against the checker's own Info.
 func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
 	return c.info.ResolveMethod(typeName, name, prefer)
+}
+
+// currentModule names the module whose source the checker is walking, or
+// "" outside any function (and for a single-file program that bypassed
+// modload).
+func (c *checker) currentModule() string {
+	if c.current == nil {
+		return ""
+	}
+	return c.current.SourceModule
 }
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
@@ -10773,19 +10976,24 @@ func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
 // `__method_<Type>_<method>` free function, so the raw name would name a
 // symbol no program can write. spelling is what type arguments attach to:
 // `.make[i32](...)` for a method, `empty[i32](...)` for a free function.
-func callSiteName(name string) (display, spelling string) {
-	rest, ok := strings.CutPrefix(name, "__method_")
-	if !ok {
-		return name, name
+//
+// The split comes off the receiver hoist's own stamp rather than out of
+// the mangled name: with two traits providing one method name for one
+// type the loser is mangled `__method_<Type>__<Trait>__<name>`, and both
+// halves carry their own `__` module mangling, so no string surgery can
+// find the seam.
+func callSiteName(fn *ast.FuncDecl) (display, spelling string) {
+	if fn.MethodRecv == "" || fn.MethodSimpleName == "" {
+		return fn.Name, fn.Name
 	}
-	// Type names cannot contain underscores by parser rule, so the first
-	// underscore splits the owner from a multi-word method name.
-	idx := strings.Index(rest, "_")
-	if idx <= 0 {
-		return name, name
+	display = demangle(fn.MethodRecv) + "." + fn.MethodSimpleName
+	if strings.HasPrefix(fn.Name, "__assoc_") {
+		// An associated function is called through its type —
+		// `Holder.empty[i32]()` — so the type name is part of the
+		// spelling, unlike a receiver method's `.make[i32]()`.
+		return display, display
 	}
-	method := rest[idx+1:]
-	return rest[:idx] + "." + method, "." + method
+	return display, "." + fn.MethodSimpleName
 }
 
 // containsParamType reports whether t (or any of its component
@@ -11643,7 +11851,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// resolves after the type-param rewrite.
 					isPrim := isPrimitiveTypeName(tid.Name)
 					if isStruct || isEnum || isPrim {
-						if mangled, _, ok := c.resolveMethod(tid.Name, fa.Field, nil); ok {
+						if mangled, _, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), tid.Name, fa.Field, nil); ok {
+							if len(tied) > 0 {
+								c.errAmbiguousMethod(fa.FieldPos, tid.Name, fa.Field, c.info.methodCands(tid.Name, fa.Field, tied))
+							}
 							if strings.HasPrefix(mangled, "__assoc_") {
 								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 							} else {
@@ -11883,7 +12094,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if typeName != "" {
-				if mangled, ownerTrait, ok := c.resolveMethod(typeName, fa.Field, nil); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+				// A call site that already resolved to a trait keeps it.
+				// The monomorphiser re-checks a bounded generic body with
+				// the receiver made concrete, from the module that DEFINED
+				// the generic — where the trait the bound named may not be
+				// the one module ranking would pick. The stamp is the
+				// bound's answer, and it outranks the module ranking.
+				var prefer []string
+				if n.Method != nil && n.Method.OwnerTrait != "" {
+					prefer = []string{n.Method.OwnerTrait}
+				}
+				if mangled, ownerTrait, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+					if len(tied) > 0 {
+						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, c.info.methodCands(typeName, fa.Field, tied))
+					}
 					if fa.Field == "drop" && c.hasDropImpl(typeName) {
 						c.errfCode(fa.FieldPos, "E073",
 							"`drop` is a finalizer, not a method to call: the runtime runs %s's `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized", typeName)
@@ -12046,7 +12270,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					tooMany := len(n.TypeArgs) > len(fn.TypeParams)
 					tooFew := len(n.TypeArgs) < len(fn.TypeParams)
 					if tooMany || (tooFew && n.Method == nil) {
-						display, _ := callSiteName(fn.Name)
+						display, _ := callSiteName(fn)
 						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
 							display, len(fn.TypeParams), len(n.TypeArgs))
 					}
@@ -12211,7 +12435,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					display, spelling := callSiteName(genericFn.Name)
+					display, spelling := callSiteName(genericFn)
 					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
 					complete = false
 				}

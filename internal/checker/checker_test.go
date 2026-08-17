@@ -5853,7 +5853,7 @@ func firstErrCode(err error) string {
 	return ""
 }
 
-// A redeclared method reports E006 and NOTHING ELSE.
+// A rejected method declaration reports its own error and NOTHING ELSE.
 //
 // The dup check rejects the second declaration and moves on, but the losing
 // FuncDecl's body is still walked. Its receiver used to be left un-hoisted —
@@ -5863,28 +5863,33 @@ func firstErrCode(err error) string {
 //
 // That second diagnostic is worse than noise when the loser is a stdlib impl:
 // it cites a file the program never imported, at a line the reader cannot act
-// on. `impl Add for i32` in std/num is exactly that shape, and it is what a
-// user trait providing `add` for i32 collides with (#6931).
-func TestRedeclaredMethodReportsOneError(t *testing.T) {
-	// Two traits each providing `add` for i32 — the exact shape a user trait
-	// hits once anything in the import closure carries `impl num.Add for i32`.
-	// The receiver must be spelled `self` for the cascade to be visible: that
-	// is the identifier the un-hoisted body fails to resolve.
-	src := `trait A { function add(self: Self, n: i32): i32; }
-trait B { function add(self: Self, n: i32): i32; }
+// on. Both surviving rejections take that path, so both are pinned here: the
+// same trait declaring one method twice (E006), and an inherent method
+// colliding with a trait-provided one (E074). Two DIFFERENT traits providing
+// one name is no longer rejected at all (#6931).
+func TestRejectedMethodReportsOneError(t *testing.T) {
+	// The LOSING declaration's receiver must be spelled `self` for the
+	// cascade to be visible: that is the identifier the un-hoisted body
+	// fails to resolve. Source order decides which one loses, so the impl
+	// method comes last in both cases.
+	for name, src := range map[string]string{
+		"same trait twice": `trait A { function add(self: Self, n: i32): i32; }
+impl A for i32 { function add(self: Self, n: i32): i32 { return self - n; } }
 impl A for i32 { function add(self: Self, n: i32): i32 { return self + n; } }
-impl B for i32 { function add(self: Self, n: i32): i32 { return self - n; } }
-function main(): i32 { return 0; }`
-	err := checkSource(t, src)
-	if err == nil {
-		t.Fatal("expected a redeclaration error, got nil")
-	}
-	got := err.Error()
-	if !strings.Contains(got, "redeclared") {
-		t.Errorf("want the redeclaration error, got %q", got)
-	}
-	if strings.Contains(got, "E001") || strings.Contains(got, `undefined identifier "self"`) {
-		t.Errorf("the rejected declaration's body leaked a second diagnostic: %q", got)
+function main(): i32 { return 0; }`,
+		"inherent then trait": `function (x: i32) add(n: i32): i32 { return x - n; }
+trait A { function add(self: Self, n: i32): i32; }
+impl A for i32 { function add(self: Self, n: i32): i32 { return self + n; } }
+function main(): i32 { return 0; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Fatalf("%s: expected a diagnostic, got nil", name)
+		}
+		got := err.Error()
+		if strings.Contains(got, "E001") || strings.Contains(got, `undefined identifier "self"`) {
+			t.Errorf("%s: the rejected declaration's body leaked a second diagnostic: %q", name, got)
+		}
 	}
 }
 

@@ -402,6 +402,64 @@ For single-file programs (and the entry module) every type and trait is
 local, so coherence is always satisfied; the rule only bites across
 modules.
 
+### 5.1 Which impl, when two traits share a method name
+
+Coherence pins `(Trait, Type)`. It does not pin `(Type, method name)`:
+two different traits may each declare `scale`, and one type may
+implement both. That is legal, and the second impl is not a
+redeclaration — the checker keys trait methods by
+`<Trait>.<Type>.<name>`, so both stay individually addressable.
+
+The *call* is what must be unambiguous. `v.m()` with `v: T` ranks the
+traits in `MethodOwners["T.m"]`:
+
+- **rank 0** — the trait is declared in the calling module, or that
+  module's own `import` list names the trait's module;
+- **rank 1** — everything else: a trait reachable only because some
+  module you imported imported it.
+
+Exactly one candidate at the best occupied rank resolves the call; two
+or more at that rank is `E074`. The ranking reads the *direct* import
+map, not the transitive closure — the closure would count `std/num` as
+in scope for a program that only ever wrote `import "std/i32"`, tying a
+user's own trait with one they never named. A lower-ranked trait is
+still a live candidate, never filtered out: a bounded generic is
+re-checked by the monomorphiser from the module that *defined* it,
+where the receiver's module is not imported, and a hard visibility
+filter there would drop the only candidate.
+
+Inside a generic body the *bound* answers first and the ranking never
+runs: `v.m()` with `v: T` and `[T: SomeTrait]` dispatches through
+`SomeTrait`, and that answer is carried on the call site so the
+monomorphiser's re-check of the substituted clone lands on the same
+impl. Without it the re-check happens with a concrete receiver in the
+module that defined the generic, where two traits it declares itself
+both rank 0 — a call the first check resolved would become `E074`
+inside generated code the source cannot point at (§4).
+
+An inherent method colliding with a trait-provided one of the same name
+is `E074` too, reported at the declaration rather than at a call. It is
+not resolved by rank and the inherent one does not shadow: silent
+shadowing would make `p.m()` mean the trait method inside a generic body
+(dispatch through the bound) and the inherent method at a concrete call
+site — one spelling, two meanings.
+
+So the invariant is narrower than "dispatch is independent of who
+imports whom", which is what coherence alone would give: **among the
+candidates a module can see, dispatch is unambiguous or it is an
+error.** Never a silent pick between two answers.
+
+An import only ever *adds* candidates, and a call whose answer already
+ranks 0 cannot be displaced by one: a new rank-1 candidate loses, and a
+new rank-0 one ties, which is `E074`. The one way an import changes
+which method runs rather than rejecting the call is when the previous
+answer ranked 1 — reachable only through somebody else's imports — and
+the new import names a trait that provides the same method for the same
+type. That is the motivating case read forwards: naming a trait yourself
+is how you say which one you meant, so it wins over one you never
+mentioned. An import that introduces no second provider of the same
+`(Type, method name)` never changes dispatch at all.
+
 ## 6. Implementation
 
 ### 6.1 Lexer
