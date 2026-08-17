@@ -76,8 +76,31 @@ function only_read(o: S, i: i32): i32[] {
     var ys: i32[] = o.xs.append(i);
     return ys;
 }
+// Unmarked: the container reaches a call, but the call gives back a SCALAR, so
+// no name that outlives the read can hold it. The x86 assembler's shape.
+function scalar_binding(o: S, i: i32): S {
+    var n: i32 = mark(o);
+    o = S { ...o, xs: o.xs.append(i + n) };
+    return o;
+}
+// Marked: the same read, bound to something that CAN hold the container.
+function container_binding(o: S, i: i32): S {
+    var keep: S = pass(o);
+    o = S { ...o, xs: o.xs.append(i) };
+    return S { ...o, ys: keep.xs };
+}
+// Marked: a Map binding is not pointer-shaped by IsPointerType, but the handle
+// carries the container all the same — bindingHoldsContainer is a whitelist of
+// the scalars for exactly this reason.
+function map_binding(o: S, i: i32): S {
+    var m: Map[i32, S] = stash(o);
+    o = S { ...o, xs: o.xs.append(i + m.len()) };
+    return o;
+}
 
 function mark(s: S): i32 { return s.xs.len(); }
+function pass(s: S): S { return s; }
+function stash(s: S): Map[i32, S] { var m: Map[i32, S] = map_new(4); return m.insert(0, s); }
 function main(): i32 { return 0; }`
 
 	prog, err := parser.Parse(src)
@@ -98,6 +121,9 @@ function main(): i32 { return 0; }`
 		"spread":            0,
 		"retpos":            0,
 		"only_read":         0,
+		"scalar_binding":    0,
+		"container_binding": 1,
+		"map_binding":       1,
 	}
 	seen := map[string]bool{}
 	for _, fn := range prog.Funcs {

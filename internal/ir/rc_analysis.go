@@ -4212,7 +4212,9 @@ func isArrayPushCall(c *ast.Call) bool {
 //     replacing expression is evaluated against the pre-append container
 //     (`inner: I { data: o.xs }`, the #6665 repro), and a bare read that binds
 //     the container elsewhere (`var old = o`) keeps the old one reachable
-//     under another name.
+//     under another name. A binding only counts when it CAN hold the
+//     container: `var n: i32 = len_of(o)` hands `o` to a call that gives back
+//     a scalar, so nothing reachable afterwards names it (bindingHoldsContainer).
 //   - RETURN. The append sits in a return expression with no overlapping read
 //     later in that expression, so the function exits before anything here can
 //     look again. What the CALLER can still see through a parameter is the
@@ -4231,8 +4233,18 @@ func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
 	rebind := map[*ast.Call]*ast.Assign{}
 	retExpr := map[*ast.Call]ast.Expr{}
 	// Bare reads of a root that BIND the container somewhere it outlives the
-	// expression: anything under a `var` initialiser or an assignment's value.
+	// expression: a `var` initialiser or an assignment's value WHOSE BINDING
+	// can hold the container. A scalar binding cannot, however the container
+	// reaches it — `var t: i32 = lookup(o, k)` passes `o` to a call that
+	// returns an i32, and an i32 names nothing.
 	capturing := map[ast.Node]bool{}
+	declared := map[string]ast.Type{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if v, isVar := n.(*ast.Var); isVar {
+			declared[v.Name] = v.Type
+		}
+		return true
+	})
 	markPushes := func(scope ast.Expr, want string, mark func(*ast.Call)) {
 		ast.Walk(scope, func(m ast.Node) bool {
 			if _, isLambda := m.(*ast.Lambda); isLambda {
@@ -4270,21 +4282,25 @@ func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
 	ast.Walk(body, func(n ast.Node) bool {
 		var bound ast.Expr
 		var boundTo string
+		var boundType ast.Type
+		var boundTypeKnown bool
 		switch st := n.(type) {
 		case *ast.Assign:
 			bound = st.Value
 			if t, isID := st.Target.(*ast.Ident); isID && st.Value != nil {
 				boundTo = t.Name
+				boundType, boundTypeKnown = declared[t.Name]
 				markPushes(st.Value, t.Name, func(c *ast.Call) { rebind[c] = st })
 			}
 		case *ast.Var:
 			bound, boundTo = st.Init, st.Name
+			boundType, boundTypeKnown = st.Type, true
 		case *ast.Return:
 			if st.Value != nil {
 				markPushes(st.Value, "", func(c *ast.Call) { retExpr[c] = st.Value })
 			}
 		}
-		if bound != nil {
+		if bound != nil && !(boundTypeKnown && !bindingHoldsContainer(boundType)) {
 			for _, q := range placesIn(bound) {
 				// Reading a container to rebuild ITSELF (`a = A { ...a, … }`)
 				// hands the old value to its own replacement, not to a name
@@ -4343,6 +4359,19 @@ func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
 		return true
 	})
 	return out
+}
+
+// bindingHoldsContainer reports whether a binding of type `t` could hold a
+// reference to a container read in its initialiser. Only the scalars are
+// ruled out, by whitelist: every other type either is a pointer or is a
+// runtime handle (Map, Reader, …) that can carry one, and an unknown type
+// is not a licence to assume otherwise.
+func bindingHoldsContainer(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.CharType, ast.VoidType:
+		return false
+	}
+	return true
 }
 
 // overriddenSpread reports whether `q` is the spread base of a struct-update

@@ -54,6 +54,55 @@ const arrPushCliffSharedSrc = `function main(): i32 {
     return __arr_push_shared_count();
 }`
 
+// arrPushCliffFieldBorrowSrc threads a struct-held accumulator and consults the
+// container through a SCALAR-returning call each step — the shape the x86
+// assembler is built from (`x86_label_off(a, name)` before the queue append).
+// The call gives back an i32, so nothing that outlives it can name the
+// container, and the append must still grow in place. Treating that read as a
+// capture forced a full clone per append and made the self-host compiler's own
+// assembly quadratic (#6911).
+const arrPushCliffFieldBorrowSrc = `struct Asm { code: i32[], labels: i32[] }
+function label_off(a: Asm, want: i32): i32 {
+    var i: i32 = 0;
+    while (i < a.labels.len()) { if (a.labels[i] == want) { return i; } i = i + 1; }
+    return 0 - 1;
+}
+function emit(own a: Asm, v: i32): Asm {
+    var t: i32 = label_off(a, v);
+    a = Asm { ...a, code: a.code.append(v + t) };
+    return a;
+}
+function main(): i32 {
+    var a: Asm = Asm { code: [], labels: [1, 2, 3] };
+    var i: i32 = 0;
+    while (i < 200) { a = emit(a, i); i = i + 1; }
+    if (a.code.len() != 200) { return 254; }
+    if (a.code[7] != 6 || a.code[199] != 198 || a.code[2] != 3) { return 253; }
+    return __arr_push_shared_count();
+}`
+
+// arrPushCliffFieldAliasSrc is the same loop with the container bound to a name
+// that OUTLIVES the append, so the in-place grow would be observable through
+// `keep` and the copy is mandatory. The paired case: the relaxation above must
+// not reach a binding that can hold the container.
+const arrPushCliffFieldAliasSrc = `struct Asm { code: i32[], labels: i32[] }
+function grown(): i32[] {
+    var c: i32[] = [];
+    var i: i32 = 0;
+    while (i < 5) { c = c.append(i); i = i + 1; }
+    return c;
+}
+function emit(a: Asm, v: i32): i32 {
+    var keep: Asm = a;
+    a = Asm { ...a, code: a.code.append(v) };
+    return a.code.len() - keep.code.len();
+}
+function main(): i32 {
+    var a: Asm = Asm { code: grown(), labels: [] };
+    if (emit(a, 9) != 1) { return 252; }
+    return __arr_push_shared_count();
+}`
+
 func TestX86_64ArrPushCliffCounter(t *testing.T) {
 	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffHealthySrc); got != 0 {
 		t.Errorf("x86-64 healthy accumulator: __arr_push_shared_count() = %d, want 0 — "+
@@ -63,6 +112,15 @@ func TestX86_64ArrPushCliffCounter(t *testing.T) {
 		t.Errorf("x86-64 shared buffer: __arr_push_shared_count() = %d, want 1 — "+
 			"the counter is not reporting a copy that spare capacity could have avoided", got)
 	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffFieldBorrowSrc); got != 0 {
+		t.Errorf("x86-64 field accumulator past a scalar-returning read: "+
+			"__arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffFieldAliasSrc); got != 1 {
+		t.Errorf("x86-64 field accumulator with a live container alias: "+
+			"__arr_push_shared_count() = %d, want 1 — the in-place grow is observable "+
+			"through the alias and must have been refused", got)
+	}
 }
 
 func TestArm64ArrPushCliffCounter(t *testing.T) {
@@ -71,6 +129,14 @@ func TestArm64ArrPushCliffCounter(t *testing.T) {
 	}
 	if _, got := compileAndRunArm64(t, arrPushCliffSharedSrc); got != 1 {
 		t.Errorf("arm64 shared buffer: __arr_push_shared_count() = %d, want 1", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffFieldBorrowSrc); got != 0 {
+		t.Errorf("arm64 field accumulator past a scalar-returning read: "+
+			"__arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffFieldAliasSrc); got != 1 {
+		t.Errorf("arm64 field accumulator with a live container alias: "+
+			"__arr_push_shared_count() = %d, want 1", got)
 	}
 }
 
@@ -83,5 +149,13 @@ func TestWASMArrPushCliffCounter(t *testing.T) {
 	}
 	if got := runWasm(t, arrPushCliffSharedSrc); got != 1 {
 		t.Errorf("wasm shared buffer: __arr_push_shared_count() = %d, want 1", got)
+	}
+	if got := runWasm(t, arrPushCliffFieldBorrowSrc); got != 0 {
+		t.Errorf("wasm field accumulator past a scalar-returning read: "+
+			"__arr_push_shared_count() = %d, want 0", got)
+	}
+	if got := runWasm(t, arrPushCliffFieldAliasSrc); got != 1 {
+		t.Errorf("wasm field accumulator with a live container alias: "+
+			"__arr_push_shared_count() = %d, want 1", got)
 	}
 }
