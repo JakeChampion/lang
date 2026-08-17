@@ -1,8 +1,17 @@
 // std/array — Array.X receiver-method bodies.
 //
-// The checker auto-discovers any `__method_Array_<name>`
-// function and registers it as `Array.<name>` for dispatch
-// (`internal/checker/checker.go`).
+// Two spellings reach the same `arr.<name>(…)` dispatch. An
+// element-polymorphic method is written with a real receiver,
+// `pub function (xs: T[]) name(…)`, and is what anything usable at more
+// than one element type should be. The older
+// `pub function __method_Array_<name>(arr: i32[], …)` form, which the
+// checker auto-discovers by name (`internal/checker/checker.go`), pins a
+// concrete element type and so is only for a verb that is genuinely
+// specific to it — `join` over `string[]`, `gcd_all` over `i32[]`.
+//
+// The namespace is keyed on the method NAME, so the two forms cannot both
+// claim one name (E006). That is why a concrete-receiver helper must not
+// be given a name an element-polymorphic verb would want.
 //
 // No prelude: a program `import "std/array";` explicitly to
 // call `arr.sum()` / `arr.join(",")` / etc.
@@ -23,67 +32,45 @@ import "core/cmp";
 import "std/i32";
 import "std/string";
 
-// === i32 array math (sum / max / min) ===
+// === i32 array math ===
 //
-// `(arr: i32[]).sum()` — total of every element.
-// `(arr: i32[]).max()` / `.min()` — Option[i32] returning
-// the extreme element, None on empty array. The Option arm
-// is necessary because there's no sentinel value that's
-// safe across the full i32 range.
-//
-// Dispatch via the same "Array.<method>" pattern used for
-// join / distinct / reverse. The constrained
-// receiver type makes `["a"].sum()` surface as a clean
-// type error rather than a missing-method one.
+// What is left here is genuinely i32-shaped — `gcd_all` / `median` /
+// `cumsum` and friends, whose bodies need integer division or an i32
+// identity element. The element-polymorphic reductions (`sum` / `max` /
+// `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
+// the file as bounded generic methods.
 
+// `(arr: i32[]).sum()` / `.product()` — additive / multiplicative fold.
+//
+// These two are the collapse's holdouts. The generic form is
+// `(xs: T[]) sum[T: num.Add + num.Zero]() { return num.sum(xs); }`, which
+// works on native and on the self-host COMPILER, but `num.sum` reaches the
+// additive identity through `T.zero()` — a receiver-less trait function
+// called through a type parameter — and the self-host INTERPRETER cannot
+// dispatch that (`undefined method \`add\` on \`zero\``). That gap predates
+// this collapse: `num.sum(xs)` called directly fails there too. Until it is
+// fixed these stay pinned to i32[]; everything else in the reductions
+// family is element-polymorphic (see the bottom of this file).
 pub function __method_Array_sum(arr: i32[]): i32 {
     var n: i32 = arr.len();
-    var s: i32 = 0;
+    var total: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
-        s = s + arr[i];
+        total = total + arr[i];
         i = i + 1;
     }
-    return s;
+    return total;
 }
 
-pub function __method_Array_max(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: i32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] > m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-pub function __method_Array_min(arr: i32[]): Option[i32] {
-    var n: i32 = arr.len();
-    if (n == 0) { return None; }
-    var m: i32 = arr[0];
-    var i: i32 = 1;
-    while (i < n) {
-        if (arr[i] < m) { m = arr[i]; }
-        i = i + 1;
-    }
-    return Some(m);
-}
-
-// `(arr: i32[]) product()` — multiply every element. Empty
-// array returns 1 (multiplicative identity). Overflow wraps
-// silently; callers needing exact long-product should widen
-// to i64 first.
 pub function __method_Array_product(arr: i32[]): i32 {
     var n: i32 = arr.len();
-    var p: i32 = 1;
+    var acc: i32 = 1;
     var i: i32 = 0;
     while (i < n) {
-        p = p * arr[i];
+        acc = acc * arr[i];
         i = i + 1;
     }
-    return p;
+    return acc;
 }
 
 // `(arr: i32[]) avg()` — integer mean (truncated toward zero).
@@ -118,20 +105,6 @@ pub function __method_Array_range(arr: i32[]): Option[i32] {
         i = i + 1;
     }
     return Some(hi - lo);
-}
-
-// `(arr: i32[]) count(v)` — how many times v appears.
-// Linear scan; for repeated queries on big arrays a
-// pre-built frequency map is faster.
-pub function __method_Array_count(arr: i32[], v: i32): i32 {
-    var n: i32 = arr.len();
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] == v) { c = c + 1; }
-        i = i + 1;
-    }
-    return c;
 }
 
 // `(arr: i32[]) gcd_all()` — fold gcd across the array.
@@ -181,20 +154,6 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
     return out;
 }
 
-// `(arr: i32[]) first_index_of(v)` — Option[i32] index of
-// the first element equal to v. None if absent or empty.
-// The Option-returning form of the element-generic `.index_of`
-// (which uses the `-1` sentinel), for an i32[] receiver.
-pub function __method_Array_first_index_of(arr: i32[], v: i32): Option[i32] {
-    var n: i32 = arr.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] == v) { return Some(i); }
-        i = i + 1;
-    }
-    return None;
-}
-
 // `(arr: i32[]) pairwise_diffs()` — array of consecutive
 // differences: out[i] = arr[i+1] - arr[i]. Length is
 // max(len(arr) - 1, 0). Empty / singleton inputs return
@@ -228,20 +187,6 @@ pub function __method_Array_min_max(arr: i32[]): Option[(i32, i32)] {
     return Some((lo, hi));
 }
 
-// `(arr: i32[]) reversed()` — fresh reversed copy. Companion
-// to the existing string[] `reverse`. Both collapse to a
-// single `reversed()` once generic Array methods land.
-pub function __method_Array_reversed(arr: i32[]): i32[] {
-    var n: i32 = arr.len();
-    var out: i32[] = [];
-    var i: i32 = n - 1;
-    while (i >= 0) {
-        out = out.append(arr[i]);
-        i = i - 1;
-    }
-    return out;
-}
-
 // `(arr: i32[]) every_positive()` — true if every element is
 // strictly positive (n > 0). Empty → true (vacuous). Useful
 // for input validation on count / size arrays.
@@ -253,19 +198,6 @@ pub function __method_Array_every_positive(arr: i32[]): boolean {
         i = i + 1;
     }
     return true;
-}
-
-// `(arr: i32[]) sorted_asc()` / `sorted_desc()` — method wrappers around
-// `core/cmp`'s generic `sort` / `sort_desc` (the retired per-width
-// `sort_i32_asc` / `sort_i32_desc`, #5397). The receiver-style call reads
-// better in pipelines (`arr.sorted_asc().take(3)`) and matches the shape
-// we'll converge on once generic Ord methods land.
-pub function __method_Array_sorted_asc(arr: i32[]): i32[] {
-    return cmp.sort(arr);
-}
-
-pub function __method_Array_sorted_desc(arr: i32[]): i32[] {
-    return cmp.sort_desc(arr);
 }
 
 // `(arr: i32[]) cumsum()` — running sum: out[i] is the sum
@@ -385,40 +317,6 @@ pub function __method_Array_join(arr: string[], sep: string): string {
     return string_from_bytes_unchecked(buf);
 }
 
-// `arr.position(s)` — Option[i32] index of the first element
-// equal to `s`, `None` if absent. The Option-returning companion
-// to `index_of` (which uses the `-1` sentinel), mirroring the
-// i32[] `first_index_of` form so "not found" stays out-of-band
-// rather than relying on a `< 0` check at every call site.
-// (Named `position` rather than `first_index_of` because Array
-// method dispatch keys on the name only — `first_index_of` is
-// already claimed by the i32[] receiver and can't be overloaded
-// on element type.)
-pub function __method_Array_position(arr: string[], s: string): Option[i32] {
-    var i: i32 = 0;
-    while (i < arr.len()) {
-        if (arr[i] == s) { return Some(i); }
-        i = i + 1;
-    }
-    return None;
-}
-
-// `arr.reverse()` — fresh string[] with elements in reverse
-// order. Functional shape (returns a new array; input is
-// untouched). O(n) build via push, no in-place mutation —
-// matches the rest of the array surface where push and friends
-// also return fresh arrays under lang's value-semantic array
-// model.
-pub function __method_Array_reverse(arr: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = arr.len() - 1;
-    while (i >= 0) {
-        out = out.append(arr[i]);
-        i = i - 1;
-    }
-    return out;
-}
-
 // `(arr: string[]) filter_non_empty()` — fresh string[] with
 // only the non-empty entries. Useful for cleaning up the
 // output of `split(sep)` when adjacent separators left empty
@@ -446,21 +344,6 @@ pub function __method_Array_count_non_empty(arr: string[]): i32 {
         i = i + 1;
     }
     return c;
-}
-
-// `(arr: string[]) distinct()` — fresh string[] with
-// duplicates removed (first occurrence wins; order preserved).
-// O(n²) — fine for the small-list use cases (CLI flags,
-// sorted-keys dedup). For larger N use a Map-backed dedup.
-pub function __method_Array_distinct(arr: string[]): string[] {
-    var n: i32 = arr.len();
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < n) {
-        if (!cmp.contains(out, arr[i])) { out = out.append(arr[i]); }
-        i = i + 1;
-    }
-    return out;
 }
 
 // `(arr: string[]) distinct_count()` — number of unique
@@ -521,40 +404,6 @@ pub function __method_Array_sum_lens(arr: string[]): i32 {
     return s;
 }
 
-// `(arr: string[]) take(n)` — first n elements, bounds-
-// clamped. n <= 0 returns empty; n >= len returns the full
-// array. Companion to string take()/drop().
-pub function __method_Array_take(arr: string[], n: i32): string[] {
-    var out: string[] = [];
-    if (n <= 0) { return out; }
-    var alen: i32 = arr.len();
-    var stop: i32 = n;
-    if (stop > alen) { stop = alen; }
-    var i: i32 = 0;
-    while (i < stop) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    return out;
-}
-
-// `(arr: string[]) drop(n)` — skip first n elements, bounds-
-// clamped. n <= 0 returns a fresh copy; n >= len returns
-// empty.
-pub function __method_Array_drop(arr: string[], n: i32): string[] {
-    var out: string[] = [];
-    var alen: i32 = arr.len();
-    var start: i32 = n;
-    if (start < 0) { start = 0; }
-    if (start > alen) { return out; }
-    var i: i32 = start;
-    while (i < alen) {
-        out = out.append(arr[i]);
-        i = i + 1;
-    }
-    return out;
-}
-
 // `(arr: string[]) all_non_empty()` — true iff every entry
 // has at least one byte. Empty array returns true
 // (vacuously — there are no empty entries). Useful for
@@ -582,21 +431,6 @@ pub function __method_Array_any_contains(arr: string[], needle: string): boolean
     return false;
 }
 
-// `(arr: string[]) count_str(v)` — how many times v appears.
-// Separate from i32[].count to avoid the receiver-type
-// overload (the Array.X dispatch is name-keyed and can't
-// fan out on element type).
-pub function __method_Array_count_str(arr: string[], v: string): i32 {
-    var n: i32 = arr.len();
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        if (arr[i] == v) { c = c + 1; }
-        i = i + 1;
-    }
-    return c;
-}
-
 // `(arr: string[]) all_starts_with(prefix)` — true if
 // every element starts with `prefix`. Empty array → true
 // (vacuous). Empty prefix → true (every string starts
@@ -621,19 +455,6 @@ pub function __method_Array_all_ends_with(arr: string[], suffix: string): boolea
         i = i + 1;
     }
     return true;
-}
-
-// `(arr: string[]) sorted_str_asc()` / `sorted_str_desc()` — method wrappers
-// around `core/cmp`'s generic `sort` / `sort_desc` over the lexicographic
-// `impl Ord for string` (the retired `sort_strings_asc` / `sort_strings_desc`,
-// #5397). Companion to the i32[] sorted_asc/desc above; collapses to
-// `sorted()` once generic Ord methods land.
-pub function __method_Array_sorted_str_asc(arr: string[]): string[] {
-    return cmp.sort(arr);
-}
-
-pub function __method_Array_sorted_str_desc(arr: string[]): string[] {
-    return cmp.sort_desc(arr);
 }
 
 // `(arr: string[]) join_with_last(sep, last_sep)` — like
@@ -1938,11 +1759,6 @@ pub function (xs: T[]) sum_by(key: (T) => i32): i32 { return sum_by(xs, key); }
 pub function (xs: T[]) enumerate(): (i32, T)[] { return enumerate(xs); }
 
 // `xs.concat(other)` — `xs` followed by `other` (fresh array).
-// (Generic `.reverse()`/`.take()`/`.drop()` receiver methods are
-// deferred: string[]-specific `__method_Array_reverse`/`take`/`drop`
-// already claim those method names, and array method dispatch keys on
-// the name only. Use the free functions `reverse(xs)` / `take(xs, n)`
-// / `drop(xs, n)` for non-string element types until those are unified.)
 pub function (xs: T[]) concat(other: T[]): T[] { return concat(xs, other); }
 
 // `xs.zip(other)` — positional pairing, truncated to the shorter input.
@@ -2068,3 +1884,56 @@ pub function (xs: T[]) chunks[T](size: i32): T[][] { return chunks(xs, size); }
 // `xs.chunks_exact(size)` — full-length groups only; drops a short tail.
 pub function (xs: T[]) chunks_exact[T](size: i32): T[][] { return chunks_exact(xs, size); }
 pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); }
+
+// ---- Element-polymorphic method forms of the reductions ------------
+//
+// `max` / `min` / `count` / `first_index_of` / `sorted_asc` /
+// `sorted_desc` / `reverse` / `take` / `drop` / `distinct`
+// used to exist twice, once for an `i32[]` receiver and once for a
+// `string[]` one, under names invented to dodge a namespace that keyed on
+// the method name alone (`count` vs `count_str`, `reversed` vs `reverse`,
+// `sorted_asc` vs `sorted_str_asc`). They are one bounded generic each now,
+// so the same call works for every element type that satisfies the bound —
+// i32 / i64 / u32 / u64 / f32 / f64 / string and `@derive(Ord)` /
+// `@derive(Eq)` types alike (#2663).
+
+// `xs.max()` / `xs.min()` — extremal element by `Ord`, `None` when empty.
+// The Option arm is necessary: no sentinel is safe across a full numeric range.
+pub function (xs: T[]) max[T: cmp.Ord](): Option[T] { return cmp.max_of(xs); }
+pub function (xs: T[]) min[T: cmp.Ord](): Option[T] { return cmp.min_of(xs); }
+
+// `xs.count(target)` — how many elements equal `target`.
+pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 { return count(xs, target); }
+
+// `xs.first_index_of(target)` — `Some(i)` for the first element equal to
+// `target`, `None` if absent. The Option-returning companion to
+// `index_of`, which reports a `-1` sentinel instead.
+pub function (xs: T[]) first_index_of[T: cmp.Eq](target: T): Option[i32] {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].eq(target)) { return Some(i); }
+        i = i + 1;
+    }
+    return None;
+}
+
+// `xs.sorted_asc()` / `xs.sorted_desc()` — a fresh array in `Ord` order;
+// the input is untouched.
+pub function (xs: T[]) sorted_asc[T: cmp.Ord](): T[] { return cmp.sort(xs); }
+pub function (xs: T[]) sorted_desc[T: cmp.Ord](): T[] { return cmp.sort_desc(xs); }
+
+// `xs.reverse()` — fresh array, elements in reverse order.
+pub function (xs: T[]) reverse(): T[] { return reverse(xs); }
+
+// `xs.take(n)` / `xs.drop(n)` — the first `n` elements / everything after
+// them. Both clamp: `n <= 0` and `n >= len` give empty or a full copy.
+pub function (xs: T[]) take(n: i32): T[] { return take(xs, n); }
+pub function (xs: T[]) drop(n: i32): T[] { return drop(xs, n); }
+
+// `xs.distinct()` — duplicates removed, first occurrence wins, order kept.
+pub function (xs: T[]) distinct[T: cmp.Eq](): T[] { return distinct(xs); }
+
+// `xs.position(pred)` — index of the first element satisfying `pred`, or
+// `None`. Predicate-driven, matching the free `position(xs, pred)`; the
+// value-driven form that used to hold this name is `first_index_of`.
+pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] { return position(xs, pred); }

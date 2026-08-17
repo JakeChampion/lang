@@ -28,8 +28,8 @@ function main(): i32 {
     match ("hello".find("xyz")) { Some(_) => { print("FAIL find-miss"); return 24; }, None => {} }
     match ("hello hello".rfind("hello")) { Some(i) => { if (i != 6) { print("FAIL rfind"); return 25; } }, None => { print("FAIL rfind-none"); return 26; } }
     match ("Hello".find_ci("LLO")) { Some(i) => { if (i != 2) { print("FAIL findci"); return 27; } }, None => { print("FAIL findci-none"); return 28; } }
-    match (parts.position("c")) { Some(i) => { if (i != 2) { print("FAIL position"); return 29; } }, None => { print("FAIL position-none"); return 30; } }
-    match (parts.position("z")) { Some(_) => { print("FAIL position-miss"); return 31; }, None => {} }
+    match (parts.first_index_of("c")) { Some(i) => { if (i != 2) { print("FAIL position"); return 29; } }, None => { print("FAIL position-none"); return 30; } }
+    match (parts.first_index_of("z")) { Some(_) => { print("FAIL position-miss"); return 31; }, None => {} }
 
     print("OK");
     return 0;

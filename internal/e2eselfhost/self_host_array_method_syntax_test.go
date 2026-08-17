@@ -20,7 +20,7 @@ var arrayMethodSyntaxCases = []struct {
 	{"sum_squared", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [5, 3, 8, 1]; return a.sum_squared(); }\n", 99},
 	{"sum_abs", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [5, 3, 8, 1]; return a.sum_abs(); }\n", 17},
 	// reversed returns a fresh i32[]; index it back to a scalar exit code.
-	{"reversed", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [5, 3, 8, 1]; var b: i32[] = a.reversed(); return b[0]; }\n", 1},
+	{"reversed", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [5, 3, 8, 1]; var b: i32[] = a.reverse(); return b[0]; }\n", 1},
 	// sorted_asc likewise returns i32[].
 	{"sorted_asc", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [3, 1, 2]; var s: i32[] = a.sorted_asc(); return s[0] * 100 + s[1] * 10 + s[2]; }\n", 123},
 }

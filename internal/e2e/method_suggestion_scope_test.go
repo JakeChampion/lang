@@ -10,14 +10,19 @@ import (
 
 // E043's "it has:" list and its did-you-mean must be scoped to the methods
 // THIS receiver can call. A collection namespace is shared across element
-// types — `Array` holds `sum` (i32[] only), `join` (string[] only) and `len`
+// types — `Array` holds `avg` (i32[] only), `join` (string[] only) and `len`
 // (anything) side by side — so an unfiltered list advertises to an `i32[]`
-// receiver most of an API it does not have.
+// receiver an API it does not have.
 //
 // That is not merely noisy: following one of those names turns the E043 into
 // an E038, which is worse than the original typo, because the reader now
-// believes the method exists. `a.take(n)` on an `i32[]` was the case that
-// found this.
+// believes the method exists.
+//
+// Since #2663 the list also has to get the OTHER direction right. The verbs
+// that are element-polymorphic (`max` / `count` / `sorted_asc` /
+// `take` / `drop` / `reverse` / `distinct`) really do apply to both
+// receivers, so a filter that still keyed them by element type would now be
+// hiding a method that exists. Both kinds of row are checked below.
 
 func e043Message(t *testing.T, src string) string {
 	t.Helper()
@@ -57,15 +62,24 @@ function main(): i32 {
 	}{
 		{"len", true, true},
 		{"append", true, true},
+		// Element-polymorphic since #2663: applicable to BOTH receivers.
+		{"max", true, true},
+		{"count", true, true},
+		{"sorted_asc", true, true},
+		{"take", true, true},
+		{"drop", true, true},
+		{"reverse", true, true},
+		{"distinct", true, true},
+		// Genuinely element-specific: integer division / an i32 identity.
 		{"sum", true, false},
+		{"product", true, false},
 		{"avg", true, false},
 		{"median", true, false},
 		{"cumsum", true, false},
-		{"sorted_asc", true, false},
+		{"gcd_all", true, false},
+		// Genuinely element-specific: about strings.
 		{"join", false, true},
-		{"take", false, true},
-		{"drop", false, true},
-		{"sorted_str_asc", false, true},
+		{"sum_lens", false, true},
 		{"all_starts_with", false, true},
 	}
 

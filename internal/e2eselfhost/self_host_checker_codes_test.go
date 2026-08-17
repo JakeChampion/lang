@@ -1635,8 +1635,8 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// (join→string) returns are each covered on a clean and a mismatch path.
 		{"array-sum-ret-i32-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: i32 = a.sum(); return x; }\n"},
 		{"array-sum-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var x: string = a.sum(); return 0; }\n"},
-		{"array-reversed-ret-array-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = a.reversed(); return b[0]; }\n"},
-		{"array-reversed-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var c: string = a.reversed(); return 0; }\n"},
+		{"array-reversed-ret-array-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var b: i32[] = a.reverse(); return b[0]; }\n"},
+		{"array-reversed-ret-string-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; var c: string = a.reverse(); return 0; }\n"},
 		{"array-every-positive-ret-bool-ok", "import \"std/array\";\nfunction main(): i32 { var a: i32[] = [1, 2, 3]; if (a.every_positive()) { return 1; } return 0; }\n"},
 		{"array-join-ret-string-ok", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var s: string = a.join(\",\"); return 0; }\n"},
 		{"array-join-ret-i32-mismatch", "import \"std/array\";\nfunction main(): i32 { var a: string[] = [\"x\", \"y\"]; var n: i32 = a.join(\",\"); return 0; }\n"},

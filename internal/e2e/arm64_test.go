@@ -6600,10 +6600,10 @@ function main(): i32 {
     var emp: i32[] = [];
     match (emp.min_max()) { Some(_) => { return 5; }, None => { } }
 
-    var rev: i32[] = [1, 2, 3, 4].reversed();
+    var rev: i32[] = [1, 2, 3, 4].reverse();
     if (rev[0] != 4 || rev[1] != 3 || rev[2] != 2 || rev[3] != 1) { return 10; }
-    if ((emp.reversed()).len() != 0) { return 11; }
-    var single: i32[] = [7].reversed();
+    if ((emp.reverse()).len() != 0) { return 11; }
+    var single: i32[] = [7].reverse();
     if (single[0] != 7) { return 12; }
 
     if ("hello world".without_chars(" lo") != "hewrd") { return 20; }
@@ -6679,12 +6679,12 @@ function main(): i32 {
     if ((empty_i.sorted_desc()).len() != 0) { return 4; }
 
     var ss: string[] = ["banana", "apple", "cherry"];
-    var sa: string[] = ss.sorted_str_asc();
+    var sa: string[] = ss.sorted_asc();
     if (sa[0] != "apple" || sa[1] != "banana" || sa[2] != "cherry") { return 10; }
-    var sd: string[] = ss.sorted_str_desc();
+    var sd: string[] = ss.sorted_desc();
     if (sd[0] != "cherry" || sd[1] != "banana" || sd[2] != "apple") { return 11; }
     var empty_s: string[] = [];
-    if ((empty_s.sorted_str_asc()).len() != 0) { return 12; }
+    if ((empty_s.sorted_asc()).len() != 0) { return 12; }
 
     var cs: i32[] = [1, 2, 3, 4].cumsum();
     if (cs[0] != 1 || cs[1] != 3 || cs[2] != 6 || cs[3] != 10) { return 20; }
@@ -6870,10 +6870,10 @@ function main(): i32 {
     if (empty_i.count(1) != 0) { return 32; }
 
     // count_str (string[])
-    if (["a", "b", "a", "c", "a"].count_str("a") != 3) { return 40; }
-    if (["a", "b"].count_str("z") != 0) { return 41; }
+    if (["a", "b", "a", "c", "a"].count("a") != 3) { return 40; }
+    if (["a", "b"].count("z") != 0) { return 41; }
     var empty_s: string[] = [];
-    if (empty_s.count_str("x") != 0) { return 42; }
+    if (empty_s.count("x") != 0) { return 42; }
 
     // lines_non_empty
     var src1: string = "a\n\nb\nc\n";

@@ -1295,30 +1295,36 @@ function main(): i32 {
 // dispatch would fail.
 //
 // Repro: explicit `import "std/array";` from a user file. Under
-// the buggy prefix every `(arr).sum()` / `.avg()` / etc. method
+// the buggy prefix every `(arr).avg()` / `.gcd_all()` / etc. method
 // call surfaces as "field access on non-struct value of type
 // i32[]" because the renamed function never registers as
-// `Array.sum` / `Array.avg`.
+// `Array.avg` / `Array.gcd_all`.
+//
+// `avg` is used because it is one of the survivors of the #2663 collapse:
+// the element-polymorphic verbs (`sum` / `max` / `count` / …) are now
+// written with a real `(xs: T[])` receiver, which the checker hoists
+// itself, so they never exercise this path. What still needs it is a
+// concrete-receiver `__method_Array_<name>` helper.
 func TestLoadPreservesManuallyHoistedMethodNames(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `import "std/array";
 function main(): i32 {
     var xs: i32[] = [1, 2, 3, 4, 5];
-    return xs.sum();
+    match (xs.avg()) { Some(a) => { return a; }, None => { return 0; } }
 }`,
 	})
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if findFunc(prog, "__method_Array_sum") == nil {
-		t.Fatalf("__method_Array_sum should keep its bare name under modload; got: %v", funcNames(prog))
+	if findFunc(prog, "__method_Array_avg") == nil {
+		t.Fatalf("__method_Array_avg should keep its bare name under modload; got: %v", funcNames(prog))
 	}
-	if findFunc(prog, "array____method_Array_sum") != nil {
+	if findFunc(prog, "array____method_Array_avg") != nil {
 		t.Errorf("modload should not prefix __method_ names with the module prefix")
 	}
 	if _, err := checker.Check(prog); err != nil {
-		t.Fatalf("expected check to succeed (Array.sum dispatch resolves), got %v", err)
+		t.Fatalf("expected check to succeed (Array.avg dispatch resolves), got %v", err)
 	}
 }
 
