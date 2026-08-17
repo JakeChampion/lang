@@ -3,6 +3,7 @@ package x86_64ssa
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -197,11 +198,28 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	// sequences pin, nor any caller-saved register saved across a call.
 	scratch := p.NumRegFile - 1
 
-	// Callee-saved registers this function may clobber (allocatable homes and the
-	// scratch registers can land on rbx / r12–r15). Per the System V ABI the
-	// function must preserve them for its caller, so they are saved into fresh
-	// slots above the allocator's spill slots and restored at every return.
-	saved := calleeSavedUsed(p.NumRegFile)
+	// Callee-saved registers this function actually clobbers (allocatable homes
+	// and the scratch registers can land on rbx / r12–r15). Per the System V ABI
+	// the function must preserve them for its caller, so they are saved into
+	// fresh slots above the allocator's spill slots and restored at every return.
+	// A leaf that touches none of them pays nothing.
+	//
+	// The set is read back off the emitted text rather than predicted from the
+	// Program, because predicting it means keeping a list of every field and
+	// every helper that can name a register, and a list that falls behind drops
+	// a save silently — the caller gets a clobbered register and the failure
+	// surfaces as a wrong answer somewhere else entirely. So the body is emitted
+	// once into a buffer with nothing saved, scanned for what it actually
+	// mentions, and only then emitted for real. Adding the saves cannot widen
+	// the set: they name only registers already in it.
+	var probe strings.Builder
+	probeW := func(format string, args ...any) {
+		fmt.Fprintf(&probe, format+"\n", args...)
+	}
+	if err := emitFuncBlocks(probeW, label, p, numAlloc, scratch, strLabels, fnIndex, func() {}); err != nil {
+		return err
+	}
+	saved := calleeSavedIn(probe.String(), p.NumRegFile)
 	savedSlot := func(i int) string { return slotMem(p.NumSlots + i) }
 	restore := func() {
 		for i := len(saved) - 1; i >= 0; i-- {
@@ -223,6 +241,15 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		w("\t%s", line)
 	}
 
+	return emitFuncBlocks(w, label, p, numAlloc, scratch, strLabels, fnIndex, restore)
+}
+
+// emitFuncBlocks writes every block body and terminator. Split out of
+// emitFuncBody so the same emission can be run twice: once into a scratch buffer
+// to discover which callee-saved registers the output names, then once for real
+// with the matching save/restore. `restore` emits the callee-saved reloads that
+// precede each return.
+func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, fnIndex map[string]int, restore func()) error {
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
 		for ii, in := range blk.Insts {
@@ -333,18 +360,53 @@ func isCallerSaved(r int) bool {
 	}
 }
 
-// calleeSavedUsed returns the callee-saved gpRegs indices within a register file
-// of size numRegFile, in ascending order — the registers a function must
-// preserve for its caller if it touches them (which it may, via allocatable
-// homes or scratch registers landing on rbx / r12–r15).
-func calleeSavedUsed(numRegFile int) []int {
+// calleeSavedIn returns, in ascending order, the callee-saved gpRegs indices the
+// emitted text `asm` mentions — the registers the function must preserve for its
+// caller.
+//
+// Reading it back off the text is what makes it complete. The alternative is a
+// list of every Program field and every line helper that can name a register,
+// and the two failure directions are not symmetric: an over-wide set costs one
+// push and one pop, while a missed register is returned to the caller clobbered,
+// with nothing failing until some unrelated code reads it.
+//
+// Tokens keep `_` and `.` so a label like `.Lssa_strcat_bl` stays one word and
+// does not read as `bl`. Matching a register anywhere on a line (rather than
+// only in a write position) over-approximates deliberately: a function that
+// merely reads one still gets it saved, which is safe and keeps the scan free of
+// per-opcode operand knowledge.
+func calleeSavedIn(asm string, numRegFile int) []int {
+	seen := map[string]bool{}
+	for _, tok := range regTokenRe.FindAllString(asm, -1) {
+		seen[tok] = true
+	}
 	var out []int
 	for _, r := range []int{1, 10, 11, 12, 13} { // rbx, r12–r15
-		if r < numRegFile {
-			out = append(out, r)
+		if r >= numRegFile {
+			continue
+		}
+		for _, name := range regSpellings[r] {
+			if seen[name] {
+				out = append(out, r)
+				break
+			}
 		}
 	}
 	return out
+}
+
+// regTokenRe splits assembly into identifier-ish tokens, treating `_` and `.` as
+// word characters so label names cannot decompose into register names.
+var regTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
+
+// regSpellings maps a gpRegs index to every width spelling of that register, so
+// a 32-bit or byte-width use counts as a use.
+var regSpellings = map[int][]string{
+	1:  {"rbx", "ebx", "bx", "bl"},
+	10: {"r12", "r12d", "r12w", "r12b"},
+	11: {"r13", "r13d", "r13w", "r13b"},
+	12: {"r14", "r14d", "r14w", "r14b"},
+	13: {"r15", "r15d", "r15w", "r15b"},
 }
 
 // callSavedSet returns the caller-saved allocatable registers to preserve across
