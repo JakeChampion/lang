@@ -27,6 +27,7 @@
 //   - CONTROL — the structured block/loop/if nesting that br-depths index.
 
 import "./ir";
+import "./irverify";
 import "./parser";
 import "./util";
 import "./astwalk";
@@ -45046,6 +45047,34 @@ pub function fn_names_of(funcs: parser.FuncDecl[]): string[] {
         fi = fi + 1;
     }
     return out;
+}
+
+// fn_sig_index records every declared function's parameter count under the
+// name a `call_direct` op spells it with — `<BaseType>.<method>` for a
+// receiver method, the bare name otherwise, the same key lower_module stores a
+// LoweredFn under. It is what lets the IR verifier's call-arity check and its
+// callee-resolution pass look a callee up without scanning the declaration
+// list per call op.
+//
+// The arity counts the receiver, because lower_func does: the receiver is
+// param slot 0 of a method, and the call site pushes it as the first argument.
+// DECLARED functions, not lowered ones — a function whose lowering bailed and
+// a generic monomorphised under another name are both absent from the lowered
+// set while being perfectly well declared.
+pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
+    var sigs: irverify.FnSig[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var nm: string = funcs[i].name;
+        if (funcs[i].receiver_type.len() > 0) {
+            nm = util.base_type_name(funcs[i].receiver_type) + "." + funcs[i].name;
+        }
+        var np: i32 = funcs[i].params.len();
+        if (funcs[i].receiver_name.len() > 0) { np = np + 1; }
+        sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
+        i = i + 1;
+    }
+    return irverify.sig_index(sigs);
 }
 
 // is_user_fn reports whether `name` is a free function declared in this module

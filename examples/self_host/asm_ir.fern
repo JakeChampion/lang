@@ -17,6 +17,7 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverify";
 import "./irverifygate";
 
 // ir_eligible reports whether a function is in the IR path's current subset:
@@ -4264,9 +4265,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // emit_function_via_ir emits one IR-eligible function via the stack IR,
 // writing through the global strbuf (same as asm.fern's emitters).
 // arr_ret_fns drives move-on-return / move-from-call for array values.
-function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs): asmcore.EmitState {
+function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
-    return emit_function_via_ir_pre(r, fd, s);
+    return emit_function_via_ir_pre(r, fd, s, vsigs);
 }
 
 // emit_function_via_ir_pre is the emit half of emit_function_via_ir, split out at
@@ -4279,7 +4280,7 @@ function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irl
 // runtime-need detection onward reads only r / fd / s (none of the eighteen
 // side-tables lower_func consumes), so this split is byte-identical to the
 // inlined body.
-function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState): asmcore.EmitState {
+function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
     // Runtime-need detection, folded into the per-function lowering the emit loop
     // ALREADY performs. The tail used to re-derive these by re-lowering the WHOLE
     // module twice (module_uses_maps / module_uses_heap, each a full second/third
@@ -4321,7 +4322,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     // asm.fern + irlower's dispatch); free functions stay `__fn_<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals);
+    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
@@ -6251,11 +6252,12 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
     // their own .rodata block then return to .text. A literal-free helper (the
     // str_search / str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
     // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], s, sg);
+        s = emit_function_via_ir(fns[i], s, sg, vsigs);
         i = i + 1;
     }
     if (s.string_lits.len() > lit0) {
@@ -6313,6 +6315,10 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
         closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
         fn_names: irlower.fn_names_of(mod.funcs),
     };
+    // The IR verify gate's callee-arity index, derived ONCE over the
+    // whole-program all_funcs for the reason the registries above are: a
+    // per-function rebuild would be O(n^2) on the compiler's own sources.
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
     // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
     // window that overshoots the module length can't index past mod.funcs.
     var hh: i32 = hi;
@@ -6329,9 +6335,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
         if (cache.len() == 0) {
-            s = emit_function_via_ir(mod.funcs[fi], s, sg);
+            s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
         } else {
-            s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s);
+            s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
         }
         fi = fi + 1;
     }

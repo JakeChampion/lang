@@ -27,6 +27,7 @@ import "./parser";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverify";
 import "./irverifygate";
 import "./asm_ir";
 import "./asmcore";
@@ -3095,7 +3096,7 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[]): string {
+function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -3115,7 +3116,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
     // allow `.`. r.n_params already counts the receiver as the first param.
     var fn_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals);
+    irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vsigs);
     var out: string = "  (func $" + fn_name;
     var p: i32 = 0;
     while (p < r.n_params) {
@@ -4391,6 +4392,10 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
     var str_vals: string[] = str_values(cache);
     var cagg_vals: string[] = const_agg_values(cache);
     var ft: string[] = fn_value_table(cache);
+    // The IR verify gate's callee-arity index: built once for the whole
+    // program, not per function, which is what keeps a ~3000-declaration
+    // lookup out of the emit loop's inner cost.
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
     var out: string = "";
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
@@ -4405,7 +4410,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
         // Skipping it is the other half of bringing the extern bridge onto the IR
         // path: the bridge supplies the definition, so the lowering must not.
         if (mod.funcs[fi].import_iface.len() == 0) {
-            out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs);
+            out = out + emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vsigs);
         }
         fi = fi + 1;
     }

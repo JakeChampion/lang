@@ -26,6 +26,7 @@ import "./asmcore";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./irverify";
 import "./irverifygate";
 import "./asm_ir";
 import "./lexer";
@@ -460,13 +461,13 @@ function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolea
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
-pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs): asmcore.EmitState {
+pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
     var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
 
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals);
+    irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
@@ -2019,9 +2020,10 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
         // this path is wider than the module's own decls.
         struct_ret_fns: irlower.struct_ret_fns_of(mod.funcs, s.struct_decls),
     };
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], s, sg);
+        s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
         fi = fi + 1;
     }
     return emit_ir_start(s, darwin);
@@ -2055,11 +2057,12 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         opt_fresh_ret_fns: irlower.opt_fresh_ret_fns_of(fns, s.struct_decls),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], s, sg);
+        s = emit_function_via_ir(fns[i], s, sg, vsigs);
         i = i + 1;
     }
     if (s.const_aggs.len() > agg0) {
@@ -6362,6 +6365,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
     // window lets an oversized module emit across separate processes without
     // any single emit's leak-mode heap crossing the arena ceiling.
+    var vsigs: irverify.NameIndex = irlower.fn_sig_index(all_funcs);
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
     var fi: i32 = lo;
@@ -6371,7 +6375,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
             if (mod.funcs[fi].receiver_type.len() > 0) { gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name; }
             s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
         }
-        s = emit_function_via_ir(mod.funcs[fi], s, sg);
+        s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
         fi = fi + 1;
     }
     // #4355: admit the replaced-STRING-field arm per type from the
