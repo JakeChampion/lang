@@ -624,9 +624,9 @@ func (l *lexer) badCharError(start ast.Position) error {
 // whose Text is the source spelling, quotes and escapes included.
 //
 // Everything a literal cannot mean is rejected here rather than left
-// for the parser: an empty `''`, more than one scalar / byte, a
-// non-ASCII `b'é'` (a byte literal has to fit in u8), and an
-// unterminated one.
+// for the parser: one with nothing between the quotes, more than one
+// scalar / byte, a non-ASCII `b'é'` (a byte literal has to fit in u8),
+// and an unterminated one.
 func (l *lexer) scanQuoted(start ast.Position, isByte bool) (Token, error) {
 	begin := l.i
 	kindName := "character"
