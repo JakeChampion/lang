@@ -6367,7 +6367,10 @@ pub function all_runtime_need_roots(): string[] {
         "tcp_close", "tcp_pollable", "poll", "timer_fd",
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
         // wide-int stringifiers + the Option-returning i32 min/max:
-        "i64_to_string", "u64_to_string", "arr_i32_min_max_opt"
+        "i64_to_string", "u64_to_string", "arr_i32_min_max_opt",
+        // arm64's f64 transcendental bundle (sin/cos/exp/log/pow). x86-64 needs
+        // no root: it lowers these inline on the x87 FPU with no runtime helper.
+        "float_transcendentals"
     ];
 }
 
