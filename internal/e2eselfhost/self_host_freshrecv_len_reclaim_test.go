@@ -142,6 +142,51 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
+	// A CHAIN whose links both take their identity path, so the result IS the
+	// root's own box. The guard has to recognise that through two levels — a
+	// root walked wrong here frees a live local, and the byte re-read plus the
+	// detector are the witnesses.
+	{"freshrecv-len-chain-identity", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function (s: string) same(): string { return s; }
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 3000) {
+        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        if (b.tails(0).same().len() != 21) { return 96; }
+        if (b.len() != 21) { return 95; }
+        if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// A chain whose OUTER link allocates over a receiver that is itself a view:
+	// the result is the chain's own box and dies at the read, while the view it
+	// was built from is still the root's bytes.
+	{"freshrecv-len-chain-alias-safe", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function (s: string) owned(): string { return s + ""; }
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 3000) {
+        var b: string = "long-enough-payload-" + (i % 8).to_string();
+        if (b.tails(4).owned().len() != 17) { return 96; }
+        if (b.len() != 21) { return 95; }
+        if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 	// The REFUSAL control. `pick` also returns a bare non-receiver param, which
 	// is neither fresh nor the receiver nor a view of it, so the whole callee
 	// earns no SFRRECV key and nothing here is released. Admitting it would
@@ -221,6 +266,35 @@ function main(): i32 {
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`},
+	// A CHAINED receiver, `base.tails(4).owned().len()`. This one is not flat
+	// and is not supposed to be: the chain's RESULT is released, the
+	// intermediate view its outer link was built from is not — freeing an
+	// intermediate needs the outer callee proven both borrowing and
+	// never-a-view, which is a separate slice. So the assertion is structural
+	// rather than absolute: one 24-byte box a round survives instead of three
+	// allocations (a view box, the outer box, and the outer's data buffer).
+	// Measured 71 B/round before, 22 after; the bound sits between with ~2x
+	// margin either way.
+	{"freshrecv-len-chain-bounded", `function (s: string) tails(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return s[n:sLen];
+}
+function (s: string) owned(): string { return s + ""; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var w: i32 = 0;
+    while (w < 200) { var b: string = "long-enough-payload-" + (w % 8).to_string(); acc = (acc + b.tails(4).owned().len()) % 251; w = w + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).owned().len()) % 251; i = i + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 240000) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
 }`},

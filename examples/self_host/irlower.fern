@@ -7735,6 +7735,41 @@ pub function method_recv_tyname(obj: parser.Expr, s: LowerState): string {
     return expr_recv_prim_type(obj, s);
 }
 
+// sfrrecv_chain_root_slot: the slot of the bare string LOCAL that a chain of
+// SFRRECV-proven string methods is rooted at, or -1 when `e` is anything else.
+// `base.drop(2)` roots at `base`, and so does `base.tail(4).to_owned()`.
+//
+// The root is the one pointer a consuming site has to guard against. Every link
+// returns a fresh box, its own receiver, or a slice of it — and a slice is an
+// allocation, so it is never equal to a box that already existed. Inductively
+// the chain's result is therefore either the ROOT's box (every link took its
+// identity path) or a box the chain itself allocated, which no live name holds.
+// Depth is bounded because a wrong answer here is a use-after-free, not a
+// missed reclaim, and no real chain is deep.
+pub function sfrrecv_chain_root_slot(e: parser.Expr, s: LowerState, depth: i32): i32 {
+    if (depth > 8) { return 0 - 1; }
+    match (e) {
+        parser.ExprIdent(cid) => {
+            var csl: i32 = s.slot_of(cid.name);
+            if (csl >= 0 && s.is_str_slot(csl)) { return csl; }
+            return 0 - 1;
+        },
+        parser.ExprCall(cc) => {
+            match (cc.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    var cty: string = method_recv_tyname(cfa.obj, s);
+                    if (cty == "") { return 0 - 1; }
+                    if (util.index_of_str(s.sigs.str_fresh_ret_fns, "SFRRECV:" + cty + "." + cfa.field) < 0) { return 0 - 1; }
+                    return sfrrecv_chain_root_slot(cfa.obj, s, depth + 1);
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return 0 - 1;
+}
+
 // lower_i64 lowers `e` as an i64 VALUE (pushing an i64). Integer literals become
 // const_i64 (carrying source text), i64 locals load directly, and unary `-` /
 // the non-comparison arithmetic + bitwise ops recurse on i64 operands. Anything
@@ -10549,42 +10584,31 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 return lr;
             }
             // A fresh-or-RECEIVER method result (`base.drop(2).len()`,
-            // SFRRECV:) — the receiver-position half of #6544. The callee is
-            // proven to return a fresh box, the receiver itself, or a view of
-            // the receiver, so the pointer decides at runtime which one
-            // arrived: release it only when it differs from the receiver's. No
+            // `base.tail(4).to_owned().len()`, SFRRECV:) — the receiver-position
+            // half of #6544. Every link on the chain is proven to return a fresh
+            // box, its own receiver, or a view of it, so the only pointer the
+            // chain's result can carry without being the chain's own allocation
+            // is the ROOT's — a slice allocates a box like any other producer.
+            // The pointer therefore decides at runtime which arrived: release
+            // the result only when it differs from the root's. No
             // return-transfer inc is involved, which is what makes this safe
             // without the whole-surface drop coverage that inc would require
             // (§9). __fern_str_view_free is __fern_str_free plus the view case:
             // a fresh box frees data + box, a heap view box frees the box
             // alone.
             //
-            // The receiver must be a bare string LOCAL, so its pointer is a
-            // slot load with no re-evaluation and no second allocation to
-            // confuse the compare.
+            // INTERMEDIATE links still leak — freeing one needs the outer callee
+            // proven both borrowing and never-a-view, which is a separate slice.
+            // Nothing here can double-free them: the result is released once,
+            // whether it is the chain's last allocation or an earlier link
+            // handed through.
+            //
+            // The chain must be rooted at a bare string LOCAL, so the pointer it
+            // is compared against is a slot load with no re-evaluation and no
+            // second allocation to confuse the compare.
             var frslot: i32 = 0 - 1;
-            var frname: string = "";
             match (fa.obj) {
-                parser.ExprCall(frc) => {
-                    match (frc.callee) {
-                        parser.ExprFieldAccess(frfa) => {
-                            match (frfa.obj) {
-                                parser.ExprIdent(frid) => {
-                                    var fsl: i32 = s.slot_of(frid.name);
-                                    if (fsl >= 0 && s.is_str_slot(fsl)) {
-                                        var frty: string = method_recv_tyname(frfa.obj, s);
-                                        if (frty != "" && util.index_of_str(s.sigs.str_fresh_ret_fns, "SFRRECV:" + frty + "." + frfa.field) >= 0) {
-                                            frslot = fsl;
-                                            frname = frid.name;
-                                        }
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
+                parser.ExprCall(_) => { frslot = sfrrecv_chain_root_slot(fa.obj, s, 0); },
                 _ => {}
             }
             if (frslot >= 0) {

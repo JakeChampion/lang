@@ -7882,3 +7882,54 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   mutation-checked. std/string's `drop` cannot be a row in the reclaim test —
   that driver resolves no imports — and was measured flat through the CLI on
   x86-64, arm64 (qemu) and wasm instead. Refs #6544 #4451.
+
+- 2026-08-17 (later still): **The chained receiver, two thirds of it (#6544).**
+  `base.tail(4).to_owned().len()` cost 71 B/round because the `.len()` reclaim
+  arm required its receiver to be a bare string LOCAL, so a receiver that was
+  itself a method call declined outright — and the three allocations the shape
+  makes (the inner view box, the outer box, the outer's data buffer) all
+  survived.
+
+  The arm now walks the chain instead: `sfrrecv_chain_root_slot` descends
+  through `SFRRECV:`-proven links to the bare string local at the bottom, and
+  that root's pointer is what the release is guarded against. The induction is
+  the same one the single-link case rests on — every link returns a fresh box,
+  its own receiver, or a slice of it, and a slice is an ALLOCATION, so it can
+  never equal a box that already existed. The chain's result is therefore either
+  the root's box (every link took its identity path) or a box the chain itself
+  allocated, which no live name holds.
+
+  Per round, self-host x86-64 (arm64 identical, measured under qemu):
+
+  | probe | before | after | native |
+  |---|---|---|---|
+  | `base.tail(4).to_owned().len()` | 71 | 22 | 0 |
+  | same, wasm | 71 | 30 | 0 |
+  | `base.tails(0).same().len()` (both links identity) | 0 | 0 | 0 |
+  | the whole `alloc_flat_method_identity_return` case | 190 | 142 | 0 |
+
+  **What is left, and why it is a separate slice.** The 22 is the INTERMEDIATE
+  view box, released nowhere. Freeing it at the outer call needs two proofs the
+  registry does not carry: the outer callee must BORROW its receiver (not stash
+  it), and it must never return a VIEW of it — otherwise freeing a fresh
+  intermediate frees data the result still points into. `SFRRECV:` is the union
+  of fresh / receiver / view, so it cannot answer the second; splitting it is
+  the next increment.
+
+  **The chain admits user methods only.** `base.tail(4).to_ascii_upper().len()`
+  is unchanged at 71: `to_ascii_upper` is a builtin, so no registry key exists
+  for it. The builtin string producers would each qualify under the same rule
+  (`to_upper` / `to_lower` / `reverse` / `repeat` are always fresh, `trim` is a
+  view of the receiver, `replace` and a string-receiver `to_string` are the
+  receiver or fresh) — but each is a claim about emitted code that has to be
+  checked one at a time, so that widening is its own slice too.
+
+  VERIFIED: new `freshrecv-len-chain-bounded` row (FAILS on the parent). It
+  asserts a per-round BUDGET rather than flatness, because the shape is not
+  supposed to be flat yet: one 24-byte box a round instead of three allocations,
+  bound at 48 with ~2x margin either side. `freshrecv-len-chain-identity` (both
+  links take the identity path, so the result IS the root's box — a root walked
+  wrong frees a live local) and `freshrecv-len-chain-alias-safe` are the
+  controls on both legs; both re-read the root's BYTE after 3000 rounds. Plus
+  the str / rc / freshrecv / irverify / fixpoint / bootstrap subset of
+  `internal/e2eselfhost`. Refs #6544 #4451.
