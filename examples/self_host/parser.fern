@@ -204,7 +204,14 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // and codegen only ever see positional patterns. A pattern that still carries
 // names after that pass named a field the variant does not have, named one
 // twice, missed one, or renamed one — all E015 at the checker.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[] }
+// lit_cond is the condition a literal payload slot implies: `Sm(0)` binds the
+// slot to a synthetic name and tests it, so the pattern carries
+// `__pl<line>_<col> == 0` and has_lit_cond is set. The PARSER folds it into
+// the guard of whichever arm the pattern becomes — the outer arm for a direct
+// slot, the inner match's arm for a nested one — and clears it. Nothing
+// downstream should ever see it set; the checker refuses one that survives,
+// so a fold site nobody added cannot quietly go back to matching every value.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -886,7 +893,7 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [] };
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false };
 }
 // p_variant_n builds a variant pattern binding N payloads as `<prefix>0` …
 // `<prefix>N-1`. p_variant's single `binding` covers only the first, which is
@@ -899,8 +906,26 @@ function p_variant_n(type_name: string, prefix: string, n: i32): Pattern {
     var i: i32 = 1;
     while (i < n) { extra = extra.append(prefix + dl_itoa(i)); i = i + 1; }
     var no_nested: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [] };
+    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false };
 }
+// fold_lit_cond moves a pattern's implied literal-payload condition onto the
+// arm being built and clears it from the pattern. Call it at every point the
+// PARSER turns a freshly parsed Pattern into a MatchArm — the outer arm for a
+// direct slot, build_merged_arm's inner arm for a nested one. After the fold
+// the arm is an ordinary guarded arm, so no later stage needs to know literal
+// payload slots exist.
+function fold_lit_cond(pat: Pattern, guard: Expr, has_guard: boolean): (Pattern, Expr, boolean) {
+    match (pat) {
+        PatVariant(pv) => {
+            if (!pv.has_lit_cond) { return (pat, guard, has_guard); }
+            var cleared: Pattern = PatVariant { ...pv, lit_cond: e_bool(true), has_lit_cond: false };
+            if (!has_guard) { return (cleared, pv.lit_cond, true); }
+            return (cleared, e_binary("&&", pv.lit_cond, guard), true);
+        },
+        _ => { return (pat, guard, has_guard); }
+    }
+}
+
 function p_wildcard(): Pattern { return PatWildcard { tag: 0 }; }
 function s_unknown(kind: string): Stmt { return StmtUnknown { kind: kind }; }
 function s_defer(action: Stmt): Stmt { return StmtDefer { action: action, on_error: 0, line: 0 }; }
@@ -3527,7 +3552,8 @@ function parse_match_expr(p: Par): IfChain {
         if (first) { rt = art; first = false; } else { rt = wider_rt(rt, art); }
         var pi: i32 = 0;
         while (pi < pats.len()) {
-            arms = arms.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            var (fa_pat, fa_g, fa_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
+            arms = arms.append(MatchArm { pattern: fa_pat, body: abody, line: aline, col: acol, guard: fa_g, has_guard: fa_hg });
             pi = pi + 1;
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
@@ -3755,6 +3781,10 @@ function parse_block_or_stmt(p: Par): (Stmt[], Par) {
 // alpha byte) so wildcards arrive here via peek_ident.
 
 function parse_pattern(p: Par): (Pattern, Par) {
+    // Accumulates the condition implied by any literal payload slots; see
+    // PatVariant.lit_cond.
+    var lit_cond: Expr = e_bool(true);
+    var has_lit_cond: boolean = false;
     var name: string = p.peek_ident();
     // `n @ Variant(...)` — bind the whole matched value to `n` while also
     // matching the variant. Consume the `IDENT @` prefix; the variant name
@@ -3857,6 +3887,23 @@ function parse_pattern(p: Par): (Pattern, Par) {
                 p = sub_p;
                 nested = nested.append(sub_pat);
                 bn = bn + 1;
+            } else if (p.peek_is_pat_literal()) {
+                // A literal payload slot (`Sm(0)`) tests the payload rather
+                // than binding it. Bind the slot to a synthetic name and
+                // record `name == literal`; the arm builder folds that into
+                // the arm's guard, so every backend sees an ordinary guarded
+                // arm. Dropping the token here — which is what used to
+                // happen — left a bare `Sm` arm that matched every payload.
+                var lit_line: i32 = p.peek_line();
+                var lit_col: i32 = p.peek_col();
+                var (lit_expr, lit_p) = parse_binary(p, 4);
+                p = lit_p;
+                var slot: string = "__pl" + dl_itoa(lit_line) + "_" + dl_itoa(lit_col);
+                if (bn == 0) { binding = slot; } else { extra_bindings = extra_bindings.append(slot); }
+                var one = e_binary("==", e_ident(slot), lit_expr);
+                if (has_lit_cond) { lit_cond = e_binary("&&", lit_cond, one); } else { lit_cond = one; }
+                has_lit_cond = true;
+                bn = bn + 1;
             } else {
                 var inner: string = p.peek_ident();
                 if (inner.len() > 0) {
@@ -3871,7 +3918,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names, lit_cond: lit_cond, has_lit_cond: has_lit_cond }, p);
 }
 
 // prepend_stmt returns a fresh statement list with `s` in front of `body`.
@@ -3990,7 +4037,8 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
             PatWildcard(w) => {}
         }
         if (pv_name(inner_pat) == "" && !g.has_guard) { has_inner_wild = true; }
-        inner = inner.append(MatchArm { pattern: inner_pat, body: inner_body, line: g.line, col: g.col, guard: g.guard, has_guard: g.has_guard });
+        var (fn_pat, fn_g, fn_hg) = fold_lit_cond(inner_pat, g.guard, g.has_guard);
+        inner = inner.append(MatchArm { pattern: fn_pat, body: inner_body, line: g.line, col: g.col, guard: fn_g, has_guard: fn_hg });
         k = k + 1;
     }
     if (!has_inner_wild && has_fall) {
@@ -4000,7 +4048,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
-    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [] };
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false };
     var body: Stmt[] = [inner_match];
     return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
@@ -4212,7 +4260,8 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         p = bb_p;
         var pi: i32 = 0;
         while (pi < pats.len()) {
-            arms = arms.append(MatchArm { pattern: pats[pi], body: bb_body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            var (fs_pat, fs_g, fs_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
+            arms = arms.append(MatchArm { pattern: fs_pat, body: bb_body, line: aline, col: acol, guard: fs_g, has_guard: fs_hg });
             pi = pi + 1;
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
@@ -4753,7 +4802,8 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var ilarms: MatchArm[] = [];
             var ilpi: i32 = 0;
             while (ilpi < ilpats.len()) {
-                ilarms = ilarms.append(MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+                var (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
+                ilarms = ilarms.append(MatchArm { pattern: fi_pat, body: ilthen_body, line: 0, col: 0, guard: fi_g, has_guard: fi_hg });
                 ilpi = ilpi + 1;
             }
             ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
@@ -4912,7 +4962,8 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     var lsp_arms: MatchArm[] = [];
                     var lsp_i: i32 = 0;
                     while (lsp_i < lsp_pats.len()) {
-                        lsp_arms = lsp_arms.append(MatchArm { pattern: lsp_pats[lsp_i], body: lsp_rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+                        var (fl_pat, fl_g, fl_hg) = fold_lit_cond(lsp_pats[lsp_i], e_bool(true), false);
+                        lsp_arms = lsp_arms.append(MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg });
                         lsp_i = lsp_i + 1;
                     }
                     lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -5006,7 +5057,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                 rest = rest.append(rr_stmt);
             }
             var le_no_nested: Pattern[] = [];
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [] };
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
@@ -10216,7 +10267,7 @@ function me_rewrite_arm_pattern(pat: Pattern, ed: EnumDecl, key: string): Patter
             var j: i32 = 0;
             while (j < vn.len()) {
                 if (vn[j] == simple) {
-                    return PatVariant { type_name: simple + "__" + key, binding: pv.binding, extra_bindings: pv.extra_bindings, nested: pv.nested, at_binding: pv.at_binding, field_names: pv.field_names };
+                    return PatVariant { ...pv, type_name: simple + "__" + key };
                 }
                 j = j + 1;
             }
@@ -12429,7 +12480,7 @@ pub function rebind_record_positional(pv: PatVariant, decl_names: string[]): Pat
     var k: i32 = 1;
     while (k < decl_names.len()) { extra = extra.append(decl_names[k]); k = k + 1; }
     var no_names: string[] = [];
-    return PatVariant { type_name: pv.type_name, binding: decl_names[0], extra_bindings: extra, nested: pv.nested, at_binding: pv.at_binding, field_names: no_names };
+    return PatVariant { ...pv, binding: decl_names[0], extra_bindings: extra, field_names: no_names };
 }
 
 // resolve_record_pattern settles one record-form PatVariant against the
@@ -12451,7 +12502,7 @@ function rvf_pattern(pat: Pattern, structs: StructDecl[]): Pattern {
             var nested: Pattern[] = [];
             var i: i32 = 0;
             while (i < np.nested.len()) { nested = nested.append(rvf_pattern(np.nested[i], structs)); i = i + 1; }
-            return PatVariant { type_name: np.type_name, binding: np.binding, extra_bindings: np.extra_bindings, nested: nested, at_binding: np.at_binding, field_names: np.field_names };
+            return PatVariant { ...np, nested: nested };
         },
         _ => { return pat; }
     }

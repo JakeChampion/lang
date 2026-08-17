@@ -309,14 +309,7 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
 function rewrite_pattern(p: parser.Pattern, ctx: RewriteCtx): parser.Pattern {
     match (p) {
         parser.PatVariant(pv) => {
-            return parser.PatVariant {
-                type_name: rewrite_type_name(pv.type_name, ctx),
-                binding: pv.binding,
-                extra_bindings: pv.extra_bindings,
-                nested: pv.nested,
-                at_binding: pv.at_binding,
-                field_names: pv.field_names
-            };
+            return parser.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx) };
         },
         _ => { return p; }
     }

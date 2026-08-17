@@ -1,0 +1,101 @@
+// A literal in a variant payload slot TESTS the payload; it does not bind it.
+//
+// The self-host parser used to drop a non-identifier payload token on the
+// floor, so `Sm(0)` became a bare `Sm` arm that matched every payload and
+// returned the first arm's answer for every value. Native said 2 and the
+// self-host binary said 1 on the two-arm shape below, and nothing noticed:
+// no case in this corpus wrote the form, and this corpus is the only one that
+// runs the self-host on all three targets.
+//
+// Both compilers desugar the slot to a synthetic binder plus a guard, so the
+// arms below also pin that a FAILING implied guard falls through to the next
+// arm rather than ending the match.
+
+import "std/i32";
+
+enum Opt2 { Sm(i32), Nn }
+enum Res2 { Ok2(i32), Er2 }
+enum Nest2 { Wrap(Res2), Bare }
+enum Pair2 { Pr(i32, i32), Non }
+enum Msg { Txt(string), Num(i32) }
+
+// The headline: a literal slot beside a binding slot on the same variant.
+function classify(o: Opt2): string {
+    match (o) {
+        Sm(0) => { return "zero"; },
+        Sm(n) => { return "some"; },
+        Nn => { return "none"; },
+    }
+}
+
+// A literal at slot 0 with a binder after it — the literal must not consume
+// the second slot's position.
+function pair_of(p: Pair2): i32 {
+    match (p) {
+        Pr(1, y) => { return 100 + y; },
+        Pr(x, y) => { return x + y; },
+        Non => { return 0; },
+    }
+}
+
+// String and negative-number literals reach the same path as a plain integer.
+function describe(m: Msg): string {
+    match (m) {
+        Txt("hi") => { return "greeting"; },
+        Txt(s) => { return s; },
+        Num(-1) => { return "minus one"; },
+        Num(n) => { return "number"; },
+    }
+}
+
+// A literal inside a NESTED slot belongs to the inner match the desugar
+// builds, not to the outer arm — a distinction that is invisible until the
+// outer variant has a second arm forcing the merge.
+function unwrap(w: Nest2): i32 {
+    match (w) {
+        Wrap(Ok2(0)) => { return 40; },
+        Wrap(Ok2(n)) => { return 41; },
+        Wrap(Er2()) => { return 42; },
+        Bare => { return 43; },
+    }
+}
+
+// The same form at a second binding site, and alongside a written guard.
+function via_if_let(o: Opt2): i32 {
+    if let Sm(0) = o { return 60; }
+    return 61;
+}
+
+function guarded(o: Opt2): i32 {
+    match (o) {
+        Sm(0) when true => { return 80; },
+        _ => { return 81; },
+    }
+}
+
+function main(): i32 {
+    print(classify(Opt2.Sm(0)));
+    print(classify(Opt2.Sm(5)));
+    print(classify(Opt2.Nn));
+
+    print(pair_of(Pair2.Pr(1, 9)).to_string());
+    print(pair_of(Pair2.Pr(3, 4)).to_string());
+    print(pair_of(Pair2.Non).to_string());
+
+    print(describe(Msg.Txt("hi")));
+    print(describe(Msg.Txt("other")));
+    print(describe(Msg.Num(0 - 1)));
+    print(describe(Msg.Num(9)));
+
+    print(unwrap(Nest2.Wrap(Res2.Ok2(0))).to_string());
+    print(unwrap(Nest2.Wrap(Res2.Ok2(9))).to_string());
+    print(unwrap(Nest2.Wrap(Res2.Er2)).to_string());
+    print(unwrap(Nest2.Bare).to_string());
+
+    print(via_if_let(Opt2.Sm(0)).to_string());
+    print(via_if_let(Opt2.Sm(1)).to_string());
+
+    print(guarded(Opt2.Sm(0)).to_string());
+    print(guarded(Opt2.Sm(1)).to_string());
+    return 0;
+}
