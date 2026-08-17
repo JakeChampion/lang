@@ -5887,3 +5887,78 @@ function main(): i32 { return 0; }`
 		t.Errorf("the rejected declaration's body leaked a second diagnostic: %q", got)
 	}
 }
+
+// TestPayloadlessVariantNameAsTupleElemIsRejected covers the same hazard as
+// TestPayloadlessVariantNameAsPayloadBinderIsRejected in a second position: a
+// tuple ELEMENT spelled with a payload-less variant's name. It parses as a
+// binder, so the arm matches every value of that element rather than testing
+// the tag the spelling suggests.
+//
+// With a later arm present, E026 already caught it as collateral ("a preceding
+// arm matches every value"). As the only arm it was silent — `(B, y)` matched
+// `A(5)` and returned 102 — so the diagnostic has to name the cause, not the
+// downstream unreachability.
+func TestPayloadlessVariantNameAsTupleElemIsRejected(t *testing.T) {
+	const decls = "enum E { A(i32), B }\n"
+	bad := map[string]string{
+		// The silent case: irrefutable AND exhaustive, so nothing else fired.
+		"only arm, statement match": `function f(t: (E, i32)): i32 {
+  match (t) { (B, y) => { return 100 + y; } }
+  return 0;
+}`,
+		"only arm, expression match": `function f(t: (E, i32)): i32 { return match (t) { (B, y) => 100i32 }; }`,
+		"second element": `function f(t: (i32, E)): i32 {
+  match (t) { (y, B) => { return y; } }
+  return 0;
+}`,
+		"beside a literal element": `function f(t: (E, i32)): i32 {
+  match (t) { (B, 1) => { return 5; }, _ => { return 0; } }
+  return 0;
+}`,
+	}
+	for name, body := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+body)
+			if err == nil {
+				t.Fatalf("want E015 for a payload-less variant name in a tuple element, got none")
+			}
+			if code := firstErrCode(err); code != "E015" {
+				t.Errorf("code = %q, want E015: %v", code, err)
+			}
+			for _, want := range []string{"payload-less variant of enum E", "matches every value"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("want %q in:\n%v", want, err)
+				}
+			}
+		})
+	}
+
+	good := map[string]string{
+		"ordinary binder": `function f(t: (E, i32)): i32 {
+  match (t) { (e, y) => { return match (e) { A(n) => n + y, B => y }; } }
+  return 0;
+}`,
+		"wildcard element": `function f(t: (E, i32)): i32 {
+  match (t) { (_, y) => { return y; } }
+  return 0;
+}`,
+		// `A` is a variant of E but carries a payload, so a bare `A` is an
+		// ordinary binder with no misleading spelling.
+		"variant with a payload": `function f(t: (E, i32)): i32 {
+  match (t) { (A, y) => { return y; } }
+  return 0;
+}`,
+		// `B` is payload-less, but the element it names is an i32, not E.
+		"name collides on a non-enum element": `function f(t: (i32, i32)): i32 {
+  match (t) { (B, y) => { return B + y; } }
+  return 0;
+}`,
+	}
+	for name, body := range good {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
