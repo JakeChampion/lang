@@ -36,6 +36,17 @@ var ifLetIRCases = []struct {
 	// no longer taken as `s { … }`. Pre-fix the whole statement shredded and
 	// the program mis-ran.
 	{"labeled-then-block", "enum Shape { Circle(i32), Empty } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var s: Shape = Circle(42); if let Circle(r) = s { lp: while (true) { return r + pad; } } return 0 + pad; }", 42},
+	// Or-patterns in the head: `if let A(x) | B(x) = e`. Each alternative
+	// becomes its own arm sharing the then-block, the same per-alternative
+	// expansion match arms use, so the binding is live whichever matched.
+	// Before this the `|` was left on the cursor and the statement shredded
+	// into a P001 pair ("missing { in block", then a bogus assign).
+	{"or-first-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = A(41); if let A(v) | B(v) = e { return v + pad; } return 1 + pad; }", 41},
+	{"or-second-alt", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = B(42); if let A(v) | B(v) = e { return v + pad; } return 1 + pad; }", 42},
+	// A variant outside the alternatives takes the else — the trailing
+	// wildcard arm still has to be appended after the expansion.
+	{"or-no-match-else", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(9); if let A(v) | B(v) = e { return v + pad; } else { return 7 + pad; } }", 7},
+	{"or-three-alts", "enum E { A(i32), B(i32), C(i32) } struct Point { x: i32, y: i32 } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; var e: E = C(13); if let A(v) | B(v) | C(v) = e { return v + pad; } return 1 + pad; }", 13},
 }
 
 // TestSelfHostIfLetIRX86_64 compiles each case through the self-hosted x86-64

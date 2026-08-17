@@ -4660,6 +4660,16 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             p = p.advance();  // consume `let`
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);
             p = ilpat_p;
+            // Or-patterns: `if let A(x) | B(x) = e { … }` — one arm per
+            // alternative sharing the then-block, the same per-alternative
+            // expansion match arms use.
+            var ilpats: Pattern[] = [ilpat_pattern];
+            while (p.peek_punct() == "|") {
+                p = p.advance();
+                var (ilalt_pattern, ilalt_p) = parse_pattern(p);
+                p = ilalt_p;
+                ilpats = ilpats.append(ilalt_pattern);
+            }
             if (p.peek_punct() == "=") { p = p.advance(); }
             // The source expression is followed directly by the then-block's
             // `{`, so struct-literal parsing must be suppressed while reading
@@ -4680,8 +4690,18 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                 ilelse = ileb_body;
             }
             var ilarms: MatchArm[] = [];
-            ilarms = ilarms.append(MatchArm { pattern: ilpat_pattern, body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            var ilpi: i32 = 0;
+            while (ilpi < ilpats.len()) {
+                ilarms = ilarms.append(MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+                ilpi = ilpi + 1;
+            }
             ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
+            // match arm does; the wildcard arm above is the outer fallthrough
+            // desugar_nested_arms copies into the inner match, so a payload
+            // matching no inner pattern runs the else rather than falling off
+            // a non-exhaustive inner match.
+            ilarms = desugar_nested_arms(ilarms, 0);
             return (s_match_origin(ilscrut_expr, ilarms, 0, 0, "if_let"), p);
         }
         if (p.peek_punct() != "(") {
