@@ -9643,10 +9643,48 @@ func (c *checker) checkMergedSiblingBinder(pos ast.Position, name string, scrut 
 	}
 }
 
+// checkTuplePatElem types tuple-pattern element k against the scrutinee's
+// element type and binds whatever it binds into armScope. It reports whether
+// the element is REFUTABLE: a literal element can make the arm fail to match,
+// a binder or `_` cannot, and that is what decides tuple-arm exhaustiveness.
+//
+// Both tuple-match forms (statement and expression) route through here so the
+// element rules are stated once. They were verbatim copies before, which is
+// the shape that let the merged-sibling half of #6923 survive its first fix.
+func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, bindingTypes []ast.Type, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
+	el := &elems[k]
+	bindingTypes[k] = elT
+	if el.Literal != nil {
+		litT := c.checkExpr(el.Literal, s)
+		if litT != nil {
+			c.settleNumeric(el.Literal, elT)
+			litT = c.postSettleType(el.Literal, litT)
+			if !c.assignable(litT, elT) {
+				c.errfCode(pos, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
+			}
+		}
+		return true
+	}
+	if el.IsWildcard {
+		return false
+	}
+	if seen[el.Name] {
+		c.errfCode(pos, "E013", "variable %q already declared in this scope", el.Name)
+		return false
+	}
+	seen[el.Name] = true
+	if en, clash := c.payloadlessVariantNamed(el.Name, elT); clash {
+		c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a tuple element is a binder that matches every value — rename the binder, or match the element in a nested match (a variant test on a tuple element is not supported yet)",
+			el.Name, en)
+	}
+	armScope.names[el.Name] = elT
+	return false
+}
+
 // payloadlessVariantNamed reports whether name is a payload-less variant of
-// t's enum, naming the enum. A payload slot spelled with such a name parses
-// as a binder, so the arm matches every value of the slot instead of testing
-// the variant the spelling suggests.
+// t's enum, naming the enum. A payload slot or tuple element spelled with such
+// a name parses as a binder, so the arm matches every value of the slot instead
+// of testing the variant the spelling suggests.
 func (c *checker) payloadlessVariantNamed(name string, t ast.Type) (string, bool) {
 	et, ok := t.(ast.EnumType)
 	if !ok {
@@ -10004,30 +10042,10 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
 		seen := map[string]bool{}
-		for k, el := range arm.TupleElems {
-			elT := tup.Elems[k]
-			arm.BindingTypes[k] = elT
-			if el.Literal != nil {
+		for k := range arm.TupleElems {
+			if c.checkTuplePatElem(arm.P, arm.TupleElems, arm.BindingTypes, k, tup.Elems[k], s, armScope, seen) {
 				irrefutable = false
-				litT := c.checkExpr(el.Literal, s)
-				if litT != nil {
-					c.settleNumeric(el.Literal, elT)
-					litT = c.postSettleType(el.Literal, litT)
-					if !c.assignable(litT, elT) {
-						c.errfCode(arm.P, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
-					}
-				}
-				continue
 			}
-			if el.IsWildcard {
-				continue
-			}
-			if seen[el.Name] {
-				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", el.Name)
-				continue
-			}
-			seen[el.Name] = true
-			armScope.names[el.Name] = elT
 		}
 		if arm.Guard != nil {
 			irrefutable = false
@@ -10328,30 +10346,10 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
 		seen := map[string]bool{}
-		for k, el := range arm.TupleElems {
-			elT := tup.Elems[k]
-			arm.BindingTypes[k] = elT
-			if el.Literal != nil {
+		for k := range arm.TupleElems {
+			if c.checkTuplePatElem(arm.P, arm.TupleElems, arm.BindingTypes, k, tup.Elems[k], s, armScope, seen) {
 				irrefutable = false
-				litT := c.checkExpr(el.Literal, s)
-				if litT != nil {
-					c.settleNumeric(el.Literal, elT)
-					litT = c.postSettleType(el.Literal, litT)
-					if !c.assignable(litT, elT) {
-						c.errfCode(arm.P, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
-					}
-				}
-				continue
 			}
-			if el.IsWildcard {
-				continue
-			}
-			if seen[el.Name] {
-				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", el.Name)
-				continue
-			}
-			seen[el.Name] = true
-			armScope.names[el.Name] = elT
 		}
 		if arm.Guard != nil {
 			irrefutable = false
