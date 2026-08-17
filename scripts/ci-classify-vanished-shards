@@ -23,8 +23,18 @@
 #     examples/self_host change invalidates them) is enough to cross it.
 #   * cancelled well inside the budget          -> runner reclaim, the case
 #     `continue-on-error` and the tolerate dial exist for. Re-run it.
+#   * failed BEFORE the test step ran           -> setup failed, not the code:
+#     an action tarball GitHub would not serve, a toolchain install, a cache
+#     restore. Re-run it. Measured 2026-08-17: a codeload outage returning
+#     429/502/503 for `actions/setup-go` and `actions/download-artifact` killed
+#     a dozen jobs across two hours, none of which compiled a line of Fern.
 #   * failure / anything else                   -> the job died on its own
 #     terms; read its log, don't re-run blindly.
+#
+# The setup-vs-tests split needs the job's STEP list, which the same jobs
+# payload already carries. Without it every infrastructure death reads as
+# "died on its own terms, READ ITS LOG" — advice that points at a log holding
+# only a download error, and away from the re-run that actually fixes it.
 #
 # Advisory only: it never changes the run's verdict (the caller already failed),
 # it only names the cause. Exits 0 even when it can't reach the API, because a
@@ -61,7 +71,10 @@ if [ -z "$jobs_json" ]; then
   exit 0
 fi
 
-# One line per non-success shard job: name, conclusion, duration in seconds.
+# One line per non-success shard job: name, conclusion, duration in seconds,
+# and the name of the first step that did not succeed ("" when the payload
+# carries no step list). A failure recorded against a step other than the
+# test step ($TEST_STEP below) means the tests never started.
 rows=$(printf '%s' "$jobs_json" | jq -r --arg p "$PREFIX" '
   [.jobs? // [] | .[]] | .[]
   | select(.name | startswith($p))
@@ -70,7 +83,10 @@ rows=$(printf '%s' "$jobs_json" | jq -r --arg p "$PREFIX" '
       .conclusion,
       (if .started_at and .completed_at
        then ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
-       else -1 end) ]
+       else -1 end),
+      ([ (.steps? // [])[]
+         | select(.conclusion != "success" and .conclusion != "skipped")
+         | .name ] | first // "") ]
   | @tsv' 2>/dev/null)
 
 if [ -z "$rows" ]; then
@@ -78,8 +94,13 @@ if [ -z "$rows" ]; then
   exit 0
 fi
 
+# The prefix of the shard's test step (.github/workflows/test-e2e-selfhost.yml,
+# "run self-host shard N/M …"). A non-success step whose name does not start
+# with this ran before the tests did.
+TEST_STEP="run self-host shard"
+
 echo "why the shard(s) left no outcome (budget ${BUDGET_MINUTES}m):" >&2
-while IFS=$'\t' read -r name conclusion secs; do
+while IFS=$'\t' read -r name conclusion secs badstep; do
   [ -n "$name" ] || continue
   if [ "$secs" -lt 0 ] 2>/dev/null; then
     printf '  %s: %s, duration unknown\n' "$name" "$conclusion" >&2
@@ -92,6 +113,9 @@ while IFS=$'\t' read -r name conclusion secs; do
   elif [ "$conclusion" = "cancelled" ]; then
     printf '  %s: cancelled after %s, well inside the budget — RUNNER RECLAIM. Re-run the failed jobs.\n' \
       "$name" "$human" >&2
+  elif [ -n "$badstep" ] && [ "${badstep#"$TEST_STEP"}" = "$badstep" ]; then
+    printf '  %s: %s after %s in step "%s" — SETUP FAILED BEFORE THE TESTS RAN, no verdict on the code. Re-run the failed jobs.\n' \
+      "$name" "$conclusion" "$human" "$badstep" >&2
   else
     printf '  %s: %s after %s — died on its own terms, READ ITS LOG rather than re-running.\n' \
       "$name" "$conclusion" "$human" >&2

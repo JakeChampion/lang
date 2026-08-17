@@ -26,17 +26,31 @@
 # it — a shard that finished its tests leaves a verdict behind, so:
 #
 #   * marker says `success`  → the shard ran its slice and passed.
+#   * marker says `skipped`  → the test step never executed, because a step
+#                              BEFORE it failed (an action download, a
+#                              toolchain install). The record step still runs
+#                              — it is `if: !cancelled()` — so the marker
+#                              exists and reads `skipped`. No tests ran, so
+#                              this is not a verdict on the code.
 #   * marker says otherwise  → REAL test failure. Always fatal.
 #   * marker absent          → the shard never reached its record step: runner
 #                              reclaim, OOM-kill, or job timeout. Fatal too,
 #                              because a silently missing shard is precisely
 #                              how the #5901 regression stayed invisible.
 #
-# The absent case is the one with a policy dial, since a stochastic reclaim
-# becomes a red build someone has to re-run: set
-# FERN_CI_TOLERATE_VANISHED_SHARDS=1 to report vanished shards without
-# failing. Failures are ALWAYS fatal — that half has no downside and is the
-# gap #5912 item 1 was filed for.
+# `skipped` and absent are the same fact — this shard produced NO SIGNAL — so
+# they share a verdict and a dial. Both are fatal by default (a shard that ran
+# nothing must never read as green); set FERN_CI_TOLERATE_VANISHED_SHARDS=1 to
+# report them without failing, since either can be a stochastic infrastructure
+# event that only wants a re-run. Failures are ALWAYS fatal — that half has no
+# downside and is the gap #5912 item 1 was filed for.
+#
+# Splitting `skipped` out of the failure bucket matters because the two want
+# OPPOSITE responses. Lumped together, an hours-long GitHub codeload outage
+# (429/502/503 serving action tarballs, 2026-08-17) reported as
+# "real test failure, read the shard's log" on shards that had not run a line
+# of Fern — sending the reader to a log containing nothing but a download
+# error, and arguing against the re-run that was in fact the whole fix.
 
 set -euo pipefail
 
@@ -49,7 +63,8 @@ shift
 
 tolerate_vanished="${FERN_CI_TOLERATE_VANISHED_SHARDS:-0}"
 
-failed=()   # shard reported a non-success outcome
+failed=()   # shard ran its tests and they failed
+notrun=()   # shard left a marker saying its test step never executed
 vanished=() # shard left no marker at all
 ok=0
 
@@ -78,18 +93,21 @@ for spec in "$@"; do
     fi
     # trim whitespace/newline the recording step may leave behind
     outcome="$(tr -d '[:space:]' <"$marker")"
-    if [ "$outcome" = "success" ]; then
-      ok=$((ok + 1))
-    else
-      failed+=("$host shard$s (${outcome:-empty})")
-    fi
+    case "$outcome" in
+      success) ok=$((ok + 1)) ;;
+      skipped) notrun+=("$host shard$s") ;;
+      *) failed+=("$host shard$s (${outcome:-empty})") ;;
+    esac
   done
 done
 
-echo "shard outcomes: $ok passed, ${#failed[@]} failed, ${#vanished[@]} vanished"
+echo "shard outcomes: $ok passed, ${#failed[@]} failed, ${#notrun[@]} never ran, ${#vanished[@]} vanished"
 
 for f in ${failed+"${failed[@]}"}; do
   echo "FAILED: $f — real test failure, read the shard's log" >&2
+done
+for n in ${notrun+"${notrun[@]}"}; do
+  echo "NEVER RAN: $n — a step before the tests failed (action download, toolchain install); read that step, not the tests" >&2
 done
 for v in ${vanished+"${vanished[@]}"}; do
   echo "VANISHED: $v — no outcome reported (runner reclaim, OOM-kill, or timeout)" >&2
@@ -99,12 +117,13 @@ if [ ${#failed[@]} -gt 0 ]; then
   exit 1
 fi
 
-if [ ${#vanished[@]} -gt 0 ]; then
+nosignal=$((${#notrun[@]} + ${#vanished[@]}))
+if [ "$nosignal" -gt 0 ]; then
   if [ "$tolerate_vanished" = "1" ]; then
-    echo "tolerating ${#vanished[@]} vanished shard(s): FERN_CI_TOLERATE_VANISHED_SHARDS=1" >&2
+    echo "tolerating $nosignal shard(s) that reported no result: FERN_CI_TOLERATE_VANISHED_SHARDS=1" >&2
     exit 0
   fi
-  echo "a vanished shard ran NO tests — re-run the job, or set FERN_CI_TOLERATE_VANISHED_SHARDS=1 to tolerate" >&2
+  echo "$nosignal shard(s) ran NO tests — re-run the job, or set FERN_CI_TOLERATE_VANISHED_SHARDS=1 to tolerate" >&2
   exit 1
 fi
 
