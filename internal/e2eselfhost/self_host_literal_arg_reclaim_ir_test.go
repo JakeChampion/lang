@@ -159,4 +159,107 @@ function main(): i32 {
     if (acc != 11000) { return 97; }
     return 0;
 }`, "literal-arg-mixed-flat", 0)
+
+	// #6544: the same reclaim at a METHOD call. It was wired at the free-call
+	// site only, so `x.m("lit")` leaked a box per call where `m(x, "lit")` did
+	// not — measured 23 B/round on a string receiver and 24 on an i32 one, in
+	// every program that passes a literal to a method. The borrowability
+	// registry already keyed methods "<Type>.<method>"; what was missing was
+	// the stash at the three user-method arms and a census that can see a
+	// method callee at all.
+	run(t, `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
+function main(): i32 {
+    var recv: string = "rr";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + recv.readit("ab"); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + recv.readit("ab"); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (recv.len() != 2) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 8800) { return 97; }
+    return 0;
+}`, "method-literal-arg-borrowable-flat", 0)
+
+	// The PRIMITIVE-receiver arm is a separate site from the struct one.
+	run(t, `function (k: i32) tally(nm: string): i32 { return k + nm.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + (i % 4).tally("abc"); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + (j % 4).tally("abc"); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "method-literal-arg-prim-recv-flat", 0)
+
+	// A fresh anonymous temp at a method call — the concat shape, not just a
+	// literal.
+	run(t, `function (s: string) readit(nm: string): i32 { return nm.len(); }
+function main(): i32 {
+    var recv: string = "rr";
+    var base: string = "a";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + recv.readit(base + "bc"); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) { acc = acc + recv.readit(base + "bc"); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (base.len() != 1) { return 88; }
+    if (recv.len() != 2) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 6600) { return 97; }
+    return 0;
+}`, "method-fresh-concat-arg-flat", 0)
+
+	// NON-borrowable method param — the callee RETURNS it. Freeing at the call
+	// edge would free what the binding now holds.
+	run(t, `function (s: string) keepit(nm: string): string { return nm; }
+function main(): i32 {
+    var recv: string = "rr";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var got: string = recv.keepit("xy");
+        if (got.len() != 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "method-literal-arg-retained-safe", 0)
+
+	// The other non-borrowable direction, and the shape
+	// conformance/cases/alloc_flat_method_identity_return is built from: the
+	// param is MOVED into a struct field, so the field owns it after the call
+	// and the literal keeps its prior sound leak. A reclaim that ignored the
+	// borrowability verdict would free the tag out from under the result.
+	run(t, `struct Box { tag: string, n: i32 }
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var b: Box = Box { tag: "start", n: i % 8 };
+        var r: Box = b.relabel("fresh-tag-value");
+        if (r.tag.len() != 15) { bad = 1; }
+        if (b.tag.len() != 5) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "method-literal-arg-consumed-safe", 0)
 }

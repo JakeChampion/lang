@@ -67,6 +67,59 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
+		// #6544: the same reclaim at a METHOD call. The release lands at the IR
+		// layer, so wasm emits it too — and its literals are data-section, so
+		// what this pins is that the $__fern_arr_dec mapping stays a guarded
+		// no-op there rather than a leak fix.
+		{"method-literal-arg-borrowable-flat-wasm", `function (s: string) readit(nm: string): i32 { return s.len() + nm.len(); }
+function main(): i32 {
+    var recv: string = "rr";
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = acc + recv.readit("ab"); i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 1500) { acc = acc + recv.readit("ab"); j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (recv.len() != 2) { return 88; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc != 6800) { return 97; }
+    return 0;
+}`, 0},
+		{"method-literal-arg-retained-safe-wasm", `function (s: string) keepit(nm: string): string { return nm; }
+function main(): i32 {
+    var recv: string = "rr";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var got: string = recv.keepit("xy");
+        if (got.len() != 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
+		{"method-literal-arg-consumed-safe-wasm", `struct Box { tag: string, n: i32 }
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var b: Box = Box { tag: "start", n: i % 8 };
+        var r: Box = b.relabel("fresh-tag-value");
+        if (r.tag.len() != 15) { bad = 1; }
+        if (b.tag.len() != 5) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

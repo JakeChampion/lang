@@ -9613,17 +9613,9 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             // (store+reload keeps the arg in place) and free it
             // right after the call — the call-arg sibling of the
             // #2649 concat-operand anonymous-temp reclaim.
-            var lit_arg: boolean = false;
-            match (c.args[ai]) { parser.ExprString(_) => { lit_arg = true; }, _ => {} }
-            if (!lit_arg && sc.ok) { lit_arg = is_fresh_str_temp(c.args[ai], sc); }
-            if (lit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
-                var latn: string = "$lat" + util.i32_to_string(sc.locals.len());
-                sc = sc.add_local(latn);
-                var lats: i32 = sc.slot_of(latn);
-                sc = sc.emit(ir.op_store_local(lats));
-                sc = sc.emit(ir.op_load_local(lats));
-                lat_slots = lat_slots.append(lats);
-            }
+            var lst: ArgStash = stash_fresh_str_arg(sc, c.args[ai], cid.name, ai);
+            sc = lst.state;
+            if (lst.slot >= 0) { lat_slots = lat_slots.append(lst.slot); }
             // #4365 stage (b): a fresh SCALAR-element array-literal
             // arg (`f([i, i+1])`, discardable_scalar_arr_lit — a
             // rc=1 sole-owned single-level buffer, never bound or
@@ -9637,7 +9629,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             // stay excluded — a shallow buffer free would leak
             // their element boxes; they keep today's safe leak.
             var arrlit_arg: boolean = false;
-            if (!lit_arg && sc.ok) {
+            if (sc.ok) {
                 match (c.args[ai]) {
                     parser.ExprArray(laa) => { arrlit_arg = discardable_scalar_arr_lit(laa, sc); },
                     _ => {}
@@ -11204,6 +11196,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         // stack, count-agnostic on every backend.
         var sm: LowerState = lower_expr(fa.obj, s);
         if (!sm.ok) { return sm; }
+        var sm_lat: i32[] = [];
         var ai: i32 = 0;
         while (ai < c.args.len()) {
             // A bare fn-name arg at a "fn"-typed method param is a
@@ -11221,11 +11214,15 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 sm = lower_i64(c.args[ai], sm);
             } else {
                 sm = lower_expr(c.args[ai], sm);
+                var smst: ArgStash = stash_fresh_str_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
+                sm = smst.state;
+                if (smst.slot >= 0) { sm_lat = sm_lat.append(smst.slot); }
             }
             if (!sm.ok) { return sm; }
             ai = ai + 1;
         }
-        return sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
+        sm = sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
+        return free_stashed_str_args(sm, sm_lat);
     }
     // Enum method called directly on a FRESH variant construction
     // (`Has(5).eq(other)`) or a bare unit variant (`A.method()`).
@@ -11237,6 +11234,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     if (ety != "") {
         var em: LowerState = lower_expr(fa.obj, s);
         if (!em.ok) { return em; }
+        var em_lat: i32[] = [];
         var eai: i32 = 0;
         while (eai < c.args.len()) {
             // fn-value arg (const_func) before general lowering —
@@ -11244,11 +11242,17 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             var efvn: string = fn_value_arg_name(c.args[eai], em);
             if (efvn.len() > 0 && em.callee_param_is_fn(ety + "." + fa.field, eai)) { em = em.emit(ir.op_const_func(0, efvn)); }
             else if (em.param_is_i64(ety + "." + fa.field, eai)) { em = lower_i64(c.args[eai], em); }
-            else { em = lower_expr(c.args[eai], em); }
+            else {
+                em = lower_expr(c.args[eai], em);
+                var emst: ArgStash = stash_fresh_str_arg(em, c.args[eai], ety + "." + fa.field, eai);
+                em = emst.state;
+                if (emst.slot >= 0) { em_lat = em_lat.append(emst.slot); }
+            }
             if (!em.ok) { return em; }
             eai = eai + 1;
         }
-        return em.emit(ir.op_call_direct(ety + "." + fa.field, 1 + c.args.len()));
+        em = em.emit(ir.op_call_direct(ety + "." + fa.field, 1 + c.args.len()));
+        return free_stashed_str_args(em, em_lat);
     }
     // Array-receiver method `arr.<field>(args)` — the std/array
     // auto-discovered helper `__method_Array_<field>(arr, args)`.
@@ -11333,6 +11337,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         if (pty == "i64" || pty == "u64") { pm = lower_i64(fa.obj, s); }
         else { pm = lower_expr(fa.obj, s); }
         if (!pm.ok) { return pm; }
+        var pm_lat: i32[] = [];
         var pai: i32 = 0;
         while (pai < c.args.len()) {
             // fn-value arg (const_func) before general lowering —
@@ -11340,11 +11345,17 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             var pfvn: string = fn_value_arg_name(c.args[pai], pm);
             if (pfvn.len() > 0 && pm.callee_param_is_fn(pty + "." + fa.field, pai)) { pm = pm.emit(ir.op_const_func(0, pfvn)); }
             else if (pm.param_is_i64(pty + "." + fa.field, pai)) { pm = lower_i64(c.args[pai], pm); }
-            else { pm = lower_expr(c.args[pai], pm); }
+            else {
+                pm = lower_expr(c.args[pai], pm);
+                var pmst: ArgStash = stash_fresh_str_arg(pm, c.args[pai], pty + "." + fa.field, pai);
+                pm = pmst.state;
+                if (pmst.slot >= 0) { pm_lat = pm_lat.append(pmst.slot); }
+            }
             if (!pm.ok) { return pm; }
             pai = pai + 1;
         }
-        return pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
+        pm = pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
+        return free_stashed_str_args(pm, pm_lat);
     }
     return s.fail();
 }
@@ -25240,6 +25251,49 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
     return false;
 }
 
+// ArgStash is stash_fresh_str_arg's result: the state with the park emitted,
+// and the scratch slot holding the box (-1 when the arg earned no stash).
+struct ArgStash { state: LowerState, slot: i32 }
+
+// stash_fresh_str_arg parks a fresh string ARGUMENT — a literal, or one of the
+// anonymous temps is_fresh_str_temp admits (a concat, a producer, a copying
+// method) — in a scratch and reloads it, so the caller can free the box after
+// the call. The store+reload leaves the arg in place on the operand stack.
+//
+// Gated on call_arg_borrowable: at a borrowable position the callee can neither
+// retain nor return the argument, so the box is dead the moment the call
+// returns. `relabel(t)` moving `t` into a struct field is NOT borrowable and is
+// correctly refused here.
+function stash_fresh_str_arg(s: LowerState, arg: parser.Expr, callee: string, ai: i32): ArgStash {
+    if (!s.ok) { return ArgStash { state: s, slot: 0 - 1 }; }
+    var fresh: boolean = false;
+    match (arg) { parser.ExprString(_) => { fresh = true; }, _ => {} }
+    if (!fresh) { fresh = is_fresh_str_temp(arg, s); }
+    if (!fresh || !call_arg_borrowable(s, callee, ai)) { return ArgStash { state: s, slot: 0 - 1 }; }
+    var latn: string = "$lat" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(latn);
+    var lats: i32 = st.slot_of(latn);
+    st = st.emit(ir.op_store_local(lats));
+    st = st.emit(ir.op_load_local(lats));
+    return ArgStash { state: st, slot: lats };
+}
+
+// free_stashed_str_args drains stash_fresh_str_arg's slots after the call.
+// Net-zero on the operand stack (load -> free -> drop), so the call's result —
+// live beneath — is untouched; __fern_str_free is rc-aware, so a box that
+// turned out to be retained only decs.
+function free_stashed_str_args(s: LowerState, slots: i32[]): LowerState {
+    var st: LowerState = s;
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        st = st.emit(ir.op_load_local(slots[i]));
+        st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+        st = st.emit(ir.op_drop());
+        i = i + 1;
+    }
+    return st;
+}
+
 // discarded_call_callees_stmt collects the bare-ident CALLEE names of DISCARDED
 // call statements (`mk(i);` — a StmtExpr whose value is a direct free call),
 // recursing into control-flow bodies. Only these callees need a "TUPRET:" seed.
@@ -25438,6 +25492,24 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                         li = li + 1;
                     }
                     if (has_lit) { a = push_str_unique(a, cid.name); }
+                },
+                // A METHOD callee. Its borrowable key is "<Type>.<method>",
+                // which needs the receiver's type — not resolvable here (no
+                // LowerState), so collect the bare method NAME and let the
+                // seeding loop match a key by its part after the last '.'.
+                // The lowering looks the entry up by the full key, so a
+                // same-named method on another type only seeds a spare entry.
+                parser.ExprFieldAccess(mfa) => {
+                    var mhas: boolean = false;
+                    var mli: i32 = 0;
+                    while (mli < c.args.len()) {
+                        match (c.args[mli]) { parser.ExprString(_) => { mhas = true; }, _ => {
+                            if (str_local_binding_is_fresh(c.args[mli])) { mhas = true; }
+                        } }
+                        mli = mli + 1;
+                    }
+                    if (mhas) { a = push_str_unique(a, mfa.field); }
+                    a = lit_arg_callees_expr(c.callee, a);
                 },
                 _ => { a = lit_arg_callees_expr(c.callee, a); }
             }
@@ -41019,7 +41091,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             var bpe: string = sg.borrowable_params[bpk];
             var bpbar: i32 = 0;
             while (bpbar < bpe.len() && bpe[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
-            if (util.index_of_str(lacs, bpe[0:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + bpe); }
+            // A METHOD key is "<Type>.<method>" and the census can only see the
+            // bare method name, so match on the part after the last '.'. A free
+            // function's key holds no '.' (module mangling uses '__'), so it
+            // still compares whole.
+            var bpdot: i32 = bpbar;
+            while (bpdot > 0 && bpe[bpdot - 1] != 46) { bpdot = bpdot - 1; }   // 46 = '.'
+            if (util.index_of_str(lacs, bpe[bpdot:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + bpe); }
             bpk = bpk + 1;
         }
     }

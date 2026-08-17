@@ -7933,3 +7933,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   controls on both legs; both re-read the root's BYTE after 3000 rounds. Plus
   the str / rc / freshrecv / irverify / fixpoint / bootstrap subset of
   `internal/e2eselfhost`. Refs #6544 #4451.
+
+- 2026-08-17 (later still): **A fresh string ARGUMENT was reclaimed at a
+  free-function call and leaked at a METHOD call (#6544).** Found while
+  decomposing the `b.relabel(..).tag.len()` row, which turned out not to be one
+  leak but three. Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `s.score("lit")`, string receiver | 23 | 0 |
+  | `(i % 8).score("lit")`, i32 receiver | 24 | 0 |
+  | `score(s, "lit")`, free function (control) | 0 | 0 |
+  | `b.score("lit")`, struct receiver | 46 | 21 |
+  | `b.score()`, struct receiver, no string arg | 22 | 22 |
+
+  So the row decomposes into three INDEPENDENT leaks, and only the first is
+  closed here: the literal-argument box (24), a struct local handed to a method
+  as its RECEIVER (22, untouched), and the fresh STRUCT result of a method
+  consumed by a field read (~48, untouched). The conformance row moves by none
+  of it, because `relabel` MOVES its param into the struct field and is
+  therefore correctly not borrowable — which is the point of the gate.
+
+  The fix is where the asymmetry was: `borrowable_params_of` has keyed methods
+  `"<Type>.<method>"` all along, and `call_arg_borrowable` reads that key
+  fine — the stash was simply only ever written at the free-call site. Three
+  user-method arms (struct, enum, primitive receiver) now share it through
+  `stash_fresh_str_arg` / `free_stashed_str_args`, which replace the inline copy
+  at the free-call site rather than adding a fourth.
+
+  **The census was the hidden half.** `lit_arg_callees_expr` collects the
+  callees whose `BORROW:` entry gets seeded, and it only ever matched a
+  bare-ident callee — a method call fell to the recurse-into-receiver arm, so no
+  method entry was ever seeded and a wired-up stash would have found nothing.
+  The census cannot resolve a receiver's type (no LowerState), so it collects
+  the bare method NAME and the seeding loop matches a registry key by its part
+  after the last '.'. Over-collection is harmless: the lowering looks the entry
+  up by the full `<Type>.<method>` key, so a same-named method on another type
+  only seeds a spare entry — the same reasoning the census already documents.
+
+  VERIFIED: three new rows in `TestSelfHostLiteralArgReclaimIRX86_64`
+  (`method-literal-arg-borrowable-flat`, `…-prim-recv-flat`,
+  `method-fresh-concat-arg-flat`) all FAIL on the parent commit at 98 (leaked);
+  `method-literal-arg-retained-safe` (callee returns the param) and
+  `method-literal-arg-consumed-safe` (the `relabel` shape — param moved into a
+  struct field, both the result's and the receiver's tag re-read) are the
+  refusal controls and pass on both. Arm64 and wasm siblings gained the same
+  rows. Refs #6544 #4355 #4451.
