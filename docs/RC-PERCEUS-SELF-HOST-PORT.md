@@ -7678,3 +7678,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the `arith-tostring-string-operand-alias-safe` negative, and an
   `arith-tostring-operand-churn` row on `TestSelfHostStrConcatTempWasmIR`
   (`__rc_underflow_count()` = 0). Refs #6544 #4353 #4451.
+
+- 2026-08-17 (later): **#6544's ordering, MEASURED: the return-transfer inc must
+  land AFTER the drop coverage, not before.** The previous entry reasoned that
+  the inc and the consuming-site drops "have to land together". Tried it, so the
+  claim is now a number rather than an argument.
+
+  Adding the retain for a bare STRING param return — the two-word change that
+  mirrors the array arm at `irlower.fern:15293` — and nothing else, self-host
+  x86-64, bytes per round:
+
+  | probe | before | inc alone | native |
+  |---|---|---|---|
+  | `base.tail(0).len() + base.len()` (the identity CONTROL) | 0 | 48 | 0 |
+  | `base.tail(4).len()` row | 24 | 72 | 0 |
+  | the whole `alloc_flat_method_identity_return` case | 216 | 264 | 0 |
+
+  Every row gets WORSE. The control is the clearest: it costs nothing today
+  because the aliased result is dropped on the floor and `base`'s own owner frees
+  the box; with an unpaired retain the box reaches rc 2, the owner's dec leaves
+  it at 1, and it never reaches zero.
+
+  That is not a partial win to be finished later — it is a regression for as long
+  as any consuming position lacks a drop, and the set of such positions is the
+  whole language surface, not a list. Native does not have this problem because
+  its drops were already in place at every position `ownedCallResultType` admits.
+
+  **So the order is: drops first, inc last.** The self-host needs a drop at every
+  position that consumes a string-shaped call result — `.len()` receiver,
+  `.to_owned()` receiver, call argument, concat operand, field read, discarded
+  statement — each admitting a USER-DECLARED callee rather than only a
+  registry-proven-fresh one. Until all of them exist the retain cannot be
+  switched on, and until the retain is on none of them can free an aliased
+  return. The two halves are a single atomic slice, and it is a large one.
+
+  A cheaper alternative exists and is worth weighing before porting native's
+  mechanism wholesale: prove per-callee that every return is either FRESH or the
+  RECEIVER (a widening of `body_has_nonfresh_str_return` that also admits
+  `return <receiver>`), then at the consuming site free the result only when its
+  pointer differs from the receiver's. That is sound with NO retain — a fresh box
+  is never the receiver, an identity return always is — and it closes exactly the
+  `tail` / `drop` shapes this case is built from. It diverges from native's
+  is_unique mechanism, which is a real cost under `docs/NATIVE-CONVERGENCE.md`,
+  but it is one analysis plus one pointer compare against a slice that has to
+  move the whole surface at once.
+
+  Refs #6544 #4451.
