@@ -5739,3 +5739,99 @@ func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
 		"function f(c: Color): i32 { return match (c) { Status.Ok => 1i32, _ => 0i32 }; }",
 		`qualifier "Status" does not match scrutinee enum Color`)
 }
+
+// A bare name in a payload slot parses as a BINDER — the parser has no
+// types, so it cannot tell `Wrap(Err2)` (test the payload for the
+// payload-less variant `Err2`) from `Wrap(x)` (bind the payload). It read
+// every such slot as a binder, so `Wrap(Err2)` matched EVERY `Wrap` and
+// returned the wrong answer with no diagnostic. The nested spelling that
+// works is the empty parens, `Wrap(Err2())`, so the collision is reported
+// here — where the slot's type is known — pointing at it.
+func TestPayloadlessVariantNameAsPayloadBinderIsRejected(t *testing.T) {
+	const decls = `enum Res { Ok2(i32), Err2 }
+enum Nest { Wrap(Res), Bare }
+enum Two { Pair(Res, i32), Nil }
+`
+	bad := map[string]string{
+		"statement match": `function f(w: Nest): i32 {
+  match (w) { Wrap(Err2) => { return 9; }, _ => { return 1; } }
+  return 0;
+}`,
+		"expression match": `function f(w: Nest): i32 { return match (w) { Wrap(Err2) => 9i32, _ => 1i32 }; }`,
+		"if let": `function f(w: Nest): i32 {
+  if let Wrap(Err2) = w { return 9; }
+  return 1;
+}`,
+		"second payload slot": `function f(t: Two): i32 {
+  match (t) { Pair(Err2, k) => { return k; }, _ => { return 1; } }
+  return 0;
+}`,
+	}
+	for name, body := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+body)
+			if err == nil {
+				t.Fatalf("want E015 for a payload-less variant name in a payload slot, got none")
+			}
+			if code := firstErrCode(err); code != "E015" {
+				t.Errorf("code = %q, want E015: %v", code, err)
+			}
+			for _, want := range []string{"payload-less variant of enum Res", "write `Err2()`"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("want %q in:\n%v", want, err)
+				}
+			}
+		})
+	}
+
+	good := map[string]string{
+		"ordinary binder": `function f(w: Nest): i32 {
+  match (w) { Wrap(x) => { return match (x) { Ok2(n) => n, Err2 => 0i32 }; }, Bare => { return 2; } }
+  return 0;
+}`,
+		"wildcard slot": `function f(w: Nest): i32 {
+  match (w) { Wrap(_) => { return 1; }, Bare => { return 2; } }
+  return 0;
+}`,
+		"the nested spelling": `function f(w: Nest): i32 {
+  match (w) { Wrap(Err2()) => { return 9; }, _ => { return 1; } }
+  return 0;
+}`,
+		"two ordinary binders": `function f(t: Two): i32 {
+  match (t) { Pair(r, k) => { return match (r) { Ok2(n) => n + k, Err2 => k }; }, Nil => { return 0; } }
+  return 0;
+}`,
+		// `Bare` is payload-less, but of Nest — not of the slot's enum Res.
+		"variant of another enum": `function f(w: Nest): i32 {
+  match (w) { Wrap(Bare) => { return 1; }, Bare => { return 2; } }
+  return 0;
+}`,
+	}
+	for name, body := range good {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
+// firstErrCode reports the code of the first checker error in err, whether
+// err is a single *Error or a diag.Errors aggregate.
+func firstErrCode(err error) string {
+	var errs diag.Errors
+	if errors.As(err, &errs) {
+		for _, e := range errs {
+			var ce *Error
+			if errors.As(e, &ce) {
+				return ce.ErrCode
+			}
+		}
+		return ""
+	}
+	var ce *Error
+	if errors.As(err, &ce) {
+		return ce.ErrCode
+	}
+	return ""
+}

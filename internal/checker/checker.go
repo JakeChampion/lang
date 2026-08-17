@@ -9441,9 +9441,34 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 	for k := range bindings {
 		if k < len(variant.Payloads) {
 			outTypes[k] = substituteType(variant.Payloads[k], sub)
+			if en, clash := c.payloadlessVariantNamed(bindings[k], outTypes[k]); clash {
+				c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in a payload slot is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
+					bindings[k], en, bindings[k])
+			}
 		}
 	}
 	return bindings, outTypes
+}
+
+// payloadlessVariantNamed reports whether name is a payload-less variant of
+// t's enum, naming the enum. A payload slot spelled with such a name parses
+// as a binder, so the arm matches every value of the slot instead of testing
+// the variant the spelling suggests.
+func (c *checker) payloadlessVariantNamed(name string, t ast.Type) (string, bool) {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return "", false
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		return "", false
+	}
+	for i := range ed.Variants {
+		if ed.Variants[i].Name == name && len(ed.Variants[i].Payloads) == 0 {
+			return ed.Name, true
+		}
+	}
+	return "", false
 }
 
 // wildcard). Bindings are typed against the matching variant's

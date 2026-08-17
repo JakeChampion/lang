@@ -4063,9 +4063,9 @@ func (mp *matchPattern) hasNestedSub() bool {
 // identifier immediately followed by `(` (variant-with-payload), `{`
 // (named-field), or `.` (a `mod.Variant` qualifier). A bare identifier —
 // or `_` — stays a binder, so `Some(x)` / `Some(_)` / `Pair(a, b)` are
-// unaffected. Payloadless nested variants (`Some(None)`) are therefore
-// out of scope here (they'd need binder-vs-variant resolution) and remain
-// a plain binder named after the variant, exactly as before.
+// unaffected. A payload-less nested variant is written with the empty
+// parens (`Some(None())`); `Some(None)` is a binder here, and the checker
+// rejects it (E015) rather than letting the arm match every payload.
 func (p *parser) isNestedPatternStart() bool {
 	t := p.peek()
 	if p.atLiteralPattern() {
