@@ -137,6 +137,26 @@ function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Bare) * 1
 		want: 191, // 1 + 90 + 100
 	},
 	{
+		// A flat sibling of a nested arm is merged into the inner match as a
+		// wildcard, so a bare name there was a binder too — `Wrap(Err2)`
+		// beside `Wrap(Ok2(n))` swallowed `Wrap(Third)` and returned 9. The
+		// empty parens are the spelling that tests the tag; this folds all
+		// three payloads so the exit code depends on which arm ran.
+		name: "merged_sibling_payloadless",
+		src: `enum Res { Ok2(i32), Err2, Third }
+enum Nest { Wrap(Res), Bare }
+function g(w: Nest): i32 {
+  match (w) {
+    Wrap(Ok2(n)) => { return n; },
+    Wrap(Err2()) => { return 9; },
+    _ => { return 1; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(Wrap(Ok2(5))) + g(Wrap(Err2)) * 10 + g(Wrap(Third)) * 100; }`,
+		want: 195, // 5 + 90 + 100
+	},
+	{
 		// Outer `_` fallthrough: `Some(Err(_))` matches no inner arm, so the
 		// outer wildcard body runs (rather than a non-exhaustive bail).
 		name: "wildcard_fallthrough",

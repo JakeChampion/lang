@@ -169,12 +169,15 @@ func TestAtBindingWasm(t *testing.T) {
 	}
 }
 
-// `@` on a literal or wildcard sub-pattern is rejected (v1 restriction), and
-// a nested `@` is rejected. (Variant / struct / tuple `@` are supported.)
+// What an `@` still cannot carry. Literal and range sub-patterns became
+// legal in #2698 (`n @ 1..10` is one of the forms the unified grammar is
+// specified around, and TestAtBindingScalar* covers it), leaving `_` — a
+// wildcard arm is the unconditional default at every downstream stage, with
+// no pattern to bind alongside — and a second, nested `@`.
 func TestAtBindingRejected(t *testing.T) {
 	cases := []string{
-		// `@` on a literal
-		`function f(x: i32): i32 { match (x) { n @ 0 => { return 1; }, _ => { return 2; } } return 0; }
+		// `@` on `_`
+		`function f(x: i32): i32 { match (x) { n @ _ => { return 1; } } return 0; }
 function main(): i32 { return 0; }`,
 		// nested `@`
 		`enum Box { Full(i32), Empty }
