@@ -41,8 +41,8 @@ What a 167k-line compiler written in a modern language uses, counted across
 
 | Construct | The language has it | Self-host uses it |
 |---|---|---|
-| Generic functions / structs | ✅ monomorphised, with trait bounds | **2** (`astwalk.fold_expr` / `fold_stmt`, #6993) |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **1** (`astwalk.collect_calls_stmt`'s visitor, #6993) |
+| Generic functions / structs | ✅ monomorphised, with trait bounds | **4** (`astwalk`'s fold spine, #6993) |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **3** top-level fn values (`astwalk`, #6993) |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **0** |
@@ -209,10 +209,50 @@ will hit too:
 - **A visitor with no descent control cannot express every walk.**
   `collect_calls_*` converted cleanly because a node it does not record
   contributes nothing on its own, so a uniform pre-order walk is equivalent to
-  the hand-written one. `collect_qualrefs_*` is not: it records a qualified call
-  at the CALL's position and must then not re-record the callee's field access
-  at its own. Converting that family needs the visitor to be able to say "do not
-  descend", which this pair deliberately does not model yet.
+  the hand-written one. `collect_idents_expr` is not: a nested lambda's
+  contribution is its body's reads MINUS its own bindings, and descending
+  re-adds the names that subtraction removed. Slice two adds the control.
+
+**What the second adoption cost (#6993).** `fold_expr` / `fold_stmt` became
+wrappers over a `fold_expr_pruned` / `fold_stmt_pruned` pair taking a second
+fn-typed parameter, `descend: (parser.Expr) => boolean`, asked after a node is
+visited and before its children are. `collect_idents_expr` and
+`collect_qualrefs_expr` / `_stmt` are now visitors over that spine: 260 lines of
+hand-written recursion deleted against 60 added, so unlike slice one the slice
+is a net subtraction, as predicted.
+
+The prune is a predicate rather than a `(T, boolean)` return or a generic
+`Visit[T]` box — the two shapes the slice was expected to choose between —
+because it is asked once per AST node on the compiler's hottest walk, and a
+boxed answer is an allocation per node where a predicate is a call.
+
+Two findings, and both were only reachable by doing it:
+
+- **`collect_qualrefs_*` did not need descent control after all — it needed a
+  bug fixed.** The reason it could not share a pre-order walk was that it
+  located a qualified CALL at the enclosing call node, so it had to suppress the
+  callee's own field access to avoid recording twice. Native locates the same
+  reference at the field access (`checkPublicFunc(mod, fa.Field, fa.P)`, the
+  dot). The self-host's visibility diagnostic therefore pointed at the opening
+  paren, a module name's width to the right of native's caret, and matching
+  native collapses the two arms into one node case. A "we need a design decision
+  here" turned out to be a divergence wearing a design decision's clothes.
+- **Native mis-lowered the shape the moment a second instantiation appeared.**
+  `ast.CloneBlock` shallow-copied a match arm, so every monomorphised clone
+  shared one `Bindings` backing array while each got its own deep-copied body.
+  shadowrename renamed the second arm's binding in the first instantiation,
+  wrote it through the shared array, and rewrote only that instantiation's body
+  — leaving every later clone's pattern saying `p$1` and its body saying `p`.
+  The stale reference resolved to the other arm's binding of that name and
+  lowering read the wrong struct: a build failure when the two arms' payload
+  types differ, a segfault when they do not. `astwalk.fold_expr` binds `sl` in
+  both its `ExprSlice` and `ExprStructLit` arms and now has three
+  instantiations, which is exactly the trigger. Like #6996 in slice one, this
+  had been sitting in the path the whole time with nothing to find it.
+
+That is the ratchet's cost stated twice over. Neither slice needed a language
+feature built; both needed one *used*, and each turned up a real bug within the
+first hour of using it.
 
 ### 2.5 Types are strings
 

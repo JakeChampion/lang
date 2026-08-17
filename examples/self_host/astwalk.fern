@@ -16,25 +16,57 @@ import "./util";
 // a new parser node is covered everywhere the moment it is covered here (#6993).
 //
 // `visit` reaches it as a nested named function closing over whatever context
-// the consumer needs — see collect_calls_stmt. An arrow lambda works too since
-// #6996; the named form is kept because it reads better at the call site.
+// the consumer needs — see collect_qualrefs_expr. An arrow lambda works too
+// since #6996; the named form is kept because it reads better at the call site.
 pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T): T {
+    return fold_expr_pruned(e, acc, visit, descend_all);
+}
+
+// fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
+// reaches, in source order. Statement nodes themselves are not visited — a
+// consumer that needs those inspects the statement before handing its
+// expressions here.
+pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+    return fold_stmt_pruned(st, acc, visit, descend_all);
+}
+
+// descend_all is the unpruned walk's descent rule: every node's children are
+// reachable.
+function descend_all(e: parser.Expr): boolean { return true; }
+
+// fold_expr_pruned is fold_expr with descent control. `visit` still sees every
+// node the walk reaches; `descend` then decides whether that node's CHILDREN
+// are walked, which is what a consumer needs when one node's contribution
+// already accounts for its subtree.
+//
+// collect_idents_expr is the archetype: a nested lambda contributes its FREE
+// variables, computed by subtracting the lambda's own bindings from its body's
+// reads. Descending would instead append every name the body mentions,
+// including the lambda's own params — the bug that made an enclosing closure
+// treat them as unresolvable captures and decline the lift.
+//
+// The rule is a plain predicate over the node rather than a `(T, boolean)`
+// return or a `Visit[T]` box because it is asked once per node on the
+// compiler's hottest walk: a boxed answer would be one allocation per AST node
+// visited, where a predicate is a call.
+pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
     acc = visit(e, acc);
+    if (!descend(e)) { return acc; }
     match (e) {
         parser.ExprIdent(_) => { return acc; },
         parser.ExprNumber(_) => { return acc; },
         parser.ExprString(_) => { return acc; },
         parser.ExprBool(_) => { return acc; },
         parser.ExprBinary(b) => {
-            acc = fold_expr(b.left, acc, visit);
-            return fold_expr(b.right, acc, visit);
+            acc = fold_expr_pruned(b.left, acc, visit, descend);
+            return fold_expr_pruned(b.right, acc, visit, descend);
         },
-        parser.ExprUnary(u) => { return fold_expr(u.operand, acc, visit); },
+        parser.ExprUnary(u) => { return fold_expr_pruned(u.operand, acc, visit, descend); },
         parser.ExprCall(c) => {
-            acc = fold_expr(c.callee, acc, visit);
+            acc = fold_expr_pruned(c.callee, acc, visit, descend);
             var i: i32 = 0;
             while (i < c.args.len()) {
-                acc = fold_expr(c.args[i], acc, visit);
+                acc = fold_expr_pruned(c.args[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
@@ -42,7 +74,7 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                acc = fold_expr(a.elements[i], acc, visit);
+                acc = fold_expr_pruned(a.elements[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
@@ -50,8 +82,8 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
         parser.ExprMapLit(ml) => {
             var i: i32 = 0;
             while (i < ml.keys.len()) {
-                acc = fold_expr(ml.keys[i], acc, visit);
-                acc = fold_expr(ml.vals[i], acc, visit);
+                acc = fold_expr_pruned(ml.keys[i], acc, visit, descend);
+                acc = fold_expr_pruned(ml.vals[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
@@ -59,7 +91,7 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
         parser.ExprFString(fs) => {
             var i: i32 = 0;
             while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = fold_expr(fs.exprs[i], acc, visit); }
+                if (fs.is_expr[i]) { acc = fold_expr_pruned(fs.exprs[i], acc, visit, descend); }
                 i = i + 1;
             }
             return acc;
@@ -67,34 +99,34 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
         parser.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                acc = fold_expr(t.elements[i], acc, visit);
+                acc = fold_expr_pruned(t.elements[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
         },
         parser.ExprIndex(x) => {
-            acc = fold_expr(x.array, acc, visit);
-            return fold_expr(x.index, acc, visit);
+            acc = fold_expr_pruned(x.array, acc, visit, descend);
+            return fold_expr_pruned(x.index, acc, visit, descend);
         },
         parser.ExprSlice(sl) => {
-            acc = fold_expr(sl.array, acc, visit);
-            acc = fold_expr(sl.start, acc, visit);
-            return fold_expr(sl.end, acc, visit);
+            acc = fold_expr_pruned(sl.array, acc, visit, descend);
+            acc = fold_expr_pruned(sl.start, acc, visit, descend);
+            return fold_expr_pruned(sl.end, acc, visit, descend);
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = fold_expr(sl.base, acc, visit); }
+            if (sl.has_base) { acc = fold_expr_pruned(sl.base, acc, visit, descend); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                acc = fold_expr(sl.field_values[i], acc, visit);
+                acc = fold_expr_pruned(sl.field_values[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
         },
-        parser.ExprFieldAccess(fa) => { return fold_expr(fa.obj, acc, visit); },
+        parser.ExprFieldAccess(fa) => { return fold_expr_pruned(fa.obj, acc, visit, descend); },
         parser.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) {
-                acc = fold_stmt(lm.body[i], acc, visit);
+                acc = fold_stmt_pruned(lm.body[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
@@ -104,48 +136,46 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
     return acc;
 }
 
-// fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
-// reaches, in source order. Statement nodes themselves are not visited — a
-// consumer that needs those inspects the statement before handing its
-// expressions here.
-pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
+// fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
+// expressions it reaches exactly as it does inside an expression tree.
+pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
     match (st) {
-        parser.StmtDefer(d) => { return fold_stmt(d.action, acc, visit); },
-        parser.StmtVar(v) => { return fold_expr(v.init, acc, visit); },
-        parser.StmtReturn(r) => { return fold_expr(r.value, acc, visit); },
-        parser.StmtExpr(e) => { return fold_expr(e.value, acc, visit); },
+        parser.StmtDefer(d) => { return fold_stmt_pruned(d.action, acc, visit, descend); },
+        parser.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
+        parser.StmtReturn(r) => { return fold_expr_pruned(r.value, acc, visit, descend); },
+        parser.StmtExpr(e) => { return fold_expr_pruned(e.value, acc, visit, descend); },
         parser.StmtIf(i) => {
-            acc = fold_expr(i.cond, acc, visit);
+            acc = fold_expr_pruned(i.cond, acc, visit, descend);
             var ti: i32 = 0;
             while (ti < i.then_body.len()) {
-                acc = fold_stmt(i.then_body[ti], acc, visit);
+                acc = fold_stmt_pruned(i.then_body[ti], acc, visit, descend);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
             while (ei < i.else_body.len()) {
-                acc = fold_stmt(i.else_body[ei], acc, visit);
+                acc = fold_stmt_pruned(i.else_body[ei], acc, visit, descend);
                 ei = ei + 1;
             }
             return acc;
         },
         parser.StmtWhile(w) => {
-            acc = fold_expr(w.cond, acc, visit);
+            acc = fold_expr_pruned(w.cond, acc, visit, descend);
             var i: i32 = 0;
             while (i < w.body.len()) {
-                acc = fold_stmt(w.body[i], acc, visit);
+                acc = fold_stmt_pruned(w.body[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
         },
-        parser.StmtAssign(a) => { return fold_expr(a.value, acc, visit); },
+        parser.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
         parser.StmtMatch(m) => {
-            acc = fold_expr(m.scrutinee, acc, visit);
+            acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = fold_expr(m.arms[ai].guard, acc, visit); }
+                if (m.arms[ai].has_guard) { acc = fold_expr_pruned(m.arms[ai].guard, acc, visit, descend); }
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) {
-                    acc = fold_stmt(m.arms[ai].body[bi], acc, visit);
+                    acc = fold_stmt_pruned(m.arms[ai].body[bi], acc, visit, descend);
                     bi = bi + 1;
                 }
                 ai = ai + 1;
@@ -153,10 +183,10 @@ pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T)
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = fold_expr(f.iter, acc, visit);
+            acc = fold_expr_pruned(f.iter, acc, visit, descend);
             var i: i32 = 0;
             while (i < f.body.len()) {
-                acc = fold_stmt(f.body[i], acc, visit);
+                acc = fold_stmt_pruned(f.body[i], acc, visit, descend);
                 i = i + 1;
             }
             return acc;
@@ -168,80 +198,11 @@ pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T)
     return acc;
 }
 
-// collect_idents_expr appends every identifier READ in `e` to `acc`
-// (with duplicates; consumers dedup when building capture lists).
-pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+// ident_of contributes one node's identifier READS. It is the whole of
+// collect_idents_expr that is not the walk.
+function ident_of(e: parser.Expr, acc: string[]): string[] {
     match (e) {
         parser.ExprIdent(id) => { return acc.append(id.name); },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_idents_expr(b.left, acc);
-            return collect_idents_expr(b.right, acc);
-        },
-        parser.ExprUnary(u) => { return collect_idents_expr(u.operand, acc); },
-        parser.ExprCall(c) => {
-            acc = collect_idents_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_idents_expr(c.args[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = collect_idents_expr(a.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprMapLit(ml) => {
-            var i: i32 = 0;
-            while (i < ml.keys.len()) {
-                acc = collect_idents_expr(ml.keys[i], acc);
-                acc = collect_idents_expr(ml.vals[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFString(fs) => {
-            var i: i32 = 0;
-            while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = collect_idents_expr(fs.exprs[i], acc); }
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_idents_expr(t.elements[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_idents_expr(x.array, acc);
-            return collect_idents_expr(x.index, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_idents_expr(sl.array, acc);
-            acc = collect_idents_expr(sl.start, acc);
-            return collect_idents_expr(sl.end, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_idents_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_idents_expr(sl.field_values[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFieldAccess(fa) => { return collect_idents_expr(fa.obj, acc); },
         parser.ExprLambda(lm) => {
             // A nested lambda reads, from the ENCLOSING scope, only its FREE
             // variables — its own params and locally-bound names are bound WITHIN
@@ -251,6 +212,10 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             // `function(y){…}`) leak as spurious references of the outer scope,
             // which makes the enclosing lambda's capture analysis treat `y` as an
             // unresolvable capture and decline the lift (nested closures bail).
+            //
+            // This is why the walk is `not_lambda`-pruned: the subtraction is the
+            // node's whole contribution, and descending would re-add the very
+            // names it removed.
             var inner_used: string[] = [];
             var iu: i32 = 0;
             while (iu < lm.body.len()) { inner_used = collect_idents_stmt(lm.body[iu], inner_used); iu = iu + 1; }
@@ -266,9 +231,25 @@ pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
             }
             return acc;
         },
-        parser.ExprUnknown(_) => { return acc; }
+        _ => { return acc; }
     }
     return acc;
+}
+
+// not_lambda stops the walk at a lambda: ident_of has already accounted for its
+// whole body.
+function not_lambda(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprLambda(_) => { return false; },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// collect_idents_expr appends every identifier READ in `e` to `acc`
+// (with duplicates; consumers dedup when building capture lists).
+pub function collect_idents_expr(e: parser.Expr, acc: string[]): string[] {
+    return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
 
 // subst_ident_expr returns `e` with every identifier READ named `from`
@@ -555,97 +536,15 @@ pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
 // the bundle. The visibility check learned that the expensive way.
 pub struct QualRef { qual: string, name: string, line: i32, col: i32 }
 
-// collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
-// is in `quals` (the module names in scope for the file being walked). The
-// qualifier ident itself is NOT recursed into — it names a module, not a value.
-pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
+// qualref_of records the module-qualified reference `e` makes, if any: a field
+// access whose object is an ident naming a module in scope. `mod.f(…)`'s callee
+// and a bare `mod.CONST` are the same node, so they are one case.
+//
+// The reference is located at the field access, which the parser positions at
+// the dot — matching native, whose rewriter reports this against `fa.P` and not
+// against the enclosing call.
+function qualref_of(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
     match (e) {
-        parser.ExprIdent(_) => { return acc; },
-        parser.ExprNumber(_) => { return acc; },
-        parser.ExprString(_) => { return acc; },
-        parser.ExprBool(_) => { return acc; },
-        parser.ExprBinary(b) => {
-            acc = collect_qualrefs_expr(b.left, quals, acc);
-            return collect_qualrefs_expr(b.right, quals, acc);
-        },
-        parser.ExprUnary(u) => { return collect_qualrefs_expr(u.operand, quals, acc); },
-        parser.ExprCall(c) => {
-            var handled: boolean = false;
-            match (c.callee) {
-                parser.ExprFieldAccess(fa) => {
-                    match (fa.obj) {
-                        parser.ExprIdent(id) => {
-                            if (util.has_str(quals, id.name)) {
-                                acc = acc.append(QualRef { qual: id.name, name: fa.field, line: c.line, col: c.col });
-                                handled = true;
-                            }
-                        },
-                        _ => {}
-                    }
-                    if (!handled) { acc = collect_qualrefs_expr(fa.obj, quals, acc); }
-                },
-                _ => { acc = collect_qualrefs_expr(c.callee, quals, acc); }
-            }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                acc = collect_qualrefs_expr(c.args[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                acc = collect_qualrefs_expr(a.elements[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprMapLit(ml) => {
-            var i: i32 = 0;
-            while (i < ml.keys.len()) {
-                acc = collect_qualrefs_expr(ml.keys[i], quals, acc);
-                acc = collect_qualrefs_expr(ml.vals[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprFString(fs) => {
-            var i: i32 = 0;
-            while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = collect_qualrefs_expr(fs.exprs[i], quals, acc); }
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                acc = collect_qualrefs_expr(t.elements[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.ExprIndex(x) => {
-            acc = collect_qualrefs_expr(x.array, quals, acc);
-            return collect_qualrefs_expr(x.index, quals, acc);
-        },
-        parser.ExprSlice(sl) => {
-            acc = collect_qualrefs_expr(sl.array, quals, acc);
-            acc = collect_qualrefs_expr(sl.start, quals, acc);
-            return collect_qualrefs_expr(sl.end, quals, acc);
-        },
-        parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = collect_qualrefs_expr(sl.base, quals, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                acc = collect_qualrefs_expr(sl.field_values[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        // A bare `mod.NAME` in value position — a const reference, or a
-        // function value. Same rule as the call form.
         parser.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 parser.ExprIdent(id) => {
@@ -655,78 +554,22 @@ pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef
                 },
                 _ => {}
             }
-            return collect_qualrefs_expr(fa.obj, quals, acc);
-        },
-        parser.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                acc = collect_qualrefs_stmt(lm.body[i], quals, acc);
-                i = i + 1;
-            }
             return acc;
         },
-        parser.ExprUnknown(_) => { return acc; }
+        _ => { return acc; }
     }
     return acc;
 }
 
+// collect_qualrefs_expr appends every `<q>.<name>` in `e` whose qualifier `q`
+// is in `quals` (the module names in scope for the file being walked).
+pub function collect_qualrefs_expr(e: parser.Expr, quals: string[], acc: QualRef[]): QualRef[] {
+    function visit(n: parser.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+    return fold_expr(e, acc, visit);
+}
+
 // collect_qualrefs_stmt is collect_qualrefs_expr's statement half.
 pub function collect_qualrefs_stmt(st: parser.Stmt, quals: string[], acc: QualRef[]): QualRef[] {
-    match (st) {
-        parser.StmtDefer(d) => { return collect_qualrefs_stmt(d.action, quals, acc); },
-        parser.StmtVar(v) => { return collect_qualrefs_expr(v.init, quals, acc); },
-        parser.StmtReturn(r) => { return collect_qualrefs_expr(r.value, quals, acc); },
-        parser.StmtExpr(e) => { return collect_qualrefs_expr(e.value, quals, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_qualrefs_expr(i.cond, quals, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_qualrefs_stmt(i.then_body[ti], quals, acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_qualrefs_stmt(i.else_body[ei], quals, acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_qualrefs_expr(w.cond, quals, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_qualrefs_stmt(w.body[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(a) => { return collect_qualrefs_expr(a.value, quals, acc); },
-        parser.StmtMatch(m) => {
-            acc = collect_qualrefs_expr(m.scrutinee, quals, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = collect_qualrefs_expr(m.arms[ai].guard, quals, acc); }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_qualrefs_stmt(m.arms[ai].body[bi], quals, acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_qualrefs_expr(f.iter, quals, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_qualrefs_stmt(f.body[i], quals, acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
+    function visit(n: parser.Expr, a: QualRef[]): QualRef[] { return qualref_of(n, quals, a); }
+    return fold_stmt(st, acc, visit);
 }
