@@ -250,12 +250,65 @@ function main(): i32 {
                            ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false)];
     out = out + "kp_far: " + render(ir.const_propagate(kp_far)) + "\n";
 
-    // 14a. CONTROL FLOW IS A BARRIER: the load after the `if` is not rewritten,
-    //      because this pass does no scope merging and will not assume a binding
-    //      survives a branch. Native merges here; that is a separate port.
-    var kp_cf: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_if(0), ir.op_end(),
+    // 14a. A scope the slot is not written in does not end the binding — the merge
+    //      rule kills what a scope COULD have written, and this if writes nothing.
+    //      Each case below is asserted in both directions, because a merge rule
+    //      that keeps one binding too many is a miscompile the backends cannot see.
+    var kp_cf: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0), ir.op_end(),
                           ir.op_load_local(0)];
-    out = out + "kp_control_flow: " + render(ir.const_propagate(kp_cf)) + "\n";
+    out = out + "kp_if_untouched: " + render(ir.const_propagate(kp_cf)) + "\n";
+
+    // 14a-i. The refusal twin: the arm writes the slot, so the load after the `end`
+    //        cannot assume either value — the arm may not have run.
+    var kp_if_w: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
+                            ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
+                            ir.op_load_local(0)];
+    out = out + "kp_if_written: " + render(ir.const_propagate(kp_if_w)) + "\n";
+
+    // 14a-ii. A write in the ELSE arm kills it just the same, and the then-arm's
+    //         own binding does not leak across the `else` into it.
+    var kp_else_w: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
+                              ir.op_load_local(0), ir.op_drop(), ir.op_else(),
+                              ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
+                              ir.op_load_local(0)];
+    out = out + "kp_else_written: " + render(ir.const_propagate(kp_else_w)) + "\n";
+
+    // 14a-iii. A `block` nothing branches to runs straight through, so a binding
+    //          MADE inside it holds after its end.
+    var kp_blk: ir.Op[] = [ir.op_block(0), ir.op_const_i32(7), ir.op_store_local(0), ir.op_end(),
+                           ir.op_load_local(0)];
+    out = out + "kp_block_straight: " + render(ir.const_propagate(kp_blk)) + "\n";
+
+    // 14a-iv. The refusal twin: a `br` to that block can skip the store, so the
+    //         same binding must not survive it.
+    var kp_blk_br: ir.Op[] = [ir.op_block(0), ir.op_const_i32(1), ir.op_brif(0),
+                              ir.op_const_i32(7), ir.op_store_local(0), ir.op_end(),
+                              ir.op_load_local(0)];
+    out = out + "kp_block_branched: " + render(ir.const_propagate(kp_blk_br)) + "\n";
+
+    // 14a-v. A loop body cannot change this slot, so the binding is assumed INSIDE
+    //        the body — the one place this rule is finer than native's, which drops
+    //        the whole table at a loop — and after it.
+    var kp_loop: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_loop(0),
+                            ir.op_load_local(0), ir.op_drop(), ir.op_end(),
+                            ir.op_load_local(0)];
+    out = out + "kp_loop_invariant: " + render(ir.const_propagate(kp_loop)) + "\n";
+
+    // 14a-vi. The refusal twin: the body writes the slot, so the back-edge re-enters
+    //         with what the body left and NEITHER load may be rewritten.
+    var kp_loop_w: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_loop(0),
+                              ir.op_load_local(0), ir.op_drop(),
+                              ir.op_call_direct("side", 0), ir.op_store_local(0), ir.op_end(),
+                              ir.op_load_local(0)];
+    out = out + "kp_loop_written: " + render(ir.const_propagate(kp_loop_w)) + "\n";
+
+    // 14a-vii. A constant reaches a load nested TWO scopes deep, which is the shape
+    //          the barrier version could never see.
+    var kp_deep: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
+                            ir.op_block(0), ir.op_load_local(0), ir.op_const_i32(3),
+                            ir.op_bin("add", 0, false), ir.op_drop(), ir.op_end(), ir.op_end(),
+                            ir.op_return()];
+    out = out + "kp_nested: " + render(ir.const_propagate(kp_deep)) + "\n";
 
     // 14b. A store of a NON-constant kills the binding — the slot now holds
     //      whatever the call returned.
@@ -275,6 +328,40 @@ function main(): i32 {
     var kp_hex: ir.Op[] = [ir.op_const_i32_text("0x10"), ir.op_store_local(0), ir.op_call_direct("side", 0),
                            ir.op_drop(), ir.op_load_local(0)];
     out = out + "kp_hex_refused: " + render(ir.const_propagate(kp_hex)) + "\n";
+
+    // 14e. The binding source is the REWRITTEN list, so a load this pass just
+    //      replaced is itself a constant source — `var b = a; return b` carries the
+    //      value two slots along in one walk.
+    var kp_chain: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
+                             ir.op_store_local(1), ir.op_load_local(1), ir.op_return()];
+    out = out + "kp_chain: " + render(ir.const_propagate(kp_chain)) + "\n";
+
+    // 14e-i. str_slice_frame is the one op that writes locals without being a store
+    //        — three consecutive slots at `i32_imm - 1` — so a binding on any of
+    //        them ends there. The heap form (immediate 0) writes none and is left
+    //        alone. No program reaches this today, because irlower names those slots
+    //        `!view!` and no store can name them; pinning it keeps the pass sound on
+    //        its own reasoning rather than on that convention.
+    var kp_view: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_str_slice_frame(1),
+                            ir.op_drop(), ir.op_load_local(1)];
+    out = out + "kp_frame_write: " + render(ir.const_propagate(kp_view)) + "\n";
+    var kp_heap: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_str_slice(),
+                            ir.op_drop(), ir.op_load_local(1)];
+    out = out + "kp_heap_slice_kept: " + render(ir.const_propagate(kp_heap)) + "\n";
+
+    // 14f. Idempotent: the second walk has no load left to rewrite. A merge rule
+    //      that kept growing its own output would loop inside optimize_ops.
+    var kp_once: ir.Op[] = ir.const_propagate(kp_deep);
+    var kp_stable: i32 = 0;
+    if (render(ir.const_propagate(kp_once)) == render(kp_once)) { kp_stable = 1; }
+    out = out + "kp_idempotent=" + util.i32_to_string(kp_stable) + "\n";
+
+    // 14g. Through the whole pipeline: the constant crosses the if, the fold then
+    //      collapses the arithmetic, and the dead store goes.
+    var kp_opt: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
+                           ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false),
+                           ir.op_drop(), ir.op_end(), ir.op_return()];
+    out = out + "kp_in_optimize: " + render(ir.optimize_ops(kp_opt)) + "\n";
 
     write(out);
 

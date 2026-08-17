@@ -93,16 +93,49 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"cp_two_tees: const_i32 7 ; tee_local 0 ; const_i32 8 ; tee_local 0\n" +
 		"cp_store_kept: const_i32 7 ; store_local 3\n" +
 		"cp_pipeline: const_i32 14 ; return\n" +
-		// #6638 constant propagation, straight-line only. kp_control_flow is the
-		// restriction made visible: this pass does no scope merging, so a binding is
-		// never assumed to survive a branch. kp_hex_refused inherits the shared
-		// const_i32_readable guard — a non-decimal text constant is not propagated as
-		// though it were its own digits.
+		// #6638 constant propagation. kp_far is the shape fuse_tee structurally
+		// cannot reach: a store and a load that are not adjacent.
 		"kp_far: const_i32 7 ; store_local 0 ; call_direct side/0 ; drop ; const_i32 7 ; const_i32 3 ; add\n" +
-		"kp_control_flow: const_i32 7 ; store_local 0 ; if ; end ; load_local 0\n" +
+		// The merge rule, in both directions on every scope kind. It kills what a
+		// scope COULD have written, so the survivors below are the slots the scope
+		// provably does not touch — and the refusal twin of each is a slot it does.
+		// A wrong verdict here is a miscompile no backend can see, which is why each
+		// pair is pinned rather than sampled.
+		"kp_if_untouched: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; end ; const_i32 7\n" +
+		"kp_if_written: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; call_direct side/0 ; store_local 0 ; end ; load_local 0\n" +
+		// The then-arm still sees the ENTRY binding (const_i32 7 inside the arm); what
+		// it does not see is the other arm's write, and what survives the `end` is
+		// neither.
+		"kp_else_written: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; const_i32 7 ; drop ; else ; call_direct side/0 ; store_local 0 ; end ; load_local 0\n" +
+		"kp_block_straight: block ; const_i32 7 ; store_local 0 ; end ; const_i32 7\n" +
+		"kp_block_branched: block ; const_i32 1 ; brif 0 ; const_i32 7 ; store_local 0 ; end ; load_local 0\n" +
+		// The loop pair is where this rule is FINER than native's, which drops its
+		// whole table at a loop: a slot the body cannot write is still propagated
+		// inside the body, not just after it.
+		"kp_loop_invariant: const_i32 7 ; store_local 0 ; loop ; const_i32 7 ; drop ; end ; const_i32 7\n" +
+		"kp_loop_written: const_i32 7 ; store_local 0 ; loop ; load_local 0 ; drop ; call_direct side/0 ; store_local 0 ; end ; load_local 0\n" +
+		"kp_nested: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; block ; const_i32 7 ; const_i32 3 ; add ; drop ; end ; end ; return\n" +
 		"kp_killed: const_i32 7 ; store_local 0 ; call_direct side/0 ; store_local 0 ; load_local 0\n" +
+		// kp_hex_refused inherits the shared const_i32_readable guard — a non-decimal
+		// text constant is not propagated as though it were its own digits.
 		"kp_text: const_i32_text 7 ; store_local 0 ; call_direct side/0 ; drop ; const_i32_text 7\n" +
-		"kp_hex_refused: const_i32_text 0x10 ; store_local 0 ; call_direct side/0 ; drop ; load_local 0\n"
+		"kp_hex_refused: const_i32_text 0x10 ; store_local 0 ; call_direct side/0 ; drop ; load_local 0\n" +
+		// The binding source is the rewritten list, so the substituted load at slot 0
+		// is itself the constant that binds slot 1 — one walk carries `var b = a`.
+		"kp_chain: const_i32 7 ; store_local 0 ; const_i32 7 ; store_local 1 ; const_i32 7 ; return\n" +
+		// str_slice_frame is the only op that writes a local without being a store —
+		// three slots at `i32_imm - 1` — so a binding on one ends there, while the
+		// heap form (immediate 0) leaves it alone. Unreachable on today's programs,
+		// where irlower names those slots `!view!` and no store can name them; pinned
+		// so the pass is sound on its own reasoning rather than on that convention.
+		"kp_frame_write: const_i32 7 ; store_local 1 ; str_slice frame:1 ; drop ; load_local 1\n" +
+		"kp_heap_slice_kept: const_i32 7 ; store_local 1 ; str_slice ; drop ; const_i32 7\n" +
+		"kp_idempotent=1\n" +
+		// The payoff, through optimize_ops: the constant crosses the if, and the fold
+		// behind it collapses the arm's arithmetic to a single const. The dead
+		// `store_local 0` stays because rewriting a dead store to a drop is the half
+		// of propagate_copies deliberately not ported (it needs slot types).
+		"kp_in_optimize: const_i32 7 ; store_local 0 ; const_i32 1 ; if ; const_i32 10 ; drop ; end ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
