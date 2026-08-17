@@ -8,10 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/native/elf"
+	x86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
 
 // TestWXPageAlignPerArch pins the per-architecture page alignment of the W^X
@@ -1246,3 +1248,81 @@ func TestFuncSyms(t *testing.T) {
 		t.Errorf("sym1 = %+v, want beta@0x2000 size 0x10", got[1])
 	}
 }
+
+// TestInterleavedBssIsNotMaterialised is the #6928 regression gate, and the
+// case TestStaticExecutableDataWXBssNobits above does NOT cover: that one
+// hands the writer an already-ideal blob (initialised prefix, zero tail) and
+// so only proves the trim works when the layout is already right.
+//
+// The code generator does not emit that layout. It opens `.section .bss`,
+// reserves 64 MiB for __fern_strbuf_data, returns to `.text`, and then emits
+// more `.rodata` (vtables, abort messages, float constants). Folded in
+// emission order, the zero run is stranded mid-blob and trailing-zero
+// trimming reaches none of it — which is how a six-line Fern program linked
+// to 67 MB.
+//
+// So this drives the real path: assembler first, on interleaved sections,
+// then the writer. It must hold for both native assemblers.
+func TestInterleavedBssIsNotMaterialised(t *testing.T) {
+	const reserve = 1 << 20 // stand-in for __fern_strbuf_data
+
+	t.Run("x86_64", func(t *testing.T) {
+		src := "" +
+			".intel_syntax noprefix\n" +
+			".text\n" +
+			"_start:\n" +
+			"\tlea rax, [rip + big]\n" +
+			"\tlea rcx, [rip + msg]\n" +
+			"\tret\n" +
+			".section .bss\n" +
+			"big:\n\t.skip " + itoa(reserve) + "\n" +
+			".section .rodata\n" + // initialised data AFTER the reservation
+			"msg:\n\t.asciz \"hi\"\n"
+		text, data, err := x86.AssembleProgramWX(src, elf.TextVAddrWX)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBssNobits(t, elf.StaticExecutableDataX86WX(text, data), len(data), reserve, 0x1000)
+	})
+
+	t.Run("arm64", func(t *testing.T) {
+		src := "" +
+			"\t.text\n" +
+			"\tadrp x0, big\n" +
+			"\tadd x0, x0, :lo12:big\n" +
+			"\tadrp x1, msg\n" +
+			"\tadd x1, x1, :lo12:msg\n" +
+			"\tret\n" +
+			"\t.section .bss\n" +
+			"big:\n\t.skip " + itoa(reserve) + "\n" +
+			"\t.section .rodata\n" +
+			"msg:\n\t.asciz \"hi\"\n"
+		text, data, err := arm64.AssembleProgramWX(src, elf.TextVAddrWX)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertBssNobits(t, elf.StaticExecutableDataWX(text, data), len(data), reserve, 0x10000)
+	})
+}
+
+// assertBssNobits checks that the reserved zero region is present in memory
+// but absent from the file.
+func assertBssNobits(t *testing.T, bin []byte, dataLen, reserve int, page uint64) {
+	t.Helper()
+	pFilesz := u64(bin, 152)
+	pMemsz := u64(bin, 160)
+	if pMemsz != uint64(dataLen) {
+		t.Errorf("p_memsz = %d, want %d — the reservation must still be mapped", pMemsz, dataLen)
+	}
+	if pFilesz >= uint64(reserve) {
+		t.Errorf("p_filesz = %d: the %d-byte .bss reservation is being written to the file", pFilesz, reserve)
+	}
+	if uint64(len(bin)) >= uint64(reserve) {
+		t.Errorf("binary is %d bytes for a %d-byte reservation — .bss is materialised", len(bin), reserve)
+	}
+	if pFilesz > pMemsz {
+		t.Errorf("p_filesz %d > p_memsz %d", pFilesz, pMemsz)
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }

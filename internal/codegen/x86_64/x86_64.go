@@ -7918,7 +7918,10 @@ func (g *generator) emitEprintRuntime() {
 //
 // Single-threaded; only one strbuf active at a time. The 64 MiB cap
 // is generous for the asm-self-host use case (asm.fern's expected
-// output is ~2 MB) but documented.
+// output is ~2 MB) but documented. It costs nothing on disk: the
+// assembler keeps .bss at the tail of the data blob so the ELF writer
+// leaves it to the loader's zero-fill (#6928). It is NOT free on the
+// Mach-O path, which has no zero-fill section.
 func (g *generator) emitStrBufRuntime() {
 	g.line("")
 	g.line(".section .bss")

@@ -36,14 +36,24 @@
 # x86-64. The `warm` and `cli` jobs are x86-only (the aarch64 lane skips the x86
 # driver builds), so there is one architecture to baseline and no per-arch split.
 #
-# REFRESHED after #4111 (8-byte operand-stack slots + real push/pop on the
-# x86-64 backend). Note the two-tier split in that refresh, because it is the
-# most informative thing this file currently records: the drivers WITHOUT the
-# strbuf runtime fell 17.9-19.2%, which is the actual code-density win, while
-# the whole-compiler drivers fell only 3.4-5.0%. The difference is not a
-# codegen effect — `__fern_strbuf_data` reserves 64 MiB of .bss that the
-# linker materialises as zero bytes in the file, so ~79% of `fern.fern` is
-# zeros and no amount of code-density work moves it. See #4109.
+# REFRESHED after #6928 (.bss laid out last, so the ELF writer's zero-fill
+# trim reaches it). TWO INDEPENDENT MOVEMENTS ARE FOLDED INTO THESE NUMBERS
+# and they point opposite ways — do not read either figure as one effect:
+#
+#   1. The five drivers that link the strbuf runtime fell 78-84%, because
+#      `__fern_strbuf_data`'s 64 MiB .bss reservation is no longer written to
+#      the file. Measured on one host, same tree, fix in vs out: fern.fern
+#      85,581,884 -> 18,473,012. That is the #6928 win and it is confined to
+#      those five; for a driver without strbuf the output is BYTE-IDENTICAL
+#      with and without the fix (verified on irlower_run).
+#   2. Every driver also grew ~348 KB of .text against the previous baseline,
+#      from self-host source changes that landed between the two refreshes.
+#      That is why the ten non-strbuf drivers show +3.0% to +8.9% here: it is
+#      main moving, not a codegen regression.
+#
+# Refreshed before that after #4111 (8-byte operand-stack slots + real
+# push/pop on the x86-64 backend), which cut code density ~19% across the
+# board.
 #
 # Refreshed before that after #6894 (exit-sweep drop outlining), which cut
 # every driver: the tracked artifact by 42.5%, the front-end-only drivers by
@@ -68,18 +78,18 @@
 # percentage is what is compared, deliberately, so a small driver's regression is
 # not lost inside a big one's noise.
 
-fern.fern 85239036
-asm_load_run.fern 81168764
-asm_modload_run.fern 80081732
-asm_ir_run.fern 79908796
-asm_run.fern 79440700
-wasm_ir_run.fern 11801500
-wasm_run.fern 11784764
-wasm_runio_run.fern 11750172
-asm_pathprobe_run.fern 11207164
-ssa_lift_scan_run.fern 10882124
-asm_ir_elig_run.fern 10592172
-irlower_run.fern 10110748
-checker_modload_run.fern 4144980
-ssa_emit_run.fern 4060284
-ssa_run.fern 3911244
+fern.fern 18473012
+asm_load_run.fern 14406836
+asm_modload_run.fern 13315708
+asm_ir_run.fern 13142764
+asm_run.fern 12675692
+wasm_ir_run.fern 12149660
+wasm_run.fern 12132924
+wasm_runio_run.fern 12098332
+asm_pathprobe_run.fern 11555324
+ssa_lift_scan_run.fern 11230284
+asm_ir_elig_run.fern 10940332
+irlower_run.fern 10458908
+checker_modload_run.fern 4493140
+ssa_emit_run.fern 4412540
+ssa_run.fern 4259404

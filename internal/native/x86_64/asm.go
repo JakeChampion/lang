@@ -75,10 +75,19 @@ type ripFixup struct {
 // Assembler accumulates encoded machine code and resolves text-label
 // branch/call targets in a final pass.
 type Assembler struct {
-	text         []byte
-	rodata       []byte
+	text   []byte
+	rodata []byte
+	// bss accumulates .bss (zero-initialised) contributions SEPARATELY from
+	// rodata, and is concatenated after it once layout is final. Folding the
+	// two in emission order is what made the ELF writer's trailing-zero trim
+	// useless: `.section .bss` blocks are emitted mid-stream, so the 64 MiB
+	// __fern_strbuf_data reservation had initialised .rodata after it and the
+	// whole run was written to the file (#6928). Kept at the tail, it is
+	// trailing zeros and the loader supplies it via p_memsz.
+	bss          []byte
 	textLabels   map[string]int
 	rodataLabels map[string]int
+	bssLabels    map[string]int
 	relFixups    []relFixup
 	ripFixups    []ripFixup
 	quadSyms     []quadSymFixup
@@ -96,7 +105,9 @@ type LineRow struct {
 
 // quadSymFixup records a ".quad <symbol>" slot in .rodata (a function- or
 // data-pointer table entry) to be filled with the symbol's absolute
-// virtual address once layout is final.
+// virtual address once layout is final. .bss holds no such slot — a symbol
+// address is not zero, so it is initialised data by definition — and
+// emitInts rejects one there rather than silently placing it.
 type quadSymFixup struct {
 	at  int // offset in rodata
 	sym string
@@ -106,6 +117,7 @@ func newAssembler() *Assembler {
 	return &Assembler{
 		textLabels:   map[string]int{},
 		rodataLabels: map[string]int{},
+		bssLabels:    map[string]int{},
 	}
 }
 
@@ -202,10 +214,13 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			if !ok {
 				break
 			}
-			if sec == "text" {
+			switch sec {
+			case "text":
 				a.textLabels[label] = len(a.text)
-			} else if sec == "rodata" {
+			case "rodata":
 				a.rodataLabels[label] = len(a.rodata)
+			case "bss":
+				a.bssLabels[label] = len(a.bss)
 			}
 			line = strings.TrimSpace(rest)
 		}
@@ -258,6 +273,18 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	}
 	rodataVAddr := textVAddr + uint64(rodataBase)
 
+	// .bss sits immediately after .rodata in the blob, 16-aligned so the
+	// widest scalar in it stays naturally aligned. Placing it last is what
+	// lets the ELF writer drop it from the file: everything from bssBase on
+	// is zero, so trailingTrimZeros reaches all of it.
+	if len(a.bss) > 0 {
+		for len(a.rodata)%16 != 0 {
+			a.rodata = append(a.rodata, 0)
+		}
+	}
+	bssBase := rodataBase + len(a.rodata)
+	dataLen := len(a.rodata) + len(a.bss)
+
 	// PIE self-relocation symbols the prologue references via [rip+sym].
 	// Their base-relative vaddrs MUST match where elf.StaticPieExecutableX86
 	// lays the bytes: .rela.dyn is 8-aligned after the data blob, one
@@ -265,7 +292,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	// at vaddr 0 (so [rip+__ehdr_start] yields the runtime load base).
 	var pieSyms map[string]uint64
 	if pie {
-		relaStart := rodataVAddr + uint64(len(a.rodata))
+		relaStart := rodataVAddr + uint64(dataLen)
 		if rem := relaStart % 8; rem != 0 {
 			relaStart += 8 - rem
 		}
@@ -284,6 +311,8 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			symOff = int(v) - int(textVAddr)
 		} else if off, ok := a.rodataLabels[f.sym]; ok {
 			symOff = rodataBase + off
+		} else if off, ok := a.bssLabels[f.sym]; ok {
+			symOff = bssBase + off
 		} else if off, ok := a.textLabels[f.sym]; ok {
 			symOff = off // text symbol: a function address (e.g. a closure body)
 		} else {
@@ -301,6 +330,8 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			abs = textVAddr + uint64(off)
 		} else if off, ok := a.rodataLabels[f.sym]; ok {
 			abs = rodataVAddr + uint64(off)
+		} else if off, ok := a.bssLabels[f.sym]; ok {
+			abs = textVAddr + uint64(bssBase+off)
 		} else {
 			return nil, nil, nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
 		}
@@ -319,7 +350,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		}
 		exportVAddr[name] = textVAddr + uint64(off)
 	}
-	return a.text, a.rodata, relocs, a.textLabels, a.locRows, nil
+	return a.text, append(a.rodata, a.bss...), relocs, a.textLabels, a.locRows, nil
 }
 
 func putLE32(b []byte, at int, v uint32) {
@@ -339,11 +370,13 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 	switch d {
 	case ".text":
 		return "text", nil
-	case ".rodata", ".bss", ".data":
-		// .bss / .data are zero-/value-initialised writable globals
-		// (allocator cursors, freelist). The single program segment is
-		// mapped R+W+X, so they live in the same blob as .rodata.
+	case ".rodata", ".data":
+		// .data is value-initialised writable globals (allocator cursors,
+		// freelist). The single program segment is mapped R+W+X, so it
+		// lives in the same blob as .rodata.
 		return "rodata", nil
+	case ".bss":
+		return "bss", nil
 	case ".section":
 		arg := ""
 		if len(fields) > 1 {
@@ -352,7 +385,9 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 		switch {
 		case strings.Contains(arg, ".text"):
 			return "text", nil
-		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".bss"), strings.Contains(arg, ".data"):
+		case strings.Contains(arg, ".bss"):
+			return "bss", nil
+		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".data"):
 			return "rodata", nil
 		default:
 			return "ignore", nil // e.g. .note.GNU-stack
@@ -373,8 +408,8 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 	if sec == "ignore" {
 		return "ignore", nil
 	}
-	if sec == "rodata" {
-		return "rodata", a.appendRodataDirective(d, strings.TrimSpace(strings.TrimPrefix(line, d)))
+	if sec == "rodata" || sec == "bss" {
+		return sec, a.appendRodataDirective(sec, d, strings.TrimSpace(strings.TrimPrefix(line, d)))
 	}
 	// In .text, alignment directives are advisory for this flat,
 	// single-segment layout (correctness doesn't depend on padding).
