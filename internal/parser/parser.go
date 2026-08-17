@@ -4082,9 +4082,9 @@ func (mp *matchPattern) hasNestedSub() bool {
 // slot can hold, so appending the outer fallthrough after it would produce an
 // arm the checker calls unreachable. A `_` obviously covers; so does a tuple
 // pattern whose elements are all binders or `_`, which is decidable here
-// because a literal element is the only thing that can make one fail. Struct
-// patterns are NOT included: the parser cannot tell a struct from an
-// enum's record-form variant, and only the former is irrefutable.
+// because a literal or variant element is the only thing that can make one
+// fail. Struct patterns are NOT included: the parser cannot tell a struct from
+// an enum's record-form variant, and only the former is irrefutable.
 func coversEveryValue(mp matchPattern) bool {
 	if mp.IsWildcard {
 		return true
@@ -4093,7 +4093,7 @@ func coversEveryValue(mp matchPattern) bool {
 		return false
 	}
 	for _, el := range mp.TupleElems {
-		if el.Literal != nil {
+		if el.Literal != nil || el.VariantName != "" {
 			return false
 		}
 	}
@@ -4127,6 +4127,52 @@ func (p *parser) isNestedPatternStart() bool {
 		}
 	}
 	return false
+}
+
+// tupleElemVariantStart reports whether the identifier at the cursor opens a
+// variant sub-pattern in a tuple element rather than a binder. A binder is
+// followed by `,` or `)`, so `(` (payload list, empty for a payload-less
+// variant) and `.` (a `mod.` qualifier) are both unambiguous.
+func (p *parser) tupleElemVariantStart() bool {
+	n := p.peekAt(1)
+	return n.Kind == lexer.Punct && (n.Text == "(" || n.Text == ".")
+}
+
+// parseTupleElemVariant fills elem with a tuple element's variant sub-pattern
+// `A(x, y)` / `A()` / `mod.A(x)`, leaving the cursor after the closing `)`.
+// Payload slots are plain binders — a nested pattern there is step 3 of the
+// unified grammar, and rejecting it here keeps it loud rather than silent.
+func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
+	nameTok := p.peek()
+	p.advance()
+	elem.VariantName = nameTok.Text
+	if p.match(lexer.Punct, ".") {
+		p.advance()
+		vt, err := p.expect(lexer.Ident, "")
+		if err != nil {
+			return err
+		}
+		elem.VariantModule = elem.VariantName
+		elem.VariantName = vt.Text
+	}
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return err
+	}
+	if !p.match(lexer.Punct, ")") {
+		for {
+			bt, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return err
+			}
+			elem.VariantBindings = append(elem.VariantBindings, bt.Text)
+			if _, ok := p.accept(lexer.Punct, ","); ok {
+				continue
+			}
+			break
+		}
+	}
+	_, err := p.expect(lexer.Punct, ")")
+	return err
 }
 
 // parseMatchPattern parses a single pattern (wildcard / literal / variant
@@ -4164,10 +4210,11 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		pat.IsWildcard = true
 	} else if t.Kind == lexer.Punct && t.Text == "(" {
 		// Tuple pattern: `(p0, p1, …) => …` on a tuple-typed scrutinee.
-		// Each element is a binder name, `_`, or a literal (compared by
-		// equality). At least 2 elements (no-singleton-tuples rule);
-		// nested patterns are not supported. The checker validates the
-		// arity against the scrutinee tuple and types each element.
+		// Each element is a binder name, `_`, a literal (compared by
+		// equality), or a variant sub-pattern `A(x)` / `mod.A(x)` / `A()`.
+		// At least 2 elements (no-singleton-tuples rule). The checker
+		// validates the arity against the scrutinee tuple and types each
+		// element.
 		p.advance()
 		for {
 			et := p.peek()
@@ -4181,11 +4228,15 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 					return pat, err
 				}
 				elem.Literal = lit
+			} else if et.Kind == lexer.Ident && p.tupleElemVariantStart() {
+				if err := p.parseTupleElemVariant(&elem); err != nil {
+					return pat, err
+				}
 			} else if et.Kind == lexer.Ident {
 				p.advance()
 				elem.Name = et.Text
 			} else {
-				return pat, p.errorfCode(et.Pos, "P001", "expected binder, literal, or `_` in tuple pattern, got %s", et.Text)
+				return pat, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, or `_` in tuple pattern, got %s", et.Text)
 			}
 			pat.TupleElems = append(pat.TupleElems, elem)
 			if _, ok := p.accept(lexer.Punct, ","); ok {
@@ -5051,8 +5102,15 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 				names[i] = "_"
 			case el.Literal != nil:
 				return nil, p.refutableBindErr(pos, "a literal tuple element", site)
-			default:
+			case el.VariantName != "":
+				return nil, p.refutableBindErr(pos, "a variant tuple element", site)
+			case el.Name != "":
 				names[i] = el.Name
+			default:
+				// An element kind this site does not know binds nothing, and
+				// falling through with the empty name would make it a silent
+				// discard rather than a diagnostic.
+				return nil, p.errorfCode(pos, "P001", "unsupported tuple element in a %s pattern", site)
 			}
 		}
 		return &ast.Destructure{P: pos, Names: discardNames(names, pos), Init: nil}, nil

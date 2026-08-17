@@ -1229,6 +1229,20 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				f.b.WriteByte('_')
 			case el.Literal != nil:
 				f.formatExpr(el.Literal, precLowest)
+			case el.VariantName != "":
+				if el.VariantModule != "" {
+					f.b.WriteString(el.VariantModule)
+					f.b.WriteByte('.')
+				}
+				f.b.WriteString(el.VariantName)
+				f.b.WriteByte('(')
+				for j, vb := range el.VariantBindings {
+					if j > 0 {
+						f.b.WriteString(", ")
+					}
+					f.b.WriteString(vb)
+				}
+				f.b.WriteByte(')')
 			default:
 				f.b.WriteString(el.Name)
 			}

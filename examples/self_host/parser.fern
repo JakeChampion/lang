@@ -211,12 +211,12 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // slot, the inner match's arm for a nested one — and clears it. Nothing
 // downstream should ever see it set; the checker refuses one that survives,
 // so a fold site nobody added cannot quietly go back to matching every value.
-// tup_kinds / tup_binds / tup_lits carry a TUPLE sub-pattern sitting in payload
-// slot 0 (`Pr((a, b))`), in parse_tuple_arm_pattern's encoding. Pattern cannot
-// express a tuple, so the data rides here and build_merged_arm turns it into a
-// build_tuple_match inner match rather than the variant one. Empty tup_kinds
-// means no tuple sub-pattern.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[] }
+// tup_kinds / tup_binds / tup_lits / tup_pats carry a TUPLE sub-pattern sitting
+// in payload slot 0 (`Pr((a, b))`), in parse_tuple_arm_pattern's encoding.
+// Pattern cannot express a tuple, so the data rides here and build_merged_arm
+// turns it into a build_tuple_match inner match rather than the variant one.
+// Empty tup_kinds means no tuple sub-pattern.
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[], tup_pats: Pattern[] }
 pub struct PatWildcard { tag: i32 }
 pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
@@ -898,7 +898,8 @@ function p_variant(type_name: string, binding: string): Pattern {
     var no_tup_kinds: i32[] = [];
     var no_tup_binds: string[] = [];
     var no_tup_lits: Expr[] = [];
-    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits };
+    var no_tup_pats: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
 }
 // p_variant_n builds a variant pattern binding N payloads as `<prefix>0` …
 // `<prefix>N-1`. p_variant's single `binding` covers only the first, which is
@@ -914,7 +915,8 @@ function p_variant_n(type_name: string, prefix: string, n: i32): Pattern {
     var no_tup_kinds: i32[] = [];
     var no_tup_binds: string[] = [];
     var no_tup_lits: Expr[] = [];
-    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits };
+    var no_tup_pats: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
 }
 // fold_lit_cond moves a pattern's implied literal-payload condition onto the
 // arm being built and clears it from the pattern. Call it at every point the
@@ -926,10 +928,11 @@ function fold_lit_cond(pat: Pattern, guard: Expr, has_guard: boolean): (Pattern,
     match (pat) {
         PatVariant(pv) => {
             if (!pv.has_lit_cond) { return (pat, guard, has_guard); }
-    var no_tup_kinds: i32[] = [];
-    var no_tup_binds: string[] = [];
-    var no_tup_lits: Expr[] = [];
-            var cleared: Pattern = PatVariant { ...pv, lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits };
+            var no_tup_kinds: i32[] = [];
+            var no_tup_binds: string[] = [];
+            var no_tup_lits: Expr[] = [];
+            var no_tup_pats: Pattern[] = [];
+            var cleared: Pattern = PatVariant { ...pv, lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
             if (!has_guard) { return (cleared, pv.lit_cond, true); }
             return (cleared, e_binary("&&", pv.lit_cond, guard), true);
         },
@@ -2769,18 +2772,40 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // declared while a guard-false still falls through to the next arm.
 // The native checker validated arity / exhaustiveness / types before
 // any of this runs on the self-host path, so no diagnostics are
-// re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal.
-struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+// re-implemented here. Element kinds: 0 = binder, 1 = `_`, 2 = literal,
+// 3 = variant sub-pattern (`(A(x), y)`) — elem_pats[k] then holds the
+// PatVariant, and build_tuple_match nests the arm inside a match on the
+// element temp rather than adding a condition. elem_pats runs parallel to
+// elem_kinds with a wildcard filler at every other kind.
+struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+
+// p_variant_binds builds the pattern for a tuple element's variant
+// sub-pattern: `binds` are the payload binders in payload order, empty for
+// the payload-less spelling `A()`.
+function p_variant_binds(type_name: string, binds: string[]): Pattern {
+    if (binds.len() == 0) { return p_variant(type_name, ""); }
+    var extra: string[] = [];
+    var i: i32 = 1;
+    while (i < binds.len()) { extra = extra.append(binds[i]); i = i + 1; }
+    var no_nested: Pattern[] = [];
+    var no_tup_kinds: i32[] = [];
+    var no_tup_binds: string[] = [];
+    var no_tup_lits: Expr[] = [];
+    var no_tup_pats: Pattern[] = [];
+    return PatVariant { type_name: type_name, binding: binds[0], extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
+}
 
 // parse_tuple_arm_pattern consumes `(p0, p1, …)` with the cursor on the
 // opening `(`, returning the element encoding. A parse problem yields
 // elem_kinds.len() == 0 (the callers emit a degenerate stmt).
 
-function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Par) {
+function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Pattern[], Par) {
     var elem_kinds: i32[] = [];
     var binds: string[] = [];
     var lits: Expr[] = [];
+    var pats: Pattern[] = [];
     var none: i32[] = [];
+    var no_pats: Pattern[] = [];
     p = p.advance(); // consume `(`
     while (p.peek_punct() != ")" && !p.at_end()) {
         var n: string = p.peek_ident();
@@ -2789,28 +2814,63 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Par) {
             elem_kinds = elem_kinds.append(1);
             binds = binds.append("");
             lits = lits.append(e_bool(true));
+            pats = pats.append(p_wildcard());
+        } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
+            // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
+            // (payload list, empty for a payload-less variant) and `.` (a
+            // `mod.` qualifier) both say variant unambiguously. Payload slots
+            // are plain binders — a nested pattern or a literal there is not
+            // the element grammar, and bailing keeps it loud.
+            var vname: string = n;
+            p = p.advance();
+            while (p.peek_punct() == ".") {
+                p = p.advance();
+                var seg: string = p.peek_ident();
+                if (seg.len() == 0) { return (none, [], [], no_pats, p); }
+                vname = vname + "." + seg;
+                p = p.advance();
+            }
+            if (p.peek_punct() != "(") { return (none, [], [], no_pats, p); }
+            p = p.advance();
+            var vbinds: string[] = [];
+            while (p.peek_punct() != ")" && !p.at_end()) {
+                var vb: string = p.peek_ident();
+                if (vb.len() == 0) { return (none, [], [], no_pats, p); }
+                vbinds = vbinds.append(vb);
+                p = p.advance();
+                if (p.peek_punct() == ",") { p = p.advance(); continue; }
+                break;
+            }
+            if (p.peek_punct() != ")") { return (none, [], [], no_pats, p); }
+            p = p.advance();
+            elem_kinds = elem_kinds.append(3);
+            binds = binds.append("");
+            lits = lits.append(e_bool(true));
+            pats = pats.append(p_variant_binds(vname, vbinds));
         } else if (n.len() > 0) {
             p = p.advance();
             elem_kinds = elem_kinds.append(0);
             binds = binds.append(n);
             lits = lits.append(e_bool(true));
+            pats = pats.append(p_wildcard());
         } else if (p.peek_is_pat_literal()) {
             var (le_expr, le_p) = parse_expr(p);
             p = le_p;
             elem_kinds = elem_kinds.append(2);
             binds = binds.append("");
             lits = lits.append(le_expr);
+            pats = pats.append(p_wildcard());
         } else {
-            return (none, [], [], p);
+            return (none, [], [], no_pats, p);
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
     if (p.peek_punct() == ")") { p = p.advance(); }
     if (elem_kinds.len() < 2) {
-        return (none, [], [], p);
+        return (none, [], [], no_pats, p);
     }
-    return (elem_kinds, binds, lits, p);
+    return (elem_kinds, binds, lits, pats, p);
 }
 
 // build_tuple_match assembles the desugared statement described above.
@@ -2905,6 +2965,25 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
             while (bi2 < binds.len()) { inner = inner.append(binds[bi2]); bi2 = bi2 + 1; }
             var ab: i32 = 0;
             while (ab < a.body.len()) { inner = inner.append(a.body[ab]); ab = ab + 1; }
+        }
+        // A variant sub-pattern element (`(A(x), y)`) tests the element's tag
+        // and binds its payloads — which is exactly what a match arm does, so
+        // the arm's whole matched path nests inside one match per such element
+        // (innermost = last element). The `done` flag is set inside, so a
+        // failing tag test falls through to the next arm the way a failing
+        // literal test does.
+        var wi: i32 = a.elem_kinds.len() - 1;
+        while (wi >= 0) {
+            if (a.elem_kinds[wi] == 3) {
+                var mk_arms: MatchArm[] = [];
+                mk_arms = mk_arms.append(MatchArm { pattern: a.elem_pats[wi], body: inner, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+                var mk_skip: Stmt[] = [];
+                mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+                var mk_wrap: Stmt[] = [];
+                mk_wrap = mk_wrap.append(s_match_at(e_ident_at(base + "_e" + util.i32_to_string(wi), a.line, a.col), mk_arms, a.line, a.col));
+                inner = mk_wrap;
+            }
+            wi = wi - 1;
         }
         outer = outer.append(s_if(cond, inner, []));
         ai = ai + 1;
@@ -3343,23 +3422,23 @@ function parse_match_expr(p: Par): IfChain {
             // same IR-eligible struct-array shape as the statement form.
             var etpats: TupArm[] = [];
             if (p.peek_punct() == "(") {
-                var (etpr_elem_kinds, etpr_binds, etpr_lits, etpr_p) = parse_tuple_arm_pattern(p);
+                var (etpr_elem_kinds, etpr_binds, etpr_lits, etpr_pats, etpr_p) = parse_tuple_arm_pattern(p);
                 p = etpr_p;
                 if (etpr_elem_kinds.len() == 0) {
                     return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                 }
-                etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
+                etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, elem_pats: etpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
                 // Tuple or-patterns: one TupArm per `|` alternative sharing
                 // the guard + body (per-alternative binds), same as the
                 // statement form and the native per-alternative desugar.
                 while (p.peek_punct() == "|") {
                     p = p.advance();
-                    var (etor_kinds, etor_binds, etor_lits, etor_p) = parse_tuple_arm_pattern(p);
+                    var (etor_kinds, etor_binds, etor_lits, etor_pats, etor_p) = parse_tuple_arm_pattern(p);
                     p = etor_p;
                     if (etor_kinds.len() == 0) {
                         return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                     }
-                    etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
+                    etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, elem_pats: etor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
                 }
             } else {
                 var (etwp_pattern, etwp_p) = parse_pattern(p);
@@ -3392,14 +3471,15 @@ function parse_match_expr(p: Par): IfChain {
             if (etfirst) { rt = etrt; etfirst = false; }
             if (et_wild) {
                 var etw_kinds: i32[] = [];
+                var etw_pats: Pattern[] = [];
                 var etw_binds: string[] = [];
                 var etw_lits: Expr[] = [];
-                etarms = etarms.append(TupArm { is_wild: true, elem_kinds: etw_kinds, binds: etw_binds, lits: etw_lits, at_binding: "", guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
+                etarms = etarms.append(TupArm { is_wild: true, elem_kinds: etw_kinds, binds: etw_binds, lits: etw_lits, elem_pats: etw_pats, at_binding: "", guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
             } else {
                 var etalt: i32 = 0;
                 while (etalt < etpats.len()) {
                     var etpa: TupArm = etpats[etalt];
-                    etarms = etarms.append(TupArm { is_wild: false, elem_kinds: etpa.elem_kinds, binds: etpa.binds, lits: etpa.lits, at_binding: et_at, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
+                    etarms = etarms.append(TupArm { is_wild: false, elem_kinds: etpa.elem_kinds, binds: etpa.binds, lits: etpa.lits, elem_pats: etpa.elem_pats, at_binding: et_at, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
                     etalt = etalt + 1;
                 }
             }
@@ -3416,7 +3496,7 @@ function parse_match_expr(p: Par): IfChain {
         var etvi: i32 = 0;
         while (etvi < etarms.len()) {
             var etva: TupArm = etarms[etvi];
-            etvarms = etvarms.append(TupArm { is_wild: etva.is_wild, elem_kinds: etva.elem_kinds, binds: etva.binds, lits: etva.lits, at_binding: etva.at_binding, guard: etva.guard, has_guard: etva.has_guard, body: value_arm_body(etva.body, etval), line: etva.line, col: etva.col });
+            etvarms = etvarms.append(TupArm { is_wild: etva.is_wild, elem_kinds: etva.elem_kinds, binds: etva.binds, lits: etva.lits, elem_pats: etva.elem_pats, at_binding: etva.at_binding, guard: etva.guard, has_guard: etva.has_guard, body: value_arm_body(etva.body, etval), line: etva.line, col: etva.col });
             etvi = etvi + 1;
         }
         return IfChain { par: p, stmt: build_tuple_match(sr_expr, etvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: etval };
@@ -3839,6 +3919,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
     var tup_kinds: i32[] = [];
     var tup_binds: string[] = [];
     var tup_lits: Expr[] = [];
+    var tup_pats: Pattern[] = [];
     var name: string = p.peek_ident();
     // `n @ Variant(...)` — bind the whole matched value to `n` while also
     // matching the variant. Consume the `IDENT @` prefix; the variant name
@@ -3945,11 +4026,12 @@ function parse_pattern(p: Par): (Pattern, Par) {
                 // A TUPLE sub-pattern in the slot (`Pr((a, b))`). Pattern has
                 // no tuple case, so the elements ride on PatVariant and
                 // build_merged_arm turns them into a tuple inner match.
-                var (tk, tb, tl, tp) = parse_tuple_arm_pattern(p);
+                var (tk, tb, tl, tpp, tp) = parse_tuple_arm_pattern(p);
                 p = tp;
                 tup_kinds = tk;
                 tup_binds = tb;
                 tup_lits = tl;
+                tup_pats = tpp;
                 binding = "__tupslot";
                 bn = bn + 1;
             } else if (p.peek_is_pat_literal()) {
@@ -3983,7 +4065,7 @@ function parse_pattern(p: Par): (Pattern, Par) {
         }
         if (p.peek_punct() == ")") { p = p.advance(); }
     }
-    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits }, p);
+    return (PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: field_names, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats }, p);
 }
 
 // prepend_stmt returns a fresh statement list with `s` in front of `body`.
@@ -4099,7 +4181,7 @@ function group_has_tuple(arms: MatchArm[], lo: i32, hi: i32): boolean {
 function tuple_elems_irrefutable(kinds: i32[]): boolean {
     var i: i32 = 0;
     while (i < kinds.len()) {
-        if (kinds[i] == 2) { return false; }
+        if (kinds[i] == 2 || kinds[i] == 3) { return false; }
         i = i + 1;
     }
     return true;
@@ -4144,6 +4226,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     if (group_has_tuple(arms, lo, hi)) {
         var tarms: TupArm[] = [];
         var no_k: i32[] = [];
+        var no_p: Pattern[] = [];
         var no_b: string[] = [];
         var no_l: Expr[] = [];
         var tuple_covers: boolean = false;
@@ -4154,14 +4237,14 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
                 PatVariant(gv2) => {
                     if (gv2.tup_kinds.len() > 0) {
                         if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds)) { tuple_covers = true; }
-                        tarms = tarms.append(TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col });
+                        tarms = tarms.append(TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col });
                     } else {
                         var b2: Stmt[] = ga.body;
                         if (gv2.binding.len() > 0 && gv2.binding != "_") {
                             b2 = prepend_stmt(s_var(gv2.binding, "", e_ident(tmp)), ga.body);
                         }
                         if (!ga.has_guard) { tuple_covers = true; }
-                        tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col });
+                        tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col });
                     }
                 },
                 PatWildcard(w2) => {}
@@ -4172,7 +4255,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         // covers every value — an all-binder tuple arm does, and appending
         // after it would emit an arm that can never run.
         if (!tuple_covers && has_fall) {
-            tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col });
+            tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col });
         }
         var tmatch: Stmt = build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col);
         var t_no_extra: string[] = [];
@@ -4180,7 +4263,8 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         var t_nk: i32[] = [];
         var t_nb: string[] = [];
         var t_nl: Expr[] = [];
-        var t_merged: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl };
+        var t_np: Pattern[] = [];
+        var t_merged: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np };
         var t_body: Stmt[] = [tmatch];
         return MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
     }
@@ -4191,7 +4275,8 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     var no_tup_kinds: i32[] = [];
     var no_tup_binds: string[] = [];
     var no_tup_lits: Expr[] = [];
-    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits };
+    var no_tup_pats: Pattern[] = [];
+    var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
     var body: Stmt[] = [inner_match];
     return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
 }
@@ -4244,24 +4329,24 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             // on the IR-eligible path — no bare nested-array locals.
             var tpats: TupArm[] = [];
             if (p.peek_punct() == "(") {
-                var (tpr_elem_kinds, tpr_binds, tpr_lits, tpr_p) = parse_tuple_arm_pattern(p);
+                var (tpr_elem_kinds, tpr_binds, tpr_lits, tpr_pats, tpr_p) = parse_tuple_arm_pattern(p);
                 p = tpr_p;
                 if (tpr_elem_kinds.len() == 0) {
                     return (s_unknown("bad tuple pattern"), p);
                 }
-                tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tpr_elem_kinds, binds: tpr_binds, lits: tpr_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
+                tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tpr_elem_kinds, binds: tpr_binds, lits: tpr_lits, elem_pats: tpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
                 // Tuple or-patterns: `(1, 2) | (3, 4) => …`. Each `|`
                 // alternative becomes its own TupArm sharing the guard +
                 // body (per-alternative binds), matching the literal path
                 // above and the native per-alternative desugar.
                 while (p.peek_punct() == "|") {
                     p = p.advance();
-                    var (tor_kinds, tor_binds, tor_lits, tor_p) = parse_tuple_arm_pattern(p);
+                    var (tor_kinds, tor_binds, tor_lits, tor_pats, tor_p) = parse_tuple_arm_pattern(p);
                     p = tor_p;
                     if (tor_kinds.len() == 0) {
                         return (s_unknown("bad tuple pattern"), p);
                     }
-                    tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tor_kinds, binds: tor_binds, lits: tor_lits, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
+                    tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tor_kinds, binds: tor_binds, lits: tor_lits, elem_pats: tor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
                 }
             } else {
                 var (twp_pattern, twp_p) = parse_pattern(p);
@@ -4282,14 +4367,15 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             p = tbb_p;
             if (t_wild) {
                 var tw_kinds: i32[] = [];
+                var tw_pats: Pattern[] = [];
                 var tw_binds: string[] = [];
                 var tw_lits: Expr[] = [];
-                tarms = tarms.append(TupArm { is_wild: true, elem_kinds: tw_kinds, binds: tw_binds, lits: tw_lits, at_binding: "", guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
+                tarms = tarms.append(TupArm { is_wild: true, elem_kinds: tw_kinds, binds: tw_binds, lits: tw_lits, elem_pats: tw_pats, at_binding: "", guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
             } else {
                 var talt: i32 = 0;
                 while (talt < tpats.len()) {
                     var tpa: TupArm = tpats[talt];
-                    tarms = tarms.append(TupArm { is_wild: false, elem_kinds: tpa.elem_kinds, binds: tpa.binds, lits: tpa.lits, at_binding: t_at, guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
+                    tarms = tarms.append(TupArm { is_wild: false, elem_kinds: tpa.elem_kinds, binds: tpa.binds, lits: tpa.lits, elem_pats: tpa.elem_pats, at_binding: t_at, guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
                     talt = talt + 1;
                 }
             }
@@ -5203,7 +5289,8 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var no_tup_kinds: i32[] = [];
             var no_tup_binds: string[] = [];
             var no_tup_lits: Expr[] = [];
-            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits };
+            var no_tup_pats: Pattern[] = [];
+            var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
             var le_arms: MatchArm[] = [];
             le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
             le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });

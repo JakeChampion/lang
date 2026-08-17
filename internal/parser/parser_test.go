@@ -2020,6 +2020,76 @@ func TestTupleMatchPatternParses(t *testing.T) {
 	}
 }
 
+// TestTupleElemVariantPatternParses pins the variant sub-pattern element
+// `(A(x), y)`: the payloads land on the element, not on the arm, and the
+// payload-less spelling is the empty parens (a bare `A` stays a binder, which
+// the checker rejects with E015). `mod.A(x)` carries the qualifier the same
+// way an arm-position pattern does.
+func TestTupleElemVariantPatternParses(t *testing.T) {
+	prog, err := Parse(`enum Sh { A(i32), B, C(i32, i32) }
+	function f(p: (Sh, i32)): i32 {
+		match (p) {
+			(A(x), y) => { return x + y; },
+			(B(), y) => { return y; },
+			(m.C(q, r), _) => { return q + r; },
+			(z, y) => { return y; }
+		}
+		return 0;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Match; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	e0 := m.Arms[0].TupleElems
+	if len(e0) != 2 || e0[0].VariantName != "A" || len(e0[0].VariantBindings) != 1 ||
+		e0[0].VariantBindings[0] != "x" || e0[0].Name != "" || e0[1].Name != "y" {
+		t.Errorf("arm 0 elems = %#v, want (A(x), binder y)", e0)
+	}
+	e1 := m.Arms[1].TupleElems
+	if len(e1) != 2 || e1[0].VariantName != "B" || len(e1[0].VariantBindings) != 0 {
+		t.Errorf("arm 1 elems = %#v, want (B(), binder y)", e1)
+	}
+	e2 := m.Arms[2].TupleElems
+	if len(e2) != 2 || e2[0].VariantModule != "m" || e2[0].VariantName != "C" ||
+		len(e2[0].VariantBindings) != 2 || e2[0].VariantBindings[1] != "r" {
+		t.Errorf("arm 2 elems = %#v, want (m.C(q, r), _)", e2)
+	}
+	// A bare name is still a binder — the spelling is what distinguishes them.
+	e3 := m.Arms[3].TupleElems
+	if len(e3) != 2 || e3[0].VariantName != "" || e3[0].Name != "z" {
+		t.Errorf("arm 3 elems = %#v, want (binder z, binder y)", e3)
+	}
+}
+
+// A variant element can fail to match, so the irrefutable binding sites have
+// to refuse it the way they refuse a literal element. They share
+// irrefutableDestructure, whose binder branch took `el.Name` unconditionally —
+// which for a variant element is the empty string, so `let (A(x), y) = t;`
+// bound a nameless local and silently discarded the pattern.
+func TestTupleElemVariantIsRefutableAtBindingSites(t *testing.T) {
+	const decls = "enum Sh { A(i32), B }\n"
+	for name, src := range map[string]string{
+		"let destructure": `function f(t: (Sh, i32)): i32 {
+			let (A(x), y) = t;
+			return y;
+		}`,
+		"parameter": `function f((A(x), y): (Sh, i32)): i32 { return y; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse(decls + src)
+			if err == nil {
+				t.Fatal("want a refutable-pattern error, got none")
+			}
+			if !strings.Contains(err.Error(), "a variant tuple element can fail to match") {
+				t.Errorf("want the refutable-element diagnostic, got: %v", err)
+			}
+		})
+	}
+}
+
 // Tuple patterns parse in expression-form match arms too, and the
 // remaining error shapes hold: singleton tuple patterns and nested tuple
 // patterns are parse errors. (Tuple or-patterns now parse — see

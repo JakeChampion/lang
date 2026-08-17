@@ -6763,8 +6763,53 @@ func (b *builder) tupleMatchElemIdent(ptrSlot int32, offs []int32, elems []ast.T
 	return name
 }
 
+// tupleMatchArmTest emits the arm's element test, leaving one i32 boolean on
+// the operand stack, and reports whether it emitted anything at all (false =
+// irrefutable arm, every element a binder or `_`).
+//
+// Literal elements go through an AST `==` (tupleMatchArmCond) so the
+// comparison settles the way emitLiteralMatch's does — OpStrEq for strings,
+// float compares, the two-word string ABI. A variant element has no AST
+// spelling: it is a tag load at offset 0 of the element pointer. The two
+// halves are combined with a non-short-circuiting OpAnd, which is sound
+// because every element test is a pure read of the borrowed tuple box.
+func (b *builder) tupleMatchArmTest(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) (bool, error) {
+	emitted := false
+	if cond := b.tupleMatchArmCond(arm, tupleElems, ptrSlot, offs, elems, elemName); cond != nil {
+		if err := b.expr(cond); err != nil {
+			return false, err
+		}
+		emitted = true
+	}
+	for k, el := range tupleElems {
+		if el.VariantName == "" || k >= len(elems) || k >= len(offs) {
+			continue
+		}
+		et, isEnum := elems[k].(ast.EnumType)
+		if !isEnum {
+			return false, fmt.Errorf("ir: variant pattern on non-enum tuple element %d (compiler bug)", k)
+		}
+		_, varIdx, _, ok := b.lookupVariantOn(el.VariantName, et.Name)
+		if !ok {
+			return false, fmt.Errorf("ir: tuple pattern references unknown variant %q", el.VariantName)
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+		b.emit(Op{Kind: OpAdd})
+		b.emit(payloadLoadOpFor(elems[k], b.ptrW))
+		b.emit(Op{Kind: OpMatchTag})
+		b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+		b.emit(Op{Kind: OpEq})
+		if emitted {
+			b.emit(Op{Kind: OpAnd})
+		}
+		emitted = true
+	}
+	return emitted, nil
+}
+
 // tupleMatchArmCond builds the arm's literal-element condition as an
-// AST expression (nil when the arm is irrefutable — all binders / `_`).
+// AST expression (nil when no element is a literal).
 func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatElem, ptrSlot int32, offs []int32, elems []ast.Type, elemName []string) ast.Expr {
 	var cond ast.Expr
 	for k, el := range tupleElems {
@@ -6798,19 +6843,44 @@ func (b *builder) tupleMatchArmCond(arm ast.Position, tupleElems []ast.TuplePatE
 func (b *builder) tupleMatchBindArm(tupleElems []ast.TuplePatElem, bindingTypes []ast.Type, ptrSlot int32, offs []int32) func() {
 	restores := []func(){}
 	for k, el := range tupleElems {
-		if el.Name == "" || k >= len(offs) {
+		if k >= len(offs) {
 			continue
 		}
-		bt := ast.Type(ast.NumberType{})
+		elT := ast.Type(ast.NumberType{})
 		if k < len(bindingTypes) && bindingTypes[k] != nil {
-			bt = bindingTypes[k]
+			elT = bindingTypes[k]
 		}
-		slot, restore := b.bindingSlotScoped(el.Name, bt)
+		if el.VariantName != "" {
+			// The element is an enum box; its payloads sit at the same
+			// offsets a top-level variant arm binds from.
+			poffs, _ := payloadLayout(el.VariantBindingTypes, len(el.VariantBindings), b.ptrW)
+			for i, name := range el.VariantBindings {
+				bt := ast.Type(ast.NumberType{})
+				if i < len(el.VariantBindingTypes) && el.VariantBindingTypes[i] != nil {
+					bt = el.VariantBindingTypes[i]
+				}
+				slot, restore := b.bindingSlotScoped(name, bt)
+				restores = append(restores, restore)
+				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+				b.emit(Op{Kind: OpConstI32, I32: offs[k]})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(payloadLoadOpFor(elT, b.ptrW))
+				b.emit(Op{Kind: OpConstI32, I32: poffs[i]})
+				b.emit(Op{Kind: OpAdd})
+				b.emit(payloadLoadOpFor(bt, b.ptrW))
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+			continue
+		}
+		if el.Name == "" {
+			continue
+		}
+		slot, restore := b.bindingSlotScoped(el.Name, elT)
 		restores = append(restores, restore)
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(Op{Kind: OpConstI32, I32: offs[k]})
 		b.emit(Op{Kind: OpAdd})
-		b.emit(payloadLoadOpFor(bt, b.ptrW))
+		b.emit(payloadLoadOpFor(elT, b.ptrW))
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
 	return func() {
@@ -6856,11 +6926,11 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
-		if cond != nil {
-			if err := b.expr(cond); err != nil {
-				return err
-			}
+		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if err != nil {
+			return err
+		}
+		if tested {
 			b.openIf(BlockTypeVoid)
 		}
 		// Bind BEFORE the guard so the guard sees the arm's names.
@@ -6888,7 +6958,7 @@ func (b *builder) emitTupleMatch(n *ast.Match) error {
 		if arm.Guard != nil {
 			b.closeScope()
 		}
-		if cond != nil {
+		if tested {
 			b.closeScope()
 		}
 	}
@@ -6957,11 +7027,11 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 			b.brTo(exitDepth, false)
 			continue
 		}
-		cond := b.tupleMatchArmCond(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
-		if cond != nil {
-			if err := b.expr(cond); err != nil {
-				return err
-			}
+		tested, err := b.tupleMatchArmTest(arm.P, arm.TupleElems, ptrSlot, offs, tup.Elems, elemName)
+		if err != nil {
+			return err
+		}
+		if tested {
 			b.openIf(BlockTypeVoid)
 		}
 		restoreBinds := b.tupleMatchBindArm(arm.TupleElems, arm.BindingTypes, ptrSlot, offs)
@@ -6989,7 +7059,7 @@ func (b *builder) emitTupleMatchExpr(n *ast.MatchExpr) error {
 		if arm.Guard != nil {
 			b.closeScope()
 		}
-		if cond != nil {
+		if tested {
 			b.closeScope()
 		}
 	}
