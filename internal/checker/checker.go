@@ -85,6 +85,18 @@ type Info struct {
 	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
 	// uses this map to turn `p.area()` into `__method_Point_area(p)`.
 	Methods map[string]string
+	// TraitMethods is Methods split by providing trait: the key is
+	// `<Trait>.<Type>.<MethodName>` and the value the mangled top-level
+	// name, so the two traits that would collide on one flat `Methods`
+	// key stay individually addressable. Only impl-provided methods and
+	// associated functions appear — an inherent method has no trait.
+	TraitMethods map[string]string
+	// MethodOwners is the reverse index: `<Type>.<MethodName>` to the
+	// names of the traits providing it, sorted so the order does not
+	// depend on declaration or map iteration. An inherent method
+	// contributes no entry, so a missing key means "not from a trait"
+	// and a multi-entry value means the flat `Methods` key is ambiguous.
+	MethodOwners map[string][]string
 	// MethodSources records the canonical source-module path each
 	// registered method's body came from. Mangled-name keys mirror
 	// the values in Methods (e.g. `__method_i32_abs` →
@@ -107,6 +119,11 @@ type Info struct {
 	// loading. Copied onto Info at the start of Check so the
 	// dispatch path doesn't need a back-reference to the Program.
 	ModuleImports map[string]map[string]bool
+	// DirectImports mirrors `ast.Program.DirectImports` — the same shape
+	// as ModuleImports but without the transitive step, so a trait can be
+	// ranked by whether the calling module imported (or declared) it
+	// itself. Copied onto Info alongside ModuleImports.
+	DirectImports map[string]map[string]bool
 	// VariantCallPayloads is keyed by every variant-construction
 	// Call (`Some(42)`, `Ok(v)`, …) with the variant's payload
 	// types AFTER the checker has substituted any type-parameter
@@ -776,8 +793,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Enums:               map[string]*ast.EnumDecl{},
 			Resources:           map[string]*ast.ResourceDecl{},
 			Methods:             map[string]string{},
+			TraitMethods:        map[string]string{},
+			MethodOwners:        map[string][]string{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
+			DirectImports:       prog.DirectImports,
 			VariantCallPayloads: map[*ast.Call][]ast.Type{},
 			GenericFuncs:        map[string]*ast.FuncDecl{},
 			GenericStructs:      map[string]*ast.StructDecl{},
@@ -1720,7 +1740,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// pre-populate Methods + FuncSigs so the rewrite finds them
 	// and so codegen can resolve the call to a runtime helper
 	// emitted at the same name.
-	registerMethod := func(structName, methodName string, params []ast.Type, result ast.Type) {
+	registerStructMethod := func(structName, methodName string, params []ast.Type, result ast.Type) {
 		mangled := "__method_" + structName + "_" + methodName
 		c.info.Methods[structName+"."+methodName] = mangled
 		// First param is the receiver (the auto-injected struct).
@@ -1728,11 +1748,11 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
 	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
-	registerMethod("Reader", "read_line", nil, optionString)
-	registerMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}}, optionString)
-	registerMethod("Reader", "close", nil, optionIoErr)
-	registerMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
-	registerMethod("Writer", "close", nil, optionIoErr)
+	registerStructMethod("Reader", "read_line", nil, optionString)
+	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}}, optionString)
+	registerStructMethod("Reader", "close", nil, optionIoErr)
+	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	registerStructMethod("Writer", "close", nil, optionIoErr)
 
 	// Map[K, V] — generic IndexMap-shaped associative
 	// container per PR 4 of docs/LANGUAGE-DIRECTION.md. The
@@ -1926,7 +1946,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 
 	// Built-in string methods. The receiver type is
 	// StringType (not StructType), so we can't use
-	// `registerMethod` directly — that helper hardcodes
+	// `registerStructMethod` directly — that helper hardcodes
 	// `StructType{Name: structName}` as the first param.
 	// Use the same `__method_string_<name>` mangling so the
 	// dispatch path picks them up uniformly.
@@ -2273,12 +2293,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
 				continue
 			}
+			simpleName := fn.Name
 			fn.MethodRecv = typeName
-			fn.MethodSimpleName = fn.Name
-			fn.Name = "__assoc_" + typeName + "_" + fn.Name
+			fn.MethodSimpleName = simpleName
+			fn.Name = c.mangleMethodName("__assoc_", typeName, simpleName, fn.ImplTrait)
 			fn.AssocType = ""
-			c.info.Methods[methodKey] = fn.Name
-			c.info.MethodSources[fn.Name] = fn.SourceModule
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, fn.Name, fn.SourceModule)
 		} else if fn.Receiver != nil {
 			var typeName string
 			switch rt := fn.Receiver.Type.(type) {
@@ -2349,10 +2369,10 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				fn.Receiver = nil
 				continue
 			}
-			mangled := "__method_" + typeName + "_" + fn.Name
 			// Stamp the method identity so a later Check pass can
 			// re-register it (Receiver is about to be cleared).
 			simpleName := fn.Name
+			mangled := c.mangleMethodName("__method_", typeName, simpleName, fn.ImplTrait)
 			// Rewrite the FuncDecl so codegen sees a regular
 			// top-level function with the receiver as its first
 			// parameter.
@@ -2366,8 +2386,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// handle method calls, so this is sound.
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
-			c.info.Methods[methodKey] = mangled
-			c.info.MethodSources[mangled] = fn.SourceModule
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule)
 		} else if fn.MethodRecv != "" {
 			// Already-hoisted method whose Receiver was consumed by a
 			// previous Check pass — this is what the monomorph
@@ -2377,11 +2396,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			// names like `shapes__Square` that the name alone can't be
 			// split on). Idempotent: only fills a missing key.
 			// See docs/TRAITS.md §4.
-			key := fn.MethodRecv + "." + fn.MethodSimpleName
-			if _, exists := c.info.Methods[key]; !exists {
-				c.info.Methods[key] = fn.Name
-				c.info.MethodSources[fn.Name] = fn.SourceModule
-			}
+			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule)
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
@@ -2914,6 +2929,51 @@ func surrogateHint(v int64) string {
 // same `ast.ReceiverTypeName` the receiver hoist registers under, so
 // impl-conformance lookups land on the key the hoist wrote.
 func methodTypeName(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) }
+
+// mangleMethodName picks the flat top-level name a method or associated
+// function is hoisted to. The first claimant of a `<Type>.<name>` pair
+// keeps the plain `<prefix><Type>_<name>` form — that name is also the
+// emitted symbol, and the asm goldens and the bulk of the test suite
+// spell it out. A later claimant from a *different* trait interposes the
+// trait, because the flat name doubles as the Info.FuncSigs key and two
+// traits offering the same method for one type would otherwise collide
+// there as well.
+func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string {
+	key := typeName + "." + name
+	if trait != "" {
+		if _, taken := c.info.Methods[key]; taken && !slices.Contains(c.info.MethodOwners[key], trait) {
+			return prefix + typeName + "__" + trait + "__" + name
+		}
+	}
+	return prefix + typeName + "_" + name
+}
+
+// registerMethod records one hoisted method or associated function: the
+// flat `<Type>.<name>` dispatch key (first registration wins — later ones
+// are either the monomorph re-check re-stating what a previous Check pass
+// already established, or a second trait whose entry lives only in the
+// trait-keyed tables), and, when a trait provided it, the trait-aware
+// TraitMethods / MethodOwners pair. MethodOwners stays sorted so nothing
+// downstream inherits declaration or map-iteration order.
+func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string) {
+	key := typeName + "." + name
+	if _, exists := c.info.Methods[key]; !exists {
+		c.info.Methods[key] = mangled
+		c.info.MethodSources[mangled] = srcModule
+	}
+	if trait == "" {
+		return
+	}
+	traitKey := trait + "." + key
+	if _, exists := c.info.TraitMethods[traitKey]; exists {
+		return
+	}
+	c.info.TraitMethods[traitKey] = mangled
+	c.info.MethodSources[mangled] = srcModule
+	owners := append(c.info.MethodOwners[key], trait)
+	slices.Sort(owners)
+	c.info.MethodOwners[key] = owners
+}
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
 // `e` is directly an array literal and `dst` is an array type — the
@@ -3723,6 +3783,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				fj, fjOK := synthFromJson(sd, recvType)
 				if haveStdJson && fjOK {
 					fj.SourceModule = sd.SourceModule
+					fj.ImplTrait = dn
 					bindDeriveTypeParams(fj, implTypeParams, dn)
 					prog.Funcs = append(prog.Funcs, fj)
 				}
@@ -3735,6 +3796,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = m
 			}
 			method.SourceModule = sd.SourceModule
+			method.ImplTrait = dn
 			bindDeriveTypeParams(method, implTypeParams, dn)
 			prog.Funcs = append(prog.Funcs, method)
 			prog.Impls = append(prog.Impls, &ast.ImplDecl{
@@ -3798,6 +3860,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				continue
 			}
 			method.SourceModule = ed.SourceModule
+			method.ImplTrait = dn
 			bindDeriveTypeParams(method, implTypeParams, dn)
 			prog.Funcs = append(prog.Funcs, method)
 			prog.Impls = append(prog.Impls, &ast.ImplDecl{
@@ -3840,6 +3903,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				ReturnType:   ast.SubstSelf(m.Result, impl.Type),
 				Body:         ast.CloneBlock(m.Body),
 				SourceModule: impl.SourceModule,
+				ImplTrait:    impl.Trait,
 			}
 			if m.Assoc {
 				// Associated default (no `self`): hoists to

@@ -1147,6 +1147,8 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			fn.Params[i].Type = ast.SubstSelf(fn.Params[i].Type, implType)
 		}
 		fn.ReturnType = ast.SubstSelf(fn.ReturnType, implType)
+		// Empty for an inherent `impl Type { … }` block.
+		fn.ImplTrait = trait
 		if assoc {
 			if st, ok := implType.(ast.StructType); ok {
 				fn.AssocType = st.Name

@@ -1064,6 +1064,52 @@ function main(): i32 { return b.b_fn() + 1; }`,
 	}
 }
 
+// DirectImports is the same shape as ModuleImports with the
+// transitive step removed: a module maps to what its own `import`
+// declarations name, plus itself. Trait-method resolution ranks a
+// directly-imported trait above one reached only through the closure,
+// so the two must not be conflated.
+func TestLoadComputesDirectImports(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"c.fern": `pub function c_fn(): i32 { return 3; }`,
+		"b.fern": `import "./c";
+pub function b_fn(): i32 { return c.c_fn() + 2; }`,
+		"a.fern": `import "./b";
+function main(): i32 { return b.b_fn() + 1; }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "a.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aAbs, _ := filepath.Abs(filepath.Join(dir, "a.fern"))
+	bAbs, _ := filepath.Abs(filepath.Join(dir, "b.fern"))
+	cAbs, _ := filepath.Abs(filepath.Join(dir, "c.fern"))
+
+	if prog.DirectImports == nil {
+		t.Fatal("DirectImports map is nil")
+	}
+	if !prog.DirectImports[aAbs][aAbs] {
+		t.Errorf("direct[a] should contain a itself")
+	}
+	if !prog.DirectImports[aAbs][bAbs] {
+		t.Errorf("direct[a] should contain b")
+	}
+	// The whole point: c is in a's transitive closure but a never
+	// imported it.
+	if prog.DirectImports[aAbs][cAbs] {
+		t.Errorf("direct[a] should NOT contain c (transitive only)")
+	}
+	if !prog.ModuleImports[aAbs][cAbs] {
+		t.Errorf("closure[a] should still contain c")
+	}
+	if !prog.DirectImports[bAbs][cAbs] {
+		t.Errorf("direct[b] should contain c")
+	}
+	if prog.DirectImports[cAbs][bAbs] || prog.DirectImports[cAbs][aAbs] {
+		t.Errorf("direct[c] should contain only c")
+	}
+}
+
 // Module-scoped method dispatch (Phase 3 of the prelude-to-
 // modules migration): a method declared in module L is callable
 // from module M only when M's import closure reaches L.

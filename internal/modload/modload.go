@@ -1097,6 +1097,27 @@ func importClosures(loaded map[string]*module) map[string]map[string]bool {
 	return out
 }
 
+// directImports is importClosures without the transitive step: each
+// module maps to the paths its own `import` declarations name, plus
+// itself. Trait-method resolution needs the distinction — a trait
+// reachable only through some other module's imports ranks below one
+// the calling module imported or declared itself.
+//
+// Keyed off importPaths rather than the resolved `imports` pointers so
+// a back-edge left nil by a stdlib import cycle still contributes its
+// canonical path.
+func directImports(loaded map[string]*module) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for path, mod := range loaded {
+		direct := map[string]bool{path: true}
+		for _, childPath := range mod.importPaths {
+			direct[childPath] = true
+		}
+		out[path] = direct
+	}
+	return out
+}
+
 // importLocalName mirrors the parser-side helper but is duplicated
 // here so the driver doesn't need to re-parse to compute it. Stdlib
 // path keys (`stdlib://std/i32.fern`) get their basename extracted
@@ -1124,6 +1145,7 @@ func importLocalName(path string) string {
 func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) {
 	combined := &ast.Program{
 		ModuleImports:     importClosures(loaded),
+		DirectImports:     directImports(loaded),
 		LoadedStdlibPaths: map[string]bool{},
 	}
 	for path := range loaded {
@@ -1554,6 +1576,9 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		}
 	}
 	for _, fn := range m.prog.Funcs {
+		// The impl method's own record of which trait provided it,
+		// mangled to line up with the ImplDecl.Trait rewritten above.
+		fn.ImplTrait = r.resolveTraitName(fn.ImplTrait)
 		for tp, traits := range fn.Bounds {
 			for k, tn := range traits {
 				fn.Bounds[tp][k] = r.rewriteTraitNameAt(tn, fn.P)
@@ -2296,12 +2321,24 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 // docs/TRAITS.md (Phase 3).
 func (r *rewriter) rewriteTraitNameAt(name string, pos ast.Position) string {
 	if dot := indexByte(name, '.'); dot >= 0 {
+		// Traits register into the same publicStructs visibility set as
+		// struct/enum names (see the `pub trait` handling in
+		// loadRecursive), so reuse that gate.
+		if mod, _, ok := r.importedModule(name[:dot]); ok {
+			r.checkPublicStruct(mod, name[dot+1:], pos)
+		}
+	}
+	return r.resolveTraitName(name)
+}
+
+// resolveTraitName is rewriteTraitNameAt's name mapping without the
+// visibility check, for slots that repeat a trait reference already
+// gated elsewhere (a method's ImplTrait stamp mirrors its ImplDecl's
+// Trait) and so must not report the same error twice.
+func (r *rewriter) resolveTraitName(name string) string {
+	if dot := indexByte(name, '.'); dot >= 0 {
 		modName, traitName := name[:dot], name[dot+1:]
 		if mod, prefix, ok := r.importedModule(modName); ok {
-			// Traits register into the same publicStructs visibility
-			// set as struct/enum names (see the `pub trait` handling
-			// in loadRecursive), so reuse that gate.
-			r.checkPublicStruct(mod, traitName, pos)
 			// A `pub use`-re-exported trait resolves to its declaring
 			// module's mangled name, not this facade's prefix.
 			if rx, ok := mod.reexportTypes[traitName]; ok {
