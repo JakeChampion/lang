@@ -81,7 +81,7 @@ func TestX8664ExportsEntryOmitsProcessRuntime(t *testing.T) {
 		t.Error("EntryExports emitted a syscall instruction: there is no kernel to service it")
 	}
 	// main itself must survive — the artifact IS its exported symbols.
-	if !strings.Contains(asm, "main:") {
+	if !strings.Contains(asm, AsmFnName("main")+":") {
 		t.Error("EntryExports dropped `main`; the exported symbols are the whole artifact")
 	}
 }

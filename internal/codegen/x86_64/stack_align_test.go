@@ -335,14 +335,16 @@ func compileMaybe(src string) (string, error) {
 	return Emit(prog, info)
 }
 
-// fnBodyOf slices the emitted text between `name:` and its `.size` directive.
+// fnBodyOf slices the emitted text of the Fern function `name` (given by its
+// source name) between its label and its `.size` directive.
 func fnBodyOf(asm, name string) (string, bool) {
-	start := strings.Index(asm, "\n"+name+":\n")
+	sym := AsmFnName(name)
+	start := strings.Index(asm, "\n"+sym+":\n")
 	if start < 0 {
 		return "", false
 	}
 	rest := asm[start:]
-	end := strings.Index(rest, "\n.size "+name+",")
+	end := strings.Index(rest, "\n.size "+sym+",")
 	if end < 0 {
 		return "", false
 	}

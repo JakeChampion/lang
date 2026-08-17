@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/symname"
 	"time"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -274,8 +276,9 @@ func exitCodeOf(err error) int {
 // against is control flow redirected somewhere the compiler never
 // emitted, which is precisely what splicing an instruction models.
 func injectExecve(asm string) string {
-	return strings.Replace(asm, "main:\n",
-		"main:\n\tmov eax, 59\n\txor edi, edi\n\txor esi, esi\n\txor edx, edx\n\tsyscall\n", 1)
+	label := symname.Fn("main") + ":\n"
+	return strings.Replace(asm, label,
+		label+"\tmov eax, 59\n\txor edi, edi\n\txor esi, esi\n\txor edx, edx\n\tsyscall\n", 1)
 }
 
 // TestSeccompFilterDenies is the only test that observes the filter's

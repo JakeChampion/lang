@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/symname"
 )
 
 // TestX86_64DebugSymtab checks the `-g` flag: the native x86-64 binary gains a
@@ -42,7 +44,11 @@ function main(): i32 { return helper(14); }
 	for _, s := range syms {
 		found[s.Name] = s
 	}
-	for _, name := range []string{"main", "helper"} {
+	// The symbol table names the EMITTED symbols, which are mangled — that
+	// is what a disassembler, a profiler and `nm` see at those addresses.
+	// The source names live in DWARF's DW_AT_name (TestDWARFDebugInfo).
+	for _, fn := range []string{"main", "helper"} {
+		name := symname.Fn(fn)
 		s, ok := found[name]
 		if !ok {
 			t.Errorf("missing symbol %q in -g binary", name)

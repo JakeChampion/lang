@@ -19,17 +19,19 @@ import (
 // skip, so `if (a < b)` shows the skip-branch `b.lt` (fall through to the
 // unconditional `b .LifElse` when a >= b), not a literal `b.ge`.
 
-// fnBody returns the emitted lines of function `name` (between its label and
-// its `.size` directive), for shape assertions. On Darwin there is no `.size`
+// fnBody returns the emitted lines of the Fern function `name` (between its
+// label and its `.size` directive), for shape assertions. `name` is the source
+// name; the emitted symbol is mangled. On Darwin there is no `.size`
 // directive; the Linux emit path (the default here) always has one.
 func fnBody(t *testing.T, asm, name string) string {
 	t.Helper()
-	start := strings.Index(asm, "\n"+name+":\n")
+	sym := AsmFnName(name)
+	start := strings.Index(asm, "\n"+sym+":\n")
 	if start < 0 {
 		t.Fatalf("function %q not found in asm", name)
 	}
 	rest := asm[start+1:]
-	end := strings.Index(rest, ".size "+name)
+	end := strings.Index(rest, ".size "+sym)
 	if end < 0 {
 		end = len(rest)
 	}

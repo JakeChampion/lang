@@ -15,16 +15,18 @@ import (
 // chosen jcc mnemonic is right for every comparison / signedness /
 // negation combination.
 
-// fnBody returns the emitted lines of function `name` (between its
-// label and its `.size` directive), for shape assertions.
+// fnBody returns the emitted lines of the Fern function `name` (between its
+// label and its `.size` directive), for shape assertions. `name` is the
+// source name; the emitted symbol is mangled.
 func fnBody(t *testing.T, asm, name string) string {
 	t.Helper()
-	start := strings.Index(asm, "\n"+name+":\n")
+	sym := AsmFnName(name)
+	start := strings.Index(asm, "\n"+sym+":\n")
 	if start < 0 {
 		t.Fatalf("function %q not found in asm", name)
 	}
 	rest := asm[start+1:]
-	end := strings.Index(rest, ".size "+name)
+	end := strings.Index(rest, ".size "+sym)
 	if end < 0 {
 		end = len(rest)
 	}

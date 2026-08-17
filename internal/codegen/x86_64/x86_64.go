@@ -55,6 +55,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
 
@@ -1623,7 +1624,7 @@ func (g *generator) emitStartRuntime() {
 		g.emit("lea rdi, [rdi + rax*8 + 8]") // skip argv + NULL terminator
 		g.emit("mov [rip + __fern_envp], rdi")
 	}
-	g.emit("call main")
+	g.emit(fmt.Sprintf("call %s", AsmFnName("main")))
 	if ast.LeakCheckEnabled {
 		// Leak detector (#5362 slice 1): print the alloc/free summary
 		// before exiting. main's return value parks in rbx (callee-save,
@@ -1649,85 +1650,27 @@ func (g *generator) emitStartRuntime() {
 // function; production never reassigns it.
 var rcInlineMaxOps = 1_000_000
 
-// x86AsmReserved is the set of tokens GNU `as` refuses to read as a plain
-// symbol in Intel syntax. A user function whose name matches one is
-// mis-assembled: `call ch` reads `ch` as register CH and encodes an indirect
-// `call rbp` through garbage (SIGSEGV), `.size cs, .-cs` / `.quad cs` fail to
-// evaluate, and `call r16` encodes a REX2 indirect call with no diagnostic at
-// all. This project's own assembler (internal/native/x86_64) knows only the
-// registers this backend emits, so it reads every other entry here as the
-// symbol it is — the escape is what keeps the two toolchains agreeing.
+// AsmFnName returns the asm symbol for a Fern function `name` — see
+// internal/symname for why every one of them is mangled. It must be used at
+// EVERY site that emits a Fern function's name as an asm token (definition,
+// call, and `.quad` / `lea` pointer), or the definition and its references
+// disagree and the link fails with an undefined symbol.
 //
-// Membership is empirical: each entry was confirmed to break `as` (binutils
-// 2.42) in `call` or `.size` position. Deliberately absent because they do
-// NOT: `st0`..`st7` (`as` spells the x87 stack `st(0)`, so a bare `st0` is a
-// symbol — plain `st` does collide), `ip`, the test registers `tr0`..`tr7`,
-// the null index registers `riz`/`eiz` (recognised only inside `[]`), `ptr`
-// (only meaningful after a size keyword), and instruction mnemonics, which
-// are reserved in mnemonic position only.
-var x86AsmReserved = func() map[string]bool {
-	m := map[string]bool{}
-	add := func(names ...string) {
-		for _, n := range names {
-			m[n] = true
-		}
-	}
-	addNumbered := func(prefix, suffix string, lo, hi int) {
-		for i := lo; i <= hi; i++ {
-			m[fmt.Sprintf("%s%d%s", prefix, i, suffix)] = true
-		}
-	}
-	add(
-		"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-		"eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
-		"ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
-		"al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
-		"ah", "ch", "dh", "bh",
-	)
-	// APX extended GPRs, recognised since binutils 2.42. These are the
-	// dangerous ones: `call r16` assembles clean as an indirect call.
-	for _, width := range []string{"", "d", "w", "b"} {
-		addNumbered("r", width, 16, 31)
-	}
-	addNumbered("xmm", "", 0, 31)
-	addNumbered("ymm", "", 0, 31)
-	addNumbered("zmm", "", 0, 31)
-	addNumbered("mm", "", 0, 7)             // MMX
-	addNumbered("k", "", 0, 7)              // AVX-512 mask
-	addNumbered("bnd", "", 0, 3)            // MPX bounds
-	addNumbered("tmm", "", 0, 7)            // AMX tile
-	addNumbered("cr", "", 0, 15)            // control
-	addNumbered("dr", "", 0, 15)            // debug
-	add("cs", "ds", "es", "ss", "fs", "gs") // segment
-	add("st")                               // x87 stack top
-	add("rip", "eip")                       // instruction pointer
-	// Intel-syntax operand keywords: size overrides, and the address and
-	// branch-distance modifiers.
-	add("byte", "word", "dword", "qword", "tbyte", "fword", "oword",
-		"xmmword", "ymmword", "zmmword", "offset", "short", "near", "far", "flat")
-	// Intel-syntax expression operators. `as` rejects these with
-	// `invalid use of operator "and"` wherever a symbol was meant.
-	add("and", "or", "xor", "not", "shl", "shr", "mod",
-		"eq", "ne", "lt", "le", "gt", "ge")
-	return m
-}()
+// Only Fern functions go through it. The runtime helpers this backend emits
+// itself (`__fern_alloc`, `__memcpy`, the `__c_call*` family, …) are not Fern
+// functions and keep their own names; `sym` is the call-site form that tells
+// the two apart.
+func AsmFnName(name string) string { return symname.Fn(name) }
 
-// AsmFnName returns the asm symbol for a Fern function `name`, escaping
-// names the assembler reserves (the reserved set is case-insensitive to the
-// assembler, so the check folds case). The `$` suffix is collision-proof:
-// Fern identifiers cannot contain `$`, so no real function name can equal an
-// escaped one, and both assemblers accept `$` in a symbol. Names the
-// assembler does not reserve — the overwhelming majority,
-// including every `__fern_*` runtime helper — pass through unchanged, so
-// applying it to any function symbol (user or runtime) is safe. It must be
-// used at EVERY site that emits a function name as an asm token
-// (definition, call, and `.quad` pointer), or the definition and its
-// references disagree and the link fails with an undefined symbol.
-func AsmFnName(name string) string {
-	if x86AsmReserved[strings.ToLower(name)] {
-		return name + "$fn"
+// sym returns the asm symbol for a direct-call target, which the IR names in
+// one namespace whether it is a function the program defines or a runtime
+// helper this backend provides. A defined function is the mangled symbol; a
+// helper is its own bare name.
+func (g *generator) sym(target string) string {
+	if _, ok := g.funcs[target]; ok {
+		return AsmFnName(target)
 	}
-	return name
+	return target
 }
 
 // emitFunc lowers one function to assembly. Per-function
@@ -2617,7 +2560,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// shape as OpCallDirect with one extra arg.
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+		g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
 		g.emitCallArgsCleanup(argc, extra)
 		g.push()
 
@@ -2760,7 +2703,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
 			extra := g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+			g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
 			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
@@ -2806,7 +2749,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			// recorded the "__fern_rc_is_unique" use, so the helper is
 			// emitted regardless of inline-vs-call.
 			extra := g.emitCallArgsLoad(1)
-			g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+			g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
 			g.emitCallArgsCleanup(1, extra)
 			g.push()
 			return nil
@@ -3025,7 +2968,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		}
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", AsmFnName(target)))
+		g.emit(fmt.Sprintf("call %s", g.sym(target)))
 		g.emitCallArgsCleanup(argc, extra)
 		// Void-returning callees push NOTHING. Without this gate,
 		// helpers like `__memcpy` / `__memset` leave a phantom
@@ -3055,7 +2998,7 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// call" contract is now register-backed.
 		argc := int(op.I32)
 		extra := g.emitCallArgsLoad(argc)
-		g.emit(fmt.Sprintf("call %s", AsmFnName(op.Str)))
+		g.emit(fmt.Sprintf("call %s", g.sym(op.Str)))
 		g.emitCallArgsCleanup(argc, extra)
 		g.emit("mov r10, rdx") // stash payload (rdx is volatile)
 		g.push()               // push rax (tag)
@@ -4042,7 +3985,7 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 		// is 0 (the generic drop guards drop_fn!=0).
 		g.emit("mov edi, 32")
 		g.callAligned("__fern_alloc_rc1")
-		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
+		g.emit(fmt.Sprintf("lea rcx, [rip + %s]", g.sym(op.Str)))
 		g.emit("mov [rax], rcx")
 		g.emit("mov qword ptr [rax + 8], 0")
 		g.emit("mov qword ptr [rax + 16], 0")
@@ -4147,12 +4090,12 @@ func (g *generator) emitMakeClosureOrEnv(op ir.Op) error {
 	// helpers). Decide structurally on its presence in prog.Funcs, never
 	// by re-reading the flag in codegen, so a free-OFF build (or a flag
 	// toggled by a concurrent test) stores 0 instead of a dangling label.
-	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", op.Str))
+	g.emit(fmt.Sprintf("lea rcx, [rip + %s]", g.sym(op.Str)))
 	g.emit("mov [rax], rcx")
 	g.emit("mov rcx, [rsp]") // env_ptr from the operand-stack save
 	g.emit("mov [rax + 8], rcx")
 	if _, ok := g.funcs["__closure_drop_"+op.Str]; ok {
-		g.emit(fmt.Sprintf("lea rdx, [rip + __closure_drop_%s]", op.Str))
+		g.emit(fmt.Sprintf("lea rdx, [rip + %s]", g.sym("__closure_drop_"+op.Str)))
 		g.emit("mov [rax + 16], rdx")
 	} else {
 		g.emit("mov qword ptr [rax + 16], 0")
@@ -4374,7 +4317,7 @@ func (g *generator) emitDataSections() {
 			g.line(".align 8")
 			g.label(dynVtableLabel(vt.Trait, vt.Concrete))
 			for _, m := range vt.Methods {
-				g.line(fmt.Sprintf("\t.quad %s", AsmFnName(m.Func)))
+				g.line(fmt.Sprintf("\t.quad %s", g.sym(m.Func)))
 			}
 			// Trailing drop slot at index len(Methods) (docs/DYN-TRAITS.md
 			// §4.4, slice 4b): the concrete type's drop fn as an absolute
@@ -4384,7 +4327,7 @@ func (g *generator) emitDataSections() {
 			// trailing so the method slot indices (0..n-1) are unchanged —
 			// OpCallDyn's slot math is untouched. Mirrors wasm internVtable.
 			if vt.Drop != "" {
-				g.line(fmt.Sprintf("\t.quad %s", AsmFnName(vt.Drop)))
+				g.line(fmt.Sprintf("\t.quad %s", g.sym(vt.Drop)))
 			} else {
 				g.line("\t.quad 0")
 			}
@@ -4409,7 +4352,7 @@ func (g *generator) emitDataSections() {
 			g.line("\t.4byte 0x80000000") // rc header (static sentinel)
 			g.line("\t.4byte 0")          // pad
 			g.label(fmt.Sprintf("__closure_cell_%s", name))
-			g.line(fmt.Sprintf("\t.quad %s", AsmFnName(name)))
+			g.line(fmt.Sprintf("\t.quad %s", g.sym(name)))
 			g.line("\t.quad 0")
 		}
 	}
