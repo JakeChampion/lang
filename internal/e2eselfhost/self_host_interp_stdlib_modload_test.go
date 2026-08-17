@@ -94,6 +94,16 @@ var interpStdlibModloadCases = []struct {
 	// through one Eq-bounded generic — and since the two engines are compared
 	// against each other, a self-host regression on the generic shows up here.
 	{"array-index-of-generic", "import \"std/array\";\nfunction main(): i32 {\n  var xs: i32[] = [3, 1, 2];\n  if (xs.index_of(1) != 1) { return 1; }\n  if (xs.index_of(9) != 0 - 1) { return 2; }\n  if (!xs.contains(2)) { return 3; }\n  if (xs.contains(9)) { return 4; }\n  var bs: u8[] = [7 as u8, 8 as u8];\n  if (bs.index_of(8 as u8) != 1) { return 5; }\n  if (!bs.contains(7 as u8)) { return 6; }\n  var ws: string[] = [\"a\", \"bb\"];\n  if (ws.index_of(\"bb\") != 1) { return 8; }\n  if (ws.index_of(\"zz\") != 0 - 1) { return 9; }\n  return 7;\n}\n"},
+	// std/num's `sum` / `product` / `cumsum` seed their accumulator from a
+	// RECEIVER-LESS trait function reached through the bound type parameter
+	// (`var acc: T = T.zero();`). Native monomorphises that away before its
+	// interpreter runs; this engine erases generics instead, so `T` has to be
+	// pinned from the argument values — and the empty case has no element to
+	// pin it from, which is what makes `sum([])` the interesting row.
+	{"num-identity-generics", "import \"std/num\";\nfunction main(): i32 {\n  var xs: i32[] = [1, 2, 3];\n  if (num.sum(xs) != 6) { return 1; }\n  if (num.product(xs) != 6) { return 2; }\n  if (num.cumsum(xs)[2] != 6) { return 3; }\n  var ws: i64[] = [1, 2, 3];\n  if (num.sum(ws) != 6) { return 4; }\n  var fs: f64[] = [1.5, 2.5];\n  if (num.sum(fs) != 4.0) { return 5; }\n  var none: i32[] = [];\n  if (num.sum(none) != 0) { return 6; }\n  if (num.product(none) != 1) { return 8; }\n  return 7;\n}\n"},
+	// The same associated call spelled on a concrete type, and reached through
+	// a USER impl rather than a primitive one.
+	{"assoc-fn-user-impl", "import \"std/num\";\nstruct P { x: i32, y: i32 }\nimpl num.Add for P { function add(self: Self, o: Self): Self { return P { x: self.x + o.x, y: self.y + o.y }; } }\nimpl num.Zero for P { function zero(): Self { return P { x: 0, y: 0 }; } }\nfunction main(): i32 {\n  if (i32.zero() != 0) { return 1; }\n  if (P.zero().x != 0) { return 2; }\n  var ps: P[] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];\n  var t: P = num.sum(ps);\n  if (t.x != 4 || t.y != 6) { return 3; }\n  var none: P[] = [];\n  if (num.sum(none).y != 0) { return 4; }\n  return 7;\n}\n"},
 }
 
 // TestSelfHostInterpStdlibModload drives `fern -interp <prog> <stdlib-root>`
