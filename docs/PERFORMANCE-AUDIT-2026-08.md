@@ -564,6 +564,88 @@ copying version it replaced — 1.83 GB → 2.53 GB at 400 arms. A plain paramet
 gives the numbers above. That result is why the second attempt was measured
 rather than assumed.
 
+### 4d.2 The threading chain: one full buffer copy per link
+
+`body_assign_targets` was the biggest term in 4d.1, not the last one — the six
+`lower_block` pre-scans are now **6 MB** of a 400-arm function's 66 MB, measured
+with the same probes. Where the rest went, on the SAME reproducer:
+
+| region, 400 arms | bumped |
+|---|---|
+| the six `lower_block` pre-scans, all levels | 6.1 MB |
+| `lower_expr` of each arm's condition | 30.0 MB |
+| `LowerState.emit` alone | 10.0 MB |
+| everything under the outermost `else` | 66.5 MB |
+
+`emit` is `LowerState { ...s, ops: s.ops.append(op), ctrl: nctrl }`. Probed with a
+wrapper (`emit` → `emit_inner`, so the measured body is unchanged — the naive
+probe splits the append into a `var` and FORCES the copy it is trying to
+observe), **one emit allocated 16 bytes per op already in the buffer**, on 59% of
+2,807 emits. It is a full copy of the accumulated `ops` array, it is quadratic in
+the function's OP COUNT rather than its nesting depth, and a FLAT 400-statement
+function reproduces it identically — the `else if` chain is just where it got
+noticed.
+
+Reduced to a repro with no compiler in it, the whole cost is the shape of the
+threading, not the state:
+
+```fern
+function step(s: St, k: i32): St {
+    var a: St = s.emit(mkop(k));       // each link's receiver is at its last use
+    var b: St = a.emit(mkop(k + 1));
+    var c: St = b.emit(mkop(k + 2));
+    return c;
+}
+```
+
+108 MB at 5,000 appends, 4x per doubling, 6.87 GB at 40,000, and 80,000 filled
+the 16 GiB arena. Written `s = s.emit(op)` the identical work is flat. **Two
+independent causes, both caller-side, fixed together in #6988:**
+
+- **#4873's containment bracket.** It incs an argument's field buffers across a
+  call the callee may grow in place, so the grow takes its copy path, and it is
+  skipped only for an argument `callArgDeaths` proves dead. The three shapes it
+  knew were self-reassign, return position, and a param read exactly once; a
+  chain link is none of them. A textually-LAST read at a call no loop or lambda
+  encloses now counts, for a param and for a local bound from a direct call.
+  Half the copies.
+- **The in-place grow ratchets rc 1 → 2.** `__fern_arr_push_grow_ptr`'s fast
+  path sets the buffer's rc to 2, because the receiver place and the result both
+  name it — so the NEXT link sees rc 2 and copies. Giving that count back needs
+  the dead intermediate dropped at its last read, which `paramCountedRetain`
+  (a struct-update spread base and a field-receiver append are both COUNTED
+  retentions, and neither was credited) and `initMayAliasLive` (a pointer arg in
+  a counted-retain position is not an uncounted alias) were both refusing.
+  The other half.
+
+| | before | after |
+|---|---|---|
+| 5,000 appends | 108 MB | 1.8 MB |
+| 40,000 | 6.87 GB | 14.4 MB |
+| 80,000 | arena exhausted | 28 MB |
+| `checker.fern` self-host compile | 11.5 s / sys 4.10 s | 8.2 s / sys 0.68 s |
+| whole-compiler self-compile | 2 m 50.8 s / sys 71.3 s | 2 m 39.7 s / sys 60.9 s |
+
+Output byte-identical throughout, both compilers built from one tree. The bench
+corpus does not move at all (`map_string.ir` +0.25%, its declared seed-dependent
+metric) and the cliff goes 988 → 980 bytes: **this class is invisible to both
+gates**, which is why `state-threading-chain` joined the allocation-scaling
+ratio corpus instead — 3.94x per doubling before, 1.95x after.
+
+**What remains, and why it was not taken.** `scripts/depth-repro` only moves
+1.84 GB → 1.69 GB at 1,600 arms, and `emit`'s own allocation only halves
+(40.2 MB → 20.4 MB). The residue is the same rc 1 → 2 ratchet on intermediates
+that are NOT `freeEligible` — `var sc: LowerState = lower_expr(iff.cond, s)`,
+where `lower_expr` reads its state param in hundreds of positions and can never
+be `paramCountedRetain`. Those locals get the flat `__drop_struct_flat_*`, and
+only at the function-exit sweep, so the extra count sits there for the rest of
+the function. Placing that flat drop at the last use is the obvious next step
+and is NOT a free one: the taint that makes such a local ineligible is exactly
+"something may hold an uncounted alias of its fields", and dec'ing earlier
+shortens that window. It is the boundary `computePreciseDrops` deliberately
+draws by gating on `freeEligible`, so crossing it is its own slice with its own
+differential run.
+
 Item 5 (symbol interning, #4394) should be re-measured on this subject before
 scoping: a third of what `strcmp` was has already gone with the two indexes.
 

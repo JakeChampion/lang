@@ -4,8 +4,10 @@
 #
 # The self-host compiler's IR lowering WAS super-quadratic in the nesting depth
 # of an else-if chain, where the native compiler is linear: 1.83 GB at 400 arms,
-# 13.4 GB at 800, and 1,600 arms was killed by the OOM killer. #6911 made
-# body_assign_targets linear, which took those to 147 MB / 495 MB / 1.84 GB.
+# 13.4 GB at 800, and 1,600 arms was killed by the OOM killer. Making
+# body_assign_targets linear and then unbracketing a dead threading link (#6911,
+# #6988) took those to 136 MB / 455 MB / 1.69 GB — still superlinear, and
+# docs/PERFORMANCE-AUDIT-2026-08.md §4d.2 says what is left.
 # Keep this to hand: the compiler's own emit dispatchers are exactly this shape,
 # so a regression here shows up as a self-compile that will not finish.
 #
