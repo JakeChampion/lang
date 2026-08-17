@@ -16,26 +16,20 @@
 // malformed op named at the point it was produced.
 //
 // It is deliberately small and depends only on the verifiers and the op type.
-// Taking the four fields rather than an irlower.LowerResult is what keeps it
-// that way: it does not pull irlower in, so the driver that tests it does not
-// either.
-//
-// # Off by default, for the reason native's verifiers are
-//
-// The pass is a second walk of every op stream. That is cheap next to
-// lowering, but it is not free, and a verifier's value is as a diagnostic
-// under suspicion rather than as a tax on every build. The issue's plan is a
-// flag first and on-by-default once the self-compile is clean under it.
+// Taking the scalars rather than an irlower.LowerResult is what keeps it that
+// way: it does not pull irlower in, so the driver that tests it does not
+// either. The callee index is built by irlower.fn_sig_index on the backend
+// side for the same reason — it is an AST question, and answering it here
+// would drag the parser into the gate's closure.
 //
 // # What it does NOT check, and why
 //
-// The call-arity check needs a whole-program signature list, which the
-// per-function emit does not hold — threading one through three backends to
-// re-derive what the corpus gate already checks with a real list would be a
-// large change for a check that is already covered. And a function the stack
-// pass cannot model is skipped rather than reported: that pass is fail-soft by
-// design (its header says why), and turning an unmodelled op into a hard error
-// here would make a widened op vocabulary look like a lowering bug.
+// A function the stack pass cannot model is skipped rather than reported: that
+// pass is fail-soft by design (its header says why), and turning an unmodelled
+// op into a hard error here would make a widened op vocabulary look like a
+// lowering bug. Callee RESOLUTION — a name nothing declares and no backend
+// provides — is irverifyprovided.fern, which needs the whole import closure and
+// so runs from the modload driver rather than from a per-module emit.
 
 import "./ir";
 import "./irverify";
@@ -52,11 +46,15 @@ pub function verify_on(): boolean {
 // verify_problems runs both verifiers over one lowered function and returns
 // everything they found, structure problems first.
 //
+// `sigs` is the callee-arity index for the whole program being emitted, built
+// once per emit loop by irlower.fn_sig_index. A callee it does not carry is
+// left alone — a runtime helper, a lifted lambda, another unit's function — so
+// the check reports a genuine arity mismatch and never a missing entry.
+//
 // Pure, and separate from the refusal below so the gate's verdict can be
 // asserted without the exit that acting on it entails.
-pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32): irverify.Problem[] {
-    var no_sigs: irverify.FnSig[] = [];
-    var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, no_sigs);
+pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: irverify.NameIndex): irverify.Problem[] {
+    var out: irverify.Problem[] = irverify.verify_fn(fn_name, ops, n_params, n_locals, sigs);
     var sr: irverifystack.StackResult = irverifystack.verify_stack_fn(fn_name, ops);
     var i: i32 = 0;
     while (i < sr.problems.len()) {
@@ -72,9 +70,9 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
 // Exiting rather than returning a diagnostic is the point. The alternative is
 // emitting the malformed stream anyway, which is exactly the behaviour the
 // flag exists to replace.
-pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
+pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: irverify.NameIndex): i32 {
     if (!verify_on()) { return 0; }
-    var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals);
+    var ps: irverify.Problem[] = verify_problems(fn_name, ops, n_params, n_locals, sigs);
     if (ps.len() == 0) { return 0; }
     eprint("FERN_IR_VERIFY: " + fn_name + " lowered to malformed IR (#6639):"
         + irverify.format_problems(ps, 20) + "\n");

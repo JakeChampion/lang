@@ -41,20 +41,17 @@ import "./util";
 // successfully lowered function and returns the problems, so the driver can
 // be pointed at real modules — which is where a structural bug would
 // actually be, and the only way to know the pass does not fire on valid IR.
-function verify_all(fns: irlower.LoweredFn[]): irverify.Problem[] {
-    var sigs: irverify.FnSig[] = [];
-    var i: i32 = 0;
-    while (i < fns.len()) {
-        if (fns[i].ok) {
-            sigs = sigs.append(irverify.FnSig { name: fns[i].name, n_params: fns[i].n_params });
-        }
-        i = i + 1;
-    }
+function verify_all(funcs: parser.FuncDecl[], fns: irlower.LoweredFn[]): irverify.Problem[] {
+    // The index the BACKENDS build, from the same declarations, so the corpus
+    // sweep gates the derivation the compile-path gate actually consults —
+    // including its receiver-counting rule, which an off-by-one would turn
+    // into a reported mismatch on every method call in the corpus.
+    var ix: irverify.NameIndex = irlower.fn_sig_index(funcs);
     var out: irverify.Problem[] = [];
     var j: i32 = 0;
     while (j < fns.len()) {
         if (fns[j].ok) {
-            var ps: irverify.Problem[] = irverify.verify_fn(fns[j].name, fns[j].ops, fns[j].n_params, fns[j].n_locals, sigs);
+            var ps: irverify.Problem[] = irverify.verify_fn(fns[j].name, fns[j].ops, fns[j].n_params, fns[j].n_locals, ix);
             var k: i32 = 0;
             while (k < ps.len()) { out = out.append(ps[k]); k = k + 1; }
         }
@@ -240,8 +237,9 @@ function main(): i32 {
         // report a 1-arg call to a 3-param callee on every defaulted call in
         // the corpus — a property of this driver's shortcut, not of the IR any
         // backend is handed.
-        var vfns: irlower.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
-        var probs: irverify.Problem[] = verify_all(vfns);
+        var vfilled: parser.Module = parser.fill_default_args_module(mod);
+        var vfns: irlower.LoweredFn[] = irlower.lower_module(vfilled.funcs, mod.structs);
+        var probs: irverify.Problem[] = verify_all(vfilled.funcs, vfns);
         if (probs.len() == 0) {
             write("irverify: clean\n");
             return 0;
