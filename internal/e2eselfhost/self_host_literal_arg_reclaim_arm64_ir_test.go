@@ -138,4 +138,33 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arg-returned-safe-arm64", 0)
+
+	// The ARRAY sibling on the second register backend.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function size(d: i32[]): i32 { return d.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + size(mk(i))) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + size(mk(j))) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "producer-call-arr-arg-borrowable-flat-arm64", 0)
+
+	// Refused: the callee returns the array, and the alias is read back.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function pick(d: i32[]): i32[] { return d; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 2000) { var r: i32[] = pick(mk(i)); if (r.len() != 3 || r[2] != i + 2) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arr-arg-returned-safe-arm64", 0)
 }
