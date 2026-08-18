@@ -47988,8 +47988,17 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             // BE's or CONTAINS the argument — `both(d, k)` building a struct
             // from `d` and handing `d` back out of it — would leave the caller
             // reading freed memory. This is stricter than the string tier below
-            // and than native, and it is what #6522's row is still stuck behind;
-            // narrowing it to a real alias test is that row's own slice.
+            // and than native.
+            //
+            // It is NOT what #6522's row is stuck behind, though this comment
+            // said so until it was measured: lifting the guard entirely moves
+            // `node(wide(n), deps_of(n), n)` not at all. That row's argument is
+            // a `string[]`, and is_leaksafe_array_field admits only
+            // SCALAR-element arrays, so it never becomes a candidate here in the
+            // first place. Widening the tier to pointer-element arrays is that
+            // row's slice; the release for one is a shallow arr_dec (the callee
+            // struct retains it and deep-frees on its own drop), not the deep
+            // free the element-owning paths use.
             var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
             var aflags: string = "";
             var aany: boolean = false;
