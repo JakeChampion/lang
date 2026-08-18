@@ -428,9 +428,9 @@ function gate_checks(): i32 {
 function refuse_probe(): i32 {
     var malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
     irverifygate.verify_or_refuse("probe", malformed, 0, 1, no_sigs());
-    // Only reachable with the flag unset: the gate must be inert by default,
-    // which is as much of the contract as the refusal is.
-    print("irverifygate: inert (FERN_IR_VERIFY unset)");
+    // Only reachable under FERN_IR_VERIFY=0: the opt-out must make the gate
+    // inert, which is as much of the contract as the refusal is.
+    print("irverifygate: inert (FERN_IR_VERIFY=0)");
     return 0;
 }
 
