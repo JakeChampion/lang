@@ -325,6 +325,57 @@ func TestUnknownTypeReported(t *testing.T) {
 	mustOK(`function main(): i32 { var n: i32 = 1; var b: boolean = true; if (b) { return n; } return 0; }`)
 }
 
+// A LAMBDA's parameter and return annotations are declarations too, and the
+// two reporters that walk a body — E064's and `dyn`'s — visited `*ast.Var`
+// alone, so neither ever reached one. `((x: Wibble) => 1)` was accepted
+// outright: no E064, and not even the indirect cascade, because nothing
+// resolves an unknown lambda parameter into a later mismatch (#7004).
+//
+// A nested `function` declaration goes through the same node set. The valid
+// rows matter as much as the invalid ones: an arrow lambda written without a
+// return type has none to check, and reporting on a synthesised one would
+// reject every `(x) => e` in the corpus.
+func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
+	for name, src := range map[string]string{
+		"lambda param":         `function main(): i32 { var f = ((x: Wibble) => 1); return 0; }`,
+		"lambda return":        `function main(): i32 { var f = ((x: i32): Wibble => x); return 0; }`,
+		"lambda param array":   `function main(): i32 { var f = ((x: Wibble[]) => 1); return 0; }`,
+		"function-form lambda": `function main(): i32 { var f = function(x: Wibble): i32 { return 1; }; return 0; }`,
+		"nested in a lambda":   `function main(): i32 { var f = (() => { var g = ((y: Wibble) => 2); return 1; }); return 0; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, src)
+			if err == nil || !strings.Contains(err.Error(), "unknown type") {
+				t.Errorf("expected E064 unknown type, got: %v", err)
+			}
+		})
+	}
+	for name, src := range map[string]string{
+		"unannotated arrow return": `function main(): i32 { var f = ((x: i32) => x + 1); return f(1); }`,
+		"declared type":            `struct P { x: i32 } function main(): i32 { var f = ((p: P) => p.x); return f(P { x: 1 }); }`,
+		"type parameter in scope":  `function apply[T](v: T): i32 { var f = ((x: T) => 1); return f(v); }` + "\n" + `function main(): i32 { return apply(1); }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, src); err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// The `dyn` reporter shares that node set, so it gains the same reach: an
+// unknown trait on a lambda parameter went unreported for the same reason.
+func TestDynTraitReachesLambdaAnnotations(t *testing.T) {
+	src := `function main(): i32 { var f = ((x: dyn Bogus) => 1); return 0; }`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatalf("want E021, got none")
+	}
+	if code := firstErrCode(err); code != "E021" {
+		t.Errorf("code = %q, want E021: %v", code, err)
+	}
+}
+
 // TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
 // expression with an already-errored operand (here `q()`, an undefined
 // identifier, whose type is nil) must not emit a *second*, cascading E009

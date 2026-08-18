@@ -5852,7 +5852,9 @@ function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
 // emit_ir_field_reclaim_one emits one __field_reclaim_<sty> body. Stack-arg ABI:
 // 24(%rsp)=new, 16=old, 8=snap. For each rc-tracked ARRAY field (offset (k+1)*8
 // off the struct box's data pointer) it frees old.field[k] via __fn___fern_arr_dec
-// (rc-guarded SHALLOW dec/free) iff old.field[k] differs from new.field[k] (cow)
+// (rc-guarded SHALLOW dec/free — a struct/enum-array field first walks the
+// uniquely-owned buffer dec'ing each element box, as __struct_drop does) iff
+// old.field[k] differs from new.field[k] (cow)
 // AND, when snap != 0, from snap.field[k] (the caller's original). It then frees
 // the old box itself via __fn___fern_snapshot_dec(new, old, snap) and returns
 // `new` in %rax. r9/r10/r11 hold snap/old/new across the field loop —
@@ -5910,6 +5912,29 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         // of it is an uncounted alias the free would dangle.
         var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
         var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        // A registered PLAIN-fn-pointer array field (#5235): its elements are RAW
+        // code addresses, so the fr_box_arr element walk below would corrupt the
+        // freelist. Keep it on the buffer-only shallow dec, exactly like
+        // __struct_drop's k_fnptr arm.
+        var fr_fnptr: boolean = irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        // A replaced struct-ARRAY / enum-ARRAY field (#7067): released DEEP —
+        // when the dead buffer is uniquely owned, each element box is dec'd
+        // before the buffer is. __struct_drop_<T> has always done this at scope
+        // exit; __field_reclaim_<T> dec'd the buffer only, so a rebound struct
+        // (`var b: Bag = Bag { es: [...] }` in a loop) stranded one element box
+        // per element per iteration. The is_unique gate is what keeps this a
+        // leak fix and not an over-release: a SHARED buffer is only dec'd.
+        // GATED on the whole-program scan ("strfldok:sarr:<T>", the sarr half of
+        // strfld_reclaim_ok_types_of): element-fresh stores and .len()-only reads.
+        // Without it the walk is a double free — `d = Doc { ...d, vals: d.vals.append(v) }`
+        // hands the NEW buffer the same element pointers the old one holds, and the
+        // append copies them uncounted. __struct_drop needs no such gate: at scope
+        // exit every buffer that shared those elements is dying too.
+        var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum && !fr_fnptr
+            && !irlower.is_leaksafe_array_field(fdt)
+            && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
+            && s.has_need("strfldok:sarr:" + sty);
         if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
@@ -5938,15 +5963,74 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
             s = s.write("    cmpq " + off + "(%r9), %rsi\n");       // == snap.field_k? (caller's)
             s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lfr_" + san + "_dec" + ks + ":\n");
-            s = s.write("    pushq %rsi\n");
-            if (fr_str) {
-                s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
-            } else if (fr_str_arr) {
-                s = s.write("    call __fn___fern_str_arr_free\n"); // deep string[] free (rc-guarded)
-            } else {
+            if (fr_box_arr) {
+                // MULTI-LEVEL element deep-drop (#2649), the same call
+                // __struct_drop's k_box arm makes first: release each element's
+                // OWN rc fields before the element boxes are freed below. The
+                // helper is_unique-gates the buffer AND each element itself. It
+                // calls __struct_drop_<E>, clobbering r11/r10/r9, so reload all
+                // three from the (frameless, balanced) stack args after it.
+                if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                    var elem_ty: str = fdt[0 : fdt.len() - 2];
+                    if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                        var esan: string = asmcore.sanitize_label(elem_ty);
+                        s = s.need("struct_arr_elems_drop:" + elem_ty);
+                        s = s.write("    pushq %rsi\n");                  // buffer
+                        s = s.write("    call __fn___struct_arr_elems_drop_" + esan + "\n");
+                        s = s.write("    addq $8, %rsp\n");
+                        s = s.write("    movq 24(%rsp), %r11\n");         // reload new
+                        s = s.write("    movq 16(%rsp), %r10\n");         // reload old
+                        s = s.write("    movq 8(%rsp), %r9\n");           // reload snap
+                        s = s.write("    movq " + off + "(%r10), %rsi\n");// reload buffer
+                    }
+                }
+                // The walk needs two scratch registers that survive the calls it
+                // makes. Only r9/r10/r11 do (__fern_arr_dec and
+                // __fern_rc_is_unique clobber just rax/rcx/rdx/rsi/rdi/r8) and all
+                // three are LIVE here — r11=new, r10=old, r9=snap are re-read by
+                // every later field iteration and by the trailing
+                // __fern_snapshot_dec — so r10/r9 are borrowed and restored. r11
+                // is untouched from here on (no __struct_drop call below).
+                s = s.write("    pushq %r9\n");                     // save snap
+                s = s.write("    pushq %r10\n");                    // save old
+                s = s.write("    movq %rsi, %r10\n");               // a = old.field_k (buffer)
+                s = s.write("    cmpq $0x10000, %r10\n");           // null / low -> skip walk (buffer dec is a null no-op)
+                s = s.write("    jb .Lfr_" + san + "_buf" + ks + "\n");
+                s = s.write("    pushq %r10\n");
+                s = s.write("    call __fn___fern_rc_is_unique\n");  // shared (rc>1) -> skip element walk
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    testq %rax, %rax\n");
+                s = s.write("    jz .Lfr_" + san + "_buf" + ks + "\n");
+                s = s.write("    xorq %r9, %r9\n");                 // i = 0
+                s = s.write(".Lfr_" + san + "_loop" + ks + ":\n");
+                s = s.write("    movq (%r10), %rax\n");             // len = a[0] (length header at data+0)
+                s = s.write("    cmpq %rax, %r9\n");
+                s = s.write("    jge .Lfr_" + san + "_buf" + ks + "\n");
+                s = s.write("    movq %r9, %rcx\n");
+                s = s.write("    incq %rcx\n");
+                s = s.write("    movq (%r10,%rcx,8), %rdi\n");      // a[i] at data+(i+1)*8
+                s = s.write("    pushq %rdi\n");
+                s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec the element box
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    incq %r9\n");
+                s = s.write("    jmp .Lfr_" + san + "_loop" + ks + "\n");
+                s = s.write(".Lfr_" + san + "_buf" + ks + ":\n");
+                s = s.write("    pushq %r10\n");                    // buffer (r10 survives both calls above)
                 s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec/free the dead buffer
+                s = s.write("    addq $8, %rsp\n");
+                s = s.write("    popq %r10\n");                     // restore old
+                s = s.write("    popq %r9\n");                      // restore snap
+            } else {
+                s = s.write("    pushq %rsi\n");
+                if (fr_str) {
+                    s = s.write("    call __fn___fern_str_free\n");     // rc-aware string free (data buffer + box)
+                } else if (fr_str_arr) {
+                    s = s.write("    call __fn___fern_str_arr_free\n"); // deep string[] free (rc-guarded)
+                } else {
+                    s = s.write("    call __fn___fern_arr_dec\n");      // shallow dec/free the dead buffer
+                }
+                s = s.write("    addq $8, %rsp\n");
             }
-            s = s.write("    addq $8, %rsp\n");
             s = s.write(".Lfr_" + san + "_skip" + ks + ":\n");
         }
         k = k + 1;

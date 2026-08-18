@@ -71,7 +71,7 @@ func TestSelfHostCheckerDriverArm64(t *testing.T) {
 	// ./checker) with the arm64 file-based driver: the loader resolves
 	// std/io to the vendored flat io.fern, so the source is unmodified.
 	files := map[string]string{}
-	for _, m := range []string{"util", "lexer", "parser", "checker"} {
+	for _, m := range []string{"util", "lexer", "parser", "astwalk", "checker"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
 			t.Fatalf("read %s.fern: %v", m, err)
