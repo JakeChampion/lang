@@ -971,30 +971,46 @@ pointers, so each copy also runs the grow helper's per-element `__fern_rc_inc`
 and the discarded buffer's matching walk-drop — 33 M retains and 33 M releases
 on top of the 267 MB.
 
-**The fix is the ownership arc, not a local patch.** Nothing in `internal/ir`
-can drop a borrowed parameter, and the copies are semantically required as long
-as those boxes are reachable. Three of `docs/OWNERSHIP-INFERENCE-PLAN.md`'s
-listed items compose into the actual fix, in this order:
+**The fix removes a BOX, and three plausible candidates measured as not doing
+that.** Nothing in `internal/ir` can drop a borrowed parameter, so the obvious
+route is `docs/OWNERSHIP-INFERENCE-PLAN.md`'s own remaining items. All three
+were prototyped and measured against `scripts/cliff-bench` (`checker.fern`,
+281,621 crossings / 267,661,872 bytes on the base commit):
 
-1. **Owned-by-default for string/array-bearing structs** — Slice 2's explicitly
-   "remaining sub-slice". `isOwnedByDefaultType` admits struct/tuple only when
-   `typeIsStringArrayFree`, which is exactly what excludes `LowerState`,
-   `Scope`, `EmitState`, and every other accumulator in the compiler.
-2. **Precise drops for PARAMETERS.** `computePreciseDrops` covers `var`-declared
-   locals only (`blockDeclIndices` walks `*ast.Var`); an owned param dropped at
-   its last use is what takes `rc(ops)` back to 1 before the recursion runs.
-   The existing comment on `preciseDropTarget` already states the principle —
-   "giving it back at the last read rather than at scope exit is what restores
-   the source to rc 1" (#6024) — it just never reaches a param.
-3. **Struct-update reuse on a unique owned receiver.** With (1) and (2),
-   `LowerState { ...s, f: v }` over a uniquely-owned `s` can write the one
-   changed field into `s`'s own box instead of allocating a successor — Koka's
-   reuse specialization, the plan's "Later" item. That removes the inc as well
-   as the copy.
+| prototype | crossings | bytes |
+|---|---|---|
+| base | 281,621 | 267,661,872 |
+| owned-by-default widened to array/string structs (`isOwnedByDefaultType`'s struct arm switched from `typeIsStringArrayFree` to `consumedDropWired`) | 218,781 (−22%) | 274,420,352 (**+2.5%**) |
+| + precise drops for owned PARAMETERS (`computePreciseDrops` seeds them at index −1; `localNameUnique` reads 0 for a param and has to become "no local shadows it") | 218,781 | 274,420,352 (**no change**) |
+| + `flowsIntoUncountedAlias` relaxed where the name is passed as an argument the CALLEE owns, so the transfer is counted | 218,494 | 273,638,144 (−0.3%) |
 
-Only (1) and (2) together move this number; (1) alone swaps a borrow for an
-inc/dec pair at the same two points and changes nothing about when the box
-dies.
+The third prototype took the accepted-parameter count from 30 to 72 (37 of them
+`LowerState`) and still moved nothing. **Precise drops are not the lever, and
+the reason is structural:** the drop routes through `emitOwnedSlotDrop` →
+`__drop_struct_<N>`, which is `__fern_rc_is_unique`-gated. An ancestor frame's
+`LowerState` box is never unique while the recursion is running — every frame
+below it was reached through a call that box is an argument of — so the drop
+decs and returns, and the box (with its reference to `ops`) survives. Worse,
+each ancestor's LAST USE *is* the call currently executing, so no placement of
+its drop can fire before the appends it would have helped.
+
+**What actually has to go is the box, not its drop.** `rc(ops)` counts live
+`LowerState` VALUES, and every `LowerState { ...s, f: v }` mints a new one. The
+single transformation that removes one is reuse: write the changed field into
+`s`'s own box and return `s`, instead of allocating a successor — Koka's reuse
+specialization, `OWNERSHIP-INFERENCE-PLAN.md`'s "Later" item, and the same
+mechanism `tryStructReuseOverwrite` already applies to the self-assign form
+`s = S { ...s, … }`. Its precondition is a uniquely-owned receiver, and that
+needs the argument MOVED into the call at its last use (no caller-side retain,
+no caller-side drop) rather than retained — Perceus's dup-elision, which native
+today applies only to explicitly-`own` params (`ownCallMoveArgs` /
+`computeMovedLocals`).
+
+So the sequence is: owned-by-default for these types, **move-on-last-use for
+owned-by-default call arguments**, then struct-update reuse on the unique
+receiver. Owned-by-default and precise drops are prerequisites of the first two
+steps, not wins in themselves — the table above is what that costs to learn a
+second time.
 
 ### 4d.6 The `strcmp` HELPER was byte-at-a-time — 25% off the compare benchmark
 
