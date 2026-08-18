@@ -398,6 +398,10 @@ pub struct FnSigs {
     // uniqueness check is a guard only if an aliased argument arrives already
     // retained. Recomputing either half locally lets a path that has the verdict
     // free a cell a path that lacks it never retained.
+    // array_param_counted: "ACNT:<key>|<flags>" — parameters every appearance of
+    // which is a counted store or a non-retaining read, so a fresh argument
+    // passed there is released by one post-call dec (array_param_counted_of).
+    array_param_counted: string[],
     trmc_consume_fns: string[],
 }
 
@@ -9813,7 +9817,22 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                     _ => {}
                 }
             }
-            if (arrlit_arg && sc.ok && call_arg_borrowable(sc, cid.name, ai)) {
+            // A COUNTED-RETAIN position admits the same temp where
+            // borrowability cannot: the callee stores the argument, but every
+            // appearance of its parameter is a counted store or a non-retaining
+            // read, so the temp is rc 2 on the escaping path and rc 1 otherwise
+            // and this one dec nets it to a single owner either way (#6522).
+            // The counted-retain admission additionally requires a CONCRETE
+            // SCALAR result (native's resultCannotAliasArg). A pointer-shaped
+            // return can BE or CONTAIN the argument — `both(d, k)` building a
+            // struct from `d` and returning `d` back out of it — and the dec
+            // fires immediately after the call, so the caller would read freed
+            // memory. Array- and struct-returning callees lower through other
+            // paths that never reach this block today; stating the requirement
+            // here keeps that an invariant rather than an accident.
+            var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
+                || arr_param_counted_at(sc.sigs.array_param_counted, cid.name, ai);
+            if (arrlit_arg && sc.ok && arg_releasable) {
                 var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
                 sc = sc.add_local(laan);
                 var laas: i32 = sc.slot_of(laan);
@@ -47006,6 +47025,186 @@ function borrow_reg_put(reg: string[], key: string, flags: string): string[] {
     return reg.with(b, reg[b] + key + "|" + flags + "\n");
 }
 
+// ── counted-retain array params (#6522, native's inferParamCountedRetain) ────
+//
+// The arg-temp stash releases a fresh argument only at a BORROWABLE position,
+// because a callee that retains its argument must be the one to free it. That
+// leaves the shape the conformance row is built from stranded: a constructor
+// that STORES the array — `node(name, deps_of(n), mtime)` — is not borrowable
+// by construction, so the caller's reference to the temp has nothing to
+// release it.
+//
+// Native's answer is not to widen borrowability but to ask a different
+// question per ARGUMENT: is every appearance of the callee's parameter a
+// COUNTED store or a non-retaining read? If so, an argument that reaches the
+// callee's result got there through a construction that inc'd it. The temp is
+// then rc 2 on the escaping path and rc 1 on the non-escaping one, and a single
+// post-call dec nets it to exactly one owner either way — which is why this
+// admits where the whole-call gate cannot.
+//
+// Credited (safe) occurrences, mirroring arrayParamCounted:
+//   - a bare `p` as a slot value of a struct / tuple / array literal — the
+//     construction incs it;
+//   - `p.len()`, the pure-read builtin receiver — reads, retains nothing;
+//   - `p` as argument i of a call whose parameter i is itself counted.
+// EVERYTHING else disqualifies, including `return p`, `x = p`, an element read
+// and a non-counted call argument. Positive evidence only.
+//
+// ARRAY parameters only. Native also classifies string and struct params and
+// then withdraws a scalar exemption when some pointer param is unproven
+// (`ptrAllCounted`); classifying only arrays and leaving every other param
+// uncredited is strictly narrower than that, so the exemption never arises and
+// a missing credit costs a leak rather than an over-release.
+function arrparam_use_ok(e: parser.Expr, pn: string, counted: boolean, reg: string[]): boolean {
+    match (e) {
+        parser.ExprIdent(id) => { if (id.name == pn) { return counted; } return true; },
+        parser.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) { if (!arrparam_use_ok(a.elements[i], pn, true, reg)) { return false; } i = i + 1; }
+            return true;
+        },
+        parser.ExprTuple(t) => {
+            var i: i32 = 0;
+            while (i < t.elements.len()) { if (!arrparam_use_ok(t.elements[i], pn, true, reg)) { return false; } i = i + 1; }
+            return true;
+        },
+        parser.ExprStructLit(sl) => {
+            // A functional-update BASE copies field pointers without a counted
+            // store, so it is not a credited slot.
+            if (sl.has_base && !arrparam_use_ok(sl.base, pn, false, reg)) { return false; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len()) { if (!arrparam_use_ok(sl.field_values[i], pn, true, reg)) { return false; } i = i + 1; }
+            return true;
+        },
+        parser.ExprCall(c) => {
+            var callee_name: string = "";
+            match (c.callee) {
+                parser.ExprIdent(cid) => { callee_name = cid.name; },
+                parser.ExprFieldAccess(fa) => {
+                    // `p.len()` — the pure-read builtin receiver. Any other
+                    // method may thread the receiver, so it is not credited.
+                    var recv_counted: boolean = fa.field == "len";
+                    if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg)) { return false; }
+                },
+                _ => { if (!arrparam_use_ok(c.callee, pn, false, reg)) { return false; } }
+            }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                var argc: boolean = callee_name.len() > 0 && arr_param_counted_at(reg, callee_name, ai);
+                if (!arrparam_use_ok(c.args[ai], pn, argc, reg)) { return false; }
+                ai = ai + 1;
+            }
+            return true;
+        },
+        parser.ExprBinary(b) => { return arrparam_use_ok(b.left, pn, false, reg) && arrparam_use_ok(b.right, pn, false, reg); },
+        parser.ExprUnary(u) => { return arrparam_use_ok(u.operand, pn, false, reg); },
+        parser.ExprIndex(ix) => { return arrparam_use_ok(ix.array, pn, false, reg) && arrparam_use_ok(ix.index, pn, false, reg); },
+        parser.ExprSlice(sl2) => { return arrparam_use_ok(sl2.array, pn, false, reg) && arrparam_use_ok(sl2.start, pn, false, reg) && arrparam_use_ok(sl2.end, pn, false, reg); },
+        parser.ExprFieldAccess(fa2) => { return arrparam_use_ok(fa2.obj, pn, false, reg); },
+        parser.ExprLambda(lm) => { return arrparam_uses_ok_stmts(lm.body, pn, reg); },
+        _ => { return true; }
+    }
+    return true;
+}
+
+function arrparam_uses_ok_stmts(stmts: parser.Stmt[], pn: string, reg: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) { if (!arrparam_use_ok_stmt(stmts[i], pn, reg)) { return false; } i = i + 1; }
+    return true;
+}
+function arrparam_use_ok_stmt(st: parser.Stmt, pn: string, reg: string[]): boolean {
+    match (st) {
+        parser.StmtVar(v) => { return arrparam_use_ok(v.init, pn, false, reg); },
+        parser.StmtAssign(a) => { return arrparam_use_ok(a.value, pn, false, reg); },
+        parser.StmtReturn(r) => { return arrparam_use_ok(r.value, pn, false, reg); },
+        parser.StmtExpr(e) => { return arrparam_use_ok(e.value, pn, false, reg); },
+        parser.StmtIf(f) => {
+            return arrparam_use_ok(f.cond, pn, false, reg)
+                && arrparam_uses_ok_stmts(f.then_body, pn, reg)
+                && arrparam_uses_ok_stmts(f.else_body, pn, reg);
+        },
+        parser.StmtWhile(w) => { return arrparam_use_ok(w.cond, pn, false, reg) && arrparam_uses_ok_stmts(w.body, pn, reg); },
+        parser.StmtFor(fo) => { return arrparam_use_ok(fo.iter, pn, false, reg) && arrparam_uses_ok_stmts(fo.body, pn, reg); },
+        parser.StmtMatch(m) => {
+            if (!arrparam_use_ok(m.scrutinee, pn, false, reg)) { return false; }
+            var ai: i32 = 0;
+            while (ai < m.arms.len()) {
+                if (m.arms[ai].has_guard && !arrparam_use_ok(m.arms[ai].guard, pn, false, reg)) { return false; }
+                if (!arrparam_uses_ok_stmts(m.arms[ai].body, pn, reg)) { return false; }
+                ai = ai + 1;
+            }
+            return true;
+        },
+        parser.StmtDefer(d) => { return arrparam_use_ok_stmt(d.action, pn, reg); },
+        _ => { return true; }
+    }
+    return true;
+}
+
+// arr_param_counted_at: parameter `ai` of `callee` is counted-retain.
+pub function arr_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var st: i32 = tagged_value_start(reg[i], "ACNT:", callee);
+        if (st >= 0 && st < reg[i].len()) {
+            if (st + ai < reg[i].len()) { return reg[i][st + ai] == 49; }   // 49 = '1'
+            return false;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// array_param_counted_of: the least fixpoint. Starts all-false and only ever
+// ADDS credits — a use is credited on positive local evidence or on a callee
+// already proven counted — so the iteration is monotone and settles on the
+// grounded fixpoint. A mutual-recursion cycle with no grounding stays
+// uncredited, which is the conservative direction.
+pub function array_param_counted_of(funcs: parser.FuncDecl[]): string[] {
+    var reg: string[] = [];
+    var round: i32 = 0;
+    while (round < 16) {
+        var next: string[] = [];
+        var changed: boolean = false;
+        var k: i32 = 0;
+        while (k < funcs.len()) {
+            var fn: parser.FuncDecl = funcs[k];
+            var flags: string = "";
+            var any: boolean = false;
+            // A CONCRETE SCALAR result is required (native's
+            // resultCannotAliasArg): the release fires immediately after the
+            // call, so a pointer-shaped return that BE's or CONTAINS the
+            // argument — `both(d, k)` building a struct from `d` and handing
+            // `d` back out of it — would leave the caller reading freed
+            // memory. Array- and struct-returning callees lower through paths
+            // that do not reach the arg stash today; requiring it here makes
+            // that an invariant of the registry rather than an accident of
+            // which lowering ran.
+            var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
+            var pj: i32 = 0;
+            while (pj < fn.params.len()) {
+                var ok: boolean = false;
+                if (scalar_result
+                    && is_leaksafe_array_field(fn.params[pj].type_name)
+                    && !fn.params[pj].own
+                    && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg)) { ok = true; }
+                if (ok) { flags = flags + "1"; any = true; } else { flags = flags + "0"; }
+                pj = pj + 1;
+            }
+            if (any) {
+                var ent: string = "ACNT:" + borrowable_key(fn) + "|" + flags;
+                next = next.append(ent);
+                if (util.index_of_str(reg, ent) < 0) { changed = true; }
+            }
+            k = k + 1;
+        }
+        reg = next;
+        if (!changed) { return reg; }
+        round = round + 1;
+    }
+    return reg;
+}
+
 pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
     var none: string[] = [];
     var out: string[] = borrow_reg_new();
@@ -47275,7 +47474,8 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     var e: string[] = [];
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
-        opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e };
+        opt_fresh_ret_fns: e, strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e,
+        array_param_counted: e };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -47288,7 +47488,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: e,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: e, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, move_arr_params: e, trmc_consume_fns: e };
+        tuple_fresh_ret_fns: e, move_arr_params: e, array_param_counted: e, trmc_consume_fns: e };
 }
 
 // array_ret_fn_names is the plain "return type is an array" scan — the default
@@ -47354,6 +47554,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         strfld_ok_types: strfld_reclaim_ok_types_of(funcs, structs, bparams),
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         move_arr_params: move_arr_params_of(funcs),
+        array_param_counted: array_param_counted_of(funcs),
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
     };
 }
