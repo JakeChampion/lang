@@ -18,11 +18,13 @@
 # since any divergence at all fails the leg — and keep the record below of what
 # left, because it is what the next round of probing should be measured against.
 #
-# Measured 2026-08-14 over seeds 0..511 (the leg's default corpus): 504 agree,
-# 0 diverge, 8 compile gaps — all of them the `<fn>$clo not defined` class, so
-# every other category in the census below is now empty. #6819 has since closed
-# one of the 8 (s0017 compiles and agrees), which should make it 505 / 7; that
-# figure is inferred from #6819's own 512-seed run, not re-swept here.
+# Measured 2026-08-18 over seeds 0..511 (the leg's default corpus): 507 agree,
+# 0 diverge, 5 compile gaps — all of them the `<fn>$clo not defined` class
+# (#6256), so every other category in the census below is empty.
+#
+# This is the only place the figure is derived. Quote it from here and re-sweep
+# before you do: a count carried into an issue body or a doc is stale within
+# days at this cadence, which is what retired the parity census in #6645.
 #
 # Count the gaps, not just the agreements, when reading a run: the leg only
 # proves what it could COMPILE, so a fix that turns a wrong answer into an IR
@@ -30,11 +32,11 @@
 #
 # That caution cuts both ways, and every run since has gone the other way: 204
 # agree / 308 gaps, then 263 / 249 (#6237 + #6246), 291 / 221 (#6261), 311 / 201
-# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8. One bail can cost far
-# more than the seed that exposes it — an if-expression whose branches are 64-bit
-# took the whole MODULE off the IR path, and fernsmith emits if-expressions
-# everywhere, so a single missing branch in one classifier was suppressing a
-# tenth of the corpus.
+# (#6268), 325 / 187 (#6272), 338 / 174 (#6276), 361 / 151, 504 / 8, 507 / 5.
+# One bail can cost far more than the seed that exposes it — an if-expression
+# whose branches are 64-bit took the whole MODULE off the IR path, and fernsmith
+# emits if-expressions everywhere, so a single missing branch in one classifier
+# was suppressing a tenth of the corpus.
 #
 # HOW TO READ A BAIL: just run it. `FERN_STRICT_IR=1` now names the innermost AST
 # node that refused, via LowerState.fail_why —
@@ -54,9 +56,9 @@
 #
 # The class is NOT one mechanism, which is the standing lesson here: grouping by
 # message is what made the first reduction fix the wrong thing. #6256's sweep
-# separated the survivors by instrumenting `lower_expr`'s `ExprLambda` arm:
+# separated the survivors by instrumenting `lower_expr`'s `ExprLambda` arm. The
+# fn-valued-capture row (s0356, s0172) left with #6861; five remain:
 #
-#   2  fn-valued capture with no `cap_type`                       (s0356, s0172)
 #   2  generic-passthrough arm values never walked                (s0393, s0215)
 #   2  the array gate failed by a passthrough arm, not a nested
 #      IIFE — same gate as the closed s0017, different failure    (s0042, s0211)

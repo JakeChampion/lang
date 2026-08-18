@@ -56,17 +56,19 @@ import (
 //
 // Compile gaps are a legitimate endpoint — the self-host backends route
 // IR-or-error, so a construct outside the IR subset is a diagnostic
-// naming the bail site rather than a miscompile — but they are the
-// MAJORITY of this corpus today (measured 2026-08-05: 51% of seeds bail
-// with "module is not IR-eligible"). That makes a floor essential rather
-// than decorative: without one, a regression that widened the bail set
-// would turn this lane green by testing almost nothing, and the shape of
-// the corpus means nobody would notice the count moving.
+// naming the bail site rather than a miscompile. Without a floor, a
+// regression that widened the bail set would turn this lane green by
+// testing almost nothing, and the shape of the corpus means nobody would
+// notice the count moving.
 //
 // Set below the measured runnable fraction with room for the natural
 // drift a generator change causes, and well above "the leg has hollowed
-// out".
-const selfHostDiffMinRunRatio = 0.3
+// out". Measured 2026-08-18 over seeds 0..511: 507 compile and run, 5
+// bail, 0 seeds skip on the interpreter side — a 0.99 ratio. Sharding is
+// what sets the headroom rather than the whole-corpus figure: CI splits
+// this leg two ways, so a shard that drew every one of today's 5 bails
+// runs 251 of 256, and the floor has to sit under that.
+const selfHostDiffMinRunRatio = 0.85
 
 // selfHostDiffKnownFile lists the seeds whose self-host result is KNOWN
 // to disagree with the interpreter today, one per line, each against its
