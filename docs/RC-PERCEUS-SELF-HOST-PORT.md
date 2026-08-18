@@ -8285,3 +8285,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   runs on x86_64 / arm64 / wasm under `TestFernFixtures` and on
   `TestFernFixturesSelfHost{X86_64,Wasm}`, and agrees with native byte-for-byte.
   Plus the whole `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
+- 2026-08-18 (struct half, fifth slice): **A strict-fresh producer's box was
+  refused along with its BORROWED string field.** The field-read reclaim asks
+  `owned_fresh_call_callee(..., "STRFLDF:")` for a `string` field, and that entry
+  requires `body_strfields_all_fresh` — every string in the returned literal
+  allocated by the producer's own frame. `Box { name: s, k: n }` over a PARAMETER
+  fails it, correctly: moving that pointer out and letting the destination free
+  it would release the caller's string underneath it, which is what
+  `strfld-param-value-refused` pins.
+
+  Refusing the MOVE is right. Refusing the BOX was not. The producer is still
+  strict-fresh, so the box is this frame's own allocation and nothing names it —
+  the same proof the SCALAR field read has always used to dec it. The read now
+  falls back to the bare strict-fresh key when "STRFLDF:" declines, and the dec
+  it reaches is the shallow one: `__struct_drop_<T>` above it is separately gated
+  on `struct_has_reclaim_array_field`, which this admission excludes. So the
+  moved-out pointer keeps belonging to whoever allocated it and the release
+  cannot over-reach. Every consumer that would treat the read as OWNING its
+  string — the `.len()` receiver site and the binding credit — keys on
+  "STRFLDF:", so none of them is reached from the fallback.
+
+  Per round, self-host x86-64, against native's 0:
+
+  | probe | before | after |
+  |---|---|---|
+  | `wrap(live, i).name.len()`, free fn, borrowed string field | 72 | 23 |
+  | `b.relabel(t).tag.len()`, method, borrowed string field | 70 | 21 |
+  | `b.relabel(t).n`, scalar read of the same producer (control) | 21 | 21 |
+
+  The control is the point: 21 was already the floor for that probe's shape
+  before this slice, and the string read now sits on it rather than above it.
+  On the gate's own shape both reads are flat outright — it grows on the parent
+  (92) and is flat here.
+
+  What this does NOT touch: the `relabel` CONFORMANCE row, where the method
+  returns the receiver on one path. That is still refused by
+  `body_has_nonstrictfresh_return` and still needs the SFRRECV-style runtime
+  discriminator named in the third slice — a different mechanism, and measured
+  here at an unchanged 70. This slice was reached by measuring toward that one
+  and finding a nearer, separable gap on the way: the identity return is not
+  what blocks a borrowed-string field read, and a strict-fresh control proved it
+  (70 with the identity return removed, so the discriminator was never the
+  binding constraint for this shape).
+
+  VERIFIED: new `strfld-param-value-box-reclaimed` (grows at 92 on the parent,
+  flat here) and `strfld-method-param-value-box-reclaimed` (reads the moved-out
+  pointer back AFTER churn has recycled the freed box's bytes — the half that
+  proves the dec stayed shallow), plus all 15 existing cases in the #6491
+  read-reclaim file, `strfld-param-value-refused` and `borrowed-field-refused`
+  among them. Refs #6544 #6491 #4451.

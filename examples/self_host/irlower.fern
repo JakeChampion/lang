@@ -12168,6 +12168,27 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 faown = owned_fresh_call_callee(fa.obj, "", s);
             } else if (decl_field_type(s.structs, sty, fa.field) == "string") {
                 faown = owned_fresh_call_callee(fa.obj, "STRFLDF:", s);
+                // A BORROWED string field. The producer is strict-fresh, so the
+                // BOX is this frame's own allocation and nothing names it — but
+                // its string arrived from a parameter (or any source this frame
+                // did not allocate), which is precisely what "STRFLDF:" refuses.
+                // Refusing the MOVE is right; refusing the box was not, and the
+                // whole box leaked per evaluation.
+                //
+                // Reclaim the box alone. The dec below is shallow — the deep
+                // __struct_drop_<T> above it is separately gated — so the
+                // moved-out pointer stays owned by whoever allocated it and this
+                // can never over-release. Every consumer that would treat the
+                // read as owning its string ("STRFLDF:" at the .len() receiver
+                // site, and the binding credit) keys on that entry, so none of
+                // them is reached from here.
+                //
+                // No rc-array field: skipping __struct_drop_<T> would strand one,
+                // which is safe but pointless, and admitting it would need the
+                // deep drop this read cannot prove.
+                if (faown == "" && !struct_has_reclaim_array_field(s.structs, sty)) {
+                    faown = owned_fresh_call_callee(fa.obj, "", s);
+                }
             }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
