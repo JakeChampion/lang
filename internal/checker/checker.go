@@ -3399,7 +3399,7 @@ func (c *checker) validateResourceHandles(prog *ast.Program) {
 		}
 		visit(fn.ReturnType, fn.P)
 		if fn.Body != nil {
-			c.walkVarTypes(fn.Body, visit)
+			c.walkDeclaredTypes(fn.Body, visit)
 		}
 	}
 }
@@ -3487,28 +3487,61 @@ func (c *checker) validateDynTraitTypes(prog *ast.Program) {
 		}
 		visit(fn.ReturnType, fn.P)
 		if fn.Body != nil {
-			c.walkVarTypes(fn.Body, visit)
+			c.walkDeclaredTypes(fn.Body, visit)
 		}
 	}
 }
 
-// walkVarTypes invokes visit on every local `var` declaration's
-// annotated type within a block, wherever it nests. The hand-rolled
-// statement recursion this replaced descended only into blocks, so it
-// missed a `var` in an else-if chain (an *ast.If sits directly in the
-// Else slot, not a Block) and in every expression-nested position — the
-// same class of gap #6996 found in resolveTypesInBlock, which is why
-// both now walk the tree the same way.
-func (c *checker) walkVarTypes(b *ast.Block, visit func(ast.Type, ast.Position)) {
+// walkDeclaredTypes invokes visit on every annotated type declared inside
+// a block, wherever it nests — see forEachDeclaredType for the node set.
+// The hand-rolled statement recursion this replaced descended only into
+// blocks, so it missed a `var` in an else-if chain (an *ast.If sits
+// directly in the Else slot, not a Block) and in every expression-nested
+// position — the same class of gap #6996 found in resolveTypesInBlock,
+// which is why both now walk the tree the same way.
+func (c *checker) walkDeclaredTypes(b *ast.Block, visit func(ast.Type, ast.Position)) {
 	if b == nil {
 		return
 	}
 	ast.Walk(b, func(n ast.Node) bool {
-		if v, ok := n.(*ast.Var); ok {
-			visit(v.Type, v.P)
-		}
+		forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+			if *t != nil {
+				visit(*t, pos)
+			}
+		})
 		return true
 	})
+}
+
+// forEachDeclaredType invokes visit on every type a declaration node
+// ANNOTATES: a `var`'s type, and a nested function's or a lambda's
+// parameter and return types. The pointer is what lets the resolution
+// pass rewrite in place; the reporters just read through it.
+//
+// It exists because the three body walkers that care about annotated
+// types were each written separately and drifted: resolution covered all
+// three node kinds after #7003, while the two REPORTERS still looked at
+// `var` alone, so neither E064 nor E021 ever reached a lambda parameter
+// (#7004). Sharing the node set is what stops that recurring.
+//
+// A nested function's own type-params would shadow the outer scope's; the
+// typical inner function has none and just sees the outer params, so
+// callers pass the surrounding set, which is the conservative answer.
+func forEachDeclaredType(n ast.Node, visit func(t *ast.Type, pos ast.Position)) {
+	switch x := n.(type) {
+	case *ast.Var:
+		visit(&x.Type, x.P)
+	case *ast.FuncDecl:
+		for i := range x.Params {
+			visit(&x.Params[i].Type, paramPos(x.Params[i], x.P))
+		}
+		visit(&x.ReturnType, x.P)
+	case *ast.Lambda:
+		for i := range x.Params {
+			visit(&x.Params[i].Type, paramPos(x.Params[i], x.P))
+		}
+		visit(&x.ReturnType, x.P)
+	}
 }
 
 // mentionsSelf reports whether `Self` appears anywhere in a type —
@@ -5513,24 +5546,9 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 	// a positionless Type field is not traversal state, and Walk never
 	// visits those fields itself.
 	ast.Walk(b, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Var:
-			c.resolveType(&x.Type, params, x.P)
-		case *ast.FuncDecl:
-			// A nested function's own type-params would shadow the
-			// outer scope's; the typical inner function has none and
-			// just sees the outer params, so passing the surrounding
-			// `params` set is the conservative right answer here.
-			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
-			}
-			c.resolveType(&x.ReturnType, params, x.P)
-		case *ast.Lambda:
-			for i := range x.Params {
-				c.resolveType(&x.Params[i].Type, params, orPos(x.Params[i].NamePos, x.P))
-			}
-			c.resolveType(&x.ReturnType, params, x.P)
-		}
+		forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+			c.resolveType(t, params, pos)
+		})
 		return true
 	})
 }
@@ -5862,9 +5880,11 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		c.checkTypeKnown(fn.ReturnType, params, fn.P)
 		if fn.Body != nil {
 			ast.Walk(fn.Body, func(n ast.Node) bool {
-				if v, ok := n.(*ast.Var); ok && v.Type != nil {
-					c.checkTypeKnown(v.Type, params, v.P)
-				}
+				forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+					if *t != nil {
+						c.checkTypeKnown(*t, params, pos)
+					}
+				})
 				return true
 			})
 		}
