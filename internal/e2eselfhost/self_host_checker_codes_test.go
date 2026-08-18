@@ -1370,8 +1370,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			out, _ := cmd.Output()
-			got := driverCodes(string(out))
+			out := runCheckerDriver(t, cmd, tc.name)
+			got := driverCodes(out)
 
 			want := uniqueSortedCodes(tc.want)
 			if !equalStrings(got, want) {
@@ -1558,8 +1558,8 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], checkerBin)...)
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			out, _ := cmd.Output()
-			got := driverCodes(string(out))
+			out := runCheckerDriver(t, cmd, tc.name)
+			got := driverCodes(out)
 			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
