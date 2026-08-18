@@ -9605,3 +9605,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (rc 2 -> 1). The scalar-result guard is a separate question and, on the
   evidence above, not one worth spending the row's budget on. Refs #6544 #6522
   #7061 #4451.
+- 2026-08-18: the arg temp itself — `node(wide(n), deps_of(n), n)` — 268 B/round
+  to 0. Two widenings, both in the counted-retain tier the previous entry
+  restated:
+
+  1. **`param_counted_of`'s ARRAY tier admits `string[]`.** The candidacy
+     predicate was `is_leaksafe_array_field`, which is SCALAR-element only, so a
+     pointer-element parameter never reached the per-param verdict. The use
+     vocabulary needed nothing: a bare `p` in a struct literal is already a
+     credited slot, and the construction-side retain for an ARRAY field is not
+     gated on `slit_reclaim` the way the string one is, so the credit and the
+     retain line up for `string[]` exactly as they do for `i32[]`.
+
+  2. **The tier admits a STRUCT-RETURNING callee.** A concrete scalar result was
+     required so the release could not free something the result IS or CONTAINS.
+     A result that CONTAINS the argument is the shape this tier exists for,
+     though — the callee's counted store and the caller's post-call dec net to
+     the one reference the result owns — so the guard now also passes a return
+     type that `struct_routes_field_reclaim_at` admits, which is the string
+     tier's reading (`str_result_cannot_alias`) narrowed to types whose drop
+     actually reaches the field.
+
+  The call-site stash takes `"STRARR:"` producers only at a counted-retain
+  position. The release there is `__fern_rc_dec` — a SHALLOW buffer dec — so at
+  a borrowable position it would free the buffer and strand the element boxes,
+  the same exclusion the array-LITERAL arm makes for pointer-element literals.
+  At a counted-retain position the callee's construction has retained the array,
+  the dec takes rc 2 -> 1, and the struct's own drop deep-frees the elements.
+
+  Measured (x86-64, `__heap_bump_bytes` per round): the `node(...)` row 268 -> 0;
+  a caller holding the struct across three further array allocations 462 -> 184;
+  a READ-ONLY callee 272 -> 216, where the dec takes rc 1 -> 0 and frees the
+  buffer outright and the 216 that remains is the leaked element boxes. The
+  conformance row is unchanged at 538: its element reads (`fresh.deps[0].len()`)
+  exclude the field through the separate read gate, which is the next slice.
+
+  **Two of the four safety probes were vacuous and an asm differential is what
+  said so.** An element-read callee and a field-read escape (`Outer { b: q.a }`)
+  both compile byte-identically before and after — the first because the caller's
+  own `r.deps[0]` read poisons the struct type's admission, the second because
+  the local struct whose field escapes is not dropped, so the retain survives and
+  the dec is a no-op. Neither is a witness for anything, and a mutation build
+  that admits the escape shape outright still passes both. They are dropped
+  rather than kept as decoration; the four rows that ship all move measured
+  bytes or pin a value the release could corrupt. Regression tests:
+  `arrArgReclaimCases` in `internal/e2eselfhost/self_host_arrarg_reclaim_ir_test.go`
+  (4 new rows x 3 backends). Refs #6544 #6522 #7061 #4451.

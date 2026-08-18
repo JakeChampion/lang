@@ -9844,6 +9844,19 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                             parser.ExprIdent(lacid) => {
                                 arrlit_arg = util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "ARR:" + lacid.name) >= 0
                                     && sc.slot_of(lacid.name) < 0;
+                                // A "STRARR:" producer — a POINTER-element array
+                                // — is stashable only at a COUNTED-RETAIN
+                                // position. The release here is a shallow buffer
+                                // dec, which at a borrowable position would
+                                // strand the element boxes (the exclusion above);
+                                // at a counted-retain one the callee's
+                                // construction has retained the array, so the dec
+                                // takes rc 2 -> 1 and the callee's own drop
+                                // deep-frees the elements it now owns.
+                                if (!arrlit_arg
+                                    && util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "STRARR:" + lacid.name) >= 0
+                                    && sc.slot_of(lacid.name) < 0
+                                    && arr_param_counted_at(sc.sigs.param_counted, cid.name, ai)) { arrlit_arg = true; }
                             },
                             _ => {}
                         }
@@ -9856,14 +9869,13 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             // appearance of its parameter is a counted store or a non-retaining
             // read, so the temp is rc 2 on the escaping path and rc 1 otherwise
             // and this one dec nets it to a single owner either way (#6522).
-            // The counted-retain admission additionally requires a CONCRETE
-            // SCALAR result (native's resultCannotAliasArg). A pointer-shaped
-            // return can BE or CONTAIN the argument — `both(d, k)` building a
-            // struct from `d` and returning `d` back out of it — and the dec
-            // fires immediately after the call, so the caller would read freed
-            // memory. Array- and struct-returning callees lower through other
-            // paths that never reach this block today; stating the requirement
-            // here keeps that an invariant rather than an accident.
+            // The counted-retain admission additionally requires a result that
+            // cannot BE the argument (native's resultCannotAliasArg) — a
+            // concrete scalar, or a struct whose drop routes field reclaim, so
+            // the returned struct owns the reference the dec leaves behind.
+            // param_counted_of carries that test; the dec fires immediately
+            // after the call, so an array-returning callee would hand the caller
+            // freed memory.
             var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
                 || arr_param_counted_at(sc.sigs.param_counted, cid.name, ai);
             if (arrlit_arg && sc.ok && arg_releasable) {
@@ -47983,22 +47995,23 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
         var k: i32 = 0;
         while (k < funcs.len()) {
             var fn: parser.FuncDecl = funcs[k];
-            // ARRAY tier. A CONCRETE SCALAR result is required: the release
-            // fires immediately after the call, so a pointer-shaped return that
-            // BE's or CONTAINS the argument — `both(d, k)` building a struct
-            // from `d` and handing `d` back out of it — would leave the caller
-            // reading freed memory. This is stricter than the string tier below
-            // and than native.
+            // ARRAY tier. The result must not BE the argument: the release
+            // fires immediately after the call, so a callee handing `d` straight
+            // back out would leave the caller reading freed memory. A CONCRETE
+            // SCALAR result settles that outright; so does a struct result whose
+            // drop ROUTES field reclaim, which is the shape this tier exists for
+            // — the callee's counted store and the caller's post-call dec net to
+            // the one reference the returned struct owns. (The string tier's
+            // str_result_cannot_alias reads it the same way, minus the routing
+            // requirement.) A `string[]`/array RESULT is refused by both halves.
             //
-            // It is NOT what #6522's row is stuck behind, though this comment
-            // said so until it was measured: lifting the guard entirely moves
-            // `node(wide(n), deps_of(n), n)` not at all. That row's argument is
-            // a `string[]`, and is_leaksafe_array_field admits only
-            // SCALAR-element arrays, so it never becomes a candidate here in the
-            // first place. Widening the tier to pointer-element arrays is that
-            // row's slice; the release for one is a shallow arr_dec (the callee
-            // struct retains it and deep-frees on its own drop), not the deep
-            // free the element-owning paths use.
+            // Candidacy spans SCALAR-element arrays and `string[]`. For a
+            // pointer-element array the caller's release is a shallow arr_dec,
+            // not the deep element free — the returned struct retains the array
+            // and deep-frees it on its own drop — so the credited use vocabulary
+            // is the same either way: a bare `p` in a struct literal is a
+            // counted slot, and the construction-side retain for an ARRAY field
+            // is not gated on slit_reclaim the way the string one is.
             var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
             var aflags: string = "";
             var aany: boolean = false;
@@ -48008,8 +48021,9 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
-                if (scalar_result
-                    && is_leaksafe_array_field(fn.params[pj].type_name)
+                if ((scalar_result || struct_routes_field_reclaim_at(structs, sfok, fn.ret_type))
+                    && (is_leaksafe_array_field(fn.params[pj].type_name)
+                        || fn.params[pj].type_name == "string[]")
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ACNT:", structs, sfok)) { aok = true; }
                 if (aok) { aflags = aflags + "1"; aany = true; } else { aflags = aflags + "0"; }

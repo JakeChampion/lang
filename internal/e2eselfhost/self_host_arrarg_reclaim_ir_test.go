@@ -15,6 +15,15 @@ import (
 // call_arg_borrowable position) and __fern_rc_dec's it right after the call —
 // the array sibling of the #4355 string literal-arg box reclaim.
 //
+// The last four cases widen that stash: a fresh array a "STRARR:" / "ARR:"
+// PRODUCER returned is the same temp one step removed, and a COUNTED-RETAIN
+// param position admits one where borrowability cannot — the callee stores the
+// argument, but every appearance of its parameter is a counted store or a
+// non-retaining read, so this one dec nets it to a single owner either way.
+// Pointer-element arrays ride only the counted-retain half: the release is the
+// shallow buffer dec, which at a borrowable position would strand the element
+// boxes.
+//
 // The consuming-callee case additionally pins the borrow-verdict soundness fix
 // this slice required: a param that is REASSIGNED (`xs = xs.append(9)`) or used
 // as an `.append` receiver (`var ys = xs.append(7)`) is never borrowable —
@@ -119,6 +128,70 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
+	// POINTER-ELEMENT producer arg at a COUNTED-RETAIN position (#6522): the
+	// `deps_of(pre)` temp in `node(w(pre), deps_of(pre), n)` is a fresh string[]
+	// nothing released — the stash arm admitted only scalar-element "ARR:"
+	// producers, because a shallow buffer dec of a pointer-element array at a
+	// BORROWABLE position would strand the element boxes. At a counted-retain
+	// position the callee's struct construction has already retained the array,
+	// so the same dec takes rc 2 -> 1 and the struct's own drop deep-frees the
+	// elements it owns. Bounded high-water: 544 KB of leaked buffers over the
+	// second 2000-iteration churn before, flat after.
+	{"arrarg-strarr-producer-counted-flat", `struct Node { name: string, deps: string[], mtime: i32 }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function node(name: string, deps: string[], mtime: i32): Node { return Node { name: name, deps: deps, mtime: mtime }; }
+function round(pre: string, n: i32): i32 { var f: Node = node(w(pre), deps_of(pre), n); return f.deps.len() + f.name.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre, i)) % 251; i = i + 1; } return acc; }
+function main(): i32 {
+    var w0: i32 = churn(2000);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var x: i32 = churn(2000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (w0 != x) { return 97; }
+    return 0;
+}`, 0},
+	// The released temp's array must SURVIVE the call: the caller holds the
+	// struct across three further array allocations, and deps_of's LENGTH varies
+	// with n, so a buffer freed by an unbalanced dec and re-served from the
+	// freelist reports the wrong element count. Value-exact over 2000 rounds.
+	{"arrarg-strarr-counted-held-struct", `struct Held { deps: string[], n: i32 }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string, n: i32): string[] { var out: string[] = []; var i: i32 = 0; while (i < (n % 5) + 1) { out = out.append(w(pre)); i = i + 1; } return out; }
+function keep(p: string[], n: i32): Held { return Held { deps: p, n: n }; }
+function round(pre: string, n: i32): i32 {
+    var h: Held = keep(deps_of(pre, n), n);
+    var k1: string[] = deps_of(pre, n + 1);
+    var k2: string[] = deps_of(pre, n + 3);
+    var k3: string[] = deps_of(pre, n + 7);
+    if (k1.len() < 0 || k2.len() < 0 || k3.len() < 0) { return 0; }
+    return h.deps.len() + h.n - n;
+}
+function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre, i) != (i % 5) + 1) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+	// A READ-ONLY callee is counted-retain too (nothing in the use vocabulary
+	// refuses `p.len()`), and there the dec takes rc 1 -> 0 and frees the buffer
+	// outright — 56 B/round recovered. The element boxes stay leaked: the release
+	// is the shallow __fern_rc_dec, not the element walk. Sound, and the deep
+	// free is a later slice — a borrowable callee may hand an element back out.
+	{"arrarg-strarr-read-only-callee-safe", `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function count(p: string[]): i32 { return p.len() + p.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < n) { if (count(deps_of(pre)) != 6) { return 97; } i = i + 1; } return 0; }
+function main(): i32 { var a: i32 = churn(2000); if (a != 0) { return a; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+	// The tier now admits a STRUCT-RETURNING callee, so a SCALAR-array param
+	// reaches the release through a shape the concrete-scalar-result guard used
+	// to exclude: `esci` stores the argument in a local struct (a counted store)
+	// and hands it out again through a FIELD READ into the struct it returns.
+	// The field-read copy takes its own construction retain, so the returned
+	// struct owns a counted reference and the caller's dec cannot strand it.
+	{"arrarg-scalar-struct-ret-alias-safe", `struct SIn { a: i32[] }
+struct SOut { b: i32[] }
+function nums_of(n: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
+function esci(p: i32[]): SOut { var q: SIn = SIn { a: p }; return SOut { b: q.a }; }
+function round(n: i32): i32 { var o: SOut = esci(nums_of(n)); var k: i32[] = nums_of(n + 9); if (k.len() < 0) { return 0; } return o.b.len() + o.b[0] - n + o.b[3] - n; }
+function main(): i32 { var i: i32 = 0; while (i < 2000) { if (round(i) != 7) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostArrArgReclaimIRX86_64 drives the cases through the self-hosted
