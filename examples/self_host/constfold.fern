@@ -136,7 +136,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
             var elems: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) { elems = elems.append(fold_expr(a.elements[i])); i = i + 1; }
-            return parser.ExprArray { elements: elems };
+            return parser.ExprArray { ...a, elements: elems };
         },
         parser.ExprMapLit(ml) => {
             var mks: parser.Expr[] = [];

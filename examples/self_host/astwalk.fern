@@ -314,7 +314,7 @@ pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.
             var na: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) { na = na.append(subst_ident_expr(a.elements[i], from, to)); i = i + 1; }
-            return parser.ExprArray { elements: na };
+            return parser.ExprArray { ...a, elements: na };
         },
         parser.ExprTuple(t) => {
             var nt: parser.Expr[] = [];

@@ -4987,17 +4987,51 @@ pub function expr_is_strarr(e: parser.Expr, s: LowerState): boolean {
     return false;
 }
 
+// arr_lit_is_f64 / arr_lit_is_i64 answer which slot an array LITERAL's elements
+// occupy. The element TYPE answers first — `parser.ExprArray.elem_ty`, stamped
+// by the settle pass from the destination the literal stands in, the same fact
+// native sizes elements from (ast.ElemSizeBytesFor on ast.ArrayLit.ElemType).
+// Reading the width off the first element's expression shape alone mis-sized
+// `[1, 2]` in an i64[] or f64[] destination to a 4-byte stride on wasm (#4366).
+//
+// The type only ever WIDENS the verdict: an elem_ty naming no 8-byte slot — an
+// unreached destination (""), or a type PARAMETER (`f(xs: T[])` stamps "T"),
+// where the concrete element is not knowable here — falls through to the
+// expression probe rather than forcing the 4-byte answer over it.
+//
+// f32 shares the f64 slot: the self-host carries every float 8-byte wide
+// (ir.fern's `f64` immediate), so an `f32[]` strides 8 here where native strides
+// 4 — the slot-width divergence #4366 tracks separately.
+pub function elem_ty_is_f64slot(t: string): boolean {
+    return t == "f64" || t == "f32" || t == "float";
+}
+
+pub function elem_ty_is_i64slot(t: string): boolean {
+    return t == "i64" || t == "u64";
+}
+
+pub function arr_lit_is_f64(arr: parser.ExprArray, s: LowerState): boolean {
+    if (elem_ty_is_f64slot(arr.elem_ty)) { return true; }
+    return arr.elements.len() > 0 && expr_is_f64(arr.elements[0], s);
+}
+
+pub function arr_lit_is_i64(arr: parser.ExprArray, s: LowerState): boolean {
+    if (elem_ty_is_i64slot(arr.elem_ty)) { return true; }
+    return arr.elements.len() > 0 && !expr_is_f64(arr.elements[0], s)
+        && infer_expr_width(arr.elements[0], s) == 64;
+}
+
 // expr_is_f64arr reports whether `e` is an f64[] array — an array literal whose
-// first element is f64, or an f64-array-tracked local/param. Drives the slot's
-// element-width tracking at a `var a = …` binding (mirrors expr_is_strarr).
+// element type (or, unstamped, whose first element) is f64, or an
+// f64-array-tracked local/param. Drives the slot's element-width tracking at a
+// `var a = …` binding (mirrors expr_is_strarr).
 // f64[]-returning calls and slices aren't tracked (those uses bail), so they
 // fall to the default — keeping a stray width-32 a[i] off an f64 buffer out of
 // the eligible set via the whole-module gate.
 pub function expr_is_f64arr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
         parser.ExprArray(arr) => {
-            if (arr.elements.len() == 0) { return false; }
-            return expr_is_f64(arr.elements[0], s);
+            return arr_lit_is_f64(arr, s);
         },
         parser.ExprIdent(id) => { return s.is_f64arr_slot(s.slot_of(id.name)); },
         // `m[i]` over an f64[][] slot is itself an f64[] (so `var r = m[i]` tracks
@@ -6799,7 +6833,7 @@ pub function lower_array_to_json(arr: parser.Expr, s: LowerState): LowerState {
         aref = parser.ExprIdent { name: an, line: 0, col: 0 };
     }
     // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "u8[]", init: parser.ExprArray { elements: [] }, line: 0, col: 0, is_str: false };
+    var dout: parser.Stmt = parser.StmtVar { name: on, type_name: "u8[]", init: parser.ExprArray { elements: [], elem_ty: "u8" }, line: 0, col: 0, is_str: false };
     s2 = lower_stmt(dout, s2);
     if (!s2.ok) { return s2; }
     // $tjout = $tjout.append(91 as u8);  — '['
@@ -6948,13 +6982,12 @@ pub function arr_index_is_f64(arr: parser.Expr, s: LowerState): boolean {
         // stride instead of f64's 8-byte stride (#2908).
         parser.ExprSlice(sl) => { return expr_is_f64arr(sl.array, s); },
         // Direct index of an f64 array LITERAL `[1.0, 2.0][i]`: the ExprArray
-        // construction builds it at an 8-byte f64 stride (ewidth=64 when
-        // elements[0] is f64), so the read must match — mirror that same
-        // first-element probe. Without this the read defaulted to the 4-byte
-        // i32 path and mis-strode the f64 literal on wasm (the ExprArray sibling
-        // of the #2908 ExprSlice gap; register backends use 8-byte slots so only
+        // construction builds it at an 8-byte f64 stride, so the read must ask
+        // the same question. Without this the read defaulted to the 4-byte i32
+        // path and mis-strode the f64 literal on wasm (the ExprArray sibling of
+        // the #2908 ExprSlice gap; register backends use 8-byte slots so only
         // wasm was affected).
-        parser.ExprArray(al) => { return al.elements.len() > 0 && expr_is_f64(al.elements[0], s); },
+        parser.ExprArray(al) => { return arr_lit_is_f64(al, s); },
         _ => { return false; }
     }
     return false;
@@ -7039,11 +7072,10 @@ pub function arr_index_is_i64(arr: parser.Expr, s: LowerState): boolean {
         // fixed for f64[]).
         parser.ExprSlice(sl) => { return expr_is_i64arr(sl.array, s); },
         // Direct index of an i64/u64 array LITERAL `[x as i64, …][i]`: the
-        // ExprArray construction emits arr_make_i64 (8-byte stride) when
-        // elements[0] is 64-bit-wide and not f64, so the read must match —
-        // mirror that same first-element probe (the i64 sibling of the f64
-        // ExprArray arm above; wasm-only, register backends unaffected).
-        parser.ExprArray(al) => { return al.elements.len() > 0 && !expr_is_f64(al.elements[0], s) && infer_expr_width(al.elements[0], s) == 64; },
+        // ExprArray construction emits arr_make_i64 (8-byte stride) for the same
+        // literals, so the read must ask the same question (the i64 sibling of
+        // the f64 ExprArray arm above; wasm-only, register backends unaffected).
+        parser.ExprArray(al) => { return arr_lit_is_i64(al, s); },
         _ => { return false; }
     }
     return false;
@@ -7077,18 +7109,15 @@ pub function arr_index_is_i32_scalar(arr: parser.Expr, s: LowerState): boolean {
 
 // expr_is_i64arr reports whether `e` is an i64[] — an i64-array-tracked
 // local/param (aliasing), an i64[]-returning call, an i64[] slice, OR a literal
-// whose first element is an unambiguous 64-bit int (`[x as i64, …]`). A bare
-// integer literal (`[10, 20]`) stays i32 — only an explicitly-64-bit first
-// element (an `as i64`/`as u64` cast or an i64-typed operand) marks the literal
-// i64[], mirroring the StmtVar i64[]-literal binding detection (#3353). This
-// lets an i64[] tuple element / array literal in a non-binding position carry
-// its 8-byte element width through elem_type_tag.
+// arr_lit_is_i64 sizes 8-byte. An UNSTAMPED literal of bare integer literals
+// (`[10, 20]`) stays i32: without a destination only an explicitly-64-bit first
+// element (an `as i64`/`as u64` cast or an i64-typed operand) marks it i64[],
+// mirroring the StmtVar i64[]-literal binding detection (#3353). This lets an
+// i64[] tuple element / array literal in a non-binding position carry its
+// 8-byte element width through elem_type_tag.
 pub function expr_is_i64arr(e: parser.Expr, s: LowerState): boolean {
     match (e) {
-        parser.ExprArray(lit) => {
-            if (lit.elements.len() == 0) { return false; }
-            return !expr_is_f64(lit.elements[0], s) && infer_expr_width(lit.elements[0], s) == 64;
-        },
+        parser.ExprArray(lit) => { return arr_lit_is_i64(lit, s); },
         parser.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
         // `m[i]` over an i64[][] or u64[][] slot is itself an 8-byte-element
         // array (so `var r = m[i]` tracks r for 8-byte `r[j]` reads). #2691 /
@@ -9533,7 +9562,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // a 1-element array [v] so it reuses the array machinery on
     // every backend (#5510). c.get()/c.set() desugar to c[0] below.
     if (cid.name == "cell_new" && c.args.len() == 1) {
-        return lower_expr(parser.ExprArray { elements: [c.args[0]] }, s);
+        return lower_expr(parser.ExprArray { elements: [c.args[0]], elem_ty: "" }, s);
     }
     // Raw-memory intrinsics (#2649 Tier-2 floor — see
     // docs/RUNTIME-INTRINSICS.md). Each lowers its args left-to-right
@@ -12888,16 +12917,14 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // literal: owned at rc=1, no alias-inc.) Elements must be i32 or the
             // element lowering bails.
             var n: i32 = arr.elements.len();
-            // An i64[]/u64[] literal (`[x as i64, …]`): a bare integer literal is
-            // i32, so an i64[] literal is identified by an unambiguous 64-bit
-            // first element. Lower each element via lower_i64 (8-byte value) and
-            // emit arr_make_i64 — mirroring the StmtVar i64[]-literal binding
-            // path. The generic i32/f64 path below lowers elements via lower_expr,
-            // which BAILS on an `as i64` element (as_i64 has no lower_expr arm),
-            // so without this an i64[] literal in a non-binding position (e.g. a
-            // tuple element `([x as i64], y)`) bailed the module to AST. #3353.
-            if (n > 0 && !expr_is_f64(arr.elements[0], s)
-                    && (infer_expr_width(arr.elements[0], s) == 64 || lit_has_i64_suffix(arr.elements[0]))) {
+            // An i64[]/u64[] literal: lower each element via lower_i64 (8-byte
+            // value) and emit arr_make_i64 — mirroring the StmtVar i64[]-literal
+            // binding path. The generic i32/f64 path below lowers elements via
+            // lower_expr, which BAILS on an `as i64` element (as_i64 has no
+            // lower_expr arm), so without this an i64[] literal in a non-binding
+            // position (e.g. a tuple element `([x as i64], y)`) bailed the module
+            // to AST. #3353.
+            if (n > 0 && (arr_lit_is_i64(arr, s) || lit_has_i64_suffix(arr.elements[0]))) {
                 var ia64: LowerState = s;
                 var iae: i32 = 0;
                 while (iae < n) {
@@ -12914,7 +12941,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // regardless — width only steers wasm.) The slot binding tracks
             // f64-array-ness (local_is_f64arr) so a[i] reads an 8-byte f64.
             var ewidth: i32 = 32;
-            if (n > 0 && expr_is_f64(arr.elements[0], s)) { ewidth = 64; }
+            if (n > 0 && arr_lit_is_f64(arr, s)) { ewidth = 64; }
             // i32[] / string[] / f64[] literals are all supported: an i32 element
             // lowers to its value, a string element to its box pointer (const_str
             // etc.), an f64 element to its 8-byte bit pattern. The slot binding
@@ -52813,7 +52840,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
                 nelems = nelems.append(er.expr);
                 ei = ei + 1;
             }
-            return LiftExpr { expr: parser.ExprArray { elements: nelems }, acc: aa };
+            return LiftExpr { expr: parser.ExprArray { ...arr, elements: nelems }, acc: aa };
         },
         // A no-capture lambda in a STRUCT-FIELD value position (`Box { f:
         // function(x){...} }`) hoists the same way — lift_call_arg turns it into
@@ -53845,7 +53872,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             var ael: parser.Expr[] = [];
             var ai: i32 = 0;
             while (ai < arr.elements.len()) { ael = ael.append(subst_fcall_expr(arr.elements[ai], fname, lname, capargs)); ai = ai + 1; }
-            return parser.ExprArray { elements: ael };
+            return parser.ExprArray { ...arr, elements: ael };
         },
         parser.ExprTuple(tu) => {
             var tel: parser.Expr[] = [];
@@ -55368,7 +55395,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                             fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
                             e = e + 1;
                         }
-                        nv = parser.ExprArray { elements: nelems };
+                        nv = parser.ExprArray { ...arr, elements: nelems };
                     },
                     // A nested value-position if/match arm: box the arrays its own
                     // arms return, matching the gate's recursion through the same
@@ -55785,7 +55812,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                 }
                 i = i + 1;
             }
-            return InlineCloRes { expr: parser.ExprArray { elements: nelems }, funcs: fs, counter: ct };
+            return InlineCloRes { expr: parser.ExprArray { ...arr, elements: nelems }, funcs: fs, counter: ct };
         },
         parser.ExprTuple(tl) => {
             // Every fn-VALUED tuple element is lifted to a `__mkclo$…` env-box
@@ -56080,7 +56107,7 @@ function wrap_ann_fn_tuple_elems(e: parser.Expr, ann: string, fd: parser.FuncDec
                     afs = ar.funcs; act = ar.counter; aels = aels.append(ar.expr);
                     ai = ai + 1;
                 }
-                return InlineCloRes { expr: parser.ExprArray { elements: aels }, funcs: afs, counter: act };
+                return InlineCloRes { expr: parser.ExprArray { ...arr, elements: aels }, funcs: afs, counter: act };
             },
             _ => { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
         }
@@ -56490,7 +56517,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             var ne: parser.Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) { ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes)); i = i + 1; }
-            return parser.ExprArray { elements: ne };
+            return parser.ExprArray { ...a, elements: ne };
         },
         parser.ExprTuple(t) => {
             var ne: parser.Expr[] = [];
@@ -56522,7 +56549,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
         parser.StmtVar(v) => {
             var bxi: i32 = util.index_of_str(boxed, v.name);
             if (bxi >= 0) {
-                var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)] };
+                var cell: parser.Expr = parser.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)], elem_ty: btypes[bxi] };
                 return parser.StmtVar { name: mcap_cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false };
             }
             return parser.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes), line: v.line, col: v.col, is_str: v.is_str };
@@ -56763,7 +56790,7 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): parser.Stmt {
     var src: parser.Expr = parser.ExprIdent { name: c, line: 0, col: 0 };
-    return parser.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: parser.ExprArray { elements: [src] }, line: 0, col: 0, is_str: false };
+    return parser.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: parser.ExprArray { elements: [src], elem_ty: ty }, line: 0, col: 0, is_str: false };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
@@ -56862,7 +56889,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
                 var er: WCapExpr = wcap_expr(ar.elements[i], fd, gfns, structs, mfuncs, a, atargets);
                 a = er.caps; ne = ne.append(er.expr); i = i + 1;
             }
-            return WCapExpr { expr: parser.ExprArray { elements: ne }, caps: a };
+            return WCapExpr { expr: parser.ExprArray { ...ar, elements: ne }, caps: a };
         },
         parser.ExprTuple(t) => {
             var a: WCaps = acc;

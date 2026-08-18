@@ -12896,7 +12896,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
         na = na.append(annotate_expr(a.elements[i], s));
         i = i + 1;
       }
-      return parser.ExprArray { elements: na };
+      return parser.ExprArray { ...a, elements: na };
     },
     parser.ExprTuple(t) => {
       var nt: parser.Expr[] = [];
