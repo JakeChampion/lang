@@ -351,6 +351,97 @@ function main(): i32 {
     return 0;
 }`, 0},
 
+	// The MIXED-path producer ("FRESHSELF:"): `relabel` returns a fresh Pair on one
+	// path and the RECEIVER on the other, so no all-fresh registry can admit it and
+	// the fresh path's box was stranded at every call. Which box arrived is a
+	// runtime fact, so the release is a pointer compare against the receiver — the
+	// struct twin of the SFRRECV chain release.
+	{"freshself-mixed-method-flat", `struct Pair { j: i32, k: i32 }
+function (p: Pair) relabel(t: i32): Pair {
+    if (t == 0) { return p; }
+    return Pair { j: t, k: p.k };
+}
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var p: Pair = Pair { j: 1, k: 2 };
+        acc = acc + p.relabel(3).k + p.relabel(0).k;
+        i = i + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 200) { return 91; }
+    if (y != 400) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The same producer read through a STRING field — `b.relabel(t).tag.len()`, the
+	// conformance case's own shape, which reaches the release from the `.len()`
+	// receiver path rather than the field-read one. It asserts VALUES and balance
+	// rather than flatness: the receiver still loses its own reclaim across a
+	// method that can hand it back ("RECVRET:", the previous slice's credit gate),
+	// which caps this shape at 48 B/round and is the next slice, not this one.
+	{"freshself-string-field-read-safe", `struct Box { tag: string, n: i32 }
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: Box = Box { tag: "start-tag-value", n: i % 8 };
+        acc = acc + b.relabel("fresh-tag-value").tag.len();
+        acc = acc + b.relabel("").tag.len() + b.tag.len();
+        i = i + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var x: i32 = rounds(50);
+    var y: i32 = rounds(100);
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (x != 2250) { return 91; }
+    if (y != 4500) { return 93; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The safety half of that compare, and the reason it is a compare at all:
+	// EVERY call here takes the identity path, so the "temp" is `keep`'s own box.
+	// A release that skipped the compare — or got its sense backwards — frees it
+	// a hundred times over; the churn re-fills the freed bytes, so the surviving
+	// read reports 90 rather than passing by luck.
+	{"freshself-identity-path-not-freed", `struct Box { tag: string, n: i32 }
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function (b: Box) relabel(t: string): Box {
+    if (t.len() == 0) { return b; }
+    return Box { tag: t, n: b.n };
+}
+function main(): i32 {
+    var keep: Box = Box { tag: wide(7), n: 7 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + keep.relabel("").tag.len(); i = i + 1; }
+    var churn1: string = "0123456789" + "0123456789";
+    var churn2: string = "0123456789" + "0123456789";
+    if (t != 4100) { return 91; }
+    if (keep.n != 7) { return 90; }
+    if (keep.tag.len() != 41) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
 	// The IDENTITY-return refusal, which is what stops the method admission from
 	// becoming an over-release: `me()` hands the RECEIVER back, so the "temp" the
 	// read would free is `keep`'s own box and the moved-out tag is `keep`'s own

@@ -8485,3 +8485,71 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `-pointer-result-safe` (counted param, `i32[]` return) and
   `-aliased-param-safe` (param bound to a local) are the two refusal directions
   and pass on both, each re-reading the buffer's ELEMENTS. Refs #6522 #4451.
+
+- 2026-08-18 (struct half, sixth slice): **A method that returns a fresh struct
+  on one path and its RECEIVER on the other releases the fresh one, decided by
+  the pointer at runtime (#6544).**
+
+  The slice above admits a producer only when EVERY return is a strict-fresh
+  literal, which refuses the shape every builder-ish method opens with —
+  `if (t.len() == 0) { return b; }`. The refusal is not conservatism about the
+  identity path; it is that the two paths hand back different boxes and no
+  whole-body registry can say which. The string side answered the same question
+  with a runtime discriminator (SFRRECV compares the result pointer against the
+  chain root) and this is that answer for structs: `"FRESHSELF:<Base>.<method>"`
+  admits a body whose every return is a strict-fresh literal OR the bare
+  receiver, and the caller releases the result only when its pointer differs
+  from the receiver's.
+
+  Three things make the release safe with no further proof:
+
+  - The dec is **shallow**. A fresh literal's field values are not proven owned
+    here — `Box { tag: t, … }` takes a parameter's box — so only the box itself
+    is provably this frame's, and everything it does own leaks with it. The
+    established safe floor.
+  - The receiver must be a bare **LOCAL**, so the compare reloads a slot rather
+    than re-evaluating an expression that could allocate a second box.
+  - The field read happens **before** the release, into a parked scratch: the
+    read's value is a borrow either way, and the box may be gone after.
+
+  The entry requires a bare-receiver return rather than merely tolerating one: an
+  all-fresh body is what the slice above already admits with no runtime compare
+  to pay for, and a second entry for it would only lengthen a registry every call
+  site scans. That gate and the shape-test ordering in the `.len()` hook are not
+  tidiness — without them this slice cost the self-host's own compile ~8%
+  (65.7 s vs 60.6 s on TestSelfHostStage2Compiler), which is enough to push a CI
+  shard packed to its 1080 s budget past its 20-minute timeout, and did. With
+  them the same measurement is 60.6 s, indistinguishable from the base.
+
+  Two call shapes reach it, because a field read off a call and a `.len()` on a
+  string field off a call are lowered in different places: the ExprFieldAccess
+  arm of `lower_expr`, and the `str_recv` receiver path in the method-call
+  lowering. Both park the box, read, and hand `emit_freshself_release` the two
+  slots.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `p.relabel(3).k` + `p.relabel(0).k`, string-free struct | 48 | **0** |
+  | `b.relabel(t).tag.len()` × 2 + `b.tag.len()` (the conformance case) | 96 | 48 |
+  | the fresh call alone, string-bearing struct | 72 | 24 |
+  | the identity call alone, string-bearing struct | 24 | 24 |
+
+  **What the last row says is where the next slice is.** The identity call
+  allocates nothing at all, so its 24 is the RECEIVER's own box: `relabel` has a
+  bare `return b`, which earns it `"RECVRET:"` and costs `b` its reclaim credit
+  at every call site (the slice before last). The `"RECVIDENT:"` tier exists to
+  give that credit back when the result dies inline, and `relabel` misses it on
+  `optstruct_body_moves_field` — because `b.n`, a SCALAR field, reaches the
+  returned literal. A scalar is copied out of its box; it carries no reference
+  and cannot strand one. Restricting that predicate to rc-tracked field types is
+  the next slice, and it is what takes the conformance case the rest of the way.
+
+  VERIFIED: new `freshself-mixed-method-flat` (failing at 92 on the parent),
+  plus two safety rows that pass on both sides — `freshself-identity-path-not-freed`,
+  where EVERY call takes the identity path so a compare with its sense backwards
+  frees `keep`'s own box a hundred times over, and `freshself-string-field-read-safe`,
+  the conformance shape itself, asserting values and balance rather than the
+  flatness the receiver-credit gate still caps. Plus the whole
+  `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
