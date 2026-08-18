@@ -85,6 +85,48 @@ return t1 + t2 + t3 + t4 + t5 + t6;
 	// lowering, so `-fmt -w` rewrote the file into the desugar. Nothing in
 	// the parity CORPUS uses either spelling, which is why the gate stayed
 	// green through it; this fixture is what covers them.
+	// `if let` and a match in EXPRESSION position are both parsed into
+	// something else — a two-arm match with a wildcard else, and a 0-arg IIFE
+	// — and the self-host reprinted those lowerings: the `if let` came back as
+	// `match (o) { Sm(n) => {…}, _ => {} }`, and an expression match whose arms
+	// nest came back as the whole `function(): i32 { … }()`. Nothing in the
+	// parity CORPUS spells either (`if let` appears only inside string
+	// literals and comments in the compiler's own sources), so these fixtures
+	// are the only thing covering them.
+	{"pattern-if-let", `enum Opt { Sm(i32), Nn }
+enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+function plain(o: Opt): i32 {
+if let Sm(n) = o { return n; }
+return 0;
+}
+function with_else(o: Opt): i32 {
+if let Sm(n) = o { return n; } else { return 5; }
+return 0;
+}
+function nested_head(o: Outer): i32 {
+if let A(Ok2(n)) = o { return n; }
+return 0;
+}
+function main(): i32 {
+return plain(Opt.Sm(1)) + with_else(Opt.Nn) + nested_head(Outer.A(Inner.Ok2(3)));
+}
+`},
+	{"pattern-nested-expression-match", `enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+enum Opt { Sm(i32), Nn }
+function nested_expr(o: Outer): i32 {
+var v = match (o) { A(Ok2(n)) => n, A(Err2(n)) => 0 - n, _ => 0 };
+return v;
+}
+function guarded_expr(o: Opt): i32 {
+var v = match (o) { Sm(n) when n > 2 => n, Sm(n) => 0 - n, Nn => 0 };
+return v;
+}
+function main(): i32 {
+return nested_expr(Outer.A(Inner.Err2(4))) + guarded_expr(Opt.Sm(9));
+}
+`},
 	{"pattern-nested-payload", `enum Inner { Ok2(i32), Err2(i32) }
 enum Outer { A(Inner), B }
 function nested(o: Outer): i32 {
