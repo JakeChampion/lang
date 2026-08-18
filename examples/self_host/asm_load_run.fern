@@ -241,6 +241,14 @@ function main(): i32 {
             ag = ag + 2;
         }
 
+        // The first argument matching no flag is the stdlib root. It has to stay
+        // in this chain: hoisted out of it, a flag reaches it as well — and so
+        // does the value `-target` has just stepped over, which then resolves
+        // `core/…` imports under "arm64-linux".
+        else if (root == "") { root = av[ag]; }
+        ag = ag + 1;
+    }
+
     // An unrecognised -target is refused rather than emitted for. This driver
     // dispatches by naming the targets it knows and letting everything else
     // reach the x86-64 branch, so a stale or misspelled name used to come back
@@ -250,10 +258,6 @@ function main(): i32 {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
         eprint("asm_load_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
         return 2;
-    }
-
-        else if (root == "") { root = av[ag]; }
-        ag = ag + 1;
     }
 
     var esrc: string = "";
