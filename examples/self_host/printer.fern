@@ -177,6 +177,10 @@ function print_expr_iife(c: parser.ExprCall): string {
                     return out + " }";
                 },
                 parser.StmtIf(f) => {
+                    // A literal-scrutinee match in expression position is an
+                    // if/else-if chain inside the IIFE; the carrier on its
+                    // outermost `if` holds the arms as written.
+                    if (f.sugar.lits.len() > 0) { return print_lit_match_expr(f.sugar); }
                     var tv: string = print_return_only(f.then_body);
                     if (tv.len() == 0) { return ""; }
                     var ev: string = print_return_only(f.else_body);
@@ -190,6 +194,24 @@ function print_expr_iife(c: parser.ExprCall): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// print_lit_match_expr renders an expression-position literal match compactly —
+// `match (n) { 0 => 5, _ => 7 }` — or "" when an arm body is not a single
+// `return`, which is the only shape the expression form parses to.
+function print_lit_match_expr(sg: parser.MatchSugar): string {
+    var out: string = "match (" + print_expr(sg.scrut) + ") { ";
+    var i: i32 = 0;
+    while (i < sg.lits.len()) {
+        var av: string = print_return_only(sg.lits[i].body);
+        if (av.len() == 0) { return ""; }
+        if (i > 0) { out = out + ", "; }
+        out = out + print_lit_pat(sg.lits[i]);
+        if (sg.lits[i].has_guard) { out = out + " when " + print_expr(sg.lits[i].guard); }
+        out = out + " => " + av;
+        i = i + 1;
+    }
+    return out + " }";
 }
 
 // print_expr_prec emits `e` inside a context binding at `parent_prec`, adding
@@ -666,7 +688,7 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
     var out: string = "match (" + print_expr(sg.scrut) + ") {\n";
     var g: Fmt = f;
     var i: i32 = 0;
-    var n: i32 = sg.tup.len() + sg.strct.len();
+    var n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
     while (i < n) {
         var head: string = "";
         var body: parser.Stmt[] = [];
@@ -678,10 +700,19 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
             guard = sg.tup[i].guard;
             has_guard = sg.tup[i].has_guard;
         } else {
-            head = print_struct_arm(sg.strct[i]);
-            body = sg.strct[i].body;
-            guard = sg.strct[i].guard;
-            has_guard = sg.strct[i].has_guard;
+            if (sg.strct.len() > 0) {
+                head = print_struct_arm(sg.strct[i]);
+                body = sg.strct[i].body;
+                guard = sg.strct[i].guard;
+                has_guard = sg.strct[i].has_guard;
+            } else {
+                // One arm per LitArm: an or-pattern `0 | 1` has already been
+                // cloned into one arm per alternative, matching native.
+                head = print_lit_pat(sg.lits[i]);
+                body = sg.lits[i].body;
+                guard = sg.lits[i].guard;
+                has_guard = sg.lits[i].has_guard;
+            }
         }
         var (arm_body, g1) = print_block(body, depth + 1, g);
         g = g1;
@@ -693,6 +724,17 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
         i = i + 1;
     }
     return (out + pad + "}", g);
+}
+
+// print_lit_pat renders one literal arm pattern: `_`, a literal, or a range.
+function print_lit_pat(a: parser.LitArm): string {
+    if (a.is_wild) { return "_"; }
+    if (a.has_range) {
+        var dots: string = "..";
+        if (a.range_inclusive) { dots = "..="; }
+        return print_expr(a.lit) + dots + print_expr(a.range_hi);
+    }
+    return print_expr(a.lit);
 }
 
 function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
@@ -800,6 +842,53 @@ function stmt_is_single_line(st: parser.Stmt): boolean {
         _ => { return false; }
     }
     return false;
+}
+
+// print_chain_assign reprints `a = b = c = expr;` from its desugar, which
+// assigns the innermost target first and copies leftwards — so the written
+// targets are the assignment targets read back to front, and the written value
+// is the first assignment's right-hand side.
+function print_chain_assign(stmts: parser.Stmt[]): string {
+    var out: string = "";
+    var i: i32 = stmts.len() - 1;
+    while (i >= 0) {
+        out = out + assign_target(stmts[i]) + " = ";
+        i = i - 1;
+    }
+    return out + print_expr(assign_value(stmts[0])) + ";";
+}
+
+function assign_target(st: parser.Stmt): string {
+    match (st) {
+        parser.StmtAssign(a) => { return a.target; },
+        _ => { return ""; },
+    }
+}
+
+function assign_value(st: parser.Stmt): parser.Expr {
+    match (st) {
+        parser.StmtAssign(a) => { return a.value; },
+        _ => { return parser.e_bool(true); },
+    }
+}
+
+// is_block_stmt reports whether `st` is a bare `{ … }` statement — the if-true
+// scope parse_stmt_at tags as such.
+function is_block_stmt(st: parser.Stmt): boolean {
+    match (st) {
+        parser.StmtIf(ifs) => { return ifs.origin == "block"; },
+        _ => { return false; },
+    }
+}
+
+// block_stmts is the body of the if-true scope `st`; empty for anything that
+// is not an `if` at all.
+function block_stmts(st: parser.Stmt): parser.Stmt[] {
+    var none: parser.Stmt[] = [];
+    match (st) {
+        parser.StmtIf(ifs) => { return ifs.then_body; },
+        _ => { return none; },
+    }
 }
 
 // print_stmt_inline renders `st` for a position that CONTINUES the current
@@ -1137,6 +1226,18 @@ function print_nested_func_decl(v: parser.StmtVar, depth: i32, f: Fmt): (string,
 function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     match (st) {
         parser.StmtDefer(d) => {
+            // `defer { … }` parses its action with parse_stmt, so a block
+            // action arrives as the tagged if-true scope. Native parses the
+            // same action as a block EXPRESSION and prints it compactly, so
+            // the braces go on one line here too.
+            if (is_block_stmt(d.action)) {
+                var blk: parser.Stmt[] = block_stmts(d.action);
+                var inl: string = "{ ";
+                var bi: i32 = 0;
+                while (bi < blk.len()) { inl = inl + print_stmt_inline(blk[bi]) + " "; bi = bi + 1; }
+                if (d.on_error != 0) { return ("errdefer " + inl + "}", f); }
+                return ("defer " + inl + "}", f);
+            }
             var (act, dg) = print_stmt_body(d.action, depth, f);
             if (d.on_error != 0) { return ("errdefer " + act, dg); }
             return ("defer " + act, dg);
@@ -1176,9 +1277,14 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // A tuple- or struct-scrutinee `match` desugars to `if (true) { … }`
             // and leaves no StmtMatch, so the carrier on the if is the only
             // record of what was written (#7065).
-            if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0) {
+            if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0 || ifs.sugar.lits.len() > 0) {
                 return print_sugared_match(ifs.sugar, depth, f);
             }
+            // A bare `{ … }` statement is the same if-true scope, tagged.
+            if (ifs.origin == "block") { return print_block(ifs.then_body, depth, f); }
+            // As is a chained assignment `a = b = c;`, whose desugar is one
+            // assignment per target.
+            if (ifs.origin == "chain_assign") { return (print_chain_assign(ifs.then_body), f); }
             return print_if_chain(ifs, depth, f);
         },
         parser.StmtWhile(w) => {
