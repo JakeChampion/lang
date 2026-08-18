@@ -1,0 +1,77 @@
+// spec: AL-01
+//
+// The AL-01 shape of alloc_flat_index_of_fresh_container with the
+// producer written as a METHOD: `recv.m().field`. Nothing names the
+// returned box, so the field read is the only place it can be
+// reclaimed, exactly as for `mk().field`.
+//
+// The Go-side gate for this shape (TestSelfHostFreshContainerRead-
+// ReclaimIRX86_64) is x86-64 only, so it cannot say the other two
+// backends reclaim it. That is what this case adds: the same claim as
+// a cross-backend contract, on the terms docs/ALLOCATION-OBSERVABLE.md
+// sets out.
+//
+// Both destinations for the string read are here because they reclaim
+// by different routes: a BINDING owns the moved-out string, while a
+// borrowing `.len()` frees the temp after reading it. The binding half
+// was the last one still leaking (72 B a round) — its credit is
+// decided without a LowerState, so it has to resolve the receiver's
+// type from the local's annotation.
+//
+// `seed` and `pair` are the over-free controls: each is read after its
+// method result has been reclaimed, so a release that took the
+// receiver's box instead of the result's would fail here rather than
+// silently.
+//
+// The case prints the SHAPE, never a byte count — see
+// docs/ALLOCATION-OBSERVABLE.md.
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+struct Box { name: string, k: i32 }
+struct Pair { a: i32, b: i32 }
+
+// Past the small-string threshold, so the field is a real heap buffer
+// the move has to carry out of the box being freed.
+function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+
+function (b: Box) rename(n: i32): Box { return Box { name: wide(n), k: b.k + n }; }
+
+// No `string` field, so the scalar read reclaims the whole box — the
+// string-bearing struct strands the field it does not read, which is
+// the established floor and not what this case pins.
+function (p: Pair) shift(n: i32): Pair { return Pair { a: p.a + n, b: p.b }; }
+
+function round(n: i32): i32 {
+    var seed: Box = Box { name: wide(n), k: n };
+    var pair: Pair = Pair { a: n, b: 1 };
+    // Binding takes the string as a move; `.len()` borrows it and
+    // reclaims the temp after the read. Different routes, both here.
+    var field: string = seed.rename(n).name;
+    var acc: i32 = field.len() + seed.rename(n).name.len();
+    acc = acc + pair.shift(n).a;
+    return acc + seed.name.len() + pair.b;
+}
+
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(i);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+
+    print(x.to_string());
+    print(y.to_string());
+    // Twice the work must not cost more fresh memory.
+    if ((b2 - b1) > (b1 - b0)) { print("grows"); } else { print("flat"); }
+    return 0;
+}

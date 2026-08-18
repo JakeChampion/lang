@@ -318,6 +318,39 @@ function main(): i32 {
     return 0;
 }`, 0},
 
+	// The BINDING destination for that same read. `.len()` above borrows the
+	// moved-out string and the receiver-position reclaim frees it; a binding
+	// OWNS it instead, and the credit that says so is decided by
+	// reclaimable_names_of, which has no LowerState and so resolves the
+	// receiver's type from the local's annotation. Until it did, the string
+	// survived the box it was moved out of with nothing left to free it: 72 B a
+	// round, where the free-function spelling of the same binding is flat.
+	{"method-field-string-bound", `struct Box { tag: string, n: i32 }
+function (b: Box) bump(): Box { return Box { tag: b.tag + "!", n: b.n + 1 }; }
+function rounds(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) {
+        var b: Box = Box { tag: "start-tag-value-" + (i % 8).to_string(), n: 1 };
+        var f: string = b.bump().tag;
+        acc = acc + f.len();
+        i = i + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 900) { return 91; }
+    if (y != 1800) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
 	// The IDENTITY-return refusal, which is what stops the method admission from
 	// becoming an over-release: `me()` hands the RECEIVER back, so the "temp" the
 	// read would free is `keep`'s own box and the moved-out tag is `keep`'s own
