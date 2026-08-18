@@ -1012,6 +1012,61 @@ receiver. Owned-by-default and precise drops are prerequisites of the first two
 steps, not wins in themselves — the table above is what that costs to learn a
 second time.
 
+**That sequence was then built, and it is where the real obstacle is.** A
+prototype of the first two steps — `isOwnedByDefaultType`'s struct arm widened
+to `consumedDropWired`, plus a move at three call shapes (`x = f(.., x, ..)`
+including chained spellings, `return f(.., x, ..)`, and a last-use argument
+outside any loop, each with the source slot zeroed so the exit sweep skips only
+the paths that moved) took the cliff from 268.0 MB to **225.9 MB** and the
+crossings from 282,154 to 207,550.
+
+**Do not read that as the prize. It is not sound, and the unsoundness is in the
+direction that produces exactly that number.** `internal/e2e`'s
+`TestStructFieldAppendAliasDifferential` fails on:
+
+```fern
+struct GBox[T] { xs: T[], }
+pub function (b: GBox[T]) push[T](x: T): GBox[T] { var ys: T[] = b.xs.append(x); return GBox { xs: ys }; }
+function main(): i32 {
+    var a: GBox[i32] = gbox_new();
+    a = a.push(1); a = a.push(2);
+    var before: i32 = a.size();   // 2
+    var c: GBox[i32] = a.push(3); // must NOT mutate a
+    var after: i32 = a.size();    // 2 on main, 3 with the prototype
+```
+
+Traced at `__fern_arr_push_grow`, the two builds diverge on one refcount:
+
+```
+main:       grow rc=1 cap=0 len=0   grow rc=1 cap=4 len=1   grow rc=2 cap=4 len=2  -> copies, prints 22
+prototype:  grow rc=1 cap=0 len=0   grow rc=1 cap=4 len=1   grow rc=1 cap=4 len=2  -> in place, prints 23
+```
+
+A hardware watchpoint on that buffer's rc word says main takes one more retain
+before the third `push` than the prototype does. So the prototype's missing
+retain is what lets the append mutate a buffer a live alias still reads — and an
+append that goes in place instead of copying is precisely a cliff crossing that
+does not happen. **A material part of the 42 MB is the bug, not the fix**, and
+the honest reading is that the prize is unmeasured, not that it is 16%.
+
+The imbalance to close is between the caller-side retain owned-by-default adds
+and the callee-side deep drop it adds with it: for a struct whose fields are
+themselves rc-tracked buffers, `__drop_struct_<N>` releases the FIELDS, and the
+retain that is supposed to balance it is on the BOX. That is the reason the
+original gate was `typeIsStringArrayFree` — the widening has to come with the
+field-level accounting, not just the type admission. Slice C (reuse on a unique
+receiver) was not reached: it has no sound unique receiver to gate on until this
+is fixed.
+
+Also worth keeping: `frameOwnsIdent`, the predicate deciding whether a frame may
+hand a reference away, cannot be `freeEligible`. That asks whether the frame may
+FREE the value, and its taint conservatively excludes anything that might alias
+a live one; moving needs only that the frame HOLDS a reference. Widening it to
+admit a local bound once from a call result took the moved share of the
+self-host's `emit` call sites from 34% to 40%, and was the single change that
+moved the cliff number at all — every earlier refinement of the move's SHAPE was
+worth almost nothing next to fixing what it was allowed to move.
+
 ### 4d.6 The `strcmp` HELPER was byte-at-a-time — 25% off the compare benchmark
 
 §4d.3 ranked `__fern_strcmp` as the largest single leaf and concluded that the
