@@ -9858,6 +9858,10 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
                                     && sc.slot_of(lacid.name) < 0
                                     && arr_param_counted_at(sc.sigs.param_counted, cid.name, ai)) { arrlit_arg = true; }
                             },
+                            // `sink(path.append(i))` — the consumed-append temp
+                            // (#6501). Not a literal and not a registry producer,
+                            // so neither arm above reaches it.
+                            parser.ExprFieldAccess(_) => { arrlit_arg = append_temp_is_scalar_arr(c.args[ai], sc); },
                             _ => {}
                         }
                     },
@@ -15517,6 +15521,39 @@ function discardable_scalar_arr_lit(arr: parser.ExprArray, s: LowerState): boole
         i = i + 1;
     }
     return true;
+}
+
+// append_temp_is_scalar_arr reports whether a call ARGUMENT is `recv.append(v)`
+// with a flat SCALAR element — the #6501 "consumed by a borrowing call" shape,
+// where nothing outlives the statement to own the appended array and the only
+// place it can be released is the call site.
+//
+// One post-call __fern_rc_dec is right for BOTH of __fern_arr_push_grow's
+// outcomes, which is why this needs no is_unique test of its own: the copy path
+// hands back a fresh buffer at rc 1, which the dec frees, and the in-place path
+// bumps the receiver to rc 2 before handing it back, which the dec nets down to
+// the one reference the receiver already had.
+//
+// SCALAR elements only, exactly as the literal arm above. The grow's copy path
+// memcpys elements WITHOUT retaining them, so a pointer-element copy's elements
+// alias the original's and the deep per-element release such a buffer earns
+// would free them out from under the receiver. Those keep today's safe leak.
+function append_temp_is_scalar_arr(e: parser.Expr, s: LowerState): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(fa) => {
+                    if (fa.field != "append" || c.args.len() != 1) { return false; }
+                    if (!expr_is_arr_src(fa.obj, s)) { return false; }
+                    if (expr_is_strarr(fa.obj, s)) { return false; }
+                    return expr_scalar_leaf(c.args[0], s);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // discardable_fresh_strarr_lit reports whether a discarded `["a"+x, "b"+y, …];`
@@ -42155,16 +42192,33 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     if (lacs.len() > 0) {
         var bpk: i32 = 0;
         while (bpk < sg.borrowable_params.len()) {
-            var bpe: string = sg.borrowable_params[bpk];
-            var bpbar: i32 = 0;
-            while (bpbar < bpe.len() && bpe[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
-            // A METHOD key is "<Type>.<method>" and the census can only see the
-            // bare method name, so match on the part after the last '.'. A free
-            // function's key holds no '.' (module mangling uses '__'), so it
-            // still compares whole.
-            var bpdot: i32 = bpbar;
-            while (bpdot > 0 && bpe[bpdot - 1] != 46) { bpdot = bpdot - 1; }   // 46 = '.'
-            if (util.index_of_str(lacs, bpe[bpdot:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + bpe); }
+            // borrowable_params is a HASH TABLE: each element is a bucket
+            // holding zero or more "<key>|<flags>\n" lines, so a bucket is not
+            // itself a lookup entry. Seeding one wholesale registered only the
+            // key that happened to land first in it — and tagged_value_start
+            // anchors at position 0, so that was also the only key a lookup
+            // could ever resolve. Every callee sharing a bucket behind another
+            // was silently unborrowable, and its callers' fresh-argument temps
+            // went unreclaimed. Walk the lines and seed each match on its own.
+            var buck: string = sg.borrowable_params[bpk];
+            var bl: i32 = 0;
+            while (bl < buck.len()) {
+                var ble: i32 = bl;
+                while (ble < buck.len() && buck[ble] != 10) { ble = ble + 1; }   // 10 = newline
+                var line: string = buck[bl:ble] + "";
+                var bpbar: i32 = 0;
+                while (bpbar < line.len() && line[bpbar] != 124) { bpbar = bpbar + 1; }   // 124 = '|'
+                if (bpbar < line.len()) {
+                    // A METHOD key is "<Type>.<method>" and the census can only
+                    // see the bare method name, so match on the part after the
+                    // last '.'. A free function's key holds no '.' (module
+                    // mangling uses '__'), so it still compares whole.
+                    var bpdot: i32 = bpbar;
+                    while (bpdot > 0 && line[bpdot - 1] != 46) { bpdot = bpdot - 1; }   // 46 = '.'
+                    if (util.index_of_str(lacs, line[bpdot:bpbar]) >= 0) { reclaim = reclaim.append("BORROW:" + line); }
+                }
+                bl = ble + 1;
+            }
             bpk = bpk + 1;
         }
     }

@@ -9681,3 +9681,65 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   arm64 agree with a wasm behaviour that is itself unproven. The known-divergence
   rows carry the measurement — `alloc_flat_fresh_array_arg` is delisted on wasm
   and restated on the other two legs. Refs #6544 #6522 #4451.
+
+- 2026-08-18: **#6501 — the consumed-`.append` arg temp, and the reason the
+  gate in front of it was answering "no" for most callees.**
+
+  `sink(path.append(i))` — an appended trail handed straight to a borrowing
+  call, which is how backtracking, DFS-with-a-path and subset enumeration are
+  written — leaked one buffer per call. Two independent defects, and neither
+  one alone moves the row:
+
+  | | `full.append(10)` probe | conformance case |
+  |---|---|---|
+  | parent | 2840 / 5600 | grows |
+  | classifier only | 2840 / 5600 | grows |
+  | registry fix only | 2840 / 5600 | grows |
+  | **both** | **96 / 0** | **flat** |
+
+  **1. The temp was never classified.** The #4365 stage-(b) admission takes a
+  scalar array LITERAL argument, or a call to a bare-ident producer in the
+  `ARR:` registry. `path.append(i)` is a method call — an `ExprCall` whose
+  callee is an `ExprFieldAccess` — so it matched neither arm.
+
+  **2. `call_arg_borrowable` was first-key-only, which is the wider bug.**
+  `borrowable_params` is a HASH TABLE: `borrow_reg_put` appends
+  `"<key>|<flags>\n"` into `reg[hash(key)]`, so each element is a BUCKET of
+  zero or more lines, not a lookup entry. Both halves treated a bucket as one
+  entry — the seeding scanned to the bucket's first `|`, matched that one key
+  against the call census and seeded the whole bucket; and `tagged_value_start`
+  anchors at position 0, so the only key it could ever resolve was that same
+  first one. Every callee sharing a bucket behind another was silently
+  UNBORROWABLE, and its callers' fresh-argument temps went unreclaimed — string
+  literals and string temps (#4355 slices 6+7) and scalar array literals
+  alike, not just this row. `sink` sat behind `array____method_Array_all_zero`.
+
+  The seeding now walks the bucket's lines and appends each match as its own
+  anchored `BORROW:<key>|<flags>`, which is also SMALLER than appending whole
+  buckets — the arena pressure that comment was worried about.
+
+  **One post-call `__fern_rc_dec` is right for both grow outcomes**, which is
+  why the temp needs no uniqueness test of its own: the copy path hands back a
+  fresh buffer at rc 1 and the dec frees it; the in-place path bumps the
+  receiver to rc 2 before returning it and the dec nets that away, freeing
+  nothing. Every regression case reads its receiver again afterwards, so
+  releasing the wrong buffer is a wrong ANSWER rather than a byte count.
+
+  SCALAR elements only, mirroring native's `appendCopyTempType`: the grow's
+  copy path memcpys elements without retaining them, so a pointer-element copy
+  aliases the original's elements and the deep release such a buffer earns
+  would free them out from under it. `string[]` receivers keep today's safe
+  leak and are pinned as a refusal case.
+
+  Per-round before → after on the four spellings: copy path 56 → 0, in-place
+  56 → 0, element receiver 40 → 0, param receiver in a loop 448 → 0. All three
+  targets print `41075 / 154650 / flat`, identical to native, so the
+  `alloc_flat_consumed_append` row leaves all three divergence files.
+
+  Defect 2 turns the arg-temp reclaim ON for most callees, so the gates were
+  run wide rather than narrow: the reclaim/rcplan/perceus/underflow/leak sweep
+  (499 s, including the differential against native's own rc dump), the
+  per-module emit-all fixpoint, the arm64 stage-2 fixpoint including `self`,
+  and the stage-2 bootstrap. Regression test:
+  `internal/e2eselfhost/self_host_consumed_append_reclaim_test.go`.
+  Refs #6501 #4357 #4365 #4451.
