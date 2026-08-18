@@ -224,7 +224,7 @@ function print_expr_iife(c: parser.ExprCall): string {
                     // A literal-scrutinee match in expression position is an
                     // if/else-if chain inside the IIFE; the carrier on its
                     // outermost `if` holds the arms as written.
-                    if (f.sugar.lits.len() > 0) { return print_lit_match_expr(f.sugar); }
+                    if (f.sugar.lits.len() > 0) { return print_sugared_match_expr(f.sugar, ""); }
                     var tv: string = print_return_only(f.then_body);
                     if (tv.len() == 0) { return ""; }
                     var ev: string = print_return_only(f.else_body);
@@ -240,21 +240,81 @@ function print_expr_iife(c: parser.ExprCall): string {
     return "";
 }
 
-// print_lit_match_expr renders an expression-position literal match compactly —
-// `match (n) { 0 => 5, _ => 7 }` — or "" when an arm body is not a single
-// `return`, which is the only shape the expression form parses to.
-function print_lit_match_expr(sg: parser.MatchSugar): string {
-    var out: string = "match (" + print_expr(sg.scrut) + ") { ";
+// print_value_local_iife renders the WRITTEN form of an expression-position
+// match whose desugar stores arm values in a local — a tuple or struct
+// scrutinee, or a variant match with a tuple sub-pattern — and "" for any other
+// call. Without it `-fmt` emitted the whole IIFE, writing the synthesised
+// `__tm<l>_<c>_r` into the user's source (#7089).
+//
+// parse_primary builds exactly `{ var V = <zero>; <the desugared match>; return V }`
+// (IfChain.value_local), so the shape is the marker, and the match inside it
+// already reprints correctly — this only has to unwrap it and put the arm
+// values back where the `return`s were.
+function print_value_local_iife(c: parser.ExprCall): string {
+    if (c.args.len() != 0) { return ""; }
+    match (c.callee) {
+        parser.ExprLambda(lm) => {
+            if (lm.params.len() != 0 || lm.body.len() != 3) { return ""; }
+            var v: string = value_local_name(lm.body[0], lm.body[2]);
+            if (v.len() == 0) { return ""; }
+            match (lm.body[1]) {
+                parser.StmtIf(ifs) => { return print_sugared_match_expr(ifs.sugar, v); },
+                parser.StmtMatch(m) => { return print_match_expr_arms(m, v); },
+                _ => { return ""; }
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// value_local_name is the local an IIFE body declares first and returns last,
+// or "" when `first` / `last` are not that pair.
+function value_local_name(first: parser.Stmt, last: parser.Stmt): string {
+    var declared: string = "";
+    match (first) {
+        parser.StmtVar(vd) => { declared = vd.name; },
+        _ => { return ""; },
+    }
+    if (declared.len() == 0) { return ""; }
+    match (last) {
+        parser.StmtReturn(r) => {
+            match (r.value) {
+                parser.ExprIdent(id) => {
+                    if (id.name == declared) { return declared; }
+                    return "";
+                },
+                _ => { return ""; },
+            }
+        },
+        _ => { return ""; },
+    }
+    return "";
+}
+
+// print_match_expr_arms is print_sugared_match_expr for a match the desugar
+// left as a StmtMatch — a variant match with a tuple sub-pattern, whose arms
+// are ordinary MatchArms rather than a carrier's.
+function print_match_expr_arms(m: parser.StmtMatch, v: string): string {
+    // The WRITTEN arms are snapshotted BEFORE value_arm_body rewrites the
+    // terminal `return E` into `V = E`, so they still carry the return and the
+    // value local does not apply to them.
+    var arms: parser.MatchArm[] = m.arms;
+    var val: string = v;
+    if (m.sugar.len() > 0) { arms = m.sugar; val = ""; }
+    if (arms.len() == 0) { return ""; }
+    var out: string = "match (" + print_expr(m.scrutinee) + ") { ";
     var i: i32 = 0;
-    while (i < sg.lits.len()) {
-        var av: string = print_return_only(sg.lits[i].body);
+    while (i < arms.len()) {
+        var av: string = arm_expr_value(arms[i].body, val);
         if (av.len() == 0) { return ""; }
         if (i > 0) { out = out + ", "; }
-        var head: string = print_lit_pat(sg.lits[i]);
-        var guarded: parser.LitArm = sg.lits[i];
-        while (i + 1 < sg.lits.len() && sg.lits[i + 1].alt_cont) {
+        var head: string = print_pattern(arms[i].pattern);
+        var guarded: parser.MatchArm = arms[i];
+        while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
             i = i + 1;
-            head = head + " | " + print_lit_pat(sg.lits[i]);
+            head = head + " | " + print_pattern(arms[i].pattern);
         }
         out = out + head;
         if (guarded.has_guard) { out = out + " when " + print_expr(guarded.guard); }
@@ -262,6 +322,54 @@ function print_lit_match_expr(sg: parser.MatchSugar): string {
         i = i + 1;
     }
     return out + " }";
+}
+
+// print_sugared_match_expr renders a carrier's match in EXPRESSION form — one
+// line, arm bodies unbraced — or "" when an arm has no recoverable value.
+//
+// `v` names the local the desugar stores arm values into (IfChain.value_local),
+// or is "" when the arms kept their `return`. See arm_expr_value.
+function print_sugared_match_expr(sg: parser.MatchSugar, v: string): string {
+    var arms: WrittenArm[] = sugar_written_arms(sg);
+    if (arms.len() == 0) { return ""; }
+    var out: string = "match (" + print_expr(sg.scrut) + ") { ";
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var av: string = arm_expr_value(arms[i].body, v);
+        if (av.len() == 0) { return ""; }
+        if (i > 0) { out = out + ", "; }
+        out = out + arms[i].head;
+        if (arms[i].has_guard) { out = out + " when " + print_expr(arms[i].guard); }
+        out = out + " => " + av;
+        i = i + 1;
+    }
+    return out + " }";
+}
+
+// arm_expr_value recovers an expression-form arm's value from its lowered body.
+// The literal chain leaves the arm's `return E` in place; the tuple and struct
+// desugars turn it into `V = E`, so `v` names that local and is "" for the
+// return form. Statements ahead of the terminal one become the block-expression
+// spelling `{ stmts; E }`.
+//
+// "" when the body has no terminal value at all — a divergent arm, which
+// value_arm_body deliberately leaves alone.
+function arm_expr_value(body: parser.Stmt[], v: string): string {
+    if (body.len() == 0) { return ""; }
+    var last: parser.Stmt = body[body.len() - 1];
+    var tail: string = "";
+    if (v.len() == 0) {
+        tail = print_return_only([last]);
+    } else {
+        if (assign_target(last) != v) { return ""; }
+        tail = print_expr(assign_value(last));
+    }
+    if (tail.len() == 0) { return ""; }
+    if (body.len() == 1) { return tail; }
+    var out: string = "{ ";
+    var i: i32 = 0;
+    while (i + 1 < body.len()) { out = out + print_stmt_inline(body[i]) + " "; i = i + 1; }
+    return out + tail + " }";
 }
 
 // print_expr_prec emits `e` inside a context binding at `parent_prec`, adding
@@ -325,6 +433,12 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             // the parser's tag rather than the shape.
             var blk: string = print_block_expr(c, parent_prec);
             if (blk.len() > 0) { return blk; }
+            // A tuple- or struct-scrutinee match in expression position routes
+            // its arm values through a local rather than a `return`, so the
+            // IIFE body is three statements and print_expr_iife's one-statement
+            // shape does not fit it (#7089).
+            var vl: string = print_value_local_iife(c);
+            if (vl.len() > 0) { return vl; }
             var iife: string = print_expr_iife(c);
             if (iife.len() > 0) { return iife; }
             var out: string = print_expr_prec(c.callee, prec_primary()) + "(";
@@ -623,6 +737,13 @@ function print_pattern_ctx(pat: parser.Pattern, always_parens: boolean): string 
             // there would drop the sub-pattern and re-parse as a payload-less
             // arm. The sub-pattern is the payload.
             if (pv.nested.len() > 0) { return head + "(" + print_pattern(pv.nested[0]) + ")"; }
+            // A TUPLE sub-pattern (`Pr((a, b))`) rides on tup_* rather than on
+            // nested, and binds nothing itself either — printing `head` here
+            // dropped it and re-parsed as a payload-less arm, leaving the
+            // desugar's `__nest_<l>_<c>_<d>` temp behind in its place.
+            if (pv.tup_kinds.len() > 0) {
+                return head + "(" + print_tuple_elems(pv.tup_kinds, pv.tup_binds, pv.tup_lits, pv.tup_pats) + ")";
+            }
             if (pv.binding.len() == 0) {
                 if (always_parens) { return head + "()"; }
                 return head;
@@ -737,13 +858,18 @@ function print_struct_arm(a: parser.StructArm): string {
     return out;
 }
 
-// print_sugared_match reprints the tuple- or struct-scrutinee `match` whose
-// done-flag desugar the carrier hangs off. Without it `-fmt` emitted the
-// chain — `var __sm4_5_d = false; …` — over the user's match (#7065).
-function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
-    var pad: string = indent_str(depth);
-    var out: string = "match (" + print_expr(sg.scrut) + ") {\n";
-    var g: Fmt = f;
+// WrittenArm is one arm of a sugared match as the source spelled it: the
+// pattern text with any `|` alternatives already rejoined, and the guard and
+// body those alternatives shared.
+struct WrittenArm { head: string, body: parser.Stmt[], guard: parser.Expr, has_guard: boolean }
+
+// sugar_written_arms regroups a carrier's per-alternative arms back into the
+// arms as written. A MatchSugar holds exactly one of the three arm lists — the
+// tuple, struct and literal desugars each populate their own — and every one of
+// them expands `P1 | P2 => …` to one entry per alternative sharing a body, so
+// the regroup is the same walk in all three cases (#7077).
+function sugar_written_arms(sg: parser.MatchSugar): WrittenArm[] {
+    var out: WrittenArm[] = [];
     var i: i32 = 0;
     var n: i32 = sg.tup.len() + sg.strct.len() + sg.lits.len();
     while (i < n) {
@@ -756,7 +882,6 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
             body = sg.tup[i].body;
             guard = sg.tup[i].guard;
             has_guard = sg.tup[i].has_guard;
-            // `(1, 2) | (3, 4) => …` parsed to one TupArm per alternative.
             while (i + 1 < n && sg.tup[i + 1].alt_cont) {
                 i = i + 1;
                 head = head + " | " + print_tup_arm(sg.tup[i]);
@@ -772,19 +897,35 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
                 body = sg.lits[i].body;
                 guard = sg.lits[i].guard;
                 has_guard = sg.lits[i].has_guard;
-                // `0 | 1 => …` parsed to one LitArm per alternative.
                 while (i + 1 < n && sg.lits[i + 1].alt_cont) {
                     i = i + 1;
                     head = head + " | " + print_lit_pat(sg.lits[i]);
                 }
             }
         }
-        var (arm_body, g1) = print_block(body, depth + 1, g);
+        out = out.append(WrittenArm { head: head, body: body, guard: guard, has_guard: has_guard });
+        i = i + 1;
+    }
+    return out;
+}
+
+// print_sugared_match reprints a match the parser replaced outright — a tuple
+// or struct scrutinee, whose done-flag chain the carrier hangs off (#7065), or
+// a non-enum scrutinee, whose if/else-if chain it hangs off (#7072). Without it
+// `-fmt` emitted the chain — `var __sm4_5_d = false; …` — over the user's match.
+function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+    var pad: string = indent_str(depth);
+    var arms: WrittenArm[] = sugar_written_arms(sg);
+    var out: string = "match (" + print_expr(sg.scrut) + ") {\n";
+    var g: Fmt = f;
+    var i: i32 = 0;
+    while (i < arms.len()) {
+        var (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
         g = g1;
-        out = out + indent_str(depth + 1) + head;
-        if (has_guard) { out = out + " when " + print_expr(guard); }
+        out = out + indent_str(depth + 1) + arms[i].head;
+        if (arms[i].has_guard) { out = out + " when " + print_expr(arms[i].guard); }
         out = out + " => " + arm_body;
-        if (i + 1 < n) { out = out + ","; }
+        if (i + 1 < arms.len()) { out = out + ","; }
         out = out + "\n";
         i = i + 1;
     }

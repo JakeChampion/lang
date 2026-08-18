@@ -1066,6 +1066,58 @@ function main(): i32 {
 return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4)) + expr_form(Col.B);
 }
 `},
+	// A tuple- or struct-scrutinee match in EXPRESSION position routes its arm
+	// values through a local instead of a `return` (IfChain.value_local), so
+	// the IIFE body is three statements and the one-statement shape
+	// print_expr_iife recognises did not fit it — `-fmt` reprinted the whole
+	// `function(): i32 { var __tm4_18_r = 0; … }()`, synthesised name and all
+	// (#7089). #7065 fixed only the statement form.
+	//
+	// A TUPLE sub-pattern in an arm payload (`Pr((a, b))`) is the same leak one
+	// level down and in BOTH positions: it rides on the pattern's tup_* fields
+	// rather than on `nested`, so neither the written-form snapshot nor the
+	// pattern printer knew about it and the arm came back as
+	// `Pr(__nest_5_9_0) => { match (__nest_5_9_0) { … } }`.
+	{"lowering-value-local-match", `struct P { x: i32, y: i32 }
+enum W { Pr((i32, i32)), None }
+function tup(t: (i32, i32)): i32 {
+var v: i32 = match (t) {
+(0, b) => b,
+(a, b) => a + b,
+};
+return v;
+}
+function strct(p: P): i32 {
+var v: i32 = match (p) {
+P { x, y } when x > 0 => x + y,
+_ => 0,
+};
+return v;
+}
+function block_arm(t: (i32, i32)): i32 {
+var v: i32 = match (t) {
+(0, b) => { var k: i32 = b * 2; k + 1 },
+(a, b) => a + b,
+};
+return v;
+}
+function sub_pattern_stmt(w: W): i32 {
+match (w) {
+Pr((a, b)) => { return a + b; },
+None => { return 0; },
+}
+}
+function sub_pattern_expr(w: W): i32 {
+var v: i32 = match (w) {
+Pr((a, b)) => a + b,
+None => 0,
+};
+return v;
+}
+function main(): i32 {
+return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_stmt(W.Pr((1, 2))) + sub_pattern_expr(W.None);
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the
