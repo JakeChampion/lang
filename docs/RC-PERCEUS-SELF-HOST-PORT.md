@@ -9259,3 +9259,56 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   The residual 537 after the pairing is undecomposed and should be measured
   before anything else is attempted on it. Refs #6544 #6522 #4451.
+
+- 2026-08-18 (measurement, no code): **The "~21 B/round floor shared by every
+  read of the relabel probe" is none of those things. It is 24 B, it is the
+  inline string LITERAL argument's box, and no read is involved.**
+
+  That characterisation has been carried unowned across several entries and is
+  wrong in three ways, each of which points the next attempt at the wrong file.
+  Measured on `a228a5f`, self-host x86-64, against native; re-measured
+  unchanged on `47e8d1b`, so the two #6544 slices that landed in between —
+  including the strict-fresh struct's producer-call array field — do not touch
+  this row:
+
+  | probe | self-host | native |
+  |---|---|---|
+  | `b.relabel("…").tag.len()` — fresh path | 24 | 0 |
+  | `b.relabel("").tag.len()` — identity path | 0 | 0 |
+  | `b.relabel("…").n` — **scalar** field read, fresh path | 24 | 0 |
+  | `b.freshonly("…").n` — a method with NO identity path | 24 | 0 |
+  | `relabel_free(b, "…").n` — the free-function twin | 72 | 0 |
+  | `b.freshonly(t).n` — the argument is a bound LOCAL | **0** | 0 |
+  | the same shapes on a scalar-only `struct P { k: i32, n: i32 }` | 0 | 0 |
+
+  1. **It is 24, not ~21**, and it is a FIXED 24: a 60-character literal costs
+     the same as a 2-character one, and widening the struct from two fields to
+     five costs nothing. Neither the string data nor the struct box tracks it —
+     0x18 is the rc string BOX, the same object `__fn_main +0x6e` was resolved
+     to in the 2026-08-18 #6544 attribution.
+  2. **No read is involved.** Reading the SCALAR field `n` costs the same 24 as
+     reading `tag`. "Shared by every read" described a read-site cost; there
+     isn't one.
+  3. **It is not the identity return, and not the FRESHSELF discriminator.**
+     `freshonly`, whose every return is a strict-fresh literal and whose result
+     the plain registry already releases, leaks the identical 24.
+
+  What it IS: an inline string literal in argument position at a METHOD call.
+  Bind the same value to a local first and the row is flat — the local owns the
+  box and its own scope-exit release covers it. So this is
+  `stash_fresh_str_arg`'s territory, and the open question is why the
+  counted-retain admission (#7060 / #7061) does not reach it at a method call
+  site the way it does for the free producers those slices tested. Start there,
+  not at the result-side registries; every result-side mechanism is a shallow
+  dec and cannot touch this box by construction.
+
+  **The free-function twin's 72 is a different, larger row** and should not be
+  folded in: `relabel_free` has an identity path, so it earns no strict-fresh
+  entry, and a free function has no FRESHSELF tier to fall back on — the
+  returned `Box` leaks there too, on top of this 24.
+
+  Not implemented here on purpose. Two PRs were in flight in `irlower.fern` at
+  the time of writing (#7094, #7098) and #7098 makes the case, for the array
+  half of the same machinery, that a widening in this area wants the full sweep
+  behind it rather than a late push. The same applies to this row; the
+  measurement is what makes it a bounded question. Refs #6544 #6522 #4451.
