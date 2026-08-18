@@ -8,7 +8,7 @@
 # WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
 # given commit EXCEPT `map_string.ir`: core/map draws a per-process
 # string-hash seed (#6194), which moves probe lengths. Measured spread over
-# five runs: 291,105,501 .. 293,300,059, i.e. 0.75%. That one line therefore
+# seven runs: 227,636,734 .. 228,602,918, i.e. 0.42%. That one line therefore
 # carries an explicit 2% tolerance and is baselined at the middle of the
 # range rather than at a sample. `map_int.ir` is exact — the seed is consulted
 # for string keys only — and is deliberately left on the default so the two
@@ -39,24 +39,24 @@ x86_64/enum_match.text	735
 x86_64/enum_match.ir	228600067
 x86_64/int_loop.text	114
 x86_64/int_loop.ir	66000032
-x86_64/map_int.text	3337
+x86_64/map_int.text	3376
 x86_64/map_int.ir	114365112
-x86_64/map_string.text	4475
-x86_64/map_string.ir	226404501	2
+x86_64/map_string.text	4514
+x86_64/map_string.ir	228119826	2
 x86_64/sort_inplace.text	874
 x86_64/sort_inplace.ir	153911104
 x86_64/sort_ints.text	2726
 x86_64/sort_ints.ir	128615368
 x86_64/string_build.text	1309
 x86_64/string_build.ir	186360139
-x86_64/string_scan.text	1628
-x86_64/string_scan.ir	121416710
+x86_64/string_scan.text	1667
+x86_64/string_scan.ir	122146710
 x86_64/string_slice.text	492
 x86_64/string_slice.ir	183780097
 x86_64/struct_drop.text	2088
 x86_64/struct_drop.ir	627380163
-x86_64/tokenize.text	895
-x86_64/tokenize.ir	168000089
+x86_64/tokenize.text	934
+x86_64/tokenize.ir	169070089
 
 # aarch64, from the Perf workflow's own perf-aarch64 job — the arch this
 # project defaults to. Seeded from CI rather than measured here, because no
