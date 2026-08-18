@@ -9411,3 +9411,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   under a 40-block string and a fresh array of recycling pressure, and two
   structs over one array. The residual 537 is undecomposed. Refs #6544 #6522
   #6703 #4451.
+- 2026-08-18 (decomposing the 537): the previous entry left the residual
+  unmeasured and said to measure it before touching anything. Done; it splits
+  cleanly in two, and neither half is the struct.
+
+  | variant of the conformance round | B/round |
+  |---|---|
+  | verbatim | **537** |
+  | struct-field ELEMENT reads (`fresh.deps[0].len()`) removed | **260** |
+  | the fresh half alone / the aliased half alone | 268 / 268 |
+
+  The two halves are independent and cost 268 each. The element reads cost the
+  other **277**: witnessed in the asm, `str_arr_free` in user code is **0** with
+  them and 2 without — an element read excludes the field from STRFLDOK, so the
+  struct's drop fires but never walks the elements.
+
+  The 268 is the surprise, and it is NOT the struct. With the reads gone the
+  type is fully reclaimed — `__field_reclaim_Node`, `__struct_drop_Node`, a
+  `__fern_str_free` of `name` and a deep `__fern_str_arr_free` of `deps` all
+  emit — and the loop still leaks 268. Isolating it:
+
+  | shape | B/round |
+  |---|---|
+  | `node(wide(n), deps_of(n), n)` — producers INLINE as arguments | **268** |
+  | the same with both arguments bound to LOCALS first | **64** |
+  | the two producers bound and read, no struct at all | 0 |
+  | `Node { name: wide(n), deps: deps_of(n), mtime: n }` — a literal, no call | 0 |
+
+  The struct-literal form is flat, so the previous two slices closed that. What
+  remains is the **argument temporary at a call whose callee STORES the
+  parameter** — and it is a consequence of the retain this session added: the
+  field now takes a counted reference, so the caller's temp is a second
+  reference that nothing releases. Before the retain it was an uncounted alias
+  and the same bytes leaked for the opposite reason.
+
+  That makes the next slice a counted-retain question, not a struct one:
+  `stash_fresh_str_arg` and the `"PCNT:"` registry release a fresh argument at a
+  BORROWABLE parameter; this position is not borrowable — it is stored — but it
+  is now *retained*, which is the same net contract (one reference in, one owned
+  by the callee) and is what native's `paramCountedRetain` keys on. Binding the
+  arguments to locals first recovers 204 of the 268, which is the size of the
+  prize.
+
+  Do not re-derive: the struct half is done (#7092, #7106), the element-read
+  exclusion is a separate 277 and is a read-gate question, and the arg-temp work
+  under #7039 / #7047 / #7049 covered BORROWABLE parameters only. Refs #6544
+  #6522 #7061 #4451.
