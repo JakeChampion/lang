@@ -190,15 +190,6 @@ func TestMapCowTempBindingNoUnderflowArm64(t *testing.T) {
 // __heap_bump_bytes() is the bump allocator's high-water mark — what the
 // freelist could NOT recycle — so it is host-independent, unlike RSS (see
 // docs/LOCAL-DEV-LOOP.md on the THP 12x spread).
-//
-// x86-64 ONLY. arm64 still leaks 16 B per string-keyed INSERT in the direct
-// form: `set` is the one Map method that keeps the boxed key cell, and on an
-// OVERWRITE it keeps the key it already had and drops the incoming one on the
-// floor — the remaining half of #6243, whose read half (get / has / get_or /
-// delete) is pinned flat on every target by
-// TestMapStringKeyLookupHeapFlat* below. So a flatness assertion here would
-// measure that, not this. The leak this pins is 1328 B an iteration, eighty
-// times larger, and x86-64 shows it against a genuinely flat baseline.
 const mapCowTempBindingHeapProg = `
 import "core/map";
 import "std/i32";
@@ -232,6 +223,187 @@ func TestMapCowTempBindingHeapFlatX86_64(t *testing.T) {
 	}
 }
 
+func TestMapCowTempBindingHeapFlatArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapCowTempBindingHeapProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (2 = the temporary-bound insert loop leaks per iteration)", got)
+	}
+}
+
+func TestMapCowTempBindingHeapFlatWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapCowTempBindingHeapProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (2 = the temporary-bound insert loop leaks per iteration)", got)
+	}
+}
+
+// Memory: a string-keyed INSERT loop that mostly OVERWRITES must stay flat on
+// every target (#6243).
+//
+// `set` is the one Map method that keeps the boxed key cell the lowering
+// allocates on the two-word string ABI (wasm32, and arm64 under
+// TwoWordOverride) — but only when it inserts. On an overwrite
+// __map_set_keyed_impl keeps the equal key already in the column and returns,
+// so the cell and the one string reference it carries were dropped on the
+// floor: 16 B per overwrite for an immortal literal key, 32 B when the key is
+// a fresh heap string. Unbounded in a loop, and invisible on x86-64, which
+// does not box string keys at all.
+//
+// Three key shapes, because they leaked by different amounts and through
+// different boxing decisions:
+//
+//	built string key   — cell + string buffer (32 B/iter on arm64 and wasm)
+//	literal string key — the cell alone (16 B/iter), which pins the leak to
+//	                     the BOXING rather than to the string
+//	i64 key            — boxed on wasm32 only (mapKeyKindTag 2, wide scalar on
+//	                     a narrow-pointer target): 16 B/iter there, and the
+//	                     same defect with no string involved
+//
+// 16x the iterations rather than 4x: at 32 B an iteration the pre-fix arm64
+// mark grew 4576 -> 52576 across this spread, so nothing subtle is being
+// asked of the comparison.
+//
+// __heap_bump_bytes() is the bump allocator's high-water mark — what the
+// freelist could NOT recycle — so it is host-independent, unlike RSS.
+const mapStringKeyInsertHeapProg = `
+import "core/map";
+import "std/i32";
+
+function fillBuilt(n: i32): i64 {
+    var m: Map[string, i32] = map_new(64);
+    var i: i32 = 0;
+    while (i < n) {
+        m = m.insert("k" + (i % 32).to_string(), i);
+        i = i + 1;
+    }
+    if (m.len() != 32) { return 0 - 1; }
+    return __heap_bump_bytes();
+}
+
+function fillLiteral(n: i32): i64 {
+    var m: Map[string, i32] = map_new(64);
+    var i: i32 = 0;
+    while (i < n) {
+        m = m.insert("kfixed", i);
+        i = i + 1;
+    }
+    if (m.len() != 1) { return 0 - 1; }
+    return __heap_bump_bytes();
+}
+
+function fillWide(n: i32): i64 {
+    var m: Map[i64, i32] = map_new(64);
+    var i: i32 = 0;
+    while (i < n) {
+        m = m.insert((i % 32) as i64, i);
+        i = i + 1;
+    }
+    if (m.len() != 32) { return 0 - 1; }
+    return __heap_bump_bytes();
+}
+
+function main(): i32 {
+    var b1: i64 = fillBuilt(100);
+    var b2: i64 = fillBuilt(1600);
+    if (b1 < 0) { return 1; }
+    if (b2 > b1) { return 2; }
+    var l1: i64 = fillLiteral(100);
+    var l2: i64 = fillLiteral(1600);
+    if (l1 < 0) { return 3; }
+    if (l2 > l1) { return 4; }
+    var w1: i64 = fillWide(100);
+    var w2: i64 = fillWide(1600);
+    if (w1 < 0) { return 5; }
+    if (w2 > w1) { return 6; }
+    return 42;
+}
+`
+
+func TestMapStringKeyInsertHeapFlatArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapStringKeyInsertHeapProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (2 = built key, 4 = literal key, 6 = i64 key leaks per overwrite)", got)
+	}
+}
+
+func TestMapStringKeyInsertHeapFlatWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapStringKeyInsertHeapProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (2 = built key, 4 = literal key, 6 = i64 key leaks per overwrite)", got)
+	}
+}
+
+func TestMapStringKeyInsertHeapFlatX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapStringKeyInsertHeapProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (2 = built key, 4 = literal key, 6 = i64 key leaks per overwrite)", got)
+	}
+}
+
+// The discarded key cell must be released EXACTLY once. Freeing it is only
+// safe because the boxed key on the set path always carries one owned string
+// reference — a fresh key moves its rc in, an aliased one is retained by the
+// set's key retain — so an aliased key overwritten in a loop must survive
+// every one of those releases and still read back.
+const mapStringKeyOverwriteAliasProg = `
+import "core/map";
+import "std/i32";
+
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    // Aliased heap key: the caller keeps using it after every overwrite.
+    var k: string = "alpha" + "-beta-gamma-delta";
+    var i: i32 = 0;
+    while (i < 64) {
+        m = m.insert(k, i);
+        i = i + 1;
+    }
+    if (m.len() != 1) { return 1; }
+    if (k.len() != 22) { return 2; }
+    if (m.get_or(k, 0 - 1) != 63) { return 3; }
+    // An equal literal must still find the entry, so the stored key is intact.
+    if (m.get_or("alpha-beta-gamma-delta", 0 - 1) != 63) { return 4; }
+
+    // Inline (SSO) and heap keys interleaved: an inline key's data word is
+    // not a pointer, and its release must stay a no-op.
+    var s: Map[string, i32] = map_new(4);
+    var z: i32 = 0;
+    while (z < 100) {
+        s = s.insert("ab", z);
+        s = s.insert("a-much-longer-heap-allocated-key", z);
+        z = z + 1;
+    }
+    if (s.len() != 2) { return 5; }
+    if (s.get_or("ab", 0 - 1) != 99) { return 6; }
+    if (s.get_or("a-much-longer-heap-allocated-key", 0 - 1) != 99) { return 7; }
+
+    // Wide keys, boxed on wasm32 and bare elsewhere.
+    var w: Map[i64, i32] = map_new(8);
+    var y: i32 = 0;
+    while (y < 200) {
+        w = w.insert((y % 8) as i64, y);
+        y = y + 1;
+    }
+    if (w.len() != 8) { return 8; }
+    if (w.get_or(3 as i64, 0 - 1) != 195) { return 9; }
+
+    return 42 + __rc_underflow_count();
+}
+`
+
+func TestMapStringKeyOverwriteAliasArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapStringKeyOverwriteAliasProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42", got)
+	}
+}
+
+func TestMapStringKeyOverwriteAliasWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapStringKeyOverwriteAliasProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42", got)
+	}
+}
+
+func TestMapStringKeyOverwriteAliasX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapStringKeyOverwriteAliasProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42", got)
+	}
+}
+
 // Memory: a string-keyed LOOKUP loop must stay flat on every target.
 //
 // On the two-word string ABI — wasm32, and arm64 under TwoWordOverride — a
@@ -252,11 +424,6 @@ func TestMapCowTempBindingHeapFlatX86_64(t *testing.T) {
 // respectively, exactly linear over n = 100 / 200 / 400 / 800; after it, 1360
 // and 1424 bytes flat at every n.
 //
-// NO wasm leg, even though wasm32 is the other two-word target and this loop
-// leaks the same 16 B/iter there (measured 2480 -> 13680 for n = 100 -> 800,
-// byte-identical module before and after this change). Its Map lowering never
-// reaches freeLookupKeyCell at all, so that is a second instance of the same
-// leak behind a different path — a follow-up, not something this fix covers.
 // The x86-64 leg does not box string keys (isStringForBoxing is false without
 // the two-word ABI), so it pins the flat baseline this must not disturb.
 //
@@ -297,6 +464,12 @@ function main(): i32 {
 func TestMapStringKeyLookupHeapFlatArm64(t *testing.T) {
 	if _, got := compileAndRunArm64(t, mapStringKeyLookupHeapProg); got != 42 {
 		t.Fatalf("arm64 got %d, want 42 (2 = the string-keyed lookup loop leaks per iteration)", got)
+	}
+}
+
+func TestMapStringKeyLookupHeapFlatWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapStringKeyLookupHeapProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (2 = the string-keyed lookup loop leaks per iteration)", got)
 	}
 }
 
