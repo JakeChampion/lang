@@ -8473,35 +8473,25 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   without this they would have been safe by accident; requiring a concrete
   scalar result to earn an entry makes it an invariant of the registry instead.
 
-  **`alloc_flat_fresh_array_arg` still does not move, and the cause is NOT
-  established.** Two earlier readings of this were wrong and are corrected here,
-  because both would have sent the next reader at the wrong file.
+  **`alloc_flat_fresh_array_arg` still does not move. The cause was witnessed on
+  2026-08-18 and it is not in this arg stash at all** — see that day's entry for
+  the measurement. In short: `node` earns no `"ACNT:"` entry, and this slice's
+  scalar-result guard is exactly why (forcing `scalar_result` true gives it
+  `ACNT:node|10` and the call site does emit the release). The byte count does
+  not move because the released reference was never the leak — the leak is the
+  CALLER's `var b: Node = node(…)` binding, which earns no reclaim credit at all.
 
-  First wrong reading: "a struct-returning callee lowers through a path that
-  never reaches the arg stash". Disproved — a borrowable array param is released
-  when the callee returns a SCALAR-ONLY struct *and* when it returns a
-  POINTER-BEARING one. The arm is reached regardless of the return's shape; the
-  inference came from `keep(…): i32` being flat and `node(…): Node` not, without
-  ever testing reachability for a struct return.
-
-  Second wrong reading: "this slice's own scalar-result guard is the blocker".
-  Also disproved — removing that guard leaves `node(mk(i), i)` at 103 and
-  `both(mk(i), i)` at 54, unmoved.
-
-  What is left is a genuine open question. `keep` (credited, fires) and `node`
-  (does not fire) should be classified identically by `array_param_counted_of` —
-  the parameter is a struct-literal slot value in each — so the divergence is
-  somewhere between the registry and the call site and has not been isolated.
-  Isolate it before writing any more code: dump or otherwise witness whether
-  `node` earns an `"ACNT:"` entry at all, rather than inferring the mechanism
-  from which probes happen to be flat. That inference has now failed twice on
-  this exact row.
+  Two earlier readings of this row were wrong and are kept here because both
+  would have sent the next reader at the wrong file. First: "a struct-returning
+  callee lowers through a path that never reaches the arg stash" — disproved, the
+  arm is reached regardless of the return's shape. Second: "the scalar-result
+  guard is the blocker" — half right and misleading as written; it IS what keeps
+  `node` out of the registry, and lifting it still moves nothing.
 
   The scalar-result guard is independently stricter than native —
   `countedArgTemp` has no result-type check, and native's comment names
   `node(name, no_deps(), k)` as the shape it exists to admit — but it stays: it
-  is the conservative direction, costs only a leak, and removing it changes
-  nothing measurable until the real blocker is found.
+  is the conservative direction and costs only a leak.
   The case stays at 798 B/round.
 
   VERIFIED: `counted-retain-arr-arg-flat` fails at 98 on the parent;
@@ -8576,3 +8566,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   the conformance shape itself, asserting values and balance rather than the
   flatness the receiver-credit gate still caps. Plus the whole
   `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
+
+- 2026-08-18 (array half): **A struct producer that seeds its array field from a
+  PRODUCER CALL is strict-fresh, so its caller's binding is reclaimable (#6522
+  isolation, #6758 follow-on).**
+
+  This started as the isolation the previous entry asked for, and it is worth
+  reading in that order because the answer moved the row somewhere else.
+
+  **Witnessed, not inferred.** Dumping the registry at the end of
+  `array_param_counted_of` and compiling both probes with a self-host CLI built
+  from the tree: `keep` earns `ACNT:keep|10`; `node` earns nothing at all.
+  Forcing `scalar_result` true gives it `ACNT:node|10`, and a probe at the stash
+  site then prints `callee=node ai=0 arrlit=1 borrowable=0 counted=1` — the
+  emitted asm gains the stash and the `__fern_arr_dec` after the call. So the
+  guard IS the registry's blocker, and lifting it still leaves the case at 104
+  B/round.
+
+  **Because the released reference was never the leak.** `node(mk(i), i)` stores
+  the temp in the struct it returns; the post-call dec takes that temp from rc 2
+  to rc 1 and the struct owns it — correctly. What leaks is the CALLER's
+  `var b: Node = node(…)`: `node` is param-fed, so it is not strict-fresh, so `b`
+  earns no reclaim credit and box plus buffer die unreleased every iteration. The
+  probe that settles it has no array argument at all —
+  `make(k: i32): Node { var d: i32[] = mk(k); return Node { deps: d, k: k }; }` —
+  and leaked the identical 104 B/round.
+
+  **That probe was its own closable gap, and this slice closes it.**
+  `return_value_is_strictfresh_struct` admitted an ident field value only when
+  `arr_field_ident_is_frame_built` proved the local was LITERAL-initialised
+  (#6758). A local seeded by a call to an `"ARR:"` producer carries the same
+  proof one call further out — that registry's whole claim is that every return
+  is a sole-owned scalar-element buffer the callee's frame allocated — so it is
+  admitted now, under the unchanged single-declaration, self-append-only and
+  single-escape conditions. `arr_local_has_literal_init` becomes
+  `arr_local_init_is_frame_fresh` and the `"ARR:"` admission rule moves out into
+  `arr_fresh_ret_fns_of`, so the registry and this walk ask one question instead
+  of two copies of it. `body_returns_local_built_arr` passes an EMPTY producer
+  list: it is the predicate that registry is built from, so consulting it there
+  would be circular, and a producer returning another producer's local is a
+  widening of its own.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `var d: i32[] = mk(k); return Node { deps: d, … }` | 104 | **0** |
+  | `var d: i32[] = [k, …]; return Node { deps: d, … }` (#6758) | 0 | 0 |
+  | `return Node { deps: [k, …], … }` | 0 | 0 |
+  | `node(mk(i), i)`, the param-fed producer | 104 | 104 |
+
+  **The last row is where the row goes next.** It is param-fed, so no
+  freshness-of-construction argument can credit it — but the counted-retain
+  contract already proves what a credit would need: every appearance of the
+  parameter is a counted store, so the struct the callee returns owns exactly one
+  reference to the argument. Crediting the caller's binding off `"ACNT:"` rather
+  than off strict-freshness is the shape of the next slice, and it is what the
+  conformance row has been waiting on.
+
+  VERIFIED: new `producer-call-array-field` (104 B/iteration on the parent,
+  flat after) and `passthru-producer-declined` — a producer that hands back its
+  own parameter earns no `"ARR:"` entry, which is what keeps the caller's buffer
+  safe, so it is carried beside the positive rather than left implicit. Both on
+  x86-64 and arm64. Refs #6522 #6758 #4451.
