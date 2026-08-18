@@ -24,6 +24,13 @@ import (
 //   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so there
 //     is no __c_call runtime on any wasm path; before this it deferred to the AST
 //     emitter, which emitted a call against an undefined $__c_call<n>.
+//   - the raw-memory / syscall floor (#6946) — __raw_alloc, __raw_store8,
+//     __raw_load8, __raw_string, __raw_scratch, __raw_environ, __raw_addr,
+//     __raw_arr_box, __syscall3, __syscall4, __syscall5. They exist so the
+//     register backends' runtime helpers can be written in Fern; wasm has
+//     neither a raw address space nor syscalls. Unclassified, they reached
+//     instruction selection, which named an IR op nobody wrote (and, before
+//     #6981, emitted the op as a WAT comment the assembler then choked on).
 //
 // Both drivers are exercised. The differential wasm_ir_run driver has rejected
 // subprocess since #4320, but the PRODUCTION wasm_run driver had no such gate
@@ -98,6 +105,25 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			name:    "c_call",
 			src:     `function main(): i32 { var cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
 			mustSay: "__c_call0",
+		},
+		// One per shape of the raw floor (#6946): a syscall, an argument-taking
+		// raw-memory op, and the zero-argument one — the last because an op with
+		// no operands is the arity that keeps the wasm operand stack balanced
+		// when it is dropped, so it is the one a silent miscompile hides in.
+		{
+			name:    "syscall3",
+			src:     `function main(): i32 { return __syscall3(1, 1, 0, 0); }` + "\n",
+			mustSay: "__syscall3",
+		},
+		{
+			name:    "raw_alloc",
+			src:     `function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }` + "\n",
+			mustSay: "__raw_alloc",
+		},
+		{
+			name:    "raw_environ",
+			src:     `function main(): i32 { return __raw_environ(); }` + "\n",
+			mustSay: "__raw_environ",
 		},
 	}
 

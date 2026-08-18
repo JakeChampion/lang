@@ -59,12 +59,10 @@ function main(): i32 {
         eprint(arity_errs);
         return 1;
     }
-    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317).
-    // The differential wasm_ir_run driver has rejected these since #4320; this
-    // production driver never did, so a timer_fd / subprocess program emitted a
-    // WAT calling a symbol nothing defines and failed at load with an opaque
-    // `unknown func: failed to find name $timer_fd` instead of a diagnostic
-    // naming the feature.
+    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
+    // the raw/syscall floor #6946). The emit below runs this same gate, but only
+    // on the emit path: the `-decide` probe returns before it, and answering
+    // "ir" or "ast" for a program neither path can compile would be a lie.
     var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
     if (unsupported.len() > 0) {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));

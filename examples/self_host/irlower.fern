@@ -33759,9 +33759,8 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
 // additionally deep-drops string K/V). Routing through a helper — rather than an
 // inline raw_load_ptr read of mapbox words — is REQUIRED for wasm: the wasm map
 // box is a 40-byte rc-headered layout (keys@8/vals@12), NOT asm's raw 16-byte
-// {keys@0,vals@8}, and raw_load_ptr does not even lower on the wasm backend (it
-// would emit an `unsupported bin` comment, leaving an imbalanced operand stack →
-// invalid wat). The helper is null-safe on every backend, so the precise-drop /
+// {keys@0,vals@8}, so word offsets read off the wrong fields there.
+// The helper is null-safe on every backend, so the precise-drop /
 // exit-sweep double-call is a safe no-op (the slot is zeroed after the free, so a
 // second call loads null); no outer null guard is needed. call_direct pushes the
 // helper's return (the box / count) which is dropped.

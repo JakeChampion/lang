@@ -2313,6 +2313,62 @@ function main(): i32 {
 		}
 	})
 
+	// #6946: a builtin with no wasm meaning must be named by the diagnostic on
+	// the CLI's wasm path too. The pre-emit gate lived only in the standalone
+	// wasm drivers, which the CLI does not go through, so `-target wasm32-wasi`
+	// carried the refusal all the way down to instruction selection: it named an
+	// IR op nobody wrote (`syscall3`), and before that it emitted the op as a WAT
+	// COMMENT, so the assembler blamed the comment marker ("unknown instruction:
+	// ;;"). Both halves are asserted — the exit code and the builtin's name —
+	// for one raw-floor intrinsic and for timer_fd, which had the same gap.
+	t.Run("wasm-unsupported-builtin-names-the-builtin", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			src     string
+			mustSay string
+		}{
+			{"syscall-floor", "function main(): i32 { return __syscall3(1, 1, 0, 0); }\n", "__syscall3"},
+			{"raw-memory-floor", "function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }\n", "__raw_alloc"},
+			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", "timer_fd"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				srcPath := filepath.Join(dir, "unsupported_"+tc.name+".fern")
+				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
+					t.Fatalf("write src: %v", err)
+				}
+				cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+				_ = cmd.Run()
+				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+					t.Fatalf("driver did not exit normally")
+				}
+				if code := cmd.ProcessState.ExitCode(); code != 1 {
+					t.Errorf("exit = %d, want 1; stderr:\n%s", code, stderr.String())
+				}
+				if !strings.Contains(stderr.String(), tc.mustSay) || !strings.Contains(stderr.String(), "not supported on the wasm target") {
+					t.Errorf("stderr does not name %s as unsupported on wasm:\n%s", tc.mustSay, stderr.String())
+				}
+				if strings.Contains(stdout.String(), "(module") {
+					t.Errorf("refused but still emitted a module (%d bytes)", stdout.Len())
+				}
+			})
+		}
+
+		// The control: the same syscall program still compiles for a register
+		// backend through this very CLI, which is what makes the wasm refusal a
+		// backend limit rather than a rejected program.
+		srcPath := filepath.Join(dir, "unsupported_syscall-floor.fern")
+		out, code := runDriver(t, srcPath)
+		if code != 0 {
+			t.Fatalf("x86-64 refused a program it lowers: exit %d", code)
+		}
+		if !strings.Contains(string(out), ".globl") {
+			t.Errorf("x86-64 emitted no assembly for the syscall program (%d bytes)", len(out))
+		}
+	})
+
 	t.Run("unknown-target-exits-2", func(t *testing.T) {
 		srcPath := filepath.Join(dir, "ret42.fern")
 		_, code := runDriver(t, "-target", "riscv", srcPath)
