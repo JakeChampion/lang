@@ -9651,3 +9651,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bytes or pin a value the release could corrupt. Regression tests:
   `arrArgReclaimCases` in `internal/e2eselfhost/self_host_arrarg_reclaim_ir_test.go`
   (4 new rows x 3 backends). Refs #6544 #6522 #7061 #4451.
+- 2026-08-18 (found by the slice above, and it changes what the next one is):
+  **the three field-reclaim emitters do not agree on a `string[]` field.** The
+  conformance case `alloc_flat_fresh_array_arg` went flat on wasm and did not
+  move at all on x86-64 or arm64 — 197 -> flat against 538 -> 538 — from one
+  shared lowering change. The arg-temp dec is emitted identically on all three;
+  what differs is what happens to the reference afterwards.
+
+  `emit_wasm_field_reclaim_body` gates its shallow `$__fern_arr_dec` on
+  `frk == "a"` — ANY array-kind field, `string[]` included. `asm_ir`'s
+  `emit_ir_field_reclaim_one` and the arm64 sibling reach a `string[]` field only
+  through `fr_str_arr`, which requires the `strfldok:arr:<T>` admission. This
+  case's `fresh.deps[0].len()` withholds it, so those two emit NOTHING for the
+  field. The construction-side retain is unconditional for a bare-ident array
+  field value in all three, so x86-64 and arm64 keep one array reference per
+  construction that nothing ever gives back.
+
+  Which side is right is not settled by "wasm reclaims more". The register
+  backends' gate is doing a job the wasm one skips: a `string[]` field whose
+  value is a FIELD READ (`S { xs: s.xs }`) takes no construction retain at all —
+  `field_access_arr_field_type` admits scalar-element and array-of-struct reads,
+  not `string[]` — so an ungated shallow dec there frees a buffer the source
+  struct still owns. wasm does that today. Closing the gap therefore means
+  aligning retain and release for `string[]` fields across all three emitters,
+  not copying either one's gate onto the others.
+
+  That is now the next slice, ahead of the element-read exclusion: the read gate
+  is what withholds admission here, but widening it would only make x86-64 and
+  arm64 agree with a wasm behaviour that is itself unproven. The known-divergence
+  rows carry the measurement — `alloc_flat_fresh_array_arg` is delisted on wasm
+  and restated on the other two legs. Refs #6544 #6522 #4451.
