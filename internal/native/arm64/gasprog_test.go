@@ -242,3 +242,69 @@ func TestAssembleProgramUndefinedSymbol(t *testing.T) {
 		t.Fatal("expected an error for undefined symbol")
 	}
 }
+
+// TestAssembleProgramData covers the ELF `.data` section. It was silently
+// dropped — `.section .data` fell through to secIgnore, so every label defined
+// in it was undefined and an `adrp` at it failed to assemble. Mach-O's
+// `__DATA,__data` was already materialised, so only the ELF spelling was
+// missing.
+//
+// The shape is a static string box (#7080): an immortal `-1` rc word, the box
+// label, an absolute `.quad` to the bytes in .rodata, and the length. The
+// const-aggregate blocks (#6149) put the same pattern in `.data`, so this was
+// reachable before and simply had no case that referenced a `.data` label.
+//
+// Both spellings are covered: the `.section .data` form the emitters write and
+// the bare `.data` shorthand, which was missing alongside it.
+func TestAssembleProgramData(t *testing.T) {
+	const textVAddr = 0x400078
+	for _, tc := range []struct {
+		name    string
+		switch_ string
+	}{
+		{"section-form", "\t.section .data\n"},
+		{"bare-shorthand", "\t.data\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "" +
+				"\t.text\n" +
+				"_start:\n" +
+				"\tadrp x0, .SB0\n" +
+				"\tadd x0, x0, :lo12:.SB0\n" +
+				"\tret\n" +
+				"\t.section .rodata\n" +
+				".S0: .ascii \"hi!\"\n" +
+				tc.switch_ +
+				"\t.balign 8\n" +
+				"\t.quad -1\n" +
+				".SB0:\n" +
+				"\t.quad .S0\n" +
+				"\t.quad 3\n"
+			text, rodata, err := arm64.AssembleProgram(src, textVAddr)
+			if err != nil {
+				t.Fatalf("assemble: %v", err)
+			}
+			// .text is 3 instructions (12 bytes); the data blob starts
+			// 8-aligned right after it, so it is padded to 16.
+			rodataVAddr := uint64(textVAddr + (len(text)+7)/8*8)
+			rd := func(off int) uint64 {
+				var v uint64
+				for i := 0; i < 8; i++ {
+					v |= uint64(rodata[off+i]) << (8 * i)
+				}
+				return v
+			}
+			// .data lands in the same blob, in source order: "hi!" at 0,
+			// padded to 8 for the rc word, so .SB0 is at 16.
+			if got, want := rd(8), ^uint64(0); got != want {
+				t.Errorf("immortal rc word = %#x, want %#x", got, want)
+			}
+			if got, want := rd(16), rodataVAddr; got != want {
+				t.Errorf(".quad .S0 = %#x, want %#x (the bytes at .rodata+0)", got, want)
+			}
+			if got, want := rd(24), uint64(3); got != want {
+				t.Errorf("length word = %d, want %d", got, want)
+			}
+		})
+	}
+}
