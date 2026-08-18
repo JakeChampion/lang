@@ -14786,10 +14786,12 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 		return
 	}
 	// Single-word string value (native single-word, x86_64): caller loaded a
-	// ptr; __fern_rc_dec it (inline-tag / sentinel guards keep all sources
-	// safe). arm64 / wasm two-word ABIs take the two-word str_dec branch above.
+	// ptr; reclaim via __fern_str_dec — __fern_rc_dec never frees, so it takes
+	// the buffer's count to 0 and strands it (#6901). Same helper
+	// appendChildDrop emits for this shape in the generated drop fn. arm64 /
+	// wasm two-word ABIs take the two-word str_dec branch above.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -14860,10 +14862,13 @@ func (b *builder) dropStructField(t ast.Type) {
 		return
 	}
 	// Single-word string value (native single-word, x86_64): caller loaded a
-	// ptr via payloadLoadOpFor; __fern_rc_dec it. SSO inline-tag low-bit guard
-	// + literal sentinel keep all sources safe.
+	// ptr via payloadLoadOpFor; reclaim via __fern_str_dec — __fern_rc_dec
+	// never frees, so it takes the buffer's count to 0 and strands it (#6901).
+	// Same helper appendChildDrop emits for this shape in the generated drop
+	// fn. SSO inline-tag low-bit guard + literal sentinel keep all sources
+	// safe.
 	if _, isStr := t.(ast.StringType); isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
