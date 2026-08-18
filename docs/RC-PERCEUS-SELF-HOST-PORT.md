@@ -8549,15 +8549,13 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | the fresh call alone, string-bearing struct | 72 | 24 |
   | the identity call alone, string-bearing struct | 24 | 24 |
 
-  **What the last row says is where the next slice is.** The identity call
-  allocates nothing at all, so its 24 is the RECEIVER's own box: `relabel` has a
-  bare `return b`, which earns it `"RECVRET:"` and costs `b` its reclaim credit
-  at every call site (the slice before last). The `"RECVIDENT:"` tier exists to
-  give that credit back when the result dies inline, and `relabel` misses it on
-  `optstruct_body_moves_field` — because `b.n`, a SCALAR field, reaches the
-  returned literal. A scalar is copied out of its box; it carries no reference
-  and cannot strand one. Restricting that predicate to rc-tracked field types is
-  the next slice, and it is what takes the conformance case the rest of the way.
+  **The next-slice reading written here was wrong; see the 2026-08-18 (method
+  half) entry for what the last row actually says.** It named
+  `optstruct_body_moves_field` as what costs `relabel` the `"RECVIDENT:"` tier,
+  and proposed restricting that predicate to rc-tracked field types. Witnessed at
+  HEAD, `relabel` scores `movesfield=0` and earns `RECVIDENT:Box.relabel`
+  already, so that edit is a no-op. The residue is not about the receiver or the
+  identity return at all.
 
   VERIFIED: new `freshself-mixed-method-flat` (failing at 92 on the parent),
   plus two safety rows that pass on both sides — `freshself-identity-path-not-freed`,
@@ -8629,3 +8627,87 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   own parameter earns no `"ARR:"` entry, which is what keeps the caller's buffer
   safe, so it is carried beside the positive rather than left implicit. Both on
   x86-64 and arm64. Refs #6522 #6758 #4451.
+
+- 2026-08-18 (method half): **The `alloc_flat_method_identity_return` residue is
+  a STRING FIELD SEEDED FROM A PARAMETER, not the identity return (#6544).**
+
+  Doc-only. The previous entry named the next slice as "restrict
+  `optstruct_body_moves_field` to rc-tracked field types"; this one measures that
+  the edit would change nothing and re-aims the row. That predicate's
+  `fieldmove_is_move_value` already ends in `!is_scalar_type_name(lt)`, so a
+  scalar field never marked in the first place.
+
+  **Witnessed** by dumping the four predicates `recv_borrow_fns_of` scores, then
+  compiling the conformance case with a self-host CLI built from the tree:
+
+  ```
+  RECVPROBE Box.relabel bareret=1 movesfields=0 movesfield=0 unsafe=1 unsafe_allowret=0
+  ```
+
+  `movesfield=0`, `unsafe_allowret=0` — `relabel` earns `RECVIDENT:Box.relabel`
+  today. The tier the entry said was missed is granted.
+
+  **What the 24 actually is.** Per round, self-host x86-64, `Box { tag: string,
+  n: i32 }` unless stated:
+
+  | probe | B/round |
+  |---|---|
+  | `var b = Box { … }`, no method call at all | 0 |
+  | `b.relabel("")`, the identity path | 24 |
+  | `b.relabel("fresh-tag-value")`, the fresh path | 24 |
+  | `b.freshonly("…")` — a method with NO identity path | 24 |
+  | `var c: Q = mkq(t, k)` — a plain FREE function, no receiver anywhere | 24 |
+  | the same producer building its own field: `Q { tag: "…", k: k }` | 0 |
+  | the same, from a fresh concat: `Q { tag: "…" + k.to_string(), k: k }` | 0 |
+  | string-FREE struct: `P { k: i32, m: i32 }` from `mkp(k)` | 0 |
+  | param-seeded field, and the ARGUMENT is fresh too | 64 |
+
+  Read down that list: the receiver, the identity return and the method form all
+  drop out — a free function leaks identically. What survives as the
+  discriminator is a `string` field whose value is the producer's own PARAMETER.
+  A producer that builds its string field itself is flat, string-free structs are
+  flat, and when the argument is itself fresh the leak grows by that string
+  (24 → 64), so the caller's box AND the string it handed in are both stranded.
+
+  Native is 0 on every row (measured, with the `__rc_underflow()` guard stripped
+  — that builtin is self-host-only, and a probe carrying it fails to COMPILE
+  natively, which is worth knowing before someone reads the compiler's exit code
+  as a byte count).
+
+  **What it actually is, attributed.** `FERN_LEAKCHECK=1` on the three-iteration
+  reduction: native `allocs=3 frees=3 live_bytes=0`, self-host
+  `allocs=6 frees=3 live_bytes=72`. The self-host allocates TWICE per iteration
+  and frees once — so nothing is missing a free on an object native also builds;
+  there is an extra object. `FERN_RC_TRACE=1` names it, resolved through
+  `nm -n`:
+
+  | site | size | fate |
+  |---|---|---|
+  | `__fn_mkq +0x34` | 0x30 | freed — `__fern_snapshot_dec` per iteration, `__fern_arr_dec` at exit |
+  | `__fn_main +0x6e` | **0x18** | **never freed** |
+
+  The leaked box is the CALLER's, not the callee's, and it is the `string`
+  ARGUMENT's box — materialised at the call site and released by nothing. That
+  is why a producer building its own field is flat (the box is built inside the
+  callee, where it is reclaimed) and why a fresh argument costs 24 + 40.
+
+  **So the slice is the STRING sibling of `paramCountedRetain`.**
+  `stash_fresh_str_arg` releases a fresh string argument only at a BORROWABLE
+  position, and a callee that STORES its parameter is not borrowable by
+  construction — the same wall the array half hit at #6522, closed there by
+  `array_param_counted_of`. That registry is ARRAY-only and says so in its own
+  header. A `string` twin (`"SCNT:"`), consumed at the same call site the array
+  one already feeds, is what this row needs.
+
+  One difference to get right, and it is the trap the array half is still stuck
+  behind: `array_param_counted_of` demands a CONCRETE SCALAR result, which
+  refuses exactly the struct-returning producer this row is made of. The property
+  actually needed is native's `resultCannotAliasArg` — the result cannot BE the
+  argument. A struct result CONTAINS it, which is fine (the callee's counted
+  store and the caller's post-call dec net to the one reference the struct owns);
+  the unsafe shape is a result of the parameter's OWN type, `both(t: string, k):
+  string { var n = Q { tag: t, k: k }; return n.tag; }`, which the use-vocabulary
+  credits and only a result-type test can refuse. Write the string rule that way
+  rather than copying the scalar-result guard across.
+
+  Refs #6544 #6522 #6887 #4451.
