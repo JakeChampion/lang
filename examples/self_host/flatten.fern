@@ -503,11 +503,10 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
             return parser.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
         parser.StmtIf(f) => {
-            return parser.StmtIf {
+            return parser.StmtIf { ...f,
                 cond: rewrite_expr(f.cond, ctx),
                 then_body: rewrite_block(f.then_body, ctx),
-                else_body: rewrite_block(f.else_body, ctx),
-                line: f.line, else_chained: f.else_chained };
+                else_body: rewrite_block(f.else_body, ctx) };
         },
         parser.StmtWhile(w) => {
             return parser.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop };

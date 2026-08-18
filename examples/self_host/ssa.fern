@@ -1524,7 +1524,7 @@ function synth_match_chain(arms: parser.MatchArm[], structs: parser.StructDecl[]
                     // => return …, Err(e) => return … }`) fail build_func.
                     chain = then_body;
                 } else {
-                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain, line: 0, else_chained: false };
+                    var theif: parser.Stmt = parser.StmtIf { cond: cond, then_body: then_body, else_body: chain, line: 0, else_chained: false, sugar: parser.no_match_sugar() };
                     chain = [theif];
                 }
             }

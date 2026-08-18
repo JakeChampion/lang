@@ -6763,7 +6763,7 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     var cond: parser.Expr = parser.ExprBinary { op: "<", left: iref, right: lenc, line: 0, col: 0 };
     var igt: parser.Expr = parser.ExprBinary { op: ">", left: iref, right: zero, line: 0, col: 0 };
     var noelse: parser.Stmt[] = [];
-    var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse, line: 0, else_chained: false };
+    var ifc: parser.Stmt = parser.StmtIf { cond: igt, then_body: [to_json_append_stmt(on, comma)], else_body: noelse, line: 0, else_chained: false, sugar: parser.no_match_sugar() };
     // var $s = aref[$i].to_json();
     var elem: parser.Expr = parser.ExprIndex { array: aref, index: iref, unchecked: false, ty: "" };
     var elemj: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
@@ -52231,7 +52231,7 @@ function desugar_lambda_returns(body: parser.Stmt[], counter: i32): DesugarRet {
             parser.StmtIf(f) => {
                 var td: DesugarRet = desugar_lambda_returns(f.then_body, c); c = td.counter;
                 var ed: DesugarRet = desugar_lambda_returns(f.else_body, c); c = ed.counter;
-                out = out.append(parser.StmtIf { cond: f.cond, then_body: td.body, else_body: ed.body, line: f.line, else_chained: f.else_chained });
+                out = out.append(parser.StmtIf { ...f, cond: f.cond, then_body: td.body, else_body: ed.body });
             },
             parser.StmtWhile(w) => {
                 var wd: DesugarRet = desugar_lambda_returns(w.body, c); c = wd.counter;
@@ -52346,7 +52346,7 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             var ce: LiftExpr = lift_expr_walk(f.cond, acc, gfns);
             var tb: LiftStmts = lift_stmts(f.then_body, ce.acc, gfns);
             var eb: LiftStmts = lift_stmts(f.else_body, tb.acc, gfns);
-            var ns: parser.Stmt = parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false };
+            var ns: parser.Stmt = parser.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar() };
             return LiftStmts { stmts: [ns], acc: eb.acc };
         },
         // A match's ARM BODIES need the same walk StmtIf's branches get. Without
@@ -53225,7 +53225,7 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
             parser.StmtVar(v) => { var ns: parser.Stmt = parser.StmtVar { name: v.name, type_name: v.type_name, init: subst_fcall_expr(v.init, fname, lname, capargs), line: v.line, col: v.col, is_str: v.is_str }; out = out.append(ns); },
             parser.StmtExpr(s) => { var ns: parser.Stmt = parser.StmtExpr { value: subst_fcall_expr(s.value, fname, lname, capargs), line: s.line }; out = out.append(ns); },
             parser.StmtAssign(a) => { var ns: parser.Stmt = parser.StmtAssign { target: a.target, value: subst_fcall_expr(a.value, fname, lname, capargs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; out = out.append(ns); },
-            parser.StmtIf(f) => { var ns: parser.Stmt = parser.StmtIf { cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs), line: f.line, else_chained: f.else_chained }; out = out.append(ns); },
+            parser.StmtIf(f) => { var ns: parser.Stmt = parser.StmtIf { ...f, cond: subst_fcall_expr(f.cond, fname, lname, capargs), then_body: subst_fcall_stmts(f.then_body, fname, lname, capargs), else_body: subst_fcall_stmts(f.else_body, fname, lname, capargs) }; out = out.append(ns); },
             parser.StmtWhile(w) => { var ns: parser.Stmt = parser.StmtWhile { cond: subst_fcall_expr(w.cond, fname, lname, capargs), body: subst_fcall_stmts(w.body, fname, lname, capargs), label: w.label, line: w.line, is_loop: w.is_loop }; out = out.append(ns); },
             parser.StmtFor(fr) => { var ns: parser.Stmt = parser.StmtFor { var_name: fr.var_name, iter: subst_fcall_expr(fr.iter, fname, lname, capargs), body: subst_fcall_stmts(fr.body, fname, lname, capargs), label: fr.label, line: fr.line }; out = out.append(ns); },
             // A `match` whose scrutinee / arm bodies / guards call `f`: rewrite
@@ -53393,11 +53393,11 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
             parser.StmtIf(f) => {
                 var st: ClosureLift = closure_lift_one(f.then_body, fd, acc, gfns, structs, mfuncs);
                 if (st.changed) {
-                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { cond: f.cond, then_body: st.body, else_body: f.else_body, line: f.line, else_chained: f.else_chained }), acc: st.acc, changed: true };
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { ...f, cond: f.cond, then_body: st.body, else_body: f.else_body }), acc: st.acc, changed: true };
                 }
                 var se: ClosureLift = closure_lift_one(f.else_body, fd, acc, gfns, structs, mfuncs);
                 if (se.changed) {
-                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { cond: f.cond, then_body: f.then_body, else_body: se.body, line: f.line, else_chained: f.else_chained }), acc: se.acc, changed: true };
+                    return ClosureLift { body: cl_replace_at(body, i, parser.StmtIf { ...f, cond: f.cond, then_body: f.then_body, else_body: se.body }), acc: se.acc, changed: true };
                 }
             },
             parser.StmtMatch(mm) => {
@@ -53921,7 +53921,7 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
                 fs = tb.funcs; ct = tb.counter;
                 var eb: InlineCloStmts = lift_iife_conditions(iff.else_body, fd, fs, ct, gfns, mfuncs, structs);
                 fs = eb.funcs; ct = eb.counter;
-                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false });
+                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar() });
             },
             parser.StmtMatch(mm) => {
                 var sr: InlineCloRes = lift_inline_closures_expr(mm.scrutinee, fd, fs, ct, gfns, structs, mfuncs);
@@ -53964,7 +53964,7 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
                 fs = tb.funcs; ct = tb.counter;
                 var eb: InlineCloStmts = box_iife_arm_values(iff.else_body, fd, fs, ct, gfns, mfuncs, structs);
                 fs = eb.funcs; ct = eb.counter;
-                out = out.append(parser.StmtIf { cond: iff.cond, then_body: tb.stmts, else_body: eb.stmts, line: iff.line, else_chained: iff.else_chained });
+                out = out.append(parser.StmtIf { ...iff, cond: iff.cond, then_body: tb.stmts, else_body: eb.stmts });
             },
             parser.StmtMatch(mm) => {
                 var narms: parser.MatchArm[] = [];
@@ -54713,7 +54713,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                 fs = tb.funcs; ct = tb.counter;
                 var eb: InlineCloStmts = box_iife_arm_array_elems(iff.else_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = eb.funcs; ct = eb.counter;
-                out = out.append(parser.StmtIf { cond: iff.cond, then_body: tb.stmts, else_body: eb.stmts, line: iff.line, else_chained: iff.else_chained });
+                out = out.append(parser.StmtIf { ...iff, cond: iff.cond, then_body: tb.stmts, else_body: eb.stmts });
             },
             parser.StmtMatch(mm) => {
                 var narms: parser.MatchArm[] = [];
@@ -55684,7 +55684,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                 fs = tb.funcs; ct = tb.counter;
                 var eb: InlineCloStmts = lift_inline_closures_stmts(f.else_body, fd, fs, ct, gfns, structs, mfuncs);
                 fs = eb.funcs; ct = eb.counter;
-                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false });
+                out = out.append(parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar() });
             },
             parser.StmtWhile(w) => {
                 // Walk the condition (same fn-arg-boxing reason as StmtIf above).
@@ -55857,7 +55857,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
         },
         parser.StmtReturn(r) => { return parser.StmtReturn { value: box_rewrite_expr(r.value, boxed, btypes), line: r.line, col: r.col }; },
         parser.StmtExpr(e) => { return parser.StmtExpr { value: box_rewrite_expr(e.value, boxed, btypes), line: e.line }; },
-        parser.StmtIf(f) => { return parser.StmtIf { cond: box_rewrite_expr(f.cond, boxed, btypes), then_body: box_rewrite_stmts(f.then_body, boxed, btypes), else_body: box_rewrite_stmts(f.else_body, boxed, btypes), line: f.line, else_chained: f.else_chained }; },
+        parser.StmtIf(f) => { return parser.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes), then_body: box_rewrite_stmts(f.then_body, boxed, btypes), else_body: box_rewrite_stmts(f.else_body, boxed, btypes) }; },
         parser.StmtWhile(w) => { return parser.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes), body: box_rewrite_stmts(w.body, boxed, btypes), label: w.label, line: w.line, is_loop: w.is_loop }; },
         parser.StmtFor(fr) => { return parser.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes), body: box_rewrite_stmts(fr.body, boxed, btypes), label: fr.label, line: fr.line }; },
         parser.StmtMatch(m) => {
@@ -56254,7 +56254,7 @@ function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs
             var cr: WCapExpr = wcap_expr(f.cond, fd, gfns, structs, mfuncs, acc, atargets);
             var tb: WCapBody = box_wide_captures_stmts(f.then_body, fd, gfns, structs, mfuncs, atargets);
             var eb: WCapBody = box_wide_captures_stmts(f.else_body, fd, gfns, structs, mfuncs, atargets);
-            return WCapStmt { stmt: parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false }, caps: cr.caps, changed: tb.changed || eb.changed };
+            return WCapStmt { stmt: parser.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar() }, caps: cr.caps, changed: tb.changed || eb.changed };
         },
         parser.StmtWhile(w) => {
             var cr: WCapExpr = wcap_expr(w.cond, fd, gfns, structs, mfuncs, acc, atargets);

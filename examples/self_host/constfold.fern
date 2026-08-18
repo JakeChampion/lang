@@ -257,11 +257,10 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
         parser.StmtExpr(x) => { return parser.StmtExpr { value: fold_expr(x.value), line: x.line }; },
         parser.StmtAssign(a) => { return parser.StmtAssign { target: a.target, value: fold_expr(a.value), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         parser.StmtIf(ifs) => {
-            return parser.StmtIf {
+            return parser.StmtIf { ...ifs,
                 cond: fold_expr(ifs.cond),
                 then_body: fold_block(ifs.then_body),
-                else_body: fold_block(ifs.else_body),
-                line: ifs.line, else_chained: ifs.else_chained };
+                else_body: fold_block(ifs.else_body) };
         },
         parser.StmtWhile(w) => {
             return parser.StmtWhile { cond: fold_expr(w.cond), body: fold_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
