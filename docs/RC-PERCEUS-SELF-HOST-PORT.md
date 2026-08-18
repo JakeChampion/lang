@@ -9575,3 +9575,33 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   Regression test: `internal/e2eselfhost/self_host_dyn_call_reclaim_ir_test.go`
   (13 cases x 3 backends; the flat cases return the MEASURED bytes per round as
   their exit code, so a regression reports its own size). Refs #4351 #4451.
+- 2026-08-18 (correcting a claim in the source): the previous entry named the
+  arg temp as the next slice and pointed at `param_counted_of`. Going there
+  found a comment at that site asserting the cause, and the comment is wrong —
+  it had been steering the work.
+
+  `param_counted_of`'s ARRAY tier said: "A CONCRETE SCALAR result is required …
+  it is what #6522's row is still stuck behind; narrowing it to a real alias
+  test is that row's own slice." Lifting that guard entirely — `scalar_result =
+  true` — moves `node(wide(n), deps_of(n), n)` from 268 B/round to 268, and the
+  conformance row from 538 to 538. It is not the blocker.
+
+  Instrumenting the classifier instead of reading it: no `ARRPARAM node.deps`
+  line is printed at all, so the parameter never reaches the per-param verdict.
+  `is_leaksafe_array_field` — the tier's candidacy predicate — admits
+  `is_scalar_array_type`, `f64[]`/`f32[]`, `i64[]`, `u32[]` and `u8[]`.
+  **`string[]` is not among them.** The row's argument is a `string[]`, so it is
+  not a candidate in the first place, and neither the result guard nor the
+  use-walk ever gets a say.
+
+  That is the third distinct reason this row has been "stuck behind" something,
+  after two earlier ones that measurement also overturned. The comment is
+  corrected in place rather than left to send the next reader the same way.
+
+  The slice, restated: widen the ARRAY tier to POINTER-element arrays. The
+  release for one is a shallow `arr_dec`, not the deep free the element-owning
+  paths use — the callee's struct retains the array (#7106) and deep-frees it on
+  its own drop, so the caller's temp only needs its own reference dropped
+  (rc 2 -> 1). The scalar-result guard is a separate question and, on the
+  evidence above, not one worth spending the row's budget on. Refs #6544 #6522
+  #7061 #4451.
