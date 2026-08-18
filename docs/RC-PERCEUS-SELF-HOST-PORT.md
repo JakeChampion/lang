@@ -9743,3 +9743,58 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   and the stage-2 bootstrap. Regression test:
   `internal/e2eselfhost/self_host_consumed_append_reclaim_test.go`.
   Refs #6501 #4357 #4365 #4451.
+- 2026-08-18: **#4353 re-measured per backend, and the `string[]` tuple element
+  position closed.** Byte figures are a 5000-round churn's
+  `__heap_bump_bytes()` delta divided by the rounds (x86-64 | arm64 | wasm),
+  with `__rc_underflow_count()` zero on every run; `120` is the probe's clamp,
+  i.e. >= 120 B/round. Native measured alongside as the reference.
+
+  | churn shape | native | self-host before | after |
+  |---|---|---|---|
+  | `i32[]` / `string[]` / `(i32, i32[])` / `(i32, string)` / `Option[string]` / `(i32, i32[])[]` literals | 0 | 0 | — |
+  | `(i32, string[])` | 0 | 64 \| 64 \| 46 | **0** |
+  | `Option[(i32, string[])]` | 0 | 120 \| 120 \| 110 | **0** |
+  | `(i32, E)`, E an enum with an `i32[]` payload | 0 | 120 \| 120 \| 72 | unchanged |
+  | `(i32, Option[i32[]])` | 0 | 120 \| 120 \| 64 | unchanged |
+  | `(i32, Map[i32, i32])` | 0 | 120 \| 120 \| 120 | unchanged |
+  | `Option[E]` | 0 | 120 \| 120 \| 64 | unchanged |
+  | `Option[Option[i32[]]]` | 0 | 120 \| 120 \| 56 | unchanged |
+  | `Option[Map[i32, i32]]` | 120 | does not lower | unchanged |
+  | `var xs: (i32, i32[])[] = mk(k)` | 0 | 80 \| 80 \| 48 | unchanged |
+  | `var ps: Q[] = mk(k)`, Q a struct with an `i32[]` field | 0 | 80 \| 80 \| 48 | unchanged |
+  | `var xs: string[] = mk(k)` | 0 | 0 | — |
+  | `Map[i32, i32]` / `Map[string, i32]` / `Map[i32, string]` | **120** | 0 | — |
+  | `Map[i32, i32[]]` / `Map[i32, Q]` | **120** | 80 \| 80 \| 48 | unchanged |
+
+  Three readings the tracker did not have:
+
+  - **Native leaks every map churn shape probed**, plain `Map[i32, i32]`
+    included, where the self-host IR path is flat on the scalar and
+    string-column ones. So the array- / struct-valued map column is not a
+    self-host PARITY gap — both compilers leak it and the self-host leaks less.
+    Item 3's residual wants a native-side measurement before anyone ports glue
+    "to match native".
+  - **A call-bound array-of-tuples / array-of-structs is not reclaimed even
+    when the callee is CONCRETE.** The generic-instantiation case measures
+    identically to the concrete one because neither is admitted:
+    `collect_fresh_arrtup_names` / `collect_fresh_arrstruct_names` take only a
+    direct array LITERAL initialiser. `string[]` has no such hole — the
+    `STRARR:` producer registry (`fn_returns_fresh_strarr`) covers it, and it
+    is the shape a fix would copy.
+  - **`Option[Map[K, V]]` does not lower at all** — `FERN_STRICT_IR=1` reports
+    `main (did not lower: match)`. Its leak is a lowering gap, not drop glue.
+
+  Closed here: a `string[]` ELEMENT POSITION of an rc-tuple. It was admitted
+  for deep reclaim but released as a plain buffer — the literal-driven
+  `emit_tuple_child_drops` `__fern_rc_dec`'d it and stranded every element
+  string, and `tuple_field_deep_droppable` refused the `string[]` tag outright,
+  so the type-driven walker rejected the whole tuple TYPE and an
+  `Option[(i32, string[])]` payload leaked its entire structure. The position
+  now takes `__fern_str_arr_free`, admitted by `tuple_strarr_elem_fresh` (an
+  array literal whose every element is a string literal or a
+  `tuple_str_elem_fresh` producer); one bare-ident element keeps the shallow
+  buffer-only dec, so a live local's box is never freed. Regression test:
+  `internal/e2eselfhost/self_host_tuple_strarr_reclaim_*_test.go` (5 cases x 3
+  backends; 6 of the 15 fail with the `irlower.fern` change reverted, the other
+  9 being the value and aliasing controls that must pass either way).
+  Refs #4353 #4451.
