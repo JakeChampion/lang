@@ -103,4 +103,39 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "method-literal-arg-consumed-safe-arm64", 0)
+
+	// The fresh PRODUCER CALL in argument position, on the second register
+	// backend. Same reclaim, a different emitter.
+	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function size(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + size(mks(i))) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + size(mks(j))) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "producer-call-arg-borrowable-flat-arm64", 0)
+
+	// The callee returns the argument: refused, and the aliased result is read
+	// back rather than merely counted.
+	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function pick(s: string): string { return s; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 2000) {
+        var r: string = pick(mks(i));
+        if (r.len() < 41) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arg-returned-safe-arm64", 0)
 }

@@ -5713,6 +5713,18 @@ function is_fresh_str_temp(e: parser.Expr, s: LowerState): boolean {
                     _ => {}
                 }
             }
+            // A direct call to a proven fresh-string PRODUCER (`size(mks(i))`).
+            // str_fresh_ret_fns is the same registry every other owner of a
+            // returned box consults: every return is a fresh, sole-owned box,
+            // so the temp is this frame's and nothing else names it. A local
+            // of the callee's name shadows the declaration and is refused —
+            // the registry is keyed by declaration.
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    if (util.index_of_str(s.sigs.str_fresh_ret_fns, cid.name) >= 0 && s.slot_of(cid.name) < 0) { return true; }
+                },
+                _ => {}
+            }
         },
         _ => {}
     }
@@ -25631,7 +25643,14 @@ function lit_arg_callees_expr(e: parser.Expr, acc: string[]): string[] {
                         // ExprArray: the #4365 stage-(b) fresh array-literal arg
                         // (the scalar-element gate runs at the lowering with type
                         // info; over-collection here just seeds a harmless entry).
-                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, _ => {
+                        // A direct CALL argument is the producer-temp shape
+                        // (`size(mk(i))`): a fresh box handed straight to a
+                        // borrowed position, which nothing releases. The
+                        // lowering re-tests freshness and borrowability with
+                        // type info, so a non-producing call only seeds a
+                        // spare entry — the same over-collection the method
+                        // arm below already documents.
+                        match (c.args[li]) { parser.ExprString(_) => { has_lit = true; }, parser.ExprArray(_) => { has_lit = true; }, parser.ExprCall(_) => { has_lit = true; }, _ => {
                             if (str_local_binding_is_fresh(c.args[li])) { has_lit = true; }
                         } }
                         li = li + 1;

@@ -262,4 +262,85 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "method-literal-arg-consumed-safe", 0)
+
+	// A fresh PRODUCER CALL in the same argument position. The stash already
+	// admitted a literal, a concat and a scalar `.to_string()`; a call to a
+	// function str_fresh_ret_fns proves returns a fresh sole-owned box —
+	// `size(mks(i))` — reached none of them, so the box leaked once per
+	// evaluation (70 B/round measured). The producer is the ordinary way to
+	// build the argument, so the leak was on the ordinary path.
+	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function size(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + size(mks(i))) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + size(mks(j))) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "producer-call-arg-borrowable-flat", 0)
+
+	// REFUSED — the callee RETURNS the argument, so the result aliases the
+	// temp and the caller reads it after. Freeing at the call would be a
+	// use-after-free rather than a leak, which is why this reads the result
+	// back rather than only counting bytes.
+	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function pick(s: string): string { return s; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var r: string = pick(mks(i));
+        if (r.len() < 41) { bad = 1; }
+        if (r[0:1] != "a") { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arg-returned-safe", 0)
+
+	// REFUSED — the callee MOVES the argument into a struct field, so the
+	// returned box owns it. The field is read back after churn has recycled
+	// the freed bytes.
+	run(t, `struct Box { name: string, k: i32 }
+function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function keep(s: string, k: i32): Box { return Box { name: s, k: k }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var b: Box = keep(mks(i), i);
+        if (b.name.len() < 41) { bad = 1; }
+        if (b.k != i) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arg-stored-safe", 0)
+
+	// A LOCAL at the same borrowable position is NOT a temp — `nm` is read
+	// after the call and its own scope-exit release owns it. A stash here
+	// would double-free.
+	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function size(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var nm: string = mks(i);
+        if (size(nm) < 41) { bad = 1; }
+        if (nm.len() < 41) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arg-bound-local-safe", 0)
 }

@@ -8334,3 +8334,63 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   proves the dec stayed shallow), plus all 15 existing cases in the #6491
   read-reclaim file, `strfld-param-value-refused` and `borrowed-field-refused`
   among them. Refs #6544 #6491 #4451.
+
+- 2026-08-18: **A fresh string PRODUCER handed straight to a borrowed parameter
+  was released by nobody (#6522-adjacent).** Found while decomposing
+  `alloc_flat_fresh_array_arg`, and it is not that row — it is the string half
+  of the same stage-(b) arg-temp shape, on the ordinary path.
+
+  `size(mks(i))` leaked one box per evaluation, 70 B/round measured, where the
+  identical call with a string LITERAL argument has been flat since #4355. The
+  reclaim already existed; two separate gates kept the producer out of it.
+
+  | gate | admitted | missed |
+  |---|---|---|
+  | `lit_arg_callees_expr` (the `BORROW:` seeding census) | a literal, an array literal, a fresh local binding | a callee whose argument is a direct CALL — so `size` was never seeded and the stash could not fire for it |
+  | `is_fresh_str_temp` | a literal, a scalar `.to_string()`, `str_local_binding_is_fresh` | a call to a proven fresh producer |
+
+  Both were needed; widening only the census moved nothing, which is worth
+  remembering — the census is a necessary condition, never a sufficient one.
+  `str_fresh_ret_fns` supplies the second half: it is the same registry every
+  other owner of a returned box consults, and a local shadowing the callee's
+  name is refused because the registry is keyed by declaration.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `size(mks(i))` — borrowable position | 70 | **0** |
+  | `pick(mks(i))` — callee RETURNS the argument | 70 | 70 (refused) |
+  | `keep(mks(i), i)` — callee MOVES it into a struct field | 68 | 68 (refused) |
+  | `var nm = mks(i); size(nm)` — a bound LOCAL, not a temp | 0 | 0 |
+
+  **The ARRAY half is NOT closed, and it is a CALL-SITE widening.** `size(mk(i))`
+  with an `i32[]` producer still costs 55. The registry is not the obstacle:
+  `return_fresh_struct_ret_fns_of` admits two return shapes, a direct array
+  literal OR `body_returns_local_built_arr` — a local with a literal init, only
+  ever self-appended, returned bare — which is exactly the
+  `var out: i32[] = []; for … { out = out.append(..) } return out;` producer. The
+  block is the arg-stash arm, which gates on `discardable_scalar_arr_lit` and so
+  matches only a `parser.ExprArray` literal. Admitting an `"ARR:"`-registered
+  producer CALL there, released with `__fern_rc_dec`, is the same shape as the
+  string half above.
+
+  Measured rather than read off the source, through the DISCARDED-call reclaim —
+  a different consumer of the same `"ARR:"` entry, so it answers the registry
+  question on its own: a discarded `mk(i);` is FLAT (registered), while a control
+  whose local is initialised from a call (`var out = seed();`) costs 71
+  (correctly not registered). An earlier draft of this entry claimed the registry
+  excluded the loop-built shape and that widening it was the work; that was
+  reasoned from a source read and is wrong, which is worth keeping because it
+  would have sent the next reader at the wrong file.
+
+  The conformance row decomposes as: 0 for a fresh array bound to a local, 0 for
+  one used as an inline struct-literal field, 55 for the borrowed-arg temp, and
+  103 once a constructor stores it.
+
+  VERIFIED: `producer-call-arg-borrowable-flat` fails at 98 on the parent;
+  `-returned-safe`, `-stored-safe` and `-bound-local-safe` are the refusals and
+  pass on both, each reading the protected value back rather than only counting
+  bytes. arm64 and wasm siblings gained the same rows, wasm without a flatness
+  assertion per the trap above. All five `alloc_flat_*` divergence rows re-checked
+  and unmoved. Refs #6522 #4355 #4451.
