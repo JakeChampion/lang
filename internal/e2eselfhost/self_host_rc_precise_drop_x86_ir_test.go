@@ -1149,9 +1149,21 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// ALIASED string local into a field: inc'd at construction → field-drop decs
 		// the dup, the local's reference survives (leaks, sound). No over-release.
 		{"strdrop-aliased-local-detector", `struct P { name: string } function go(): i32 { var s = "shared"; var p = P { name: s }; var r = s.len() + p.name.len(); return r; } function main(): i32 { var r = go(); if (r != 12) { return 99; } return __rc_underflow(); }`, 0},
-		// SAME string local aliased into TWO structs: each construction incs → rc
-		// reaches 3, two field-drops leave rc 1 (leaks) — no over-release.
+		// SAME string local aliased into TWO structs. Only the LAST use may be
+		// moved, so the first literal incs and the second takes the local's own
+		// reference over: rc reaches 2, the two field-drops bring it to 0, and the
+		// local's exit dec is elided. Balanced — no leak, no over-release.
+		//
+		// This is the case that made the first #6545 attempt unsound. Admitting a
+		// string field to the construction-move analysis while the emitter still
+		// answered "is this local moved?" BY NAME elided the retain at BOTH
+		// literals, so one buffer was released twice.
 		{"strdrop-two-alias-detector", `struct P { name: string } function go(): i32 { var s = "x"; var a = P { name: s }; var b = P { name: s }; var r = a.name.len() + b.name.len(); return r; } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
+		// The ARRAY sibling of the case above, and the one that shows the
+		// name-keyed elision was never string-specific: array fields have been in
+		// the construction-move set all along, so this over-released on every
+		// build before the retain was keyed on the move SITE (#6545).
+		{"arrdrop-two-alias-detector", `struct Q { v: i32[] } function go(): i32 { var s: i32[] = [1, 2]; var a: Q = Q { v: s }; var b: Q = Q { v: s }; var r: i32 = a.v.len() + b.v.len(); return r; } function main(): i32 { var r: i32 = go(); if (r != 4) { return 99; } return __rc_underflow(); }`, 0},
 		// A field read OUT of a reclaimable struct, then RETURNED (escapes): the
 		// returned string must survive the field-drop. (If string-field read-out
 		// lowers on the IR path, this catches a use-after-free / over-release.)
