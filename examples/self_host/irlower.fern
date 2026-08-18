@@ -30057,7 +30057,7 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
     return false;
 }
 
-function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
+function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
     match (e) {
         parser.ExprStructLit(slit) => {
             if (!(decl_is_struct(structs, slit.type_name) && decl_is_leaksafe(structs, slit.type_name))) { return false; }
@@ -30117,6 +30117,22 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
                         },
                         _ => {}
                     }
+                    // A bare IDENT — a parameter or a live local. Admitted only
+                    // when this struct's type ROUTES field reclaim, because that
+                    // is the same predicate the construction retain is gated on
+                    // (irlower.fern's struct-lit `slit_reclaim`): routed means the
+                    // literal took a reference, so the caller's drop decs a count
+                    // it owns instead of freeing the caller's array. Unrouted, the
+                    // field is an uncounted alias and crediting the caller would
+                    // hand the struct freed memory (#6703's class).
+                    if (!ok) {
+                        match (v) {
+                            parser.ExprIdent(_) => {
+                                if (struct_routes_field_reclaim_at(structs, sfok, slit.type_name)) { ok = true; }
+                            },
+                            _ => {}
+                        }
+                    }
                     if (!ok) { return false; }
                 }
                 i = i + 1;
@@ -30159,7 +30175,7 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
 // release under a pointer compare because those are the only two boxes it can
 // be. A body with no return at all answers false via the caller's
 // body_has_return check.
-function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
+function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -30169,27 +30185,27 @@ function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser
                     parser.ExprIdent(rid) => { if (rid.name == recv) { self_ret = true; } },
                     _ => {}
                 }
-                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams)) { return false; }
+                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return false; }
             },
-            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh, fwd, fnparams) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
-            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
-            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } a = a + 1; } },
+            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
+            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
+            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh, fwd, fnparams, sfok)) { return false; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
     }
     return true;
 }
-function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
+function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[], sfok: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh, fwd, fnparams) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh, fwd, fnparams, sfok) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh, fwd, fnparams, sfok)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -30604,7 +30620,7 @@ pub function arr_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // fixpoint so a chain of forwarding frames is admitted end to end; the round cap
 // bounds the chain length rather than the call graph, and a longer one simply
 // stays uncredited.
-function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_fresh: string[]): string[] {
+function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_fresh: string[], sfok: string[]): string[] {
     // Candidates are fixed by their signature, so the type tests are done once.
     var pending: i32[] = [];
     var k: i32 = 0;
@@ -30628,7 +30644,7 @@ function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.Str
         var p: i32 = 0;
         while (p < pending.len()) {
             var fi: i32 = pending[p];
-            if (!body_has_nonstrictfresh_return(funcs[fi].body, structs, funcs[fi].body, arr_fresh, acc, funcs[fi].params)) {
+            if (!body_has_nonstrictfresh_return(funcs[fi].body, structs, funcs[fi].body, arr_fresh, acc, funcs[fi].params, sfok)) {
                 acc = acc.append(funcs[fi].name);
                 added = true;
             } else {
@@ -30643,7 +30659,7 @@ function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.Str
     return acc;
 }
 
-pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], sfok: string[]): string[] {
     var out: string[] = [];
     // The whole-program str-fresh-ret registry, needed to prove a `string`
     // element / field value is this frame's own box. Computed once, and only
@@ -30676,7 +30692,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     // recursion with no grounding stays uncredited, the conservative direction.
     // Free functions only: the forwarding arm resolves a bare-ident callee, so a
     // method key could never be the thing it looks up.
-    var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh);
+    var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh, sfok);
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
@@ -30687,7 +30703,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         var strict_fresh_ret: boolean = decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body);
         if (strict_fresh_ret) {
             if (funcs[k].receiver_type.len() == 0) { strict_fresh_ret = util.index_of_str(fwd, funcs[k].name) >= 0; }
-            else { strict_fresh_ret = !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh, fwd, funcs[k].params); }
+            else { strict_fresh_ret = !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh, fwd, funcs[k].params, sfok); }
         }
         if (strict_fresh_ret) {
             var key: string = funcs[k].name;
@@ -30759,7 +30775,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         if (funcs[k].receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && body_has_return(funcs[k].body)
                 && body_returns_bare_ident(funcs[k].body, funcs[k].receiver_name)
-                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh, fwd, funcs[k].params)) {
+                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh, fwd, funcs[k].params, sfok)) {
             out = out.append("FRESHSELF:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
@@ -45464,6 +45480,14 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                         },
                         _ => {}
                     }
+                    // A bare IDENT — a parameter or a live local. Admitting it
+                    // is what turns the construction retain on for this type
+                    // (both ride struct_routes_field_reclaim), so the field
+                    // holds a counted reference rather than an uncounted alias
+                    // and the drop's dec is balanced against it. Refusing it was
+                    // the third leg of the circularity: unadmitted meant no
+                    // retain, and no retain meant it could not be admitted.
+                    match (sl2.field_values[i]) { parser.ExprIdent(_) => { store_ok = true; }, _ => {} }
                     if (!store_ok) { a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]); }
                 }
                 a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, a);
@@ -48217,7 +48241,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         fn_names: fn_names_of(funcs),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
-        return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs),
+        return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs, sfok),
         recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: opt_fresh_ret_fns_of(funcs, structs),
@@ -49992,7 +50016,7 @@ pub function array_set_incs_of(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // recipient position (native skips a recipient the same-block pass claimed).
 pub function reuse_sources_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     if (reuse_layer_disabled()) { return []; }
-    var fresh_ret: string[] = return_fresh_struct_ret_fns_of(funcs, structs);
+    var fresh_ret: string[] = return_fresh_struct_ret_fns_of(funcs, structs, strfld_reclaim_ok_types_of(funcs, structs, borrowable_params_of(funcs)));
     var same: string[] = reuse_sources_block(fn.body, structs, fresh_ret, []);
     var xb: string[] = reuse_xblock_pairs(fn.body, structs, fresh_ret, []);
     var out: string[] = same;
@@ -50188,7 +50212,7 @@ function reuse_sources_block(stmts: parser.Stmt[], structs: parser.StructDecl[],
 // reuse_consumed_of: the donor-name set of the same pairings (all blocks).
 pub function reuse_consumed_of(fn: parser.FuncDecl, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string[] {
     if (reuse_layer_disabled()) { return []; }
-    return reuse_consumed_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs), []);
+    return reuse_consumed_block(fn.body, structs, return_fresh_struct_ret_fns_of(funcs, structs, strfld_reclaim_ok_types_of(funcs, structs, borrowable_params_of(funcs))), []);
 }
 
 function reuse_consumed_block(stmts: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], out: string[]): string[] {
