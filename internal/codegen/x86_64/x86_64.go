@@ -7758,10 +7758,62 @@ func (g *generator) emitStrcmpRuntime() {
 	// the returned pointer addresses the first data byte.
 	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
 	g.emitStrDataPtr("rsi", "rsi", "[rbp - 32]")
-	// rep cmpsb wants the count in rcx and the pointers in
-	// rsi (source 1) / rdi (source 2). cld → forward.
-	g.emit("cld")
-	g.emit("repe cmpsb")
+	// Word-at-a-time equality. `repe cmpsb` walked one BYTE per
+	// microcoded step on top of a start-up the short strings this
+	// runtime compares never amortise — and comparing strings is where
+	// the self-host compiler spends its second-largest slice (name
+	// lookups: Scope.lookup, decl_is_struct, module_has_func). Reading 8
+	// bytes at a time never runs past the operands: the tail is a final
+	// possibly-overlapping load anchored at the END of each string, and
+	// the sub-8 classes only ever read inside their own length. rcx holds
+	// the (equal) length of both.
+	g.emit("test ecx, ecx")
+	g.emit("je .Lscmp_eq")
+	g.emit("lea r10, [rdi + rcx]") // end of a
+	g.emit("lea r11, [rsi + rcx]") // end of b
+	g.emit("cmp ecx, 8")
+	g.emit("jb .Lscmp_short")
+	g.emit("sub r10, 8")
+	g.emit("sub r11, 8")
+	g.label(".Lscmp_word")
+	g.emit("mov r8, qword ptr [rdi]")
+	g.emit("cmp r8, qword ptr [rsi]")
+	g.emit("jne .Lscmp_neq")
+	g.emit("add rdi, 8")
+	g.emit("add rsi, 8")
+	g.emit("cmp rdi, r10")
+	g.emit("jb .Lscmp_word")
+	// Last 8 bytes of each, overlapping whatever the loop already read.
+	g.emit("mov r8, qword ptr [r10]")
+	g.emit("cmp r8, qword ptr [r11]")
+	g.emit("jne .Lscmp_neq")
+	g.emit("jmp .Lscmp_eq")
+	// 1..7 bytes, r10 / r11 = end of a / b.
+	g.label(".Lscmp_short")
+	g.emit("cmp ecx, 4")
+	g.emit("jb .Lscmp_byte")
+	g.emit("mov r8d, dword ptr [rdi]")
+	g.emit("cmp r8d, dword ptr [rsi]")
+	g.emit("jne .Lscmp_neq")
+	g.emit("mov r8d, dword ptr [r10 - 4]")
+	g.emit("cmp r8d, dword ptr [r11 - 4]")
+	g.emit("jne .Lscmp_neq")
+	g.emit("jmp .Lscmp_eq")
+	// 1..3 bytes.
+	g.label(".Lscmp_byte")
+	g.emit("movzx r8d, byte ptr [rdi]")
+	g.emit("movzx r9d, byte ptr [rsi]")
+	g.emit("cmp r8d, r9d")
+	g.emit("jne .Lscmp_neq")
+	g.emit("movzx r8d, byte ptr [r10 - 1]")
+	g.emit("movzx r9d, byte ptr [r11 - 1]")
+	g.emit("cmp r8d, r9d")
+	g.emit("jne .Lscmp_neq")
+	g.emit("cmp ecx, 3")
+	g.emit("jb .Lscmp_eq")
+	g.emit("movzx r8d, byte ptr [rdi + 1]")
+	g.emit("movzx r9d, byte ptr [rsi + 1]")
+	g.emit("cmp r8d, r9d")
 	g.emit("jne .Lscmp_neq")
 	g.label(".Lscmp_eq")
 	g.emit("xor eax, eax")

@@ -915,6 +915,76 @@ So the ratchet is located but not yet explained: `emit` and `bind` see
 state, and the next step is to find what is still holding that count in the real
 compiler — a native `internal/ir` question, not a self-host one.
 
+### 4d.6 The `strcmp` HELPER was byte-at-a-time — 25% off the compare benchmark
+
+§4d.3 ranked `__fern_strcmp` as the largest single leaf and concluded that the
+lever was the linear SCAN, not the comparison. It measured that correctly and
+then stopped one level short: the comparison itself was also worth fixing,
+because on x86-64 `__fern_strcmp` compared **one byte per microcoded step**.
+After the length check it ran `repe cmpsb`, which no x86 accelerates — `rep
+movsb` gets ERMSB and FSRM, `rep cmpsb` gets neither — so every equal-length
+candidate in a symbol scan paid the string-op start-up before comparing
+anything. arm64's `__fern_strcmp` had walked 4-byte words since it was written;
+the x86-64 twin was the outlier, not the design.
+
+Comparing 8 bytes a step (with a final load anchored at the END of each
+operand, deliberately overlapping what the loop already read, and 4-byte /
+1-byte classes below that):
+
+| | before | after |
+|---|---|---|
+| `examples/bench/string_scan` (the symbol-scan shape) | 14 ms | **10–11 ms** |
+| `examples/bench/tokenize` | 14 ms | 13–14 ms |
+| whole self-compile, user time, 4 interleaved pairs | 26.83 s | **25.72 s** (-4.1%) |
+
+The self-compile figure is the mean of four A/B pairs in which B won every
+pair; §8's interleaving rule is what makes a 4% claim on this box mean
+anything.
+
+**Two measurement facts came out of it, and both cost time.**
+
+**The `.ir` metric moves the WRONG WAY on this change.** `scripts/perf-bench`'s
+dynamic half counts retired instructions, and callgrind bills each `rep cmpsb`
+iteration as one — so a microcoded instruction whose real cost is its start-up
+is priced at its cheapest. Replacing it therefore reads as a regression:
+`string_scan.ir` +0.60% and `tokenize.ir` +0.64% against a 25% and 3% drop on
+the clock. The gate is still the right gate — it is exact, and wall time on
+this box is not — but a retired-instruction count cannot see microcode, so a
+change that trades instruction COUNT for instruction COST has to be settled on
+the clock. (The `.text` half moved +39 on every benchmark for the plain reason
+that the helper is 39 instructions longer.)
+
+**This box is not the baseline CPU, and one class of tuning is unmeasurable
+here.** `/proc/cpuinfo` reports `fsrm` (Fast Short REP MOV, Ice Lake and later)
+alongside `erms` and `avx512f`; `docs/BACKEND-PARITY.md` pins the supported
+x86-64 baseline at **Haswell-class 2013**, which has ERMSB and no FSRM. So
+`rep movsb` for a SHORT copy is fast here and slow on the baseline. Measured
+against that: `__fern_memcpy` is called **94,186,729 times for 4,027,505,831
+bytes** in one self-compile — a mean of **43 bytes a call**, exactly the length
+FSRM exists to make fast. A size-dispatched rewrite (16-byte GP blocks under
+128 bytes, `rep movsb` above) measured **-1.3% user time over four interleaved
+pairs**, i.e. nothing separable from drift, on hardware where the instruction
+it replaces is already optimal. It is left unlanded rather than landed on an
+argument about a CPU nobody here can run: the honest statement is that the
+change cannot be evaluated on this box, not that it does not help.
+
+That 43-byte mean is itself the useful number, and it contradicts the
+assumption the helper was written under ("competitive with hand-rolled 8-byte
+loops for the buffer sizes the lang runtime sees"). The copies this runtime
+makes are small and there are ~94 M of them; anyone tuning `__fern_memcpy`
+should start from that distribution and measure on a Haswell-class part.
+
+**The cliff counter cannot see any of the compiler's own accumulators.**
+`__arr_push_shared_count()` / `_bytes()` (§4c) are bumped only inside
+`__fern_arr_push_grow` — the SCALAR-element helper. Every pointer- and
+string-element append goes through `__fern_arr_push_grow_ptr` / `_str` and
+their `_move_` siblings, none of which bump anything. So `FERN_CLIFF_REPORT=1`
+on a whole self-compile reports 1,073 crossings and 197 KB, while the gdb
+breakpoint census of §4d.5 finds thousands of ref-forced copies on `ir.Op[]`
+and `string[]` in a single module. §4c's reading that "the crossings are
+4-byte loop-depth stacks" is a reading of the scalar helper only. Closing that
+blind spot is a prerequisite for measuring the §4d.5 ratchet without gdb.
+
 ## 8. Reproducing any of this
 
 **Build the A/B baseline from the SAME COMMIT, not just before your edit.**
