@@ -123,4 +123,51 @@ function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { cod
 	run(t, `struct Diag { code: i32, notes: string[] }
 function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
 		"strarr-field-read-excluded", 0)
+
+	// PRODUCER-CALL ELEMENTS, BOUNDED HIGH-WATER: the field is built from calls
+	// to `w`, a whole-program-proven fresh-string producer, rather than from
+	// inline concats. The store gate now asks strarr_value_is_fresh — the same
+	// question the "SARR:" local credit and the "STRARR:" producer admission
+	// ask — so the type is admitted; the registry-blind sibling it replaced
+	// refused any call and every element box leaked per round → 98.
+	run(t, `struct Diag { code: i32, notes: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+		"strarr-field-producer-elements-flat", 0)
+
+	// A SIBLING TYPE'S IDENTICALLY-NAMED FIELD no longer costs this one its
+	// reclaim. `Other.notes` is stored from a borrowed parameter, so it is
+	// correctly refused — but the mark used to be the bare field NAME, which
+	// disqualified `Diag.notes` too, and every string[] field called `notes`
+	// anywhere in the program with it. Marks are keyed "<T>.<field>" now, so
+	// Diag is admitted and the churn is flat. `useother` runs once OUTSIDE the
+	// measured loop: it is what puts the mark in the set, and its own leak is
+	// the sound refusal, not something to measure.
+	run(t, `struct Diag { code: i32, notes: string[] }
+struct Other { notes: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function mkother(notes: string[]): Other { return Other { notes: notes }; }
+function useother(pre: string): i32 { var o: Other = mkother([pre]); return o.notes.len(); }
+function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var seed: i32 = useother("q"); if (seed < 0) { return 96; } var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+		"strarr-field-sibling-name-not-poisoned", 0)
+
+	// The refusals type-keying must NOT weaken, checked by VALUE under
+	// recycling pressure rather than by bytes. `Esc.notes` is stored from a
+	// borrowed parameter — the caller's array must outlive the struct's drop —
+	// while `Ok.notes`, same field name, is admitted. A long string is built
+	// between the store and the reads so a wrongly freed block is really
+	// recycled first. 2 + 43 + 43 + 1 = 89, underflow 0.
+	run(t, `struct Esc { notes: string[] }
+struct Ok { notes: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function mkesc(notes: string[]): Esc { return Esc { notes: notes }; }
+function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e: Esc = mkesc(live); var o: Ok = Ok { notes: [w(pre)] }; var junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-field-borrowed-param-still-excluded", 0)
 }

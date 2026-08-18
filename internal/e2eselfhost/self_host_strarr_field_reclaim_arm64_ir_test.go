@@ -60,4 +60,31 @@ function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow() != 0) { 
 function churn(n: i32): i32 { var pre: string = "aa"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } if (r.items.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(300000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"str-before-array-field-order-arm64", 0, "")
+
+	// PRODUCER-CALL ELEMENTS: the field is built from calls to a proven
+	// fresh-string producer rather than inline concats, which the store gate
+	// now admits (strarr_value_is_fresh, the same question the "SARR:" credit
+	// asks). Correctness + over-release under qemu; the x86 sibling carries the
+	// flatness leg. 2 + 43 = 45 each build.
+	run(t, `struct Diag { code: i32, notes: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len() + d.notes.len() + 41; }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 45) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-field-producer-elements-arm64", 0, "bl __fn___fern_str_arr_free")
+
+	// A SIBLING TYPE'S IDENTICALLY-NAMED FIELD, stored from a borrowed
+	// parameter, is correctly refused — but the mark used to be the bare field
+	// NAME and took `Diag.notes` with it. Keyed "<T>.<field>" now: Diag keeps
+	// its deep free while Esc keeps the sound leak, and the caller's array
+	// stays valid past the struct's drop. 2 + 43 + 43 + 1 = 89.
+	run(t, `struct Esc { notes: string[] }
+struct Ok { notes: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function mkesc(notes: string[]): Esc { return Esc { notes: notes }; }
+function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e: Esc = mkesc(live); var o: Ok = Ok { notes: [w(pre)] }; var junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-field-sibling-name-arm64", 0, "")
 }
