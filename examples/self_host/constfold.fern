@@ -105,11 +105,7 @@ pub function fold_expr(e: parser.Expr): parser.Expr {
         parser.ExprString(_) => { return e; },
         parser.ExprIdent(_) => { return e; },
         parser.ExprLambda(lm) => {
-            return parser.ExprLambda {
-                params: lm.params,
-                ret_type: lm.ret_type,
-                body: fold_block(lm.body), use_infer: lm.use_infer
-            };
+            return parser.ExprLambda { ...lm, body: fold_block(lm.body) };
         },
         parser.ExprUnknown(_) => { return e; },
         parser.ExprBinary(b) => {

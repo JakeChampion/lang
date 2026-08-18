@@ -64,7 +64,11 @@ pub struct ExprArray { elements: Expr[] }
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
 // just builds the AST node.
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean }
+// origin records the source form a lambda the PARSER synthesised stands in for,
+// so `-fmt` reprints that form rather than the lambda: "block" for a
+// value-position `{ … }` block expression, which parse_primary desugars to a
+// 0-arg IIFE. "" for a lambda the programmer wrote. Read by the printer only.
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
@@ -591,7 +595,13 @@ function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr 
     return ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
-    return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false };
+    return e_lambda_origin(params, ret_type, body, "");
+}
+// e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
+// with the source form it stands in for so `-fmt` reprints that form. "block"
+// is a value-position `{ … }`; see ExprLambda.origin.
+function e_lambda_origin(params: ParamDecl[], ret_type: string, body: Stmt[], origin: string): Expr {
+    return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin };
 }
 pub function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind, line: 0, col: 0 }; }
 pub function e_unknown_at(kind: string, line: i32, col: i32): Expr { return ExprUnknown { kind: kind, line: line, col: col }; }
@@ -899,7 +909,7 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: "" };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -966,7 +976,7 @@ function maybe_desugar_map_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: "" };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -2446,7 +2456,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var (bb_body, bb_rt, bb_p) = parse_branch_body(p);
                 var bx_params: ParamDecl[] = [];
                 var bx_args: Expr[] = [];
-                var iife: Expr = e_call(e_lambda(bx_params, bb_rt, bb_body), bx_args);
+                var iife: Expr = e_call(e_lambda_origin(bx_params, bb_rt, bb_body, "block"), bx_args);
                 return parse_postfix(bb_p, iife);
             }
             if (x.text == "-" || x.text == "!") {
@@ -4140,7 +4150,7 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0 };
+            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: "" };
             match (usrc_expr) {
                 ExprCall(c) => {
                     var newargs: Expr[] = c.args.append(cb);
@@ -8681,7 +8691,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
         },
         ExprLambda(lm) => {
             var bodyr: RStmts = mono_stmts(lm.body, env, funcs, ins, "");
-            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: lm.ret_type, body: bodyr.rstmts, use_infer: lm.use_infer }, rins: bodyr.rins3 };
+            return RExpr { rexpr: ExprLambda { ...lm, body: bodyr.rstmts }, rins: bodyr.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -9904,7 +9914,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], 
                 nparams = nparams.append(ParamDecl { name: lm.params[pi].name, type_name: pt.ty, own: lm.params[pi].own, has_default: lm.params[pi].has_default, default_value: lm.params[pi].default_value, ret_arr: lm.params[pi].ret_arr, fn_ret: lm.params[pi].fn_ret, fn_param_dyn: lm.params[pi].fn_param_dyn, fn_param_types: lm.params[pi].fn_param_types });
                 pi = pi + 1;
             }
-            return RExpr { rexpr: ExprLambda { params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
+            return RExpr { rexpr: ExprLambda { ...lm, params: nparams, ret_type: rt.ty, body: bodyr.rstmts, use_infer: false }, rins: pcur };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -10789,7 +10799,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         },
         ExprLambda(lm) => {
             var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
-            return RExpr { rexpr: ExprLambda { params: lm.params, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts, use_infer: lm.use_infer }, rins: lb.rins3 };
+            return RExpr { rexpr: ExprLambda { ...lm, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts }, rins: lb.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -11428,7 +11438,7 @@ function dl_is_value_block(c: ExprCall): boolean {
 function dl_vb_rebuild(c: ExprCall, body: Stmt[]): Expr {
     match (c.callee) {
         ExprLambda(l) => {
-            var lam: Expr = ExprLambda { params: l.params, ret_type: l.ret_type, body: body, use_infer: l.use_infer };
+            var lam: Expr = ExprLambda { ...l, body: body };
             return ExprCall { callee: lam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         _ => { return ExprCall { callee: c.callee, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }; }
@@ -12256,7 +12266,7 @@ function rw_call_expr(e: Expr, fname: string, caps: string[]): Expr {
         },
         ExprLambda(lm) => {
             // A nested lambda can call the lifted function too; rewrite its body.
-            return e_lambda(lm.params, lm.ret_type, rw_call_stmts(lm.body, fname, caps));
+            return ExprLambda { ...lm, body: rw_call_stmts(lm.body, fname, caps) };
         },
         _ => { return e; }
     }
@@ -13091,7 +13101,7 @@ function rvf_expr(e: Expr, structs: StructDecl[]): Expr {
             return ExprStructLit { type_name: st.type_name, field_names: st.field_names, field_values: vals, has_base: st.has_base, base: nbase, line: st.line, col: st.col };
         },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: rvf_expr(fa.obj, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: rvf_block(lm.body, structs), use_infer: lm.use_infer }; },
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: rvf_block(lm.body, structs) }; },
         _ => { return e; }
     }
     return e;
@@ -13490,7 +13500,7 @@ function fda_expr(e: Expr, funcs: FuncDecl[]): Expr {
             if (s.has_base) { nb = fda_expr(s.base, funcs); }
             return ExprStructLit { type_name: s.type_name, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: nb, line: s.line, col: s.col };
         },
-        ExprLambda(lm) => { return e_lambda(lm.params, lm.ret_type, fda_stmts(lm.body, funcs)); },
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: fda_stmts(lm.body, funcs) }; },
         _ => { return e; }
     }
 }
@@ -13578,7 +13588,7 @@ function stamp_lambda_ret(e: Expr, fn_ret: string): Expr {
     match (e) {
         ExprLambda(lm) => {
             if (lm.ret_type.len() > 0) { return e; }
-            return ExprLambda { params: lm.params, ret_type: fn_ret, body: lm.body, use_infer: lm.use_infer };
+            return ExprLambda { ...lm, ret_type: fn_ret };
         },
         _ => { return e; }
     }
@@ -13630,7 +13640,7 @@ function stamp_value_block_ret(e: Expr, decl_ty: string): Expr {
                 ExprLambda(lm) => {
                     if (lm.params.len() != 0) { return e; }
                     if (lm.ret_type == "i64" || lm.ret_type == "u64") { return e; }
-                    var nl: Expr = ExprLambda { params: lm.params, ret_type: decl_ty, body: lm.body, use_infer: lm.use_infer };
+                    var nl: Expr = ExprLambda { ...lm, ret_type: decl_ty };
                     return ExprCall { callee: nl, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                 },
                 _ => { return e; }
@@ -14172,7 +14182,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: cf_rw_expr(sl.base, f, target), line: sl.line, col: sl.col };
         },
         ExprFieldAccess(fa) => { return ExprFieldAccess { obj: cf_rw_expr(fa.obj, f, target), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        ExprLambda(lm) => { return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: cf_rw_stmts(lm.body, f, target), use_infer: lm.use_infer }; },
+        ExprLambda(lm) => { return ExprLambda { ...lm, body: cf_rw_stmts(lm.body, f, target) }; },
         _ => { return e; }
     }
     return e;
@@ -16746,7 +16756,7 @@ function settle_float_value_branches(e: Expr): Expr {
                         _ => { return e; }
                     }
                     if (nbody.len() == 0) { return e; }
-                    var nlam: Expr = ExprLambda { params: lm.params, ret_type: lm.ret_type, body: nbody, use_infer: lm.use_infer };
+                    var nlam: Expr = ExprLambda { ...lm, body: nbody };
                     return ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                 },
                 _ => { return e; }
@@ -16922,7 +16932,7 @@ function settle_expr(e: Expr, funcs: FuncDecl[], structs: StructDecl[]): Expr {
             return ExprFieldAccess { obj: settle_expr(fa.obj, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         ExprLambda(lm) => {
-            return ExprLambda { params: lm.params, ret_type: lm.ret_type, body: settle_block(lm.body, lm.ret_type, [], [], funcs, structs), use_infer: lm.use_infer };
+            return ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, [], [], funcs, structs) };
         },
         _ => { return e; }
     }

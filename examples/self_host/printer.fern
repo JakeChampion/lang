@@ -137,6 +137,43 @@ function print_return_only(body: parser.Stmt[]): string {
     return "";
 }
 
+// print_block_expr renders a value-position `{ stmt; …; tail }` from the tagged
+// 0-arg IIFE parse_primary desugars it to, and "" when `c` is any other call.
+//
+// The desugar ends the body with `return <tail>`, so the tail is that return's
+// expression and the leading statements print inline. A block with no leading
+// statements is just its tail — braces there would be noise, and native drops
+// them too, so the tail carries the caller's precedence.
+function print_block_expr(c: parser.ExprCall, parent_prec: i32): string {
+    if (c.args.len() != 0) { return ""; }
+    match (c.callee) {
+        parser.ExprLambda(lm) => {
+            if (lm.origin != "block" || lm.body.len() == 0) { return ""; }
+            var last: parser.Stmt = lm.body[lm.body.len() - 1];
+            var tail: string = print_return_only([last]);
+            if (tail.len() == 0) { return ""; }
+            if (lm.body.len() == 1) { return print_expr_prec(tail_expr(last), parent_prec); }
+            var out: string = "{ ";
+            var i: i32 = 0;
+            while (i + 1 < lm.body.len()) {
+                out = out + print_stmt_inline(lm.body[i]) + " ";
+                i = i + 1;
+            }
+            return out + tail + " }";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// tail_expr is the expression of a `return <expr>;` statement.
+function tail_expr(st: parser.Stmt): parser.Expr {
+    match (st) {
+        parser.StmtReturn(r) => { return r.value; },
+        _ => { return parser.e_unknown("block tail"); },
+    }
+}
+
 // print_expr_iife renders the WRITTEN form of a match- or if-expression from
 // the 0-argument IIFE parse_primary desugars it to, or "" when the call is an
 // ordinary one.
@@ -268,6 +305,13 @@ function print_expr_prec(e: parser.Expr, parent_prec: i32): string {
             // one branch's shape (if_expr_rt), so `match (o) { … }` yielding a
             // string came back as `function(): i32 { … }()`, which no longer
             // type-checks.
+            // A value-position `{ … }` block expression is a 0-arg IIFE too,
+            // but a TAGGED one — a hand-written IIFE is not interchangeable
+            // with it (its `return` stays inside the lambda, and a `defer` in
+            // it is the lambda's, not the enclosing function's), so this reads
+            // the parser's tag rather than the shape.
+            var blk: string = print_block_expr(c, parent_prec);
+            if (blk.len() > 0) { return blk; }
             var iife: string = print_expr_iife(c);
             if (iife.len() > 0) { return iife; }
             var out: string = print_expr_prec(c.callee, prec_primary()) + "(";

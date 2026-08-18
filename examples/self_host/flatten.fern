@@ -463,9 +463,10 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 };
             }
             return parser.ExprLambda {
+                ...lm,
                 params: rewrite_params(lm.params, ctx),
                 ret_type: rewrite_type_name(lm.ret_type, ctx),
-                body: rewrite_block(lm.body, lctx), use_infer: lm.use_infer
+                body: rewrite_block(lm.body, lctx)
             };
         },
         _ => { return e; }
