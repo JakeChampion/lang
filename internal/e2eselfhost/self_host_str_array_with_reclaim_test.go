@@ -15,18 +15,20 @@ import (
 // receiver's reclaimability on that store being counted — tainted the whole
 // receiver out of freeEligible. One `.with` stranded N+1 blocks per round.
 //
-// The self-host compiler lowers `.with` differently — a clone (arr_slice over
-// the whole length) plus an in-place arr_set, never __fern_arr_cow_inplace —
-// so it does not inherit the native bug, and measured here it costs exactly
-// nothing: the `.with` delta is 0 B at both round counts.
+// The self-host compiler lowers `.with` differently — an in-place arr_set on a
+// sole-owned slot, a clone plus arr_set on an aliased one, never
+// __fern_arr_cow_inplace — but it inherited the leak by another route: the
+// in-place store dropped the overwritten element pointer, and the rebind cost
+// the array its element-reclaim credit ("SARR:"), so every element box leaked.
+// That was invisible while `mks()` denied the control the same credit — both
+// columns leaked 380 B/round and the delta was 0. lower_strarr_with_store
+// closed it: the store releases the superseded box and retains the value, and
+// both columns are now flat.
 //
-// It is the delta that this asserts, not a byte count. The self-host DOES leak
-// this loop (~384 B/round at the time of writing), but identically with and
-// without the `.with`: the array comes back from `mks()`, which costs it the
-// element-reclaim credit (`strarr_elem_store_ok` / "SARR:") regardless. That
-// is the goal-2 port's own gap and belongs to it — subtracting the control
-// keeps this test from quietly becoming a budget for it, while still failing
-// the moment a `.with` starts costing the self-host a per-round block.
+// It is the delta that this asserts, not a byte count. Whatever the self-host
+// leaks for unrelated reasons appears in both columns and cancels, so this
+// cannot become a byte budget for the rest of the goal-2 port — while still
+// failing the moment a `.with` starts costing a per-round block.
 func strArrayWithChurnSrc(rounds int, with bool) string {
 	set := ""
 	if with {
