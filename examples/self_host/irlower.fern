@@ -44283,6 +44283,36 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
             }
             if (aok) { out = out.append("arr:" + at); }
         }
+        // struct-ARRAY / enum-ARRAY FIELD admissions ("sarr:"-prefixed), read
+        // out of the SAME unsafe-mark set (#7067): the backends gate
+        // __field_reclaim_<T>'s element walk on "strfldok:sarr:<T>". A type is
+        // admitted iff every one of its struct/enum-array fields is (a) never
+        // read outside a bare `.len()` borrow — any other read binds an element
+        // alias the walk would dangle — and (b) only ever stored an array
+        // literal of fresh elements, so no surviving buffer shares an element
+        // with the one being released. Marks are matched type-keyed first and
+        // by bare NAME as the fallback, exactly like the "arr:" half above.
+        // __struct_drop_<T>'s walk needs neither: at scope exit the box and
+        // every buffer that ever aliased its elements are dying together.
+        var sa_has: boolean = false;
+        var safi: i32 = 0;
+        while (safi < structs[asi].fields.len()) {
+            if (is_struct_array_field_type(structs, structs[asi].fields[safi].type_name)
+                || is_enum_array_field_type(structs, structs[asi].fields[safi].type_name)) { sa_has = true; }
+            safi = safi + 1;
+        }
+        if (sa_has) {
+            var saok: boolean = true;
+            var safj: i32 = 0;
+            while (safj < structs[asi].fields.len()) {
+                var saft: string = structs[asi].fields[safj].type_name;
+                if ((is_struct_array_field_type(structs, saft) || is_enum_array_field_type(structs, saft))
+                    && (util.index_of_str(arr_unsafe, at + "." + structs[asi].fields[safj].name) >= 0
+                        || util.index_of_str(arr_unsafe, structs[asi].fields[safj].name) >= 0)) { saok = false; }
+                safj = safj + 1;
+            }
+            if (saok) { out = out.append("sarr:" + at); }
+        }
         asi = asi + 1;
     }
     // CLOSURE-field admissions ("clo:"-prefixed, threaded exactly like the
@@ -45328,7 +45358,9 @@ function fnfld_lookup(binds: string[], name: string): string {
     return "";
 }
 
-// strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk.
+// strarrfld_scan / strarrfld_scan_stmts: the string[]-field admission walk,
+// which the struct[]/enum[]-field admission ("sarr:", #7067) rides — the read
+// rule below is the same question for both, so one walk feeds both halves.
 // Marks a field unsafe when:
 //   - it is READ anywhere except as a bare `.len()` receiver — an indexed
 //     read (`x.f[i]`), an iteration (`for s in x.f`), a bare copy, a method
@@ -45337,7 +45369,12 @@ function fnfld_lookup(binds: string[], name: string): string {
 //   - a struct-literal stores a NON-element-fresh value into a string[]
 //     field — anything but an array literal whose every element is
 //     strarr_value_is_fresh (string literal / concat / proven producer call)
-//     or `[]`.
+//     or `[]`;
+//   - a struct-literal stores a non-element-fresh value into a struct-ARRAY /
+//     enum-ARRAY field (boxarr_lit_all_elems_fresh).
+// Over-marking names of fields of the other kind is harmless: each admission
+// consults only its own field names.
+//
 // Marks are keyed "<T>.<field>" wherever the owning type is known — always at
 // a struct-literal store, and at a read whose receiver fnfld_obj_type can
 // resolve (a param, an annotated `var`, a literal-initialised `var`). An
@@ -45384,6 +45421,19 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
             var i: i32 = 0;
             while (i < sl2.field_names.len()) {
                 var fkt: string = decl_field_type(structs, sl2.type_name, sl2.field_names[i]);
+                // A struct-ARRAY / enum-ARRAY field rides the SAME scan (#7067):
+                // its element boxes are freed by __field_reclaim_<T>'s walk on a
+                // rebind, so the field is admitted only when every stored value
+                // is an array literal of FRESH elements — boxarr_lit_all_elems_fresh,
+                // the identical proof the reuse admission makes for these fields.
+                // `d.vals.append(v)` and any other non-literal store share element
+                // pointers with the buffer it supersedes, and freeing those is a
+                // double free.
+                if (is_struct_array_field_type(structs, fkt) || is_enum_array_field_type(structs, fkt)) {
+                    if (!boxarr_lit_all_elems_fresh(sl2.field_values[i], structs, fkt[0 : fkt.len() - 2], is_enum_array_field_type(structs, fkt))) {
+                        a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]);
+                    }
+                }
                 if (fkt == "string[]") {
                     var store_ok: boolean = false;
                     match (sl2.field_values[i]) {

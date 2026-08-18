@@ -2160,6 +2160,23 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
         // gated ("structfldok:<T>").
         var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
         var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        // A registered PLAIN-fn-pointer array field (#5235) keeps the buffer-only
+        // shallow dec — its elements are raw code addresses, so the fr_box_arr
+        // walk below would corrupt the freelist. The x86 fr_fnptr transcription.
+        var fr_fnptr: boolean = irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        // A replaced struct-ARRAY / enum-ARRAY field (#7067): released DEEP —
+        // the x86 fr_box_arr transcription. __struct_drop_<T> walks a uniquely
+        // owned buffer dec'ing each element box at scope exit; this body dec'd
+        // the buffer only, stranding one element box per element on every
+        // rebind. (__fern_drop_arr_ptr is NOT the helper for this: its arm64
+        // body is a bare `ret`.)
+        // GATED on "strfldok:sarr:<T>" exactly like the x86 twin — the walk is a
+        // double free for a field whose stores can carry element pointers over.
+        var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum && !fr_fnptr
+            && !irlower.is_leaksafe_array_field(fdt)
+            && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
+            && s.has_need("strfldok:sarr:" + sty);
         if (fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum || irlower.is_leaksafe_array_field(fdt) || irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
             var off: string = util.i32_to_string((k + 1) * 8);
             var ks: string = util.i32_to_string(k);
@@ -2180,23 +2197,75 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    cmp x1, x2\n");                       // == snap? (caller's)
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
             s = s.write(".Lafr_" + san + "_dec" + ks + ":\n");
-            s = s.write("    str x1, [sp, #-16]!\n");
-            if (fr_str || fr_str_arr) {
-                if (fr_str) {
-                    s = s.write("    bl __fn___fern_str_free\n");  // rc-aware string free (data buffer + box)
-                } else {
-                    s = s.write("    bl __fn___fern_str_arr_free\n");  // deep string[] free (rc-guarded)
+            if (fr_box_arr) {
+                // MULTI-LEVEL element deep-drop (#2649), the x86 twin: release
+                // each element's OWN rc fields via the helper __struct_drop's
+                // k_box arm already calls. It calls __struct_drop_<E>, which
+                // clobbers x10/x11/x12, so all three are reloaded from the stack
+                // args (shifted +16 by the stp x29,x30 frame) afterwards.
+                if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                    var elem_ty: str = fdt[0 : fdt.len() - 2];
+                    if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                        var esan: string = asmcore.sanitize_label(elem_ty);
+                        s = s.need("struct_arr_elems_drop:" + elem_ty);
+                        s = s.write("    str x1, [sp, #-16]!\n");          // buffer
+                        s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+                        s = s.write("    add sp, sp, #16\n");
+                        s = s.write("    ldr x10, [sp, #48]\n");           // reload new
+                        s = s.write("    ldr x11, [sp, #32]\n");           // reload old
+                        s = s.write("    ldr x12, [sp, #16]\n");           // reload snap
+                        s = s.write("    ldr x1, [x11, #" + off + "]\n");  // reload buffer
+                    }
                 }
+                // The walk borrows x11 (buffer) and x12 (index): they survive
+                // __fern_arr_dec / __fern_rc_is_unique (which clobber only
+                // x0..x3,x9) but hold old/snap for the rest of the field loop, so
+                // both are reloaded from the stack args afterwards. x10 (new) is
+                // untouched from here on.
+                s = s.write("    mov x11, x1\n");                  // a = old.field_k (buffer)
+                s = s.write("    cmp x11, #16, lsl #12\n");        // null/low -> skip walk
+                s = s.write("    blo .Lafr_" + san + "_buf" + ks + "\n");
+                s = s.write("    str x11, [sp, #-16]!\n");
+                s = s.write("    bl __fn___fern_rc_is_unique\n");  // shared (rc>1) -> skip element walk
                 s = s.write("    add sp, sp, #16\n");
-                // str_free / str_arr_free clobbered x10/x11/x12 — reload
-                // new/old/snap from the stack args (shifted +16 by the stp
-                // x29,x30 frame).
-                s = s.write("    ldr x10, [sp, #48]\n");           // new
-                s = s.write("    ldr x11, [sp, #32]\n");           // old
-                s = s.write("    ldr x12, [sp, #16]\n");           // snap
-            } else {
+                s = s.write("    cbz x0, .Lafr_" + san + "_buf" + ks + "\n");
+                s = s.write("    mov x12, #0\n");                  // i = 0
+                s = s.write(".Lafr_" + san + "_loop" + ks + ":\n");
+                s = s.write("    ldr x0, [x11]\n");                // len = buffer[0]
+                s = s.write("    cmp x12, x0\n");
+                s = s.write("    bge .Lafr_" + san + "_buf" + ks + "\n");
+                s = s.write("    add x1, x12, #1\n");
+                s = s.write("    ldr x0, [x11, x1, lsl #3]\n");    // elem = buffer[(i+1)*8]
+                s = s.write("    str x0, [sp, #-16]!\n");
+                s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec the element box
+                s = s.write("    add sp, sp, #16\n");
+                s = s.write("    add x12, x12, #1\n");
+                s = s.write("    b .Lafr_" + san + "_loop" + ks + "\n");
+                s = s.write(".Lafr_" + san + "_buf" + ks + ":\n");
+                s = s.write("    str x11, [sp, #-16]!\n");         // buffer (x11 survives both calls)
                 s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
                 s = s.write("    add sp, sp, #16\n");
+                s = s.write("    ldr x11, [sp, #32]\n");           // restore old
+                s = s.write("    ldr x12, [sp, #16]\n");           // restore snap
+            } else {
+                s = s.write("    str x1, [sp, #-16]!\n");
+                if (fr_str || fr_str_arr) {
+                    if (fr_str) {
+                        s = s.write("    bl __fn___fern_str_free\n");  // rc-aware string free (data buffer + box)
+                    } else {
+                        s = s.write("    bl __fn___fern_str_arr_free\n");  // deep string[] free (rc-guarded)
+                    }
+                    s = s.write("    add sp, sp, #16\n");
+                    // str_free / str_arr_free clobbered x10/x11/x12 — reload
+                    // new/old/snap from the stack args (shifted +16 by the stp
+                    // x29,x30 frame).
+                    s = s.write("    ldr x10, [sp, #48]\n");           // new
+                    s = s.write("    ldr x11, [sp, #32]\n");           // old
+                    s = s.write("    ldr x12, [sp, #16]\n");           // snap
+                } else {
+                    s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
+                    s = s.write("    add sp, sp, #16\n");
+                }
             }
             s = s.write(".Lafr_" + san + "_skip" + ks + ":\n");
         }

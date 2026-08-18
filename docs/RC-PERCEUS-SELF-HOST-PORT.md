@@ -9312,3 +9312,40 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   half of the same machinery, that a widening in this area wants the full sweep
   behind it rather than a late push. The same applies to this row; the
   measurement is what makes it a bounded question. Refs #6544 #6522 #4451.
+- 2026-08-18: **#7067 — the two per-type reclaim helpers disagreed about a
+  struct's array field whose ELEMENTS are pointer-shaped.**
+
+  `__struct_drop_<T>` is_unique-gates the buffer, walks it dec'ing each element
+  box (and, for a deep-drop-ok element struct, runs
+  `__struct_arr_elems_drop_<E>` first), then decs the buffer.
+  `__field_reclaim_<T>` dec'd the buffer only. So the value that goes out of
+  scope was reclaimed and every value that was REBOUND leaked its elements —
+  `var b: Bag = Bag { es: [P { .. }, P { .. }], .. }` in a loop stranded one
+  element box per element per iteration, on x86-64, arm64 and wasm alike. The
+  reclaim body now runs the same walk; `string[]` fields keep the
+  `__fern_str_arr_free` arm they already had. Measured on the doubling-rounds
+  probe: 28256 / 56000 bump bytes -> 336 / 0, native flat on both sides.
+
+  **The gate is the interesting half.** Mirroring the walk unconditionally
+  segfaults `alloc_flat_array_push_bound_elem`: `d = Doc { ...d, vals:
+  d.vals.append(v) }` hands the NEW buffer the same element pointers the
+  superseded one holds, uncounted, so walking the old buffer frees boxes the
+  live one still references. A buffer-uniqueness test cannot see that — the old
+  buffer IS unique. So the walk is admitted per type by a whole-program scan
+  ("sarr:" in `strfld_reclaim_ok_types_of`, riding the same `strarrfld_scan`
+  marks as the `string[]` half): every store to the field is an array literal of
+  fresh elements (`boxarr_lit_all_elems_fresh`, the proof the reuse admission
+  already makes for these fields), every read a bare `.len()` borrow. Marks are
+  matched type-keyed (`<T>.<field>`) with the bare name as the fallback, exactly
+  like the `arr:` half since #6544. `__struct_drop` needs no such admission, and
+  that asymmetry is the reason the two helpers were allowed to differ in the
+  first place — at scope exit every buffer that ever shared those elements is
+  dying too.
+
+  Residual, unchanged by this: an enum element's variant PAYLOAD is still one
+  level deeper than either helper reaches, and on wasm an enum-array field whose
+  element type carries no methods classifies scalar, so BOTH helpers keep it on
+  the flat dec. Regression test:
+  `internal/e2eselfhost/self_host_field_reclaim_arr_elems_test.go` (all three
+  backends, including the append-carry case that pins the admission).
+  Refs #7067 #6544 #2649 #5235 #4451.
