@@ -8808,3 +8808,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   builds a long string between the reads so a wrongly freed block is really
   recycled before the value is checked. Plus the reclaim / wasm / borrow sweep of
   `internal/e2eselfhost`. Refs #6544 #6522 #6887 #4451.
+- 2026-08-18 (isolation): **The fresh-array-arg row was never blocked by the arg
+  temp at all.** Settled by dumping the registry and the call-site booleans
+  rather than inferring from which probes were flat — an inference that had
+  already produced two wrong answers on this row.
+
+  Witnessed, `node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }`
+  called as `node(mk(i), i)`:
+
+  | question | witness | answer |
+  |---|---|---|
+  | is `node` in the counted-retain registry? | dump of `array_param_counted_of` | NO with the scalar-result guard, `ACNT:node\|10` without it |
+  | does the arg stash fire once it is? | dump at the stash site | YES — `arrlit=1 rel=1 ok=1`, identical to the working `keep` |
+  | does the shape get cheaper? | `__heap_bump_bytes` | NO — 103 B/round either way |
+
+  So the guard does gate the registry entry, and lifting it does make the stash
+  fire — but the release changes nothing measurable, because the struct-literal
+  construction already inc'd the array. The dec takes rc 2 -> 1 and the returned
+  `Node` still owns it. **The 103 is the caller failing to reclaim a struct
+  RETURNED from a call, together with its array field — a different leak from the
+  arg temp, which the counted-retain admission had already handled.**
+
+  Two consequences for whoever picks this up. The `"ARR:"` arg-temp work on this
+  row is DONE; do not look for more there. And `alloc_flat_fresh_array_arg`'s 798
+  should be re-decomposed against the returned-struct reclaim before any further
+  code — the arg-temp framing that has driven the last four slices does not
+  explain the residual.
+
+  The scalar-result guard stays. It is not what costs this row anything, it is
+  the conservative direction, and native's own reasoning for lifting it
+  (`countedArgTemp` carries no result-type check) has not been demonstrated here
+  end-to-end — `both(deps, k)`, which returns the array back out of the struct,
+  is the shape that would have to be measured first. Refs #6522 #4451.
