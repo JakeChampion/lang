@@ -138,11 +138,9 @@ type Labeled interface {
 }
 
 // WithFile walks err and stamps `filename` on every entry that
-// implements `error` and exposes a `*string` SetFile mutator (via
-// the unexported setFile interface concrete error types implement).
-// Used by modload to attribute parser / lexer errors to the module
-// they came from. Single errors and diag.Errors slices are both
-// handled.
+// implements FileSetter. Used by modload to attribute parser /
+// lexer errors to the module they came from. Single errors and
+// diag.Errors slices are both handled.
 func WithFile(err error, filename string) error {
 	if err == nil {
 		return nil
@@ -157,16 +155,25 @@ func WithFile(err error, filename string) error {
 	return err
 }
 
-// setFile is the package-private mutator concrete error types
-// satisfy to let WithFile poke their File field. Kept unexported
-// so consumers can't paint random errors with bogus paths.
-type setFile interface {
-	setFile(filename string)
+// FileSetter is the mutator half of Filed: an error that knows its
+// source file and lets a loader tell it which one. The method name
+// has to be exported — an interface naming an unexported method can
+// only ever be satisfied inside the package that declares it, so a
+// package-private mutator here would match nothing and make WithFile
+// a no-op.
+//
+// Implementations assert conformance at compile time
+// (`var _ diag.FileSetter = (*Error)(nil)`): a missed stamp is
+// invisible, and leaves the diagnostic rendering against the entry
+// file instead of its own.
+type FileSetter interface {
+	error
+	SetFile(filename string)
 }
 
 func stampFile(err error, filename string) {
-	if s, ok := err.(setFile); ok {
-		s.setFile(filename)
+	if s, ok := err.(FileSetter); ok {
+		s.SetFile(filename)
 	}
 }
 

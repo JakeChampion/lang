@@ -180,3 +180,52 @@ function main(): i32 {
 		t.Errorf("stderr did not point at the offending import file: %q", errb.String())
 	}
 }
+
+// End-to-end for the whole chain the two halves above only cover in pieces:
+// `fern -check` on a program whose IMPORT has a syntax error must name that
+// import's path and quote that import's line.
+//
+// The diagnostic used to come out as
+//
+//	main.fern:2:15: error[P001]: unexpected token ";"
+//	function main(): i32 { return util.thing(); }
+//	              ^
+//
+// — the position measured in util.fern, printed over main.fern's path and
+// text, with the caret landing on whatever character shared that column. Both
+// pieces were in place (modload stamps the module path, the CLI formatter
+// routes by it and holds every module's source) and the join between them was
+// a type assertion that could never succeed.
+func TestCheckAttributesAnImportsSyntaxError(t *testing.T) {
+	bin := buildLangBinForCheck(t)
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "main.fern")
+	helper := filepath.Join(dir, "util.fern")
+	write := func(path, src string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(entry, "import \"./util\";\nfunction main(): i32 { return util.thing(); }\n")
+	write(helper, "pub function thing(): i32 {\n    return 1 +;\n}\n")
+
+	cmd := exec.Command(bin, "-check", entry)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code == 0 {
+		t.Fatalf("exit = 0, want non-zero for a syntax error in an import")
+	}
+	got := errb.String()
+	if !strings.Contains(got, helper+":2:") {
+		t.Errorf("diagnostic does not point at %s:2:\n%s", helper, got)
+	}
+	if strings.Contains(got, entry+":") {
+		t.Errorf("diagnostic blames the entry file, which parses cleanly:\n%s", got)
+	}
+	if !strings.Contains(got, "return 1 +;") {
+		t.Errorf("diagnostic does not quote the offending line from the import:\n%s", got)
+	}
+}

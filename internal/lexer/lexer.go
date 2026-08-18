@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 )
 
 type Kind int
@@ -222,7 +223,9 @@ type Error struct {
 func (e *Error) Error() string          { return fmt.Sprintf("lex error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) File() string           { return e.Path }
-func (e *Error) setFile(p string)       { e.Path = p }
+func (e *Error) SetFile(p string)       { e.Path = p }
+
+var _ diag.FileSetter = (*Error)(nil)
 
 // validNumericSuffix is the closed list of typed-literal suffixes
 // the lexer recognises. The same set is later honoured by the
