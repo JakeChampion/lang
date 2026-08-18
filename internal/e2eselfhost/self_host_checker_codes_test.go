@@ -121,7 +121,7 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	// to the vendored flat io.fern (basename fallback), so the driver source
 	// is used unmodified — no ///MODULE bundle, no import rewrite.
 	files := map[string]string{}
-	for _, m := range []string{"util", "lexer", "parser", "checker"} {
+	for _, m := range []string{"util", "lexer", "parser", "astwalk", "checker"} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", m+".fern"))
 		if err != nil {
 			t.Fatalf("read %s.fern: %v", m, err)
