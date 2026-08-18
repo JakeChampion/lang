@@ -204,9 +204,14 @@ function arm64_elf_binary(asm: string, emit_syms: boolean): string {
 // Now that the arm64 heap is mmap'd at the low 0x10000000 hint (not reserved
 // as a giant .bss in the loaded image), the data segment is tiny and the
 // heap lives below 4 GiB regardless of the binary's load base — so the PIE
-// runs at any base. The self-host arm64 emitter embeds no absolute pointers
-// (function addresses via runtime adrp/:lo12:), so no dynamic relocations are
-// needed; only the ELF container (ET_DYN) and the base-0 layout differ.
+// runs at any base.
+//
+// The image carries no dynamic relocations, but the emitter DOES embed absolute
+// pointers: a const-aggregate block's shape word (#6149) and a static string
+// box's data word (#7080). Those are relocated at startup instead, by the loop
+// emit_ir_reloc lays down at _start — see #7112, which is what that gap cost
+// before anyone noticed (`match` on a const aggregate took no arm and the
+// program silently returned 0).
 function arm64_elf_binary_pie(asm: string): string {
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(asm);
     if (p.unknown.len() > 0) {
@@ -2332,9 +2337,11 @@ function run(): i32 {
         }
     } else if (target == "arm64-android") {
         // arm64-android is the arm64 emitter wrapped in a static-PIE (ET_DYN)
-        // image instead of the fixed-address W^X one. The emitter's text is
-        // the same as arm64-linux's — the PIE-ness is a link-time property —
-        // so `-emit asm` produces the same GAS either way.
+        // image instead of the fixed-address W^X one. `-emit asm` produces the
+        // same GAS as arm64-linux: the PIE-ness is a link-time property, and
+        // the one construct that cares — the startup self-relocation loop — is
+        // emitted on both, where ET_EXEC simply computes a zero slide and skips
+        // it (#7112).
         out_asm = asm_arm64_ir.emit_module_or_error(full, false);
         if (out_asm.len() == 0) { return 2; }
         if (!emit_text) {
