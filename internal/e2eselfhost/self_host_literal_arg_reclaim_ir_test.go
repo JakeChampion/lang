@@ -480,4 +480,71 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-arr-arg-aliased-param-safe", 0)
+
+	// The STRING tier of the same admission (#6544). `mkq` stores its string
+	// parameter in the struct it returns, so the parameter is not borrowable and
+	// the literal-arg stash declined — the caller's argument box was released by
+	// nothing at all and leaked per call, 24 B/round measured, where native is
+	// flat. Every appearance of that parameter is a counted store, so one
+	// post-call free nets the temp to the single owner the returned struct holds.
+	run(t, `struct Q { tag: string, k: i32 }
+function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var c: Q = mkq("a-string-well-past-the-inline-threshold", i); acc = (acc + c.tag.len() + c.k) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { var d: Q = mkq("a-string-well-past-the-inline-threshold", j); acc = (acc + d.tag.len() + d.k) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-str-arg-flat", 0)
+
+	// REFUSED on the RESULT TYPE — the string tier's `resultCannotAliasArg`.
+	// `both`'s parameter is counted exactly like `mkq`'s, but the result is a
+	// `string`: it can BE the argument, and the free fires immediately after the
+	// call, so releasing would hand the caller freed memory. The result is
+	// re-read and a long string is built between the reads so a wrongly freed
+	// block is really recycled first.
+	run(t, `struct Q { tag: string, k: i32 }
+function both(t: string, k: i32): string { var n: Q = Q { tag: t, k: k }; return n.tag; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 400) {
+        var r: string = both("a-string-well-past-the-inline-threshold", i);
+        if (r.len() != 39) { bad = 1; }
+        var churn: string = "another-long-string-to-recycle-the-block" + "";
+        if (churn.len() != 40) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-str-arg-result-aliases-safe", 0)
+
+	// A LIVE LOCAL at the counted position is not a temp: the stash admits only a
+	// fresh argument, so nothing is released here and `live` survives every call
+	// to be read after the loop.
+	run(t, `struct Q { tag: string, k: i32 }
+function mkq(t: string, k: i32): Q { return Q { tag: t, k: k }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var live: string = "a-string-well-past-the-inline-threshold";
+    var i: i32 = 0;
+    while (i < 400) {
+        var c: Q = mkq(live, i);
+        if (c.tag.len() != 39) { bad = 1; }
+        var churn: string = "another-long-string-to-recycle-the-block" + "";
+        if (churn.len() != 40) { bad = 1; }
+        i = i + 1;
+    }
+    if (live.len() != 39) { bad = 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-str-arg-live-local-safe", 0)
 }
