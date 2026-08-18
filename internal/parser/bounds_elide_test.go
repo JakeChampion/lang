@@ -133,6 +133,27 @@ func TestElideLenBounded_Ineligible(t *testing.T) {
 			while (i < a.len()) { var i: i32 = 999; s = s + a[i]; i = i + 1; }
 			return s;
 		}`},
+		// A tuple pattern binds at every depth, so a nested element and a
+		// variant payload sub-pattern shadow the index just as a top-level
+		// element does.
+		{"index_shadowed_by_nested_tuple_elem", `function f(a: i32[], t: (i32, (i32, i32))): i32 {
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < a.len()) {
+				match (t) { (p, (i, q)) => { s = s + a[i]; } }
+				i = i + 1;
+			}
+			return s;
+		}`},
+		{"index_shadowed_by_payload_subpattern", `enum Inner { Ok2(i32), Err2(i32) }
+		enum Outer { A(Inner), B }
+		function f(a: i32[], t: (Outer, i32)): i32 {
+			var s: i32 = 0; var i: i32 = 0;
+			while (i < a.len()) {
+				match (t) { (A(Ok2(i)), q) => { s = s + a[i]; }, _ => {} }
+				i = i + 1;
+			}
+			return s;
+		}`},
 		{"index_reassigned_nonincrement", `function f(a: i32[], k: i32): i32 {
 			var s: i32 = 0; var i: i32 = 0;
 			while (i < a.len()) { s = s + a[i]; i = k; }

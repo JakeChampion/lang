@@ -2797,22 +2797,6 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // at every other kind.
 struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
-// p_variant_binds builds the pattern for a tuple element's variant
-// sub-pattern: `binds` are the payload binders in payload order, empty for
-// the payload-less spelling `A()`.
-function p_variant_binds(type_name: string, binds: string[]): Pattern {
-    if (binds.len() == 0) { return p_variant(type_name, ""); }
-    var extra: string[] = [];
-    var i: i32 = 1;
-    while (i < binds.len()) { extra = extra.append(binds[i]); i = i + 1; }
-    var no_nested: Pattern[] = [];
-    var no_tup_kinds: i32[] = [];
-    var no_tup_binds: string[] = [];
-    var no_tup_lits: Expr[] = [];
-    var no_tup_pats: Pattern[] = [];
-    return PatVariant { type_name: type_name, binding: binds[0], extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
-}
-
 // p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
 // can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
 // only the tup_* fields are read back.
@@ -2856,35 +2840,17 @@ function parse_tuple_arm_pattern(p: Par): (i32[], string[], Expr[], Pattern[], P
         } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
             // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
             // (payload list, empty for a payload-less variant) and `.` (a
-            // `mod.` qualifier) both say variant unambiguously. Payload slots
-            // are plain binders — a nested pattern or a literal there is not
-            // the element grammar, and bailing keeps it loud.
-            var vname: string = n;
-            p = p.advance();
-            while (p.peek_punct() == ".") {
-                p = p.advance();
-                var seg: string = p.peek_ident();
-                if (seg.len() == 0) { return (none, [], [], no_pats, p); }
-                vname = vname + "." + seg;
-                p = p.advance();
-            }
-            if (p.peek_punct() != "(") { return (none, [], [], no_pats, p); }
-            p = p.advance();
-            var vbinds: string[] = [];
-            while (p.peek_punct() != ")" && !p.at_end()) {
-                var vb: string = p.peek_ident();
-                if (vb.len() == 0) { return (none, [], [], no_pats, p); }
-                vbinds = vbinds.append(vb);
-                p = p.advance();
-                if (p.peek_punct() == ",") { p = p.advance(); continue; }
-                break;
-            }
-            if (p.peek_punct() != ")") { return (none, [], [], no_pats, p); }
-            p = p.advance();
+            // `mod.` qualifier) both say variant unambiguously. The payload
+            // list is the ARM-position production, so a payload slot may hold
+            // a nested variant (`A(Ok(n))`), a literal (`A(0)`) or a tuple
+            // (`A((a, b))`) — wrap_tuple_elems routes each through the same
+            // desugar an arm-position payload takes.
+            var (ve_pat, ve_p) = parse_pattern(p);
+            p = ve_p;
             elem_kinds = elem_kinds.append(3);
             binds = binds.append("");
             lits = lits.append(e_bool(true));
-            pats = pats.append(p_variant_binds(vname, vbinds));
+            pats = pats.append(ve_pat);
         } else if (n.len() > 0) {
             p = p.advance();
             elem_kinds = elem_kinds.append(0);
@@ -2930,22 +2896,27 @@ function tuple_elem_names(prefix: string, n: i32): string {
 //
 // A variant element (kind 3) nests the path inside a match on the element
 // temp — the tag test and the payload binds are exactly what a match arm
-// already does. A nested tuple element (kind 4) destructures the element temp
-// one level deeper, recurses for that level's own elements, declares its
-// binders and tests its literals. The destructure is irrefutable, so running
-// it before the level's own tests is safe.
+// already does, so a payload SUB-PATTERN needs nothing new either: the two
+// synthesised arms go through fold_lit_cond and desugar_nested_arms, the same
+// pair an arm-position payload takes. A nested tuple element (kind 4)
+// destructures the element temp one level deeper, recurses for that level's
+// own elements, declares its binders and tests its literals. The destructure
+// is irrefutable, so running it before the level's own tests is safe.
 function wrap_tuple_elems(path: Stmt[], kinds: i32[], pats: Pattern[], prefix: string, line: i32, col: i32): Stmt[] {
     var cur: Stmt[] = path;
     var wi: i32 = kinds.len() - 1;
     while (wi >= 0) {
         var en: string = prefix + "_e" + util.i32_to_string(wi);
         if (kinds[wi] == 3) {
+            var (mk_pat, mk_guard, mk_hg) = fold_lit_cond(pats[wi], e_bool(true), false);
             var mk_arms: MatchArm[] = [];
-            mk_arms = mk_arms.append(MatchArm { pattern: pats[wi], body: cur, line: line, col: col, guard: e_bool(true), has_guard: false });
+            mk_arms = mk_arms.append(MatchArm { pattern: mk_pat, body: cur, line: line, col: col, guard: mk_guard, has_guard: mk_hg });
             var mk_skip: Stmt[] = [];
             mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false });
             var mk_wrap: Stmt[] = [];
-            mk_wrap = mk_wrap.append(s_match_at(e_ident_at(en, line, col), mk_arms, line, col));
+            // Every element of every level shares the arm's line/col, so the
+            // element temp name is what keeps the desugar's own temps apart.
+            mk_wrap = mk_wrap.append(s_match_at(e_ident_at(en, line, col), desugar_nested_arms(mk_arms, 0, en), line, col));
             cur = mk_wrap;
         } else if (kinds[wi] == 4) {
             var (nk, nb, nl, np) = pv_tup(pats[wi]);
@@ -3869,9 +3840,9 @@ function parse_match_expr(p: Par): IfChain {
             ntarms = ntarms.append(MatchArm { pattern: nta.pattern, body: value_arm_body(nta.body, ntval), line: nta.line, col: nta.col, guard: nta.guard, has_guard: nta.has_guard });
             nti = nti + 1;
         }
-        return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
+        return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0, ""), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
     }
-    arms = desugar_nested_arms(arms, 0);
+    arms = desugar_nested_arms(arms, 0, "");
     return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
 }
 
@@ -4316,9 +4287,10 @@ function arm_is_nested(arm: MatchArm): boolean {
 // `V(__nest…) => match __nest… { … }`. A no-op returning the arms unchanged
 // when no arm nests — so every existing match (the whole self-host source
 // among them) parses byte-identically. `depth` keeps the synthesised payload
-// temp unique across nesting levels. Recurses so `Some(Ok(Some(x)))` desugars
-// at every depth.
-function desugar_nested_arms(arms: MatchArm[], depth: i32): MatchArm[] {
+// temp unique across nesting levels, and `tag` across callers that synthesise
+// arms sharing one line/col — pass "" when the arms come from distinct source
+// positions. Recurses so `Some(Ok(Some(x)))` desugars at every depth.
+function desugar_nested_arms(arms: MatchArm[], depth: i32, tag: string): MatchArm[] {
     // Any-nested short-circuit: leaves the common (flat) case allocation-free
     // and, more importantly, byte-identical to the pre-feature output.
     var seen_nested: boolean = false;
@@ -4356,7 +4328,7 @@ function desugar_nested_arms(arms: MatchArm[], depth: i32): MatchArm[] {
                 var c: i32 = i;
                 while (c < j) { out = out.append(arms[c]); c = c + 1; }
             } else {
-                out = out.append(build_merged_arm(vn, arms, i, j, fall, has_fall, depth));
+                out = out.append(build_merged_arm(vn, arms, i, j, fall, has_fall, depth, tag));
             }
             i = j;
         }
@@ -4400,10 +4372,10 @@ function tuple_elems_irrefutable(kinds: i32[], pats: Pattern[]): boolean {
     return true;
 }
 
-function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: Stmt[], has_fall: boolean, depth: i32): MatchArm {
+function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: Stmt[], has_fall: boolean, depth: i32, tag: string): MatchArm {
     var gp_line: i32 = arms[lo].line;
     var gp_col: i32 = arms[lo].col;
-    var tmp: string = "__nest_" + util.i32_to_string(gp_line) + "_" + util.i32_to_string(gp_col) + "_" + util.i32_to_string(depth);
+    var tmp: string = "__nest_" + util.i32_to_string(gp_line) + "_" + util.i32_to_string(gp_col) + "_" + util.i32_to_string(depth) + tag;
     var inner: MatchArm[] = [];
     var has_inner_wild: boolean = false;
     var k: i32 = lo;
@@ -4481,7 +4453,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         var t_body: Stmt[] = [tmatch];
         return MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
     }
-    var inner_desugared: MatchArm[] = desugar_nested_arms(inner, depth + 1);
+    var inner_desugared: MatchArm[] = desugar_nested_arms(inner, depth + 1, tag);
     var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
@@ -4710,7 +4682,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
-    arms = desugar_nested_arms(arms, 0);
+    arms = desugar_nested_arms(arms, 0, "");
     return (s_match_at(sr_expr, arms, mkline, mkcol), p);
 }
 
@@ -5257,7 +5229,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             // desugar_nested_arms copies into the inner match, so a payload
             // matching no inner pattern runs the else rather than falling off
             // a non-exhaustive inner match.
-            ilarms = desugar_nested_arms(ilarms, 0);
+            ilarms = desugar_nested_arms(ilarms, 0, "");
             return (s_match_origin(ilscrut_expr, ilarms, 0, 0, "if_let"), p);
         }
         if (p.peek_punct() != "(") {
@@ -5412,7 +5384,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                         lsp_i = lsp_i + 1;
                     }
                     lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-                    lsp_arms = desugar_nested_arms(lsp_arms, 0);
+                    lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
                     return (s_match_origin(lsp_init, lsp_arms, vline, vcol, "let_else"), p);
                 }
             }

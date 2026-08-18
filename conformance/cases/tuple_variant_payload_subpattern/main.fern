@@ -1,0 +1,136 @@
+// A SUB-PATTERN in a tuple element's variant PAYLOAD slot: `(A(Ok(n)), y)`.
+//
+// A payload slot used to be a plain binder, so the only way to look inside a
+// tuple element's variant was a second `match` in the arm body. The slot is
+// now the same production every other pattern position is: a binder, `_`, a
+// literal, a nested variant, or a tuple.
+//
+// On native the whole tuple pattern stays FLAT — no parse-time desugar — so
+// arms are tried in order and a payload sub-pattern that fails falls to the
+// next arm rather than to the outer `_`. That is why `(A(Ok2(n)), y)` can sit
+// beside `(A(Err2(n)), y)` and `(A(x), y)` here, which the arm-position
+// desugar's one-sub-pattern-per-group rule would reject.
+//
+// The tests are grouped by VARIANT-payload depth and each depth runs inside
+// the previous one's `if`. A payload's bytes only exist once its box's tag
+// matched — a payload-less variant is a shared 4-byte static sentinel — so
+// testing a payload beside the tag that licenses it would read out of bounds
+// (a trap on wasm). Sibling tests at one depth still fold with a
+// non-short-circuiting `&&`, which is a pure read of a value the enclosing
+// depths already proved present.
+//
+// The self-host reaches the same place from the other side: its tuple match
+// is a done-flag chain built at parse time, and a variant element already
+// nests the arm's path inside a match on the element temp. So the payload
+// list is simply parsed with the ARM-position production and the two
+// synthesised arms run through fold_lit_cond + desugar_nested_arms — the same
+// pair `Some(Ok(n))` takes.
+
+import "std/i32";
+
+enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+enum Wrap { W((i32, i32)), Z(i32) }
+enum Tag { T(string), U }
+
+// The headline: a nested variant in a payload slot, beside a sibling arm
+// whose payload is a plain binder.
+function nested(t: (Outer, i32)): i32 {
+    match (t) {
+        (A(Ok2(n)), y) => { return n + y; },
+        (A(Err2(n)), y) => { return 0 - n - y; },
+        (A(x), y) => { return 1000 + y; },
+        (B(), y) => { return 7000 + y; },
+        _ => { return 0; },
+    }
+}
+
+// A LITERAL payload slot: the comparison folds into the arm's condition
+// rather than nesting a match.
+function lit(t: (Wrap, i32)): i32 {
+    match (t) {
+        (Z(9), y) => { return 900 + y; },
+        (Z(n), y) => { return n + y; },
+        _ => { return 0 - 1; },
+    }
+}
+
+// A TUPLE payload slot, with a literal inside it — so the nested-tuple
+// element rules apply one level below a payload.
+function tup(t: (Wrap, i32)): i32 {
+    match (t) {
+        (W((0, b)), y) => { return 100 + b + y; },
+        (W((a, b)), y) => { return a * b + y; },
+        _ => { return 0 - 2; },
+    }
+}
+
+// A STRING literal payload, so the comparison settles the way a literal match
+// does (OpStrEq, and the two-word string ABI where it applies).
+function tagged(t: (Tag, i32)): i32 {
+    match (t) {
+        (T("go"), y) => { return 10 + y; },
+        (T(s), y) => { return y; },
+        (U(), y) => { return 20 + y; },
+        _ => { return 0; },
+    }
+}
+
+// A payload sub-pattern inside a NESTED TUPLE element, so the two recursions
+// compose: element hop, tuple hop, payload hop.
+function deep(t: ((Outer, i32), i32)): i32 {
+    match (t) {
+        ((A(Ok2(n)), b), y) => { return n * 100 + b * 10 + y; },
+        ((A(x), b), y) => { return b * 10 + y; },
+        _ => { return 0 - 3; },
+    }
+}
+
+// TWO payload sub-patterns in one arm, at different elements — each gets its
+// own depth-1 test under its own element's tag test.
+function both(t: (Outer, Wrap)): i32 {
+    match (t) {
+        (A(Ok2(n)), Z(9)) => { return 9000 + n; },
+        (A(Ok2(n)), Z(m)) => { return n * 10 + m; },
+        (A(x), Z(m)) => { return m; },
+        _ => { return 0 - 4; },
+    }
+}
+
+// A guard sees the payload sub-pattern's bindings and the sibling element's
+// binder alike.
+function guarded(t: (Outer, i32)): i32 {
+    match (t) {
+        (A(Ok2(n)), y) when n > y => { return n; },
+        (A(Ok2(n)), y) => { return y; },
+        _ => { return 0; },
+    }
+}
+
+function main(): i32 {
+    print(nested((Outer.A(Inner.Ok2(5)), 1)).to_string());
+    print(nested((Outer.A(Inner.Err2(3)), 2)).to_string());
+    print(nested((Outer.B, 4)).to_string());
+
+    print(lit((Wrap.Z(9), 1)).to_string());
+    print(lit((Wrap.Z(2), 1)).to_string());
+
+    print(tup((Wrap.W((0, 6)), 1)).to_string());
+    print(tup((Wrap.W((3, 4)), 1)).to_string());
+
+    print(tagged((Tag.T("go"), 1)).to_string());
+    print(tagged((Tag.T("stop"), 7)).to_string());
+    print(tagged((Tag.U, 1)).to_string());
+
+    print(deep(((Outer.A(Inner.Ok2(3)), 4), 5)).to_string());
+    print(deep(((Outer.A(Inner.Err2(3)), 4), 5)).to_string());
+
+    print(both((Outer.A(Inner.Ok2(2)), Wrap.Z(9))).to_string());
+    print(both((Outer.A(Inner.Ok2(2)), Wrap.Z(3))).to_string());
+    print(both((Outer.A(Inner.Err2(2)), Wrap.Z(3))).to_string());
+
+    print(guarded((Outer.A(Inner.Ok2(9)), 1)).to_string());
+    print(guarded((Outer.A(Inner.Ok2(1)), 9)).to_string());
+    print(guarded((Outer.B, 9)).to_string());
+    return 0;
+}

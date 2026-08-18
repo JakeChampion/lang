@@ -10012,7 +10012,7 @@ func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, 
 		return c.checkTuplePatNestedElem(pos, el, k, elT, s, armScope, seen)
 	}
 	if el.VariantName != "" {
-		c.checkTuplePatVariantElem(pos, el, k, elT, armScope, seen)
+		c.checkTuplePatVariantElem(pos, el, k, elT, s, armScope, seen)
 		return true
 	}
 	if el.Literal != nil {
@@ -10071,7 +10071,7 @@ func (c *checker) checkTuplePatNestedElem(pos ast.Position, el *ast.TuplePatElem
 // an enum; the variant's payload arity and type-parameter substitution go
 // through resolveVariantBindings, so a payload slot follows exactly the rules
 // a top-level `A(x) => …` arm follows.
-func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, armScope *scope, seen map[string]bool) {
+func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) {
 	et, isEnum := elT.(ast.EnumType)
 	if !isEnum {
 		c.errfCode(pos, "E035", "variant pattern on tuple element %d, but the element has type %s", k, elT)
@@ -10104,7 +10104,19 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 	}
 	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, sub)
 	for i, name := range el.VariantBindings {
-		if name == "_" {
+		// A slot carrying a sub-pattern binds nothing itself — its pattern
+		// does, under the same element rules, so it routes back through
+		// checkTuplePatElem. Its VariantBindings entry is the empty name, which
+		// must NOT reach the binder path below: that would declare a nameless
+		// local and silently drop the pattern.
+		if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+			slot := []ast.TuplePatElem{*el.VariantPayloads[i]}
+			types := []ast.Type{el.VariantBindingTypes[i]}
+			c.checkTuplePatElem(pos, slot, types, 0, el.VariantBindingTypes[i], s, armScope, seen)
+			*el.VariantPayloads[i] = slot[0]
+			continue
+		}
+		if name == "" || name == "_" {
 			continue
 		}
 		if seen[name] {

@@ -328,12 +328,28 @@ func armBinds(bindings []string, tupleElems []ast.TuplePatElem, name string) boo
 			return true
 		}
 	}
-	for _, te := range tupleElems {
+	return tupleElemsBind(tupleElems, name)
+}
+
+// tupleElemsBind reports whether any position of a tuple pattern binds name, at
+// ANY depth — a nested tuple element and a variant payload sub-pattern both
+// introduce binders, and missing one leaves the loop's index or array looking
+// invariant while the arm has rebound it.
+func tupleElemsBind(elems []ast.TuplePatElem, name string) bool {
+	for _, te := range elems {
 		if te.Name == name {
 			return true
 		}
 		for _, vb := range te.VariantBindings {
 			if vb == name {
+				return true
+			}
+		}
+		if tupleElemsBind(te.Nested, name) {
+			return true
+		}
+		for _, sub := range te.VariantPayloads {
+			if sub != nil && tupleElemsBind([]ast.TuplePatElem{*sub}, name) {
 				return true
 			}
 		}
