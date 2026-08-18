@@ -87,4 +87,17 @@ function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e:
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-field-sibling-name-arm64", 0, "")
+
+	// WHOLE-ARRAY PRODUCER CALL as the field value: the store gate took only an
+	// array LITERAL, so this shape was refused and leaked every element box.
+	// It now asks fn_returns_fresh_strarr — the "STRARR:" registry's own rule.
+	// Correctness + over-release under qemu; the x86 sibling carries flatness.
+	// 3 + 43 = 46 each build.
+	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function build(pre: string): i32 { var f: Node = Node { name: w(pre), deps: deps_of(pre), mtime: 1 }; return f.deps.len() + f.name.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-field-producer-call-store-arm64", 0, "bl __fn___fern_str_arr_free")
 }

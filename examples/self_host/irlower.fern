@@ -30472,6 +30472,19 @@ function strarr_local_stores_nonfresh(stmts: parser.Stmt[], name: string, str_fr
     return false;
 }
 
+// fn_returns_fresh_strarr: `fn` is a FREE function every return of which hands
+// back a `string[]` whose buffer AND every element box this frame allocated —
+// a direct element-fresh literal, or a local built from one and only ever
+// self-appended to. The "STRARR:" registry's admission rule, named so the
+// string[]-FIELD store gate can ask the same question the registry asks rather
+// than keeping a second, narrower answer.
+function fn_returns_fresh_strarr(fn: parser.FuncDecl, str_fresh: string[]): boolean {
+    if (fn.receiver_type.len() > 0 || fn.ret_type != "string[]") { return false; }
+    if (!body_has_return(fn.body)) { return false; }
+    return !body_has_nonfresh_strarr_lit_return(fn.body, str_fresh)
+        || body_returns_local_built_strarr(fn.body, str_fresh);
+}
+
 // body_returns_local_built_strarr: the accumulator idiom for a `string[]` —
 // body_returns_local_built_arr plus the per-element freshness proof.
 function body_returns_local_built_strarr(stmts: parser.Stmt[], str_fresh: string[]): boolean {
@@ -30662,10 +30675,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // holding its own single reference. "ARR:" cannot carry this: its
         // consumers release the buffer element-blind, which for a string[] would
         // strand every element it did not extract.
-        if (funcs[k].receiver_type.len() == 0 && funcs[k].ret_type == "string[]"
-                && body_has_return(funcs[k].body)
-                && (!body_has_nonfresh_strarr_lit_return(funcs[k].body, str_fresh)
-                    || body_returns_local_built_strarr(funcs[k].body, str_fresh))) {
+        if (fn_returns_fresh_strarr(funcs[k], str_fresh)) {
             out = out.append("STRARR:" + funcs[k].name);
         }
         // "STRFLDF:<name>" / "STRFLDF:<Base>.<method>" — the field-read half: a
@@ -44193,9 +44203,27 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         if (struct_has_strarr_field(structs, structs[wantsf].name)) { arr_str_fresh = str_fresh_ret_fns_of(funcs); wantsf = structs.len(); }
         else { wantsf = wantsf + 1; }
     }
+    // Whole-array PRODUCERS the field store gate may accept, on the same terms
+    // the "STRARR:" registry admits them.
+    var arr_producers: string[] = [];
+    var pk2: i32 = 0;
+    while (pk2 < funcs.len()) {
+        if (fn_returns_fresh_strarr(funcs[pk2], arr_str_fresh)) { arr_producers = arr_producers.append(funcs[pk2].name); }
+        pk2 = pk2 + 1;
+    }
     var aki: i32 = 0;
     while (aki < funcs.len()) {
-        arr_unsafe = strarrfld_scan_stmts(funcs[aki].body, structs, strarrfld_fn_binds(funcs[aki], structs), arr_str_fresh, arr_unsafe);
+        // Drop any producer name THIS frame shadows — a local or parameter of
+        // that name holds an unknown body, not the registered declaration.
+        var vis: string[] = [];
+        var vk: i32 = 0;
+        while (vk < arr_producers.len()) {
+            if (!body_declares_name(funcs[aki].body, arr_producers[vk]) && !fn_has_param_named(funcs[aki], arr_producers[vk])) {
+                vis = vis.append(arr_producers[vk]);
+            }
+            vk = vk + 1;
+        }
+        arr_unsafe = strarrfld_scan_stmts(funcs[aki].body, structs, strarrfld_fn_binds(funcs[aki], structs), arr_str_fresh, vis, arr_unsafe);
         aki = aki + 1;
     }
     var asi: i32 = 0;
@@ -45275,14 +45303,14 @@ function fnfld_lookup(binds: string[], name: string): string {
 // and what every mark used to be. Two structs sharing a field name no longer
 // share its verdict: a `mk(notes) { Other { notes: notes } }` elsewhere in the
 // module used to cost every `notes` field in the program its reclaim.
-function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: string[], str_fresh: string[], acc: string[]): string[] {
+function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         parser.ExprFieldAccess(fa) => {
             var oty: string = fnfld_obj_type(fa.obj, structs, binds);
             if (oty.len() > 0) { a = push_str_unique(a, oty + "." + fa.field); }
             else { a = push_str_unique(a, fa.field); }
-            return strarrfld_scan(fa.obj, structs, binds, str_fresh, a);
+            return strarrfld_scan(fa.obj, structs, binds, str_fresh, strarr_producers, a);
         },
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -45291,25 +45319,25 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                         // `x.f.len()` is the one tolerated borrow: skip marking
                         // the receiver FIELD, but keep walking beneath it.
                         match (cfa.obj) {
-                            parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, a); },
-                            _ => { a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, a); }
+                            parser.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, a); },
+                            _ => { a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, a); }
                         }
                     } else {
-                        a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, a);
+                        a = strarrfld_scan(cfa.obj, structs, binds, str_fresh, strarr_producers, a);
                     }
                 },
-                _ => { a = strarrfld_scan(c.callee, structs, binds, str_fresh, a); }
+                _ => { a = strarrfld_scan(c.callee, structs, binds, str_fresh, strarr_producers, a); }
             }
             var i: i32 = 0;
-            while (i < c.args.len()) { a = strarrfld_scan(c.args[i], structs, binds, str_fresh, a); i = i + 1; }
+            while (i < c.args.len()) { a = strarrfld_scan(c.args[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
             return a;
         },
-        parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarrfld_scan(b.left, structs, binds, str_fresh, a)); },
-        parser.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, binds, str_fresh, a); },
-        parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, binds, str_fresh, strarrfld_scan(ix.array, structs, binds, str_fresh, a)); },
-        parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, binds, str_fresh, strarrfld_scan(sl.start, structs, binds, str_fresh, strarrfld_scan(sl.array, structs, binds, str_fresh, a))); },
+        parser.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarr_producers, strarrfld_scan(b.left, structs, binds, str_fresh, strarr_producers, a)); },
+        parser.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, binds, str_fresh, strarr_producers, a); },
+        parser.ExprIndex(ix) => { return strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, strarrfld_scan(ix.array, structs, binds, str_fresh, strarr_producers, a)); },
+        parser.ExprSlice(sl) => { return strarrfld_scan(sl.end, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.start, structs, binds, str_fresh, strarr_producers, strarrfld_scan(sl.array, structs, binds, str_fresh, strarr_producers, a))); },
         parser.ExprStructLit(sl2) => {
-            if (sl2.has_base) { a = strarrfld_scan(sl2.base, structs, binds, str_fresh, a); }
+            if (sl2.has_base) { a = strarrfld_scan(sl2.base, structs, binds, str_fresh, strarr_producers, a); }
             var i: i32 = 0;
             while (i < sl2.field_names.len()) {
                 var fkt: string = decl_field_type(structs, sl2.type_name, sl2.field_names[i]);
@@ -45324,37 +45352,54 @@ function strarrfld_scan(e: parser.Expr, structs: parser.StructDecl[], binds: str
                                 ei = ei + 1;
                             }
                         },
+                        // A whole-array PRODUCER call: fn_returns_fresh_strarr
+                        // proved whole-program that every element of the result
+                        // is a box the callee allocated and handed out at rc=1,
+                        // so the struct owns them exactly as it owns a literal's.
+                        // `strarr_producers` is filtered per function before the
+                        // walk, so a callee name this frame declares or takes
+                        // as a parameter is already absent — it would hold an
+                        // unknown body, the refusal every registry consumer
+                        // makes.
+                        parser.ExprCall(fc) => {
+                            match (fc.callee) {
+                                parser.ExprIdent(fcid) => {
+                                    store_ok = util.index_of_str(strarr_producers, fcid.name) >= 0;
+                                },
+                                _ => {}
+                            }
+                        },
                         _ => {}
                     }
                     if (!store_ok) { a = push_str_unique(a, sl2.type_name + "." + sl2.field_names[i]); }
                 }
-                a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, a);
+                a = strarrfld_scan(sl2.field_values[i], structs, binds, str_fresh, strarr_producers, a);
                 i = i + 1;
             }
             return a;
         },
         parser.ExprArray(av2) => {
             var i: i32 = 0;
-            while (i < av2.elements.len()) { a = strarrfld_scan(av2.elements[i], structs, binds, str_fresh, a); i = i + 1; }
+            while (i < av2.elements.len()) { a = strarrfld_scan(av2.elements[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
             return a;
         },
         parser.ExprTuple(t) => {
             var i: i32 = 0;
-            while (i < t.elements.len()) { a = strarrfld_scan(t.elements[i], structs, binds, str_fresh, a); i = i + 1; }
+            while (i < t.elements.len()) { a = strarrfld_scan(t.elements[i], structs, binds, str_fresh, strarr_producers, a); i = i + 1; }
             return a;
         },
-        parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, binds, str_fresh, a); },
+        parser.ExprLambda(lm) => { return strarrfld_scan_stmts(lm.body, structs, binds, str_fresh, strarr_producers, a); },
         _ => { return a; }
     }
 }
-function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], acc: string[]): string[] {
+function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[], binds: string[], str_fresh: string[], strarr_producers: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var b: string[] = binds;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                a = strarrfld_scan(v.init, structs, b, str_fresh, a);
+                a = strarrfld_scan(v.init, structs, b, str_fresh, strarr_producers, a);
                 // `var r: R = …` binds by annotation, `var r = R { … }` by the
                 // literal; anything else drops the name, so a shadowing rebind
                 // never inherits the old type. Same rule as fnfld_read_stmts.
@@ -45362,37 +45407,48 @@ function strarrfld_scan_stmts(stmts: parser.Stmt[], structs: parser.StructDecl[]
                 if (vty.len() == 0) { vty = fnfld_lit_type(v.init); }
                 b = fnfld_bind(b, v.name, vty, structs);
             },
-            parser.StmtAssign(as2) => { a = strarrfld_scan(as2.value, structs, b, str_fresh, a); },
-            parser.StmtExpr(ex) => { a = strarrfld_scan(ex.value, structs, b, str_fresh, a); },
-            parser.StmtReturn(r) => { a = strarrfld_scan(r.value, structs, b, str_fresh, a); },
+            parser.StmtAssign(as2) => { a = strarrfld_scan(as2.value, structs, b, str_fresh, strarr_producers, a); },
+            parser.StmtExpr(ex) => { a = strarrfld_scan(ex.value, structs, b, str_fresh, strarr_producers, a); },
+            parser.StmtReturn(r) => { a = strarrfld_scan(r.value, structs, b, str_fresh, strarr_producers, a); },
             parser.StmtIf(iff) => {
-                a = strarrfld_scan(iff.cond, structs, b, str_fresh, a);
-                a = strarrfld_scan_stmts(iff.then_body, structs, b, str_fresh, a);
-                a = strarrfld_scan_stmts(iff.else_body, structs, b, str_fresh, a);
+                a = strarrfld_scan(iff.cond, structs, b, str_fresh, strarr_producers, a);
+                a = strarrfld_scan_stmts(iff.then_body, structs, b, str_fresh, strarr_producers, a);
+                a = strarrfld_scan_stmts(iff.else_body, structs, b, str_fresh, strarr_producers, a);
             },
             parser.StmtWhile(w) => {
-                a = strarrfld_scan(w.cond, structs, b, str_fresh, a);
-                a = strarrfld_scan_stmts(w.body, structs, b, str_fresh, a);
+                a = strarrfld_scan(w.cond, structs, b, str_fresh, strarr_producers, a);
+                a = strarrfld_scan_stmts(w.body, structs, b, str_fresh, strarr_producers, a);
             },
             parser.StmtFor(fo) => {
-                a = strarrfld_scan(fo.iter, structs, b, str_fresh, a);
-                a = strarrfld_scan_stmts(fo.body, structs, b, str_fresh, a);
+                a = strarrfld_scan(fo.iter, structs, b, str_fresh, strarr_producers, a);
+                a = strarrfld_scan_stmts(fo.body, structs, b, str_fresh, strarr_producers, a);
             },
             parser.StmtMatch(m) => {
-                a = strarrfld_scan(m.scrutinee, structs, b, str_fresh, a);
+                a = strarrfld_scan(m.scrutinee, structs, b, str_fresh, strarr_producers, a);
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
-                    if (m.arms[ai].has_guard) { a = strarrfld_scan(m.arms[ai].guard, structs, b, str_fresh, a); }
-                    a = strarrfld_scan_stmts(m.arms[ai].body, structs, b, str_fresh, a);
+                    if (m.arms[ai].has_guard) { a = strarrfld_scan(m.arms[ai].guard, structs, b, str_fresh, strarr_producers, a); }
+                    a = strarrfld_scan_stmts(m.arms[ai].body, structs, b, str_fresh, strarr_producers, a);
                     ai = ai + 1;
                 }
             },
-            parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, b, str_fresh, a); },
+            parser.StmtDefer(d) => { a = strarrfld_scan_stmts([d.action], structs, b, str_fresh, strarr_producers, a); },
             _ => {}
         }
         i = i + 1;
     }
     return a;
+}
+
+// fn_has_param_named: `fn` takes a parameter (or receiver) spelled `name`.
+function fn_has_param_named(fn: parser.FuncDecl, name: string): boolean {
+    if (fn.receiver_name == name) { return true; }
+    var i: i32 = 0;
+    while (i < fn.params.len()) {
+        if (fn.params[i].name == name) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // strarrfld_fn_binds seeds the scan's type bindings for one function: its
