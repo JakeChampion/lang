@@ -528,7 +528,7 @@ function rewrite_stmt(st: parser.Stmt, ctx: RewriteCtx): parser.Stmt {
                 arms = arms.append(parser.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            return parser.StmtMatch { scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return parser.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
         },
         // Rewrite the deferred action's cross-module references before
         // lower_defers (module_with_builtins) schedules it at the exits.

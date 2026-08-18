@@ -15264,7 +15264,7 @@ function iife_rewrite_arm_body(body: parser.Stmt[], tmp: string, tslot: i32, ts:
                 iarms = iarms.append(parser.MatchArm { pattern: im.arms[ii].pattern, body: ib, line: im.arms[ii].line, col: im.arms[ii].col, guard: im.arms[ii].guard, has_guard: im.arms[ii].has_guard });
                 ii = ii + 1;
             }
-            tail = tail.append(parser.StmtMatch { scrutinee: im.scrutinee, arms: iarms, line: im.line, col: im.col, origin: im.origin });
+            tail = tail.append(parser.StmtMatch { ...im, scrutinee: im.scrutinee, arms: iarms });
         },
         _ => { return none; }
     }
@@ -15409,7 +15409,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
         newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
         i = i + 1;
     }
-    var newmatch: parser.Stmt = parser.StmtMatch { scrutinee: m.scrutinee, arms: newarms, line: m.line, col: m.col, origin: m.origin };
+    var newmatch: parser.Stmt = parser.StmtMatch { ...m, scrutinee: m.scrutinee, arms: newarms };
     var ls: LowerState = lower_stmt(newmatch, ts);
     if (!ls.ok) { return ls; }
     return ls.emit(ir.op_load_local(tslot));
@@ -52071,7 +52071,7 @@ function desugar_lambda_returns(body: parser.Stmt[], counter: i32): DesugarRet {
                     narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ad.body, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
                     ai = ai + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: m.scrutinee, arms: narms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(parser.StmtMatch { ...m, scrutinee: m.scrutinee, arms: narms });
             },
             _ => { out = out.append(body[i]); }
         }
@@ -52193,7 +52193,7 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
                 narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ab.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard });
                 ai = ai + 1;
             }
-            var nm: parser.Stmt = parser.StmtMatch { scrutinee: se.expr, arms: narms, line: m.line, col: m.col, origin: m.origin };
+            var nm: parser.Stmt = parser.StmtMatch { ...m, scrutinee: se.expr, arms: narms };
             return LiftStmts { stmts: [nm], acc: ma };
         },
         parser.StmtWhile(w) => {
@@ -53072,7 +53072,7 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
                     narms = narms.append(parser.MatchArm { pattern: marm.pattern, body: subst_fcall_stmts(marm.body, fname, lname, capargs), line: marm.line, col: marm.col, guard: ng, has_guard: marm.has_guard });
                     q = q + 1;
                 }
-                var ns: parser.Stmt = parser.StmtMatch { scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms, line: mm.line, col: mm.col, origin: mm.origin };
+                var ns: parser.Stmt = parser.StmtMatch { ...mm, scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms };
                 out = out.append(ns);
             },
             _ => { out = out.append(stmts[i]); }
@@ -53234,7 +53234,7 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
                             else { narms = narms.append(mm.arms[q]); }
                             q = q + 1;
                         }
-                        return ClosureLift { body: cl_replace_at(body, i, parser.StmtMatch { scrutinee: mm.scrutinee, arms: narms, line: mm.line, col: mm.col, origin: mm.origin }), acc: sm.acc, changed: true };
+                        return ClosureLift { body: cl_replace_at(body, i, parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms }), acc: sm.acc, changed: true };
                     }
                     ami = ami + 1;
                 }
@@ -53756,7 +53756,7 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
                     narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
                     a = a + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+                out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
             },
             _ => { out = out.append(stmts[i]); }
         }
@@ -53797,7 +53797,7 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
                     narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
                     a = a + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: mm.scrutinee, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+                out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
             },
             _ => { out = out.append(stmts[i]); }
         }
@@ -54546,7 +54546,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                     narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
                     a = a + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: mm.scrutinee, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+                out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
             },
             _ => { out = out.append(stmts[i]); }
         }
@@ -55549,7 +55549,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                     narms = narms.append(parser.MatchArm { pattern: mm.arms[ami].pattern, body: ab.stmts, line: mm.arms[ami].line, col: mm.arms[ami].col, guard: gexpr, has_guard: mm.arms[ami].has_guard });
                     ami = ami + 1;
                 }
-                out = out.append(parser.StmtMatch { scrutinee: sr.expr, arms: narms, line: mm.line, col: mm.col, origin: mm.origin });
+                out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
             },
             _ => { out = out.append(stmts[i]); }
         }
@@ -55695,7 +55695,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
                 na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed, btypes), line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
                 ai = ai + 1;
             }
-            return parser.StmtMatch { scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na, line: m.line, col: m.col, origin: m.origin };
+            return parser.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na };
         },
         parser.StmtDefer(d) => { return parser.StmtDefer { action: box_rewrite_stmt(d.action, boxed, btypes), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
@@ -56106,7 +56106,7 @@ function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs
                 na = na.append(parser.MatchArm { pattern: arm.pattern, body: ab.stmts, line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
                 ai = ai + 1;
             }
-            return WCapStmt { stmt: parser.StmtMatch { scrutinee: sr.expr, arms: na, line: m.line, col: m.col, origin: m.origin }, caps: a, changed: mchanged };
+            return WCapStmt { stmt: parser.StmtMatch { ...m, scrutinee: sr.expr, arms: na }, caps: a, changed: mchanged };
         },
         _ => { return WCapStmt { stmt: st, caps: acc, changed: false }; }
     }

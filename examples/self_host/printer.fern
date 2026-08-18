@@ -525,13 +525,18 @@ function print_pattern(pat: parser.Pattern): string {
         parser.PatVariant(pv) => {
             var head: string = pv.type_name;
             if (pv.at_binding.len() > 0) { head = pv.at_binding + " @ " + pv.type_name; }
+            // A NESTED payload (`Some(Ok(n))`) binds nothing itself, so the
+            // empty binding below is not "no payload list" — printing `head`
+            // there would drop the sub-pattern and re-parse as a payload-less
+            // arm. The sub-pattern is the payload.
+            if (pv.nested.len() > 0) { return head + "(" + print_pattern(pv.nested[0]) + ")"; }
             if (pv.binding.len() == 0) { return head; }
             // Every payload binding, not just the first — a `Pair(a, b)` printed
             // as `Pair(a)` re-parses as a different (E015) program.
-            var out: string = head + "(" + pv.binding;
+            var out: string = head + "(" + payload_slot(pv, pv.binding);
             var i: i32 = 0;
             while (i < pv.extra_bindings.len()) {
-                out = out + ", " + pv.extra_bindings[i];
+                out = out + ", " + payload_slot(pv, pv.extra_bindings[i]);
                 i = i + 1;
             }
             return out + ")";
@@ -540,18 +545,58 @@ function print_pattern(pat: parser.Pattern): string {
     return "_";
 }
 
+// payload_slot renders one payload slot: the binder as written, or the LITERAL
+// it was written as. A literal slot (`Sm(0)`) parses to a synthetic binder plus
+// a `binder == 0` condition that fold_lit_cond moves onto the arm's guard, so
+// the binder is a lowering artefact and printing it emits `Sm(__pl12_5) when
+// __pl12_5 == 0` — a different program in the source the user gets back.
+function payload_slot(pv: parser.PatVariant, binder: string): string {
+    if (!pv.has_lit_cond) { return binder; }
+    var lit: parser.Expr = lit_cond_for(pv.lit_cond, binder);
+    if (expr_is_missing(lit)) { return binder; }
+    return print_expr(lit);
+}
+
+// lit_cond_for finds the literal a slot was compared against inside the
+// `&&`-joined condition fold_lit_cond built — the right-hand side of the
+// `binder == <lit>` conjunct. Missing when the slot carries no literal.
+function lit_cond_for(cond: parser.Expr, binder: string): parser.Expr {
+    match (cond) {
+        parser.ExprBinary(b) => {
+            if (b.op == "&&") {
+                var left: parser.Expr = lit_cond_for(b.left, binder);
+                if (!expr_is_missing(left)) { return left; }
+                return lit_cond_for(b.right, binder);
+            }
+            if (b.op == "==") {
+                match (b.left) {
+                    parser.ExprIdent(id) => { if (id.name == binder) { return b.right; } },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return parser.e_unknown("");
+}
+
 function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     var pad: string = indent_str(depth);
     var out: string = "match (" + print_expr(m.scrutinee) + ") {\n";
     var g: Fmt = f;
+    // The arms as WRITTEN when the parse consumed something into the lowering
+    // — a nested payload merged into one arm plus an inner match, or a literal
+    // payload folded onto the guard. Empty on an ordinary match.
+    var arms: parser.MatchArm[] = m.arms;
+    if (m.sugar.len() > 0) { arms = m.sugar; }
     var i: i32 = 0;
-    while (i < m.arms.len()) {
-        var (arm_body, g1) = print_block(m.arms[i].body, depth + 1, g);
+    while (i < arms.len()) {
+        var (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
         g = g1;
-        out = out + indent_str(depth + 1) + print_pattern(m.arms[i].pattern);
-        if (m.arms[i].has_guard) { out = out + " when " + print_expr(m.arms[i].guard); }
+        out = out + indent_str(depth + 1) + print_pattern(arms[i].pattern);
+        if (arms[i].has_guard) { out = out + " when " + print_expr(arms[i].guard); }
         out = out + " => " + arm_body;
-        if (i + 1 < m.arms.len()) { out = out + ","; }
+        if (i + 1 < arms.len()) { out = out + ","; }
         out = out + "\n";
         i = i + 1;
     }

@@ -273,7 +273,7 @@ function fold_stmt(st: parser.Stmt): parser.Stmt {
                 arms = arms.append(parser.MatchArm { pattern: m.arms[i].pattern, body: fold_block(m.arms[i].body), line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            return parser.StmtMatch { scrutinee: fold_expr(m.scrutinee), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return parser.StmtMatch { ...m, scrutinee: fold_expr(m.scrutinee), arms: arms };
         },
         parser.StmtFor(f) => {
             return parser.StmtFor { var_name: f.var_name, iter: fold_expr(f.iter), body: fold_block(f.body), label: f.label, line: f.line };

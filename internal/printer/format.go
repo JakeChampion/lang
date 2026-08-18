@@ -1112,14 +1112,22 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		// re-renders as the binding form the source spelled: the leading
 		// arms are the pattern alternatives, the trailing wildcard arm is
 		// the else.
-		if x.Origin != "" && len(x.Arms) >= 2 {
-			success, els := x.Arms[0].Body, x.Arms[len(x.Arms)-1].Body
+		// Sugar holds the arms as written, when the nested-pattern desugar
+		// rewrote them into a merged arm plus an inner match. Reprinting the
+		// lowering instead would put the desugar's `__nest` temps into the
+		// user's source — permanently, under `-fmt -w`.
+		arms := x.Arms
+		if x.Sugar != nil {
+			arms = x.Sugar
+		}
+		if x.Origin != "" && len(arms) >= 2 {
+			success, els := arms[0].Body, arms[len(arms)-1].Body
 			if x.Origin == ast.OriginLetElse {
 				f.b.WriteString("let ")
 			} else {
 				f.b.WriteString("if let ")
 			}
-			for i, arm := range x.Arms[:len(x.Arms)-1] {
+			for i, arm := range arms[:len(arms)-1] {
 				if i > 0 {
 					f.b.WriteString(" | ")
 				}
@@ -1154,7 +1162,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") {\n")
-		for i, arm := range x.Arms {
+		for i, arm := range arms {
 			f.indent(depth + 1)
 			f.formatArmPattern(arm)
 			if arm.Guard != nil {
@@ -1163,7 +1171,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			}
 			f.b.WriteString(" => ")
 			f.formatBlock(arm.Body, depth+1)
-			if i < len(x.Arms)-1 {
+			if i < len(arms)-1 {
 				f.b.WriteByte(',')
 			}
 			f.b.WriteByte('\n')
@@ -1227,6 +1235,17 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				if i > 0 {
 					f.b.WriteString(", ")
 				}
+				// A field carrying a SUB-PATTERN prints `field: <pat>`; the
+				// binder in Bindings[i] is the desugar's temp, not a name the
+				// source spelled.
+				if sub := armSub(arm, i); sub != nil {
+					if i < len(arm.FieldNames) {
+						f.b.WriteString(arm.FieldNames[i])
+						f.b.WriteString(": ")
+					}
+					f.formatArmPattern(sub)
+					continue
+				}
 				// `S { field: local }` renames; the shorthand `S { x }`
 				// has FieldNames[i] == Bindings[i].
 				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != b {
@@ -1242,11 +1261,24 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 				if i > 0 {
 					f.b.WriteString(", ")
 				}
+				if sub := armSub(arm, i); sub != nil {
+					f.formatArmPattern(sub)
+					continue
+				}
 				f.b.WriteString(b)
 			}
 			f.b.WriteByte(')')
 		}
 	}
+}
+
+// armSub returns the sub-pattern this arm matches against payload slot i, or
+// nil when the slot is a plain binder.
+func armSub(arm *ast.MatchArm, i int) *ast.MatchArm {
+	if i >= len(arm.Sub) {
+		return nil
+	}
+	return arm.Sub[i]
 }
 
 // formatTuplePatElems renders a tuple pattern `(p0, p1, …)`.
@@ -1301,7 +1333,24 @@ func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
 // the copy it used to keep silently dropped `@` bindings, range high bounds,
 // tuple patterns and field renames, rewriting `3..=4 => …` to `3 => …`.
 func (f *formatter) formatExprArmPattern(arm *ast.MatchExprArm) {
-	f.formatArmPattern(&ast.MatchArm{
+	f.formatArmPattern(stmtShapedArm(arm))
+}
+
+// stmtShapedArm adapts an expression-form arm's PATTERN half to the statement
+// shape the one renderer takes. Recursive through Sub, so a payload
+// sub-pattern reaches the same renderer the statement form uses.
+func stmtShapedArm(arm *ast.MatchExprArm) *ast.MatchArm {
+	if arm == nil {
+		return nil
+	}
+	var sub []*ast.MatchArm
+	if arm.Sub != nil {
+		sub = make([]*ast.MatchArm, len(arm.Sub))
+		for i := range arm.Sub {
+			sub[i] = stmtShapedArm(arm.Sub[i])
+		}
+	}
+	return &ast.MatchArm{
 		P:              arm.P,
 		VariantName:    arm.VariantName,
 		VariantModule:  arm.VariantModule,
@@ -1314,7 +1363,8 @@ func (f *formatter) formatExprArmPattern(arm *ast.MatchExprArm) {
 		RangeInclusive: arm.RangeInclusive,
 		TupleElems:     arm.TupleElems,
 		AtBinding:      arm.AtBinding,
-	})
+		Sub:            sub,
+	}
 }
 
 // Precedence levels mirror the parser's. Higher value binds
@@ -1706,7 +1756,12 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") { ")
-		for i, arm := range x.Arms {
+		// See the statement form: Sugar is the arms as written.
+		exprArms := x.Arms
+		if x.Sugar != nil {
+			exprArms = x.Sugar
+		}
+		for i, arm := range exprArms {
 			if i > 0 {
 				f.b.WriteString(", ")
 			}

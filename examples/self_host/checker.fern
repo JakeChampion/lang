@@ -13060,7 +13060,7 @@ function annotate_stmt(st: parser.Stmt, s: Scope): parser.Stmt {
         narms = narms.append(parser.MatchArm { pattern: arm.pattern, body: annotate_block(arm.body, asc), line: arm.line, col: arm.col, guard: g, has_guard: arm.has_guard });
         i = i + 1;
       }
-      return parser.StmtMatch { scrutinee: annotate_expr(m.scrutinee, s), arms: narms, line: m.line, col: m.col, origin: m.origin };
+      return parser.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
     },
     parser.StmtFor(fr) => {
       return parser.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, annotate_for_scope(fr, s)), label: fr.label, line: fr.line };
