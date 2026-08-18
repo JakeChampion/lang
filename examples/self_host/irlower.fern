@@ -56802,7 +56802,7 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "" };
+        var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0 };
         var nested: parser.ExprLambda[] = [];
         match (stmts[i]) {
             parser.StmtVar(v) => {
