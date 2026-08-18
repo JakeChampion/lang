@@ -3630,12 +3630,56 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
+	sugar := sugarStmtArms(raw)
 	arms, err := p.desugarNestedStmtArms(raw)
 	if err != nil {
 		return nil, err
 	}
 	m.Arms = arms
+	m.Sugar = sugar
 	return m, nil
+}
+
+// sugarStmtArms snapshots the arms as written, for the printer, when at least
+// one of them nests — so `-fmt` reprints `Some(Ok(n)) => …` instead of the
+// merged arm and its inner match. nil when nothing nested, which is every
+// ordinary match: the desugar is a no-op there and the lowered arms ARE the
+// written ones.
+func sugarStmtArms(raw []stmtRawArm) []*ast.MatchArm {
+	nested := false
+	for i := range raw {
+		if raw[i].pat.hasNestedSub() {
+			nested = true
+			break
+		}
+	}
+	if !nested {
+		return nil
+	}
+	out := make([]*ast.MatchArm, len(raw))
+	for i := range raw {
+		out[i] = stmtArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
+	}
+	return out
+}
+
+// sugarExprArms is sugarStmtArms for the expression form.
+func sugarExprArms(raw []exprRawArm) []*ast.MatchExprArm {
+	nested := false
+	for i := range raw {
+		if raw[i].pat.hasNestedSub() {
+			nested = true
+			break
+		}
+	}
+	if !nested {
+		return nil
+	}
+	out := make([]*ast.MatchExprArm, len(raw))
+	for i := range raw {
+		out[i] = exprArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
+	}
+	return out
 }
 
 // stmtRawArm is one fully-parsed statement-match arm alternative — a
@@ -3780,11 +3824,12 @@ func (p *parser) buildPatternBindingMatch(pos ast.Position, pats []matchPattern,
 		raw = append(raw, stmtRawArm{pat: pat, body: b})
 	}
 	raw = append(raw, stmtRawArm{pat: matchPattern{P: pos, IsWildcard: true}, body: els})
+	sugar := sugarStmtArms(raw)
 	arms, err := p.desugarNestedStmtArms(raw)
 	if err != nil {
 		return nil, err
 	}
-	return &ast.Match{P: pos, Tag: src, Arms: arms, Origin: origin}, nil
+	return &ast.Match{P: pos, Tag: src, Arms: arms, Origin: origin, Sugar: sugar}, nil
 }
 
 // stmtAsBlock adapts a single statement to the *ast.Block a match arm
@@ -3806,8 +3851,25 @@ func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
-		SlotBinderName: pat.slotBinder, Guard: guard, Body: body,
+		SlotBinderName: pat.slotBinder, Sub: subStmtArms(pat), Guard: guard, Body: body,
 	}
+}
+
+// subStmtArms lifts a pattern's nested payload sub-patterns onto the AST so
+// the printer can reprint them — nil for the common flat pattern. Recursive,
+// so `Some(Ok(Some(x)))` survives at every depth. The sub-arms carry no body:
+// nothing runs them, and the desugar has already produced the arms that do.
+func subStmtArms(pat matchPattern) []*ast.MatchArm {
+	if !pat.hasNestedSub() {
+		return nil
+	}
+	out := make([]*ast.MatchArm, len(pat.subPats))
+	for i, sp := range pat.subPats {
+		if sp != nil {
+			out[i] = stmtArmFromPattern(*sp, nil, nil)
+		}
+	}
+	return out
 }
 
 // freshNestName mints a unique synthetic temp name for a nested-pattern
@@ -4581,11 +4643,13 @@ func (p *parser) parseMatchExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
+	sugar := sugarExprArms(raw)
 	arms, err := p.desugarNestedExprArms(raw)
 	if err != nil {
 		return nil, err
 	}
 	m.Arms = arms
+	m.Sugar = sugar
 	return m, nil
 }
 
@@ -4655,8 +4719,22 @@ func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprAr
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
-		SlotBinderName: pat.slotBinder, Guard: guard, Body: body,
+		SlotBinderName: pat.slotBinder, Sub: subExprArms(pat), Guard: guard, Body: body,
 	}
+}
+
+// subExprArms is subStmtArms for the expression form.
+func subExprArms(pat matchPattern) []*ast.MatchExprArm {
+	if !pat.hasNestedSub() {
+		return nil
+	}
+	out := make([]*ast.MatchExprArm, len(pat.subPats))
+	for i, sp := range pat.subPats {
+		if sp != nil {
+			out[i] = exprArmFromPattern(*sp, nil, nil)
+		}
+	}
+	return out
 }
 
 // desugarNestedExprArms is the expression-form twin of

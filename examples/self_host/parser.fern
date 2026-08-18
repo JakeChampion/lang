@@ -235,7 +235,13 @@ pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard
 // but the checker reads it to apply the dedicated `if-let`/`let-else`
 // diagnostics (E022/E023) the Go checker emits, instead of the generic
 // match-arm diagnostics (E035) the desugared shape would otherwise draw.
-pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string }
+// sugar is the arms as the PROGRAMMER wrote them, kept when a pattern carried
+// something the lowering consumes — a nested payload (`Some(Ok(n))`) or a
+// literal payload (`Sm(0)`, folded into the arm's guard). Read by the PRINTER
+// only, so `-fmt` reprints the pattern the source spelled instead of the merged
+// arm and its `__nest` temp, or the `V(__pl…) when __pl… == 0` the fold leaves.
+// Empty on every ordinary match, where the lowered arms ARE the written ones.
+pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[] }
 // StmtFor models `for VAR in EXPR { body }`. The iter expr
 // evaluates to an array (interp) / TypeArray (checker); the
 // loop binds `var_name` to each element in turn. break /
@@ -726,10 +732,16 @@ function s_assign_at(target: string, value: Expr, line: i32, col: i32, target_li
     return StmtAssign { target: target, value: value, line: line, col: col, target_line: target_line, target_col: target_col };
 }
 function s_match(scrutinee: Expr, arms: MatchArm[]): Stmt {
-    return StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "" };
+    var no_sugar: MatchArm[] = [];
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar };
 }
 function s_match_at(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32): Stmt {
-    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "" };
+    var no_sugar: MatchArm[] = [];
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar };
+}
+// s_match_sugared is s_match_at plus the written-form arms for the printer.
+function s_match_sugared(scrutinee: Expr, arms: MatchArm[], sugar: MatchArm[], line: i32, col: i32): Stmt {
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar };
 }
 
 // array_builder_elem extracts T from an "ArrayBuilder[T]" type spelling
@@ -801,7 +813,7 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
                 arms = arms.append(MatchArm { pattern: arm.pattern, body: rewrite_builder_stmts(arm.body, b), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
                 ai = ai + 1;
             }
-            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
         },
         _ => { return s; },
     }
@@ -934,7 +946,8 @@ function maybe_desugar_map_build(base: Expr): Expr {
 // s_match_origin is s_match_at tagged with the desugar that produced it
 // ("if_let" / "let_else"); see StmtMatch.origin.
 function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string): Stmt {
-    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin };
+    var no_sugar: MatchArm[] = [];
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar };
 }
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
@@ -1041,7 +1054,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
                 arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
                 ai = ai + 1;
             }
-            return StmtMatch { scrutinee: m.scrutinee, arms: arms2, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms2 };
         },
         StmtDefer(dd) => {
             return StmtDefer { action: resolve_labels_stmt(dd.action, labels), on_error: dd.on_error, line: dd.line };
@@ -4670,6 +4683,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         return (build_literal_match(sr_expr, lit_arms, mkline, mkcol), p);
     }
     var arms: MatchArm[] = [];
+    var written: MatchArm[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // E026 / E028 are reported at the arm (Go's `arm.P`), which is the
         // pattern's first token.
@@ -4710,6 +4724,11 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         p = bb_p;
         var pi: i32 = 0;
         while (pi < pats.len()) {
+            // The WRITTEN arm goes to `sugar` before fold_lit_cond moves a
+            // literal payload into the guard and before desugar_nested_arms
+            // merges a nested one — those two are what the printer must not
+            // reprint in place of the source.
+            written = written.append(MatchArm { pattern: pats[pi], body: bb_body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
             var (fs_pat, fs_g, fs_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
             arms = arms.append(MatchArm { pattern: fs_pat, body: bb_body, line: aline, col: acol, guard: fs_g, has_guard: fs_hg });
             pi = pi + 1;
@@ -4718,8 +4737,27 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    var sugar: MatchArm[] = [];
+    if (arms_have_written_form(written)) { sugar = written; }
     arms = desugar_nested_arms(arms, 0, "");
-    return (s_match_at(sr_expr, arms, mkline, mkcol), p);
+    return (s_match_sugared(sr_expr, arms, sugar, mkline, mkcol), p);
+}
+
+// arms_have_written_form reports whether any arm's pattern carries something
+// the lowering consumes — a nested payload or a literal one — so the written
+// arms are worth keeping for the printer. False for every ordinary match.
+function arms_have_written_form(written: MatchArm[]): boolean {
+    var i: i32 = 0;
+    while (i < written.len()) {
+        match (written[i].pattern) {
+            PatVariant(v) => {
+                if (v.nested.len() > 0 || v.has_lit_cond) { return true; }
+            },
+            PatWildcard(w) => {}
+        }
+        i = i + 1;
+    }
+    return false;
 }
 
 // expr_mentions / stmts_mention report whether `name` appears as an
@@ -8675,7 +8713,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
+            return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
         },
         _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
     }
@@ -8865,7 +8903,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
                     arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard });
                     j = j + 1;
                 }
-                out = out.append(StmtMatch { scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(StmtMatch { ...m, scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms });
             },
             _ => { out = out.append(st); }
         }
@@ -8945,7 +8983,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
                     arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: retarget_self_lit_stmts(m.arms[j].body, base, mang), line: m.arms[j].line, col: m.arms[j].col, guard: retarget_self_lit_expr(m.arms[j].guard, base, mang), has_guard: m.arms[j].has_guard });
                     j = j + 1;
                 }
-                out = out.append(StmtMatch { scrutinee: retarget_self_lit_expr(m.scrutinee, base, mang), arms: arms, line: m.line, col: m.col, origin: m.origin });
+                out = out.append(StmtMatch { ...m, scrutinee: retarget_self_lit_expr(m.scrutinee, base, mang), arms: arms });
             },
             _ => { out = out.append(st); }
         }
@@ -9920,7 +9958,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
                 arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
+            return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
         },
         _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
     }
@@ -11045,7 +11083,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                 arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard });
                 i = i + 1;
             }
-            return RStmtOne { rstmt: StmtMatch { scrutinee: sv.rexpr, arms: arms, line: m.line, col: m.col, origin: m.origin }, renv: env, rins2: cur };
+            return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
         },
         _ => { return RStmtOne { rstmt: st, renv: env, rins2: ins }; }
     }
@@ -12796,7 +12834,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
                 arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
                 a = a + 1;
             }
-            return [StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin }];
+            return [StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
         },
         StmtDefer(d) => {
             var r: Stmt[] = desugar_ranges_one(d.action);
@@ -13003,7 +13041,7 @@ function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
                 arms = arms.append(MatchArm { pattern: rvf_pattern(m.arms[a].pattern, structs), body: rvf_block(m.arms[a].body, structs), line: m.arms[a].line, col: m.arms[a].col, guard: rvf_expr(m.arms[a].guard, structs), has_guard: m.arms[a].has_guard });
                 a = a + 1;
             }
-            return StmtMatch { scrutinee: rvf_expr(m.scrutinee, structs), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: rvf_expr(m.scrutinee, structs), arms: arms };
         },
         _ => { return st; }
     }
@@ -14080,7 +14118,7 @@ function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) { arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard }); i = i + 1; }
-            return StmtMatch { scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms };
         },
         StmtDefer(d) => { return StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
@@ -14176,7 +14214,7 @@ function elb_recurse_stmt(st: Stmt): Stmt {
                 arms = arms.append(MatchArm { pattern: arm.pattern, body: elide_len_bounded_body(arm.body), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
                 i = i + 1;
             }
-            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
         },
         StmtDefer(d) => { return StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
@@ -14410,7 +14448,7 @@ function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
                 arms = arms.append(MatchArm { pattern: arm.pattern, body: elb_mark_stmts(arm.body, idx, arr), line: arm.line, col: arm.col, guard: elb_mark_expr(arm.guard, idx, arr), has_guard: arm.has_guard });
                 i = i + 1;
             }
-            return StmtMatch { scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms };
         },
         _ => { return st; }
     }
@@ -14797,7 +14835,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
                 arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: fnv_rewrite_block(m.arms[ai].body, whole, funcs, structs), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
                 ai = ai + 1;
             }
-            return StmtMatch { scrutinee: m.scrutinee, arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
         },
         _ => { return st; }
     }
@@ -16853,7 +16891,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
                 arms = arms.append(MatchArm { pattern: a.pattern, body: settle_block(a.body, ret_type, names, types, funcs, structs), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
                 ai = ai + 1;
             }
-            return StmtMatch { scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms, line: m.line, col: m.col, origin: m.origin };
+            return StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms };
         },
         StmtDefer(dd) => {
             return StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, funcs, structs), on_error: dd.on_error, line: dd.line };

@@ -1341,6 +1341,61 @@ func TestFormatNegativeLiteralPattern(t *testing.T) {
 	}
 }
 
+// A pattern the nested-pattern desugar consumes must still reprint as the
+// source spelled it. Without a written-form carrier the formatter had only the
+// lowering left to render — the merged arm, its inner match and the `__nest`
+// temp — and `-fmt -w` made that the user's file.
+func TestFormatKeepsNestedArmPatterns(t *testing.T) {
+	const decls = "enum Inner { Ok2(i32), Err2(i32) }\nenum Outer { A(Inner), B }\nenum Sm { V(i32), W }\nstruct W2 { e: Outer, n: i32 }\n"
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			name: "nested_payload",
+			src:  decls + "function f(o: Outer): i32 {\n match (o) { A(Ok2(n)) => { return n; }, A(Err2(n)) => { return 0 - n; }, _ => { return 0; } }\n}",
+			want: "A(Ok2(n)) => {",
+		},
+		{
+			// A literal payload folds into the arm's condition, so without the
+			// carrier this printed the desugar's binder instead of the `0`.
+			name: "literal_payload",
+			src:  decls + "function f(s: Sm): i32 {\n match (s) { V(0) => { return 100; }, V(x) => { return x; }, W() => { return 1; } }\n}",
+			want: "V(0) => {",
+		},
+		{
+			name: "depth_three",
+			src:  "enum L1 { P(L2) }\nenum L2 { Q(L3) }\nenum L3 { R(i32) }\nfunction f(v: L1): i32 {\n match (v) { P(Q(R(n))) => { return n; } }\n}",
+			want: "P(Q(R(n))) => {",
+		},
+		{
+			name: "expression_form",
+			src:  decls + "function f(o: Outer): i32 { return match (o) { A(Ok2(n)) => n, A(Err2(n)) => 0 - n, _ => 0 }; }",
+			want: "A(Ok2(n)) => n",
+		},
+		{
+			name: "if_let",
+			src:  decls + "function f(o: Outer): i32 { if let A(Ok2(n)) = o { return n; } return 0; }",
+			want: "if let A(Ok2(n)) = o {",
+		},
+		{
+			name: "struct_field_subpattern",
+			src:  decls + "function f(w: W2): i32 {\n match (w) { W2 { e: A(Ok2(n)), n: m } => { return n + m; }, _ => { return 0; } }\n}",
+			want: "W2 { e: A(Ok2(n)), n: m } => {",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatSrc(t, tc.src)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("got:\n%s\nwant it to contain %q", got, tc.want)
+			}
+			if strings.Contains(got, "__nest") {
+				t.Errorf("the desugar's temp reached the formatted source:\n%s", got)
+			}
+			if again := formatSrc(t, got); again != got {
+				t.Errorf("not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+			}
+		})
+	}
+}
+
 // Match-EXPRESSION arms render through the same pattern renderer as
 // statement arms. They used to keep a second, impoverished copy that knew
 // only variant / named-field / wildcard / bare-literal, so it silently

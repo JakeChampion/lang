@@ -2732,6 +2732,13 @@ type Match struct {
 	// it back to re-render the original form.
 	// Mirrors the self-host parser's StmtMatch.origin.
 	Origin string
+	// Sugar records the arms as the PROGRAMMER wrote them, kept when the
+	// nested-pattern desugar rewrote them into merged arms plus an inner
+	// match. Read by the printer only — the role Block.Sugar plays for
+	// `for … in …` — and nil when no arm nested, so an ordinary match
+	// carries nothing extra. The walk skips it: every body it holds is the
+	// same node the lowered arms already carry.
+	Sugar []*MatchArm
 }
 
 // TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
@@ -2859,7 +2866,19 @@ type MatchArm struct {
 	// reachability check must not call it unreachable. It still counts
 	// for exhaustiveness: the copy is what makes the inner match total.
 	FallConsumed bool
-	Body         *Block
+	// Sub runs parallel to Bindings: a non-nil entry is the SUB-PATTERN
+	// matched against that payload slot rather than a binder —
+	// `Some(Ok(n))` — and Bindings[i] is then the synthetic temp the
+	// nested-pattern desugar binds the slot to. Recursive, so
+	// `Some(Ok(Some(x)))` is expressible at every depth.
+	//
+	// Read by the PRINTER only, which is the whole reason it exists: the
+	// desugar has already turned the nesting into flat arms plus an inner
+	// match for every other stage, and without this the formatter had
+	// nothing left to reprint but that lowering — writing `__nest0` into
+	// the user's source, permanently under `-fmt -w`. The walk skips it.
+	Sub  []*MatchArm
+	Body *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2882,6 +2901,9 @@ type MatchExpr struct {
 	// StructMatch mirrors Match.StructMatch: the scrutinee struct type
 	// name when the arms are struct patterns `S { x, y }`. Empty otherwise.
 	StructMatch string
+	// Sugar mirrors Match.Sugar: the arms as written, kept when the
+	// nested-pattern desugar rewrote them. Printer-only, walk-skipped.
+	Sugar []*MatchExprArm
 }
 
 // MatchExprArm is the expression-form arm. Body is an Expr; all
@@ -2923,7 +2945,10 @@ type MatchExprArm struct {
 	// reachability check must not call it unreachable. It still counts
 	// for exhaustiveness: the copy is what makes the inner match total.
 	FallConsumed bool
-	Body         Expr
+	// Sub mirrors MatchArm.Sub: the payload sub-patterns as written,
+	// parallel to Bindings. Printer-only, walk-skipped.
+	Sub  []*MatchExprArm
+	Body Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }

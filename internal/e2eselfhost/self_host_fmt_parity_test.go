@@ -78,6 +78,38 @@ var t6: i32 = a << b >> c;
 return t1 + t2 + t3 + t4 + t5 + t6;
 }
 `},
+	// A NESTED payload (`A(Ok2(n))`) and a LITERAL one (`V(0)`) are both
+	// consumed by the lowering — the first into a merged arm plus an inner
+	// match on a `__nest` temp, the second into a synthetic binder plus a
+	// guard. Neither formatter had anything left to reprint but that
+	// lowering, so `-fmt -w` rewrote the file into the desugar. Nothing in
+	// the parity CORPUS uses either spelling, which is why the gate stayed
+	// green through it; this fixture is what covers them.
+	{"pattern-nested-payload", `enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+function nested(o: Outer): i32 {
+match (o) {
+A(Ok2(n)) => { return n; },
+A(Err2(n)) => { return 0 - n; },
+_ => { return 0; }
+}
+}
+function main(): i32 {
+return nested(Outer.A(Inner.Ok2(1)));
+}
+`},
+	{"pattern-literal-payload", `enum Sm { V(i32), W }
+function pick(s: Sm): i32 {
+match (s) {
+V(0) => { return 100; },
+V(x) => { return x; },
+W => { return 1; }
+}
+}
+function main(): i32 {
+return pick(Sm.V(0)) + pick(Sm.V(7)) + pick(Sm.W);
+}
+`},
 	{"precedence-bitwise-vs-compare", `function is_pow2(n: i32): boolean {
 return (n & (n - 1)) == 0;
 }
