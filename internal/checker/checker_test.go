@@ -2901,6 +2901,68 @@ func TestQualifiedVariantReferences(t *testing.T) {
 	}
 }
 
+// TestAmbiguousVariantHintIsSpellable pins that E036's "qualify the
+// reference" hint names enums the way a reader can WRITE them.
+//
+// The cases above are all single-file, where every enum name is already
+// its source spelling. Across modules the checker holds the mangled
+// `lib__Kind`, and the diagnostic printed that: an identifier no program
+// can contain, which also leaks a private module's internal name. The
+// candidate was picked as `variantOf[name][0]` too, so a reference in
+// one module was told to qualify with an enum from another.
+func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
+	const libEnum = "pub enum Kind { Text, Number }\n"
+	const otherEnum = "pub enum Kind { Text, Blah }\n"
+
+	t.Run("prefers the reader's own module", func(t *testing.T) {
+		err, _ := checkFiles(t, map[string]string{
+			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
+				"function main(): i32 { return lib.pick() + other.n(); }\n",
+			"lib.fern": libEnum + "pub function pick(): i32 {\n" +
+				"    var k: Kind = Text;\n    return 0;\n}\n",
+			"other.fern": otherEnum + "pub function n(): i32 { return 0; }\n",
+		}, "main.fern")
+		if err == nil {
+			t.Fatal("expected E036 for the ambiguous bare variant")
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "__") {
+			t.Errorf("diagnostic names a mangled enum:\n%s", msg)
+		}
+		// lib declares the reference, so lib's own enum is the one to
+		// suggest — and inside lib it is spelled bare.
+		if !strings.Contains(msg, "e.g. `Kind.Text`") {
+			t.Errorf("hint should qualify with the referring module's own enum:\n%s", msg)
+		}
+		for _, want := range []string{"Kind", "other.Kind"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("candidate list missing %q:\n%s", want, msg)
+			}
+		}
+	})
+
+	t.Run("names imported enums as mod.Enum", func(t *testing.T) {
+		err, _ := checkFiles(t, map[string]string{
+			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
+				"function main(): i32 {\n    var k: lib.Kind = Text;\n    return 0;\n}\n",
+			"lib.fern":   libEnum,
+			"other.fern": otherEnum,
+		}, "main.fern")
+		if err == nil {
+			t.Fatal("expected E036 for the ambiguous bare variant")
+		}
+		msg := err.Error()
+		if strings.Contains(msg, "__") {
+			t.Errorf("diagnostic names a mangled enum:\n%s", msg)
+		}
+		for _, want := range []string{"lib.Kind", "other.Kind"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("candidate list missing %q:\n%s", want, msg)
+			}
+		}
+	})
+}
+
 // TestCastAsTypeAscription — the `as` operator doubles as a
 // zero-cost type-annotation form. Bare `None`, `[]`, partially-
 // inferred variant constructors, etc. all get a place to pin a
