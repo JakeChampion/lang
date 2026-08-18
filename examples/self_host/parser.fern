@@ -8188,7 +8188,7 @@ function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string
 // classification is duplicated here to keep instantiation inference and lowering
 // in agreement. (Negative literals are unary minus over a positive literal;
 // hex literals keep the "0x" prefix so len<10 reads i32, matching irlower.)
-function literal_is_i64(text: string): boolean {
+pub function literal_is_i64(text: string): boolean {
     var n: i32 = text.len();
     if (n > 10) { return true; }
     if (n < 10) { return false; }

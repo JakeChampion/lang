@@ -67,10 +67,11 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E048]",
 		},
 		{
-			// E043 is excluded: the self-host checker reports it here (its
-			// `type_eq` ignores integer width, #7011) and native accepts the
-			// program. Gating E043 would refuse a valid i64 program.
-			name:     "excluded-i64-width-E043",
+			// A valid i64 program compiles. This drew a spurious E043 when the
+			// checker ignored integer width, which is why E043 was excluded;
+			// #7011 closed that, and both checkers are now silent here. The
+			// case stays as the regression guard for the width rule.
+			name:     "i64-program-compiles",
 			src:      "import \"std/i64\";\nfunction main(): i32 { var a: i64 = 9i64; var b: i64 = 3i64; return (a / b) as i32; }\n",
 			wantDiag: "",
 		},
