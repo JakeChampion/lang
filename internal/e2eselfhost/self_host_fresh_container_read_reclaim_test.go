@@ -430,6 +430,59 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+
+	// The BOX half of that same refusal. `wrap` is strict-fresh, so the box it
+	// returns is this frame's own allocation and nothing names it — only its
+	// STRING came from a parameter. "STRFLDF:" refuses the move for that reason,
+	// which is right, and the box was refused along with it, leaking the whole
+	// thing per evaluation. The box dec is shallow and the moved-out pointer
+	// belongs to whoever allocated it, so reclaiming the box alone is safe where
+	// moving the string is not. Grew on the parent (92), flat here.
+	{"strfld-param-value-box-reclaimed", `struct Box { name: string, k: i32 }
+function wrap(s: string, n: i32): Box { return Box { name: s, k: n }; }
+function rounds(live: string, n: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { t = t + wrap(live, i).name.len(); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var live: string = "abcd" + "efgh";
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(live, 50);
+    var b1: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(live, 100);
+    var b2: i64 = __heap_bump_bytes();
+    if (x != 400) { return 91; }
+    if (y != 800) { return 93; }
+    if ((b2 - b1) > (b1 - b0)) { return 92; }
+    if (live != "abcdefgh") { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+
+	// The same admission reached through a METHOD receiver, and the half that
+	// proves the box dec stayed SHALLOW: the moved-out pointer is read back
+	// AFTER churn has recycled the freed box's bytes. A deep drop here would
+	// have freed main's `owned` underneath it.
+	{"strfld-method-param-value-box-reclaimed", `struct Box { tag: string, n: i32 }
+function (b: Box) relabel(t: string): Box { return Box { tag: t, n: b.n }; }
+function churn(n: i32): i32 {
+    var junk: string = "";
+    var i: i32 = 0;
+    while (i < n) { junk = junk + "z"; i = i + 1; }
+    return junk.len();
+}
+function main(): i32 {
+    var seed: Box = Box { tag: "seed", n: 1 };
+    var owned: string = "hello" + "!";
+    var got: string = seed.relabel(owned).tag;
+    if (churn(200) != 200) { return 91; }
+    if (got != "hello!") { return 90; }
+    if (owned != "hello!") { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostFreshContainerReadReclaimIRX86_64 drives the cases through the
