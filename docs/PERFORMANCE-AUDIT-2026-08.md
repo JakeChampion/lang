@@ -892,24 +892,28 @@ pub function (s: LowerState) emit(op: ir.Op): LowerState {
 }
 ```
 
-**The hypothesis to test next, and it is testable.** This is the threaded-param
-struct accumulator `docs/OWNERSHIP-INFERENCE-PLAN.md` says was restored to O(N)
-on the natives — but its fix and its regression test
-(`TestX86_64SSAAccumThreadedParam`) are written in the FREE-FUNCTION spelling,
-`build(s: Bld, n)`. A minimal probe of both spellings of one accumulator, read
-with `__heap_bump_bytes()`, separates them:
+**One hypothesis is already ruled out: the method-receiver spelling.** Both hot
+sites are methods, and `docs/OWNERSHIP-INFERENCE-PLAN.md` restores this shape to
+O(N) using the FREE-FUNCTION spelling (`build(s: Bld, n)`, pinned by
+`TestX86_64SSAAccumThreadedParam`), so "the fix does not reach methods" is the
+obvious guess. It is wrong, checked two ways. The checker rewrites
+`x.m(a)` to `__method_T_m(x, a)` before the rc passes run, and the emitted asm
+for the two spellings of one accumulator is identical — same callee body, same
+caller rc traffic (3 × `__drop_struct_Bld`, 2 × `__fern_alloc`, one call).
 
-| spelling | bump bytes, n=20,000 | n=40,000 |
-|---|---|---|
-| `push_free(b, v)` | **0** | **0** |
-| `b.push_method(v)` | 229,024 | 229,376 |
+**And the probe that suggested it was an artefact worth recording.** Reading
+`__heap_bump_bytes()` around both spellings IN ONE PROCESS reported 229,024
+bytes for the first and **0** for the second — a difference that follows the
+ORDER, not the spelling: whichever runs second reuses what the first left in the
+arena. Swap them and the zero swaps with it. This is why
+`internal/e2e/alloc_scaling_test.go` compiles one program per shape and runs
+each in its own process; a bump delta measured after any earlier churn in the
+same process is not a measurement of that shape.
 
-The free-function form allocates nothing net — every superseded buffer is freed
-and reused. The method-receiver form does not, which is exactly what the `RC >= 2`
-trace shows at `emit` and `bind`. So the likely gap is that the ownership fix
-does not reach the method-RECEIVER spelling, which is how the self-host compiler
-writes both of its hot accumulators. That is a native `internal/ir` question,
-not a self-host one.
+So the ratchet is located but not yet explained: `emit` and `bind` see
+`RC >= 2` on a field buffer whose only other reference should be the superseded
+state, and the next step is to find what is still holding that count in the real
+compiler — a native `internal/ir` question, not a self-host one.
 
 ## 8. Reproducing any of this
 
