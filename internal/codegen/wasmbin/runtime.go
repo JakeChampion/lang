@@ -3953,6 +3953,51 @@ func buildRcDecBody(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// appendArrPushCliffTally appends the rc==1 cliff tally every
+// __fern_arr_push_grow* variant runs once its in-place fast path has fallen
+// through: reaching there means rc != 1 OR the buffer was full, so if it still
+// had ROOM then rc != 1 was the sole reason and the copy that follows is bought
+// entirely by an extra reference. Count it and weight it by the bytes about to
+// be copied, so an accumulator that has silently gone quadratic can be seen
+// rather than inferred from an arena exhaustion downstream. See
+// arrPushSharedAddr.
+//
+// EVERY variant, not just the scalar one. The counters were bumped only inside
+// `__fern_arr_push_grow` until #6888 §4d.6, so pointer- and string-element
+// appends — which is what a compiler's own accumulators are made of — crossed
+// the cliff invisibly.
+//
+// Locals 0/1/2 are the (arr, oldLen, stride) parameters every variant shares.
+func appendArrPushCliffTally(body []byte) []byte {
+	body = inst.InstLocalGet(body, 1) // oldLen
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 12)
+	body = numeric.InstI32Sub(body)
+	body = memory.InstI32Load(body, 2, 0) // cap
+	body = numeric.InstI32LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, arrPushSharedAddr)
+	body = inst.InstI32Const(body, arrPushSharedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Store(body, 2, 0)
+	// Weight the crossing by the bytes it is about to copy — oldLen *
+	// stride, accumulated as an i64 at arrPushCopiedAddr. The product is
+	// computed in i32 (wasm32 memory bounds it) and zero-extended.
+	body = inst.InstI32Const(body, arrPushCopiedAddr)
+	body = inst.InstI32Const(body, arrPushCopiedAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstLocalGet(body, 1) // oldLen
+	body = inst.InstLocalGet(body, 2) // stride
+	body = numeric.InstI32Mul(body)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Add(body)
+	body = memory.InstI64Store(body, 3, 0)
+	body = inst.InstEnd(body)
+	return body
+}
+
 // buildArrPushGrowBody — (arr, oldLen, stride) → new_data.
 // Wasm32 counterpart of arm64.go's emitArrPushGrowRuntime /
 // x86_64.go's emitArrPushGrowRuntime. Decides between in-place
@@ -4002,37 +4047,7 @@ func buildArrPushGrowBody(helperIdxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
-	// Reaching here means rc != 1 OR the buffer was full. If it still had
-	// room then rc != 1 was the sole reason, and the copy below is bought
-	// entirely by an extra reference — the rc==1 cliff. Count it, so an
-	// accumulator that has silently gone quadratic can be seen rather than
-	// inferred from an arena exhaustion downstream. See arrPushSharedAddr.
-	body = inst.InstLocalGet(body, 1) // oldLen
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Sub(body)
-	body = memory.InstI32Load(body, 2, 0) // cap
-	body = numeric.InstI32LtS(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstI32Const(body, arrPushSharedAddr)
-	body = inst.InstI32Const(body, arrPushSharedAddr)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Add(body)
-	body = memory.InstI32Store(body, 2, 0)
-	// Weight the crossing by the bytes it is about to copy — oldLen *
-	// stride, accumulated as an i64 at arrPushCopiedAddr. The product is
-	// computed in i32 (wasm32 memory bounds it) and zero-extended.
-	body = inst.InstI32Const(body, arrPushCopiedAddr)
-	body = inst.InstI32Const(body, arrPushCopiedAddr)
-	body = memory.InstI64Load(body, 3, 0)
-	body = inst.InstLocalGet(body, 1) // oldLen
-	body = inst.InstLocalGet(body, 2) // stride
-	body = numeric.InstI32Mul(body)
-	body = convert.InstI64ExtendI32U(body)
-	body = numeric.InstI64Add(body)
-	body = memory.InstI64Store(body, 3, 0)
-	body = inst.InstEnd(body)
+	body = appendArrPushCliffTally(body)
 	// Copy path. newLen = oldLen + 1.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 1)
@@ -4157,6 +4172,7 @@ func arrPushGrowPtrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	body = appendArrPushCliffTally(body)
 	// Copy path. newLen = oldLen + 1.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 1)
@@ -4319,6 +4335,7 @@ func arrPushGrowStrBody(helperIdxs map[string]uint32, moveForm bool) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
+	body = appendArrPushCliffTally(body)
 	// Copy path — identical to buildArrPushGrowPtrBody up to the walk.
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 1)

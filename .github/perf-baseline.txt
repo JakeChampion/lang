@@ -41,7 +41,7 @@ x86_64/int_loop.text	114
 x86_64/int_loop.ir	66000032
 x86_64/map_int.text	3376
 x86_64/map_int.ir	114365112
-x86_64/map_string.text	4514
+x86_64/map_string.text	4524
 x86_64/map_string.ir	228119826	2
 x86_64/sort_inplace.text	874
 x86_64/sort_inplace.ir	153911104
@@ -49,11 +49,11 @@ x86_64/sort_ints.text	2726
 x86_64/sort_ints.ir	128615368
 x86_64/string_build.text	1309
 x86_64/string_build.ir	186360139
-x86_64/string_scan.text	1667
+x86_64/string_scan.text	1677
 x86_64/string_scan.ir	122146710
 x86_64/string_slice.text	492
 x86_64/string_slice.ir	183780097
-x86_64/struct_drop.text	2088
+x86_64/struct_drop.text	2096
 x86_64/struct_drop.ir	627380163
 x86_64/tokenize.text	934
 x86_64/tokenize.ir	169070089
@@ -82,9 +82,9 @@ aarch64/enum_match.text	682
 aarch64/enum_match.ir	194175068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
-aarch64/map_int.text	3095
+aarch64/map_int.text	3105
 aarch64/map_int.ir	100592487
-aarch64/map_string.text	4171
+aarch64/map_string.text	4199
 aarch64/map_string.ir	223648093	2
 aarch64/sort_inplace.text	815
 aarch64/sort_inplace.ir	132740196
@@ -92,11 +92,11 @@ aarch64/sort_ints.text	2631
 aarch64/sort_ints.ir	115263483
 aarch64/string_build.text	1214
 aarch64/string_build.ir	242431740
-aarch64/string_scan.text	1543
+aarch64/string_scan.text	1561
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	497
 aarch64/string_slice.ir	167280114
-aarch64/struct_drop.text	1864
+aarch64/struct_drop.text	1880
 aarch64/struct_drop.ir	692820288
 aarch64/tokenize.text	944
 aarch64/tokenize.ir	176490114

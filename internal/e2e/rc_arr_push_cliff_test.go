@@ -15,6 +15,16 @@
 //
 // Both halves are pinned here. A counter that never fires would pass the
 // healthy case forever.
+//
+// POINTER AND STRING ELEMENTS COUNT TOO, and until #6888 §4d.6 they did not:
+// the tally lived only in `__fern_arr_push_grow`, the SCALAR-element helper,
+// so every `T[]` / `string[]` append went through `_ptr` / `_str` (or their
+// `_move_` siblings) and crossed the cliff without bumping anything. That is
+// the whole of a compiler's own accumulators — the self-host's `ir.Op[]` and
+// `string[]` threading read 988 bytes on the gate while a gdb breakpoint
+// census of the same module found 267 MB. Every case below therefore exists in
+// three element flavours; the scalar ones alone are what let the blind spot
+// stand.
 package e2e
 
 import (
@@ -103,6 +113,81 @@ function main(): i32 {
     return __arr_push_shared_count();
 }`
 
+// arrPushCliffPtrHealthySrc is arrPushCliffHealthySrc with POINTER elements, so
+// it routes through `__fern_arr_push_grow_ptr` / `_move_ptr` instead of the
+// scalar helper. Nothing else holds the buffer, so it must never cross.
+const arrPushCliffPtrHealthySrc = `struct Item { v: i32 }
+function step(acc: Item[], v: i32): Item[] { return acc.append(Item { v: v }); }
+function main(): i32 {
+    var acc: Item[] = [];
+    var i: i32 = 0;
+    while (i < 200) { acc = step(acc, i); i = i + 1; }
+    if (acc.len() != 200) { return 254; }
+    if (acc[7].v != 7 || acc[199].v != 199) { return 253; }
+    return __arr_push_shared_count();
+}`
+
+// arrPushCliffPtrSharedSrc crosses on EVERY append but the first: `with_tag`
+// builds a second BOX holding the same element buffer, and it stays live across
+// the append, so the in-place grow would be observable through it. The first
+// append finds cap 0 and is genuine growth, so the count is 49, not 50 — which
+// is also what makes this a test of the tally's capacity check and not just of
+// the rc check.
+//
+// This is the self-host `LowerState` shape reduced: a struct threaded by
+// functional update whose OTHER methods hand back a fresh box sharing the same
+// accumulator field.
+const arrPushCliffPtrSharedSrc = `struct Item { v: i32 }
+struct Bld { xs: Item[], tag: i32 }
+function step(b: Bld, v: i32): Bld { return Bld { xs: b.xs.append(Item { v: v }), tag: b.tag }; }
+function with_tag(b: Bld, t: i32): Bld { return Bld { xs: b.xs, tag: t }; }
+function main(): i32 {
+    var c: Bld = Bld { xs: [], tag: 0 };
+    var i: i32 = 0;
+    var sink: i32 = 0;
+    while (i < 50) {
+        var d: Bld = with_tag(c, i);
+        c = step(c, i);
+        sink = sink + d.tag + d.xs.len();
+        i = i + 1;
+    }
+    if (c.xs.len() != 50) { return 254; }
+    if (sink != 2450) { return 253; }
+    return __arr_push_shared_count();
+}`
+
+// The string-element twins. On a two-word-string target these route through
+// `__fern_arr_push_grow_str` / `_move_str`, a separate emitter from the pointer
+// pair on every backend.
+const arrPushCliffStrHealthySrc = `function step(acc: string[], v: i32): string[] { return acc.append("item"); }
+function main(): i32 {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < 200) { acc = step(acc, i); i = i + 1; }
+    if (acc.len() != 200) { return 254; }
+    if (acc[7] != "item" || acc[199] != "item") { return 253; }
+    return __arr_push_shared_count();
+}`
+
+const arrPushCliffStrSharedSrc = `struct Names { xs: string[], tag: i32 }
+function step(b: Names, t: i32): Names { return Names { xs: b.xs.append("item"), tag: b.tag }; }
+function with_tag(b: Names, t: i32): Names { return Names { xs: b.xs, tag: t }; }
+function main(): i32 {
+    var c: Names = Names { xs: [], tag: 0 };
+    var i: i32 = 0;
+    var sink: i32 = 0;
+    while (i < 50) {
+        var d: Names = with_tag(c, i);
+        c = step(c, i);
+        sink = sink + d.tag + d.xs.len();
+        i = i + 1;
+    }
+    if (c.xs.len() != 50) { return 254; }
+    if (c.xs[49] != "item") { return 252; }
+    if (sink != 2450) { return 253; }
+    return __arr_push_shared_count();
+}`
+
 func TestX86_64ArrPushCliffCounter(t *testing.T) {
 	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffHealthySrc); got != 0 {
 		t.Errorf("x86-64 healthy accumulator: __arr_push_shared_count() = %d, want 0 — "+
@@ -121,6 +206,21 @@ func TestX86_64ArrPushCliffCounter(t *testing.T) {
 			"__arr_push_shared_count() = %d, want 1 — the in-place grow is observable "+
 			"through the alias and must have been refused", got)
 	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffPtrHealthySrc); got != 0 {
+		t.Errorf("x86-64 pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffPtrSharedSrc); got != 49 {
+		t.Errorf("x86-64 pointer-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49 — the pointer grow helper is not "+
+			"tallying the cliff it crosses", got)
+	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrHealthySrc); got != 0 {
+		t.Errorf("x86-64 string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunX86_64FreeOn(t, arrPushCliffStrSharedSrc); got != 49 {
+		t.Errorf("x86-64 string-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49", got)
+	}
 }
 
 func TestArm64ArrPushCliffCounter(t *testing.T) {
@@ -137,6 +237,20 @@ func TestArm64ArrPushCliffCounter(t *testing.T) {
 	if _, got := compileAndRunArm64(t, arrPushCliffFieldAliasSrc); got != 1 {
 		t.Errorf("arm64 field accumulator with a live container alias: "+
 			"__arr_push_shared_count() = %d, want 1", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffPtrHealthySrc); got != 0 {
+		t.Errorf("arm64 pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffPtrSharedSrc); got != 49 {
+		t.Errorf("arm64 pointer-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffStrHealthySrc); got != 0 {
+		t.Errorf("arm64 string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if _, got := compileAndRunArm64(t, arrPushCliffStrSharedSrc); got != 49 {
+		t.Errorf("arm64 string-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49", got)
 	}
 }
 
@@ -157,5 +271,19 @@ func TestWASMArrPushCliffCounter(t *testing.T) {
 	if got := runWasm(t, arrPushCliffFieldAliasSrc); got != 1 {
 		t.Errorf("wasm field accumulator with a live container alias: "+
 			"__arr_push_shared_count() = %d, want 1", got)
+	}
+	if got := runWasm(t, arrPushCliffPtrHealthySrc); got != 0 {
+		t.Errorf("wasm pointer-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if got := runWasm(t, arrPushCliffPtrSharedSrc); got != 49 {
+		t.Errorf("wasm pointer-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49", got)
+	}
+	if got := runWasm(t, arrPushCliffStrHealthySrc); got != 0 {
+		t.Errorf("wasm string-element accumulator: __arr_push_shared_count() = %d, want 0", got)
+	}
+	if got := runWasm(t, arrPushCliffStrSharedSrc); got != 49 {
+		t.Errorf("wasm string-element accumulator behind a live second box: "+
+			"__arr_push_shared_count() = %d, want 49", got)
 	}
 }

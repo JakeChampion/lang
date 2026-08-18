@@ -10,12 +10,28 @@
 # 188 crossings / 812 bytes on 2026-08-04 and called it noise. By 2026-08-16 it
 # was 77,985 crossings and 21.4 GB — a seven-order-of-magnitude regression that
 # went twelve days unnoticed because nothing measured it outside a human typing
-# an env var (#6911). The numbers below are a CEILING to keep ratcheting down.
-# 21.4 GB fell to 3.07 GB when the x86 assembler's state parameter became `own`,
-# and 3.07 GB fell to 988 bytes when `fieldPlaceAppendCopies` stopped treating a
-# container handed to a SCALAR-returning call as captured (#6911). That is the
-# healthy state this workload had on 2026-08-04, restored — so a move upward
-# here is a regression, not a ceiling being approached.
+# an env var (#6911). The numbers below are a CEILING to keep ratcheting down,
+# so a move upward here is a regression, not a ceiling being approached.
+#
+# THE NUMBERS JUMPED WHEN THE INSTRUMENT DID, once. Every reading before
+# #6888 §4d.6 counted SCALAR-element appends only: the tally lived inside
+# `__fern_arr_push_grow`, and `T[]` / `string[]` appends go through
+# `__fern_arr_push_grow_ptr` / `_str` (and their `_move_` siblings), which
+# bumped nothing. So "988 bytes" was never this workload's copying — it was
+# its `i32[]` copying. Every variant tallies now, and the same commit,
+# unchanged, reads 281,621 crossings / 267,661,872 bytes. An independent gdb
+# breakpoint census of the same compile agrees to within 3% (273,382 copies
+# over 33,385,176 pointer elements), which is what says the new reading is the
+# instrument working rather than a regression.
+#
+# So the historical narrative below reads one element type only: 21.4 GB fell
+# to 3.07 GB when the x86 assembler's state parameter became `own`, and 3.07 GB
+# fell to 988 bytes when `fieldPlaceAppendCopies` stopped treating a container
+# handed to a SCALAR-returning call as captured (#6911). Both were real wins on
+# what was measured. Neither made the self-host compiler stop copying its
+# `ir.Op[]`: 267 MB of the 267 MB below is `irlower.LowerState.emit` and
+# `checker.Scope.bind`, the ratchet docs/PERFORMANCE-AUDIT-2026-08.md §4d.5 is
+# about, and it was there the whole time.
 #
 # BYTES ARE THE RANKING KEY. The count is recorded too, but never scope work
 # against it alone — docs/LOCAL-DEV-LOOP.md has two rounds of `own`-conversion
@@ -45,5 +61,5 @@
 # and the aarch64 lane does not yet build a self-host compiler for it. An
 # unbaselined arch reports UNBASELINED rather than failing.
 
-x86_64/checker.cliff_bytes	988
-x86_64/checker.cliff_count	221
+x86_64/checker.cliff_bytes	267661872
+x86_64/checker.cliff_count	281621

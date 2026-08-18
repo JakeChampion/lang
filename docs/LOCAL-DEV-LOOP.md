@@ -217,12 +217,21 @@ offset in 64 bits, and a quadratic sweep read 141 MB / 555 MB / **-2.09 GB** /
 `__arr_push_shared_count()` counts crossings; `__arr_push_shared_bytes()` (i64)
 sums the bytes those crossings copied. `FERN_CLIFF_REPORT=1` prints both.
 
-**Never scope accumulator work against the count alone.** Measured 2026-08-04, a
-whole-module compile of `checker.fern` by the self-host compiler crosses the
-cliff **188 times and copies 812 bytes** doing it — 4-byte loop-depth stacks in
-`irlower`'s `enter_loop`, i.e. noise — while one threaded accumulator over 20k
-appends copies **2.3 GB**. Two rounds of `own`-conversion work were scoped
-against the unweighted count and aimed at sites that could not have paid.
+**Never scope accumulator work against the count alone.** One threaded
+accumulator over 20k appends copies **2.3 GB** while a hundred crossings of a
+4-byte loop-depth stack copy under a kilobyte. Two rounds of `own`-conversion
+work were scoped against the unweighted count and aimed at sites that could not
+have paid.
+
+**And read any figure taken before 2026-08-18 as SCALAR ELEMENTS ONLY.** The
+tally lived inside `__fern_arr_push_grow` and not in the `_ptr` / `_str` /
+`_move_` siblings, so `T[]` and `string[]` appends — which is what a compiler's
+own accumulators are made of — crossed the cliff without bumping anything. The
+"188 crossings / 812 bytes on `checker.fern`, i.e. noise" this file recorded on
+2026-08-04 was that blind reading; the same workload with every variant
+tallying is **281,621 crossings / 267 MB**, 88% of it `irlower.LowerState.emit`
+threading its `ir.Op[]`. See `docs/PERFORMANCE-AUDIT-2026-08.md` §4d.5 for what
+that copying is and §4d.6 for how it stayed invisible.
 
 **The counters see appends and nothing else.** They are bumped by
 `__fern_arr_push`'s un-share path, so a quadratic `.with` — copy-on-write via

@@ -1089,10 +1089,14 @@ func (g *generator) emitDataSections() {
 		g.label("__fern_rc_underflow")
 		g.line(`	.quad 0`)
 	}
-	if g.usesArrPushGrow || g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
-		// The rc==1 cliff counter. __fern_arr_push_grow bumps it when it
-		// copies a buffer that had SPARE CAPACITY — the copy was bought by
-		// an extra reference, not by a full buffer.
+	if g.usesArrPushGrow || g.usesArrPushGrowPtr || g.usesArrPushGrowStr ||
+		g.usesArrPushGrowMovePtr || g.usesArrPushGrowMoveStr ||
+		g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
+		// The rc==1 cliff counter. Every __fern_arr_push_grow* variant bumps
+		// it when it copies a buffer that had SPARE CAPACITY — the copy was
+		// bought by an extra reference, not by a full buffer — so a program
+		// that only ever appends POINTER or STRING elements still needs the
+		// word.
 		g.line(`.align 3`)
 		g.label("__fern_arr_push_shared")
 		g.line(`	.quad 0`)
@@ -2428,6 +2432,40 @@ func (g *generator) emitAllocRc1Runtime() {
 	g.sizeDirective("__fern_alloc_rc1")
 }
 
+// emitArrPushCliffTally emits the `<lbl>_shared` arm every
+// __fern_arr_push_grow* variant reaches when the incoming rc is not 1: if the
+// buffer ALSO had room, the copy that follows is bought entirely by the extra
+// reference — the rc==1 cliff — so count it and weight it by the
+// oldLen * stride bytes about to be copied. See
+// emitArrPushSharedCountRuntime. Falls through to `<lbl>_copy`.
+//
+// EVERY variant, not just the scalar one. The counters were bumped only inside
+// `__fern_arr_push_grow` until #6888 §4d.6, so pointer- and string-element
+// appends — which is what a compiler's own accumulators are made of — crossed
+// the cliff invisibly.
+//
+// x3-x5 are scratch here, ahead of the copy path's frame. The two `mov w`
+// zero-extend their 32-bit inputs into the full x registers, so the 64-bit
+// multiply is exact for a buffer past 4 GiB (umull would say this in one
+// instruction, but the in-process assembler encodes mul and not umull).
+func (g *generator) emitArrPushCliffTally(lbl string) {
+	g.label(lbl + "_shared")
+	g.emit("ldur w4, [x0, #-12]") // w4 = cap
+	g.emit("cmp w1, w4")
+	g.emit("b.ge %s_copy", lbl) // genuinely full: not the cliff
+	g.adrpAdd("x3", "__fern_arr_push_shared")
+	g.emit("ldr w4, [x3]")
+	g.emit("add w4, w4, #1")
+	g.emit("str w4, [x3]")
+	g.emit("mov w3, w1") // oldLen, zero-extended
+	g.emit("mov w4, w2") // stride, zero-extended
+	g.emit("mul x3, x3, x4")
+	g.adrpAdd("x4", "__fern_arr_push_copied")
+	g.emit("ldr x5, [x4]")
+	g.emit("add x5, x5, x3")
+	g.emit("str x5, [x4]")
+}
+
 // emitArrPushGrowRuntime emits `__fern_arr_push_grow(arr,
 // oldLen, stride) -> new_data` — the Phase 2 mutate-or-copy
 // helper called from IR-level `emitArrayPush`. Reads rc at
@@ -2466,31 +2504,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
-	// rc != 1. If the buffer ALSO had room, the copy below is bought
-	// entirely by the extra reference — the rc==1 cliff. Count it (see
-	// emitArrPushSharedCountRuntime). x3/x4 are scratch here, before the
-	// copy path establishes its frame.
-	g.label(".Lpush_shared")
-	g.emit("ldur w4, [x0, #-12]") // w4 = cap
-	g.emit("cmp w1, w4")
-	g.emit("b.ge .Lpush_copy") // genuinely full: not the cliff
-	g.adrpAdd("x3", "__fern_arr_push_shared")
-	g.emit("ldr w4, [x3]")
-	g.emit("add w4, w4, #1")
-	g.emit("str w4, [x3]")
-	// Weight the crossing by what it costs: oldLen * stride bytes about to
-	// be copied. Still ahead of the copy path's frame, so x3-x5 are all
-	// free. The two `mov w` zero-extend their 32-bit inputs into the full
-	// x registers, so the 64-bit multiply is exact for a buffer past 4 GiB
-	// (umull would say this in one instruction, but the in-process
-	// assembler encodes mul and not umull).
-	g.emit("mov w3, w1") // oldLen, zero-extended
-	g.emit("mov w4, w2") // stride, zero-extended
-	g.emit("mul x3, x3, x4")
-	g.adrpAdd("x4", "__fern_arr_push_copied")
-	g.emit("ldr x5, [x4]")
-	g.emit("add x5, x5, x3")
-	g.emit("str x5, [x4]")
+	g.emitArrPushCliffTally(".Lpush")
 	// Copy path: allocate new buffer, memcpy, return new data.
 	// Frame layout (80 bytes):
 	//   sp+0..15  : saved x29, x30
@@ -2587,7 +2601,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	// Fast path: rc==1 and oldLen < cap → in place (rc=2, len++).
 	g.emit("ldur w3, [x0, #-8]")
 	g.emit("cmp w3, #1")
-	g.emit("b.ne %s_copy", lbl)
+	g.emit("b.ne %s_shared", lbl)
 	g.emit("ldur w4, [x0, #-12]")
 	g.emit("cmp w1, w4")
 	g.emit("b.ge %s_copy", lbl)
@@ -2596,6 +2610,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
+	g.emitArrPushCliffTally(lbl)
 	// Copy path — same frame plan as __fern_arr_push_grow.
 	g.label(lbl + "_copy")
 	g.emit("stp x29, x30, [sp, #-80]!")
@@ -2696,7 +2711,7 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.label(name)
 	g.emit("ldur w3, [x0, #-8]")
 	g.emit("cmp w3, #1")
-	g.emit("b.ne %s_copy", lbl)
+	g.emit("b.ne %s_shared", lbl)
 	g.emit("ldur w4, [x0, #-12]")
 	g.emit("cmp w1, w4")
 	g.emit("b.ge %s_copy", lbl)
@@ -2705,6 +2720,7 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.emit("add w4, w1, #1")
 	g.emit("stur w4, [x0, #-4]")
 	g.emit("ret")
+	g.emitArrPushCliffTally(lbl)
 	g.label(lbl + "_copy")
 	g.emit("stp x29, x30, [sp, #-80]!")
 	g.emit("mov x29, sp")
