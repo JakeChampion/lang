@@ -8731,6 +8731,83 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
 
   The three `alloc_flat_struct_string_field` divergence rows are deleted — the
   fixture now prints `flat`, matching native. Refs #6545 #6887 #7055 #4451.
+
+- 2026-08-18 (string half): **`paramCountedRetain` ported for STRING params, so a
+  fresh string argument is released at a callee that stores it (#6544).**
+
+  The 2026-08-18 (method half) entry traced `alloc_flat_method_identity_return`'s
+  residue to a leaked string-ARGUMENT box and named this as the slice. It is that
+  slice.
+
+  `stash_fresh_str_arg` released a fresh string argument only at a BORROWABLE
+  position, and `mkq(t, k) { return Q { tag: t, k: k }; }` is not borrowable by
+  construction — it stores the parameter. So the caller's box was released by
+  nothing. Every appearance of that parameter is a counted store or a
+  non-retaining read, which is exactly what `array_param_counted_of` already
+  proves one type over, so the fix is that registry gaining a `"SCNT:"` tier and
+  the string stash consulting it beside `call_arg_borrowable`.
+
+  The walk is name-keyed and type-blind, so the two tiers share one traversal:
+  `array_param_counted_of` becomes `param_counted_of` and emits both rows, the
+  `LowerState.sigs` field becomes `param_counted`, and `arr_param_counted_at` /
+  `str_param_counted_at` are prefix-parameterised wrappers over one lookup. The
+  use-walk carries the tier prefix so a nested counted-call credit consults the
+  tier of the parameter being classified rather than always the array one.
+
+  **The credit has to agree with the RETAIN, and the first attempt did not.**
+  Admitting a struct-literal slot unconditionally — as the array tier does, where
+  the store is unconditional — passed every probe, every negative and the whole
+  reclaim sweep, and then SEGFAULTED gen1 of the emit-all fixpoint. The
+  construction-side string retain is gated on `slit_reclaim`, i.e. on
+  `struct_routes_field_reclaim`: a string field of a struct that does not route
+  field reclaim is stored UNCOUNTED, so the post-call free was an over-release on
+  every such literal in the compiler's own sources. The predicate is now
+  free-standing (`struct_routes_field_reclaim_at`, which the LowerState method
+  delegates to) and the string tier consults it, so the two analyses answer off
+  one key rather than two. Tuple and array literal slots are refused outright for
+  the string tier: whether either construction incs a STRING element is not
+  established, and an unproven credit here costs a free rather than a leak.
+
+  That is also why the fixpoint is the gate that mattered on this one, in a
+  section whose own guidance says it is secondary: the failure was not a wrong
+  answer a corpus could sample, it was an over-release that needed a program the
+  size of the compiler to hit.
+
+  **The result guard is NOT the array tier's.** `array_param_counted_of` demands
+  a CONCRETE SCALAR result, which refuses every struct-returning producer — the
+  wall #6522's row is still behind. The property actually needed is native's
+  `resultCannotAliasArg`: a struct or enum result CONTAINS the argument, which is
+  the whole point of the tier (the callee's counted store and the caller's
+  post-call free net to the one reference the result owns), and the unsafe shape
+  is a result of the parameter's OWN type. `str_result_cannot_alias` tests that
+  directly and refuses `string` / `str` / anything not a declared struct, enum or
+  scalar, so a bare type var refuses with everything else it is not.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `var c: Q = mkq(t, k)`, free function, literal argument | 24 | **0** |
+  | the same with a FRESH argument | 64 | **0** |
+  | `b.relabel("")`, the identity path | 24 | **0** |
+  | `b.freshonly("…")`, a fresh-returning method | 24 | 24 |
+  | producer building its own field / string-free struct | 0 | 0 |
+
+  **The row's remaining 24 is the other half, and it is not this one.** The
+  fresh-returning method still leaks its RESULT box — allocated inside the
+  callee, read through `.tag.len()` at the call site and released by nothing. The
+  conformance case still prints `grows` for that reason. That is
+  `emit_freshself_release`'s territory (the sixth slice), where a string-bearing
+  struct is still declined; the argument half is what closed here.
+
+  VERIFIED: new `counted-retain-str-arg-flat` (24 B/round on the parent, so 72000
+  B over the gate's 3000-round churn against a 512 threshold), plus two refusals
+  that pass on both sides — `-result-aliases-safe`, where `both(t, k): string`
+  has the identical counted parameter and a result that can BE the argument, and
+  `-live-local-safe`, where the argument is a live local rather than a temp. Each
+  builds a long string between the reads so a wrongly freed block is really
+  recycled before the value is checked. Plus the reclaim / wasm / borrow sweep of
+  `internal/e2eselfhost`. Refs #6544 #6522 #6887 #4451.
 - 2026-08-18 (isolation): **The fresh-array-arg row was never blocked by the arg
   temp at all.** Settled by dumping the registry and the call-site booleans
   rather than inferring from which probes were flat — an inference that had
