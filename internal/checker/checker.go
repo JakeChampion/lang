@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/defaultargs"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 type Error struct {
@@ -7904,13 +7905,35 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	// module, so the likeliest cause of an unrecognised name is a missing
 	// import rather than a wrong name. Listing the two builtins the type
 	// has without it would point the reader away from the fix.
-	if mod := scalarModuleFor(recv); mod != "" {
+	if mod := scalarModuleFor(recv); mod != "" && !c.moduleAlreadyImports(mod) {
 		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
 	}
 	if names := c.methodsFor(typeName, recv); len(names) > 0 {
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
+}
+
+// moduleAlreadyImports reports whether the module being checked names `mod`
+// (a source spelling like "std/string") in its own `import` list. The
+// unresolved-method hint is suppressed when it does: telling a reader to add an
+// import they already have is unfollowable in the same way the u8 hint's wrong
+// module name was — doing what it says changes nothing and the identical error
+// repeats. With the import present the receiver's full method surface is known,
+// so the caller falls through to listing it, which is what a typo needs.
+//
+// DirectImports, not the ModuleImports closure: reaching a module transitively
+// does not put its methods in scope, so the closure would suppress the hint for
+// exactly the reader who still needs it. An unstamped module — a single-file
+// program that bypassed modload, or a message raised outside any function —
+// finds nothing and keeps the hint, which is the conservative direction.
+func (c *checker) moduleAlreadyImports(mod string) bool {
+	from := c.currentModule()
+	if from == "" || c.info == nil {
+		return false
+	}
+	key := stdlib.ModuleKey(mod)
+	return key != "" && c.info.DirectImports[from][key]
 }
 
 // checkUnusedCollectionResult implements E055: a bare statement whose whole

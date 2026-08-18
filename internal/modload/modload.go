@@ -602,12 +602,8 @@ func resolveCyclicImports(loaded map[string]*module) {
 // import path doesn't already include the extension, so users
 // can write either form.
 func resolveImportPath(importingDir, importPath string) string {
-	if stdlib.IsStdlibPath(importPath) {
-		key := importPath
-		if !strings.HasSuffix(key, ".fern") {
-			key += ".fern"
-		}
-		return stdlibPrefix + key
+	if key := stdlib.ModuleKey(importPath); key != "" {
+		return key
 	}
 	resolved := filepath.Join(importingDir, importPath)
 	if filepath.Ext(resolved) == "" {
