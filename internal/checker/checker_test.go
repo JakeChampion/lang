@@ -6229,6 +6229,75 @@ func TestNestedTuplePatternChecks(t *testing.T) {
 	}
 }
 
+// A nested destructure position types under the same rules as the top level:
+// each level is a complete destructure of the level above's binder.
+func TestNestedTupleDestructureChecks(t *testing.T) {
+	bad := map[string]struct{ src, code string }{
+		"inner position is not a tuple": {`function f(t: (i32, i32)): i32 {
+  let (a, (b, c)) = t;
+  return a;
+}`, "E024"},
+		"inner arity mismatch": {`function f(t: (i32, (i32, i32))): i32 {
+  let (a, (b, c, d)) = t;
+  return a;
+}`, "E024"},
+		"outer arity mismatch": {`function f(t: (i32, (i32, i32))): i32 {
+  let (a, (b, c), d) = t;
+  return a;
+}`, "E024"},
+		"a binder collides across levels": {`function f(t: (i32, (i32, i32))): i32 {
+  let (a, (a, c)) = t;
+  return c;
+}`, "E013"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, c.src)
+			if err == nil {
+				t.Fatalf("want %s, got none", c.code)
+			}
+			if code := firstErrCode(err); code != c.code {
+				t.Errorf("code = %q, want %s: %v", code, c.code, err)
+			}
+		})
+	}
+
+	ok := map[string]string{
+		"depth three": `function f(t: (i32, (i32, (i32, string)))): i32 {
+  let (a, (b, (c, s))) = t;
+  return a + b + c + s.len();
+}`,
+		"two nested positions in one pattern": `function f(t: ((i32, i32), (i32, i32))): i32 {
+  let ((a, b), (c, d)) = t;
+  return a + b + c + d;
+}`,
+		// Every level shares the statement's source position, so the discards
+		// and the hidden per-level temps both need naming that survives it.
+		"discards at two levels": `function f(t: (i32, (i32, i32))): i32 {
+  let (_, (_, c)) = t;
+  return c;
+}`,
+		"a destructuring parameter nests": `function f((a, (b, c)): (i32, (i32, i32))): i32 {
+  return a + b + c;
+}`,
+		"var spelling nests too": `function f(t: (i32, (i32, i32))): i32 {
+  var (a, (b, c)) = t;
+  return a + b + c;
+}`,
+		"pointer-shaped elements at both levels": `function f(t: (string, (i32[], string))): i32 {
+  let (s, (xs, s2)) = t;
+  return s.len() + xs.len() + s2.len();
+}`,
+	}
+	for name, body := range ok {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
 // A payload slot carrying a sub-pattern types under the element rules, so a
 // mismatch inside a payload draws the same code it would draw at top level.
 func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {

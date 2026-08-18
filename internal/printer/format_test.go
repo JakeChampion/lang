@@ -1173,6 +1173,25 @@ func TestFormatStructDestructureKeepsFieldNames(t *testing.T) {
 			src:  "function f(t: (i32, i32)): i32 { let (a, b) = t; return a + b; }",
 			want: "let (a, b) = t;",
 		},
+		{
+			// A nested position prints as its own pattern, not as the
+			// synthesised binder the parser put in Names — that binder is a
+			// lowering detail, and printing it re-parses to a different
+			// program (an undeclared name at the inner level's uses).
+			name: "tuple_nested",
+			src:  "function f(t: (i32, (i32, i32))): i32 { let (a, (b, c)) = t; return a + b + c; }",
+			want: "let (a, (b, c)) = t;",
+		},
+		{
+			name: "tuple_nested_depth3",
+			src:  "function f(t: (i32, (i32, (i32, i32)))): i32 { let (a, (b, (c, d))) = t; return a + b + c + d; }",
+			want: "let (a, (b, (c, d))) = t;",
+		},
+		{
+			name: "tuple_nested_discards",
+			src:  "function f(t: (i32, (i32, i32))): i32 { let (_, (_, c)) = t; return c; }",
+			want: "let (_, (_, c)) = t;",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.src)

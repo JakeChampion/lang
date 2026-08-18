@@ -306,6 +306,11 @@ func rewriteBoxedStmt(s ast.Stmt, boxed map[string]ast.Type) {
 		}
 	case *ast.Destructure:
 		x.Init = rewriteBoxedExpr(x.Init, boxed)
+		for _, sub := range x.Nested {
+			if sub != nil {
+				rewriteBoxedStmt(sub, boxed)
+			}
+		}
 	case *ast.ExprStmt:
 		// An assignment statement (`x = v;`) is an *ast.Assign wrapped here;
 		// rewriteBoxedExpr handles the Assign (target + value).

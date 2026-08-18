@@ -97,3 +97,83 @@ func TestWASMDestructureHeapBumpBounded(t *testing.T) {
 		t.Errorf("destructure over-releases = %d, want 0", got)
 	}
 }
+
+// nestedDestructureBumpGrowthSrc is the same shape one level deeper: the INNER
+// tuple is its own box, so it needs its own temp, its own alias-inc and its own
+// per-iteration reinit drop. A lowering that flattened the levels into extra
+// offset hops off one temp would leak the inner box every iteration but the
+// last, and the growth would scale with N.
+func nestedDestructureBumpGrowthSrc(n string) string {
+	return `function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < ` + n + `) {
+        var p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
+        var (x, (a, b)) = p;
+        sum = sum + x + a[0] + b;
+        i = i + 1;
+    }
+    return (__heap_bump_bytes() as i32) - before;
+}`
+}
+
+// nestedDestructureUnderflowSrc must report 0 over-releases: the inner box is
+// reachable from both the outer temp's deep-drop and the inner temp's, so a
+// missing alias-inc on the inner level would double-free it.
+const nestedDestructureUnderflowSrc = `function main(): i32 {
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < 200) {
+        var p: (i32, (i32[], i32)) = (i, ([i, i + 1, i + 2], i));
+        var (x, (a, b)) = p;
+        sum = sum + x + a[0] + b;
+        i = i + 1;
+    }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64NestedDestructureHeapBumpBounded(t *testing.T) {
+	small := mustRunX86_64FreeOn(t, nestedDestructureBumpGrowthSrc("50"))
+	large := mustRunX86_64FreeOn(t, nestedDestructureBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("nested destructure bump growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d (a leaked inner box would grow with N)", small, large)
+	}
+	if small == 0 {
+		t.Errorf("expected a non-zero bounded high-water, got 0")
+	}
+	if _, code := compileAndRunX86_64FreeOn(t, nestedDestructureUnderflowSrc); code != 0 {
+		t.Errorf("nested destructure over-releases = %d, want 0", code)
+	}
+}
+
+func TestArm64NestedDestructureHeapBumpBounded(t *testing.T) {
+	small := mustRunArm64FreeOn(t, nestedDestructureBumpGrowthSrc("50"))
+	large := mustRunArm64FreeOn(t, nestedDestructureBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("nested destructure bump growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+	if small == 0 {
+		t.Errorf("expected a non-zero bounded high-water, got 0")
+	}
+	if _, code := compileAndRunArm64FreeOn(t, nestedDestructureUnderflowSrc); code != 0 {
+		t.Errorf("nested destructure over-releases = %d, want 0", code)
+	}
+}
+
+func TestWASMNestedDestructureHeapBumpBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	small := runWasm(t, nestedDestructureBumpGrowthSrc("50"))
+	large := runWasm(t, nestedDestructureBumpGrowthSrc("5000"))
+	if small != large {
+		t.Errorf("nested destructure bump growth should be bounded (reclaim): N=50 -> %d, N=5000 -> %d", small, large)
+	}
+	if small == 0 {
+		t.Errorf("expected a non-zero bounded high-water, got 0")
+	}
+	if got := runWasm(t, nestedDestructureUnderflowSrc); got != 0 {
+		t.Errorf("nested destructure over-releases = %d, want 0", got)
+	}
+}

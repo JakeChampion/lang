@@ -1898,6 +1898,103 @@ func TestTupleDestructureParses(t *testing.T) {
 	}
 }
 
+// A nested tuple position binds too: `let (a, (b, c)) = t;`. The inner level
+// becomes its own *ast.Destructure hanging off Nested[i], reading the
+// synthesised binder this level put in Names[i].
+func TestNestedTupleDestructureParses(t *testing.T) {
+	prog, err := Parse(`function f(t: (i32, (i32, (i32, i32)))): i32 {
+		let (a, (b, (c, d))) = t;
+		return a + b + c + d;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Destructure; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	if len(d.Names) != 2 || d.Names[0] != "a" {
+		t.Fatalf("outer names = %v, want [a <synth>]", d.Names)
+	}
+	if len(d.Nested) != 2 || d.Nested[0] != nil || d.Nested[1] == nil {
+		t.Fatalf("only position 1 should nest: %+v", d.Nested)
+	}
+	// The invariant every Init-only pass relies on: a nested level's Init is
+	// the ident naming this level's synthesised binder.
+	assertNestedInit := func(parent *ast.Destructure, i int) *ast.Destructure {
+		t.Helper()
+		sub := parent.Nested[i]
+		id, ok := sub.Init.(*ast.Ident)
+		if !ok {
+			t.Fatalf("nested Init should be an *ast.Ident; got %T", sub.Init)
+		}
+		if id.Name != parent.Names[i] {
+			t.Fatalf("nested Init reads %q, want the parent's binder %q", id.Name, parent.Names[i])
+		}
+		return sub
+	}
+	mid := assertNestedInit(d, 1)
+	if len(mid.Names) != 2 || mid.Names[0] != "b" {
+		t.Fatalf("depth-2 names = %v, want [b <synth>]", mid.Names)
+	}
+	inner := assertNestedInit(mid, 1)
+	if len(inner.Names) != 2 || inner.Names[0] != "c" || inner.Names[1] != "d" {
+		t.Fatalf("depth-3 names = %v, want [c d]", inner.Names)
+	}
+	if inner.Nested != nil {
+		t.Errorf("the innermost level should not nest: %+v", inner.Nested)
+	}
+}
+
+// Two `_` discards at different levels get different internal names. Every
+// level of one pattern shares the statement's source position, so naming a
+// discard by position alone made the second one a redeclaration of the first.
+func TestNestedTupleDestructureDiscardsDoNotCollide(t *testing.T) {
+	prog, err := Parse(`function f(t: (i32, (i32, i32))): i32 {
+		let (_, (_, c)) = t;
+		return c;
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := prog.Funcs[0].Body.Stmts[0].(*ast.Destructure)
+	outer, inner := d.Names[0], d.Nested[1].Names[0]
+	if outer == inner {
+		t.Fatalf("both discards named %q", outer)
+	}
+	for _, nm := range []string{outer, inner} {
+		if !strings.HasPrefix(nm, "__discard_") {
+			t.Errorf("discard named %q, want a __discard_ name", nm)
+		}
+	}
+}
+
+// A destructuring PARAMETER takes the same production, so it nests too.
+func TestNestedTupleDestructureParam(t *testing.T) {
+	prog, err := Parse(`function f((a, (b, c)): (i32, (i32, i32))): i32 { return a + b + c; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Destructure)
+	if !ok {
+		t.Fatalf("the param destructure should be prepended to the body; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	if len(d.Nested) != 2 || d.Nested[1] == nil {
+		t.Fatalf("param position 1 should nest: %+v", d.Nested)
+	}
+	if got := d.Nested[1].Names; len(got) != 2 || got[0] != "b" || got[1] != "c" {
+		t.Errorf("nested param names = %v, want [b c]", got)
+	}
+}
+
+// A singleton stays a parse error at every depth — the no-singleton-tuples
+// rule is about the pattern, not about which level it sits on.
+func TestNestedTupleDestructureSingletonError(t *testing.T) {
+	if _, err := Parse(`function f(t: (i32, (i32, i32))): i32 { let (a, (b)) = t; return a; }`); err == nil {
+		t.Error("expected parse error for a singleton nested position")
+	}
+}
+
 // Tuple destructure requires at least 2 names — the language
 // already reserves 1-element tuples (no singleton tuples), so
 // `let (a) = …;` is treated as a parse error rather than a

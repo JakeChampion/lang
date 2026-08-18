@@ -7946,6 +7946,19 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emitVarReinitDropOld(name, nameIdx)
 			b.emit(Op{Kind: OpStoreLocal, I32: nameIdx})
 		}
+		// A nested element's binder is stored, so its own Destructure —
+		// reading that binder — lowers as an ordinary one. It brings its own
+		// temp, and with it its own alias-inc, loop-reclaim and exit sweep:
+		// the inner tuple is a separate box, so it needs separate ownership
+		// bookkeeping, not extra offset hops off this level's temp.
+		for i := range n.Nested {
+			if n.Nested[i] == nil {
+				continue
+			}
+			if err := b.stmt(n.Nested[i]); err != nil {
+				return err
+			}
+		}
 	case *ast.ExprStmt:
 		if err := b.expr(n.Expr); err != nil {
 			return err

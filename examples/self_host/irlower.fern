@@ -17656,14 +17656,19 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // bind name[i] = tuple_get(i). Scalar / string / struct elements
         // (the same set the tuple LITERAL admits — a heap element bails the
         // init lowering, so it never reaches here).
+        // Split on TOP-LEVEL commas: a NESTED position rides as its own
+        // parenthesised list (`"a,(b,c)"`), and its commas belong to that
+        // level, not this one.
         var dnames: string[] = [];
         var dstart: i32 = 0;
         var dp: i32 = 0;
+        var ddepth: i32 = 0;
         while (dp <= v.name.len()) {
-            if (dp == v.name.len() || v.name[dp] == 44) {
+            if (dp == v.name.len() || (v.name[dp] == 44 && ddepth == 0)) {
                 dnames = dnames.append(v.name[dstart : dp]);
                 dstart = dp + 1;
-            }
+            } else if (v.name[dp] == 40) { ddepth = ddepth + 1; }
+            else if (v.name[dp] == 41) { ddepth = ddepth - 1; }
             dp = dp + 1;
         }
         var dn: i32 = dnames.len();
@@ -17675,8 +17680,18 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         dt = dt.emit(ir.op_store_local(tmp_slot));
         var dk: i32 = 0;
         while (dk < dn) {
-            dt = dt.add_local(dnames[dk]);
-            var dkslot: i32 = dt.slot_of(dnames[dk]);
+            // A NESTED position `(b,c)` is not a name: bind the inner tuple to
+            // a temp here and destructure that temp again below, which is the
+            // shape the second level already had to work for (`var (s, b) = p`
+            // over a tuple-tagged local).
+            var dbind: string = dnames[dk];
+            var dnest: string = "";
+            if (dbind.len() >= 2 && dbind[0:1] == "(") {
+                dnest = dbind[1 : dbind.len() - 1] + "";
+                dbind = "$dnest" + util.i32_to_string(dt.locals.len());
+            }
+            dt = dt.add_local(dbind);
+            var dkslot: i32 = dt.slot_of(dbind);
             // Type the binding from the source tuple's element tag: an
             // inline `(e0, e1, …)` literal from the element exprs, a tuple
             // local/param from its tracked tags. (Tags read from `s`, the
@@ -17756,7 +17771,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             if (dtag == "string") { dt = dt.mark_str(dkslot, true); }
             // A closure-BOX element ("clo") binds a closure local so
             // `f(args)` on the binding dispatches env-first against the box.
-            else if (dtag == "clo") { dt = dt.mark_closure_local(dnames[dk]); }
+            else if (dtag == "clo") { dt = dt.mark_closure_local(dbind); }
             else if (dtag == "i64") { dt = dt.mark_i64(dkslot, true); }
             else if (dtag == "u64") { dt = dt.mark_u64(dkslot, true); }
             else if (dtag == "f64" || dtag == "f32" || dtag == "float") { dt = dt.mark_f64(dkslot, true); }
@@ -17800,6 +17815,13 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // type (like an enum local/param) so `match (c)` / `c.method()`
             // on the bound slot dispatches to `<Enum>.<variant/method>`.
             else if (is_enum_like_name(dtag, dt.structs)) { dt = dt.mark_struct_type(dkslot, dtag); }
+            // The temp is bound and its element tags are marked, so the inner
+            // level lowers as an ordinary destructure of that temp — the same
+            // recursion the source spelling describes.
+            if (dnest.len() > 0) {
+                dt = lower_stmt_var(parser.StmtVar { name: dnest, type_name: "", init: parser.ExprIdent { name: dbind, line: v.line, col: v.col }, line: v.line, col: v.col, is_str: false }, dt);
+                if (!dt.ok) { return dt; }
+            }
             dk = dk + 1;
         }
         return dt;

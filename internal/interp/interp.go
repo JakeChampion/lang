@@ -2880,6 +2880,16 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		for i2, name := range x.Names {
 			e.declare(name, arr[i2])
 		}
+		// A nested element's binder is declared, so its own Destructure —
+		// reading that binder — runs as an ordinary one in the same env.
+		for i2 := range x.Nested {
+			if x.Nested[i2] == nil {
+				continue
+			}
+			if _, err := i.execStmtInner(x.Nested[i2], e); err != nil {
+				return result{}, err
+			}
+		}
 		return result{flow: flowNormal}, nil
 	case *ast.ExprStmt:
 		if _, err := i.evalExpr(x.Expr, e); err != nil {

@@ -1081,14 +1081,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteByte(';')
 			break
 		}
-		f.b.WriteString("let (")
-		for i, n := range x.Names {
-			if i > 0 {
-				f.b.WriteString(", ")
-			}
-			f.b.WriteString(writtenName(n))
-		}
-		f.b.WriteString(") = ")
+		f.b.WriteString("let ")
+		f.formatDestructurePattern(x)
+		f.b.WriteString(" = ")
 		f.formatExpr(x.Init, precLowest)
 		f.b.WriteByte(';')
 	case *ast.ExprStmt:
@@ -1864,6 +1859,25 @@ func writtenName(name string) string {
 		return "_"
 	}
 	return name
+}
+
+// formatDestructurePattern renders a tuple destructure's pattern `(a, (b, c))`.
+// A nested position prints as its own pattern rather than as the synthesised
+// binder the parser put in Names — that binder is an implementation detail of
+// the lowering, and printing it would re-parse to a different program.
+func (f *formatter) formatDestructurePattern(x *ast.Destructure) {
+	f.b.WriteByte('(')
+	for i, n := range x.Names {
+		if i > 0 {
+			f.b.WriteString(", ")
+		}
+		if i < len(x.Nested) && x.Nested[i] != nil {
+			f.formatDestructurePattern(x.Nested[i])
+			continue
+		}
+		f.b.WriteString(writtenName(n))
+	}
+	f.b.WriteByte(')')
 }
 
 // formatType returns the textual form of t. Unchanged from the
