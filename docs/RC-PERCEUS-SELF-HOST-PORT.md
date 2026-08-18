@@ -8972,3 +8972,56 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (the cow guard), and a fresh-temp value (no retain, the array is sole owner) —
   each with a long string built between the store and the reads so a wrongly
   freed block is really recycled first. Refs #6544 #6522 #6407 #4355 #4451.
+- 2026-08-18 (string[] FIELDS, the same two gaps one level over): the previous
+  entry closed a `string[]` LOCAL's element reclaim. Decomposing what was left
+  of `alloc_flat_fresh_array_arg` found the identical pair of gaps in the
+  string[]-FIELD admission, and one of them is far more expensive than its
+  cause suggests.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `Diag { code: i32, notes: string[] }`, elements = inline concats | 0 | 0 |
+  | the same, elements = `wide(n)` — a proven producer CALL | **181** | **0** |
+  | `Qb { notes: string[] }` alone in its module | 0 | 0 |
+  | the same, module also holds `mkother(notes) { Other { notes: notes } }` | **126** | **0** |
+  | the same sibling with the field spelled `rows` instead of `notes` | 0 | 0 |
+  | `N1 { nums: i32[] }`, same shape, scalar elements | 0 | 0 |
+
+  Read the third, fourth and fifth rows together: a struct is flat, and adding
+  an UNRELATED struct elsewhere in the module — different type, never
+  constructed on the measured path — costs it its field reclaim, and RENAMING
+  that other struct's field gives it back. The admission was keyed on the bare
+  field NAME across the whole program. `notes`, `name`, `items`, `args` are
+  exactly the names a real module reuses, so one borrowed-param producer
+  anywhere disqualified every same-named string[] field in the program.
+
+  Marks are now keyed `"<T>.<field>"` wherever the owning type is known: always
+  at a struct-literal store, which names its own type, and at a read whose
+  receiver `fnfld_obj_type` can resolve from a param, an annotated `var`, or a
+  literal-initialised `var` — the bind-tracking the fn-field scan next door
+  already had, seeded with the receiver and parameters. An unresolvable
+  receiver still marks the bare name, which the admission reads as poisoning
+  that field in every type: the old behaviour, kept as the fallback. The
+  element proof is `strarr_value_is_fresh` with the fresh-string registry, the
+  same swap the local credit took.
+
+  The refusals are unchanged and were checked by value rather than by bytes:
+  `Esc.notes` stored from a borrowed parameter stays refused, `Rd.notes` with
+  an escaping element read stays refused, and `Ok.notes` — same field name as
+  both — is admitted. Before this, all three were refused together.
+
+  **`alloc_flat_fresh_array_arg` is still 798, and still for the reason the
+  last two entries gave.** Its `node(name, deps, mtime)` stores its `deps`
+  PARAMETER into the struct it returns, so `Node.deps` is refused on its own
+  type-keyed merits, correctly: the callee cannot know the caller's array was
+  fresh. That is a per-SITE fact, not a per-type one, and it is the whole of
+  what is left on this row. Everything the name-keying was costing was
+  collateral damage to OTHER types.
+
+  VERIFIED: `strarr-field-producer-elements-flat` and
+  `strarr-field-sibling-name-not-poisoned` both fail at 98 on the parent,
+  checked through the harness; `strarr-field-borrowed-param-still-excluded`
+  passes on both sides and asserts values under recycling pressure. Two
+  matching rows on the arm64 leg. Refs #6544 #6522 #4355 #4297 #4451.
