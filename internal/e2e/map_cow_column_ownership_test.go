@@ -204,3 +204,130 @@ func TestMapCowColumnOwnershipBoundedArm64(t *testing.T) {
 		t.Fatalf("arm64 got %d, want 42 (4 = the COW copy's column claim is unbounded)", got)
 	}
 }
+
+// The inline (SSO) half of the same claim (#7081). On a two-word string ABI
+// the inline flag is the top bit of the cell's `len` word and `data` holds the
+// key's own characters, so a claim that inc's `data` unconditionally
+// dereferences those characters as an address: wasmtime trapped at
+// 0x68706c59, which is `"alph"` packed little-endian minus the rc word's 8.
+// x86-64 escaped it because its single-word inline form is bit-0 tagged and
+// __fern_rc_inc skips odd pointers.
+//
+// The keys here are all <= 7 bytes, so every one of them is inline on wasm32,
+// and "beta" is here because its first byte is EVEN — an alignment-shaped
+// guard passes "alpha" (0x61, odd) and still walks into "beta".
+//
+// The shape is the issue's: a Map field on a state struct, read out, mutated,
+// and stored back into a fresh struct, which is what makes the second insert
+// find the handle aliased and take the COW copy.
+const mapInlineKeyColumnOwnershipProg = `
+import "core/map";
+
+struct S { m: Map[string, i32], n: i32 }
+
+function ins(s: S, k: string, v: i32): S {
+    var m: Map[string, i32] = s.m;
+    m = m.insert(k, v);
+    return S { m: m, n: s.n + 1 };
+}
+
+function get(s: S, k: string): i32 {
+    match (s.m.get(k)) { Some(v) => { return v; }, None => { return 0 - 1; } }
+}
+
+function main(): i32 {
+    var m0: Map[string, i32] = map_new(4);
+    var s: S = S { m: m0, n: 0 };
+    s = ins(s, "alpha", 1);
+    s = ins(s, "beta", 2);
+    s = ins(s, "gamma", 3);
+    // A heap key in the same column: the claim still has to fire for it.
+    s = ins(s, "a-key-far-past-the-inline-cap", 4);
+    s = ins(s, "delta", 5);
+    if (s.n != 5) { return 1; }
+    if (s.m.len() != 5) { return 2; }
+    if (get(s, "alpha") != 1) { return 3; }
+    if (get(s, "beta") != 2) { return 4; }
+    if (get(s, "gamma") != 3) { return 5; }
+    if (get(s, "a-key-far-past-the-inline-cap") != 4) { return 6; }
+    if (get(s, "delta") != 5) { return 7; }
+    if (get(s, "missing") != 0 - 1) { return 8; }
+    var keys: string[] = s.m.keys();
+    if (keys.len() != 5) { return 9; }
+    if (keys[0] != "alpha") { return 10; }
+    if (keys[3] != "a-key-far-past-the-inline-cap") { return 11; }
+    return 42;
+}
+`
+
+func TestMapInlineKeyColumnOwnershipInterp(t *testing.T) {
+	if got := runInterpExit(t, mapInlineKeyColumnOwnershipProg); got != 42 {
+		t.Fatalf("interp got %d, want 42", got)
+	}
+}
+
+func TestMapInlineKeyColumnOwnershipX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapInlineKeyColumnOwnershipProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42", got)
+	}
+}
+
+func TestMapInlineKeyColumnOwnershipWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapInlineKeyColumnOwnershipProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42", got)
+	}
+}
+
+func TestMapInlineKeyColumnOwnershipArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapInlineKeyColumnOwnershipProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42", got)
+	}
+}
+
+// Skipping the inline key's inc must not leave its drop over-releasing: the
+// column's __fern_str_dec is inline-aware on the same terms, so the pair still
+// has to balance.
+const mapInlineKeyColumnOwnershipRcProg = `
+import "core/map";
+import "std/i32";
+
+struct S { m: Map[string, i32], n: i32 }
+
+function ins(s: S, k: string, v: i32): S {
+    var m: Map[string, i32] = s.m;
+    m = m.insert(k, v);
+    return S { m: m, n: s.n + 1 };
+}
+
+function main(): i32 {
+    var m0: Map[string, i32] = map_new(8);
+    var s: S = S { m: m0, n: 0 };
+    s = ins(s, "alpha", 1);
+    s = ins(s, "beta", 2);
+    var i: i32 = 0;
+    while (i < 16) {
+        s = ins(s, "k" + i.to_string(), i);
+        i = i + 1;
+    }
+    if (s.m.len() != 18) { return 1; }
+    return 42 + __rc_underflow_count();
+}
+`
+
+func TestMapInlineKeyColumnOwnershipNoUnderflowX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, mapInlineKeyColumnOwnershipRcProg); got != 42 {
+		t.Fatalf("x86-64 got %d, want 42 (%d rc underflows)", got, got-42)
+	}
+}
+
+func TestMapInlineKeyColumnOwnershipNoUnderflowWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, mapInlineKeyColumnOwnershipRcProg); got != 42 {
+		t.Fatalf("wasm got %d, want 42 (%d rc underflows)", got, got-42)
+	}
+}
+
+func TestMapInlineKeyColumnOwnershipNoUnderflowArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, mapInlineKeyColumnOwnershipRcProg); got != 42 {
+		t.Fatalf("arm64 got %d, want 42 (%d rc underflows)", got, got-42)
+	}
+}
