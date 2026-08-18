@@ -12932,7 +12932,7 @@ function annotate_expr(e: parser.Expr, s: Scope): parser.Expr {
         ls = ls.bind(lm.params[pi].name, type_from_name_with_structs_unions(lm.params[pi].type_name, s.structs, s.unions));
         pi = pi + 1;
       }
-      return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: annotate_block(lm.body, ls), use_infer: lm.use_infer };
+      return parser.ExprLambda { ...lm, body: annotate_block(lm.body, ls) };
     },
     _ => {
       return e;

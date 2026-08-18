@@ -994,6 +994,31 @@ function main(): i32 {
 return grade(3).len() + words("a") + pick(0);
 }
 `},
+	// A value-position `{ … }` is a block EXPRESSION, which the self-host parse
+	// turns into a 0-arg IIFE — so `-fmt` reprinted the whole
+	// `function(): i32 { … }()` (#7072). The tag on the synthesised lambda is
+	// what tells it apart from `real_lambda` below, which is a hand-written
+	// IIFE and must survive as one: its `return` stays inside the lambda, where
+	// a block expression's escapes to the enclosing function.
+	{"lowering-block-expression", `function id(n: i32): i32 {
+return n;
+}
+function shapes(n: i32): i32 {
+var stmts: i32 = { var t: i32 = n * 2; t + 1 };
+var tail: i32 = { n };
+var operand: i32 = { n + 1 } * 3;
+var nested: i32 = { var t: i32 = { var q: i32 = n; q + 1 }; t * 2 };
+var arg: i32 = id({ var t: i32 = n; t + 1 });
+return stmts + tail + operand + nested + arg;
+}
+function real_lambda(n: i32): i32 {
+var f: fn = function(): i32 { var t: i32 = n; return t + 1; };
+return f();
+}
+function main(): i32 {
+return shapes(1) + real_lambda(2);
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

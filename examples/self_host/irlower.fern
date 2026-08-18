@@ -52117,7 +52117,7 @@ function lift_lambda_body_only(lam: parser.ExprLambda, acc: LiftAcc, gfns0: stri
         while (bj < br.stmts.len()) { nb = nb.append(br.stmts[bj]); bj = bj + 1; }
         bi = bi + 1;
     }
-    return LiftExpr { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: nb, use_infer: lam.use_infer }, acc: ba };
+    return LiftExpr { expr: parser.ExprLambda { ...lam, body: nb }, acc: ba };
 }
 
 // lift_expr_walk recurses through the expression forms that commonly hold calls,
@@ -53256,7 +53256,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
                 }
                 ck = ck + 1;
             }
-            return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: subst_fcall_stmts(lm.body, fname, lname, capargs), use_infer: lm.use_infer };
+            return parser.ExprLambda { ...lm, body: subst_fcall_stmts(lm.body, fname, lname, capargs) };
         },
         _ => { return e; }
     }
@@ -53592,10 +53592,10 @@ struct InlineCloRes { expr: parser.Expr, funcs: parser.FuncDecl[], counter: i32 
 // the hoisted function appended; on decline returns the lambda unchanged.
 function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     var caps: string[] = lambda_captures(lam, fd);
-    if (caps.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
+    if (caps.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
     var cloname: string = fd.name + "$clo" + util.i32_to_string(counter);
     var hr: HoistResult = make_clo_func(lam, cloname, fd, gfns, structs, mfuncs);
-    if (!hr.ok) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
+    if (!hr.ok) { return InlineCloRes { expr: parser.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
     var capargs: parser.Expr[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) { capargs = capargs.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 }); ci = ci + 1; }
@@ -53737,7 +53737,7 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
                     // bailed) is rewritten even though the boxing below declines.
                     var cnd: InlineCloStmts = lift_iife_conditions(il.body, fd, funcs, counter, gfns, mfuncs, structs);
                     if (cnd.counter > counter) {
-                        var cl2: parser.Expr = parser.ExprLambda { params: il.params, ret_type: il.ret_type, body: cnd.stmts, use_infer: il.use_infer };
+                        var cl2: parser.Expr = parser.ExprLambda { ...il, body: cnd.stmts };
                         var ce2: parser.Expr = parser.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                         return InlineCloRes { expr: ce2, funcs: cnd.funcs, counter: cnd.counter };
                     }
@@ -53753,7 +53753,7 @@ function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.F
                     var fdx: parser.FuncDecl = iife_scope_fd(fd, il.body);
                     var br: InlineCloStmts = box_iife_arm_values(il.body, fdx, funcs, counter, gfns, mfuncs, structs);
                     if (br.counter == counter || !iife_arms_all_marked(br.stmts)) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
-                    var nlam: parser.Expr = parser.ExprLambda { params: il.params, ret_type: il.ret_type, body: br.stmts, use_infer: il.use_infer };
+                    var nlam: parser.Expr = parser.ExprLambda { ...il, body: br.stmts };
                     var niife: parser.Expr = parser.ExprCall { callee: nlam, args: c.args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
                     return InlineCloRes { expr: niife, funcs: br.funcs, counter: br.counter };
                 },
@@ -54744,7 +54744,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                                 if (rc.args.len() == 0 && ril.params.len() == 0) {
                                     var nb: InlineCloStmts = box_iife_arm_array_elems(ril.body, fd, fs, ct, gfns, structs, mfuncs);
                                     fs = nb.funcs; ct = nb.counter;
-                                    var nlam: parser.Expr = parser.ExprLambda { params: ril.params, ret_type: ril.ret_type, body: nb.stmts, use_infer: ril.use_infer };
+                                    var nlam: parser.Expr = parser.ExprLambda { ...ril, body: nb.stmts };
                                     nv = parser.ExprCall { callee: nlam, args: rc.args, line: rc.line, col: rc.col, type_argc: rc.type_argc, ty: rc.ty };
                                 }
                             },
@@ -54797,7 +54797,7 @@ function hoist_capturing_iife(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs
         // which leaves the module bailing exactly as it does today rather than
         // trading a refusal for a silent miscompile.
         var cp: parser.ParamDecl = cap_param_for(caps[ci], fd, structs, mfuncs);
-        if (cp.type_name.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { params: lam.params, ret_type: lam.ret_type, body: lam.body, use_infer: lam.use_infer }, funcs: funcs, counter: counter }; }
+        if (cp.type_name.len() == 0) { return InlineCloRes { expr: parser.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
         ps = ps.append(cp);
         args = args.append(parser.ExprIdent { name: caps[ci], line: 0, col: 0 });
         ci = ci + 1;
@@ -54981,7 +54981,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         var ibr: InlineCloStmts = box_iife_arm_array_elems(ielam.body, fd, fs, ct, gfns, structs, mfuncs);
                         if (ibr.counter > ct) {
                             fs = ibr.funcs; ct = ibr.counter;
-                            ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: ibr.stmts, use_infer: ielam.use_infer };
+                            ncallee = parser.ExprLambda { ...ielam, body: ibr.stmts };
                         }
                     }
                     // The arms' own CONDITION is the one part of an inline IIFE
@@ -54995,7 +54995,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
                         var icr: InlineCloStmts = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
                         if (icr.counter > ct) {
                             fs = icr.funcs; ct = icr.counter;
-                            ncallee = parser.ExprLambda { params: ielam.params, ret_type: ielam.ret_type, body: icr.stmts, use_infer: ielam.use_infer };
+                            ncallee = parser.ExprLambda { ...ielam, body: icr.stmts };
                         }
                     }
                 },
@@ -55874,7 +55874,7 @@ function box_rewrite_expr(e: parser.Expr, boxed: string[], btypes: string[]): pa
             return parser.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
         },
         parser.ExprFieldAccess(fa) => { return parser.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        parser.ExprLambda(lm) => { return parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: box_rewrite_stmts(lm.body, boxed, btypes), use_infer: lm.use_infer }; },
+        parser.ExprLambda(lm) => { return parser.ExprLambda { ...lm, body: box_rewrite_stmts(lm.body, boxed, btypes) }; },
         _ => { return e; }
     }
     return e;
@@ -56172,7 +56172,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
             var full: parser.Stmt[] = pre;
             var fi: i32 = 0;
             while (fi < nb.len()) { full = full.append(nb[fi]); fi = fi + 1; }
-            return WCapExpr { expr: parser.ExprLambda { params: lm.params, ret_type: lm.ret_type, body: full, use_infer: lm.use_infer }, caps: wcaps_join(inner, mine) };
+            return WCapExpr { expr: parser.ExprLambda { ...lm, body: full }, caps: wcaps_join(inner, mine) };
         },
         parser.ExprBinary(b) => {
             var l: WCapExpr = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
@@ -56202,7 +56202,7 @@ function wcap_expr(e: parser.Expr, fd: parser.FuncDecl, gfns: string[], structs:
                             ib = ib.append(irs.stmt);
                             ii = ii + 1;
                         }
-                        var ilam: parser.Expr = parser.ExprLambda { params: ilm.params, ret_type: ilm.ret_type, body: ib, use_infer: ilm.use_infer };
+                        var ilam: parser.Expr = parser.ExprLambda { ...ilm, body: ib };
                         var noargs: parser.Expr[] = [];
                         return WCapExpr { expr: parser.ExprCall { callee: ilam, args: noargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, caps: iacc };
                     },
@@ -56566,7 +56566,7 @@ function box_scan_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, structs: pars
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false };
+        var lam: parser.ExprLambda = parser.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "" };
         var nested: parser.ExprLambda[] = [];
         match (stmts[i]) {
             parser.StmtVar(v) => {
