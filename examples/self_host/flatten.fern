@@ -31,6 +31,7 @@
 import "./util";
 import "./lexer";
 import "./parser";
+import "./astwalk";
 
 // `locals` lists the value-binding names in scope for the body being
 // rewritten (params + every `var` / `for` / match-arm binding in the
@@ -453,7 +454,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                     inner = inner.append(lm.params[pi].name);
                     pi = pi + 1;
                 }
-                inner = collect_locals_stmts(lm.body, inner);
+                inner = astwalk.collect_bound_stmts(lm.body, inner);
                 lctx = RewriteCtx {
                     modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
                     declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: inner,
@@ -573,71 +574,6 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
     return out;
 }
 
-// rewrite_module_bodies applies ctx to every funcs/structs/aliases/
-// top_stmts position. Decl NAMES are handled by the caller (entry
-// keeps them; mangle renames them); this rewrites the bodies + type
-// spellings + the receiver type, plus mangles each non-receiver
-// function name and struct/alias name when ctx.prefix is set.
-// add_split appends each comma-separated, space-trimmed piece of `name`
-// to `into` (tuple-destructure `var (a, b)` arrives as one "a,b" name).
-function add_split(into: string[], name: string): string[] {
-    var out: string[] = into;
-    var cur: string = "";
-    var i: i32 = 0;
-    while (i < name.len()) {
-        if (name[i] == 44) {                       // ','
-            if (cur.len() > 0) { out = out.append(cur); }
-            cur = "";
-        } else if (name[i] != 32) {                // skip spaces
-            cur = cur + name[i:i + 1];
-        }
-        i = i + 1;
-    }
-    if (cur.len() > 0) { out = out.append(cur); }
-    return out;
-}
-
-// collect_locals_stmt / collect_locals_stmts gather every value-binding
-// name introduced anywhere in a statement list (over-approximating scope:
-// a name bound anywhere in the function is treated as a local throughout,
-// which is what shadowing means for bare references).
-function collect_locals_stmts(stmts: parser.Stmt[], into: string[]): string[] {
-    var out: string[] = into;
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        out = collect_locals_stmt(stmts[i], out);
-        i = i + 1;
-    }
-    return out;
-}
-
-function collect_locals_stmt(st: parser.Stmt, into: string[]): string[] {
-    var out: string[] = into;
-    match (st) {
-        parser.StmtVar(v) => { out = add_split(out, v.name); },
-        parser.StmtFor(f) => { out = add_split(out, f.var_name); out = collect_locals_stmts(f.body, out); },
-        parser.StmtIf(f) => { out = collect_locals_stmts(f.then_body, out); out = collect_locals_stmts(f.else_body, out); },
-        parser.StmtWhile(w) => { out = collect_locals_stmts(w.body, out); },
-        parser.StmtMatch(m) => {
-            var i: i32 = 0;
-            while (i < m.arms.len()) {
-                match (m.arms[i].pattern) {
-                    parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { out = out.append(pv.binding); }
-                        var e: i32 = 0;
-                        while (e < pv.extra_bindings.len()) { out = out.append(pv.extra_bindings[e]); e = e + 1; }
-                    },
-                    parser.PatWildcard(_) => { },
-                }
-                out = collect_locals_stmts(m.arms[i].body, out);
-                i = i + 1;
-            }
-        },
-        _ => { },
-    }
-    return out;
-}
-
 // collect_local_names — all value-binding names in a function (receiver +
 // params + body bindings).
 function collect_local_names(fd: parser.FuncDecl): string[] {
@@ -645,9 +581,14 @@ function collect_local_names(fd: parser.FuncDecl): string[] {
     if (fd.receiver_name.len() > 0) { out = out.append(fd.receiver_name); }
     var i: i32 = 0;
     while (i < fd.params.len()) { out = out.append(fd.params[i].name); i = i + 1; }
-    return collect_locals_stmts(fd.body, out);
+    return astwalk.collect_bound_stmts(fd.body, out);
 }
 
+// rewrite_module_bodies applies ctx to every funcs/structs/aliases/
+// top_stmts position. Decl NAMES are handled by the caller (entry
+// keeps them; mangle renames them); this rewrites the bodies + type
+// spellings + the receiver type, plus mangles each non-receiver
+// function name and struct/alias name when ctx.prefix is set.
 function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Module {
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -727,7 +668,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         top_stmts: rewrite_block(mod.top_stmts, RewriteCtx {
             modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames,
             declnames_mangled: ctx.declnames_mangled,
-            locals: collect_locals_stmts(mod.top_stmts, []),
+            locals: astwalk.collect_bound_stmts(mod.top_stmts, []),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         }),

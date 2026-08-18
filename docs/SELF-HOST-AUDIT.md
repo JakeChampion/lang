@@ -336,16 +336,17 @@ findings. Ranked by leverage.
   type system).
 
 ### T3 — No generic AST visitor / fold (→ ~40 hand-written walkers)
-- [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress
-  (`astwalk.fern` started; see appendix for the corrected analysis):_ the
-  free-variable collectors (`collect_idents_expr`/`_stmt`/`collect_bound_stmt`) are
-  byte-identical across `asmcore`/`ssa`/`vm` and now live once in `astwalk.fern`;
-  all three are converted (asmcore carried the `///MODULE astwalk` bundle cascade +
-  a 73-list staging sweep). The `expr` collector
-  also converges with `wasm`'s (wasm's accumulator-dedup is **redundant** — every
-  consumer dedups again). wasm's **stmt** collector genuinely diverges, but the
-  real reason is its `StmtAssign` arm collecting the assign **target** name
-  (`a.target`) which astwalk/asmcore/ssa/vm do NOT — see appendix; wasm is deferred. Every analysis
+- [~] **SH-022 — Add `walk_expr`/`walk_stmt` (or a fold) once.** _In progress:_
+  `astwalk.fern` now carries the walk itself once — `fold_expr_nodes` /
+  `fold_stmt_nodes`, generic in the accumulator and parameterised by a statement
+  visitor, an expression visitor and a descent predicate, with `fold_expr` /
+  `fold_stmt` and the pruned pair as wrappers (#6993). Every collector in the
+  module is a visitor over it: `collect_idents_expr`/`_stmt`,
+  `collect_bound_stmt`, `collect_calls_stmt`, `collect_qualrefs_expr`/`_stmt`.
+  `flatten`'s and `asmcore`'s private binder walks are deleted onto it too, and
+  the `a.target` divergence the appendix describes was resolved in astwalk's
+  favour (#2850 / SH-057) — `wasm.fern` itself no longer exists, so the
+  appendix's "wasm is deferred" is history. Every remaining analysis
   re-enumerates all Expr/Stmt variants by hand: `parser.fern` ~10 walkers
   (`expr_mentions:1574`, `mono_*`, `ms_*`, `rw_call_*`, …); `checker.fern` ~15
   scope-threading passes (`ret_diags`, `lret_*`, `mx_*`, `slit_diags`,

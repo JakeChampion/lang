@@ -4315,47 +4315,6 @@ function callgate_name_in(names: string[], name: string): boolean {
     return false;
 }
 
-// callgate_bound_names collects every name bound anywhere in a body
-// (function-wide, all scopes flattened — see the shadowing note above).
-function callgate_bound_names(stmts: parser.Stmt[], acc: string[]): string[] {
-    var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            parser.StmtVar(v) => { acc = acc.append(v.name); },
-            parser.StmtIf(f) => {
-                acc = callgate_bound_names(f.then_body, acc);
-                acc = callgate_bound_names(f.else_body, acc);
-            },
-            parser.StmtWhile(w) => { acc = callgate_bound_names(w.body, acc); },
-            parser.StmtFor(fo) => {
-                acc = acc.append(fo.var_name);
-                acc = callgate_bound_names(fo.body, acc);
-            },
-            parser.StmtMatch(m) => {
-                var ai: i32 = 0;
-                while (ai < m.arms.len()) {
-                    match (m.arms[ai].pattern) {
-                        parser.PatVariant(pv) => {
-                            if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
-                            var bi: i32 = 0;
-                            while (bi < pv.extra_bindings.len()) {
-                                acc = acc.append(pv.extra_bindings[bi]);
-                                bi = bi + 1;
-                            }
-                        },
-                        _ => {}
-                    }
-                    acc = callgate_bound_names(m.arms[ai].body, acc);
-                    ai = ai + 1;
-                }
-            },
-            parser.StmtDefer(d) => { acc = callgate_bound_names([d.action], acc); },
-            _ => {}
-        }
-        i = i + 1;
-    }
-    return acc;
-}
 
 // emitter_call_names are the free-function spellings the self-host emitters
 // intercept in try_emit_builtin / lower_expr beyond the front-end builtin set:
@@ -4401,8 +4360,7 @@ function callgate_known_names(mod: parser.Module): string[] {
         if (mod.funcs[fi].receiver_type.len() > 0) { out = out.append(mod.funcs[fi].name); }
         fi = fi + 1;
     }
-    var ti: i32 = 0;
-    while (ti < mod.top_stmts.len()) { out = callgate_bound_names([mod.top_stmts[ti]], out); ti = ti + 1; }
+    out = astwalk.collect_bound_stmts(mod.top_stmts, out);
     return out;
 }
 
@@ -4533,7 +4491,7 @@ function callgate_expr(e: parser.Expr, g: CallGate, where: string, bound: string
                 lb = lb.append(lm.params[pi].name);
                 pi = pi + 1;
             }
-            lb = callgate_bound_names(lm.body, lb);
+            lb = astwalk.collect_bound_stmts(lm.body, lb);
             return callgate_stmts(lm.body, g, where, lb, errs);
         },
         _ => { return errs; }
@@ -4626,12 +4584,12 @@ function callgate_run(mod: parser.Module, g: CallGate): string {
             bound = bound.append(fd.params[pi].name);
             pi = pi + 1;
         }
-        bound = callgate_bound_names(fd.body, bound);
+        bound = astwalk.collect_bound_stmts(fd.body, bound);
         errs = callgate_stmts(fd.body, g, "in fn '" + fd.name + "'", bound, errs);
         fi = fi + 1;
     }
     if (g.check_undef) {
-        var tb: string[] = callgate_bound_names(mod.top_stmts, []);
+        var tb: string[] = astwalk.collect_bound_stmts(mod.top_stmts, []);
         errs = callgate_stmts(mod.top_stmts, g, "at top level", tb, errs);
     }
     return errs;

@@ -41,8 +41,8 @@ What a 167k-line compiler written in a modern language uses, counted across
 
 | Construct | The language has it | Self-host uses it |
 |---|---|---|
-| Generic functions / structs | ✅ monomorphised, with trait bounds | **4** (`astwalk`'s fold spine, #6993) |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **3** top-level fn values (`astwalk`, #6993) |
+| Generic functions / structs | ✅ monomorphised, with trait bounds | **6** (`astwalk`'s fold spine, #6993) |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **10** top-level fn values + **2** no-op lambdas (`astwalk`, #6993) |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **0** |
@@ -253,6 +253,65 @@ Two findings, and both were only reachable by doing it:
 That is the ratchet's cost stated twice over. Neither slice needed a language
 feature built; both needed one *used*, and each turned up a real bug within the
 first hour of using it.
+
+**What the third adoption cost (#6993).** The walk gained a STATEMENT visitor:
+`fold_expr_nodes` / `fold_stmt_nodes` take `visit_stmt` alongside `visit_expr`,
+and `fold_expr` / `fold_stmt` / the pruned pair became wrappers over them.
+`collect_idents_stmt` and `collect_bound_stmt` — the last hand-written
+recursions in `astwalk` — are visitors over that spine, and two near-duplicate
+binder walks elsewhere (`flatten.collect_locals_stmt`,
+`asmcore.callgate_bound_names`) were deleted onto it. Net −120 lines across
+three modules.
+
+The visitor has to be a PAIR rather than native's single `fn(Node) bool`
+(`internal/ast/walk.go:23`) because `Expr` and `Stmt` are separate unions here
+with no common supertype, and boxing them into one would cost an allocation per
+node. Native folds descent control into the visitor's return; the self-host
+keeps the separate predicate slice two chose, for the same reason.
+
+What it cost, and none of it was visible from outside:
+
+- **The no-op statement visitor can only be spelled one way, and it is the
+  opposite of slice one's.** A top-level generic `skip[T]` cannot be named as a
+  value at all — it monomorphises away and the reference resolves to nothing
+  (#7040) — and a nested named function inside a generic keeps its declared `T`
+  verbatim when the enclosing function is monomorphised, so it arrives as
+  `(Stmt, T) => T` where `(Stmt, string[]) => string[]` was wanted (#7042). Both
+  report `re-check failed (compiler bug)` rather than a diagnostic. The arrow
+  lambda — the spelling slice one could NOT use, before #6996 fixed it — is the
+  one that works. It captures nothing, and costs the same as a top-level named
+  no-op (measured, 20M iterations).
+- **That lambda then trapped on the self-host wasm backend.** Its `$wrapN`
+  trampoline is a bare-typevar pass-through, so it took the #5464 erased
+  widening and was emitted `(param i64) (result i64)` against the arity-keyed
+  all-i32 `call_indirect` type: `indirect call type mismatch` on the first call.
+  The trampoline is not a generic — it copies a lambda's spellings but declares
+  no type parameters — so the erased-generic widening never applied to it;
+  gating it on the function actually declaring the type variables is the fix.
+  **`FERN_STRICT_IR=1` compiled it with exit 0 and `FERN_IR_VERIFY=1` was
+  clean.** Only running the module caught it, which is `docs/TEST-GATES.md`'s
+  rule about `internal/e2eselfhost` being primary, demonstrated.
+- **Three live binder bugs, all of the form "two answers to what does this
+  bind".** `PatVariant.at_binding` — the `n` of `n @ Tag(x)` — was known only to
+  `irlower.sa_pat_binds`; every capture analysis missed it, so a lambda reading
+  the binding declined the lift (`function value n not defined`). Fixing the
+  binder set was half of it: `cap_type_in_stmts` also had to type the capture,
+  which is the scrutinee's type. `asmcore`'s call gate did not comma-split a
+  tuple destructure, so `var (g, h) = pair(); g(1)` was rejected with
+  `error[E001]: call to undefined function 'g'` — a valid program refused.
+  `flatten`'s copy never entered a `defer`.
+- **Native had the same binder bug, in the same shape.** `modload.collectLocals`
+  visited statements only, so a `defer { … }` action (a BlockExpr, i.e. an
+  expression) hid its locals, and a match arm's `@` binding was not in
+  `arm.Bindings`. Both left the name out of the shadow set, and the reference
+  was mangled to the module decl: `undefined identifier "shadowlib__K"`, or a
+  silent read of the wrong value where the types agree. It now runs over
+  `ast.Walk`, so a new binding form is reachable there the moment the shared
+  walk reaches it — the same consolidation as the self-host half.
+
+Three slices, six bugs, and every one of them was sitting in a path nothing
+exercised. The census rows that remain are not blocked on the ratchet any more;
+they are blocked on their own prerequisites.
 
 ### 2.5 Types are strings
 

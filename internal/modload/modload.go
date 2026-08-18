@@ -1905,52 +1905,46 @@ func (r *rewriter) rewriteFuncBody(fn *ast.FuncDecl) {
 	r.localVars = prev
 }
 
-// collectLocals walks b and adds every `var name : T` and
-// `for var i …` / destructure-binding name to dst.
+// collectLocals adds to dst every name b binds — a `var`, a
+// destructure, a `for` binder, and a match arm's payload and `@`
+// bindings — at any depth, INCLUDING inside a block sitting in
+// expression position (`defer { … }`, a value `if`). It runs over
+// ast.Walk rather than its own switch so a new binding form is
+// reachable here the moment the shared walk reaches it.
+//
+// A nested function or lambda is its own scope and is pruned:
+// rewriteNestedFuncBody seeds one from this set and adds its own
+// binders there, so letting them bleed out would suppress the
+// rewrite of a module name the enclosing body legitimately uses.
 func collectLocals(b *ast.Block, dst map[string]bool) {
 	if b == nil {
 		return
 	}
 	for _, s := range b.Stmts {
-		collectLocalsStmt(s, dst)
-	}
-}
-
-func collectLocalsStmt(s ast.Stmt, dst map[string]bool) {
-	switch x := s.(type) {
-	case *ast.Block:
-		collectLocals(x, dst)
-	case *ast.If:
-		collectLocalsStmt(x.Then, dst)
-		collectLocalsStmt(x.Else, dst)
-	case *ast.While:
-		collectLocalsStmt(x.Body, dst)
-	case *ast.Loop:
-		collectLocalsStmt(x.Body, dst)
-	case *ast.For:
-		collectLocalsStmt(x.Init, dst)
-		collectLocalsStmt(x.Body, dst)
-	case *ast.ForEach:
-		dst[x.Var] = true
-		collectLocalsStmt(x.Body, dst)
-	case *ast.Var:
-		dst[x.Name] = true
-	case *ast.Destructure:
-		for _, n := range x.Names {
-			dst[n] = true
-		}
-	case *ast.Match:
-		for _, arm := range x.Arms {
-			for _, n := range arm.Bindings {
-				dst[n] = true
+		ast.Walk(s, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FuncDecl, *ast.Lambda:
+				return false
+			case *ast.Var:
+				dst[x.Name] = true
+			case *ast.Destructure:
+				for _, name := range x.Names {
+					dst[name] = true
+				}
+			case *ast.ForEach:
+				dst[x.Var] = true
+			case *ast.Match:
+				for _, arm := range x.Arms {
+					for _, name := range arm.Bindings {
+						dst[name] = true
+					}
+					if arm.AtBinding != "" {
+						dst[arm.AtBinding] = true
+					}
+				}
 			}
-			collectLocals(arm.Body, dst)
-		}
-	case *ast.FuncDecl:
-		// Nested local function — its parameters and body are
-		// their own scope. Don't bleed those into the enclosing
-		// function's locals set; closure conversion handles the
-		// captured-vars story separately.
+			return true
+		})
 	}
 }
 
