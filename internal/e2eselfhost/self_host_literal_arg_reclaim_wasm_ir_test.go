@@ -40,6 +40,32 @@ func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
+		// The fresh PRODUCER CALL in argument position. No heap-flatness
+		// assertion on this leg — the WAT driver's own allocations sit between
+		// any two probes — so __rc_underflow() plus the value is the witness
+		// that the release is balanced rather than over-eager.
+		{"producer-call-arg-borrowable-wasm", `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function size(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) { if (size(mks(i)) < 41) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
+		// Refused: the callee returns the argument, so the result aliases the
+		// temp and is read back.
+		{"producer-call-arg-returned-safe-wasm", `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
+function pick(s: string): string { return s; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) { var r: string = pick(mks(i)); if (r.len() < 41) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
 		{"literal-arg-borrowable-flat-wasm", `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     var acc: i32 = 0;
