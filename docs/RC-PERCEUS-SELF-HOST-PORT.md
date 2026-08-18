@@ -9798,3 +9798,45 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   backends; 6 of the 15 fail with the `irlower.fern` change reverted, the other
   9 being the value and aliasing controls that must pass either way).
   Refs #4353 #4451.
+
+  Closed next, from the same measurement: the CALL-BOUND array of tuples and
+  array of structs. `collect_fresh_arrtup_names` / `collect_fresh_arrstruct_names`
+  took only a direct array LITERAL initialiser, so `var ps: (i32, i32[])[] = mk(k)`
+  leaked buffer, element boxes and inner arrays at 80 B/round (48 on wasm). New
+  `"ARRTUPF:"` / `"ARRSTRUCTF:"` registry entries — a free function whose every
+  return is a fresh array literal of fresh tuple (resp. struct) literals — give a
+  binding from such a producer the same credit a literal gets, the arrangement
+  `"STRARR:"` already gives `string[]`. The binding's annotation supplies the
+  element type the deep free walks; the callee's returned value escapes by return
+  and keeps its shallow dec, so each box is freed once. Regression test:
+  `internal/e2eselfhost/self_host_arrtup_producer_reclaim_*_test.go` (6 cases x 3
+  backends; the two byte gates fail on the parent, the four controls — value,
+  non-fresh producer returning a PARAM array, forwarded return, element alias —
+  pass either way).
+
+  Left open, deliberately, with what each would take:
+
+  - **Tuple / Option positions of enum, `Result`, `Map` and nested-`Option`
+    kind** (120 B/round, all three backends). `tuple_field_deep_droppable` and
+    `opt_payload_freefn` both end at string / array / nested-tuple / reclaim-struct;
+    an enum position needs a per-variant drop plan (native's
+    `enumVariantDropPlan` / `genEnumDropFn`), which is a design pass, not a
+    position in an existing walk. `Option[Map[K, V]]` does not lower at all
+    first.
+  - **The erased-generic array-of-tuples producer** (`wrap[T](…): (T, i32[])[]`,
+    80 B/round): its return type carries a type var, so there is no concrete
+    element tuple for the walk. That is the call site's instantiation question
+    (#6299), not something to approximate in the registry.
+  - **A NESTED rc-tuple is not reclaimed at all** — new here, and not a
+    consequence of either fix: `var t: ((i32, i32[]), i32) = ((k, [k, k+1]), k+1)`
+    churns at 120 \| 120 \| 72 B/round where the un-nested `(i32, i32[])` is flat,
+    reading only the outer scalar. Both the admission
+    (`tuple_lit_rc_reclaimable`, via `tuple_lit_has_array`) and the emission
+    (`emit_tuple_child_drops`' nested arm) claim to cover it, so the credit is
+    being refused somewhere between them and the cause wants locating before
+    anything is changed.
+  - **Array- and struct-valued map columns** (80 B/round self-host): NATIVE
+    leaks these too — and leaks plain `Map[i32, i32]` churn where the self-host
+    is flat — so there is no parity target to port to. It wants a native
+    measurement and a decision first; `irlower.fern`'s note on the flag-1
+    alias-column grow leak being load-bearing still stands.

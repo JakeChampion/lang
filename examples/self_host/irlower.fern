@@ -29813,7 +29813,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // the free would dangle), and no element-payload escape (arrtup_elem_payload_
     // escapes — a bare `keep = xs[i].1` array-field extraction; a scalar read
     // `xs[i].0`, indexed read `xs[i].1[j]` and `xs[i].1.len()` are borrows).
-    var ats: string[] = collect_fresh_arrtup_names(body, structs, []);
+    var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, []);
     var ati: i32 = 0;
     while (ati < ats.len()) {
         if (!body_unsafe_for(body, ats[ati], borrowable)
@@ -29833,7 +29833,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
-    var asts: string[] = collect_fresh_arrstruct_names(body, structs, [], msites);
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -30895,6 +30895,18 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // strand every element it did not extract.
         if (fn_returns_fresh_strarr(funcs[k], str_fresh)) {
             out = out.append("STRARR:" + funcs[k].name);
+        }
+        // "ARRTUPF:<name>" / "ARRSTRUCTF:<name>" — the array-of-BOXES producers
+        // (#4353): a FREE function whose every return is a fresh array literal of
+        // fresh tuple (resp. struct) literals. A binding from one earns the same
+        // ARRTUP: / ARRSTRUCT: credit an array literal earns, so the caller's
+        // deep free reaches every element box; the callee's returned value
+        // escapes its own frame and keeps the shallow dec.
+        if (fn_returns_fresh_arrtup(funcs[k], structs)) {
+            out = out.append("ARRTUPF:" + funcs[k].name);
+        }
+        if (fn_returns_fresh_arrstruct(funcs[k], structs)) {
+            out = out.append("ARRSTRUCTF:" + funcs[k].name);
         }
         // "STRFLDF:<name>" / "STRFLDF:<Base>.<method>" — the field-read half: a
         // strict-fresh struct producer whose every `string` field is fresh, and
@@ -36527,23 +36539,75 @@ function arrtup_lit_is_fresh(e: parser.Expr, ttype: string, structs: parser.Stru
     return false;
 }
 
+// body_has_nonfresh_arrtup_return: any return whose value is NOT a fresh
+// `(<tuple-with-array>)[]` literal for element type `elem`. The array-of-tuples
+// sibling of body_has_nonfresh_arrlit_return, which needs no per-element proof
+// because its elements are scalars.
+function body_has_nonfresh_arrtup_return(stmts: parser.Stmt[], elem: string, structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!arrtup_lit_is_fresh(r.value, elem, structs)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrtup_return(f.then_body, elem, structs) || body_has_nonfresh_arrtup_return(f.else_body, elem, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrtup_return(w.body, elem, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrtup_return(fo.body, elem, structs)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrtup_return(m.arms[a].body, elem, structs)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// fn_returns_fresh_arrtup: `fn` is a free function whose declared return is a
+// deep-droppable `(<tuple-with-array>)[]` and whose every return hands back a
+// fresh array literal of fresh tuple literals — so the caller's binding sole-owns
+// the buffer, every element tuple box and the arrays inside them. Registered
+// "ARRTUPF:<name>" so a call-bound local earns the ARRTUP credit.
+function fn_returns_fresh_arrtup(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    if (fn.receiver_type.len() > 0) { return false; }
+    var elem: string = arrtup_elem_tuple_type(fn.ret_type, structs);
+    if (elem == "") { return false; }
+    if (!body_has_return(fn.body)) { return false; }
+    return !body_has_nonfresh_arrtup_return(fn.body, elem, structs);
+}
+
 // collect_fresh_arrtup_names: LOCAL names bound from a fresh `(<tuple-with-array>)[]`
-// literal (arrtup_ann_is + arrtup_lit_is_fresh) anywhere in the body. Escape gates
-// applied by reclaimable_names_of.
-function collect_fresh_arrtup_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+// literal (arrtup_ann_is + arrtup_lit_is_fresh), or from a call to an "ARRTUPF:"
+// producer, anywhere in the body. Escape gates applied by reclaimable_names_of.
+function collect_fresh_arrtup_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs)) { a = push_str_unique(a, v.name); }
+                // A producer CALL: the annotation supplies the element type the
+                // deep free walks, and the "ARRTUPF:" registry proves every
+                // returned buffer, element box and inner array is the callee's
+                // own. The callee's returned local escapes by return and so keeps
+                // its shallow dec — the elements are freed exactly once, here.
+                else if (arrtup_ann_is(v.type_name, structs)) {
+                    match (v.init) {
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => {
+                                    if (util.index_of_str(fresh_ret, "ARRTUPF:" + cid.name) >= 0
+                                            && !body_declares_name(body, cid.name)) { a = push_str_unique(a, v.name); }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                }
             },
-            parser.StmtIf(f) => { a = collect_fresh_arrtup_names(f.then_body, structs, a); a = collect_fresh_arrtup_names(f.else_body, structs, a); },
-            parser.StmtWhile(w) => { a = collect_fresh_arrtup_names(w.body, structs, a); },
-            parser.StmtFor(fo) => { a = collect_fresh_arrtup_names(fo.body, structs, a); },
+            parser.StmtIf(f) => { a = collect_fresh_arrtup_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_arrtup_names(f.else_body, body, structs, fresh_ret, a); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrtup_names(w.body, body, structs, fresh_ret, a); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrtup_names(fo.body, body, structs, fresh_ret, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_arrtup_names(m.arms[mi].body, structs, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_arrtup_names(m.arms[mi].body, body, structs, fresh_ret, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -37075,17 +37139,67 @@ function stmt_arrstruct_unsafe_for(st: parser.Stmt, name: string, borrowable: st
     return false;
 }
 
+// body_has_nonfresh_arrstruct_return: any return whose value is NOT a fresh
+// array-of-structs literal. The array-of-structs sibling of
+// body_has_nonfresh_arrtup_return.
+function body_has_nonfresh_arrstruct_return(stmts: parser.Stmt[], structs: parser.StructDecl[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => { if (!arrstruct_lit_is_fresh(r.value, structs)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, structs) || body_has_nonfresh_arrstruct_return(f.else_body, structs)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, structs)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, structs)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, structs)) { return true; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// arrstruct_call_producer: `e` is a direct call to an "ARRSTRUCTF:" producer that
+// the body does not shadow with a local of the same name.
+function arrstruct_call_producer(e: parser.Expr, body: parser.Stmt[], fresh_ret: string[]): boolean {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprIdent(cid) => {
+                    return util.index_of_str(fresh_ret, "ARRSTRUCTF:" + cid.name) >= 0
+                        && !body_declares_name(body, cid.name);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// fn_returns_fresh_arrstruct: the array-of-structs sibling of
+// fn_returns_fresh_arrtup, registered "ARRSTRUCTF:<name>".
+function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    if (fn.receiver_type.len() > 0) { return false; }
+    if (arrstruct_elem_struct_type(fn.ret_type, structs) == "") { return false; }
+    if (!body_has_return(fn.body)) { return false; }
+    return !body_has_nonfresh_arrstruct_return(fn.body, structs);
+}
+
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
 // literal (arrstruct_elem_struct_type + arrstruct_lit_is_fresh) anywhere in the body,
-// or — #6535 — from an EMPTY literal the body then grows by self-append. Escape gates
-// applied by reclaimable_names_of.
-function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[], msites: string[]): string[] {
+// from an "ARRSTRUCTF:" producer call, or — #6535 — from an EMPTY literal the body
+// then grows by self-append. Escape gates applied by reclaimable_names_of.
+function collect_fresh_arrstruct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[], msites: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs)) { a = push_str_unique(a, v.name); }
+                // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
+                // the annotation supplies the element struct type and the registry
+                // proves every returned element box is the callee's own.
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_call_producer(v.init, body, fresh_ret)) { a = push_str_unique(a, v.name); }
                 // APPEND-BUILT candidate (#6535): `var vals: Val[] = []` grown by
                 // `vals = vals.append(Val { .. })`. arrstruct_lit_is_fresh rejects
                 // `[]` (no elements to prove fresh), which left every append-built
@@ -37099,12 +37213,12 @@ function collect_fresh_arrstruct_names(stmts: parser.Stmt[], structs: parser.Str
                     a = push_str_unique(a, "A|" + v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, structs, a, msites); a = collect_fresh_arrstruct_names(f.else_body, structs, a, msites); },
-            parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, structs, a, msites); },
-            parser.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, structs, a, msites); },
+            parser.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites); },
+            parser.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, body, structs, fresh_ret, a, msites); },
+            parser.StmtFor(fo) => { a = collect_fresh_arrstruct_names(fo.body, body, structs, fresh_ret, a, msites); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_fresh_arrstruct_names(m.arms[mi].body, structs, a, msites); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_fresh_arrstruct_names(m.arms[mi].body, body, structs, fresh_ret, a, msites); mi = mi + 1; }
             },
             _ => {}
         }
