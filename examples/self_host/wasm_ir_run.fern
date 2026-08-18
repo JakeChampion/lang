@@ -66,10 +66,11 @@ function run(): i32 {
         eprint(arity_errs);
         return 1;
     }
-    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317)
-    // are error endpoints, not deferrals: reject here, before either emit path,
-    // rather than routing to the AST emitter — which has no runtime for them and
-    // emits a call against a symbol nothing defines.
+    // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
+    // the raw/syscall floor #6946) are error endpoints, not deferrals. This
+    // driver's IR path calls emit_ir_module directly, so the shared entry's copy
+    // of this gate does not cover it; without one the refusal comes from
+    // instruction selection and names an IR op instead of the builtin.
     var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
     if (unsupported.len() > 0) {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));

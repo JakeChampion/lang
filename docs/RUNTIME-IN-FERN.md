@@ -530,12 +530,13 @@ remainder splits three ways:
   `irverifystack` models the op correctly. The IR was well formed; only the
   emitter was deficient.
 
-  **The wasm twins are still open.** `wasm_binop` and `wasm_binop_w` have the
-  same comment fallback, and eleven live ops reach them — the `__raw_*` /
-  `__syscall*` floor primitives, which exist for the register-backend runtime and
-  have no wasm handlers. That failure is at least loud (the emitted WAT fails
-  validation) rather than silent, and the fix is a `wasm_unsupported_builtin`
-  entry rather than a refusal, so it is tracked separately.
+  **The wasm twins are closed too** (#6981, #6946). `wasm_binop` /
+  `wasm_binop_w` refuse in place of their comment fallback, and the eleven live
+  ops that reached them — the `__raw_*` / `__syscall*` floor primitives, which
+  exist for the register-backend runtime and have no wasm handlers — are named
+  by `wasm_unsupported_builtin` before emit, since a deliberate gap deserves the
+  builtin's name rather than an IR op's. The refusal stays as the backstop for an
+  op with no builtin name to report.
 
 - **Composites, not leaves**: `subprocess` (31 traps on arm64 — pipes, fork,
   exec, drain and reap in one body), `map_delete`, `strbuf_append`.

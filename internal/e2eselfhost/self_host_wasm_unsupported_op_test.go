@@ -13,16 +13,18 @@ import (
 // Both binary selectors used to end in `return ";; ir: unsupported bin <name>"` —
 // a WAT COMMENT where an instruction belongs — and the op dispatch's terminal
 // `else` routes every unrecognised tag through them, so the op was silently
-// DROPPED. `__raw_alloc` is the reproducer: it is one of the raw-memory
-// intrinsics the register backends lower and wasm_ir does not, and it is NOT
-// classified in platforms.fern, so it escapes the E066 capability gate and
-// reaches instruction selection.
+// DROPPED. What made that silent rather than merely broken is arity: a pops-1/
+// pushes-1 op leaves the operand stack balanced, so wasmtime ACCEPTED the module
+// and ran it to completion with the operation simply gone.
 //
-// What made it silent rather than merely broken is the arity. raw_alloc is
-// pops-1/pushes-1, so omitting it leaves the operand stack balanced: before the
-// fix this program compiled clean, wasmtime ACCEPTED the module, and it ran to
-// completion with the allocation simply gone. A binary op at least unbalances the
-// stack and gets rejected, with a message naming neither op nor function.
+// `__heap_mark` is the reproducer. It is a self-host-only intrinsic that both
+// register backends lower inline (#6728) and wasm does not model at all, and the
+// drivers are bare emitters that run no capability pass — so the CLI's E066
+// `arena` refusal (platforms.fern) does not fire here and the op reaches
+// instruction selection. The raw-memory / syscall floor used to serve as the
+// reproducer; it is now named by wasm_unsupported_builtin's pre-emit gate
+// (#6946), which is the better diagnostic for a builtin a user can write, and
+// leaves this refusal as the backstop it should be.
 //
 // Two halves, and they have to travel together: wasm refuses with exit 3 and
 // names the op, and the SAME program still compiles on x86-64, which is what
@@ -36,9 +38,7 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	wasmDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasmdriver")
 
-	// __raw_alloc reaches instruction selection on every target: it is not
-	// capability-gated, so nothing declines it earlier.
-	const src = `function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }`
+	const src = `function main(): i32 { var m: i64 = __heap_mark(); __heap_release_to(m); return 0; }`
 
 	t.Run("wasm-refuses", func(t *testing.T) {
 		cmd := exec.Command(wasmDriver)
@@ -55,7 +55,7 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		}
 		// The diagnostic has to name the op — the whole point is that the old
 		// failure named nothing at all.
-		if !strings.Contains(errb.String(), "raw_alloc") {
+		if !strings.Contains(errb.String(), "heap_mark") {
 			t.Errorf("refusal does not name the op; stderr:\n%s", errb.String())
 		}
 		if !strings.Contains(errb.String(), "no instruction selection") {
@@ -83,10 +83,11 @@ func TestSelfHostWasmUnsupportedOpRefused(t *testing.T) {
 		if len(out) == 0 {
 			t.Fatal("x86-64 driver emitted 0 bytes")
 		}
-		// No shape assertion on the instruction sequence — raw_alloc lowers to a
-		// `call __fern_alloc` that ordinary allocation also emits, so grepping for
-		// it would prove nothing. The control's content is the asymmetry itself:
-		// same program, other backend, no refusal.
+		// No shape assertion on the instruction sequence — the checkpoint pair
+		// lowers to plain reads and writes of the arena globals that ordinary
+		// allocation also emits, so grepping for one would prove nothing. The
+		// control's content is the asymmetry itself: same program, other
+		// backend, no refusal.
 		if strings.Contains(string(out), "# ir: unsupported") {
 			t.Error("x86-64 emitted the op as a comment — its own #6917 refusal has regressed")
 		}

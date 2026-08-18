@@ -293,6 +293,12 @@ pointer width, not the i32 the signature advertises; callers only ever pass
 values that came out of `__raw_alloc` / a box field, so the narrowing is
 nominal.
 
+The set is register-backend only, apart from `__raw_load_ptr` /
+`__raw_store_ptr` (and the two type-only bridges, `__raw_data` and
+`__raw_array`). wasm has neither a raw address space nor syscalls and serves the
+helpers these back with hand-written WAT, so a wasm compile of a program calling
+one is refused by name before emit — `wasm_ir.wasm_unsupported_builtin` (#6946).
+
 | intrinsic | lowers to | notes |
 |---|---|---|
 | `__raw_alloc(n: i32): i32` | `mov n→%rdi; call __fern_alloc` → ptr in `%rax` | the bump/freelist primitive; the one call that stays asm |

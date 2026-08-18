@@ -1574,19 +1574,36 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
     return true;
 }
 
+// is_raw_floor_builtin reports whether name is one of the Tier-2 raw-memory /
+// syscall floor intrinsics (docs/RUNTIME-INTRINSICS.md). They exist so the
+// register backends' runtime helpers can be written in Fern (asmcore.rt_src_*);
+// wasm serves those helpers with hand-written WAT and has neither a raw address
+// space nor a syscall instruction to lower them onto.
+//
+// __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm selects them
+// (kind_tag 84 / 85) — and neither are their two type-only bridges: __raw_data
+// lowers to a raw_load_ptr and __raw_array emits nothing at all.
+function is_raw_floor_builtin(name: string): boolean {
+    if (name == "__raw_alloc" || name == "__raw_store8" || name == "__raw_load8") { return true; }
+    if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ") { return true; }
+    if (name == "__raw_addr" || name == "__raw_arr_box") { return true; }
+    return name == "__syscall3" || name == "__syscall4" || name == "__syscall5";
+}
+
 // wasm_unsupported_builtin returns the name of the first builtin the module
 // calls that has NO wasm meaning at all, or "" when there is none. These are
-// error endpoints, not deferrals: routing them to the AST emitter produces a
-// module that references a runtime symbol nothing defines, so the failure lands
-// as an opaque `unknown func: failed to find name $X` from the wasm loader
-// instead of a diagnostic naming the unsupported feature.
+// error endpoints, not deferrals, and the diagnostic has to be raised here:
+// nothing downstream can name the builtin. Instruction selection sees only an IR
+// op, so it refuses with the op's name and frames a deliberate gap as the
+// miscompile-refusal it is not (#6946); the wasm loader, further on, names
+// nothing at all.
 //
 //   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
 //   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
 //     descriptors to poll, and its analog already exists and lowers:
 //     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
-//     fd (#4317). Before this, a timer_fd module fell to the AST path and
-//     emitted `call $timer_fd` against nothing.
+//     fd (#4317).
+//   - the raw-memory / syscall floor — see is_raw_floor_builtin.
 //
 // Detection is syntactic: the bare callee ident as collected by astwalk (a
 // call's callee IS collected; a `.name` field access is not), the same pre-emit
@@ -1625,6 +1642,7 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
         var ci: i32 = 0;
         while (ci < ids.len()) {
             if (asm_ir.is_c_call(ids[ci])) { return ids[ci]; }
+            if (is_raw_floor_builtin(ids[ci])) { return ids[ci]; }
             ci = ci + 1;
         }
         fi = fi + 1;
@@ -1632,7 +1650,7 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
     return "";
 }
 
-// wasm_unsupported_message is the diagnostic both wasm drivers print for an
+// wasm_unsupported_message is the diagnostic every wasm entry prints for an
 // unsupported builtin, so the wording cannot drift between them. timer_fd gets
 // a pointer at its wasm analog; there is no analog to suggest for subprocess.
 pub function wasm_unsupported_message(name: string): string {
@@ -1644,6 +1662,9 @@ pub function wasm_unsupported_message(name: string): string {
     }
     if (name == "proc_fork" || name == "proc_waitpid" || name == "proc_exec") {
         return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)\n";
+    }
+    if (is_raw_floor_builtin(name)) {
+        return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)\n";
     }
     return "error: " + name + " is not supported on the wasm target\n";
 }
@@ -2359,6 +2380,18 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
 // `@export` entirely, so a refusal is strictly better than what it did.
 pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, io: boolean): string {
     var lm: parser.Module = route_normalized(mod);
+    // Builtins with no wasm meaning at all are rejected BEFORE the routing
+    // decision, so the diagnostic names the builtin rather than the IR op
+    // instruction selection would refuse, or nothing at all when the eligibility
+    // bail speaks first (#6946). The standalone drivers run this same gate
+    // themselves, since their IR path calls emit_ir_module directly; this is the
+    // one every other caller — the whole of the `fern` CLI's wasm surface —
+    // reaches.
+    var unsupported: string = wasm_unsupported_builtin(lm);
+    if (unsupported.len() > 0) {
+        eprint(wasm_unsupported_message(unsupported));
+        exit(1);
+    }
     var mode: i32 = 0;
     if (component) {
         mode = 1;

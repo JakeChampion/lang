@@ -18,12 +18,12 @@ import (
 // mapbox from the reclaim would poison the recycled block and skew the result.
 //
 // This is the regression gate for the wasm landmine: before the __fern_map_free
-// helper, emit_map_buffers_free emitted `op_raw_load_ptr`, which does NOT lower on
-// the wasm backend (it fell through to an `;; unsupported bin raw_load_ptr`
-// comment), leaving the operand stack imbalanced so wasmtime rejected the module
-// ("values remaining on stack at end of block"). The helper routes wasm to
+// helper, emit_map_buffers_free emitted `op_raw_load_ptr`, which the wasm backend
+// did not select, leaving the operand stack imbalanced so wasmtime rejected the
+// module ("values remaining on stack at end of block"). The helper routes wasm to
 // $__fern_map_release instead, so a reclaimable map local now compiles+runs on
-// every backend.
+// every backend — and the emit no longer has a comment fallback to slip through
+// (#6917 / #6946), so a regression fails the driver rather than the run.
 var mapReclaimIRCases = []struct {
 	name string
 	main string
@@ -115,9 +115,6 @@ func TestSelfHostMapReclaimIRWasm(t *testing.T) {
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			if bytes.Contains(wat, []byte("unsupported bin raw_load_ptr")) {
-				t.Fatalf("%s: emitted an unsupported raw_load_ptr comment (map reclaim landmine regressed)", tc.name)
 			}
 			watFile := filepath.Join(dir, "mapreclaim_prog.wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
