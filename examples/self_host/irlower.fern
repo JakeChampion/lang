@@ -1597,6 +1597,26 @@ function sig_has_name(reg: string[], name: string): boolean {
     return false;
 }
 
+// opt_fresh_payload_fresh: `name`'s row in the opt-fresh registry also carries
+// the "f" flag — every success payload is a static literal or a fresh string
+// producer, which is what licenses freeing a string payload rather than only
+// the box.
+function opt_fresh_payload_fresh(reg: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        var e: string = reg[i];
+        if (tagged_value_start(e, "", name) >= 0 && optfresh_entry_payload_is_fresh(e)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// opt_err_fresh_producer: the registry carries `name` under its ERR-side tag —
+// every Err payload the producer returns is a fresh string.
+function opt_err_fresh_producer(reg: string[], name: string): boolean {
+    return reclaim_has(reg, "ERRFRESH:", name);
+}
+
 // sig_flag_at: the flag character recorded for parameter `idx` of `name` in a
 // "<name>|<flags>" registry — one character per parameter position — or 0 when
 // the name is absent, or records no flag that far out.
@@ -22320,7 +22340,7 @@ struct PreciseDrops { idxs: i32[], names: string[], kinds: string[] }
 // is its LAST top-level statement reference; releasing after that whole
 // statement completes is sound even when the last reference sits inside a
 // nested block.
-function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[], opt_fresh: string[]): PreciseDrops {
+function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], arr_ret: string[], strarr_ret: string[], f64arr_ret: string[], i64arr_ret: string[], borrowable: string[], opt_fresh_reg: string[]): PreciseDrops {
     var idxs: i32[] = [];
     var names: string[] = [];
     var kinds: string[] = [];
@@ -22399,7 +22419,7 @@ function precise_drop_names(body: parser.Stmt[], structs: parser.StructDecl[], a
                 // same footing as an inline ctor, which is what consumed_scalar_enum_frees
                 // already does for its own (FLAT-match) half of this shape.
                 var is_opt: boolean = false;
-                if (!is_lit && (fresh_scalar_option_init(v) || fresh_scalar_option_call_init(v, opt_fresh))) {
+                if (!is_lit && (fresh_scalar_option_init(v) || fresh_scalar_option_call_init(v, opt_fresh_reg))) {
                     is_opt = !body_has_top_level_match(body, v.name);
                 }
                 // A fresh rc-PAYLOAD Option/Result (`var o = Some([..])` / `Ok(P{..})`).
@@ -23495,7 +23515,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_call_names_of(s.sigs.opt_fresh_ret_fns), optfresh_fresh_call_names_of(s.sigs.opt_fresh_ret_fns), opterrfresh_call_names_of(s.sigs.opt_fresh_ret_fns), true);
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, true);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -23515,7 +23535,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_call_names_of(s.sigs.opt_fresh_ret_fns), true);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, s.sigs.opt_fresh_ret_fns, true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -29322,7 +29342,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // The non-reassigned, non-match-consumed sibling (#6360) — same tag, same
     // exit sweep; see collect_unmatched_optarr_names for why the two sets
     // cannot overlap.
-    var ufa: string[] = collect_unmatched_optarr_names(body, optfresh_call_names_of(opt_fresh_ret), []);
+    var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, []);
     var ufai: i32 = 0;
     while (ufai < ufa.len()) {
         out = out.append("OPTARR:" + ufa[ufai]);
@@ -29330,7 +29350,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         // string, so the sweep can fill the tag guard's else-branch for it alone.
         // OPTARR: is shared with the reassigned+match class, whose slots earned no
         // such proof — an unconditional Err release there would dangle.
-        if (unmatched_optarr_err_str_fresh(body, ufa[ufai], opterrfresh_call_names_of(opt_fresh_ret))) {
+        if (unmatched_optarr_err_str_fresh(body, ufa[ufai], opt_fresh_ret)) {
             out = out.append("OPTARRERR:" + ufa[ufai]);
         }
         ufai = ufai + 1;
@@ -29338,7 +29358,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
-    var ufs: string[] = collect_unmatched_optstr_names(body, optfresh_fresh_call_names_of(opt_fresh_ret), []);
+    var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, []);
     var ufsi: i32 = 0;
     while (ufsi < ufs.len()) {
         out = out.append("OPTSTR:" + ufs[ufsi]);
@@ -30555,7 +30575,7 @@ function fresh_scalar_option_init(v: parser.StmtVar): boolean {
 //
 // A non-scalar success payload stays refused: its common path would strand a
 // buffer, which needs the runtime variant a deep drop dispatches on (#6360).
-function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): boolean {
+function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh_reg: string[]): boolean {
     var callee: string = "";
     match (v.init) {
         parser.ExprCall(c) => {
@@ -30567,7 +30587,7 @@ function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): 
         _ => {}
     }
     if (callee == "") { return false; }
-    if (util.index_of_str(opt_fresh, callee) < 0) { return false; }
+    if (!sig_has_name(opt_fresh_reg, callee)) { return false; }
     // Annotation-only: the payload spelling is what proves scalar-ness, and an
     // un-annotated call init has none to read (the direct sibling can fall back
     // on a bare literal argument; there is no such fallback through a call).
@@ -30586,26 +30606,6 @@ function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): 
     return false;
 }
 
-// optfresh_call_names_of pulls the bare callee names out of the opt-fresh
-// registry ("name|ptype|flag"). Tagged rows ("RCE:" / "AAC:" / "ERRFRESH:")
-// carry no callee name and are skipped rather than yielding a junk one.
-function optfresh_call_names_of(entries: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < entries.len()) {
-        var e: string = entries[i];
-        var tagged: boolean = (e.len() > 4 && bytes_at(e, 0, "RCE:")) || (e.len() > 4 && bytes_at(e, 0, "AAC:"))
-            || (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:"));
-        if (!tagged) {
-            var bar: i32 = 0;
-            while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-            out = out.append(e[0:bar] + "");
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
 // optfresh_entry_payload_is_fresh: does a raw registry row ("name|ptype|flag")
 // carry the "f" flag — every success payload a static literal or a fresh string
 // producer? Tagged rows ("RCE:" / "AAC:") have no flag field and are refused.
@@ -30615,40 +30615,6 @@ function optfresh_entry_payload_is_fresh(e: string): boolean {
     var i: i32 = e.len() - 2;
     if (i < 0) { return false; }
     return e[i] == 124 && e[i + 1:e.len()] == "f";   // 124 = '|'
-}
-
-// The "f"-flagged siblings of the two extractors above: producers whose SUCCESS
-// payload is itself fresh, so a string payload may be released rather than only
-// the box. Same two sources — the seeded reclaimable_names and the raw registry.
-
-// The ERR-string-fresh producers, from the raw registry and from the seeded list
-// (#6360). Tagged rows rather than a second flag character, so every existing
-// "name|ptype|flag" lookup is untouched.
-function opterrfresh_call_names_of(entries: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < entries.len()) {
-        var e: string = entries[i];
-        if (e.len() > 9 && bytes_at(e, 0, "ERRFRESH:")) { out = out.append(e[9:e.len()] + ""); }
-        i = i + 1;
-    }
-    return out;
-}
-
-
-function optfresh_fresh_call_names_of(entries: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < entries.len()) {
-        var e: string = entries[i];
-        if (optfresh_entry_payload_is_fresh(e)) {
-            var bar: i32 = 0;
-            while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
-            out = out.append(e[0:bar] + "");
-        }
-        i = i + 1;
-    }
-    return out;
 }
 
 // match_scrutinee_ident: if top-level body statement `st` is a `match (x) { ... }`
@@ -30920,7 +30886,7 @@ function expr_is_scalarish(e: parser.Expr): boolean {
 // second credit loads 0 and decs null. The boundary is kept because two analyses
 // silently claiming one local is how a real over-release gets built later, and
 // because the redundant credit buys nothing precise-drop has not already done.
-function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], nested_ok: boolean): EnumFrees {
+function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: string[], nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -30937,7 +30903,7 @@ function consumed_scalar_enum_frees(body: parser.Stmt[], structs: parser.StructD
                 // same footing as an inline ctor — see fresh_scalar_option_call_init
                 // for why its payload gate is the stricter of the two.
                 var is_opt: boolean = fresh_scalar_option_init(v)
-                    || fresh_scalar_option_call_init(v, opt_fresh);
+                    || fresh_scalar_option_call_init(v, opt_fresh_reg);
                 // A REBOUND name is admitted when every one of its assignments
                 // constructs a fresh all-scalar enum / scalar Option (#6127): the
                 // old box is then dead at each rebind and the escape gate below
@@ -32733,7 +32699,7 @@ struct OptRcFrees { idxs: i32[], names: string[], pfrees: string[], blockable: b
 //
 // Annotation-only, like fresh_scalar_option_call_init: the payload spelling is
 // what proves the shape, and a call init has no literal to fall back on.
-function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[], fresh_str: string[]): string {
+function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh_reg: string[]): string {
     var callee: string = "";
     match (v.init) {
         parser.ExprCall(c) => {
@@ -32745,10 +32711,10 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[], fre
         _ => {}
     }
     if (callee == "") { return ""; }
-    if (util.index_of_str(opt_fresh, callee) < 0) { return ""; }
+    if (!sig_has_name(opt_fresh_reg, callee)) { return ""; }
     var ann: string = v.type_name;
     var n: i32 = ann.len();
-    var str_ok: boolean = util.index_of_str(fresh_str, callee) >= 0;
+    var str_ok: boolean = opt_fresh_payload_fresh(opt_fresh_reg, callee);
     if (n >= 8 && ann[0:7] == "Option[") {
         // None carries no payload, so the success payload is the only one.
         var pt: string = opt_payload_type(ann, "Ok");
@@ -32773,11 +32739,11 @@ function rcpayload_option_call_ptype(v: parser.StmtVar, opt_fresh: string[], fre
 
 // call_init_callee_in: `e` is a direct call to a bare-ident callee listed in
 // `names`. The membership test the call-init admissions all share (#6360).
-function call_init_callee_in(e: parser.Expr, names: string[]): boolean {
+function call_init_callee_err_fresh(e: parser.Expr, reg: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { return util.index_of_str(names, id.name) >= 0; },
+                parser.ExprIdent(id) => { return opt_err_fresh_producer(reg, id.name); },
                 _ => { return false; }
             }
         },
@@ -32789,7 +32755,7 @@ function call_init_callee_in(e: parser.Expr, names: string[]): boolean {
 // `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
 // take the nested-match lookup. See the comment at the lookup itself for why that
 // is safe there and unsafe at function scope.
-function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh: string[], fresh_str: string[], err_fresh: string[], nested_ok: boolean): OptRcFrees {
+function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: string[], nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var names: string[] = [];
     var pfrees: string[] = [];
@@ -32817,7 +32783,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                 // live box.
                 var call_pt: string = "";
                 if (cand.variant == "") {
-                    call_pt = rcpayload_option_call_ptype(v, opt_fresh, fresh_str);
+                    call_pt = rcpayload_option_call_ptype(v, opt_fresh_reg);
                     if (call_pt != "") {
                         var cvar: string = "Ok";
                         if (call_pt == "string") { cvar = "Ok|Some"; }
@@ -32886,7 +32852,7 @@ function consumed_rcpayload_option_frees(body: parser.Stmt[], structs: parser.St
                             // its drop never reaches the other arm's payload.
                             errstrs = errstrs.append(call_pt != ""
                                 && opt_payload_type(v.type_name, "Err") == "string"
-                                && call_init_callee_in(v.init, err_fresh));
+                                && call_init_callee_err_fresh(v.init, opt_fresh_reg));
                         }
                     }
                 }
@@ -34930,7 +34896,7 @@ function unmatched_optstr_ann_is(type_name: string): boolean {
     return opt_payload_type(type_name, "Ok") == "string";
 }
 
-function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_strfresh: string[]): boolean {
+function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[]): boolean {
     match (e) {
         parser.ExprCall(c) => {
             match (c.callee) {
@@ -34945,7 +34911,7 @@ function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_strfresh: string[]):
                     // `Err(<anything>)` on a Result[string, _]: the Ok-only payload
                     // free cannot reach an Err payload, so the box still qualifies.
                     if (cid.name == "Err") { return c.args.len() == 1; }
-                    return util.index_of_str(opt_strfresh, cid.name) >= 0;
+                    return opt_fresh_payload_fresh(opt_fresh_reg, cid.name);
                 },
                 _ => { return false; }
             }
@@ -34969,7 +34935,7 @@ function unmatched_optstr_init_is_fresh(e: parser.Expr, opt_strfresh: string[]):
 // holds — but only via an argument, which the caller-side escape analysis
 // already reads as an escape, so that buffer carries no second credit to
 // collide with. Measured on `Result[i32[], string]`: 800 allocs / 800 frees.
-function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh: string[]): boolean {
+function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh_reg: string[]): boolean {
     if (optarr_init_is_fresh(e)) { return true; }
     match (e) {
         parser.ExprCall(c) => {
@@ -34982,7 +34948,7 @@ function unmatched_optarr_init_is_fresh(e: parser.Expr, opt_fresh: string[]): bo
                         }
                     }
                     if (cid.name == "Err" && c.args.len() == 1) { return true; }
-                    return util.index_of_str(opt_fresh, cid.name) >= 0;
+                    return sig_has_name(opt_fresh_reg, cid.name);
                 },
                 _ => { return false; }
             }
@@ -35225,14 +35191,14 @@ function optarr_payload_escapes(stmts: parser.Stmt[], name: string): boolean {
 // `Err(<literal / fresh producer>)`, or a call to an ERRFRESH-registered producer
 // (#6360). Per-LOCAL rather than per-slot-class because the OPTARR credit is
 // shared with the reassigned+match class.
-function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, err_fresh: string[]): boolean {
+function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, opt_fresh_reg: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
                     if (opt_payload_type(v.type_name, "Err") != "string") { return false; }
-                    if (call_init_callee_in(v.init, err_fresh)) { return true; }
+                    if (call_init_callee_err_fresh(v.init, opt_fresh_reg)) { return true; }
                     match (v.init) {
                         parser.ExprCall(c) => {
                             match (c.callee) {
@@ -35255,10 +35221,10 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, err_
                     return false;
                 }
             },
-            parser.StmtIf(f) => { if (unmatched_optarr_err_str_fresh(f.then_body, name, err_fresh) || unmatched_optarr_err_str_fresh(f.else_body, name, err_fresh)) { return true; } },
-            parser.StmtWhile(w) => { if (unmatched_optarr_err_str_fresh(w.body, name, err_fresh)) { return true; } },
-            parser.StmtFor(fo) => { if (unmatched_optarr_err_str_fresh(fo.body, name, err_fresh)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_optarr_err_str_fresh(m.arms[a].body, name, err_fresh)) { return true; } a = a + 1; } },
+            parser.StmtIf(f) => { if (unmatched_optarr_err_str_fresh(f.then_body, name, opt_fresh_reg) || unmatched_optarr_err_str_fresh(f.else_body, name, opt_fresh_reg)) { return true; } },
+            parser.StmtWhile(w) => { if (unmatched_optarr_err_str_fresh(w.body, name, opt_fresh_reg)) { return true; } },
+            parser.StmtFor(fo) => { if (unmatched_optarr_err_str_fresh(fo.body, name, opt_fresh_reg)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_optarr_err_str_fresh(m.arms[a].body, name, opt_fresh_reg)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -35266,7 +35232,7 @@ function unmatched_optarr_err_str_fresh(stmts: parser.Stmt[], name: string, err_
     return false;
 }
 
-function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_strfresh: string[], acc: string[]): string[] {
+function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_fresh_reg: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -35274,18 +35240,18 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_strfresh: stri
         match (stmts[vi]) {
             parser.StmtVar(v) => {
                 if (unmatched_optstr_ann_is(v.type_name)
-                    && unmatched_optstr_init_is_fresh(v.init, opt_strfresh)
+                    && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_strfresh, a); a = collect_unmatched_optstr_names(f.else_body, opt_strfresh, a); },
-            parser.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_strfresh, a); },
-            parser.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_strfresh, a); },
+            parser.StmtIf(f) => { a = collect_unmatched_optstr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optstr_names(f.else_body, opt_fresh_reg, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optstr_names(w.body, opt_fresh_reg, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optstr_names(fo.body, opt_fresh_reg, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_unmatched_optstr_names(m.arms[mi].body, opt_strfresh, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_unmatched_optstr_names(m.arms[mi].body, opt_fresh_reg, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -35294,7 +35260,7 @@ function collect_unmatched_optstr_names(stmts: parser.Stmt[], opt_strfresh: stri
     return a;
 }
 
-function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh: string[], acc: string[]): string[] {
+function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh_reg: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
     var vi: i32 = 0;
@@ -35302,18 +35268,18 @@ function collect_unmatched_optarr_names(stmts: parser.Stmt[], opt_fresh: string[
         match (stmts[vi]) {
             parser.StmtVar(v) => {
                 if (unmatched_optarr_ann_is(v.type_name)
-                    && unmatched_optarr_init_is_fresh(v.init, opt_fresh)
+                    && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0
                     && !body_unsafe_for(stmts, v.name, [])) {
                     a = push_str_unique(a, v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh, a); },
-            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh, a); },
-            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh, a); },
+            parser.StmtIf(f) => { a = collect_unmatched_optarr_names(f.then_body, opt_fresh_reg, a); a = collect_unmatched_optarr_names(f.else_body, opt_fresh_reg, a); },
+            parser.StmtWhile(w) => { a = collect_unmatched_optarr_names(w.body, opt_fresh_reg, a); },
+            parser.StmtFor(fo) => { a = collect_unmatched_optarr_names(fo.body, opt_fresh_reg, a); },
             parser.StmtMatch(m) => {
                 var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, opt_fresh, a); mi = mi + 1; }
+                while (mi < m.arms.len()) { a = collect_unmatched_optarr_names(m.arms[mi].body, opt_fresh_reg, a); mi = mi + 1; }
             },
             _ => {}
         }
@@ -41430,7 +41396,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // here is what carries the fn-level admission (escape gate + sole consuming match
     // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
     // one statement.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), false);
+    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
         if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
@@ -41647,7 +41613,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // after its last top-level use (drop-on-last-use), instead of at the exit
     // sweep — bounding the live set so its block recycles for later allocations.
     // Emitted as dec + zero the slot, so the exit sweep harmlessly decs null.
-    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.f64arr_ret_fns, sg.i64arr_ret_fns, sg.borrowable_params, optfresh_call_names_of(sg.opt_fresh_ret_fns));
+    var pdrops: PreciseDrops = precise_drop_names(fn.body, structs, sg.arr_ret_fns, sg.strarr_ret_fns, sg.f64arr_ret_fns, sg.i64arr_ret_fns, sg.borrowable_params, sg.opt_fresh_ret_fns);
     // Reuse-layer switch (#4350 §6.5): with FERN_SELFHOST_NO_REUSE=1 every
     // donor-based pairing below stays EMPTY, so every construction allocates
     // fresh and every donor keeps its normal free (the suppressions keyed on
@@ -41677,7 +41643,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the match. The box is freed (dec + zero) right after its match statement —
     // sound because the box now carries an rc header and the match read its scalar
     // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), false);
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
@@ -41692,7 +41658,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, optfresh_call_names_of(sg.opt_fresh_ret_fns), optfresh_fresh_call_names_of(sg.opt_fresh_ret_fns), opterrfresh_call_names_of(sg.opt_fresh_ret_fns), false);
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -49644,7 +49610,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         head = head + "\n";
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs), optfresh_call_names_of(opt_fresh_ret_fns_of(funcs, structs)));
+    var pd: PreciseDrops = precise_drop_names(fn.body, structs, arr_ret, strarr_ret_fns_of(funcs), f64arr_ret_fns_of(funcs), i64arr_ret_fns_of(funcs), borrowable_params_of(funcs), opt_fresh_ret_fns_of(funcs, structs));
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
