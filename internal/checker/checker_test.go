@@ -2963,6 +2963,85 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	})
 }
 
+// TestVariantDiagnosticsNeverNameMangledEnums covers the rest of the
+// enum-naming surface E036/E029 print. Every case is the same defect as
+// the hint above: across modules the checker holds `lib__Kind`, and a
+// message echoing it names an identifier no program can contain while
+// exposing a private module's internal name. The single-file cases
+// elsewhere in this file cannot catch any of it — there the stored name
+// IS the source spelling.
+func TestVariantDiagnosticsNeverNameMangledEnums(t *testing.T) {
+	const main = "import \"./lib\";\nfunction main(): i32 { return lib.go(); }\n"
+
+	for _, tc := range []struct {
+		name string
+		lib  string
+		want []string
+	}{
+		{
+			// E029, enum-qualifier branch: an arm qualifies with a
+			// different enum than the scrutinee.
+			name: "qualifier does not match scrutinee",
+			lib: `pub enum Kind { Text, Number }
+pub enum Other { Text, Blah }
+
+pub function go(): i32 {
+    var k: Kind = Kind.Text;
+    match (k) {
+        Other.Text => { return 1; },
+        Kind.Number => { return 2; }
+    }
+    return 0;
+}
+`,
+			want: []string{`qualifier "Other" does not match scrutinee enum Kind`},
+		},
+		{
+			// E036, qualified reference to a variant the enum lacks.
+			name: "no such variant on the qualified enum",
+			lib: `pub enum Kind { Text, Number }
+
+pub function go(): i32 {
+    var k: Kind = Kind.Missing;
+    return 0;
+}
+`,
+			want: []string{`enum Kind has no variant "Missing"`},
+		},
+		{
+			// E036, payload-bearing variant referenced payload-less.
+			name: "qualified variant needs its payload",
+			lib: `pub enum Kind { Text, Number(i32) }
+
+pub function go(): i32 {
+    var k: Kind = Kind.Number;
+    return 0;
+}
+`,
+			want: []string{"variant Kind.Number expects 1 payload argument(s)", "call it as Kind.Number(...)"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err, _ := checkFiles(t, map[string]string{
+				"main.fern": main,
+				"lib.fern":  tc.lib,
+			}, "main.fern")
+			if err == nil {
+				t.Fatal("expected a diagnostic")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "__") {
+				t.Errorf("diagnostic names a mangled enum:\n%s", msg)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("diagnostic missing %q:\n%s", want, msg)
+				}
+			}
+		})
+	}
+}
+
 // TestCastAsTypeAscription — the `as` operator doubles as a
 // zero-cost type-annotation form. Bare `None`, `[]`, partially-
 // inferred variant constructors, etc. all get a place to pin a
