@@ -1162,9 +1162,17 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.b.WriteString("match (")
 		f.formatExpr(x.Tag, precLowest)
 		f.b.WriteString(") {\n")
-		for i, arm := range arms {
+		for i := 0; i < len(arms); i++ {
+			arm := arms[i]
 			f.indent(depth + 1)
 			f.formatArmPattern(arm)
+			// `A | B => …` parsed to one arm per alternative with the body
+			// cloned into each; the continuations rejoin their head here.
+			for i+1 < len(arms) && arms[i+1].AltCont {
+				i++
+				f.b.WriteString(" | ")
+				f.formatArmPattern(arms[i])
+			}
 			if arm.Guard != nil {
 				f.b.WriteString(" when ")
 				f.formatExpr(arm.Guard, precLowest)
@@ -1761,11 +1769,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if x.Sugar != nil {
 			exprArms = x.Sugar
 		}
-		for i, arm := range exprArms {
+		for i := 0; i < len(exprArms); i++ {
+			arm := exprArms[i]
 			if i > 0 {
 				f.b.WriteString(", ")
 			}
 			f.formatExprArmPattern(arm)
+			// See the statement form: or-pattern alternatives rejoin here.
+			for i+1 < len(exprArms) && exprArms[i+1].AltCont {
+				i++
+				f.b.WriteString(" | ")
+				f.formatExprArmPattern(exprArms[i])
+			}
 			if arm.Guard != nil {
 				f.b.WriteString(" when ")
 				f.formatExpr(arm.Guard, precLowest)

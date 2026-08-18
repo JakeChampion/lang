@@ -206,8 +206,15 @@ function print_expr_iife(c: parser.ExprCall): string {
                         var av: string = print_return_only(marms[i].body);
                         if (av.len() == 0) { return ""; }
                         if (i > 0) { out = out + ", "; }
-                        out = out + print_pattern(marms[i].pattern);
-                        if (marms[i].has_guard) { out = out + " when " + print_expr(marms[i].guard); }
+                        var head: string = print_pattern(marms[i].pattern);
+                        var guarded: parser.MatchArm = marms[i];
+                        // See print_match: or-pattern alternatives rejoin here.
+                        while (i + 1 < marms.len() && marms[i + 1].alt_cont) {
+                            i = i + 1;
+                            head = head + " | " + print_pattern(marms[i].pattern);
+                        }
+                        out = out + head;
+                        if (guarded.has_guard) { out = out + " when " + print_expr(guarded.guard); }
                         out = out + " => " + av;
                         i = i + 1;
                     }
@@ -243,8 +250,14 @@ function print_lit_match_expr(sg: parser.MatchSugar): string {
         var av: string = print_return_only(sg.lits[i].body);
         if (av.len() == 0) { return ""; }
         if (i > 0) { out = out + ", "; }
-        out = out + print_lit_pat(sg.lits[i]);
-        if (sg.lits[i].has_guard) { out = out + " when " + print_expr(sg.lits[i].guard); }
+        var head: string = print_lit_pat(sg.lits[i]);
+        var guarded: parser.LitArm = sg.lits[i];
+        while (i + 1 < sg.lits.len() && sg.lits[i + 1].alt_cont) {
+            i = i + 1;
+            head = head + " | " + print_lit_pat(sg.lits[i]);
+        }
+        out = out + head;
+        if (guarded.has_guard) { out = out + " when " + print_expr(guarded.guard); }
         out = out + " => " + av;
         i = i + 1;
     }
@@ -743,6 +756,11 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
             body = sg.tup[i].body;
             guard = sg.tup[i].guard;
             has_guard = sg.tup[i].has_guard;
+            // `(1, 2) | (3, 4) => …` parsed to one TupArm per alternative.
+            while (i + 1 < n && sg.tup[i + 1].alt_cont) {
+                i = i + 1;
+                head = head + " | " + print_tup_arm(sg.tup[i]);
+            }
         } else {
             if (sg.strct.len() > 0) {
                 head = print_struct_arm(sg.strct[i]);
@@ -750,12 +768,15 @@ function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string
                 guard = sg.strct[i].guard;
                 has_guard = sg.strct[i].has_guard;
             } else {
-                // One arm per LitArm: an or-pattern `0 | 1` has already been
-                // cloned into one arm per alternative, matching native.
                 head = print_lit_pat(sg.lits[i]);
                 body = sg.lits[i].body;
                 guard = sg.lits[i].guard;
                 has_guard = sg.lits[i].has_guard;
+                // `0 | 1 => …` parsed to one LitArm per alternative.
+                while (i + 1 < n && sg.lits[i + 1].alt_cont) {
+                    i = i + 1;
+                    head = head + " | " + print_lit_pat(sg.lits[i]);
+                }
             }
         }
         var (arm_body, g1) = print_block(body, depth + 1, g);
@@ -794,8 +815,16 @@ function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
     while (i < arms.len()) {
         var (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
         g = g1;
-        out = out + indent_str(depth + 1) + print_pattern(arms[i].pattern);
-        if (arms[i].has_guard) { out = out + " when " + print_expr(arms[i].guard); }
+        var head: string = print_pattern(arms[i].pattern);
+        var guarded: parser.MatchArm = arms[i];
+        // `A | B => …` parsed to one arm per alternative sharing the body; the
+        // continuations rejoin their head here.
+        while (i + 1 < arms.len() && arms[i + 1].alt_cont) {
+            i = i + 1;
+            head = head + " | " + print_pattern(arms[i].pattern);
+        }
+        out = out + indent_str(depth + 1) + head;
+        if (guarded.has_guard) { out = out + " when " + print_expr(guarded.guard); }
         out = out + " => " + arm_body;
         if (i + 1 < arms.len()) { out = out + ","; }
         out = out + "\n";

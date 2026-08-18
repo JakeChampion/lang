@@ -3640,44 +3640,47 @@ func (p *parser) parseMatch() (ast.Stmt, error) {
 	return m, nil
 }
 
-// sugarStmtArms snapshots the arms as written, for the printer, when at least
-// one of them nests — so `-fmt` reprints `Some(Ok(n)) => …` instead of the
-// merged arm and its inner match. nil when nothing nested, which is every
-// ordinary match: the desugar is a no-op there and the lowered arms ARE the
-// written ones.
+// sugarStmtArms snapshots the arms as written, for the printer, when the parse
+// consumed something into the lowering: a nested sub-pattern, so `-fmt`
+// reprints `Some(Ok(n)) => …` instead of the merged arm and its inner match,
+// or an or-pattern, whose alternatives are already one cloned arm each. nil
+// when neither happened, which is every ordinary match: the desugar is a no-op
+// there and the lowered arms ARE the written ones.
 func sugarStmtArms(raw []stmtRawArm) []*ast.MatchArm {
-	nested := false
+	lowered := false
 	for i := range raw {
-		if raw[i].pat.hasNestedSub() {
-			nested = true
+		if raw[i].pat.hasNestedSub() || raw[i].altCont {
+			lowered = true
 			break
 		}
 	}
-	if !nested {
+	if !lowered {
 		return nil
 	}
 	out := make([]*ast.MatchArm, len(raw))
 	for i := range raw {
 		out[i] = stmtArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
+		out[i].AltCont = raw[i].altCont
 	}
 	return out
 }
 
 // sugarExprArms is sugarStmtArms for the expression form.
 func sugarExprArms(raw []exprRawArm) []*ast.MatchExprArm {
-	nested := false
+	lowered := false
 	for i := range raw {
-		if raw[i].pat.hasNestedSub() {
-			nested = true
+		if raw[i].pat.hasNestedSub() || raw[i].altCont {
+			lowered = true
 			break
 		}
 	}
-	if !nested {
+	if !lowered {
 		return nil
 	}
 	out := make([]*ast.MatchExprArm, len(raw))
 	for i := range raw {
 		out[i] = exprArmFromPattern(raw[i].pat, raw[i].guard, raw[i].body)
+		out[i].AltCont = raw[i].altCont
 	}
 	return out
 }
@@ -3692,6 +3695,9 @@ type stmtRawArm struct {
 	pat   matchPattern
 	guard ast.Expr
 	body  *ast.Block
+	// altCont marks an alternative after the first of one written
+	// `P1 | P2 | … =>` head, so the printer can put them back together.
+	altCont bool
 }
 
 // parseStmtRawArms parses one arm head (`P1 | P2 | … [when g] =>`) plus
@@ -3721,7 +3727,7 @@ func (p *parser) parseStmtRawArms() ([]stmtRawArm, error) {
 			}
 			b = ast.CloneBlock(body)
 		}
-		out[i] = stmtRawArm{pat: pat, guard: g, body: b}
+		out[i] = stmtRawArm{pat: pat, guard: g, body: b, altCont: i > 0}
 	}
 	return out, nil
 }
@@ -4665,6 +4671,8 @@ type exprRawArm struct {
 	pat   matchPattern
 	guard ast.Expr
 	body  ast.Expr
+	// altCont — see stmtRawArm.altCont.
+	altCont bool
 }
 
 // parseExprRawArms parses one expression-form arm head + body, returning
@@ -4706,7 +4714,7 @@ func (p *parser) parseExprRawArms() ([]exprRawArm, error) {
 			}
 			b = ast.CloneExpr(body)
 		}
-		out[i] = exprRawArm{pat: pat, guard: g, body: b}
+		out[i] = exprRawArm{pat: pat, guard: g, body: b, altCont: i > 0}
 	}
 	return out, nil
 }

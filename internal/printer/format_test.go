@@ -272,6 +272,38 @@ func TestFormatMapForEachKeepsItsSugar(t *testing.T) {
 	}
 }
 
+// An or-pattern arm is a parse-time clone-desugar: `A | B => body` becomes
+// one arm per alternative with the body copied into each. Reprinting that is
+// a real edit to the file — it grows with the alternative count, and a later
+// change to one copy silently diverges from the others.
+func TestFormatKeepsOrPatterns(t *testing.T) {
+	for _, tc := range []struct{ name, arms string }{
+		{"variant", "Col.R | Col.G => {\n      return 1;\n    },\n    Col.B => {\n      return 2;\n    }"},
+		{"three-way", "Col.R | Col.G | Col.B => {\n      return 1;\n    }"},
+		{"guarded", "Col.R | Col.G when n > 0 => {\n      return 1;\n    },\n    _ => {\n      return 2;\n    }"},
+	} {
+		src := "enum Col { R, G, B }\n\nfunction f(c: Col, n: i32): i32 {\n  match (c) {\n    " +
+			tc.arms + "\n  }\n}\n"
+		if got := formatSrc(t, src); got != src {
+			t.Errorf("%s: formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", tc.name, got, src)
+		}
+	}
+}
+
+// The expression form takes the same path through MatchExpr.Sugar.
+func TestFormatKeepsOrPatternsInExpressionForm(t *testing.T) {
+	src := `enum Col { R, G, B }
+
+function f(c: Col): i32 {
+  var v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
+  return v;
+}
+`
+	if got := formatSrc(t, src); got != src {
+		t.Errorf("formatted output differs from source\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+}
+
 // A loop label and the `break` / `continue` that target it are the same
 // fact written twice; dropping either half silently retargets the jump to
 // the innermost loop.

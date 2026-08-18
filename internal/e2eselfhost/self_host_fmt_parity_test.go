@@ -1019,6 +1019,53 @@ function main(): i32 {
 return shapes(1) + real_lambda(2);
 }
 `},
+	// An or-pattern arm is a parse-time clone-desugar in BOTH compilers — one
+	// arm per alternative, body copied into each — so `-fmt` reprinted
+	// `A | B => …` as two arms and the parity gate could not see it: the two
+	// agreed on the same wrong answer (#7077). Every arm shape that admits a
+	// `|` is here, since each takes its own path: variant arms through
+	// Match.Sugar / StmtMatch.sugar, literal and range arms through the
+	// literal chain, tuple arms through the done-flag chain.
+	{"pattern-or-alternatives", `enum Col { R, G, B }
+function variant(c: Col, n: i32): i32 {
+match (c) {
+Col.R | Col.G => { return 1; },
+Col.B => { return 2; },
+}
+}
+function guarded(c: Col, n: i32): i32 {
+match (c) {
+Col.R | Col.G when n > 0 => { return 1; },
+_ => { return 2; },
+}
+}
+function lits(n: i32): i32 {
+match (n) {
+0 | 1 => { return 10; },
+2..4 | 8..=9 => { return 20; },
+_ => { return 30; },
+}
+}
+function strs(s: string): i32 {
+match (s) {
+"a" | "b" | "c" => { return 1; },
+_ => { return 0; },
+}
+}
+function tup(t: (i32, i32)): i32 {
+match (t) {
+(1, 2) | (3, 4) => { return 1; },
+(a, b) => { return a + b; },
+}
+}
+function expr_form(c: Col): i32 {
+var v: i32 = match (c) { Col.R | Col.G => 1, Col.B => 2 };
+return v;
+}
+function main(): i32 {
+return variant(Col.R, 1) + guarded(Col.R, 1) + lits(3) + strs("b") + tup((3, 4)) + expr_form(Col.B);
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the
