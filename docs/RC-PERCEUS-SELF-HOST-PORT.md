@@ -8435,3 +8435,53 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   pass on both, and each re-reads the protected buffer's ELEMENTS rather than
   only its length, so a wrongly admitted release shows as a wrong value. arm64
   and wasm siblings gained the flat + returned rows. Refs #6522 #4365 #4451.
+
+- 2026-08-18 (later still): **`paramCountedRetain` ported for ARRAY params, and
+  the conformance row's real blocker identified (#6522).**
+
+  The arg stash released a fresh temp only at a BORROWABLE position, which
+  leaves out the shape the conformance row is built from: a callee that STORES
+  the array is not borrowable by construction. Native does not widen
+  borrowability for this; it asks a different question per ARGUMENT — is every
+  appearance of the callee's parameter a counted store or a non-retaining read?
+  If so, an argument reaching the result got there through a construction that
+  inc'd it, so the temp is rc 2 on the escaping path and rc 1 otherwise and one
+  post-call dec nets it to a single owner either way.
+
+  `array_param_counted_of` is that analysis: a least fixpoint (start all-false,
+  add credits only on positive evidence, so a mutual-recursion cycle stays
+  uncredited), crediting a struct/tuple/array-literal slot value, a `p.len()`
+  pure-read receiver, and an argument at a position already proven counted.
+  ARRAY params only — native also classifies string and struct params and then
+  withdraws a scalar exemption via `ptrAllCounted`; leaving every other param
+  uncredited is strictly narrower, so the exemption never arises and a missing
+  credit costs a leak rather than an over-release.
+
+  | probe | before | after |
+  |---|---|---|
+  | `keep(mk(i), i)` — STORES the array, returns a scalar | 55 | **0** |
+  | `size(mk(i))` — borrowable (previous slice) | 0 | 0 |
+  | `both(mk(i), i)` — counted param, returns `i32[]` | 54 | 54 (refused) |
+  | `hand(mk(i))` — param aliased to a local | 55 | 55 (refused) |
+  | `node(mk(i), i)` — STORES it, returns a STRUCT | 103 | 103 (see below) |
+
+  **The scalar-result requirement is native's `resultCannotAliasArg`, and it is
+  stated in the REGISTRY rather than at the call site.** The release fires
+  immediately after the call, so a pointer-shaped return that is or contains the
+  argument would hand the caller freed memory. Array- and struct-returning
+  callees happen to lower through paths that never reach the arg stash, so
+  without this they would have been safe by accident; requiring a concrete
+  scalar result to earn an entry makes it an invariant of the registry instead.
+
+  **`alloc_flat_fresh_array_arg` still does not move, and the blocker is now
+  located precisely.** Its `node(name, deps_of(n), mtime)` returns a STRUCT, and
+  a struct-returning callee lowers through a path that never reaches this arg
+  stash — proven by the pair of probes above: the same storing callee returning
+  a SCALAR is flat, returning a STRUCT is 103. So the remaining work is not more
+  analysis; it is wiring the same admission into the struct-returning call path.
+  The case stays at 798 B/round.
+
+  VERIFIED: `counted-retain-arr-arg-flat` fails at 98 on the parent;
+  `-pointer-result-safe` (counted param, `i32[]` return) and
+  `-aliased-param-safe` (param bound to a local) are the two refusal directions
+  and pass on both, each re-reading the buffer's ELEMENTS. Refs #6522 #4451.

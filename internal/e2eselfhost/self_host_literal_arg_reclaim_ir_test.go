@@ -422,4 +422,62 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arr-arg-bound-local-safe", 0)
+
+	// COUNTED-RETAIN: `keep` STORES the array in a struct, so its parameter is
+	// not borrowable and the stash above declines — yet every appearance of that
+	// parameter is a counted store, so the temp is rc 2 on the escaping path and
+	// rc 1 otherwise and one post-call dec nets it to a single owner either way.
+	// That is native's paramCountedRetain, and it is what admits here. 55 B/round
+	// before.
+	run(t, `struct Node { deps: i32[], k: i32 }
+function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function keep(deps: i32[], k: i32): i32 { var n: Node = Node { deps: deps, k: k }; return n.k + n.deps.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + keep(mk(i), i)) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + keep(mk(j), j)) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-arr-arg-flat", 0)
+
+	// REFUSED on the RESULT TYPE, not on the parameter. `both`'s parameter is
+	// counted-retain exactly like `keep`'s, but it returns `i32[]` — the result
+	// can BE the argument, and the dec fires immediately after the call, so
+	// releasing would hand the caller freed memory. The elements are re-read, so
+	// a wrongly admitted release shows as a wrong value rather than a byte count.
+	run(t, `struct Node { deps: i32[], k: i32 }
+function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function both(deps: i32[], k: i32): i32[] { var n: Node = Node { deps: deps, k: k }; return n.deps; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var r: i32[] = both(mk(i), i);
+        if (r.len() != 3) { bad = 1; }
+        if (r[0] != i || r[2] != i + 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-arr-arg-pointer-result-safe", 0)
+
+	// REFUSED on the PARAMETER: `hand` returns its argument, so the appearance
+	// in return position is not a counted store and the param is never credited.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function hand(deps: i32[]): i32 { var keepit: i32[] = deps; return keepit.len() + deps[0]; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) { if (hand(mk(i)) != 3 + i) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-arr-arg-aliased-param-safe", 0)
 }
