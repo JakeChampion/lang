@@ -171,16 +171,22 @@ pub struct StmtExpr { value: Expr, line: i32 }
 // distinguishes them, and only the PRINTER reads it: reprinting one as the
 // other rewrites the user's source, and the block form additionally scopes
 // anything declared before the inner `if` (#6779).
-// MatchSugar is the written form of a TUPLE- or STRUCT-scrutinee `match`,
-// carried on the `if (true) { … }` that build_tuple_match / build_struct_match
-// desugar it to. Those two replace the match with a done-flag chain and leave
-// no StmtMatch behind, so without this the printer had only the chain to
-// render — `-fmt -w` then wrote `var __sm4_5_d = false; …` over the user's
-// match (#7065). Read by the printer only; the walk and every lowering pass
-// ignore it. Empty (both arm lists empty) on every other StmtIf, which is all
-// of them.
-pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], line: i32, col: i32 }
-pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar }
+// MatchSugar is the written form of a match whose scrutinee is a TUPLE, a
+// STRUCT, or a non-enum value, carried on the `if` that build_tuple_match /
+// build_struct_match / build_literal_match desugar it to. All three replace
+// the match outright — the first two with a done-flag chain, the third with an
+// if/else-if chain — and leave no StmtMatch behind, so without this the printer
+// had only the chain to render: `-fmt -w` wrote `var __sm4_5_d = false; …`
+// (#7065) or the bare `if (n == 0) … else …` (#7072) over the user's match.
+// Read by the printer only; the walk and every lowering pass ignore it. Empty
+// (all three arm lists empty) on every other StmtIf, which is all of them.
+pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], lits: LitArm[], line: i32, col: i32 }
+// origin records the source form a synthesised `if (true) { … }` stands in for,
+// so `-fmt` reprints what was written rather than the lowering: "block" for a
+// bare `{ … }` statement (the Stmt union has no block node), "chain_assign" for
+// `a = b = c` (one assignment per target), "" for every `if` the programmer
+// actually spelled. Read by the printer only.
+pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar, origin: string }
 // StmtWhile models `while (cond) { body... }`. The body executes
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
@@ -688,20 +694,31 @@ function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
 pub function no_match_sugar(): MatchSugar {
     var no_tup: TupArm[] = [];
     var no_struct: StructArm[] = [];
-    return MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, line: 0, col: 0 };
+    var no_lit: LitArm[] = [];
+    return MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, line: 0, col: 0 };
 }
 // s_if_match wraps the done-flag chain a tuple- or struct-scrutinee match
 // desugars to, carrying the arms as WRITTEN so the printer reprints the match.
 function s_if_match(body: Stmt[], sugar: MatchSugar): Stmt {
     var no_else: Stmt[] = [];
-    return StmtIf { cond: e_bool(true), then_body: body, else_body: no_else, line: sugar.line, else_chained: false, sugar: sugar };
+    return StmtIf { cond: e_bool(true), then_body: body, else_body: no_else, line: sugar.line, else_chained: false, sugar: sugar, origin: "" };
 }
 // s_if_chained is s_if for the one caller that knows how the else was WRITTEN:
 // the `if` statement parse. Every other construction is synthesised, and a
 // synthesised else-body is printed in block form (both spellings re-parse to
 // the same AST, so only source fidelity is at stake).
 function s_if_chained(cond: Expr, then_body: Stmt[], else_body: Stmt[], chained: boolean): Stmt {
-    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: chained, sugar: no_match_sugar() };
+    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: chained, sugar: no_match_sugar(), origin: "" };
+}
+// s_if_tagged is a scoping `if (true) { … }` labelled with the source form it
+// stands in for, so `-fmt` reprints that form rather than the scope.
+function s_if_tagged(body: Stmt[], origin: string): Stmt {
+    var no_else: Stmt[] = [];
+    return StmtIf { cond: e_bool(true), then_body: body, else_body: no_else, line: 0, else_chained: false, sugar: no_match_sugar(), origin: origin };
+}
+// s_block is the bare `{ … }` statement.
+function s_block(body: Stmt[]): Stmt {
+    return s_if_tagged(body, "block");
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
     return StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
@@ -2700,7 +2717,7 @@ function wider_rt(a: string, b: string): string {
 // bound, `range_hi` the high, and `range_inclusive` picks `..=` (inclusive)
 // over `..` (exclusive). build_literal_match lowers it to a bound test
 // `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
-struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean }
+pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean }
 
 // parse_lit_or_range parses a scalar-pattern low bound and, when a `..` /
 // `..=` follows, the high bound of a range pattern. Returns (low, high,
@@ -2837,7 +2854,19 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
         i = i - 1;
     }
     if (else_body.len() == 0) { return s_unknown("empty literal match"); }
-    return else_body[0];
+    // The chain replaces the match outright — there is no StmtMatch left — so
+    // hang the arms as written off its outermost `if` for `-fmt` (#7072).
+    return with_match_sugar(else_body[0], MatchSugar { ...no_match_sugar(), scrut: scrut, lits: arms, line: mkline, col: mkcol });
+}
+
+// with_match_sugar records the match a desugar stands in for on the `if` that
+// desugar produced. Printer-only: the arms it carries hold the same statement
+// objects the chain does, so every other pass reads the chain.
+function with_match_sugar(st: Stmt, sugar: MatchSugar): Stmt {
+    match (st) {
+        StmtIf(i) => { return StmtIf { ...i, sugar: sugar }; },
+        _ => { return st; },
+    }
 }
 
 // ---- Tuple-pattern match (`match (pair) { (0, y) => …, (x, y) => … }`) ----
@@ -3131,7 +3160,7 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
         ai = ai + 1;
     }
     var no_struct: StructArm[] = [];
-    return s_if_match(outer, MatchSugar { scrut: scrut, tup: arms, strct: no_struct, line: mkline, col: mkcol });
+    return s_if_match(outer, MatchSugar { ...no_match_sugar(), scrut: scrut, tup: arms, line: mkline, col: mkcol });
 }
 
 // ---- Struct-pattern match (`match (p) { Point { x, y } => … }`) ----
@@ -3304,7 +3333,7 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
         ai = ai + 1;
     }
     var no_tup: TupArm[] = [];
-    return s_if_match(outer, MatchSugar { scrut: scrut, tup: no_tup, strct: arms, line: mkline, col: mkcol });
+    return s_if_match(outer, MatchSugar { ...no_match_sugar(), scrut: scrut, strct: arms, line: mkline, col: mkcol });
 }
 
 // wrap_struct_fields nests the arm's matched path inside a match on each
@@ -5091,12 +5120,12 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
     // A bare block `{ ... }` in statement position is its own scope. The
     // self-host Stmt union has no StmtBlock node, so desugar it to
     // `if (true) { ... }` — reusing the scoped if-body (the same trick
-    // `loop` uses for `while (true)`). Map / struct literals only appear in
-    // expression position, so a leading `{` here is unambiguously a block.
+    // `loop` uses for `while (true)`), tagged so `-fmt` reprints the braces.
+    // Map / struct literals only appear in expression position, so a leading
+    // `{` here is unambiguously a block.
     if (p.peek_punct() == "{") {
         var (bb_body, bb_p) = parse_block(p);
-        var noelse: Stmt[] = [];
-        return (s_if(e_bool(true), bb_body, noelse), bb_p);
+        return (s_block(bb_body), bb_p);
     }
     // Loop label `outer: while (…) { … }` / `outer: for … ` / `outer: loop { … }`.
     // A leading `IDENT :` immediately before a loop keyword is a label (a bare
@@ -5702,7 +5731,6 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     }
                     if (okchain && chain.len() > 0) {
                         if (p.peek_punct() == ";") { p = p.advance(); }
-                        var noelse: Stmt[] = [];
                         var stmts: Stmt[] = [];
                         // innermost target gets the final value, then each
                         // earlier target copies from the one to its right.
@@ -5713,7 +5741,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                             ci = ci - 1;
                         }
                         stmts = stmts.append(s_assign(id0.name, e_ident(chain[0])));
-                        return (s_if(e_bool(true), stmts, noelse), p);
+                        return (s_if_tagged(stmts, "chain_assign"), p);
                     }
                 },
                 _ => { },
@@ -8734,7 +8762,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
             var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
             var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
@@ -9979,7 +10007,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
             var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
             var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
@@ -11072,7 +11100,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             var cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
             var tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
             var eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);

@@ -941,6 +941,59 @@ function main(): i32 {
   return 0;
 }
 `},
+	// Four statement forms the self-host parser LOWERS on the way in, leaving
+	// nothing of the written form behind for `-fmt` to reprint (#7072): a bare
+	// `{ … }` block and a block-shaped `defer` (there is no block node in the
+	// self-host Stmt union, so both become `if (true) { … }`), a chained
+	// assignment (one copy per target), and a match on a non-enum scrutinee
+	// (an if/else-if chain, in statement and in expression position alike).
+	// None appear in the parity CORPUS, so these fixtures are the only cover.
+	{"lowering-bare-block", `function main(): i32 {
+var s: i32 = 0;
+{
+var t: i32 = 3;
+s = t;
+}
+defer {
+s = 0;
+}
+return s;
+}
+`},
+	{"lowering-chained-assign", `function main(): i32 {
+var a: i32 = 0;
+var b: i32 = 0;
+var c: i32 = 0;
+a = b = c = 7;
+return a + b + c;
+}
+`},
+	{"lowering-literal-match", `function grade(n: i32): string {
+match (n) {
+0 => { return "zero"; },
+2..5 => { return "mid"; },
+6..=9 => { return "high"; },
+10 when n > 9 => { return "ten"; },
+_ => { return "other"; },
+}
+}
+function words(s: string): i32 {
+match (s) {
+"a" => { return 1; },
+_ => { return 0; },
+}
+}
+function pick(n: i32): i32 {
+var v: i32 = match (n) {
+0 => 5,
+_ => 7,
+};
+return v;
+}
+function main(): i32 {
+return grade(3).len() + words("a") + pick(0);
+}
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the
