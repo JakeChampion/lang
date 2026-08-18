@@ -8394,3 +8394,44 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   bytes. arm64 and wasm siblings gained the same rows, wasm without a flatness
   assertion per the trap above. All five `alloc_flat_*` divergence rows re-checked
   and unmoved. Refs #6522 #4355 #4451.
+
+- 2026-08-18 (later): **The ARRAY half of the stage-(b) arg temp, closed exactly
+  where the previous entry predicted (#6522).** `size(mk(i))` — a fresh
+  scalar-array producer handed to a borrowed parameter — cost 55 B/round; it is
+  0 now.
+
+  One call-site arm, no registry work: the stash gated on
+  `discardable_scalar_arr_lit`, so it matched a `parser.ExprArray` literal and
+  nothing else. It now also admits a direct call whose callee carries an
+  `"ARR:"` entry, refusing a local that shadows the declaration since the
+  registry is keyed by declaration. The release is the same `__fern_rc_dec` the
+  literal arm already used.
+
+  Per round, self-host x86-64:
+
+  | probe | before | after |
+  |---|---|---|
+  | `size(mk(i))` — borrowable position | 55 | **0** |
+  | `pick(mk(i))` — callee RETURNS the array | 55 | 55 (refused) |
+  | `node(mk(i), i)` — constructor STORES it | 103 | 103 (refused) |
+  | `var live = mk(i); size(live)` — a bound local | 0 | 0 |
+
+  **`alloc_flat_fresh_array_arg` does NOT move, and the reason is the third
+  row.** Its `node(name, deps_of(n), mtime)` stores the array, so the parameter
+  is not borrowable and this stash correctly declines — freeing there would
+  release what the returned struct now owns. The case stays at 798 B/round.
+  Closing it needs what native actually did for #6522: `paramCountedRetain`, the
+  PER-ARGUMENT admission that fires where the whole-call gate says no, keyed on
+  every appearance of the callee's parameter being a counted store or a
+  non-retaining read (`inferParamCountedRetain` / `arrayParamCounted`,
+  internal/ir/rc_analysis.go). The temp is then rc 2 on the escaping path and
+  rc 1 otherwise, and one post-call dec nets it correctly either way. That is a
+  fixpoint analysis over four param-type classifiers and is its own slice — the
+  borrowed-position stash here is not a step toward it, it is the neighbouring
+  shape.
+
+  VERIFIED: `producer-call-arr-arg-borrowable-flat` fails at 98 on the parent;
+  `-returned-safe`, `-stored-safe` and `-bound-local-safe` are the refusals,
+  pass on both, and each re-reads the protected buffer's ELEMENTS rather than
+  only its length, so a wrongly admitted release shows as a wrong value. arm64
+  and wasm siblings gained the flat + returned rows. Refs #6522 #4365 #4451.

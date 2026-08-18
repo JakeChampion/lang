@@ -343,4 +343,83 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arg-bound-local-safe", 0)
+
+	// The ARRAY sibling of the producer-call arg. The stash arm admitted only a
+	// `parser.ExprArray` literal via discardable_scalar_arr_lit, so the same
+	// temp one step removed — a call to an "ARR:"-registered producer — leaked
+	// its buffer per evaluation (55 B/round measured). The registry already
+	// admits a loop-built producer (body_returns_local_built_arr), so this is a
+	// call-site widening, not a registry one.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function size(d: i32[]): i32 { return d.len(); }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { acc = (acc + size(mk(i))) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 3000) { acc = (acc + size(mk(j))) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "producer-call-arr-arg-borrowable-flat", 0)
+
+	// REFUSED — the callee RETURNS the array, so the result aliases the temp and
+	// is read after. Freeing at the call would be a use-after-free.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function pick(d: i32[]): i32[] { return d; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var r: i32[] = pick(mk(i));
+        if (r.len() != 3) { bad = 1; }
+        if (r[2] != i + 2) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arr-arg-returned-safe", 0)
+
+	// REFUSED — a constructor STORES the array, so the returned struct owns it.
+	// This is the shape conformance/cases/alloc_flat_fresh_array_arg is built
+	// from; closing it needs native's per-argument counted-retain admission, not
+	// this borrowable-position stash.
+	run(t, `struct Node { deps: i32[], k: i32 }
+function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var b: Node = node(mk(i), i);
+        if (b.deps.len() != 3) { bad = 1; }
+        if (b.deps[1] != i + 1) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arr-arg-stored-safe", 0)
+
+	// A bound LOCAL at the same position is not a temp — it is read after the
+	// call and its own scope-exit release owns it.
+	run(t, `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function size(d: i32[]): i32 { return d.len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) {
+        var live: i32[] = mk(i);
+        if (size(live) != 3) { bad = 1; }
+        if (live[0] != i) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "producer-call-arr-arg-bound-local-safe", 0)
 }

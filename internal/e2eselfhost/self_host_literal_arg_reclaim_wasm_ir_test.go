@@ -44,6 +44,29 @@ func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 		// assertion on this leg — the WAT driver's own allocations sit between
 		// any two probes — so __rc_underflow() plus the value is the witness
 		// that the release is balanced rather than over-eager.
+		// The ARRAY sibling. No flatness assertion on this leg — the WAT
+		// driver's own allocations sit between any two probes — so
+		// __rc_underflow() plus the values are the witness.
+		{"producer-call-arr-arg-borrowable-wasm", `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function size(d: i32[]): i32 { return d.len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) { if (size(mk(i)) != 3) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
+		{"producer-call-arr-arg-returned-safe-wasm", `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
+function pick(d: i32[]): i32[] { return d; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3000) { var r: i32[] = pick(mk(i)); if (r.len() != 3 || r[2] != i + 2) { bad = 1; } i = i + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
 		{"producer-call-arg-borrowable-wasm", `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
 function main(): i32 {

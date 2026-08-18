@@ -9795,6 +9795,21 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
             if (sc.ok) {
                 match (c.args[ai]) {
                     parser.ExprArray(laa) => { arrlit_arg = discardable_scalar_arr_lit(laa, sc); },
+                    // A fresh scalar-array PRODUCER CALL (`size(mk(i))`) is the
+                    // same temp one step removed — the "ARR:" registry proves
+                    // every return is a sole-owned scalar-element buffer this
+                    // frame allocated, which is exactly what the literal arm
+                    // proves syntactically. A local shadowing the callee's name
+                    // is refused: the registry is keyed by declaration.
+                    parser.ExprCall(lac) => {
+                        match (lac.callee) {
+                            parser.ExprIdent(lacid) => {
+                                arrlit_arg = util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "ARR:" + lacid.name) >= 0
+                                    && sc.slot_of(lacid.name) < 0;
+                            },
+                            _ => {}
+                        }
+                    },
                     _ => {}
                 }
             }
