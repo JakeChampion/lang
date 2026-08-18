@@ -49,11 +49,7 @@ func Resolve(importPath string) (string, bool) {
 	if !IsStdlibPath(importPath) {
 		return "", false
 	}
-	fsPath := importPath
-	if !strings.HasSuffix(fsPath, ".fern") {
-		fsPath += ".fern"
-	}
-	data, err := fs.ReadFile(src, fsPath)
+	data, err := fs.ReadFile(src, withFernExt(importPath))
 	if err != nil {
 		return "", false
 	}
@@ -66,6 +62,32 @@ func Resolve(importPath string) (string, bool) {
 // the classification gates whether to call filepath.Join.
 func IsStdlibPath(importPath string) bool {
 	return strings.HasPrefix(importPath, "std/") || strings.HasPrefix(importPath, "core/")
+}
+
+// ModuleKey is the canonical `stdlib://…` key a stdlib import resolves to —
+// the identity modload records a module under, and therefore the shape of the
+// keys in `ast.Program.DirectImports` / `ModuleImports`. Returns "" for a path
+// that is not stdlib-namespaced.
+//
+// It exists so a caller holding an import's SOURCE spelling (`std/string`) can
+// ask whether a module imported it without re-deriving the key. Re-deriving it
+// is a silent failure: the lookup simply misses, every answer comes back
+// "not imported", and a guard written that way looks correct while changing
+// nothing.
+func ModuleKey(importPath string) string {
+	if !IsStdlibPath(importPath) {
+		return ""
+	}
+	return "stdlib://" + withFernExt(importPath)
+}
+
+// withFernExt appends the source extension unless the path already carries it,
+// so callers may write either form of a stdlib import.
+func withFernExt(importPath string) string {
+	if strings.HasSuffix(importPath, ".fern") {
+		return importPath
+	}
+	return importPath + ".fern"
 }
 
 // FS returns the embedded filesystem so tooling can iterate the
