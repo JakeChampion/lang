@@ -1101,6 +1101,18 @@ func substituteStmt(s ast.Stmt, sub map[string]ast.Type) {
 			substituteExpr(arm.Guard, sub)
 			substituteBlock(arm.Body, sub)
 		}
+	case *ast.FuncDecl:
+		// A nested named function, whose params and return type may name
+		// the enclosing generic's type parameters exactly as a lambda's
+		// can — `function skip(n: i32, a: T): T` inside `outer[T]`. Left
+		// unsubstituted it reached the re-check still typed `(i32, T) => T`
+		// against an `(i32, i32) => i32` parameter (#7042). Same treatment
+		// as the *ast.Lambda case in substituteExpr.
+		for i := range x.Params {
+			x.Params[i].Type = substituteType(x.Params[i].Type, sub)
+		}
+		x.ReturnType = substituteType(x.ReturnType, sub)
+		substituteBlock(x.Body, sub)
 	}
 }
 
@@ -1448,6 +1460,12 @@ func walkStmtStructLits(s ast.Stmt, fn func(*ast.StructLit)) {
 			}
 			walkBlockStructLits(arm.Body, fn)
 		}
+	case *ast.FuncDecl:
+		// A nested named function's body holds struct literals like any
+		// other; without this a `Box { v: k }` inside one was never
+		// rewritten to its instantiation and the re-check reported an
+		// unknown struct type (#7042).
+		walkBlockStructLits(x.Body, fn)
 	}
 }
 
@@ -1513,6 +1531,10 @@ func walkExprStructLits(e ast.Expr, fn func(*ast.StructLit)) {
 		walkExprStructLits(x.Inner, fn)
 	case *ast.DowncastExpr:
 		walkExprStructLits(x.Inner, fn)
+	case *ast.Lambda:
+		// So the lambda spelling of a nested function is not a safe
+		// harbour from the FuncDecl gap above.
+		walkBlockStructLits(x.Body, fn)
 	}
 }
 
@@ -1647,46 +1669,45 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 	return t
 }
 
+// rewriteBlockTypes rewrites every generic instantiation ANNOTATED inside a
+// body — a `var`'s type, and a lambda's or nested function's parameter and
+// return types — wherever it nests.
+//
+// The hand-rolled statement recursion this replaced descended into statements
+// only, so a `var b: Box[i32]` inside a nested function never had `Box[i32]`
+// rewritten to its instantiation and the re-check reported an unknown type;
+// inside a LAMBDA it was unreachable twice over, since nothing descended into
+// an expression at all (#7042). ast.Walk forbids restructuring the tree
+// mid-traversal, but rewriting a positionless Type field is not traversal
+// state and Walk never visits those fields itself — the same reasoning
+// resolveTypesInBlock records for the identical repair (#6996).
 func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.Type) {
 	if b == nil {
 		return
 	}
-	for _, s := range b.Stmts {
-		rewriteStmtTypes(s, info, into)
+	rewrite := func(t ast.Type) ast.Type {
+		if t == nil {
+			return nil
+		}
+		return rewriteType(t, info, into)
 	}
-}
-
-func rewriteStmtTypes(s ast.Stmt, info *checker.Info, into map[instKey][]ast.Type) {
-	switch x := s.(type) {
-	case *ast.Var:
-		if x.Type != nil {
-			x.Type = rewriteType(x.Type, info, into)
+	ast.Walk(b, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			x.Type = rewrite(x.Type)
+		case *ast.Lambda:
+			for i := range x.Params {
+				x.Params[i].Type = rewrite(x.Params[i].Type)
+			}
+			x.ReturnType = rewrite(x.ReturnType)
+		case *ast.FuncDecl:
+			for i := range x.Params {
+				x.Params[i].Type = rewrite(x.Params[i].Type)
+			}
+			x.ReturnType = rewrite(x.ReturnType)
 		}
-	case *ast.Destructure:
-		// No types stored on the node itself — element types
-		// flow from the synthesised temp `*ast.Var` in
-		// info.Locals, which the existing Var case handles.
-	case *ast.Block:
-		rewriteBlockTypes(x, info, into)
-	case *ast.If:
-		rewriteStmtTypes(x.Then, info, into)
-		if x.Else != nil {
-			rewriteStmtTypes(x.Else, info, into)
-		}
-	case *ast.While:
-		rewriteStmtTypes(x.Body, info, into)
-	case *ast.Loop:
-		rewriteStmtTypes(x.Body, info, into)
-	case *ast.For:
-		if x.Init != nil {
-			rewriteStmtTypes(x.Init, info, into)
-		}
-		rewriteStmtTypes(x.Body, info, into)
-	case *ast.Match:
-		for _, arm := range x.Arms {
-			rewriteBlockTypes(arm.Body, info, into)
-		}
-	}
+		return true
+	})
 }
 
 // walkBlock invokes fn on every Call expression reachable from
