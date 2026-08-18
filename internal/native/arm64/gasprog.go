@@ -16,9 +16,12 @@ import (
 // after (8-byte aligned); the returned blobs are meant to sit in one
 // R+X segment (see elf.StaticExecutableData).
 //
-// Supported in .rodata: .byte/.2byte/.4byte/.8byte (and the .hword/
-// .word/.quad/etc. aliases), .ascii/.asciz/.string, and .balign/.align.
-// Writable/zero-init sections (.data/.bss) are not handled yet.
+// Supported in .rodata / .data: .byte/.2byte/.4byte/.8byte (and the
+// .hword/.word/.quad/etc. aliases), .ascii/.asciz/.string, and
+// .balign/.align. .data is materialised into the same blob as .rodata —
+// nothing assembled here writes to it, and the emitter lays the two out in
+// source order, so symbol addresses agree either way. .bss is accumulated
+// separately so it can be laid out last and left out of the file.
 const (
 	secText = iota
 	secRodata
@@ -182,7 +185,7 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		// Flush the literal pool here (off the execution path).
 		a.FlushLiterals()
 		return sec, nil
-	case ".rodata":
+	case ".rodata", ".data":
 		a.SetBssSection(false)
 		return secRodata, nil
 	case ".bss":
@@ -220,7 +223,7 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 		case strings.Contains(arg, ".bss"), strings.Contains(arg, "__bss"):
 			a.SetBssSection(true)
 			return secRodata, nil
-		case strings.Contains(arg, ".rodata"),
+		case strings.Contains(arg, ".rodata"), strings.Contains(arg, ".data"),
 			strings.Contains(arg, "__const"), strings.Contains(arg, "__cstring"),
 			strings.Contains(arg, "__data"):
 			a.SetBssSection(false)

@@ -759,19 +759,32 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // the whole point — a heap address survives it.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 5) {  // const_str
-            // String literal: intern in .rodata, build an rc-headered box via
-            // __fern_str_box (#2649 Option A A1b) — data = .rodata label, len = byte
-            // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged, so
-            // __fern_str_concat / _eq see the same layout, and the rc header lets a
-            // fresh literal box (e.g. an accumulator's initial "") be reclaimed.
+            // String literal: intern the bytes in .rodata and push the address of
+            // its STATIC box (asm_ir.emit_str_box_data_from). box = [rc=-1][data][len],
+            // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
+            // read, and the immortal rc makes every reclaim path a no-op (#7080).
+            //
+            // The data pointer is stored PC-relatively on every evaluation rather
+            // than left to the block's own `.quad .S<i>`. That word is a link-time
+            // absolute address, which is only the runtime one when the image loads
+            // where it was linked: `-target arm64-android` is a position-independent
+            // ET_DYN with no PT_DYNAMIC and no relocations, so the linked value is
+            // near zero there and dereferencing it segfaults. The store is the same
+            // value every time, so it needs no first-use bookkeeping, and `.data` is
+            // in the image's RW segment on every arm64 target.
+            // Still mark_heap: the literal itself no longer allocates, but its
+            // value is a box pointer that flows into ops which do, and the
+            // runtime those need is emitted behind this flag.
             s = s.mark_heap();
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            var lolbl: string = asm_ir.str_lit_label(s, lo.idx);
-            s = s.write("    adrp x0, " + lolbl + "\n");
-            s = s.write("    add x0, x0, :lo12:" + lolbl + "\n");
-            s = s.write("    mov x1, #" + util.i32_to_string(o.str.len()) + "\n");
-            s = s.write("    bl __fern_str_box\n");
+            var boxlbl: string = asm_ir.str_box_label(s, lo.idx);
+            var datlbl: string = asm_ir.str_lit_label(s, lo.idx);
+            s = s.write("    adrp x0, " + boxlbl + "\n");
+            s = s.write("    add x0, x0, :lo12:" + boxlbl + "\n");
+            s = s.write("    adrp x1, " + datlbl + "\n");
+            s = s.write("    add x1, x1, :lo12:" + datlbl + "\n");
+            s = s.write("    str x1, [x0]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (ir.is_str_op_kind(o.kind_tag)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
@@ -2076,6 +2089,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
             s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+        s = asm_ir.emit_str_box_data_from(s, lit0);
         s = s.write("    .text\n");
     }
     return s;
@@ -2564,6 +2578,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
             s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+        s = asm_ir.emit_str_box_data_from(s, 0);
     }
     // .data: one block per static aggregate constant (#6149), after the string
     // pool because a block's first word is a shape POINTER into it.

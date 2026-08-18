@@ -31,16 +31,29 @@ import (
 //     gating it here would pin a bug rather than a behaviour.
 //   - A string-array element built from literals reports an exact 0 on the
 //     self-host: it allocates nothing, so flatness holds vacuously and the row
-//     would gate nothing. Every row below is required to allocate.
+//     would gate nothing. Every row below is required to allocate — shown either
+//     by its own non-zero high-water or, where #7080 made the setup literals
+//     free, by a `retained` control that must grow.
 type heapBumpFlatCase struct {
 	name string
 	src  func(n string) string
+	// retained is an optional control for a row whose own high-water is 0.
+	// Since #7080 a string literal is static data, so a row whose only visible
+	// allocation was its setup literals now reports 0 even though the shape it
+	// exercises allocates and reclaims exactly as before — the intermediates are
+	// served from the freelist, so the arena bump never saw them either way.
+	//
+	// The control runs the same shape with the results RETAINED, which the
+	// freelist cannot satisfy, and must grow. That is the evidence the `small ==
+	// 0` guard was reaching for; the guard itself only ever measured the setup.
+	// Rows without a control keep the guard, which still discriminates for them.
+	retained func(n string) string
 }
 
 var heapBumpFlatCases = []heapBumpFlatCase{
 	// A concat chain's intermediates: three temps per iteration, all dead at the
 	// end of the statement.
-	{"nested-concat", func(n string) string {
+	{name: "nested-concat", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "longer_string_one_here";
@@ -50,9 +63,21 @@ var heapBumpFlatCases = []heapBumpFlatCase{
     while (i < ` + n + `) { acc = acc + (a + b + a + b).len(); i = i + 1; }
     return ((__heap_bump_bytes() as i32) - before) + (acc - acc);
 }`
+	}, retained: func(n string) string {
+		return `function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var a: string = "longer_string_one_here";
+    var b: string = "longer_string_two_here";
+    var keep: string[] = [];
+    var i: i32 = 0;
+    while (i < ` + n + `) { keep = keep.append(a + b + a + b); i = i + 1; }
+    if (keep.len() != ` + n + `) { return 200; }
+    if ((__heap_bump_bytes() as i32) > before) { return 1; }
+    return 0;
+}`
 	}},
 	// The receiver of a borrowing method is still a temp the caller owns.
-	{"len-receiver", func(n string) string {
+	{name: "len-receiver", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var a: string = "hello there friend, ";
@@ -66,7 +91,7 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	}},
 	// An array literal evaluated as a STATEMENT: nothing ever reads it, so
 	// nothing but the drop insertion can free it.
-	{"stmt-temp", func(n string) string {
+	{name: "stmt-temp", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
@@ -76,7 +101,7 @@ var heapBumpFlatCases = []heapBumpFlatCase{
 	}},
 	// A discarded call RESULT, in both of the shapes that carry rc: a struct box
 	// and an array buffer.
-	{"discarded-call-struct", func(n string) string {
+	{name: "discarded-call-struct", src: func(n string) string {
 		return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v }; }
 function main(): i32 {
@@ -86,7 +111,7 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	{"discarded-call-arr", func(n string) string {
+	{name: "discarded-call-arr", src: func(n string) string {
 		return `function mk(v: i32): i32[] { return [v, v + 1, v + 2]; }
 function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
@@ -97,7 +122,7 @@ function main(): i32 {
 	}},
 	// A fresh array handed to a BORROWING callee: the caller keeps the only
 	// reference and must release it after the call returns.
-	{"call-arg-temp", func(n string) string {
+	{name: "call-arg-temp", src: func(n string) string {
 		return `function sum3(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
@@ -110,7 +135,7 @@ function main(): i32 {
 	}},
 	// A `__alloc_u8` buffer rebound through `.with`, which supersedes the old
 	// buffer once per call.
-	{"literal-alloc", func(n string) string {
+	{name: "literal-alloc", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
@@ -127,7 +152,7 @@ function main(): i32 {
 	}},
 	// A struct local rebound to a fresh literal: the superseded box AND its
 	// replaced string field both have to go (the #4355 / #6703 admission).
-	{"replaced-field", func(n string) string {
+	{name: "replaced-field", src: func(n string) string {
 		return `struct S { name: string, n: i32 }
 function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
@@ -139,7 +164,7 @@ function main(): i32 {
 }`
 	}},
 	// A tuple box bound to a loop-scoped local.
-	{"tuple-temp", func(n string) string {
+	{name: "tuple-temp", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
@@ -153,7 +178,7 @@ function main(): i32 {
 	// and nothing else can reach it, and the fresh string-literal key is not
 	// retained by the lookup. Both edges are covered because they were separate
 	// leaks: a HIT carries a payload out of the map, a MISS does not (#6875).
-	{"map-get", func(n string) string {
+	{name: "map-get", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
     var index: Map[string, i32] = map_new(64);
@@ -171,7 +196,7 @@ function main(): i32 {
 }`
 	}},
 	// A nested array: the outer buffer's drop has to walk its elements.
-	{"nested-array", func(n string) string {
+	{name: "nested-array", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
@@ -216,8 +241,20 @@ func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 			}
 			small, large := run(heapBumpFlatSmallN), run(heapBumpFlatLargeN)
 			if small == 0 {
-				t.Fatalf("%s allocated nothing at N=%s — the probe is not exercising the path, so the "+
-					"flatness below would hold vacuously", tc.name, heapBumpFlatSmallN)
+				if tc.retained == nil {
+					t.Fatalf("%s allocated nothing at N=%s — the probe is not exercising the path, so the "+
+						"flatness below would hold vacuously", tc.name, heapBumpFlatSmallN)
+				}
+				// The shape's own high-water is 0. Prove it still allocates by
+				// running it with the results retained, which the freelist cannot
+				// satisfy — otherwise the flatness below is vacuous after all.
+				src := tc.retained(heapBumpFlatSmallN) + "\n"
+				asm := hevCompile(t, runner, driverBin, src, nil)
+				bin := buildBin(t, gcc, dir, fmt.Sprintf("hbf_%s_retained", strings.ReplaceAll(tc.name, "-", "_")), asm)
+				if _, exit := hevRun(t, runner, bin); exit != 1 {
+					t.Fatalf("%s: retained control returned %d, want 1 — the shape must still allocate "+
+						"(200=length mismatch, 0=the bump did not move, so flatness proves nothing)", tc.name, exit)
+				}
 			}
 			if small != large {
 				t.Errorf("%s is not flat: N=%s bumped %d bytes, N=%s bumped %d — the mark tracks the "+

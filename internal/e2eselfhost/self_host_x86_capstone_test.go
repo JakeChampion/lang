@@ -20,8 +20,9 @@ import (
 //     from a fixed file "in.s" (so the driver compiles once and the
 //     embedded-asm size never bloats it — letting heap programs, whose asm
 //     is the whole alloc/memcpy runtime, assemble too), runs it through
-//     x86_gas_assemble + elf, and writes the ELF to stdout. Compiled once
-//     via the self-host wasm pipeline; run per-case under `wasmtime --dir`.
+//     x86_gas_assemble + x86_resolve_data + elf, and writes the ELF to
+//     stdout. Compiled once via the self-host wasm pipeline; run per-case
+//     under `wasmtime --dir`.
 //   - Stage C: run that ELF natively; assert exit code (and stdout).
 //
 // The table spans arithmetic, loops, if/else, comparisons (setCC), calls,
@@ -145,6 +146,14 @@ function main(): i32 {
     match (read_file("in.s")) {
         Ok(asmtext) => {
             var a: X86Asm = x86_gas_assemble(asmtext);
+            // An absolute .quad <label> in data is assembled as a zero
+            // placeholder and patched only once the load address is known, so
+            // this step is not optional — skipping it leaves every static
+            // string box pointing at address 0. x86_elf_binary (fern.fern) is
+            // the pipeline this mirrors, including the order: the unknown
+            // check comes AFTER, because an unresolvable data symbol is
+            // recorded here rather than by the assembler.
+            a = x86_resolve_data(a, elf_text_vaddr());
             if (a.unknown.len() > 0) {
                 return 2;
             }

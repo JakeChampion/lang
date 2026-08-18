@@ -148,6 +148,32 @@ function main(): i32 {
     return x % 83;
 }`
 
+// cbeMixedErrFreshPathSrc is cbeMixedErrPathSrc with the Err payload COMPUTED
+// rather than written as a literal. Since #7080 a string literal is static data
+// and allocates nothing, so the literal program can no longer strand a payload —
+// there is no payload box to strand. This twin keeps the stranding observable,
+// which is the property the case below exists to pin.
+const cbeMixedErrFreshPathSrc = `function mk(i: i32): Result[i32, string] {
+    if (i % 2 == 0) { return Err("neg" + "!"); }
+    return Ok(i);
+}
+function round(r: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var v: Result[i32, string] = mk(i);
+        match (v) { Ok(x) => { acc = acc + x; }, Err(_) => { acc = acc + 1; } }
+        i = i + 1;
+    }
+    return acc + r;
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
 // --- rc-PAYLOAD Option/Result: reclaimed by the consuming match, nothing else ---
 //
 // The three probes below isolate what #6360's own summary got wrong. That issue
@@ -420,9 +446,35 @@ func TestSelfHostCallBoundEnumReclaimX86_64(t *testing.T) {
 			t.Errorf("frees=%d, want 400 — every box must be released regardless of which arm ran "+
 				"(allocs=%d live=%d)", frees, allocs, live)
 		}
-		if allocs-frees != 200 {
-			t.Errorf("allocs-frees=%d, want exactly 200 — the stranded set must be the Err strings and "+
-				"nothing else (allocs=%d frees=%d live=%d)", allocs-frees, allocs, frees, live)
+		// This asserted exactly 200 stranded until #7080. The 200 were boxes for
+		// the `Err("neg")` payload, one per construction; a literal is static data
+		// now, so there is no payload box to strand and the balance is exact. That
+		// is the "drive allocs == frees" outcome the comment above predicted — by a
+		// different route than it guessed, since the free did not become deep.
+		// cbeMixedErrFreshPathSrc keeps the stranding case, on a payload that
+		// really allocates.
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d live=%d — want an exact balance. The Err payload is a literal, "+
+				"so it allocates nothing and there is nothing for the shallow free to leave behind",
+				allocs, frees, live)
+		}
+	})
+
+	// The stranding case, on a payload the compiler must actually allocate. The
+	// shallow free releases every Result box and never reaches into the payload,
+	// so the payload's allocations survive — which is what licenses the widening.
+	// An exit code that moves means the free DID reach a payload, the one thing it
+	// must never do.
+	t.Run("mixed_result_fresh_err_path_strands_only_the_payload", func(t *testing.T) {
+		allocs, frees, live := counts(t, "mixed_result_fresh_err_path", cbeMixedErrFreshPathSrc, 72)
+		if frees != 400 {
+			t.Errorf("frees=%d, want 400 — every box must be released regardless of which arm ran "+
+				"(allocs=%d live=%d)", frees, allocs, live)
+		}
+		if allocs <= frees {
+			t.Errorf("allocs=%d frees=%d live=%d — a computed Err payload must still be stranded by the "+
+				"shallow free; an exact balance here means the probe stopped allocating one",
+				allocs, frees, live)
 		}
 	})
 

@@ -50,6 +50,32 @@ function main(): i32 {
 }`
 }
 
+// stringFieldLoopLocalRetainedSrc is the fixpoint check's positive control: the
+// same shape, but every struct is kept alive in an array, so the boxes cannot be
+// recycled and the bump MUST move. It answers 1/0 rather than a byte count
+// because the value leaves as a process exit code, which is masked to 8 bits — a
+// magnitude would compare mod 256.
+//
+// It replaces an earlier `small != 0` guard on the bounded cases. That guard read
+// "the measurement is live", but what it actually measured was the one-time boxing
+// of the `"n"` / `"x"` literals: since #7080 a literal is static data and allocates
+// nothing, so a fully-reclaiming loop legitimately reports a high-water of 0 and
+// the old guard fired on the fix. This control tests the property the guard was
+// reaching for, and does it on a shape where a zero answer is unambiguously wrong.
+func stringFieldLoopLocalRetainedSrc(n string) string {
+	return `struct S { x: i32, name: string }
+function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var pre: string = "n";
+    var keep: S[] = [];
+    var i: i32 = 0;
+    while (i < ` + n + `) { var t: S = S { x: i, name: pre + "x" }; keep = keep.append(t); i = i + 1; }
+    if (keep.len() != ` + n + `) { return 9; }
+    if ((__heap_bump_bytes() as i32) > before) { return 1; }
+    return 0;
+}`
+}
+
 // The freshly-built `name` (pre + "cd" = "abcd", len 4) is read every iteration; a
 // wrong free of the live string corrupts the sum or trips __rc_underflow. sum x =
 // 0..199 = 19900; + 4*200 = 800 -> 20700.
@@ -105,11 +131,17 @@ func TestSelfHostStringFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 			if small != large {
 				t.Errorf("struct-with-fresh-string loop-local (%s) bump must be bounded: N=50 -> %d, N=5000 -> %d (string box leaked per iteration)", sh.name, small, large)
 			}
-			if small == 0 {
-				t.Errorf("%s: expected a non-zero bounded high-water, got 0", sh.name)
-			}
 		})
 	}
+
+	// Non-vacuity for the two cases above: a bounded high-water is only evidence
+	// of reclaim if the bump would have moved without it. Retaining every struct
+	// is the same allocation pattern with the frees removed, and it must be seen.
+	t.Run("fixpoint-bounded/retained-control-grows", func(t *testing.T) {
+		if got := run(t, "stringfield-retained-5000", stringFieldLoopLocalRetainedSrc("5000")); got != 1 {
+			t.Errorf("retaining 5000 structs must move the heap bump, got %d (9=length mismatch, 0=bump did not move, so the bounded cases above prove nothing)", got)
+		}
+	})
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "stringfield-loop-detector", stringFieldLoopLocalDetectorSrc); code != 0 {

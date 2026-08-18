@@ -109,11 +109,21 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_str_escape", src)
-		if frees != 3300 || live == 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want frees=3300 and a nonzero "+
-				"remainder. A HIGHER count means the escaping binding's string was released "+
-				"under a live alias, which is a dangle rather than the leak this shape must keep",
-				allocs, frees, live)
+		// The STRANDED COUNT is the measurement, not the free count. Pinning
+		// frees made this read the literal churn too: `"va" + "lue"` and
+		// `"zz" + "zzz"` each boxed both operands per evaluation, 2100
+		// balanced alloc/free pairs that said nothing about the escape. Static
+		// string literals (#7080) removed them, dropping allocs 4500 -> 2400
+		// and frees 3300 -> 1200 while leaving the remainder untouched at
+		// 1200 — which is the point: a balanced pair cannot change it.
+		// 1200 boxes x 24 bytes is the 28800 live_bytes below.
+		//
+		// A SMALLER remainder means the escaping binding's string was released
+		// under a live alias — a dangle, not the leak this shape must keep. A
+		// larger one means something else stopped being reclaimed.
+		if allocs-frees != 1200 || live == 0 {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want allocs-frees=1200 and a "+
+				"nonzero remainder", allocs, frees, live)
 		}
 	})
 
