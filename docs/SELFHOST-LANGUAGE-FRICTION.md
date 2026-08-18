@@ -45,7 +45,7 @@ What a 167k-line compiler written in a modern language uses, counted across
 | Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **10** top-level fn values + **2** no-op lambdas (`astwalk`, #6993) |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **1** (`irverify`'s `NameIndex`, #6993) |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **2** (`irverify`'s `NameIndex`, `wasm_ir`'s call set — #6993) |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) |
@@ -365,9 +365,35 @@ self-host where native allocates nothing (#7080), and native's wasm backend
 miscompiles a `Map` in a struct field after the second insert where all three
 self-host targets are correct (#7081).
 
-Four slices, nine bugs, and every one of them was sitting in a path nothing
-exercised. The census rows that remain are not blocked on the ratchet any more;
-they are blocked on their own prerequisites.
+**What the fifth adoption cost (#6993).** The first slice to consume the spine
+rather than extend it. `wasm_ir`'s `component_shape` asked sixteen questions of
+the module — "does it call `print`? `read_file`? `env`? …" — and each was a
+separate full traversal, over a private `expr_calls` / `stmts_call` recursion
+that existed only to answer them. It is now ONE walk over `astwalk.fold_stmt`
+collecting a `Map[string, boolean]` of called names, and sixteen `has` probes.
+**97 lines deleted against 38 added**, and the private walk is gone.
+
+This is the one with a measured win: compiling `checker.fern` (13k lines) to a
+wasm component goes **~1515 ms → ~1408 ms, about 7%**, reproducible best-of-5
+across rounds. Sixteen walks of a large module is not free.
+
+Equivalence was the thing to prove, and it is proven rather than argued: across
+221 corpus programs the classification is identical, and all 35 that reach a
+component emit **byte-identical** output.
+
+The interesting finding is a NEGATIVE one, and it corrects an assumption this
+document has been carrying. The deleted walk covered 8 of `Stmt`'s 12 variants
+and 10 of `Expr`'s 17, with wildcard arms for the rest — `StmtDefer`,
+`ExprMapLit` and `ExprFString` among them. That reads like a live blindness of
+exactly the kind slice three found in `flatten`. It is not: all three are
+**desugared before the compile path reaches this walk**, verified by probe on
+both compilers, which is why the corpus comes out byte-identical. A partial walk
+here was equivalent to a complete one *by accident of what runs before it*. The
+consolidation is worth doing because that accident is not a contract — but the
+honest statement is that it removed a latent hazard, not a bug.
+
+Five slices, ten bugs. The census rows that remain are not blocked on the
+ratchet any more; they are blocked on their own prerequisites.
 
 ### 2.5 Types are strings
 
