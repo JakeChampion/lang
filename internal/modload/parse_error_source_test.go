@@ -47,3 +47,49 @@ func TestLoadReturnsSourceOnParseError(t *testing.T) {
 		t.Errorf("diagnostic did not render the offending source line:\n%s", out)
 	}
 }
+
+// TestParseErrorNamesTheModuleItCameFrom pins the OTHER half of rendering a
+// syntax error in a multi-file program: which file it is blamed on.
+//
+// loadRecursive stamps every structured parse error with the module's path
+// (diag.WithFile) so the CLI formatter can pick that module's source out of
+// srcs and the LSP can attribute the diagnostic to the right URI. The stamp
+// went nowhere: diag's mutator interface named an UNEXPORTED method, which no
+// type outside diag can ever satisfy, so the assertion inside WithFile missed
+// every error it was handed. Every import's syntax error came back
+// unattributed and rendered against the entry file — a real line:column from
+// one file printed over another file's text.
+func TestParseErrorNamesTheModuleItCameFrom(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"main.fern":   "import \"./helper\";\nfunction main(): i32 { return helper.go(); }\n",
+		"helper.fern": "pub function go(): i32 {\n    return 1 +;\n}\n",
+	})
+	entry := filepath.Join(dir, "main.fern")
+	helper, _ := filepath.Abs(filepath.Join(dir, "helper.fern"))
+
+	_, srcs, err := modload.Load(entry)
+	if err == nil {
+		t.Fatal("expected a parse error from the imported module")
+	}
+	es, ok := err.(diag.Errors)
+	if !ok {
+		t.Fatalf("expected diag.Errors, got %T", err)
+	}
+	for i, one := range es {
+		f, ok := one.(diag.Filed)
+		if !ok {
+			t.Fatalf("error %d (%T) carries no file attribution at all", i, one)
+		}
+		if f.File() != helper {
+			t.Fatalf("error %d attributed to %q, want the module it was parsed from (%q)", i, f.File(), helper)
+		}
+	}
+
+	// The attribution is only worth having if it selects a source: rendering
+	// against srcs[helper] must quote the offending line, which is what the
+	// entry file's source could never have produced.
+	out := diag.Format(helper, srcs[helper], err)
+	if !strings.Contains(out, "return 1 +;") {
+		t.Errorf("diagnostic did not render the imported module's offending line:\n%s", out)
+	}
+}

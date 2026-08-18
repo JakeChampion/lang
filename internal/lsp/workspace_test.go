@@ -272,6 +272,67 @@ func TestWorkspace_CrossFileDiagnosticsRoute(t *testing.T) {
 	}
 }
 
+// A SYNTAX error in an imported module has to route the same way a type error
+// does. It did not: the checker stamps its own file path on every diagnostic,
+// while a parser error gets its path from modload's diag.WithFile call — and
+// that stamp reached nothing, so every imported module's syntax error arrived
+// unattributed and was published against the ENTRY file's URI, underlining
+// whatever happened to be at that line:column in a file that parses fine.
+//
+// TestWorkspace_CrossFileDiagnosticsRoute cannot see this: a type error is
+// stamped by the checker and never travelled the broken path.
+func TestWorkspace_ImportedSyntaxErrorDoesNotLandOnTheEntry(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.fern")
+	utilPath := filepath.Join(dir, "util.fern")
+	const mainSrc = "import \"./util\";\nfunction main(): i32 { return util.thing(); }\n"
+	const utilSrc = "pub function thing(): i32 {\n    return 1 +;\n}\n"
+	writeFile(t, mainPath, mainSrc)
+	writeFile(t, utilPath, utilSrc)
+
+	s := NewServer()
+	s.EnableWorkspace()
+	publishes := map[string][]Diagnostic{}
+	s.SetPublisher(func(method string, params any) {
+		if method != "textDocument/publishDiagnostics" {
+			return
+		}
+		b, _ := json.Marshal(params)
+		var p publishDiagnosticsParams
+		_ = json.Unmarshal(b, &p)
+		publishes[p.URI] = p.Diagnostics
+	})
+
+	open := func(path, src string) {
+		raw, _ := json.Marshal(message{
+			Jsonrpc: "2.0",
+			Method:  "textDocument/didOpen",
+			Params: jsonRaw(didOpenParams{TextDocument: textDocumentItem{
+				URI: pathToURI(path), LanguageID: "fern", Text: src,
+			}}),
+		})
+		s.HandleMessage(raw)
+	}
+	// util first, so the workspace load triggered by opening main can route
+	// back to an already-open URI (diagnostics are only published for files
+	// the editor has open).
+	open(utilPath, utilSrc)
+	open(mainPath, mainSrc)
+
+	if got := publishes[pathToURI(mainPath)]; len(got) != 0 {
+		t.Errorf("main.fern parses cleanly; its URI must carry none of util.fern's syntax errors, got %+v", got)
+	}
+	utilDiags := publishes[pathToURI(utilPath)]
+	if len(utilDiags) == 0 {
+		t.Fatalf("util.fern lost its syntax error, publishes: %+v", publishes)
+	}
+	// Line 1 (0-based) is `    return 1 +;` — a position is only meaningful
+	// once it is paired with the file it was measured in.
+	if got := utilDiags[0].Range.Start.Line; got != 1 {
+		t.Errorf("diagnostic on line %d, want the offending line 1", got)
+	}
+}
+
 func TestUriToPath_RejectsNonFileScheme(t *testing.T) {
 	if _, ok := uriToPath("inmemory:///x.fern"); ok {
 		t.Errorf("expected uriToPath to reject non-file scheme")

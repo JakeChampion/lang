@@ -27,8 +27,10 @@ type Error struct {
 func (e *Error) Error() string          { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
 func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) File() string           { return e.Path }
-func (e *Error) setFile(p string)       { e.Path = p }
+func (e *Error) SetFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
+
+var _ diag.FileSetter = (*Error)(nil)
 
 // Parse turns source into a Program, lexing along the way. The parser
 // recovers from per-statement and per-function errors and continues so

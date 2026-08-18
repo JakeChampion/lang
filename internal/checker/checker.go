@@ -38,10 +38,12 @@ func (e *Error) Position() ast.Position { return e.Pos }
 func (e *Error) Length() int            { return e.Span }
 func (e *Error) Hint() string           { return e.Note }
 func (e *Error) File() string           { return e.Path }
-func (e *Error) setFile(p string)       { e.Path = p }
+func (e *Error) SetFile(p string)       { e.Path = p }
 func (e *Error) Code() string           { return e.ErrCode }
 
 func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
+
+var _ diag.FileSetter = (*Error)(nil)
 
 // Info captures everything codegen needs that the checker discovered:
 // the inferred type of every var without an annotation, and a per-function
