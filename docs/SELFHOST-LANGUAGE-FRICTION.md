@@ -361,9 +361,12 @@ had to be fixed *before* the adoption, because the compiler's own wasm builds
 hit it the moment a compiler module holds a `Map`. Two adjacent divergences fell
 out of the same probing and are filed rather than fixed here: a string literal
 used as a comparison operand or method receiver leaks 24 B per evaluation on the
-self-host where native allocates nothing (#7080), and native's wasm backend
-miscompiles a `Map` in a struct field after the second insert where all three
-self-host targets are correct (#7081).
+self-host where native allocates nothing (#7080), and a `Map` in a struct field
+traps on native's wasm target after the second insert where all three self-host
+targets are correct (#7081). The second was not a backend divergence in the end:
+`core/map`'s COW column claim inc'd an inline (SSO) key's `data` word as a heap
+pointer, which only the two-word string ABI reaches, and the self-host escapes
+it by carrying its own `Map` runtime in `wasm_ir.fern` rather than that source.
 
 **What the fifth adoption cost (#6993).** The first slice to consume the spine
 rather than extend it. `wasm_ir`'s `component_shape` asked sixteen questions of

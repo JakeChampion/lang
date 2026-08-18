@@ -381,11 +381,18 @@ function __map_own_copied_cols(buf: usize): void {
 // tells the two ABIs apart at runtime. The inc alone is the whole claim there,
 // and it is the exact inverse of the __fern_rc_dec that column's drop emits.
 //
-// Both incs are the rc-guarded one: an inline (SSO) or static-sentinel key has
-// nothing to count, and its drop releases nothing either.
+// An inline (SSO) key has no buffer to count, and each ABI hides that fact
+// somewhere different. The single-word form is tagged in bit 0 of the slot,
+// which __fern_rc_inc itself skips. The two-word form is tagged in the top bit
+// of the cell's `len` word, which `data` carries no trace of — so inc'ing
+// `data` unguarded there dereferences the key's own characters (#7081).
 function __map_own_key(slot: usize): usize {
     var boxed: usize = (slot as string) as usize;
     if (boxed == slot) { return __fern_rc_inc(slot); }
+    // `len` sits at cell+ptrW and its top bit is the inline flag, so on a
+    // little-endian 8-byte-word target the flag is in that word's high half:
+    // cell + 2*ptrW - 4 addresses the flag-bearing i32 on both widths.
+    if (__load_i32(boxed + (2 * __ptr_width() - 4)) < 0) { return boxed; }
     __fern_rc_inc(__load_ptr(boxed));
     return boxed;
 }
