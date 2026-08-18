@@ -23,24 +23,15 @@ import (
 // what lets the checker know a.helper() is an i32 in the first place.
 // buildCheckerModloadDriverX86 builds the file-based checker driver
 // (checker_modload_run) as an x86 host binary — the import-driven successor
-// to checker_codes_bundle_run. checker imports util/lexer/parser; the
-// driver adds flatten + checker + modloader.
+// to checker_codes_bundle_run.
 func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, driverBin string) {
 	t.Helper()
 	gcc, runner = x86_64Tooling(t)
 	dir := t.TempDir()
-	for _, name := range []string{
-		"util.fern", "lexer.fern", "parser.fern", "flatten.fern",
-		"checker.fern", "modloader.fern", "fern_toml.fern", "checker_modload_run.fern",
-	} {
-		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), src, 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
+	// The driver's own import closure, derived rather than listed: a
+	// hand-written list goes stale the moment a module gains an import, and
+	// the missing source is silently omitted from the build-cache key.
+	copySelfHostDriver(t, dir, "checker_modload_run.fern")
 	return gcc, runner, buildSelfHostBin(t, gcc, dir, "checker_modload_run.fern", "ckdriver")
 }
 
