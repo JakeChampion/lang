@@ -8229,7 +8229,7 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: new `fresh-struct-method-field-string` and
   `fresh-struct-method-field-scalar` in the #6491 read-reclaim file, both
   failing at 92 (the growth) on the parent. Two refusals guard the admission
-  from the other side and pass on both: `method-identity-return-refused`
+  from the other side and pass on both: `method-identity-return-not-released`
   (`me()` hands the receiver back, so the "temp" would be `keep`'s own box) and
   `method-receiver-field-value-refused` (`same()` wraps `b.tag`, so the moved-out
   string would be `keep`'s), each re-reading the value the refusal protects

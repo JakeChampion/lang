@@ -442,12 +442,18 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The IDENTITY-return refusal, which is what stops the method admission from
-	// becoming an over-release: `me()` hands the RECEIVER back, so the "temp" the
-	// read would free is `keep`'s own box and the moved-out tag is `keep`'s own
-	// string. Every return must be a struct LITERAL for the registry to admit,
-	// and this one is not.
-	{"method-identity-return-refused", `struct Box { tag: string, n: i32 }
+	// The IDENTITY return, which is what stops the method admission from becoming
+	// an over-release: `me()` hands the RECEIVER back, so the "temp" the read
+	// would free is `keep`'s own box and the moved-out tag is `keep`'s own string.
+	//
+	// The REGISTRY no longer refuses this shape. "FRESHSELF:" admits a method whose
+	// every return is a strict-fresh literal or the receiver, and `me()` is the
+	// degenerate all-receiver member of that set — body_returns_fresh_or_self_struct
+	// says true for it. What declines is the RELEASE: emit_freshself_release
+	// compares the result against the receiver's slot and frees nothing when they
+	// are the same pointer, which here is every call. The safety this case pins is
+	// unchanged; the mechanism delivering it moved from the admission to the guard.
+	{"method-identity-return-not-released", `struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function (b: Box) me(): Box { return b; }
 function main(): i32 {
