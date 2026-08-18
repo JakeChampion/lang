@@ -30072,6 +30072,40 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
                     var v: parser.Expr = slit.field_values[i];
                     var ok: boolean = iife_returns_fresh_array(v);
                     match (v) { parser.ExprArray(_) => { ok = true; }, _ => {} }
+                    // `Q { xs: mk(i) }` — a PRODUCER call. The registries have
+                    // already proven whole-program that such a callee hands back
+                    // an array box it allocated, elements included for a
+                    // string[], so the literal moves that sole reference into
+                    // the struct exactly as it moves a literal's. Declining it
+                    // cost the CALLER's binding its whole reclaim — box, buffer
+                    // and elements — on the ordinary way a producer is written.
+                    // `arr_fresh` carries the scalar-element registry under bare
+                    // names and the string[] one under an "SA:" prefix, inert
+                    // for every bare lookup (the reclaimable_names convention).
+                    // A local or parameter of the callee's name holds an unknown
+                    // body: refused, exactly as the forwarding arm below does.
+                    match (v) {
+                        parser.ExprCall(vc) => {
+                            match (vc.callee) {
+                                parser.ExprIdent(vcid) => {
+                                    var known: boolean = false;
+                                    if (ft == "string[]") { known = util.index_of_str(arr_fresh, "SA:" + vcid.name) >= 0; }
+                                    else { known = util.index_of_str(arr_fresh, vcid.name) >= 0; }
+                                    if (known && !body_declares_name(fnbody, vcid.name)) {
+                                        var vp: i32 = 0;
+                                        var shadowed: boolean = false;
+                                        while (vp < fnparams.len()) {
+                                            if (fnparams[vp].name == vcid.name) { shadowed = true; }
+                                            vp = vp + 1;
+                                        }
+                                        if (!shadowed) { ok = true; }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
                     // `var xs = [ … ]; return Q { xs: xs, … }` — how a producer is
                     // actually written, and the literal-only rule declined it, so
                     // every caller's `var q = mk(i)` earned no reclaim credit and
@@ -30626,6 +30660,15 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     }
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
+    // The string[] producers ride the same list under "SA:" so the strict-fresh
+    // walk can ask about either element kind without a second parameter; every
+    // other consumer of this list looks up a bare name, which the prefix cannot
+    // match. Only walked when the string-fresh registry was worth computing.
+    var saf: i32 = 0;
+    while (saf < funcs.len()) {
+        if (fn_returns_fresh_strarr(funcs[saf], str_fresh)) { arr_fresh = arr_fresh.append("SA:" + funcs[saf].name); }
+        saf = saf + 1;
+    }
     // The bare-name half is a LEAST FIXPOINT, because a return may now forward
     // to another producer (`return mkp(a, b)`) and so depends on that one's
     // verdict. Starts empty and only ever adds — a use is credited on a literal

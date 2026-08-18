@@ -9126,3 +9126,59 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   VERIFIED: `strarr-field-producer-call-store-flat` fails at 98 on the parent
   through the harness; `strarr-field-producer-name-shadowed-excluded` passes on
   both sides. One matching row on the arm64 leg. Refs #6544 #6522 #4355 #4297 #4451.
+- 2026-08-18 (a producer call as an ARRAY FIELD of a strict-fresh struct): the
+  fourth appearance of the same omission, and the one that finally explains why
+  a struct RETURNED from a call keeps its array.
+
+  The investigation is worth recording because two hypotheses died in a row,
+  both of them plausible readings of code I had just changed:
+
+  | hypothesis | counterfactual | verdict |
+  |---|---|---|
+  | `node()`'s parameter store poisons `Node.deps` per type | delete `node` from the module | still 268 — WRONG |
+  | the field's STRFLDOK admission is what's missing | a type with no param-storing producer at all (`mka2`) | still 310 — WRONG |
+  | `decl_is_leaksafe` excludes an rc-array field | read it: `string[]` is admitted explicitly | WRONG |
+
+  What settled it was comparing the emitted `round` for a `string` field against
+  a `string[]` one:
+
+  | binding | calls emitted in the caller |
+  |---|---|
+  | `var s: S1 = mks(wide(n))` — string field | `__struct_drop_S1`, `__field_reclaim_S1`, `__fern_str_free`, `__fern_arr_dec` |
+  | `var a: A1 = mka(deps_of(n))` — string[] field | **none at all** |
+
+  Not a shallower drop — no drop. The type never entered
+  `return_fresh_struct_ret_fns`, because `return_value_is_strictfresh_struct`
+  admits an array-typed field value only as a LITERAL, an IIFE, or a
+  frame-built local ident. A direct producer CALL — `A2 { deps2: deps_of(n) }`,
+  the ordinary way to write it — fell through to `return false`, and with it went
+  the caller's entire reclaim: box, buffer and elements.
+
+  #6758 widened this same arm from literal-only to literal-or-frame-built-local
+  and stopped one step short of the call. The arm now also accepts a call to a
+  proven producer: the scalar-element registry by bare name, and the string[]
+  one under an `"SA:"` prefix riding the same list (inert for every bare lookup,
+  the reclaimable_names convention), keyed by `fn_returns_fresh_strarr` — the
+  predicate the previous slice extracted. A local or parameter shadowing the
+  callee's name is refused, exactly as the forwarding arm beside it refuses one.
+
+  | probe | before | after |
+  |---|---|---|
+  | `A2 { deps2: deps_of(n) }` bound from a call | 310 | **0** |
+  | `Q { xs: nums_of(k), pos: 1 }`, scalar elements | leaked | **0** |
+  | `mka(deps)` — the callee stores a borrowed PARAM | 310 | 310 (refused) |
+  | a local shadowing the producer's name | — | refused |
+
+  Witnessed by which types emit a drop: `SA` (string[] producer field) and `NA`
+  (scalar[] producer field) admitted, `PA` (borrowed param) and `DA` (shadowed
+  name) refused. Values correct on both compilers under recycling pressure.
+
+  **A probe-design error I made three times in this area, recorded so the next
+  person does not:** putting the negative case on the SAME struct type as the
+  positive one. The type-keyed admission means a single bare-ident store
+  anywhere in the module disqualifies that type, so the "admitted" row silently
+  measures the refusal instead. Each negative needs its own struct.
+
+  `alloc_flat_fresh_array_arg` remains 798. Its `node()` stores borrowed
+  parameters, which is the one shape this arm must keep refusing. Refs #6544
+  #6522 #6758 #4451.

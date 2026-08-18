@@ -154,6 +154,113 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
+	// The DIRECT producer-call spelling, the shape #6758's widening stopped one
+	// step short of: `Q { xs: nums_of(k), pos: 1 }`. Binding that same call to a
+	// local first (producer-call-array-field, above) was admitted; writing it
+	// inline was not, so the
+	// caller's binding earned no credit and box + buffer leaked per call. Same
+	// proof, one call further out: the callee is in the "ARR:" registry, so what
+	// it hands over is a buffer it allocated and nothing else names.
+	{"direct-producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
+function nums_of(k: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(k + i); i = i + 1; } return out; }
+function mkq(k: i32): Q { return Q { xs: nums_of(k), pos: 1 }; }
+function churn(k: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) { var q: Q = mkq(i); t = t + q.pos + q.xs.len(); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var w: i32 = churn(100);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var x: i32 = churn(100);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (w != 500 || x != 500) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 256) { return 98; }
+    return 0;
+}`, 0},
+	// The string[] half: the field's ELEMENTS are boxes too, so the callee has
+	// to be proven fresh element-wise ("STRARR:", via fn_returns_fresh_strarr)
+	// rather than merely buffer-wise. Reads stay on `.len()` so the field keeps
+	// its deep-free admission.
+	{"strarr-producer-call-array-field", `struct S { deps: string[], pos: i32 }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function mks(pre: string): S { return S { deps: deps_of(pre), pos: 1 }; }
+function churn(k: i32): i32 {
+    var pre: string = "ab";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) { var s: S = mks(pre); t = (t + s.pos + s.deps.len()) % 251; i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var w0: i32 = churn(2000);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var x: i32 = churn(2000);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (w0 != x) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 256) { return 98; }
+    return 0;
+}`, 0},
+	// Negative: the callee stores a BORROWED parameter, so the caller's array
+	// must outlive the struct. A long string is built between the store and the
+	// reads so a wrongly freed block is really recycled before they run.
+	{"producer-call-param-field-declined", `struct P { deps: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function mkp(deps: string[]): P { return P { deps: deps }; }
+function work(k: i32): i32 {
+    var pre: string = "ab";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) {
+        var live: string[] = deps_of(pre);
+        var p: P = mkp(live);
+        var junk: string = fill(20);
+        if (junk.len() < 0) { return 96; }
+        if (p.deps.len() != 3) { return 94; }
+        if (live[0].len() < 43) { return 93; }
+        if (live[2].len() < 43) { return 92; }
+        t = t + 1;
+        i = i + 1;
+    }
+    return t;
+}
+function main(): i32 {
+    if (work(2000) != 2000) { return 95; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// Negative: a LOCAL shadows the producer's name, so the value is a bare
+	// ident aliasing a live array rather than the registered declaration.
+	{"producer-name-shadowed-declined", `struct D { deps: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function mkd(pre: string): D { var deps_of: string[] = [w(pre)]; return D { deps: deps_of }; }
+function work(k: i32): i32 {
+    var pre: string = "ab";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) {
+        var d: D = mkd(pre);
+        var junk: string = fill(20);
+        if (junk.len() < 0) { return 96; }
+        if (d.deps.len() != 1) { return 94; }
+        t = t + 1;
+        i = i + 1;
+    }
+    return t;
+}
+function main(): i32 {
+    if (work(2000) != 2000) { return 95; }
+    if (__rc_underflow() != 0) { return 99; }
+    return 0;
+}`, 0},
 	// Negative: one local, two fields. The box carries a single rc and
 	// __struct_drop_Q would free the buffer once per field.
 	{"one-local-two-fields-declined", `struct Q { xs: i32[], ys: i32[], pos: i32 }
