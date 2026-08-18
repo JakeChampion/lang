@@ -116,6 +116,17 @@ bytes over ~1000 (fixture, target) pairs will. ~8 minutes per side.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **A checker driver that DIED, versus one that found nothing — now
+  distinguished, by `checkerDriverFault`** (`internal/e2eselfhost`). The checker
+  differentials turn the driver's stdout into a code SET, and empty is a
+  legitimate answer there meaning "no diagnostics". So a driver that bailed
+  (`checker_modload_run.fern` returns 2 and 3 on its own failure paths) or died
+  on a signal read as a *clean check*, and the differential reported a code
+  disagreement naming the checker — pointing at the wrong subsystem entirely.
+  The runner now fails on any exit status other than 0 or 1 and surfaces the
+  driver's stderr. Only the code-set call sites need it; a site that asserts the
+  exit code itself already had the signal.
+
 - **Allocation ASYMPTOTICS — now gated, by `TestX86_64AllocScaling`**
   (`internal/e2e/alloc_scaling_test.go`). The differential below compares the
   two compilers against *each other*, so a regression that lands in the shared

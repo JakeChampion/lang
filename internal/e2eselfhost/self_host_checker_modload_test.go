@@ -1,6 +1,8 @@
 package e2eselfhost
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,7 +88,54 @@ func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc strin
 	} else {
 		cmd = exec.Command(runner[0], append(runner[1:], driverBin, filepath.Join(progDir, "main.fern"))...)
 	}
-	out, _ := cmd.Output() // exit 1 on diagnostics — tolerate
+	return runCheckerDriver(t, cmd, "checkSourceModload")
+}
+
+// The checker drivers answer with an exit status as well as stdout: 0 clean, 1
+// diagnostics emitted. checker_modload_run.fern returns 2 and 3 on its own bail
+// paths, and a signal death arrives negative.
+//
+// The differential call sites turn stdout into a code SET, where EMPTY means
+// "no diagnostics" — so a driver that dies before printing reads as a clean
+// check and surfaces as a code disagreement blaming the checker.
+//
+// Returns "" when the driver answered.
+func checkerDriverFault(code int, stderr []byte) string {
+	if code == 0 || code == 1 {
+		return ""
+	}
+	what := fmt.Sprintf("exited %d", code)
+	switch {
+	case code < 0:
+		what = "died on a signal"
+	case code == 2 || code == 3:
+		what = fmt.Sprintf("bailed with its own failure code %d (load / check path)", code)
+	}
+	msg := "checker driver " + what + " rather than answering (0 = clean, 1 = diagnostics)"
+	if s := strings.TrimSpace(string(stderr)); s != "" {
+		msg += "\nstderr: " + s
+	}
+	return msg
+}
+
+// runCheckerDriver returns the driver's stdout, failing the test when it did
+// not answer. Use wherever stdout becomes a code set; a call site that asserts
+// the exit code itself does not need it.
+func runCheckerDriver(t *testing.T, cmd *exec.Cmd, label string) string {
+	t.Helper()
+	out, err := cmd.Output()
+	var stderr []byte
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		stderr = ee.Stderr
+	}
+	code := -1
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	if fault := checkerDriverFault(code, stderr); fault != "" {
+		t.Fatalf("%s: %s", label, fault)
+	}
 	return string(out)
 }
 
