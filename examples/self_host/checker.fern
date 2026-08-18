@@ -12110,11 +12110,11 @@ function main(): i32 {
     return 110;
   }
 
-  // String indexing: `s[0]` types as i32 (the byte).
+  // String indexing: `s[0]` types as u8, the byte type (#5629).
   var src12: string = "var s = \"hi\"; return s[0];";
   var stmts12: parser.Stmt[] = parser.parse_program(lexer.tokenize(src12));
   var pt12: ProgramTypes = check_program(stmts12);
-  if (!type_eq(pt12.tys[1], t_i32())) {
+  if (!type_eq(pt12.tys[1], t_u8())) {
     return 120;
   }
 
