@@ -59,7 +59,14 @@ pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc
 // Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
 // the checker rejects an empty literal in inference contexts
 // because it can't infer the element type.
-pub struct ExprArray { elements: Expr[] }
+//
+// elem_ty is the ELEMENT type of the destination this literal was settled
+// against ("i64", "f64", "Foo[]", …), stamped by settle_to_type; "" when no
+// destination reached the literal. It is what decides the element slot width at
+// lowering — the first element's expression shape is only the fallback for an
+// unstamped literal. Native carries the same fact as ast.ArrayLit.ElemType and
+// sizes elements from it via ast.ElemSizeBytesFor.
+pub struct ExprArray { elements: Expr[], elem_ty: string }
 // ExprLambda is a function-valued expression: `function (a: T,
 // b: T): U { body }` — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
@@ -581,7 +588,7 @@ function e_unary(op: string, operand: Expr): Expr { return ExprUnary { op: op, o
 function e_unary_at(op: string, operand: Expr, line: i32, col: i32): Expr { return ExprUnary { op: op, operand: operand, line: line, col: col }; }
 function e_call(callee: Expr, args: Expr[]): Expr { return ExprCall { callee: callee, args: args, line: 0, col: 0, type_argc: 0, ty: "" }; }
 function e_call_at(callee: Expr, args: Expr[], line: i32, col: i32): Expr { return ExprCall { callee: callee, args: args, line: line, col: col, type_argc: 0, ty: "" }; }
-function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements }; }
+function e_array(elements: Expr[]): Expr { return ExprArray { elements: elements, elem_ty: "" }; }
 function e_tuple(elements: Expr[]): Expr { return ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: Expr[], line: i32, col: i32): Expr { return ExprTuple { elements: elements, line: line, col: col }; }
 function e_index(array: Expr, index: Expr): Expr { return ExprIndex { array: array, index: index, unchecked: false, ty: "" }; }
@@ -8733,7 +8740,7 @@ function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 els = els.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
+            return RExpr { rexpr: ExprArray { ...a, elements: els }, rins: cur };
         },
         ExprTuple(t) => {
             var els: Expr[] = [];
@@ -9128,7 +9135,7 @@ function retarget_self_lit_expr(e: Expr, base: string, mang: string): Expr {
             var ne2: Expr[] = [];
             var ai: i32 = 0;
             while (ai < a.elements.len()) { ne2 = ne2.append(retarget_self_lit_expr(a.elements[ai], base, mang)); ai = ai + 1; }
-            return ExprArray { elements: ne2 };
+            return ExprArray { ...a, elements: ne2 };
         },
         ExprBinary(b) => { return ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col }; },
         ExprUnary(u) => { return ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col }; },
@@ -9938,7 +9945,7 @@ function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: I
                 els = els.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprArray { elements: els }, rins: cur };
+            return RExpr { rexpr: ExprArray { ...a, elements: els }, rins: cur };
         },
         ExprTuple(t) => {
             var els: Expr[] = [];
@@ -10823,7 +10830,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
                 nels = nels.append(re.rexpr);
                 i = i + 1;
             }
-            return RExpr { rexpr: ExprArray { elements: nels }, rins: cur };
+            return RExpr { rexpr: ExprArray { ...a, elements: nels }, rins: cur };
         },
         ExprTuple(t) => {
             var nels: Expr[] = [];
@@ -11672,7 +11679,7 @@ function dl_expr_with_kids(e: Expr, kids: Expr[]): Expr {
             while (i < kids.len()) { args = args.append(kids[i]); i = i + 1; }
             return ExprCall { callee: kids[0], args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
-        ExprArray(_) => { return ExprArray { elements: kids }; },
+        ExprArray(a) => { return ExprArray { ...a, elements: kids }; },
         ExprTuple(t) => { return ExprTuple { elements: kids, line: t.line, col: t.col }; },
         ExprIndex(x) => { return ExprIndex { array: kids[0], index: kids[1], unchecked: x.unchecked, ty: x.ty }; },
         ExprSlice(sl) => { return ExprSlice { array: kids[0], start: kids[1], end: kids[2], ty: sl.ty }; },
@@ -13181,7 +13188,7 @@ function rvf_expr(e: Expr, structs: StructDecl[]): Expr {
             var els: Expr[] = [];
             var j: i32 = 0;
             while (j < a.elements.len()) { els = els.append(rvf_expr(a.elements[j], structs)); j = j + 1; }
-            return ExprArray { elements: els };
+            return ExprArray { ...a, elements: els };
         },
         ExprTuple(t) => {
             var tels: Expr[] = [];
@@ -13726,7 +13733,7 @@ function stamp_value_block_ret(e: Expr, decl_ty: string): Expr {
                     nels = nels.append(stamp_value_block_ret(al.elements[ai], elem_ty));
                     ai = ai + 1;
                 }
-                return ExprArray { elements: nels };
+                return ExprArray { ...al, elements: nels };
             },
             _ => { return e; }
         }
@@ -14264,7 +14271,7 @@ function cf_rw_expr(e: Expr, f: string, target: string): Expr {
             var ne: Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) { ne = ne.append(cf_rw_expr(a.elements[i], f, target)); i = i + 1; }
-            return ExprArray { elements: ne };
+            return ExprArray { ...a, elements: ne };
         },
         ExprTuple(t) => {
             var ne: Expr[] = [];
@@ -14663,7 +14670,7 @@ function elb_mark_expr(e: Expr, idx: string, arr: string): Expr {
             var ne: Expr[] = [];
             var i: i32 = 0;
             while (i < a.elements.len()) { ne = ne.append(elb_mark_expr(a.elements[i], idx, arr)); i = i + 1; }
-            return ExprArray { elements: ne };
+            return ExprArray { ...a, elements: ne };
         },
         ExprTuple(t) => {
             var ne: Expr[] = [];
@@ -16878,7 +16885,12 @@ function settle_to_type(e: Expr, t: TypeRef): Expr {
                 var els: Expr[] = [];
                 var ei: i32 = 0;
                 while (ei < a.elements.len()) { els = els.append(settle_to_type(a.elements[ei], inner)); ei = ei + 1; }
-                return ExprArray { elements: els };
+                // Stamp the destination's element type on the literal: this is
+                // the array's LAYOUT (slot width / stride), and reading it off
+                // the first element's expression shape mis-sized `[1, 2]` in an
+                // i64[] destination to a 4-byte stride on wasm (#4366). Native
+                // stamps the same fact as ast.ArrayLit.ElemType.
+                return ExprArray { elements: els, elem_ty: render_type_ref(inner) };
             },
             _ => { return e; }
         }
@@ -16933,6 +16945,25 @@ function settle_param_types(funcs: FuncDecl[], name: string): string[] {
     return [];
 }
 
+// settle_method_param_types returns the declared parameter type names of the
+// method `name` on receiver type `recv_type`, or an empty list when the receiver
+// type is unknown ("") or declares no such method.
+function settle_method_param_types(funcs: FuncDecl[], recv_type: string, name: string): string[] {
+    if (recv_type.len() == 0) { return []; }
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        var f: FuncDecl = funcs[i];
+        if (f.name == name && f.receiver_type == recv_type) {
+            var out: string[] = [];
+            var pi: i32 = 0;
+            while (pi < f.params.len()) { out = out.append(f.params[pi].type_name); pi = pi + 1; }
+            return out;
+        }
+        i = i + 1;
+    }
+    return [];
+}
+
 // settle_field_type returns the declared type name of field `field` on struct
 // `type_name`, or "" when either is unknown.
 function settle_field_type(structs: StructDecl[], type_name: string, field: string): string {
@@ -16968,55 +16999,65 @@ function settle_local_type(names: string[], types: string[], name: string): stri
 // field values against the struct's declared field types. Sub-expressions are
 // walked so a destination nested anywhere inside is reached.
 //
-// Method calls are NOT settled: resolving the receiver's type needs the
-// inference this pass deliberately does without.
-function settle_expr(e: Expr, funcs: FuncDecl[], structs: StructDecl[]): Expr {
+// A METHOD call settles only when the receiver is a local or parameter carrying
+// a type ANNOTATION (`names`/`types`) — that spelling names the receiver type
+// outright, so the method resolves without the inference this pass does without.
+// An inferred receiver settles nothing, as before.
+function settle_expr(e: Expr, names: string[], types: string[], funcs: FuncDecl[], structs: StructDecl[]): Expr {
     match (e) {
         ExprBinary(b) => {
-            return ExprBinary { op: b.op, left: settle_expr(b.left, funcs, structs), right: settle_expr(b.right, funcs, structs), line: b.line, col: b.col };
+            return ExprBinary { op: b.op, left: settle_expr(b.left, names, types, funcs, structs), right: settle_expr(b.right, names, types, funcs, structs), line: b.line, col: b.col };
         },
         ExprUnary(u) => {
-            return ExprUnary { op: u.op, operand: settle_expr(u.operand, funcs, structs), line: u.line, col: u.col };
+            return ExprUnary { op: u.op, operand: settle_expr(u.operand, names, types, funcs, structs), line: u.line, col: u.col };
         },
         ExprCall(c) => {
             var ptypes: string[] = [];
             match (c.callee) {
                 ExprIdent(id) => { ptypes = settle_param_types(funcs, id.name); },
+                ExprFieldAccess(mfa) => {
+                    match (mfa.obj) {
+                        ExprIdent(rid) => {
+                            ptypes = settle_method_param_types(funcs, settle_local_type(names, types, rid.name), mfa.field);
+                        },
+                        _ => { ptypes = []; }
+                    }
+                },
                 _ => { ptypes = []; }
             }
             var args: Expr[] = [];
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                var arg: Expr = settle_expr(c.args[ai], funcs, structs);
+                var arg: Expr = settle_expr(c.args[ai], names, types, funcs, structs);
                 if (ai < ptypes.len()) { arg = settle_to_name(arg, ptypes[ai]); }
                 args = args.append(arg);
                 ai = ai + 1;
             }
-            return ExprCall { callee: settle_expr(c.callee, funcs, structs), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return ExprCall { callee: settle_expr(c.callee, names, types, funcs, structs), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ExprArray(a) => {
             var els: Expr[] = [];
             var i: i32 = 0;
-            while (i < a.elements.len()) { els = els.append(settle_expr(a.elements[i], funcs, structs)); i = i + 1; }
-            return ExprArray { elements: els };
+            while (i < a.elements.len()) { els = els.append(settle_expr(a.elements[i], names, types, funcs, structs)); i = i + 1; }
+            return ExprArray { ...a, elements: els };
         },
         ExprTuple(t) => {
             var tels: Expr[] = [];
             var ti: i32 = 0;
-            while (ti < t.elements.len()) { tels = tels.append(settle_expr(t.elements[ti], funcs, structs)); ti = ti + 1; }
+            while (ti < t.elements.len()) { tels = tels.append(settle_expr(t.elements[ti], names, types, funcs, structs)); ti = ti + 1; }
             return ExprTuple { elements: tels, line: t.line, col: t.col };
         },
         ExprIndex(x) => {
-            return ExprIndex { array: settle_expr(x.array, funcs, structs), index: settle_expr(x.index, funcs, structs), unchecked: x.unchecked, ty: x.ty };
+            return ExprIndex { array: settle_expr(x.array, names, types, funcs, structs), index: settle_expr(x.index, names, types, funcs, structs), unchecked: x.unchecked, ty: x.ty };
         },
         ExprSlice(sl) => {
-            return ExprSlice { array: settle_expr(sl.array, funcs, structs), start: settle_expr(sl.start, funcs, structs), end: settle_expr(sl.end, funcs, structs), ty: sl.ty };
+            return ExprSlice { array: settle_expr(sl.array, names, types, funcs, structs), start: settle_expr(sl.start, names, types, funcs, structs), end: settle_expr(sl.end, names, types, funcs, structs), ty: sl.ty };
         },
         ExprStructLit(sl) => {
             var vals: Expr[] = [];
             var vi: i32 = 0;
             while (vi < sl.field_values.len()) {
-                var v: Expr = settle_expr(sl.field_values[vi], funcs, structs);
+                var v: Expr = settle_expr(sl.field_values[vi], names, types, funcs, structs);
                 if (vi < sl.field_names.len()) {
                     v = settle_to_name(v, settle_field_type(structs, sl.type_name, sl.field_names[vi]));
                 }
@@ -17024,11 +17065,11 @@ function settle_expr(e: Expr, funcs: FuncDecl[], structs: StructDecl[]): Expr {
                 vi = vi + 1;
             }
             var base: Expr = sl.base;
-            if (sl.has_base) { base = settle_expr(sl.base, funcs, structs); }
+            if (sl.has_base) { base = settle_expr(sl.base, names, types, funcs, structs); }
             return ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: vals, has_base: sl.has_base, base: base, line: sl.line, col: sl.col };
         },
         ExprFieldAccess(fa) => {
-            return ExprFieldAccess { obj: settle_expr(fa.obj, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+            return ExprFieldAccess { obj: settle_expr(fa.obj, names, types, funcs, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
         },
         ExprLambda(lm) => {
             return ExprLambda { ...lm, body: settle_block(lm.body, lm.ret_type, [], [], funcs, structs) };
@@ -17045,25 +17086,25 @@ function settle_expr(e: Expr, funcs: FuncDecl[], structs: StructDecl[]): Expr {
 function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[], funcs: FuncDecl[], structs: StructDecl[]): Stmt {
     match (st) {
         StmtVar(v) => {
-            var init: Expr = settle_to_name(settle_expr(v.init, funcs, structs), v.type_name);
+            var init: Expr = settle_to_name(settle_expr(v.init, names, types, funcs, structs), v.type_name);
             return StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str };
         },
         StmtReturn(r) => {
-            return StmtReturn { value: settle_to_name(settle_expr(r.value, funcs, structs), ret_type), line: r.line, col: r.col };
+            return StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, funcs, structs), ret_type), line: r.line, col: r.col };
         },
         StmtAssign(a) => {
-            var val: Expr = settle_to_name(settle_expr(a.value, funcs, structs), settle_local_type(names, types, a.target));
+            var val: Expr = settle_to_name(settle_expr(a.value, names, types, funcs, structs), settle_local_type(names, types, a.target));
             return StmtAssign { target: a.target, value: val, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
-        StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, funcs, structs), line: x.line }; },
+        StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, names, types, funcs, structs), line: x.line }; },
         StmtIf(f) => {
-            return StmtIf { ...f, cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs) };
+            return StmtIf { ...f, cond: settle_expr(f.cond, names, types, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs) };
         },
         StmtWhile(w) => {
-            return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop };
+            return StmtWhile { cond: settle_expr(w.cond, names, types, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop };
         },
         StmtFor(fr) => {
-            return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label, line: fr.line };
+            return StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, names, types, funcs, structs), body: settle_block(fr.body, ret_type, names, types, funcs, structs), label: fr.label, line: fr.line };
         },
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
@@ -17073,7 +17114,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
                 arms = arms.append(MatchArm { ...a, body: settle_block(a.body, ret_type, names, types, funcs, structs) });
                 ai = ai + 1;
             }
-            return StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms };
+            return StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, names, types, funcs, structs), arms: arms };
         },
         StmtDefer(dd) => {
             return StmtDefer { action: settle_stmt(dd.action, ret_type, names, types, funcs, structs), on_error: dd.on_error, line: dd.line };

@@ -405,7 +405,7 @@ pub function rewrite_expr(e: parser.Expr, ctx: RewriteCtx): parser.Expr {
                 elems = elems.append(rewrite_expr(a.elements[i], ctx));
                 i = i + 1;
             }
-            return parser.ExprArray { elements: elems };
+            return parser.ExprArray { ...a, elements: elems };
         },
         parser.ExprStructLit(slit) => {
             var fvs: parser.Expr[] = [];
@@ -971,7 +971,12 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
     var edi: i32 = 0;
     while (edi < e.trait_decls.len()) { trait_decls = trait_decls.append(e.trait_decls[edi]); edi = edi + 1; }
     var no_imports: parser.Import[] = [];
-    return parser.Module {
+    // Re-settle on the merged signature set. A call into an IMPORTED module had
+    // no declaration to settle its arguments against at parse time, so
+    // `lib.f([1, 2])` reached an `f64[]`/`i64[]` parameter as unsettled i32
+    // literals in a literal sized for i32 slots. settle_module is idempotent, so
+    // this settles only what the merge newly reaches.
+    return parser.settle_module(parser.Module {
         funcs: funcs,
         structs: structs,
         aliases: aliases,
@@ -983,7 +988,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         impls: impls,
         trait_reqs: trait_reqs,
         trait_decls: trait_decls
-    };
+    });
 }
 
 // ReexportTable is the parallel-array re-export map threaded into every
