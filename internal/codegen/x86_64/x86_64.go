@@ -4599,11 +4599,14 @@ func (g *generator) emitDataSections() {
 			g.label("__fern_rc_underflow")
 			g.line("\t.quad 0")
 		}
-		if g.usesArrPushGrow || g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
-			// The rc==1 cliff counter (i32 in the low word).
-			// __fern_arr_push_grow bumps it when it copies a buffer
-			// that had SPARE CAPACITY — i.e. the copy was forced by an
-			// extra reference, not by a full buffer.
+		if g.usesArrPushGrow || g.usesArrPushGrowPtr || g.usesArrPushGrowMovePtr ||
+			g.usesArrPushSharedCount || g.usesArrPushSharedBytes {
+			// The rc==1 cliff counter (i32 in the low word). Every
+			// __fern_arr_push_grow* variant bumps it when it copies a
+			// buffer that had SPARE CAPACITY — i.e. the copy was forced
+			// by an extra reference, not by a full buffer — so a program
+			// that only ever appends POINTER elements still needs the
+			// word.
 			g.line(".align 8")
 			g.label("__fern_arr_push_shared")
 			g.line("\t.quad 0")
@@ -6173,6 +6176,37 @@ func (g *generator) emitAllocRc1Runtime() {
 	g.line(".size __fern_alloc_rc1, .-__fern_alloc_rc1")
 }
 
+// emitArrPushCliffTally emits the `<lbl>_shared` arm every
+// __fern_arr_push_grow* variant reaches when the incoming rc is not 1: if the
+// buffer ALSO had spare capacity then the copy that follows is bought entirely
+// by the extra reference — the rc==1 cliff — so count it and weight it by the
+// oldLen * stride bytes about to be memcpy'd. An accumulator that has silently
+// gone from O(n) to O(n²) is then visible as a number instead of inferred from
+// an arena exhaustion somewhere downstream. Falls through to `<lbl>_copy`.
+//
+// EVERY variant, not just the scalar one. The counters were bumped only inside
+// `__fern_arr_push_grow` until #6888 §4d.6, so every pointer- and
+// string-element append — which is what the self-host compiler's own
+// accumulators are — crossed the cliff invisibly: `FERN_CLIFF_REPORT=1` over a
+// whole self-compile read 1,073 crossings while a gdb breakpoint census of one
+// module found 271,197.
+//
+// rax / rcx are caller-saved and dead here (rax held the rc the caller's
+// compare consumed), and the multiply is 64-bit so a buffer past 4 GiB still
+// accumulates exactly. Off the fast path, so this costs one compare on a run
+// that is about to memcpy the whole buffer anyway.
+func (g *generator) emitArrPushCliffTally(lbl string) {
+	g.label(lbl + "_shared")
+	g.emit("mov eax, dword ptr [rdi - 12]") // cap
+	g.emit("cmp esi, eax")
+	g.emit("jge " + lbl + "_copy") // genuinely full: not the cliff
+	g.emit("add dword ptr [rip + __fern_arr_push_shared], 1")
+	g.emit("mov eax, esi") // zero-extend oldLen into rax
+	g.emit("mov ecx, edx") // zero-extend stride into rcx
+	g.emit("imul rax, rcx")
+	g.emit("add qword ptr [rip + __fern_arr_push_copied], rax")
+}
+
 // emitArrPushGrowRuntime emits `__fern_arr_push_grow(arr,
 // oldLen, stride) -> new_data` — System V counterpart of the
 // arm64 helper. Inputs rdi=arr, esi=oldLen, edx=stride.
@@ -6196,25 +6230,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("mov dword ptr [rdi - 4], eax")
 	g.emit("mov rax, rdi")
 	g.emit("ret")
-	// rc != 1. If the buffer ALSO had spare capacity then the copy below is
-	// bought entirely by the extra reference — the rc==1 cliff. Count it, so
-	// an accumulator that has silently gone from O(n) to O(n²) can be seen
-	// rather than inferred from an arena exhaustion somewhere downstream.
-	// Off the fast path, so this costs one compare on a run that is about to
-	// memcpy the whole buffer anyway.
-	g.label(".Lpush_shared")
-	g.emit("mov eax, dword ptr [rdi - 12]") // cap
-	g.emit("cmp esi, eax")
-	g.emit("jge .Lpush_copy") // genuinely full: not the cliff
-	g.emit("add dword ptr [rip + __fern_arr_push_shared], 1")
-	// Weight the crossing by what it actually costs: oldLen * stride bytes
-	// about to be memcpy'd. rax / rcx are caller-saved and dead here (rax
-	// held the capacity the compare above consumed), and the multiply is
-	// 64-bit so a buffer past 4 GiB still accumulates exactly.
-	g.emit("mov eax, esi") // zero-extend oldLen into rax
-	g.emit("mov ecx, edx") // zero-extend stride into rcx
-	g.emit("imul rax, rcx")
-	g.emit("add qword ptr [rip + __fern_arr_push_copied], rax")
+	g.emitArrPushCliffTally(".Lpush")
 	g.label(".Lpush_copy")
 	// Copy path. Stash arr / oldLen / stride / newLen / newCap /
 	// headerBytes / new_data in callee-saves so they survive the
@@ -6333,7 +6349,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	// Fast path: rc == 1 AND oldLen < cap → in place (rc = 2, len++).
 	g.emit("mov eax, dword ptr [rdi - 8]") // rc
 	g.emit("cmp eax, 1")
-	g.emit("jne " + lbl + "_copy")
+	g.emit("jne " + lbl + "_shared")
 	g.emit("mov eax, dword ptr [rdi - 12]") // cap
 	g.emit("cmp esi, eax")
 	g.emit("jge " + lbl + "_copy")
@@ -6342,6 +6358,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("mov dword ptr [rdi - 4], eax")
 	g.emit("mov rax, rdi")
 	g.emit("ret")
+	g.emitArrPushCliffTally(lbl)
 	g.label(lbl + "_copy")
 	// Copy path — same register plan as __fern_arr_push_grow.
 	g.emit("push rbp")

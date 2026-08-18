@@ -910,10 +910,91 @@ arena. Swap them and the zero swaps with it. This is why
 each in its own process; a bump delta measured after any earlier churn in the
 same process is not a measurement of that shape.
 
-So the ratchet is located but not yet explained: `emit` and `bind` see
-`RC >= 2` on a field buffer whose only other reference should be the superseded
-state, and the next step is to find what is still holding that count in the real
-compiler — a native `internal/ir` question, not a self-host one.
+**Explained: `rc(ops)` is the number of LIVE `LowerState` boxes, and the extra
+ones are dead parameters nobody drops.** A gdb hardware watchpoint on one
+freshly grown `ops` buffer's rc word, from the copy that created it, reports
+every change with its Fern frame:
+
+```
+break *<copy path>  if *(void **)$rsp == <the call site inside emit>
+finish                       # rax = the fresh buffer
+set $buf = (char *)$rax
+watch *(int*)($buf-8)
+```
+
+```
+rc 1 -> 2   __method_irlower__LowerState_with_grow_exempt   <- new box copies the field
+rc 2 -> 1   __drop_struct_flat_irlower__LowerState          <- superseded local dropped
+rc 1 -> 2   __method_irlower__LowerState_with_optret_pending
+rc 2 -> 1   __drop_struct_flat_irlower__LowerState
+```
+
+`emit` and `bind` themselves are CLEAN — neither contains a single `rc_inc` or
+`rc_dec` instruction, and `appendForcesCopy` is false at both (`false` for
+`field:ops` and `field:names`), so no bracket is forcing anything. The count
+comes from the boxes. Every `LowerState { ...s, f: v }` — `with_grow_exempt`,
+`with_optret_pending`, `add_local`, `mark_*`, and the 30-odd siblings — is a
+fresh box that inc's each pointer field it copies, so **`rc(ops)` is exactly the
+number of live `LowerState` values sharing that buffer**. The oscillation above
+is balanced: the new box takes a count, the superseded LOCAL is dropped and
+gives it back.
+
+What ratchets is the boxes nobody drops. A `LowerState` PARAMETER is borrowed,
+so it is not dropped in the callee at all, and the lowering recursion holds one
+per level:
+
+```fern
+function lower_stmt_grow_exempt(st: parser.Stmt, s: LowerState): LowerState {
+    …
+    var gr: LowerState = lower_stmt_inner(st, s.with_grow_exempt(gex));
+```
+
+`s` is dead after that line and stays alive to the end of the frame, pinning
+`ops` for the whole of `lower_stmt_inner` and everything under it. That is why
+the ratchet's rc is not a constant 2 but a spread that decays with the recursion
+depth — over `emit`'s 49,831 ref-forced copies compiling `checker.fern`: 26,441
+at rc 2, 12,319 at 3, 6,516 at 4, 3,122 at 5, 914 at 6, 334 at 7, and a tail out
+to 43.
+
+**What it costs.** Compiling `examples/self_host/checker.fern` with the
+self-hosted compiler, counted at the copy path itself:
+
+| | copies | elements copied |
+|---|---|---|
+| ref-forced, buffer had ROOM (the ratchet) | 273,382 | 33,385,176 (**267 MB**) |
+| ref-forced, buffer also full | 15,970 | 28,155 |
+| genuine growth (`rc == 1`) | 145,141 | 358,468 (2.9 MB) |
+
+**88% of it is `LowerState.emit` alone** (29,228,878 elements over 49,831
+copies); `Scope.bind` is next at 1.93 M over 178,980. And the elements are
+pointers, so each copy also runs the grow helper's per-element `__fern_rc_inc`
+and the discarded buffer's matching walk-drop — 33 M retains and 33 M releases
+on top of the 267 MB.
+
+**The fix is the ownership arc, not a local patch.** Nothing in `internal/ir`
+can drop a borrowed parameter, and the copies are semantically required as long
+as those boxes are reachable. Three of `docs/OWNERSHIP-INFERENCE-PLAN.md`'s
+listed items compose into the actual fix, in this order:
+
+1. **Owned-by-default for string/array-bearing structs** — Slice 2's explicitly
+   "remaining sub-slice". `isOwnedByDefaultType` admits struct/tuple only when
+   `typeIsStringArrayFree`, which is exactly what excludes `LowerState`,
+   `Scope`, `EmitState`, and every other accumulator in the compiler.
+2. **Precise drops for PARAMETERS.** `computePreciseDrops` covers `var`-declared
+   locals only (`blockDeclIndices` walks `*ast.Var`); an owned param dropped at
+   its last use is what takes `rc(ops)` back to 1 before the recursion runs.
+   The existing comment on `preciseDropTarget` already states the principle —
+   "giving it back at the last read rather than at scope exit is what restores
+   the source to rc 1" (#6024) — it just never reaches a param.
+3. **Struct-update reuse on a unique owned receiver.** With (1) and (2),
+   `LowerState { ...s, f: v }` over a uniquely-owned `s` can write the one
+   changed field into `s`'s own box instead of allocating a successor — Koka's
+   reuse specialization, the plan's "Later" item. That removes the inc as well
+   as the copy.
+
+Only (1) and (2) together move this number; (1) alone swaps a borrow for an
+inc/dec pair at the same two points and changes nothing about when the box
+dies.
 
 ### 4d.6 The `strcmp` HELPER was byte-at-a-time — 25% off the compare benchmark
 
@@ -974,16 +1055,21 @@ loops for the buffer sizes the lang runtime sees"). The copies this runtime
 makes are small and there are ~94 M of them; anyone tuning `__fern_memcpy`
 should start from that distribution and measure on a Haswell-class part.
 
-**The cliff counter cannot see any of the compiler's own accumulators.**
-`__arr_push_shared_count()` / `_bytes()` (§4c) are bumped only inside
-`__fern_arr_push_grow` — the SCALAR-element helper. Every pointer- and
+**The cliff counter could not see any of the compiler's own accumulators —
+fixed.** `__arr_push_shared_count()` / `_bytes()` (§4c) were bumped only inside
+`__fern_arr_push_grow`, the SCALAR-element helper. Every pointer- and
 string-element append goes through `__fern_arr_push_grow_ptr` / `_str` and
-their `_move_` siblings, none of which bump anything. So `FERN_CLIFF_REPORT=1`
-on a whole self-compile reports 1,073 crossings and 197 KB, while the gdb
-breakpoint census of §4d.5 finds thousands of ref-forced copies on `ir.Op[]`
-and `string[]` in a single module. §4c's reading that "the crossings are
-4-byte loop-depth stacks" is a reading of the scalar helper only. Closing that
-blind spot is a prerequisite for measuring the §4d.5 ratchet without gdb.
+their `_move_` siblings, none of which bumped anything — so `FERN_CLIFF_REPORT=1`
+on a whole self-compile reported 1,073 crossings and 197 KB, and §4c's reading
+that "the crossings are 4-byte loop-depth stacks" was a reading of the scalar
+helper only. Every variant tallies now, on all three backends. The same
+`checker.fern` compile that the CI gate recorded at **221 crossings / 988
+bytes** reads **281,621 / 267,661,872** — and an independent gdb breakpoint
+census of the same compile agrees to within 3% (273,382 copies over 33,385,176
+pointer elements, i.e. 267,081,408 bytes; the shortfall is the `_str` and
+`_move_` variants, which the single breakpoint address did not cover), which is
+what says the new number is the instrument working rather than a regression. `.github/cliff-baseline.txt` carries both the new
+ceiling and that history.
 
 ## 8. Reproducing any of this
 
