@@ -17294,11 +17294,23 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // (runtime shape dispatch) — matching the interpreter — rather than
     // static-dispatching to the concrete impl.
     if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn " && !is_array_type_name(v.type_name)) {
+        var dvprim: string = expr_recv_prim_type(v.init, s);
         var dvs: LowerState = lower_dyn_arg(v.init, s);
         if (!dvs.ok) { return dvs; }
         var dvb: LowerState = dvs.add_local(v.name);
         var dvslot: i32 = dvb.slot_of(v.name);
         dvb = dvb.mark_struct_type(dvslot, v.type_name);
+        // op_dyn_box COPIES a non-string primitive into a fresh rc-headered
+        // cell, so the local owns that cell however the value was produced —
+        // `k * 2` and a `var n: i32` alias alike. The escape verdict is the
+        // whole admission, and reclaimable_names_of left it under "DYNCAND:"
+        // because typing the init is this site's knowledge, not the AST scan's.
+        // A "string" payload is excluded: its cell holds a POINTER whose box may
+        // be borrowed, and the sweep's string tag frees that box too. A string
+        // LITERAL init keeps the analysis-time credit that proves it fresh.
+        if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.reclaimable_names, "DYNCAND:", v.name)) {
+            dvb = LowerState { ...dvb, reclaimable_names: dvb.reclaimable_names.append("DYN:" + v.name + "|" + dvprim) };
+        }
         return dvb.emit(ir.op_store_local(dvslot));
     }
     // `var f = r.hs[0]` where hs is a struct closure-array FIELD (#5160): f
@@ -23100,7 +23112,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var dj: i32 = st.n_params;
     while (dj < st.locals.len()) {
         if (!slot_list_has(keeps, dj) && slot_is_reclaimable_dyn(st, dj)) {
-            var dconc: string = dyn_reclaim_concrete_of(st, st.locals[dj].slot_name);
+            var dconc: string = dyn_reclaim_concrete_of(st, reclaim_slot_name(st, dj));
             if (dconc == "string") {
                 // Prim dyn cell with a STRING payload (#4351 slice 2): free the
                 // sole-owned inner string box (value@8 — read as "field 0", the
@@ -28197,24 +28209,32 @@ function collect_clo_lambda_in_stmt(st: parser.Stmt, acc: string[]): string[] {
     }
 }
 
-// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <literal>`
-// binding whose payload is statically reclaimable, as "<name>|<tag>" entries
-// (recursing through nested blocks). The tag is either the concrete STRUCT
+// collect_dyn_struct_names (#4351): every `var <n>: dyn <T> = <init>` binding,
+// as "<name>|<tag>" entries (recursing through nested blocks), where the tag
+// names the statically reclaimable payload and is EMPTY when this scan cannot
+// classify the init. The tag is either the concrete STRUCT
 // type name (a leak-safe, scalar-only / deep-drop-ok struct literal — the
 // struct flows unboxed behind the coercion, so the local holds its rc-headered
 // box) or a PRIMITIVE type name for a prim/string LITERAL init (#4351 slice 2
 // — op_dyn_box's cell is rc-headered via __fern_arr_box, so the exit sweep can
 // dec it; the "string" tag additionally frees the sole-owned inner string box
-// at cell@8). Non-literal inits (idents, calls, …) stay uncredited: the
-// payload could alias a longer-lived value. A name bound twice is blanked
-// (shadow — the payloads may differ).
-function collect_dyn_struct_names(stmts: parser.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
+// at cell@8), or the concrete STRUCT type a STRICT-FRESH call hands back
+// (`var d: dyn T = mk(k)` — `fresh_ret` proves every return of the callee is a
+// fresh literal, so the result is this frame's own rc==1 box exactly as a
+// literal init is; `struct_ret_fns` names the concrete). A bare-ident init
+// gets no tag: for a struct payload it aliases a longer-lived value, and for a
+// primitive it is the coercion's own copy that makes the cell reclaimable, not
+// anything this scan can see. A name bound twice is
+// blanked (shadow — the payloads may differ). `body` is the WHOLE function
+// body, carried unchanged through the recursion so a method callee's receiver
+// type resolves against every declaration in scope.
+function collect_dyn_struct_names(stmts: parser.Stmt[], body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
-    while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], structs, a); i = i + 1; }
+    while (i < stmts.len()) { a = collect_dyn_struct_in_stmt(stmts[i], body, structs, fresh_ret, struct_ret_fns, a); i = i + 1; }
     return a;
 }
-function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[], acc: string[]): string[] {
+function collect_dyn_struct_in_stmt(st: parser.Stmt, body: parser.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], struct_ret_fns: string[], acc: string[]): string[] {
     match (st) {
         parser.StmtVar(v) => {
             if (v.type_name.len() > 4 && v.type_name[0:4] == "dyn ") {
@@ -28242,13 +28262,43 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
                     // decs any non-struct, non-"string" tag). Unit variants
                     // (bare idents) are NOT credited: they may be static
                     // sentinels, and a bare ident is otherwise a local alias.
-                    parser.ExprCall(_) => {
+                    // A STRICT-FRESH call result (`var d: dyn T = mk(k)` /
+                    // `var d: dyn T = obj.mk(k)`): every return of the callee is
+                    // a fresh struct literal, so the result is a rc==1 box this
+                    // frame owns — the same standing a literal init has, and the
+                    // same admission collect_fresh_ret_call_names makes for a
+                    // plainly-typed local. The concrete comes from
+                    // struct_ret_fns (the annotation only says `dyn T`), and
+                    // carries the literal arm's leak-safe / deep-drop-ok gate so
+                    // the sweep's __struct_drop_<C> reaches every rc field.
+                    parser.ExprCall(dc) => {
                         var ven: string = variant_ctor_enum_owner(v.init, structs);
                         if (ven.len() > 0) { cty = ven; }
+                        else {
+                            var ckey: string = "";
+                            match (dc.callee) {
+                                parser.ExprIdent(cid) => { ckey = cid.name; },
+                                // A method key needs the RECEIVER's type, which
+                                // the `dyn T` annotation cannot supply; a
+                                // once-declared annotated local resolves it, a
+                                // param receiver keeps today's leak.
+                                _ => { ckey = local_recv_method_key(dc.callee, body, structs); },
+                            }
+                            if (ckey.len() > 0 && util.index_of_str(fresh_ret, ckey) >= 0) {
+                                var rty: string = sig_value_of(struct_ret_fns, ckey);
+                                if (decl_is_struct(structs, rty) && decl_is_leaksafe(structs, rty)
+                                    && (struct_is_scalar_only(structs, rty) || nested_field_deep_drop_ok(structs, rty))) {
+                                    cty = rty;
+                                }
+                            }
+                        }
                     },
                     _ => {}
                 }
-                if (cty.len() == 0) { return acc; }
+                // An UNCLASSIFIED payload records `<name>|` with an empty tag
+                // rather than nothing: the escape gates still apply to it and
+                // the coercion decides the rest (the "DYNCAND:" arm in
+                // reclaimable_names_of), and it has to reach the shadow rule.
                 // shadow check: a same-named earlier entry blanks both.
                 var pi: i32 = 0;
                 while (pi < acc.len()) {
@@ -28271,15 +28321,15 @@ function collect_dyn_struct_in_stmt(st: parser.Stmt, structs: parser.StructDecl[
             return acc;
         },
         parser.StmtIf(iff) => {
-            var a: string[] = collect_dyn_struct_names(iff.then_body, structs, acc);
-            return collect_dyn_struct_names(iff.else_body, structs, a);
+            var a: string[] = collect_dyn_struct_names(iff.then_body, body, structs, fresh_ret, struct_ret_fns, acc);
+            return collect_dyn_struct_names(iff.else_body, body, structs, fresh_ret, struct_ret_fns, a);
         },
-        parser.StmtWhile(w) => { return collect_dyn_struct_names(w.body, structs, acc); },
-        parser.StmtFor(f) => { return collect_dyn_struct_names(f.body, structs, acc); },
+        parser.StmtWhile(w) => { return collect_dyn_struct_names(w.body, body, structs, fresh_ret, struct_ret_fns, acc); },
+        parser.StmtFor(f) => { return collect_dyn_struct_names(f.body, body, structs, fresh_ret, struct_ret_fns, acc); },
         parser.StmtMatch(m) => {
             var a: string[] = acc;
             var i: i32 = 0;
-            while (i < m.arms.len()) { a = collect_dyn_struct_names(m.arms[i].body, structs, a); i = i + 1; }
+            while (i < m.arms.len()) { a = collect_dyn_struct_names(m.arms[i].body, body, structs, fresh_ret, struct_ret_fns, a); i = i + 1; }
             return a;
         },
         _ => { return acc; },
@@ -29130,7 +29180,7 @@ function stmt_reassigns_alias(st: parser.Stmt, name: string): boolean {
     return false;
 }
 
-function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[]): string[] {
+function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: string[], tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
@@ -29770,11 +29820,20 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // op_dyn_box cell — now rc-headered via __fern_arr_box (#4351 slice 2) —
     // credited "DYN:<name>|<prim>" so the sweep decs the cell (and for a
     // "string" tag first frees the sole-owned inner string box at cell@8).
-    // Gates mirror the enum struct-payload path: a FRESH LITERAL init (sole
-    // owner, rc==1), single-bind, never reassigned, non-escaping
-    // (body_unsafe_for — a `d.show()` dispatch is a receiver borrow, safe; a
-    // bare-ident alias, call arg, return, or `as?` downcast excludes).
-    var dyns: string[] = collect_dyn_struct_names(body, structs, []);
+    // A STRICT-FRESH CALL result (`var d: dyn T = mk(k)`) earns the struct
+    // credit on the same terms as the literal: the callee returns only fresh
+    // literals, so the box is this frame's at rc==1.
+    // Gates mirror the enum struct-payload path: a FRESH init (sole owner,
+    // rc==1), single-bind, never reassigned, non-escaping (body_unsafe_for — a
+    // `d.show()` dispatch is a receiver borrow, safe; a bare-ident alias, call
+    // arg, return, or `as?` downcast excludes).
+    //
+    // A payload this AST scan cannot type (`var d: dyn T = k * 2` — whether it
+    // boxes at all is a question about the init's TYPE) carries the escape
+    // verdict alone, as "DYNCAND:<name>". The coercion site completes it: only
+    // there is the op_dyn_box primitive known, and a non-string primitive cell
+    // is fresh by construction, so the escape gates are the whole admission.
+    var dyns: string[] = collect_dyn_struct_names(body, body, structs, fresh_ret, struct_ret_fns, []);
     var dyi: i32 = 0;
     while (dyi < dyns.len()) {
         var dentry: string = dyns[dyi];
@@ -29783,7 +29842,10 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
         var dname: str = dentry[0:dbar];
         if (dname.len() > 0
             && util.index_of_str(reassigned, dname) < 0
-            && !body_unsafe_for(body, dname, borrowable)) { out = out.append("DYN:" + dentry); }
+            && !body_unsafe_for(body, dname, borrowable)) {
+            if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dname); }
+            else { out = out.append("DYN:" + dentry); }
+        }
         dyi = dyi + 1;
     }
     // dyn-Trait ARRAY locals (#4351 slice 3): `var xs: dyn T[] = [<literals>]`
@@ -37740,15 +37802,22 @@ function darr_kinds_of(s: LowerState, name: string): string {
 
 // slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
 // holding a statically-known payload (#4351) — credited "DYN:" by
-// reclaimable_names_of. A STRUCT payload is the concrete's rc-headered struct
-// box (structs flow unboxed behind dyn), released by the exit sweep like a
-// reclaimable struct: deep-drop the concrete's rc fields, then dec the box.
+// reclaimable_names_of, or by the coercion site for a non-string primitive
+// (which owns its cell unconditionally). A STRUCT payload is the concrete's
+// rc-headered struct box (structs flow unboxed behind dyn), released by the
+// exit sweep like a reclaimable struct: deep-drop the concrete's rc fields,
+// then dec the box.
 // A PRIM/STRING payload is an rc-headered op_dyn_box cell: the sweep decs it
 // ("string" first frees the sole-owned inner string box at cell@8).
+//
+// Keyed on reclaim_slot_name, like the rcenum / scenum sweeps: retire_locals
+// renames a BLOCK-SCOPED local to "!retired!<name>" on block exit, so a
+// slot_name-keyed lookup misses every dyn local declared inside an if / while /
+// for / match body and neither zeroes nor sweeps its slot.
 function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
-    return dyn_reclaim_concrete_of(s, s.locals[i].slot_name) != "";
+    return dyn_reclaim_concrete_of(s, reclaim_slot_name(s, i)) != "";
 }
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
@@ -41886,7 +41955,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // now dump-only. The append-built ARRSTRUCT credit consults it to decide
     // whether a BOUND element may be admitted: a moved local hands its single
     // reference to the buffer, so the buffer's deep walk is the one release.
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow

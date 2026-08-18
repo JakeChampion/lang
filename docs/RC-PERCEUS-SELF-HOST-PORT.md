@@ -9520,3 +9520,58 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `internal/e2eselfhost/self_host_arrarr_ident_row_reclaim_test.go` (three
   backends, 7 cases; the three leak cases fail on the parent with 98).
   Refs #6527 #6887 #4451.
+- 2026-08-18: **#4351 — the three remaining `dyn`-payload holes were all
+  NON-LITERAL initialisers, and each had a different cause.**
+
+  Measured per round on the churn probe (`__heap_bump_bytes()` delta / rounds,
+  x86-64 | arm64 | wasm), before → after:
+
+  | `var d: dyn Shape = …` in a called fn | before | after |
+  |---|---|---|
+  | `mk(k)`, scalar-only concrete | 40 \| 40 \| 24 | 0 |
+  | `mk(k)`, concrete with an `i32[]` field | 88 \| 88 \| 56 | 0 |
+  | `f.make(k)` (method, annotated local receiver) | 40 \| 40 \| 24 | 0 |
+  | `k * 2` (computed primitive) | 40 \| 40 \| 24 | 0 |
+  | `n` where `var n: i32` (primitive from a local) | 80 \| 80 \| 48 | 0 |
+  | `Square { … }` inside an `if` body | 40 \| 40 \| 24 | 0 |
+
+  1. **A STRICT-FRESH call result now earns the struct credit.**
+     `collect_dyn_struct_in_stmt`'s `ExprCall` arm recognised only a variant
+     constructor, so a plain producer fell through. It now takes the key
+     (`local_recv_method_key` for a method), asks `return_fresh_struct_ret_fns`,
+     and reads the concrete out of `struct_ret_fns` — the `dyn T` annotation
+     cannot name it. Same admission `collect_fresh_ret_call_names` already makes
+     for a plainly-typed local, plus the literal arm's leak-safe /
+     scalar-only-or-deep-drop-ok gate so the sweep's `__struct_drop_<C>` reaches
+     every rc field.
+
+  2. **A non-string PRIMITIVE payload is reclaimable however it was produced,
+     and that is a fact only the coercion holds.** `op_dyn_box` COPIES the value
+     into a fresh rc-headered cell, so ownership needs no freshness analysis at
+     all — the escape verdict is the whole admission. But whether the init boxes
+     is a question about its TYPE, which the AST scan cannot answer. So the scan
+     now emits the escape verdict alone as `DYNCAND:<name>`, and
+     `lower_stmt_var`'s dyn arm — where `expr_recv_prim_type` is already
+     computed — completes it to `DYN:<name>|<prim>`. A `"string"` payload is
+     excluded: its cell holds a POINTER whose box may be borrowed, and the
+     string tag's sweep frees that box too; a string LITERAL keeps the
+     analysis-time credit that proves it fresh.
+
+  3. **`slot_is_reclaimable_dyn` was keyed on `slot_name`, not
+     `reclaim_slot_name`.** `retire_locals` renames a block-scoped local to
+     `!retired!<name>` on block exit, so EVERY `dyn` local declared inside an
+     `if` / `while` / `for` / `match` body missed both the exit sweep and the
+     entry zeroing — a struct LITERAL payload leaked there too, which is the
+     half of this that predates the call-result hole entirely. The rcenum /
+     scenum sweeps already carry this keying and their notes describe the same
+     trap.
+
+  Native is flat on the call-result shape already (`__drop_dyn_<Trait>` at the
+  coercion), so this is a self-host-only convergence step. Still uncredited by
+  design: an escaping or reassigned `dyn` local, a bare-ident STRUCT alias, a
+  non-strict-fresh (identity) callee, a method call on a PARAM receiver (no
+  annotation for the AST scan to read), and a string payload behind a
+  non-literal init — each pinned as a gate case rather than left untested.
+  Regression test: `internal/e2eselfhost/self_host_dyn_call_reclaim_ir_test.go`
+  (13 cases x 3 backends; the flat cases return the MEASURED bytes per round as
+  their exit code, so a regression reports its own size). Refs #4351 #4451.
