@@ -26577,18 +26577,48 @@ function body_declares_name(stmts: parser.Stmt[], name: string): boolean {
     return false;
 }
 
+// local_recv_method_key: "<Type>.<method>" for a `recv.m(..)` callee whose
+// receiver is a LOCAL of `body`, else "". The LowerState-free twin of the key
+// owned_fresh_call_callee builds with expr_struct_type, and the two have to
+// agree: a key only this side accepts credits the binding a free the read never
+// performed. So it makes that function's two refusals from the AST — the
+// receiver is a bare local, and the callee names no declared FIELD of its type
+// (a fn-typed field call names no method) — plus the one this side needs on its
+// own: the local carries a type ANNOTATION and is declared exactly once, so
+// that annotation IS the receiver's type rather than a shadowed sibling's. A
+// param receiver resolves to neither and keeps today's leak.
+function local_recv_method_key(callee: parser.Expr, body: parser.Stmt[], structs: parser.StructDecl[]): string {
+    match (callee) {
+        parser.ExprFieldAccess(mfa) => {
+            match (mfa.obj) {
+                parser.ExprIdent(rid) => {
+                    if (local_decl_count(body, rid.name) != 1) { return ""; }
+                    var rt: string = util.base_type_name(body_local_decl_type(body, rid.name));
+                    if (rt.len() == 0) { return ""; }
+                    if (decl_field_type(structs, rt, mfa.field) != "") { return ""; }
+                    return rt + "." + mfa.field;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // owned_container_read_str_binding: `init` reads a `string` OUT of a container
-// the read reclaim releases at the read — `strs(i)[1]` (a "STRARR:" producer) or
-// `boxed(i).name` (a "STRFLDF:" one). Either way the destination receives the
+// the read reclaim releases at the read — `strs(i)[1]` (a "STRARR:" producer),
+// `boxed(i).name` or `b.bump(t).name` (a "STRFLDF:" one, free function or
+// method). Either way the destination receives the
 // container's own single reference to that box, so it owns it: this is the third
 // site of the pointer-half triple (#6491), and without it the read's retain / move
 // would strand the extracted string exactly as the container used to strand.
-function owned_container_read_str_binding(init: parser.Expr, body: parser.Stmt[], fresh_ret: string[]): boolean {
+function owned_container_read_str_binding(init: parser.Expr, body: parser.Stmt[], fresh_ret: string[], structs: parser.StructDecl[]): boolean {
     var callee: string = "";
     var kind: string = "";
     match (init) {
         parser.ExprIndex(ix) => { kind = "STRARR:"; match (ix.array) { parser.ExprCall(c) => { match (c.callee) { parser.ExprIdent(cid) => { callee = cid.name; }, _ => {} } }, _ => {} } },
-        parser.ExprFieldAccess(fa) => { kind = "STRFLDF:"; match (fa.obj) { parser.ExprCall(c) => { match (c.callee) { parser.ExprIdent(cid) => { callee = cid.name; }, _ => {} } }, _ => {} } },
+        parser.ExprFieldAccess(fa) => { kind = "STRFLDF:"; match (fa.obj) { parser.ExprCall(c) => { match (c.callee) { parser.ExprIdent(cid) => { callee = cid.name; }, _ => { callee = local_recv_method_key(c.callee, body, structs); } } }, _ => {} } },
         _ => {}
     }
     if (callee.len() == 0) { return false; }
@@ -26600,21 +26630,21 @@ function owned_container_read_str_binding(init: parser.Expr, body: parser.Stmt[]
 // read>` destinations. The `string` ANNOTATION is required — an unannotated
 // binding leaves the slot's type to inference the analysis cannot see, and a
 // mis-credit here frees a box the read never handed over.
-function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+function collect_owned_container_read_str_names(stmts: parser.Stmt[], body: parser.Stmt[], fresh_ret: string[], reassigned: string[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (v.type_name == "string" && util.index_of_str(reassigned, v.name) < 0
-                        && owned_container_read_str_binding(v.init, body, fresh_ret)) {
+                        && owned_container_read_str_binding(v.init, body, fresh_ret, structs)) {
                     a = push_str_unique(a, v.name);
                 }
             },
-            parser.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, fresh_ret, reassigned, a); a = collect_owned_container_read_str_names(f.else_body, body, fresh_ret, reassigned, a); },
-            parser.StmtWhile(w) => { a = collect_owned_container_read_str_names(w.body, body, fresh_ret, reassigned, a); },
-            parser.StmtFor(fo) => { a = collect_owned_container_read_str_names(fo.body, body, fresh_ret, reassigned, a); },
-            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, fresh_ret, reassigned, a); ai = ai + 1; } },
+            parser.StmtIf(f) => { a = collect_owned_container_read_str_names(f.then_body, body, fresh_ret, reassigned, structs, a); a = collect_owned_container_read_str_names(f.else_body, body, fresh_ret, reassigned, structs, a); },
+            parser.StmtWhile(w) => { a = collect_owned_container_read_str_names(w.body, body, fresh_ret, reassigned, structs, a); },
+            parser.StmtFor(fo) => { a = collect_owned_container_read_str_names(fo.body, body, fresh_ret, reassigned, structs, a); },
+            parser.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_owned_container_read_str_names(m.arms[ai].body, body, fresh_ret, reassigned, structs, a); ai = ai + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -28990,7 +29020,7 @@ function reclaimable_names_of(body: parser.Stmt[], structs: parser.StructDecl[],
     // mk()[i]` / `= mk().f`. The read releases the container and hands over its
     // single reference to the extracted box, so s owns it exactly as a
     // fresh-producer binding does — same two gates, same "STR:" class.
-    var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, []);
+    var ocrs: string[] = collect_owned_container_read_str_names(body, body, fresh_ret, reassigned, structs, []);
     var oci: i32 = 0;
     while (oci < ocrs.len()) {
         if (!body_unsafe_for(body, ocrs[oci], borrowable)) { out = out.append("STR:" + ocrs[oci]); }

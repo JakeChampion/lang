@@ -8216,17 +8216,15 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   dec. That is the next slice, and it is a different mechanism from this one,
   not a widening of it.
 
-  Two other residuals this slice names rather than closes. A SCALAR read off a
+  One other residual this slice names rather than closes. A SCALAR read off a
   string-bearing struct still strands the strings: the bare registry entry
   proves a fresh literal, not that the box owns its string buffers, and the
   entry that does carry that proof (`"STRFLDF:"`) is not consulted on the
   scalar path — `__struct_drop_<T>`'s string arm is `strfldok:<T>`-gated and
-  pairing the two is its own reckoning. And `owned_container_read_str_binding`,
-  the credit half of the pointer triple, still reads bare-ident callees only, so
-  `var f: string = b.bump().tag;` frees the box and leaks the moved-out string
-  where the free-function form frees both; that walker has no LowerState, so
-  resolving a receiver's type there needs the declared-type approximation
-  `is_fresh_ret_binding` uses.
+  pairing the two is its own reckoning.
+
+  The credit half of the pointer triple was a second one; the entry below
+  closes it.
 
   VERIFIED: new `fresh-struct-method-field-string` and
   `fresh-struct-method-field-scalar` in the #6491 read-reclaim file, both
@@ -8238,3 +8236,52 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   after churn has recycled the freed bytes. Plus the whole `internal/e2eselfhost`
   package — the gate the 2026-08-16 process note names, and the right one for a
   registry the self-host's own sources consume. Refs #6544 #6491 #4451.
+
+- 2026-08-18 (struct half, fourth slice): **The BINDING destination for a
+  method's moved-out string field earns its credit (#6544).**
+
+  The residual the entry above names. The read half landed with the method
+  callee: `b.bump(t).tag` moves the string out of the temp and frees the box.
+  But whether the DESTINATION owns what it received is decided somewhere else
+  entirely — `owned_container_read_str_binding`, under `reclaimable_names_of` —
+  and that walker still matched bare-ident callees only. So the binding form
+  freed the box and leaked the string: 72 B a round, against 0 for the
+  free-function spelling of the same binding.
+
+  **The constraint here is not which shapes to admit, it is that two
+  independent analyses have to agree on one key.** The lowering side builds it
+  with `expr_struct_type`; this side has no LowerState at all. A key only this
+  side accepts is not a missed optimisation, it is a free the read never
+  performed — the destination releases a string the box still owns.
+
+  So `local_recv_method_key` makes the lowering's own two refusals from the
+  AST — the receiver is a bare local, and the callee names no declared FIELD of
+  its type — and adds the one this side needs on its own: the local carries a
+  type ANNOTATION and is declared exactly ONCE, so that annotation is the
+  receiver's type and not a shadowed sibling's. `structs` threads down to reach
+  the field refusal. A param receiver resolves to neither and keeps today's
+  leak; the analyses agreeing is worth more than the last few shapes.
+
+  Per round, self-host x86-64 (`Box { name: string, k: i32 }`, `wide()` past the
+  inline threshold):
+
+  | probe | before | after | free-fn control |
+  |---|---|---|---|
+  | `var f: string = seed.rename(i).name` — bound | 72 | **0** | 0 |
+  | `seed.rename(i).name.len()` — borrowed | 0 | 0 | 0 |
+  | `pair.shift(i).a` — scalar, no-`string` struct | 0 | 0 | 0 |
+
+  The last two rows are the previous slice's, unmoved — they are here because a
+  credit widening that disturbed them would be the failure mode worth catching.
+
+  VERIFIED: new `method-field-string-bound` in the #6491 read-reclaim file,
+  failing at **92** on the parent. The previous slice's two refusals are the
+  safety controls for this one as well and needed no change: both already use
+  the BINDING form (`var f: string = keep.me().tag` / `keep.same().tag`), so
+  they fail the moment this credit reaches a producer that hands back the
+  receiver's box or wraps its string — and both still pass. New conformance case
+  `alloc_flat_method_result_field_read` states the whole method-result field
+  read as a CROSS-BACKEND contract, which the x86-64-only Go gate cannot: it
+  runs on x86_64 / arm64 / wasm under `TestFernFixtures` and on
+  `TestFernFixturesSelfHost{X86_64,Wasm}`, and agrees with native byte-for-byte.
+  Plus the whole `internal/e2eselfhost` package. Refs #6544 #6491 #4451.
