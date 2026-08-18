@@ -9261,57 +9261,73 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   before anything else is attempted on it. Refs #6544 #6522 #4451.
 
 - 2026-08-18 (measurement, no code): **The "~21 B/round floor shared by every
-  read of the relabel probe" is none of those things. It is 24 B, it is the
-  inline string LITERAL argument's box, and no read is involved.**
+  read of the relabel probe" is 24 B, and the discriminator is whether the
+  call's result is BOUND to a local or read INLINE off the call.**
 
-  That characterisation has been carried unowned across several entries and is
-  wrong in three ways, each of which points the next attempt at the wrong file.
-  Measured on `a228a5f`, self-host x86-64, against native; re-measured
-  unchanged on `47e8d1b`, so the two #6544 slices that landed in between —
-  including the strict-fresh struct's producer-call array field — do not touch
-  this row:
+  Measured on `a228a5f`, self-host x86-64, against native; re-measured unchanged
+  on `47e8d1b` and `0e2918a`, so none of the #6544 slices that landed in between
+  — including the strict-fresh struct's producer-call array field — touch this
+  row. The 2×2 is the whole finding:
 
-  | probe | self-host | native |
+  | `struct Box { tag: string, n: i32 }` | result bound to a local | result read inline |
   |---|---|---|
-  | `b.relabel("…").tag.len()` — fresh path | 24 | 0 |
-  | `b.relabel("").tag.len()` — identity path | 0 | 0 |
-  | `b.relabel("…").n` — **scalar** field read, fresh path | 24 | 0 |
-  | `b.freshonly("…").n` — a method with NO identity path | 24 | 0 |
-  | `relabel_free(b, "…").n` — the free-function twin | 72 | 0 |
-  | `b.freshonly(t).n` — the argument is a bound LOCAL | **0** | 0 |
-  | the same shapes on a scalar-only `struct P { k: i32, n: i32 }` | 0 | 0 |
+  | free function `mkbox("ab", 7)` | **0** | **24** |
+  | method `b.freshonly("ab")` | **0** | **24** |
 
-  1. **It is 24, not ~21**, and it is a FIXED 24: a 60-character literal costs
-     the same as a 2-character one, and widening the struct from two fields to
-     five costs nothing. Neither the string data nor the struct box tracks it —
-     0x18 is the rc string BOX, the same object `__fn_main +0x6e` was resolved
-     to in the 2026-08-18 #6544 attribution.
-  2. **No read is involved.** Reading the SCALAR field `n` costs the same 24 as
-     reading `tag`. "Shared by every read" described a read-site cost; there
-     isn't one.
-  3. **It is not the identity return, and not the FRESHSELF discriminator.**
-     `freshonly`, whose every return is a strict-fresh literal and whose result
-     the plain registry already releases, leaks the identical 24.
+  Free-vs-method is irrelevant, and so is the argument: a producer taking no
+  string parameter at all — building `Box { tag: "constant", … }` internally —
+  leaks the same 24 when its result is read inline. Supporting rows, all against
+  native 0:
 
-  What it IS: an inline string literal in argument position at a METHOD call.
-  Bind the same value to a local first and the row is flat — the local owns the
-  box and its own scope-exit release covers it. So this is
-  `stash_fresh_str_arg`'s territory, and the open question is why the
-  counted-retain admission (#7060 / #7061) does not reach it at a method call
-  site the way it does for the free producers those slices tested. Start there,
-  not at the result-side registries; every result-side mechanism is a shallow
-  dec and cannot touch this box by construction.
+  | probe | self-host |
+  |---|---|
+  | `b.relabel("…").tag.len()` — fresh path | 24 |
+  | `b.relabel("").tag.len()` — identity path | 0 |
+  | `b.relabel("…").n` — **scalar** field read | 24 |
+  | `relabel_free(b, "…").n` — free twin with an identity path | 72 |
+  | the same shapes on a scalar-only `struct P { k: i32, n: i32 }` | 0 |
 
-  **The free-function twin's 72 is a different, larger row** and should not be
-  folded in: `relabel_free` has an identity path, so it earns no strict-fresh
-  entry, and a free function has no FRESHSELF tier to fall back on — the
-  returned `Box` leaks there too, on top of this 24.
+  1. **It is 24, not ~21**, and FIXED: a 60-character literal costs what a
+     2-character one does, and widening the struct from two fields to five costs
+     nothing. Neither the string data nor the struct box tracks it — 0x18 is the
+     rc string BOX, the same object `__fn_main +0x6e` was resolved to in the
+     2026-08-18 #6544 attribution.
+  2. **No read-site cost.** Reading the SCALAR field costs the same 24 as
+     reading the string one. "Shared by every read" described something that
+     does not exist.
+  3. **Not the identity return and not the FRESHSELF discriminator.**
+     `freshonly`, every return a strict-fresh literal and its result already
+     released by the plain registry, leaks the identical 24.
 
-  Not implemented here on purpose. Two PRs were in flight in `irlower.fern` at
-  the time of writing (#7094, #7098) and #7098 makes the case, for the array
-  half of the same machinery, that a widening in this area wants the full sweep
-  behind it rather than a late push. The same applies to this row; the
-  measurement is what makes it a bounded question. Refs #6544 #6522 #4451.
+  What it IS: the inline read releases the returned struct with the BARE box dec
+  — the documented shallow-dec safe floor — so the struct's `string` field is
+  stranded, while a bound local reaches `__struct_drop_Box` at scope exit and
+  frees it. Every row follows from that one sentence: no string field, nothing
+  to strand (scalar-only is flat); the box is fixed-size, so neither the string
+  length nor the struct width moves it; the identity path builds no fresh box at
+  all.
+
+  So the work is to give the inline-read path the same field-drop the bound one
+  gets, NOT to widen a registry — and specifically not
+  `stash_fresh_str_arg`/`counted-retain`, which an earlier revision of this
+  entry pointed at on the strength of the method-call probes alone, before the
+  bound-vs-inline 2×2 was run.
+
+  The #7067 entry below is the ARRAY-field member of this same family, and its
+  framing is the sharper one: two per-type reclaim helpers that disagree about
+  how deep to go, so which one a value reaches decides whether its fields are
+  freed. Read them together.
+
+  **The free twin's 72 is a different, larger row** and should not be folded in:
+  `relabel_free` has an identity path, so it earns no strict-fresh entry, and a
+  free function has no FRESHSELF tier — the returned `Box` leaks there too, on
+  top of this 24.
+
+  Not implemented here on purpose. #7098 makes the case, for the array half of
+  the same machinery, that a widening in this area wants the full sweep behind
+  it rather than a late push; the same applies here. The measurement is what
+  makes it a bounded question. Refs #6544 #6522 #4451.
+
 - 2026-08-18: **#7067 — the two per-type reclaim helpers disagreed about a
   struct's array field whose ELEMENTS are pointer-shaped.**
 
