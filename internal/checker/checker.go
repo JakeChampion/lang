@@ -6078,6 +6078,25 @@ func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
 	return ""
 }
 
+// enumHintName spells an enum the way a reader at the current site
+// would write it: bare inside the module that declared it, `mod.Enum`
+// from anywhere else. The stored `mod__Enum` is an internal name that
+// nothing can spell, and naming a private module's is a leak. A
+// monomorphized clone's `E__i32` is not a module mangle, so it stands.
+func (c *checker) enumHintName(name string) string {
+	ed, ok := c.info.Enums[name]
+	if !ok || ed.Monomorphized || ed.SourceModule == "" {
+		return name
+	}
+	if ed.SourceModule == c.currentModule() {
+		if i := strings.Index(name, "__"); i >= 0 {
+			return name[i+2:]
+		}
+		return name
+	}
+	return demangle(name)
+}
+
 // variantEnumList returns a human-readable list of enum names that
 // declare `name`. Used in the "ambiguous variant" diagnostic so the
 // user sees every candidate, not just the first one.
@@ -6087,7 +6106,7 @@ func (c *checker) variantEnumList(name string) string {
 		return ""
 	}
 	if len(cands) == 1 {
-		return cands[0].enumName
+		return c.enumHintName(cands[0].enumName)
 	}
 	var b strings.Builder
 	for i, vr := range cands {
@@ -6098,9 +6117,28 @@ func (c *checker) variantEnumList(name string) string {
 				b.WriteString(", ")
 			}
 		}
-		b.WriteString(vr.enumName)
+		b.WriteString(c.enumHintName(vr.enumName))
 	}
 	return b.String()
+}
+
+// variantQualifierHint picks the enum to name in the "qualify the
+// reference, e.g. `E.V`" half of the ambiguous-variant diagnostic:
+// one declared in the module being checked when there is one, so the
+// suggestion is spellable where the reader is standing, rather than
+// whichever candidate the map happened to list first.
+func (c *checker) variantQualifierHint(name string) string {
+	cands := c.variantOf[name]
+	if len(cands) == 0 {
+		return ""
+	}
+	for _, vr := range cands {
+		ed, ok := c.info.Enums[vr.enumName]
+		if ok && ed.SourceModule != "" && ed.SourceModule == c.currentModule() {
+			return c.enumHintName(vr.enumName)
+		}
+	}
+	return c.enumHintName(cands[0].enumName)
 }
 
 // substituteType returns t with every ParamType reference
@@ -11960,7 +11998,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return ast.EnumType{Name: vr.enumName}
 		} else if multi {
 			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
-				n.Name, c.variantEnumList(n.Name), c.variantOf[n.Name][0].enumName, n.Name)
+				n.Name, c.variantEnumList(n.Name), c.variantQualifierHint(n.Name), n.Name)
 			return nil
 		} else if n.EnumName != "" {
 			c.errfCode(n.P, "E036", "enum %s has no variant %q", n.EnumName, n.Name)
@@ -12342,7 +12380,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// name resolves to nothing else.
 			if !isVar && vrMulti && id.EnumName == "" && !c.isUserFuncOrLocal(id.Name, s) {
 				c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s(...)`",
-					id.Name, c.variantEnumList(id.Name), c.variantOf[id.Name][0].enumName, id.Name)
+					id.Name, c.variantEnumList(id.Name), c.variantQualifierHint(id.Name), id.Name)
 				return nil
 			}
 			if isVar {
