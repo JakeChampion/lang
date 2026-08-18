@@ -411,17 +411,29 @@ func TestClassifyVanishedShardsIsAdvisory(t *testing.T) {
 	if _, err := os.Stat(p); err != nil {
 		t.Fatalf("classifier script missing: %v", err)
 	}
-	for _, args := range [][]string{
-		{"0", "20"},           // a run id that cannot resolve
-		{"123", "notanumber"}, // a budget that is not minutes
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"0", "20"}, "skipping the diagnosis"},
+		{[]string{"123", "notanumber"}, "is not a whole number of minutes"},
 	} {
-		cmd := exec.Command("bash", append([]string{p}, args...)...)
-		// No GH_TOKEN and no network expectation: gh either errors or is absent,
-		// and either way the script must not fail the build.
-		cmd.Env = append(os.Environ(), "GH_TOKEN=", "GITHUB_TOKEN=")
+		cmd := exec.Command("bash", append([]string{p}, tc.args...)...)
+		// No GH_TOKEN and no network expectation: gh either errors or is
+		// absent, and either way the script must not fail the build.
+		//
+		// ciEnv, not os.Environ(): an ambient FERN_CI_JOBS_JSON substitutes a
+		// saved payload for the API call, so the script DIAGNOSES instead of
+		// failing to resolve. Exit 0 holds on both branches, so inheriting it
+		// left this passing without reaching the path it names (#6833) —
+		// which is also why the branch is now asserted, not just the code.
+		cmd.Env = ciEnv("GH_TOKEN=", "GITHUB_TOKEN=")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Errorf("args %v: classifier must exit 0 even when it cannot diagnose; got %v: %s", args, err, out)
+			t.Errorf("args %v: classifier must exit 0 even when it cannot diagnose; got %v: %s", tc.args, err, out)
+		}
+		if !strings.Contains(string(out), tc.want) {
+			t.Errorf("args %v: want the advisory path (%q), got: %s", tc.args, tc.want, out)
 		}
 	}
 }
@@ -462,7 +474,7 @@ func TestClassifyVanishedShardsVerdicts(t *testing.T) {
 		t.Fatalf("write jobs: %v", err)
 	}
 	cmd := exec.Command("bash", script, "12345", "20")
-	cmd.Env = append(os.Environ(), "FERN_CI_JOBS_JSON="+path)
+	cmd.Env = ciEnv("FERN_CI_JOBS_JSON=" + path)
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("classifier must exit 0; got %v: %s", err, raw)
