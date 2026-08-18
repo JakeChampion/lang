@@ -21622,8 +21622,14 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: par
     while (k < tup.elements.len()) {
         match (tup.elements[k]) {
             parser.ExprArray(_) => {
+                // A string-ARRAY position whose every element is fresh
+                // (tuple_strarr_elem_fresh) owns its element boxes too, so it takes
+                // the element-walking free; any other array position keeps the
+                // shallow buffer dec, which leaves an aliased element untouched.
+                var afree: string = "__fern_rc_dec";
+                if (tuple_strarr_elem_fresh(tup.elements[k])) { afree = "__fern_str_arr_free"; }
                 s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
-                s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
+                s = s.emit(ir.op_call_direct(afree, 1));
                 s = s.emit(ir.op_drop());
             },
             // A string element (#4353 item 1): tuple construction str_box's
@@ -21702,6 +21708,13 @@ function emit_tuple_type_child_drops(st: LowerState, slot: i32, path: i32[], tty
             s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
             s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));       // free the buffer
             s = s.emit(ir.op_drop());
+        } else if (tag == "string[]") {
+            // A string-ARRAY element position: admission (tuple_arg_payload_fresh)
+            // proved the position is an array literal of fresh strings, so the
+            // element-walking free releases every element box and the buffer.
+            s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
+            s = s.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+            s = s.emit(ir.op_drop());
         } else if (tag == "string") {
             // A STRING element position (#4353 item 2, probe p4): construction
             // str_box's every string element into a fresh sole-owned copy
@@ -21770,6 +21783,10 @@ function tuple_field_deep_droppable(t: string, structs: parser.StructDecl[]): bo
             // gated at admission (tuple_arg_payload_fresh) on a literal / fresh
             // producer element expression.
             any_arr = true;
+        } else if (tag == "string[]") {
+            // A string-ARRAY element: released by __fern_str_arr_free, gated at
+            // admission on an array literal of provably fresh strings.
+            any_arr = true;
         } else if (!is_scalar_type_name(tag)) { return false; }
         k = k + 1;
     }
@@ -21793,6 +21810,11 @@ function tuple_arg_payload_fresh(ttype: string, arg: parser.Expr, structs: parse
                     var isarr: boolean = false;
                     match (tl.elements[k]) { parser.ExprArray(_) => { isarr = true; }, _ => {} }
                     if (!isarr) { return false; }
+                } else if (tag == "string[]") {
+                    // A string-ARRAY position must be an array literal of fresh
+                    // strings — the type-driven drop element-walks it blind, so an
+                    // ident element would put a live local's box under str_free.
+                    if (!tuple_strarr_elem_fresh(tl.elements[k])) { return false; }
                 } else if (tag == "string") {
                     // A string position must be a LITERAL (construction copies it
                     // fresh) or a fresh producer (concat / .to_string(),
@@ -24942,6 +24964,32 @@ function tuple_str_elem_fresh(e: parser.Expr): boolean {
                 _ => {}
             }
             return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// tuple_strarr_elem_fresh reports whether `e` is a non-empty string-ARRAY literal
+// whose every element is a provably fresh string box (a literal, or a
+// tuple_str_elem_fresh producer). Such a position sole-owns the buffer AND every
+// element box, so __fern_str_arr_free releases it exactly; one bare-ident element
+// aliases a live local and keeps the position on the shallow buffer-only dec.
+function tuple_strarr_elem_fresh(e: parser.Expr): boolean {
+    match (e) {
+        parser.ExprArray(al) => {
+            if (al.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < al.elements.len()) {
+                var ok: boolean = false;
+                match (al.elements[i]) {
+                    parser.ExprString(_) => { ok = true; },
+                    _ => { ok = tuple_str_elem_fresh(al.elements[i]); }
+                }
+                if (!ok) { return false; }
+                i = i + 1;
+            }
+            return true;
         },
         _ => { return false; }
     }
