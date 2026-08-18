@@ -413,8 +413,10 @@ func TestBinaryOperandErrorNoCascade(t *testing.T) {
 // duplication: a method-call chain `n.foo().bar()` whose inner `n.foo()` is
 // invalid (here, a method call on a non-struct i32) reported the inner E043
 // twice — once when the outer call checked its receiver, then again when the
-// generic callee path re-checked the same target. checkCall now bails as soon
-// as the receiver fails to type, so the diagnostic is emitted exactly once.
+// generic callee path re-checked the same target. The receiver is now typed
+// once per call site, and a receiver that fails to type bails before dispatch,
+// so the diagnostic is emitted exactly once. The receivers that DO type are
+// TestMethodReceiverCheckedOnce.
 func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 	count := func(src string) int {
 		err := checkSource(t, src)
