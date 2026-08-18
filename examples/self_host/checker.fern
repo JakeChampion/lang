@@ -9812,13 +9812,12 @@ function annot_of_expr(e: parser.Expr, acc: Annot[]): Annot[] {
   return acc;
 }
 
-// e064_var_diags reports E064 for any annotation in a (non-generic, non-method)
-// function body whose bare nominal type is undefined. The caller restricts this
-// to functions with no type parameters, so a plain identifier that resolves to
-// unknown is a genuine typo, never an erased generic parameter.
-function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
+// e064_annot_diags reports E064 for any annotation whose bare nominal type is
+// undefined. The caller restricts this to functions with no type parameters, so
+// a plain identifier that resolves to unknown is a genuine typo, never an
+// erased generic parameter.
+function e064_annot_diags(an: Annot[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
   var out: Diag[] = [];
-  var an: Annot[] = collect_annots(stmts);
   var i: i32 = 0;
   while (i < an.len()) {
     var vu: string = e064_unknown_name(an[i].type_name, struct_names, union_names, extra_known);
@@ -9890,12 +9889,11 @@ function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
   return out;
 }
 
-// e057_var_diags reports the annotation-form E057 for any annotation in a
-// (non-generic, non-method) function body embedding a `Cell[<composite>]`.
-// Reads the same annotation set E064 does — see collect_annots.
-function e057_var_diags(stmts: parser.Stmt[]): Diag[] {
+// e057_var_annot_diags reports the annotation-form E057 for any annotation
+// embedding a `Cell[<composite>]`. Reads the same annotation set E064 does,
+// which is why the caller collects it once and hands it to both.
+function e057_var_annot_diags(an: Annot[]): Diag[] {
   var out: Diag[] = [];
-  var an: Annot[] = collect_annots(stmts);
   var i: i32 = 0;
   while (i < an.len()) {
     out = append_diags(out, e057_annot_diags(an[i].type_name, an[i].line, an[i].col));
@@ -11835,8 +11833,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       }
       body_diags = append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `var x: T` annotations (same non-generic scope).
-      body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names, e064_extra));
-      body_diags = append_diags(body_diags, e057_var_diags(efn.body));
+      var efn_annots: Annot[] = collect_annots(efn.body);
+      body_diags = append_diags(body_diags, e064_annot_diags(efn_annots, struct_names, union_names, e064_extra));
+      body_diags = append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
     efi = efi + 1;
   }
