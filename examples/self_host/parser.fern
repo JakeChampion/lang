@@ -68,7 +68,11 @@ pub struct ExprArray { elements: Expr[] }
 // so `-fmt` reprints that form rather than the lambda: "block" for a
 // value-position `{ … }` block expression, which parse_primary desugars to a
 // 0-arg IIFE. "" for a lambda the programmer wrote. Read by the printer only.
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string }
+// line / col locate a lambda the SOURCE wrote, for a diagnostic against one of
+// its annotations. Zero on a lambda the parser synthesised — the value-block
+// and match-/if-expression IIFEs — which is what keeps a reporter off their
+// guessed `ret_type`: those carry no annotation the programmer wrote.
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32 }
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
 // fixed-arity / heterogeneous; arrays are homogeneous and
@@ -600,13 +604,18 @@ function e_field_access_at(obj: Expr, field: string, line: i32, col: i32): Expr 
     return ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
 }
 function e_lambda(params: ParamDecl[], ret_type: string, body: Stmt[]): Expr {
-    return e_lambda_origin(params, ret_type, body, "");
+    return e_lambda_at(params, ret_type, body, "", 0, 0);
+}
+// e_lambda_at is e_lambda for the two parses of a lambda the source WROTE, which
+// are the only ones that carry a position; see ExprLambda.line.
+function e_lambda_at(params: ParamDecl[], ret_type: string, body: Stmt[], origin: string, line: i32, col: i32): Expr {
+    return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col };
 }
 // e_lambda_origin is e_lambda for a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
 // is a value-position `{ … }`; see ExprLambda.origin.
 function e_lambda_origin(params: ParamDecl[], ret_type: string, body: Stmt[], origin: string): Expr {
-    return ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin };
+    return e_lambda_at(params, ret_type, body, origin, 0, 0);
 }
 pub function e_unknown(kind: string): Expr { return ExprUnknown { kind: kind, line: 0, col: 0 }; }
 pub function e_unknown_at(kind: string, line: i32, col: i32): Expr { return ExprUnknown { kind: kind, line: line, col: col }; }
@@ -914,7 +923,7 @@ function maybe_desugar_array_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: "" };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: "", line: 0, col: 0 };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -981,7 +990,7 @@ function maybe_desugar_map_build(base: Expr): Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: "" };
+                                    var iife: Expr = ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: "", line: 0, col: 0 };
                                     return ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -1551,6 +1560,8 @@ function (p: Par) arrow_lambda_at(): boolean {
 // verbose form); the return type is optional. Ported from the native
 // parser's parseArrowLambda (#2701).
 function parse_arrow_lambda(p: Par): (Expr, Par) {
+    var lam_line: i32 = p.peek_line();
+    var lam_col: i32 = p.peek_col();
     p = p.advance();  // consume `(`
     var params: ParamDecl[] = [];
     var apd_names: string[] = [];
@@ -1609,7 +1620,7 @@ function parse_arrow_lambda(p: Par): (Expr, Par) {
     p = ber_p;
     var body: Stmt[] = [s_return(ber_expr)];
     body = prepend_param_destrs(body, apd_names, apd_synths, apd_lines, apd_cols);
-    return parse_postfix(p, e_lambda(params, ret_type, body));
+    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col));
 }
 
 // Parse results are `(parsed_thing…, Par)` tuple returns — both pieces
@@ -2217,6 +2228,8 @@ function parse_primary(p: Par): (Expr, Par) {
                 // T, …): RT { body }`. Same grammar as the
                 // top-level FuncDecl minus the name and the
                 // optional receiver clause.
+                var fnl_line: i32 = p.peek_line();
+                var fnl_col: i32 = p.peek_col();
                 p = p.advance();  // consume `function`
                 if (p.peek_punct() != "(") {
                     return (e_unknown("lambda: missing ("), p);
@@ -2271,7 +2284,7 @@ function parse_primary(p: Par): (Expr, Par) {
                 var (lblk_body, lblk_p) = parse_block(p);
                 p = lblk_p;
                 var lbody: Stmt[] = prepend_param_destrs(lblk_body, lpd_names, lpd_synths, lpd_lines, lpd_cols);
-                return parse_postfix(p, e_lambda(params, lret, lbody));
+                return parse_postfix(p, e_lambda_at(params, lret, lbody, "", fnl_line, fnl_col));
             }
             if (x.name == "match") {
                 // match-expression in value position: desugar to an
@@ -4159,7 +4172,7 @@ function parse_block_body(p: Par): (Stmt[], Par) {
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: "" };
+            var cb: Expr = ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: "", line: 0, col: 0 };
             match (usrc_expr) {
                 ExprCall(c) => {
                     var newargs: Expr[] = c.args.append(cb);

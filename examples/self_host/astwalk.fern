@@ -30,7 +30,7 @@ pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T)
 
 // descend_all is the unpruned walk's descent rule: every node's children are
 // reachable.
-function descend_all(e: parser.Expr): boolean { return true; }
+pub function descend_all(e: parser.Expr): boolean { return true; }
 
 // descend_none is the statement-shaped consumer's rule: no expression has
 // reachable children, so `visit_expr` sees the expression sitting in each
