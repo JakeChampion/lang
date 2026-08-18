@@ -9348,3 +9348,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `internal/e2eselfhost/self_host_field_reclaim_arr_elems_test.go` (all three
   backends, including the append-carry case that pins the admission).
   Refs #7067 #6544 #2649 #5235 #4451.
+- 2026-08-18 (the pairing, implemented): the previous entry scoped a three-way
+  circularity and measured what breaking it would buy. This lands it.
+
+  A borrowed-parameter field store — `mk(deps: string[]): H { return H { deps:
+  deps }; }`, the ordinary way a constructor is written — was refused three
+  times over, each refusal propping up the next:
+
+  1. `return_value_is_strictfresh_struct` refused a bare-ident array field, so
+     `mk` never entered `return_fresh_struct_ret_fns` and the CALLER's binding
+     earned no drop **at all** — not a shallower one, none;
+  2. `strarrfld_scan`'s store gate refused the same store, so the type was not
+     STRFLDOK-admitted;
+  3. the struct-literal construction took no retain, because that rides
+     `struct_routes_field_reclaim` — which (2) decides.
+
+  Opening (2) turns the retain on, which is what makes (1) safe. The strict-fresh
+  arm therefore admits a bare ident only when the field's type routes reclaim,
+  so the retain is guaranteed rather than assumed; `sfok` is threaded to
+  `return_fresh_struct_ret_fns_of` and `fresh_struct_fwd_fixpoint` for it.
+
+  | probe | before | after |
+  |---|---|---|
+  | `w6` / `w7` — the full `Node` from a call | 398 | **268** |
+  | `alloc_flat_fresh_array_arg` | 798 | **537** |
+  | `w5` — the same, with an ELEMENT read of the field | 310 | 310 (refused) |
+
+  **The threading had one real constraint and it is why this took a scoping
+  pass first.** `strfld_reclaim_ok_types_of` takes `borrowable`, and
+  `fn_sigs_for_borrow` already computes `sfok` two lines above the call site, so
+  the emission path gets the same verdict it emits with. The other two callers —
+  `reuse_sources_of` and `reuse_consumed_of` — are reached only by
+  `rc_plan_dump`, a diagnostic, and compute their own verdict from
+  `borrowable_params_of`'s single pass. That is a weaker registry than the
+  emission path's fixpoint, which is exactly the #6703 hazard, so it was settled
+  empirically rather than by argument: `self_host_rcplan_diff_test` — the
+  differential against native's own dump — is green.
+
+  **What the routing guard costs, and what it does not prove.** It refuses `w5`,
+  where an element read leaves the field unrouted: 310 rather than the 270 an
+  unconditional arm gives. That refusal is the point — unrouted means no retain,
+  and freeing there would hand the struct's array back while the caller still
+  holds it. But three attempts failed to build a shape where REMOVING the guard
+  produces an observable over-release (a hazard in the same frame, a scalar-array
+  field, and the hazard split into a separate function all behaved identically),
+  so it is kept as the conservative direction and because it states the
+  invariant the design rests on — not because a test proves it load-bearing.
+
+  **This reverses three refusals earlier slices documented.** A borrowed-param
+  store (#7073), a shadowed producer name (#7084, #7092) and a param field
+  (#7092) are now admitted with a retain rather than refused. Their tests still
+  pass unchanged, which is the stronger claim: they assert the caller's array
+  reads correctly after the struct's drop, and that now holds because the field
+  holds a counted reference rather than because nothing was freed. Renamed from
+  `-declined` / `-excluded` to `-retained` so the names stop describing a
+  contract that no longer exists.
+
+  VERIFIED: new `borrowed-field-caller-drops` asserts the caller emits
+  `__struct_drop_H`, and fails on the parent with that diagnostic; plus the
+  sharpest aliasing shapes as value rows — a struct built from a live local and
+  dropped in an inner scope FIRST with the local's elements read afterwards
+  under a 40-block string and a fresh array of recycling pressure, and two
+  structs over one array. The residual 537 is undecomposed. Refs #6544 #6522
+  #6703 #4451.

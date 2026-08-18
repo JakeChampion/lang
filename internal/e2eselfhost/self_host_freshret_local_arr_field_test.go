@@ -205,10 +205,14 @@ function main(): i32 {
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
-	// Negative: the callee stores a BORROWED parameter, so the caller's array
-	// must outlive the struct. A long string is built between the store and the
-	// reads so a wrongly freed block is really recycled before they run.
-	{"producer-call-param-field-declined", `struct P { deps: string[] }
+	// A BORROWED-PARAMETER field, admitted with a retain. The callee's
+	// construction takes a reference, so the caller's array outlives the
+	// struct's drop because the field holds a counted reference rather than
+	// because nothing was freed. Written as a refusal row; it asserts the same
+	// values now, which is what proves the retain balances. A long string is
+	// built between the store and the reads so a wrongly freed block is really
+	// recycled before they run.
+	{"producer-call-param-field-retained", `struct P { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
@@ -235,9 +239,10 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Negative: a LOCAL shadows the producer's name, so the value is a bare
-	// ident aliasing a live array rather than the registered declaration.
-	{"producer-name-shadowed-declined", `struct D { deps: string[] }
+	// A LOCAL shadows the producer's name, so the value reaches the field as a
+	// bare ident aliasing a live array rather than the registered declaration —
+	// admitted with a retain on those terms, not refused.
+	{"producer-name-shadowed-retained", `struct D { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }

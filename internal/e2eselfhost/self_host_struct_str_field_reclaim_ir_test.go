@@ -155,12 +155,15 @@ function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i
 function main(): i32 { var seed: i32 = useother("q"); if (seed < 0) { return 96; } var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-sibling-name-not-poisoned", 0)
 
-	// The refusals type-keying must NOT weaken, checked by VALUE under
-	// recycling pressure rather than by bytes. `Esc.notes` is stored from a
-	// borrowed parameter — the caller's array must outlive the struct's drop —
-	// while `Ok.notes`, same field name, is admitted. A long string is built
-	// between the store and the reads so a wrongly freed block is really
-	// recycled first. 2 + 43 + 43 + 1 = 89, underflow 0.
+	// A BORROWED-PARAMETER store is admitted, and the retain is what makes that
+	// safe: the construction takes a reference (both ride
+	// struct_routes_field_reclaim), so `Esc`'s drop decs a count it owns instead
+	// of freeing the caller's array. This row was written when the store was
+	// REFUSED and asserted the caller's array survived anyway; it asserts the
+	// same values now, which is the stronger claim — it is what proves the
+	// retain balances. `Ok.notes`, same field name, is admitted on its own
+	// merits. A long string is built between the store and the reads so a
+	// wrongly freed block is really recycled first. 2 + 43 + 43 + 1 = 89.
 	run(t, `struct Esc { notes: string[] }
 struct Ok { notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
@@ -169,7 +172,7 @@ function mkesc(notes: string[]): Esc { return Esc { notes: notes }; }
 function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e: Esc = mkesc(live); var o: Ok = Ok { notes: [w(pre)] }; var junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"strarr-field-borrowed-param-still-excluded", 0)
+		"strarr-field-borrowed-param-retained", 0)
 
 	// WHOLE-ARRAY PRODUCER CALL as the field value, BOUNDED HIGH-WATER: the
 	// store gate accepted only an array LITERAL, so `Node { deps: deps_of(pre) }`
@@ -187,11 +190,13 @@ function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i
 function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-producer-call-store-flat", 0)
 
-	// A LOCAL SHADOWING the producer's name refuses the store: `deps_of` here
-	// is a string[] local, not the registered declaration, so the value is a
-	// bare ident aliasing a live array and the type keeps the sound leak. The
-	// local is read after the struct's drop point, with a long string built in
-	// between so a wrongly freed block is really recycled first. 1 + 43 = 44.
+	// A LOCAL SHADOWING the producer's name: `deps_of` here is a string[] local,
+	// not the registered declaration, so the value reaches the field as a bare
+	// ident aliasing a live array. That is now admitted with a retain rather
+	// than refused, so the local stays valid because the field holds a counted
+	// reference — not because nothing was freed. Read after the struct's drop
+	// point with a long string built in between, so a wrongly freed block is
+	// really recycled first. 1 + 43 = 44.
 	run(t, `struct Sh { deps: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -199,5 +204,5 @@ function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n
 function build(pre: string): i32 { var deps_of: string[] = [w(pre)]; var o: Sh = Sh { deps: deps_of }; var j: string = fill(20); if (j.len() < 0) { return 0; } return o.deps.len() + deps_of[0].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 44) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
-		"strarr-field-producer-name-shadowed-excluded", 0)
+		"strarr-field-producer-name-shadowed-retained", 0)
 }
