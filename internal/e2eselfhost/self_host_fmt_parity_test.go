@@ -93,6 +93,62 @@ return t1 + t2 + t3 + t4 + t5 + t6;
 	// parity CORPUS spells either (`if let` appears only inside string
 	// literals and comments in the compiler's own sources), so these fixtures
 	// are the only thing covering them.
+	// A tuple- or struct-SCRUTINEE match desugars to a done-flag chain and
+	// leaves no StmtMatch behind, so the self-host had only the chain to
+	// reprint — `if (true) { var __sm4_5_d = false; … }` over the user's
+	// match (#7065). Independent of pattern nesting: the plainest all-binder
+	// `P { x, y }` reproduced it. Nothing in the parity CORPUS spells either
+	// scrutinee, so these fixtures are the only cover.
+	{"pattern-struct-scrutinee", `struct P { x: i32, y: i32 }
+struct Q { a: i32, b: i32, c: i32 }
+enum In { Ok2(i32), Er2(i32) }
+enum E { A(In), B }
+struct W { e: E, n: i32 }
+function plain(p: P): i32 {
+match (p) { P { x, y } => { return x + y; } }
+}
+function lit(p: P): i32 {
+match (p) { P { x: 0, y } => { return 100 + y; }, P { x, y } => { return x + y; } }
+}
+function rename(q: Q): i32 {
+match (q) { Q { a: n, b, c: m } => { return n + b + m; } }
+}
+function nested(w: W): i32 {
+match (w) { W { e: A(Ok2(v)), n } => { return v + n; }, _ => { return 0; } }
+}
+function guarded(p: P): i32 {
+match (p) { P { x, y } when x > y => { return x; }, P { x, y } => { return y; } }
+}
+function at_bound(p: P): i32 {
+match (p) { w @ P { x, y } => { return w.x + x + y; } }
+}
+function main(): i32 {
+return plain(P { x: 1, y: 2 }) + lit(P { x: 0, y: 3 }) + rename(Q { a: 1, b: 2, c: 3 })
++ nested(W { e: E.A(In.Ok2(4)), n: 5 }) + guarded(P { x: 9, y: 1 }) + at_bound(P { x: 1, y: 1 });
+}
+`},
+	{"pattern-tuple-scrutinee", `enum In { Ok2(i32), Er2(i32) }
+enum E { A(In), B }
+function plain(t: (i32, i32)): i32 {
+match (t) { (a, b) => { return a + b; } }
+}
+function mixed(t: (E, i32)): i32 {
+match (t) { (A(v), 0) => { return 1; }, (A(v), y) => { return y; }, (B(), y) => { return y; }, _ => { return 0; } }
+}
+function nested(t: (i32, (i32, i32))): i32 {
+match (t) { (a, (b, c)) => { return a + b + c; } }
+}
+function strlit(t: (string, i32)): i32 {
+match (t) { ("go", n) => { return 10 + n; }, (s, n) => { return s.len() + n; } }
+}
+function at_bound(t: (i32, i32)): i32 {
+match (t) { w @ (a, b) => { return w.0 + a + b; } }
+}
+function main(): i32 {
+return plain((1, 2)) + mixed((E.A(In.Ok2(1)), 5)) + nested((1, (2, 3)))
++ strlit(("go", 1)) + at_bound((1, 2));
+}
+`},
 	{"pattern-if-let", `enum Opt { Sm(i32), Nn }
 enum Inner { Ok2(i32), Err2(i32) }
 enum Outer { A(Inner), B }

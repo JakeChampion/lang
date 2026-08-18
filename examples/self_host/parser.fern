@@ -171,7 +171,16 @@ pub struct StmtExpr { value: Expr, line: i32 }
 // distinguishes them, and only the PRINTER reads it: reprinting one as the
 // other rewrites the user's source, and the block form additionally scopes
 // anything declared before the inner `if` (#6779).
-pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean }
+// MatchSugar is the written form of a TUPLE- or STRUCT-scrutinee `match`,
+// carried on the `if (true) { … }` that build_tuple_match / build_struct_match
+// desugar it to. Those two replace the match with a done-flag chain and leave
+// no StmtMatch behind, so without this the printer had only the chain to
+// render — `-fmt -w` then wrote `var __sm4_5_d = false; …` over the user's
+// match (#7065). Read by the printer only; the walk and every lowering pass
+// ignore it. Empty (both arm lists empty) on every other StmtIf, which is all
+// of them.
+pub struct MatchSugar { scrut: Expr, tup: TupArm[], strct: StructArm[], line: i32, col: i32 }
+pub struct StmtIf { cond: Expr, then_body: Stmt[], else_body: Stmt[], line: i32, else_chained: boolean, sugar: MatchSugar }
 // StmtWhile models `while (cond) { body... }`. The body executes
 // repeatedly as long as cond evaluates to a true VBool; an
 // in-body `return` short-circuits the loop the same way it
@@ -542,7 +551,7 @@ function e_ident(name: string): Expr { return ExprIdent { name: name, line: 0, c
 function e_ident_at(name: string, line: i32, col: i32): Expr { return ExprIdent { name: name, line: line, col: col }; }
 function e_string(value: string): Expr { return ExprString { value: value, line: 0, col: 0 }; }
 function e_string_at(value: string, line: i32, col: i32): Expr { return ExprString { value: value, line: line, col: col }; }
-function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
+pub function e_bool(value: boolean): Expr { return ExprBool { value: value }; }
 function e_binary(op: string, left: Expr, right: Expr): Expr {
     return ExprBinary { op: op, left: left, right: right, line: 0, col: 0 };
 }
@@ -674,12 +683,25 @@ function s_expr(value: Expr): Stmt { return StmtExpr { value: value, line: 0 }; 
 function s_if(cond: Expr, then_body: Stmt[], else_body: Stmt[]): Stmt {
     return s_if_chained(cond, then_body, else_body, false);
 }
+// no_match_sugar is the empty MatchSugar every StmtIf but the two match
+// desugars carries.
+pub function no_match_sugar(): MatchSugar {
+    var no_tup: TupArm[] = [];
+    var no_struct: StructArm[] = [];
+    return MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, line: 0, col: 0 };
+}
+// s_if_match wraps the done-flag chain a tuple- or struct-scrutinee match
+// desugars to, carrying the arms as WRITTEN so the printer reprints the match.
+function s_if_match(body: Stmt[], sugar: MatchSugar): Stmt {
+    var no_else: Stmt[] = [];
+    return StmtIf { cond: e_bool(true), then_body: body, else_body: no_else, line: sugar.line, else_chained: false, sugar: sugar };
+}
 // s_if_chained is s_if for the one caller that knows how the else was WRITTEN:
 // the `if` statement parse. Every other construction is synthesised, and a
 // synthesised else-body is printed in block form (both spellings re-parse to
 // the same AST, so only source fidelity is at stake).
 function s_if_chained(cond: Expr, then_body: Stmt[], else_body: Stmt[], chained: boolean): Stmt {
-    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: chained };
+    return StmtIf { cond: cond, then_body: then_body, else_body: else_body, line: 0, else_chained: chained, sugar: no_match_sugar() };
 }
 function s_while(cond: Expr, body: Stmt[]): Stmt {
     return StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
@@ -708,7 +730,7 @@ function with_loop_label(st: Stmt, label: string): Stmt {
                     var i: i32 = 0;
                     while (i < n - 1) { relabelled = relabelled.append(f.then_body[i]); i = i + 1; }
                     relabelled = relabelled.append(StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line, is_loop: w2.is_loop });
-                    return StmtIf { cond: f.cond, then_body: relabelled, else_body: f.else_body, line: f.line, else_chained: f.else_chained };
+                    return StmtIf { ...f, cond: f.cond, then_body: relabelled, else_body: f.else_body };
                 },
                 _ => { return st; }
             }
@@ -797,7 +819,7 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             }
         },
         StmtIf(f) => {
-            return StmtIf { cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b), line: f.line, else_chained: f.else_chained };
+            return StmtIf { ...f, cond: f.cond, then_body: rewrite_builder_stmts(f.then_body, b), else_body: rewrite_builder_stmts(f.else_body, b) };
         },
         StmtWhile(w) => {
             return StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line, is_loop: w.is_loop };
@@ -1048,7 +1070,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             return StmtFor { var_name: fr.var_name, iter: fr.iter, body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line };
         },
         StmtIf(f) => {
-            return StmtIf { cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels), line: f.line, else_chained: f.else_chained };
+            return StmtIf { ...f, cond: f.cond, then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
         },
         StmtMatch(m) => {
             var arms2: MatchArm[] = [];
@@ -2848,7 +2870,7 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
 // its own tup_* fields and build_tuple_match destructures the element temp a
 // level deeper. elem_pats runs parallel to elem_kinds with a wildcard filler
 // at every other kind.
-struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
 // can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
@@ -3108,7 +3130,8 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
         outer = outer.append(s_if(cond, inner, []));
         ai = ai + 1;
     }
-    return s_if(e_bool(true), outer, []);
+    var no_struct: StructArm[] = [];
+    return s_if_match(outer, MatchSugar { scrut: scrut, tup: arms, strct: no_struct, line: mkline, col: mkcol });
 }
 
 // ---- Struct-pattern match (`match (p) { Point { x, y } => … }`) ----
@@ -3127,7 +3150,7 @@ function build_tuple_match(scrut: Expr, arms: TupArm[], mkline: i32, mkcol: i32)
 // parse-time literal desugar), 3 = variant sub-pattern (the arm's matched path
 // nests inside a match on the field). A slot carrying a sub-pattern binds
 // nothing itself — its pattern introduces the bindings.
-struct StructArm { is_wild: boolean, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // parse_struct_arm_pattern consumes `S { x, y }` (shorthand fields) or
 // `S { x: a, y: b }` (renamed: field `x` bound to local `a`); a trailing
@@ -3280,7 +3303,8 @@ function build_struct_match(scrut: Expr, arms: StructArm[], mkline: i32, mkcol: 
         outer = outer.append(s_if(cond, inner, []));
         ai = ai + 1;
     }
-    return s_if(e_bool(true), outer, []);
+    var no_tup: TupArm[] = [];
+    return s_if_match(outer, MatchSugar { scrut: scrut, tup: no_tup, strct: arms, line: mkline, col: mkcol });
 }
 
 // wrap_struct_fields nests the arm's matched path inside a match on each
@@ -3341,6 +3365,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
         var s_field_lits: Expr[] = [];
         var s_field_pats: Pattern[] = [];
         var s_at: string = "";
+        var s_type: string = "";
         // Optional `name @` prefix: bind the whole matched struct to `name`
         // while destructuring its fields (`w @ Point { x, y }`).
         if (p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek2_punct() == "@") {
@@ -3352,6 +3377,11 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             p = p.advance();
             s_wild = true;
         } else {
+            // The struct name the arm spelled. parse_struct_arm_pattern
+            // consumes and discards it (the desugar binds fields off a temp
+            // and never needs it); the printer does need it, and the cursor
+            // is on it here.
+            s_type = p.peek_ident();
             var (spb, spf, spkinds, splits, sppats, spok, spp) = parse_struct_arm_pattern(p);
             p = spp;
             s_binds = spb;
@@ -3391,7 +3421,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (StructArm[], stri
             sbody = sblk_body;
         }
         if (first) { rt = sbrt; first = false; }
-        arms = arms.append(StructArm { is_wild: s_wild, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
+        arms = arms.append(StructArm { is_wild: s_wild, type_name: s_type, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
         break;
     }
@@ -3740,7 +3770,7 @@ function parse_match_expr(p: Par): IfChain {
         var smvi: i32 = 0;
         while (smvi < smarms.len()) {
             var smva: StructArm = smarms[smvi];
-            smvarms = smvarms.append(StructArm { is_wild: smva.is_wild, binds: smva.binds, fields: smva.fields, field_kinds: smva.field_kinds, field_lits: smva.field_lits, field_pats: smva.field_pats, at_binding: smva.at_binding, guard: smva.guard, has_guard: smva.has_guard, body: value_arm_body(smva.body, smval), line: smva.line, col: smva.col });
+            smvarms = smvarms.append(StructArm { ...smva, body: value_arm_body(smva.body, smval) });
             smvi = smvi + 1;
         }
         return IfChain { par: p, stmt: build_struct_match(sr_expr, smvarms, mkline, mkcol), rt: smrt, needs_default_return: false, value_local: smval };
@@ -4308,7 +4338,7 @@ function prepend_stmt(s: Stmt, body: Stmt[]): Stmt[] {
 }
 
 // pv_tup returns a pattern's tuple sub-pattern encoding, empty for a wildcard.
-function pv_tup(pat: Pattern): (i32[], string[], Expr[], Pattern[]) {
+pub function pv_tup(pat: Pattern): (i32[], string[], Expr[], Pattern[]) {
     var no_k: i32[] = [];
     var no_b: string[] = [];
     var no_l: Expr[] = [];
@@ -5041,7 +5071,7 @@ function parse_for_stmt(p: Par): (Stmt, Par) {
 function with_stmt_line(st: Stmt, line: i32): Stmt {
     match (st) {
         StmtExpr(x) => { return StmtExpr { value: x.value, line: line }; },
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: f.then_body, else_body: f.else_body, line: line, else_chained: f.else_chained }; },
+        StmtIf(f) => { return StmtIf { ...f, line: line }; },
         StmtWhile(w) => { return StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line, is_loop: w.is_loop }; },
         StmtFor(fo) => { return StmtFor { var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line }; },
         StmtDefer(d) => { return StmtDefer { action: d.action, on_error: d.on_error, line: line }; },
@@ -5241,6 +5271,7 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     p = p.advance();
                     p = p.advance();
                 }
+                var ils_type: string = p.peek_ident();
                 var (ils_binds, ils_fields, ils_field_kinds, ils_field_lits, ils_field_pats, ils_ok, ils_pp) = parse_struct_arm_pattern(p);
                 p = ils_pp;
                 if (!ils_ok) { return (s_unknown("a struct pattern binds field names"), p); }
@@ -5258,13 +5289,13 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     ils_else = ils_eb;
                 }
                 var ils_arms: StructArm[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: false, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
                 var ils_nb: string[] = [];
                 var ils_no_pats: Pattern[] = [];
                 var ils_no_kinds: i32[] = [];
                 var ils_no_lits: Expr[] = [];
                 var ils_nf: string[] = [];
-                ils_arms = ils_arms.append(StructArm { is_wild: true, binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+                ils_arms = ils_arms.append(StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
                 return (build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), p);
             }
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);
@@ -8703,7 +8734,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
             var cv: RExpr = mono_expr(f.cond, env, funcs, ins);
             var tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
             var eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = mono_expr(w.cond, env, funcs, ins);
@@ -8907,7 +8938,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
             StmtReturn(r) => { out = out.append(StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts), line: f.line, else_chained: f.else_chained }); },
+            StmtIf(f) => { out = out.append(StmtIf { ...f, cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) }); },
             StmtWhile(w) => { out = out.append(StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line, is_loop: w.is_loop }); },
             StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
@@ -8987,7 +9018,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
             StmtReturn(r) => { out = out.append(StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
             StmtExpr(x) => { out = out.append(StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line }); },
             StmtAssign(a) => { out = out.append(StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
-            StmtIf(f) => { out = out.append(StmtIf { cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang), line: f.line, else_chained: f.else_chained }); },
+            StmtIf(f) => { out = out.append(StmtIf { ...f, cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang) }); },
             StmtWhile(w) => { out = out.append(StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label, line: w.line, is_loop: w.is_loop }); },
             StmtFor(fr) => { out = out.append(StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label, line: fr.line }); },
             StmtMatch(m) => {
@@ -9948,7 +9979,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             var cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
             var tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
             var eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
@@ -11041,7 +11072,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             var cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
             var tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
             var eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
-            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false }, renv: env, rins2: eb.rins3 };
+            return RStmtOne { rstmt: StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar() }, renv: env, rins2: eb.rins3 };
         },
         StmtWhile(w) => {
             var cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
@@ -12836,7 +12867,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
             return [StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label, line: fr.line }];
         },
         StmtIf(f) => {
-            return [StmtIf { cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body), line: f.line, else_chained: f.else_chained }];
+            return [StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
         },
         StmtWhile(w) => {
             return [StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop }];
@@ -13043,7 +13074,7 @@ function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
         StmtVar(v) => { return StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str }; },
         StmtReturn(r) => { return StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: rvf_expr(x.value, structs), line: x.line }; },
-        StmtIf(f) => { return StmtIf { cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs), line: f.line, else_chained: f.else_chained }; },
+        StmtIf(f) => { return StmtIf { ...f, cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs) }; },
         StmtWhile(w) => { return StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line }; },
@@ -14125,7 +14156,7 @@ function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
         StmtReturn(r) => { return StmtReturn { value: cf_rw_expr(r.value, f, target), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: cf_rw_expr(x.value, f, target), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: cf_rw_expr(a.value, f, target), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        StmtIf(fst) => { return StmtIf { cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target), line: fst.line, else_chained: fst.else_chained }; },
+        StmtIf(fst) => { return StmtIf { ...fst, cond: cf_rw_expr(fst.cond, f, target), then_body: cf_rw_stmts(fst.then_body, f, target), else_body: cf_rw_stmts(fst.else_body, f, target) }; },
         StmtWhile(w) => { return StmtWhile { cond: cf_rw_expr(w.cond, f, target), body: cf_rw_stmts(w.body, f, target), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: cf_rw_expr(fr.iter, f, target), body: cf_rw_stmts(fr.body, f, target), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
@@ -14217,7 +14248,7 @@ pub function elide_len_bounded_body(stmts: Stmt[]): Stmt[] {
 // lifted to their own FuncDecls before lower_func, each processed separately).
 function elb_recurse_stmt(st: Stmt): Stmt {
     match (st) {
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body), line: f.line, else_chained: f.else_chained }; },
+        StmtIf(f) => { return StmtIf { ...f, cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) }; },
         StmtWhile(w) => { return StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
@@ -14451,7 +14482,7 @@ function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
         StmtReturn(r) => { return StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
         StmtExpr(x) => { return StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line }; },
         StmtAssign(a) => { return StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
-        StmtIf(f) => { return StmtIf { cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr), line: f.line, else_chained: f.else_chained }; },
+        StmtIf(f) => { return StmtIf { ...f, cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) }; },
         StmtWhile(w) => { return StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
@@ -14839,7 +14870,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
             }
             return st;
         },
-        StmtIf(f) => { return StmtIf { cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs), line: f.line, else_chained: f.else_chained }; },
+        StmtIf(f) => { return StmtIf { ...f, cond: f.cond, then_body: fnv_rewrite_block(f.then_body, whole, funcs, structs), else_body: fnv_rewrite_block(f.else_body, whole, funcs, structs) }; },
         StmtWhile(w) => { return StmtWhile { cond: w.cond, body: fnv_rewrite_block(w.body, whole, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop }; },
         StmtFor(fr) => { return StmtFor { var_name: fr.var_name, iter: fr.iter, body: fnv_rewrite_block(fr.body, whole, funcs, structs), label: fr.label, line: fr.line }; },
         StmtMatch(m) => {
@@ -16889,7 +16920,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
         },
         StmtExpr(x) => { return StmtExpr { value: settle_expr(x.value, funcs, structs), line: x.line }; },
         StmtIf(f) => {
-            return StmtIf { cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs), line: f.line, else_chained: f.else_chained };
+            return StmtIf { ...f, cond: settle_expr(f.cond, funcs, structs), then_body: settle_block(f.then_body, ret_type, names, types, funcs, structs), else_body: settle_block(f.else_body, ret_type, names, types, funcs, structs) };
         },
         StmtWhile(w) => {
             return StmtWhile { cond: settle_expr(w.cond, funcs, structs), body: settle_block(w.body, ret_type, names, types, funcs, structs), label: w.label, line: w.line, is_loop: w.is_loop };

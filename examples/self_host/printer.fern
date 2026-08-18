@@ -526,6 +526,14 @@ function print_block(body: parser.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_pattern(pat: parser.Pattern): string {
+    return print_pattern_ctx(pat, false);
+}
+
+// print_pattern_ctx is print_pattern with the one context difference the
+// grammar makes: a payload-less variant is `B` at an ARM position but must be
+// `B()` as a TUPLE ELEMENT, where a bare `B` binds a local named B instead —
+// a different program, not a different spelling.
+function print_pattern_ctx(pat: parser.Pattern, always_parens: boolean): string {
     match (pat) {
         parser.PatWildcard(_) => { return "_"; },
         parser.PatVariant(pv) => {
@@ -536,7 +544,10 @@ function print_pattern(pat: parser.Pattern): string {
             // there would drop the sub-pattern and re-parse as a payload-less
             // arm. The sub-pattern is the payload.
             if (pv.nested.len() > 0) { return head + "(" + print_pattern(pv.nested[0]) + ")"; }
-            if (pv.binding.len() == 0) { return head; }
+            if (pv.binding.len() == 0) {
+                if (always_parens) { return head + "()"; }
+                return head;
+            }
             // Every payload binding, not just the first — a `Pair(a, b)` printed
             // as `Pair(a)` re-parses as a different (E015) program.
             var out: string = head + "(" + payload_slot(pv, pv.binding);
@@ -584,6 +595,104 @@ function lit_cond_for(cond: parser.Expr, binder: string): parser.Expr {
         _ => {}
     }
     return parser.e_unknown("");
+}
+
+// print_tuple_elem renders ONE position of a tuple arm pattern, from the
+// element kinds build_tuple_match encodes: 0 = binder, 1 = `_`, 2 = literal,
+// 3 = variant sub-pattern, 4 = nested tuple (whose own encoding rides on
+// elem_pats via p_tuple_carrier).
+function print_tuple_elem(kind: i32, bind: string, lit: parser.Expr, pat: parser.Pattern): string {
+    if (kind == 1) { return "_"; }
+    if (kind == 2) { return print_expr(lit); }
+    if (kind == 3) { return print_pattern_ctx(pat, true); }
+    if (kind == 4) {
+        var (nk, nb, nl, np) = parser.pv_tup(pat);
+        return print_tuple_elems(nk, nb, nl, np);
+    }
+    return bind;
+}
+
+// print_tuple_elems renders `(p0, p1, …)`.
+function print_tuple_elems(kinds: i32[], binds: string[], lits: parser.Expr[], pats: parser.Pattern[]): string {
+    var out: string = "(";
+    var i: i32 = 0;
+    while (i < kinds.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + print_tuple_elem(kinds[i], binds[i], lits[i], pats[i]);
+        i = i + 1;
+    }
+    return out + ")";
+}
+
+// print_tup_arm renders one tuple-match arm's pattern, `@` binding included.
+function print_tup_arm(a: parser.TupArm): string {
+    if (a.is_wild) {
+        if (a.at_binding.len() > 0) { return a.at_binding + " @ _"; }
+        return "_";
+    }
+    var pat: string = print_tuple_elems(a.elem_kinds, a.binds, a.lits, a.elem_pats);
+    if (a.at_binding.len() > 0) { return a.at_binding + " @ " + pat; }
+    return pat;
+}
+
+// print_struct_arm renders one struct-match arm's pattern `P { x, y: b }`,
+// using the same field kinds build_struct_match encodes (0 = bind, 2 =
+// literal, 3 = sub-pattern). A field bound to its own name prints shorthand.
+function print_struct_arm(a: parser.StructArm): string {
+    if (a.is_wild) {
+        if (a.at_binding.len() > 0) { return a.at_binding + " @ _"; }
+        return "_";
+    }
+    var out: string = a.type_name + " { ";
+    var i: i32 = 0;
+    while (i < a.fields.len()) {
+        if (i > 0) { out = out + ", "; }
+        out = out + a.fields[i];
+        if (a.field_kinds[i] == 2) { out = out + ": " + print_expr(a.field_lits[i]); }
+        else if (a.field_kinds[i] == 3) { out = out + ": " + print_pattern(a.field_pats[i]); }
+        else if (a.binds[i] != a.fields[i]) { out = out + ": " + a.binds[i]; }
+        i = i + 1;
+    }
+    out = out + " }";
+    if (a.at_binding.len() > 0) { return a.at_binding + " @ " + out; }
+    return out;
+}
+
+// print_sugared_match reprints the tuple- or struct-scrutinee `match` whose
+// done-flag desugar the carrier hangs off. Without it `-fmt` emitted the
+// chain — `var __sm4_5_d = false; …` — over the user's match (#7065).
+function print_sugared_match(sg: parser.MatchSugar, depth: i32, f: Fmt): (string, Fmt) {
+    var pad: string = indent_str(depth);
+    var out: string = "match (" + print_expr(sg.scrut) + ") {\n";
+    var g: Fmt = f;
+    var i: i32 = 0;
+    var n: i32 = sg.tup.len() + sg.strct.len();
+    while (i < n) {
+        var head: string = "";
+        var body: parser.Stmt[] = [];
+        var guard: parser.Expr = parser.e_bool(true);
+        var has_guard: boolean = false;
+        if (sg.tup.len() > 0) {
+            head = print_tup_arm(sg.tup[i]);
+            body = sg.tup[i].body;
+            guard = sg.tup[i].guard;
+            has_guard = sg.tup[i].has_guard;
+        } else {
+            head = print_struct_arm(sg.strct[i]);
+            body = sg.strct[i].body;
+            guard = sg.strct[i].guard;
+            has_guard = sg.strct[i].has_guard;
+        }
+        var (arm_body, g1) = print_block(body, depth + 1, g);
+        g = g1;
+        out = out + indent_str(depth + 1) + head;
+        if (has_guard) { out = out + " when " + print_expr(guard); }
+        out = out + " => " + arm_body;
+        if (i + 1 < n) { out = out + ","; }
+        out = out + "\n";
+        i = i + 1;
+    }
+    return (out + pad + "}", g);
 }
 
 function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
@@ -1064,6 +1173,12 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // all, so reprint the header from the shape instead (#6771).
             var fc: ForCSugar = as_c_for(ifs);
             if (fc.ok) { return print_c_for(fc, depth, f); }
+            // A tuple- or struct-scrutinee `match` desugars to `if (true) { … }`
+            // and leaves no StmtMatch, so the carrier on the if is the only
+            // record of what was written (#7065).
+            if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0) {
+                return print_sugared_match(ifs.sugar, depth, f);
+            }
             return print_if_chain(ifs, depth, f);
         },
         parser.StmtWhile(w) => {
