@@ -9080,3 +9080,49 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `TestSelfHostLiteralArgReclaim` on all three backends,
   `TestSelfHostFreshContainerReadReclaimIRX86_64`, and the x86-64 fixture leg
   (418 fixtures). Refs #7062 #6522 #4451.
+- 2026-08-18 (a whole-array producer at a string[] FIELD): the third and last
+  appearance of one omission. The "SARR:" local credit took only an array
+  LITERAL as an initialiser until it learned to take a `"STRARR:"` producer
+  call; the string[]-FIELD store gate had the identical hole and still had it
+  after the type-keying slice.
+
+  Getting there took a wrong turn worth recording. The inline-literal row
+  measured 268 B/round and I attributed it to `node()`'s parameter store
+  poisoning `Node.deps` — plausible, since the type-keying entry had just made
+  that the interesting mechanism. Deleting `node` from the module entirely left
+  the row at 268. The cause was one line away from where I was looking:
+
+  | `Node { name: …, deps: <this>, mtime: n }` | B/round |
+  |---|---|
+  | `[wide(n), wide(n + 1), wide(n + 2)]` — an array literal | 0 |
+  | `deps_of(n)` — a `"STRARR:"` producer CALL | **268** |
+  | `deps_of(n)`, with a static literal `name` too | 269 |
+  | `[]` | 0 |
+
+  `strarrfld_scan`'s store arm matched `parser.ExprArray` and nothing else, so
+  a whole-array producer fell to the default and marked the field unsafe.
+
+  The registry's admission rule is now a named predicate,
+  `fn_returns_fresh_strarr`, so the field gate asks the question the registry
+  already answers rather than keeping a second, narrower answer — the same
+  consolidation `strarr_value_is_fresh` got two slices ago. The producer list
+  is filtered per function against `body_declares_name` / a parameter of that
+  name, so a frame that shadows the callee refuses the store.
+
+  Witnessed by which types emit a deep free, not by inference: `Ok` (producer
+  call, `.len()`-only read) admitted; `Rd` (an element read escapes), `Esc`
+  (the struct escapes by return) and `Sh` (a local shadows the producer name)
+  all refused. Values correct on both compilers under recycling pressure.
+
+  **Still no movement on `alloc_flat_fresh_array_arg` (798), for the same
+  reason as the last two entries** — its `Node` is built inside `node()` from a
+  borrowed parameter, so the type is refused on its own merits and no field-gate
+  widening can reach it. Three slices have now each closed a real leak on the
+  way to that row without moving it, which is the honest shape of the thing: the
+  row is a per-SITE question and every mechanism touched so far is per-type.
+  The next slice has to be the call-site credit, and #7074's forwarding fixpoint
+  is the neighbouring machinery to build it on.
+
+  VERIFIED: `strarr-field-producer-call-store-flat` fails at 98 on the parent
+  through the harness; `strarr-field-producer-name-shadowed-excluded` passes on
+  both sides. One matching row on the arm64 leg. Refs #6544 #6522 #4355 #4297 #4451.

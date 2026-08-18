@@ -170,4 +170,34 @@ function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e:
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-field-borrowed-param-still-excluded", 0)
+
+	// WHOLE-ARRAY PRODUCER CALL as the field value, BOUNDED HIGH-WATER: the
+	// store gate accepted only an array LITERAL, so `Node { deps: deps_of(pre) }`
+	// was refused and every element box plus the buffer leaked per round — the
+	// same omission the "SARR:" local credit had for its initialiser.
+	// fn_returns_fresh_strarr is the "STRARR:" registry's own admission rule,
+	// named so the field gate asks the question the registry already answers:
+	// every element of that result is a box the callee allocated at rc=1, so
+	// the struct owns them exactly as it owns a literal's.
+	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function build(pre: string): i32 { var f: Node = Node { name: w(pre), deps: deps_of(pre), mtime: 1 }; return f.deps.len() + f.name.len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+		"strarr-field-producer-call-store-flat", 0)
+
+	// A LOCAL SHADOWING the producer's name refuses the store: `deps_of` here
+	// is a string[] local, not the registered declaration, so the value is a
+	// bare ident aliasing a live array and the type keeps the sound leak. The
+	// local is read after the struct's drop point, with a long string built in
+	// between so a wrongly freed block is really recycled first. 1 + 43 = 44.
+	run(t, `struct Sh { deps: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
+function build(pre: string): i32 { var deps_of: string[] = [w(pre)]; var o: Sh = Sh { deps: deps_of }; var j: string = fill(20); if (j.len() < 0) { return 0; } return o.deps.len() + deps_of[0].len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 44) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-field-producer-name-shadowed-excluded", 0)
 }
