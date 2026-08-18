@@ -2017,20 +2017,39 @@ function main(): i32 {
 			t.Skip("wasmtime not on PATH; skipping the wasm component")
 		}
 		wasmtools, _ := exec.LookPath("wasm-tools")
+		stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+		if err != nil {
+			t.Fatalf("abs stdlib root: %v", err)
+		}
 		for _, c := range []struct {
 			name    string
 			src     string
 			wantOut string
+			// stdlib passes the stdlib root so a `core/*` import resolves to its
+			// Fern source. Without it `map_new` still lowers — to the builtin
+			// runtime helpers, which draw no hash seed — so the row would not
+			// reach the import surface it is here to pin.
+			stdlib bool
 		}{
-			{"no-io", "function main(): i32 { var s = 0; var i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", ""},
-			{"stdout", "function main(): i32 { print(\"hi from component\"); return 0; }\n", "hi from component\n"},
+			{"no-io", "function main(): i32 { var s = 0; var i = 0; while (i < 7) { s = s + i; i = i + 1; } return s - 21; }\n", "", false},
+			{"stdout", "function main(): i32 { print(\"hi from component\"); return 0; }\n", "hi from component\n", false},
+			// core/map seeds its string hash from the same CSPRNG as random_i32,
+			// so a Map pulls wasi:random/random's get-random-u64 into the core
+			// with no random call in the program. The framing has to be chosen
+			// accordingly: wrapped as plain stdout, this component carries a core
+			// import no instantiation argument satisfies and will not load.
+			{"map", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
 		} {
 			srcPath := filepath.Join(dir, "comp_"+c.name+".fern")
 			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "comp_"+c.name+".wasm")
-			stdout, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
+			args := []string{"-target", "wasm32-wasi", "-o", outPath, srcPath}
+			if c.stdlib {
+				args = append(args, stdlibRoot)
+			}
+			stdout, code := runDriver(t, args...)
 			if code != 0 {
 				t.Fatalf("%s: the wasm component exited %d, want 0", c.name, code)
 			}

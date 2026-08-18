@@ -10854,7 +10854,13 @@ pub function component_shape(mod: parser.Module): i32 {
     // wrapped it in component_full_io — a framing with no get-arguments to
     // satisfy the call (#5818).
     var args: boolean = module_calls(mod, "args") || module_calls(mod, "arg_at");
-    var rnd: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32");
+    // Building a Map imports get-random-u64 with no explicit random call in the
+    // program: core/map draws its per-process string-hash seed from the same
+    // CSPRNG. module_uses_random counts that seed on the lowered side, where it
+    // decides the core module's import, so this classification must agree — a
+    // framing chosen without it cannot satisfy the import the core declares.
+    var rnd: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32")
+        || module_calls(mod, "__map_hash_seed");
     var clkw: boolean = module_calls(mod, "now_unix_ms") || module_calls(mod, "now_ns");
     var clkm: boolean = module_calls(mod, "monotonic_ns");
     var ep: boolean = module_calls(mod, "eprint");
