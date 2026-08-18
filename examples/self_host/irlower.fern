@@ -42643,6 +42643,7 @@ function erased_uses_only_returned(stmts: parser.Stmt[], names: string[]): boole
 // AST path (a wide instantiation defers via erased_wide; a narrow one is
 // unaffected).
 pub function erased_passthrough_safe(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    if (!declares_typevars(fn)) { return false; }
     if (fn.receiver_type.len() != 0) { return false; }
     if (!is_erased_typevar(fn.ret_type, structs)) { return false; }
     var enames: string[] = [];
@@ -42655,6 +42656,17 @@ pub function erased_passthrough_safe(fn: parser.FuncDecl, structs: parser.Struct
     return erased_uses_only_returned(fn.body, enames);
 }
 
+// declares_typevars reports whether `fn` DECLARES the type variables its
+// signature spells. A hoisted `<fn>$wrapN` trampoline copies a lambda's
+// parameter and return spellings verbatim, so it can read as a bare-typevar
+// pass-through while being an ordinary non-generic function — and its ABI is
+// fixed by the arity-keyed indirect-call table, not by erasure. Widening one
+// gave it `(param i64) (result i64)` against an all-i32 `call_indirect` type on
+// wasm: `indirect call type mismatch` at the first call.
+function declares_typevars(fn: parser.FuncDecl): boolean {
+    return fn.type_params.len() > 0 || fn.type_param_count > 0;
+}
+
 // erased_widenable: is `fn` a free erased-generic fn whose erased params can be
 // widened to i64 on wasm — a scalar pass-through (erased_passthrough_safe) OR a
 // bare-TUPLE return whose erased params flow only into the returned tuple
@@ -42665,6 +42677,7 @@ pub function erased_passthrough_safe(fn: parser.FuncDecl, structs: parser.Struct
 // typing + result narrowing; a tuple return stays an i32 pointer.
 pub function erased_widenable(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
     if (erased_passthrough_safe(fn, structs)) { return true; }
+    if (!declares_typevars(fn)) { return false; }
     if (fn.receiver_type.len() != 0) { return false; }
     // A BARE tuple return `(A, B)` (not a tuple-array `(A,B)[]`).
     if (!(fn.ret_type.len() > 0 && fn.ret_type[0] == 40 && !is_array_type_name(fn.ret_type))) { return false; }
@@ -52382,6 +52395,14 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 while (ai < m.arms.len()) {
                     match (m.arms[ai].pattern) {
                         parser.PatVariant(pv) => {
+                            // The `@` WHOLE-VALUE binding (`n @ Tag(x)`) binds
+                            // the scrutinee itself, so its type is the
+                            // scrutinee's. It reaches lowering on the pattern
+                            // rather than as a `var` — lower_stmt_match only
+                            // materialises `var n = $mscrut` later — so nothing
+                            // below this resolves it, and a lambda capturing it
+                            // declined the lift.
+                            if (pv.at_binding.len() > 0 && pv.at_binding == name && scrut_ty.len() > 0) { return scrut_ty; }
                             // User-enum variant payload (main or extra binding).
                             var evt: string = pat_variant_payload_field_s(pv, name, structs);
                             if (evt.len() > 0) { return evt; }

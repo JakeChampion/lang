@@ -4,10 +4,8 @@ import "./util";
 // astwalk — shared AST traversals for the self-hosted compiler.
 // First home (SH-022): the free-variable collectors used by every
 // backend's closure/capture analysis. asmcore / ssa / vm carried
-// byte-identical copies of these; they now live here once. (wasm's
-// stmt collector has a different shape + coverage and is NOT folded
-// in yet — see the SH-022 appendix.) Imports only parser, so any
-// frontend module can depend on it.
+// byte-identical copies of these; they now live here once. Imports
+// only parser, so any frontend module can depend on it.
 
 // fold_expr threads `acc` through every expression reachable from `e`, calling
 // `visit` on each node in pre-order before descending into its children. It is
@@ -23,9 +21,9 @@ pub function fold_expr[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T):
 }
 
 // fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
-// reaches, in source order. Statement nodes themselves are not visited — a
-// consumer that needs those inspects the statement before handing its
-// expressions here.
+// reaches, in source order. The statement nodes themselves are visited only by
+// fold_stmt_nodes, which a consumer reaches for when what one contributes is
+// not an expression at all — a binder name, an assignment target.
 pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T): T {
     return fold_stmt_pruned(st, acc, visit, descend_all);
 }
@@ -33,6 +31,12 @@ pub function fold_stmt[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T)
 // descend_all is the unpruned walk's descent rule: every node's children are
 // reachable.
 function descend_all(e: parser.Expr): boolean { return true; }
+
+// descend_none is the statement-shaped consumer's rule: no expression has
+// reachable children, so `visit_expr` sees the expression sitting in each
+// statement slot and nothing under it. collect_bound_stmt wants exactly that —
+// binders live on statements, never inside an initialiser.
+function descend_none(e: parser.Expr): boolean { return false; }
 
 // fold_expr_pruned is fold_expr with descent control. `visit` still sees every
 // node the walk reaches; `descend` then decides whether that node's CHILDREN
@@ -49,8 +53,34 @@ function descend_all(e: parser.Expr): boolean { return true; }
 // return or a `Visit[T]` box because it is asked once per node on the
 // compiler's hottest walk: a boxed answer would be one allocation per AST node
 // visited, where a predicate is a call.
+//
+// The no-op statement visitor has to be spelled as an arrow lambda: a nested
+// named function keeps its declared `T` verbatim when the enclosing generic is
+// monomorphised, and a top-level generic one cannot be named as a value at all
+// (#7040, #7042). It captures nothing, so it lifts to a plain function —
+// measured identical to passing a top-level named no-op.
 pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
-    acc = visit(e, acc);
+    return fold_expr_nodes(e, acc, (st: parser.Stmt, a: T) => a, visit, descend);
+}
+
+// fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
+// expressions it reaches exactly as it does inside an expression tree.
+pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+    return fold_stmt_nodes(st, acc, (s: parser.Stmt, a: T) => a, visit, descend);
+}
+
+// fold_expr_nodes / fold_stmt_nodes are the walk itself, and the only copy of
+// it. They visit BOTH node kinds: `visit_stmt` on each statement in pre-order,
+// `visit_expr` on each expression. Two visitors rather than native's single
+// `fn(Node) bool` (internal/ast/walk.go) because `Expr` and `Stmt` are separate
+// unions here with no common supertype — wrapping them in one would cost an
+// allocation per node visited.
+//
+// A consumer whose contribution is statement-shaped needs this pair: an
+// assignment TARGET and a `var` / `for` / match-arm BINDER are names carried on
+// the statement, not expressions the expression visitor can ever be handed.
+pub function fold_expr_nodes[T](e: parser.Expr, acc: T, visit_stmt: (parser.Stmt, T) => T, visit_expr: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+    acc = visit_expr(e, acc);
     if (!descend(e)) { return acc; }
     match (e) {
         parser.ExprIdent(_) => { return acc; },
@@ -58,15 +88,15 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
         parser.ExprString(_) => { return acc; },
         parser.ExprBool(_) => { return acc; },
         parser.ExprBinary(b) => {
-            acc = fold_expr_pruned(b.left, acc, visit, descend);
-            return fold_expr_pruned(b.right, acc, visit, descend);
+            acc = fold_expr_nodes(b.left, acc, visit_stmt, visit_expr, descend);
+            return fold_expr_nodes(b.right, acc, visit_stmt, visit_expr, descend);
         },
-        parser.ExprUnary(u) => { return fold_expr_pruned(u.operand, acc, visit, descend); },
+        parser.ExprUnary(u) => { return fold_expr_nodes(u.operand, acc, visit_stmt, visit_expr, descend); },
         parser.ExprCall(c) => {
-            acc = fold_expr_pruned(c.callee, acc, visit, descend);
+            acc = fold_expr_nodes(c.callee, acc, visit_stmt, visit_expr, descend);
             var i: i32 = 0;
             while (i < c.args.len()) {
-                acc = fold_expr_pruned(c.args[i], acc, visit, descend);
+                acc = fold_expr_nodes(c.args[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
@@ -74,7 +104,7 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
         parser.ExprArray(a) => {
             var i: i32 = 0;
             while (i < a.elements.len()) {
-                acc = fold_expr_pruned(a.elements[i], acc, visit, descend);
+                acc = fold_expr_nodes(a.elements[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
@@ -82,8 +112,8 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
         parser.ExprMapLit(ml) => {
             var i: i32 = 0;
             while (i < ml.keys.len()) {
-                acc = fold_expr_pruned(ml.keys[i], acc, visit, descend);
-                acc = fold_expr_pruned(ml.vals[i], acc, visit, descend);
+                acc = fold_expr_nodes(ml.keys[i], acc, visit_stmt, visit_expr, descend);
+                acc = fold_expr_nodes(ml.vals[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
@@ -91,7 +121,7 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
         parser.ExprFString(fs) => {
             var i: i32 = 0;
             while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = fold_expr_pruned(fs.exprs[i], acc, visit, descend); }
+                if (fs.is_expr[i]) { acc = fold_expr_nodes(fs.exprs[i], acc, visit_stmt, visit_expr, descend); }
                 i = i + 1;
             }
             return acc;
@@ -99,34 +129,34 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
         parser.ExprTuple(t) => {
             var i: i32 = 0;
             while (i < t.elements.len()) {
-                acc = fold_expr_pruned(t.elements[i], acc, visit, descend);
+                acc = fold_expr_nodes(t.elements[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
         },
         parser.ExprIndex(x) => {
-            acc = fold_expr_pruned(x.array, acc, visit, descend);
-            return fold_expr_pruned(x.index, acc, visit, descend);
+            acc = fold_expr_nodes(x.array, acc, visit_stmt, visit_expr, descend);
+            return fold_expr_nodes(x.index, acc, visit_stmt, visit_expr, descend);
         },
         parser.ExprSlice(sl) => {
-            acc = fold_expr_pruned(sl.array, acc, visit, descend);
-            acc = fold_expr_pruned(sl.start, acc, visit, descend);
-            return fold_expr_pruned(sl.end, acc, visit, descend);
+            acc = fold_expr_nodes(sl.array, acc, visit_stmt, visit_expr, descend);
+            acc = fold_expr_nodes(sl.start, acc, visit_stmt, visit_expr, descend);
+            return fold_expr_nodes(sl.end, acc, visit_stmt, visit_expr, descend);
         },
         parser.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = fold_expr_pruned(sl.base, acc, visit, descend); }
+            if (sl.has_base) { acc = fold_expr_nodes(sl.base, acc, visit_stmt, visit_expr, descend); }
             var i: i32 = 0;
             while (i < sl.field_values.len()) {
-                acc = fold_expr_pruned(sl.field_values[i], acc, visit, descend);
+                acc = fold_expr_nodes(sl.field_values[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
         },
-        parser.ExprFieldAccess(fa) => { return fold_expr_pruned(fa.obj, acc, visit, descend); },
+        parser.ExprFieldAccess(fa) => { return fold_expr_nodes(fa.obj, acc, visit_stmt, visit_expr, descend); },
         parser.ExprLambda(lm) => {
             var i: i32 = 0;
             while (i < lm.body.len()) {
-                acc = fold_stmt_pruned(lm.body[i], acc, visit, descend);
+                acc = fold_stmt_nodes(lm.body[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
@@ -136,46 +166,45 @@ pub function fold_expr_pruned[T](e: parser.Expr, acc: T, visit: (parser.Expr, T)
     return acc;
 }
 
-// fold_stmt_pruned is fold_expr_pruned's statement half. `descend` gates the
-// expressions it reaches exactly as it does inside an expression tree.
-pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+pub function fold_stmt_nodes[T](st: parser.Stmt, acc: T, visit_stmt: (parser.Stmt, T) => T, visit_expr: (parser.Expr, T) => T, descend: (parser.Expr) => boolean): T {
+    acc = visit_stmt(st, acc);
     match (st) {
-        parser.StmtDefer(d) => { return fold_stmt_pruned(d.action, acc, visit, descend); },
-        parser.StmtVar(v) => { return fold_expr_pruned(v.init, acc, visit, descend); },
-        parser.StmtReturn(r) => { return fold_expr_pruned(r.value, acc, visit, descend); },
-        parser.StmtExpr(e) => { return fold_expr_pruned(e.value, acc, visit, descend); },
+        parser.StmtDefer(d) => { return fold_stmt_nodes(d.action, acc, visit_stmt, visit_expr, descend); },
+        parser.StmtVar(v) => { return fold_expr_nodes(v.init, acc, visit_stmt, visit_expr, descend); },
+        parser.StmtReturn(r) => { return fold_expr_nodes(r.value, acc, visit_stmt, visit_expr, descend); },
+        parser.StmtExpr(e) => { return fold_expr_nodes(e.value, acc, visit_stmt, visit_expr, descend); },
         parser.StmtIf(i) => {
-            acc = fold_expr_pruned(i.cond, acc, visit, descend);
+            acc = fold_expr_nodes(i.cond, acc, visit_stmt, visit_expr, descend);
             var ti: i32 = 0;
             while (ti < i.then_body.len()) {
-                acc = fold_stmt_pruned(i.then_body[ti], acc, visit, descend);
+                acc = fold_stmt_nodes(i.then_body[ti], acc, visit_stmt, visit_expr, descend);
                 ti = ti + 1;
             }
             var ei: i32 = 0;
             while (ei < i.else_body.len()) {
-                acc = fold_stmt_pruned(i.else_body[ei], acc, visit, descend);
+                acc = fold_stmt_nodes(i.else_body[ei], acc, visit_stmt, visit_expr, descend);
                 ei = ei + 1;
             }
             return acc;
         },
         parser.StmtWhile(w) => {
-            acc = fold_expr_pruned(w.cond, acc, visit, descend);
+            acc = fold_expr_nodes(w.cond, acc, visit_stmt, visit_expr, descend);
             var i: i32 = 0;
             while (i < w.body.len()) {
-                acc = fold_stmt_pruned(w.body[i], acc, visit, descend);
+                acc = fold_stmt_nodes(w.body[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
         },
-        parser.StmtAssign(a) => { return fold_expr_pruned(a.value, acc, visit, descend); },
+        parser.StmtAssign(a) => { return fold_expr_nodes(a.value, acc, visit_stmt, visit_expr, descend); },
         parser.StmtMatch(m) => {
-            acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
+            acc = fold_expr_nodes(m.scrutinee, acc, visit_stmt, visit_expr, descend);
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) { acc = fold_expr_pruned(m.arms[ai].guard, acc, visit, descend); }
+                if (m.arms[ai].has_guard) { acc = fold_expr_nodes(m.arms[ai].guard, acc, visit_stmt, visit_expr, descend); }
                 var bi: i32 = 0;
                 while (bi < m.arms[ai].body.len()) {
-                    acc = fold_stmt_pruned(m.arms[ai].body[bi], acc, visit, descend);
+                    acc = fold_stmt_nodes(m.arms[ai].body[bi], acc, visit_stmt, visit_expr, descend);
                     bi = bi + 1;
                 }
                 ai = ai + 1;
@@ -183,10 +212,10 @@ pub function fold_stmt_pruned[T](st: parser.Stmt, acc: T, visit: (parser.Expr, T
             return acc;
         },
         parser.StmtFor(f) => {
-            acc = fold_expr_pruned(f.iter, acc, visit, descend);
+            acc = fold_expr_nodes(f.iter, acc, visit_stmt, visit_expr, descend);
             var i: i32 = 0;
             while (i < f.body.len()) {
-                acc = fold_stmt_pruned(f.body[i], acc, visit, descend);
+                acc = fold_stmt_nodes(f.body[i], acc, visit_stmt, visit_expr, descend);
                 i = i + 1;
             }
             return acc;
@@ -298,80 +327,27 @@ pub function subst_ident_expr(e: parser.Expr, from: string, to: string): parser.
     return e;
 }
 
-pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+// assign_target_of contributes what a statement reads that is not an
+// expression, which is one name: an assignment's TARGET. A lambda that WRITES
+// a captured outer scalar without ever reading it (`x = 42`) still captures
+// `x`, so the free-variable collector has to see write-only targets (#2850 /
+// SH-057). The target is always a bare name — index and field assigns desugar
+// to __set_index / __set_field calls carried in `value`. Duplicates are fine;
+// capture lists dedup.
+function assign_target_of(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
-        // StmtDefer is eliminated before emit (lower_defers); the arm is here
-        // for exhaustiveness and recurses defensively on the lowered form.
-        parser.StmtDefer(d) => { return collect_idents_stmt(d.action, acc); },
-        parser.StmtVar(v) => { return collect_idents_expr(v.init, acc); },
-        parser.StmtReturn(r) => { return collect_idents_expr(r.value, acc); },
-        parser.StmtExpr(e) => { return collect_idents_expr(e.value, acc); },
-        parser.StmtIf(i) => {
-            acc = collect_idents_expr(i.cond, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_idents_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_idents_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            acc = collect_idents_expr(w.cond, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_idents_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(a) => {
-            // Collect the value's reads AND the assign target: a lambda that
-            // WRITES a captured outer scalar without reading it (`x = 42`) still
-            // captures `x`, so the free-var collector must see write-only targets
-            // (#2850 / SH-057). `wasm`'s collector already did this. The target is
-            // a bare name (index / field assigns desugar to __set_index /
-            // __set_field calls carried in `value`). Duplicates are fine — capture
-            // lists dedup.
-            acc = collect_idents_expr(a.value, acc);
-            return acc.append(a.target);
-        },
-        parser.StmtMatch(m) => {
-            acc = collect_idents_expr(m.scrutinee, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                // A `when` guard reads identifiers too (e.g. an enclosing local
-                // used only in the guard). Missing it left such a name out of
-                // the closure's capture list, so the guard read garbage at
-                // runtime → segfault. Walk the guard like the body.
-                if (m.arms[ai].has_guard) { acc = collect_idents_expr(m.arms[ai].guard, acc); }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_idents_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        parser.StmtFor(f) => {
-            acc = collect_idents_expr(f.iter, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_idents_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        parser.StmtAssign(a) => { return acc.append(a.target); },
+        _ => { return acc; }
     }
     return acc;
+}
+
+// collect_idents_stmt appends every identifier READ in `st` to `acc`, with
+// duplicates. `not_lambda` stops the walk at a lambda because ident_of has
+// already accounted for its whole body; a `when` guard is walked like an arm
+// body, since a name read only there is still a name the closure must capture.
+pub function collect_idents_stmt(st: parser.Stmt, acc: string[]): string[] {
+    return fold_stmt_nodes(st, acc, assign_target_of, ident_of, not_lambda);
 }
 
 // append_bound_name appends a binder name, splitting the comma-joined form the
@@ -447,81 +423,86 @@ pub function collect_calls_stmt(st: parser.Stmt, want: string[], acc: CallSite[]
     return fold_stmt(st, acc, visit);
 }
 
-pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+// pattern_binders appends every name a match-arm pattern binds: the payload
+// slot, each further slot of a multi-payload variant (`Tag(a, b)`), and the
+// `@` whole-value binder of `n @ Tag(x)`. `nested` is a parse-time transient —
+// desugar_nested_arms flattens sub-patterns before any consumer sees one — but
+// it is recursed anyway so a pattern that does reach here cannot hide a binder.
+//
+// This is the same set irlower's sa_pat_binds enumerates, which is the point:
+// two answers to "what does this pattern bind" is how at_binding came to be
+// missing from one of them (#6993).
+function pattern_binders(p: parser.Pattern, acc: string[]): string[] {
+    match (p) {
+        parser.PatVariant(pv) => {
+            if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
+            if (pv.at_binding.len() > 0) { acc = acc.append(pv.at_binding); }
+            var ebi: i32 = 0;
+            while (ebi < pv.extra_bindings.len()) {
+                // Bind the element to a typed local before .len() — a direct
+                // `pv.extra_bindings[ebi].len()` mis-dispatched the string
+                // element as i32 (an undefined `__fn_i32__len` at single-module
+                // link), the idiom irlower.fern uses for the same field.
+                var ebn: string = pv.extra_bindings[ebi];
+                if (ebn.len() > 0) { acc = acc.append(ebn); }
+                ebi = ebi + 1;
+            }
+            var ni: i32 = 0;
+            while (ni < pv.nested.len()) {
+                acc = pattern_binders(pv.nested[ni], acc);
+                ni = ni + 1;
+            }
+            return acc;
+        },
+        parser.PatWildcard(_) => { return acc; }
+    }
+    return acc;
+}
+
+// binders_of contributes the names one statement BINDS: a `var`, a `for`'s
+// loop variable, and the patterns of a `match`'s arms. Every one of them is
+// carried on the statement node, which is why this walk needs a statement
+// visitor and cannot be written over fold_stmt alone.
+function binders_of(st: parser.Stmt, acc: string[]): string[] {
     match (st) {
-        parser.StmtDefer(d) => { return collect_bound_stmt(d.action, acc); },
         parser.StmtVar(v) => { return append_bound_name(acc, v.name); },
-        parser.StmtReturn(_) => { return acc; },
-        parser.StmtExpr(_) => { return acc; },
-        parser.StmtIf(i) => {
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                acc = collect_bound_stmt(i.then_body[ti], acc);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                acc = collect_bound_stmt(i.else_body[ei], acc);
-                ei = ei + 1;
-            }
-            return acc;
-        },
-        parser.StmtWhile(w) => {
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                acc = collect_bound_stmt(w.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtAssign(_) => { return acc; },
+        parser.StmtFor(f) => { return append_bound_name(acc, f.var_name); },
         parser.StmtMatch(m) => {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                match (m.arms[ai].pattern) {
-                    parser.PatVariant(pv) => {
-                        if (pv.binding.len() > 0) { acc = acc.append(pv.binding); }
-                        // Multi-payload variants (`Tag(a, b)`) bind every extra
-                        // payload too — collecting only the main binding left an
-                        // extra binding invisible as an enclosing local, so a
-                        // lambda capturing it (lambda_captures' encl gate)
-                        // declined the lift and the module fell to the
-                        // miscompiling AST path (#5155).
-                        var ebi: i32 = 0;
-                        while (ebi < pv.extra_bindings.len()) {
-                            // Bind the element to a typed local before .len() /
-                            // .append — a direct `pv.extra_bindings[ebi].len()`
-                            // mis-dispatched the string element as i32 (an
-                            // undefined `__fn_i32__len` at single-module link),
-                            // the idiom irlower.fern uses for the same field.
-                            var ebn: string = pv.extra_bindings[ebi];
-                            if (ebn.len() > 0) { acc = acc.append(ebn); }
-                            ebi = ebi + 1;
-                        }
-                    },
-                    parser.PatWildcard(_) => { }
-                }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    acc = collect_bound_stmt(m.arms[ai].body[bi], acc);
-                    bi = bi + 1;
-                }
+                acc = pattern_binders(m.arms[ai].pattern, acc);
                 ai = ai + 1;
             }
             return acc;
         },
-        parser.StmtFor(f) => {
-            acc = append_bound_name(acc, f.var_name);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                acc = collect_bound_stmt(f.body[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        parser.StmtBreak(_) => { return acc; },
-        parser.StmtContinue(_) => { return acc; },
-        parser.StmtUnknown(_) => { return acc; }
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// binds_nothing is the binder walk's expression visitor: no expression binds a
+// name in the scope that encloses it. Paired with descend_none it makes the
+// walk statement-only, which is also what keeps a nested lambda's own locals
+// out of the enclosing scope's binder set.
+function binds_nothing(e: parser.Expr, acc: string[]): string[] { return acc; }
+
+// collect_bound_stmt appends every name `st` binds in the scope it belongs to.
+// Consumers subtract it from collect_idents_stmt's reads to get free variables,
+// so a name missing here is read as a capture of an enclosing local that does
+// not exist.
+pub function collect_bound_stmt(st: parser.Stmt, acc: string[]): string[] {
+    return fold_stmt_nodes(st, acc, binders_of, binds_nothing, descend_none);
+}
+
+// collect_bound_stmts is collect_bound_stmt over a body. Callers that want a
+// whole function's binders — the over-approximating "bound anywhere in this
+// body, so a bare reference to it is local throughout" set that shadowing
+// means for bare names — want this one.
+pub function collect_bound_stmts(stmts: parser.Stmt[], acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        acc = collect_bound_stmt(stmts[i], acc);
+        i = i + 1;
     }
     return acc;
 }

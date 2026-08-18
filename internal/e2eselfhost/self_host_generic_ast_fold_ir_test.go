@@ -480,6 +480,193 @@ function main(): i32 {
     var hs: Hit[] = fold_expr(e, h0, hit_of);
     return fold_expr(e, 0i32, count_node) * 10i32 + ns.len() * 2i32 + hs[0].v;
 }`, 37},
+	// --- the statement visitor (#6993 slice three) --------------------------
+	//
+	// The expression visitor cannot express every traversal: an assignment's
+	// TARGET and a `var` / `for` / match-arm BINDER are names carried on the
+	// STATEMENT, so a consumer contributing one is never handed a node for it.
+	// astwalk grew fold_expr_nodes / fold_stmt_nodes taking a second visitor
+	// for those, and the older folds became wrappers passing a no-op.
+
+	// Both visitors run in one walk and each decides part of the answer: the
+	// assign target reaches the reads set only through the STATEMENT visitor,
+	// and the two binder folds differ only in their descent rule, so a walk
+	// that dropped either cannot produce 91.
+	{"stmt-visitor-and-expr-visitor-in-one-walk", `struct ENum { v: i32 }
+struct EIdent { name: string }
+struct EAdd { left: Expr, right: Expr }
+struct ELambda { body: Stmt[] }
+type Expr = ENum | EIdent | EAdd | ELambda;
+
+struct SVar { name: string, init: Expr }
+struct SExpr { value: Expr }
+struct SAssign { target: string, value: Expr }
+type Stmt = SVar | SExpr | SAssign;
+
+function descend_all(e: Expr): boolean { return true; }
+function descend_none(e: Expr): boolean { return false; }
+
+function fold_expr_nodes[T](e: Expr, acc: T, visit_stmt: (Stmt, T) => T, visit_expr: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit_expr(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        ENum(_) => { return acc; },
+        EIdent(_) => { return acc; },
+        EAdd(b) => {
+            acc = fold_expr_nodes(b.left, acc, visit_stmt, visit_expr, descend);
+            return fold_expr_nodes(b.right, acc, visit_stmt, visit_expr, descend);
+        },
+        ELambda(lm) => {
+            var i: i32 = 0;
+            while (i < lm.body.len()) {
+                acc = fold_stmt_nodes(lm.body[i], acc, visit_stmt, visit_expr, descend);
+                i = i + 1;
+            }
+            return acc;
+        }
+    }
+    return acc;
+}
+
+function fold_stmt_nodes[T](st: Stmt, acc: T, visit_stmt: (Stmt, T) => T, visit_expr: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit_stmt(st, acc);
+    match (st) {
+        SVar(v) => { return fold_expr_nodes(v.init, acc, visit_stmt, visit_expr, descend); },
+        SExpr(s) => { return fold_expr_nodes(s.value, acc, visit_stmt, visit_expr, descend); },
+        SAssign(a) => { return fold_expr_nodes(a.value, acc, visit_stmt, visit_expr, descend); }
+    }
+    return acc;
+}
+
+function reads_of(e: Expr, acc: string[]): string[] {
+    match (e) {
+        EIdent(id) => { return acc.append(id.name); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function target_of(st: Stmt, acc: string[]): string[] {
+    match (st) {
+        SAssign(a) => { return acc.append(a.target); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function binders_of(st: Stmt, acc: string[]): string[] {
+    match (st) {
+        SVar(v) => { return acc.append(v.name); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function binds_nothing(e: Expr, acc: string[]): string[] { return acc; }
+
+function reads(body: Stmt[]): string[] {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) { acc = fold_stmt_nodes(body[i], acc, target_of, reads_of, descend_all); i = i + 1; }
+    return acc;
+}
+
+function binders(body: Stmt[], into_lambdas: boolean): string[] {
+    var acc: string[] = [];
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (into_lambdas) { acc = fold_stmt_nodes(body[i], acc, binders_of, binds_nothing, descend_all); }
+        else { acc = fold_stmt_nodes(body[i], acc, binders_of, binds_nothing, descend_none); }
+        i = i + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    var inner: Stmt[] = [SVar { name: "q", init: EIdent { name: "w" } }];
+    var body: Stmt[] = [
+        SVar { name: "x", init: ENum { v: 1i32 } },
+        SAssign { target: "y", value: EAdd { left: EIdent { name: "x" }, right: EIdent { name: "z" } } },
+        SExpr { value: ELambda { body: inner } }
+    ];
+    return reads(body).len() * 20i32 + binders(body, true).len() * 5i32 + binders(body, false).len();
+}`, 91},
+	// The layering astwalk itself now has: a 3-arg fold over a 4-arg pruned
+	// fold over the 5-arg walk, with the no-op statement visitor spelled as an
+	// arrow lambda mentioning the enclosing generic's own T, at three
+	// instantiations (i32 / string[] / a struct array).
+	//
+	// That lambda is why this case has to RUN, and on wasm especially. Its
+	// trampoline is a bare-typevar pass-through, so it took the #5464 erased
+	// widening and came out (param i64) (result i64) against the arity-keyed
+	// all-i32 call_indirect type: it compiled clean under FERN_STRICT_IR and
+	// trapped with an indirect-call type mismatch at the first call.
+	{"no-op-stmt-visitor-through-the-generic-wrappers", `struct ENum { v: i32 }
+struct EIdent { name: string }
+struct EAdd { left: Expr, right: Expr }
+type Expr = ENum | EIdent | EAdd;
+
+struct SExpr { value: Expr }
+struct SRet { value: Expr }
+type Stmt = SExpr | SRet;
+
+struct Hit { v: i32 }
+
+function descend_all(e: Expr): boolean { return true; }
+
+function fold_expr_nodes[T](e: Expr, acc: T, visit_stmt: (Stmt, T) => T, visit_expr: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit_expr(e, acc);
+    if (!descend(e)) { return acc; }
+    match (e) {
+        ENum(_) => { return acc; },
+        EIdent(_) => { return acc; },
+        EAdd(b) => {
+            acc = fold_expr_nodes(b.left, acc, visit_stmt, visit_expr, descend);
+            return fold_expr_nodes(b.right, acc, visit_stmt, visit_expr, descend);
+        }
+    }
+    return acc;
+}
+
+function fold_stmt_nodes[T](st: Stmt, acc: T, visit_stmt: (Stmt, T) => T, visit_expr: (Expr, T) => T, descend: (Expr) => boolean): T {
+    acc = visit_stmt(st, acc);
+    match (st) {
+        SExpr(s) => { return fold_expr_nodes(s.value, acc, visit_stmt, visit_expr, descend); },
+        SRet(r) => { return fold_expr_nodes(r.value, acc, visit_stmt, visit_expr, descend); }
+    }
+    return acc;
+}
+
+function fold_stmt_pruned[T](st: Stmt, acc: T, visit: (Expr, T) => T, descend: (Expr) => boolean): T {
+    return fold_stmt_nodes(st, acc, (s: Stmt, a: T) => a, visit, descend);
+}
+
+function fold_stmt[T](st: Stmt, acc: T, visit: (Expr, T) => T): T {
+    return fold_stmt_pruned(st, acc, visit, descend_all);
+}
+
+function count_node(e: Expr, acc: i32): i32 { return acc + 1i32; }
+function name_of(e: Expr, acc: string[]): string[] {
+    match (e) { EIdent(id) => { return acc.append(id.name); }, _ => { return acc; } }
+    return acc;
+}
+function hit_of(e: Expr, acc: Hit[]): Hit[] {
+    match (e) { ENum(n) => { return acc.append(Hit { v: n.v }); }, _ => { return acc; } }
+    return acc;
+}
+
+function main(): i32 {
+    var st: Stmt = SRet { value: EAdd { left: EIdent { name: "a" }, right: EAdd { left: ENum { v: 2i32 }, right: ENum { v: 3i32 } } } };
+    var seed_names: string[] = [];
+    var seed_hits: Hit[] = [];
+    var nodes: i32 = fold_stmt(st, 0i32, count_node);
+    var names: string[] = fold_stmt(st, seed_names, name_of);
+    var hits: Hit[] = fold_stmt(st, seed_hits, hit_of);
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < hits.len()) { sum = sum + hits[i].v; i = i + 1; }
+    return nodes * 10i32 + names.len() * 5i32 + sum;
+}`, 60},
 }
 
 // TestSelfHostGenericASTFoldIRX86_64 drives the production x86-64 IR path.
