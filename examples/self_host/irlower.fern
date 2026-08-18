@@ -34482,11 +34482,11 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
-                if (arrarr_lit_is_fresh(v.init)) {
+                if (arrarr_lit_is_fresh(v.init, stmts, i)) {
                     a = push_str_unique(a, v.name);
                     // strings-fresh marker: lets the crediting loop grant the
                     // STRICT "ARRARRS:" credit a string-kind slot requires.
-                    if (arrarr_lit_strings_fresh(v.init)) { a = push_str_unique(a, "S|" + v.name); }
+                    if (arrarr_lit_strings_fresh(v.init, stmts, i)) { a = push_str_unique(a, "S|" + v.name); }
                 } else if (arrarr_lit_is_empty(v.init) && arrarr_name_is_appended(stmts, v.name, ofr)) {
                     // APPEND-BUILT candidate (#6092): `var g: T[][] = []` grown by
                     // `g = g.append(<row literal>)`. arrarr_lit_is_fresh rejects
@@ -34544,17 +34544,94 @@ function collect_fresh_arrarr_names(stmts: parser.Stmt[], ofr: string[], acc: st
 // elements are POINTER-stored, so the STRICT sibling below must also pass
 // before a string-kind slot is freed (the slot's type-aware arrarr_elem
 // picks which credit slot_is_reclaimable_arrarr consults).
-function arrarr_lit_is_fresh(e: parser.Expr): boolean {
+function arrarr_lit_is_fresh(e: parser.Expr, stmts: parser.Stmt[], k: i32): boolean {
     match (e) {
         parser.ExprArray(outer) => {
             if (outer.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < outer.elements.len()) {
-                match (outer.elements[i]) {
-                    parser.ExprArray(_) => {},
-                    _ => { return false; }
-                }
+                if (!arrarr_row_is_fresh(outer.elements[i], stmts, k)) { return false; }
                 i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_row_effective: the array literal a ROW's contents can be read from —
+// the row itself when it is written inline, or the initializer of the local it
+// names when this construction is that local's last use. Anything else comes
+// back unchanged, and every test below then fails it.
+//
+// A local row is admitted only when it is declared earlier in THIS statement
+// list from an array LITERAL, is mentioned nowhere between that declaration and
+// `k`, appears exactly once in `k`, and is never read afterwards. Together those
+// say the arr-of-arr construction consumes the local, which is the invariant a
+// literal row gets for free: its buffer is born in the slot, so the deep reclaim
+// frees nothing anything else still reads.
+function arrarr_row_effective(e: parser.Expr, stmts: parser.Stmt[], k: i32): parser.Expr {
+    match (e) {
+        parser.ExprIdent(id) => {
+            if (k < 0 || k >= stmts.len()) { return e; }
+            var decl: i32 = 0 - 1;
+            var j: i32 = 0;
+            while (j < k) {
+                match (stmts[j]) {
+                    parser.StmtVar(v) => {
+                        if (v.name == id.name) {
+                            decl = 0 - 1;
+                            match (v.init) {
+                                parser.ExprArray(_) => { decl = j; },
+                                _ => {}
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                j = j + 1;
+            }
+            if (decl < 0) { return e; }
+            var b: i32 = decl + 1;
+            while (b < k) {
+                if (rc_ml_count_in_stmt(stmts[b], id.name) != 0) { return e; }
+                b = b + 1;
+            }
+            if (!rc_ml_last_use(stmts, id.name, k)) { return e; }
+            match (stmts[decl]) {
+                parser.StmtVar(dv) => { return dv.init; },
+                _ => { return e; }
+            }
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// arrarr_row_is_fresh: one ROW of an arr-of-arr literal owns its own buffer.
+function arrarr_row_is_fresh(e: parser.Expr, stmts: parser.Stmt[], k: i32): boolean {
+    match (arrarr_row_effective(e, stmts, k)) {
+        parser.ExprArray(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arrarr_row_elems_strings_fresh: every element of one ROW is a string LITERAL
+// or a fresh producer — the per-row half of arrarr_lit_strings_fresh.
+function arrarr_row_elems_strings_fresh(row: parser.Expr): boolean {
+    match (row) {
+        parser.ExprArray(r) => {
+            var j: i32 = 0;
+            while (j < r.elements.len()) {
+                var ok: boolean = false;
+                match (r.elements[j]) {
+                    parser.ExprString(_) => { ok = true; },
+                    _ => { ok = str_local_binding_is_fresh(r.elements[j]); }
+                }
+                if (!ok) { return false; }
+                j = j + 1;
             }
             return true;
         },
@@ -34566,27 +34643,16 @@ function arrarr_lit_is_fresh(e: parser.Expr): boolean {
 // arrarr_lit_strings_fresh: every inner element of every row is a string
 // LITERAL or a fresh producer (concat / string method / named producer) —
 // the strict gate for string-kind inners, whose pointers the reclaim frees
-// (an ident element would alias a live local the free would dangle).
-function arrarr_lit_strings_fresh(e: parser.Expr): boolean {
+// (an ident element would alias a live local the free would dangle). A row
+// that names a local is read through arrarr_row_effective, so its elements are
+// proved off the declaration's literal — and only when that local is this
+// statement's to consume.
+function arrarr_lit_strings_fresh(e: parser.Expr, stmts: parser.Stmt[], k: i32): boolean {
     match (e) {
         parser.ExprArray(outer) => {
             var i: i32 = 0;
             while (i < outer.elements.len()) {
-                match (outer.elements[i]) {
-                    parser.ExprArray(inner) => {
-                        var j: i32 = 0;
-                        while (j < inner.elements.len()) {
-                            var ok: boolean = false;
-                            match (inner.elements[j]) {
-                                parser.ExprString(_) => { ok = true; },
-                                _ => { ok = str_local_binding_is_fresh(inner.elements[j]); }
-                            }
-                            if (!ok) { return false; }
-                            j = j + 1;
-                        }
-                    },
-                    _ => { return false; }
-                }
+                if (!arrarr_row_elems_strings_fresh(arrarr_row_effective(outer.elements[i], stmts, k))) { return false; }
                 i = i + 1;
             }
             return true;
@@ -34597,9 +34663,11 @@ function arrarr_lit_strings_fresh(e: parser.Expr): boolean {
 }
 
 // arrarr_row_store_ok: `e` is a row safe to APPEND to an arr-of-arr candidate
-// that will later be deep-freed — a fresh array LITERAL, the same per-row rule
-// arrarr_lit_is_fresh applies to an initializer's elements. An ident row would
-// alias a live local whose buffer the reclaim would dangle.
+// that will later be deep-freed — a fresh array LITERAL. An ident row would
+// alias a live local whose buffer the reclaim would dangle. The initializer
+// rule (arrarr_row_effective) also admits an ident whose local this statement
+// consumes; a rebind's row is not reached by that proof, so it is not taken
+// here.
 function arrarr_row_store_ok(e: parser.Expr): boolean {
     match (e) {
         parser.ExprArray(_) => { return true; },
@@ -35974,7 +36042,7 @@ function optarrarr_init_is_fresh(e: parser.Expr): boolean {
         parser.ExprCall(c) => {
             match (c.callee) {
                 parser.ExprIdent(cid) => {
-                    if (cid.name == "Some" && c.args.len() == 1) { return arrarr_lit_is_fresh(c.args[0]); }
+                    if (cid.name == "Some" && c.args.len() == 1) { return arrarr_lit_is_fresh(c.args[0], [], 0 - 1); }
                     return false;
                 },
                 _ => { return false; }
@@ -43789,14 +43857,14 @@ function row_self_append_elem_kind(e: parser.Expr, name: string): i32 {
 
 // body_has_nonfresh_arrarr_return: any return whose value is NOT a fresh
 // arr-of-arr literal (arrarr_lit_is_fresh) — disqualifies the function from
-// the "AAC:" registry (#4355 slice 10). `return t;` of a local, a param
-// pass-through, or a call chain all disqualify; only direct literal returns
-// keep the static soleness proof.
+// the "AAC:" registry (#4355 slice 10). A param pass-through or a call chain
+// disqualifies; `return t;` of a whole local does too. A literal whose ROWS are
+// consumed locals still qualifies — the returned value solely owns them.
 function body_has_nonfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!arrarr_lit_is_fresh(r.value)) { return true; } },
+            parser.StmtReturn(r) => { if (!arrarr_lit_is_fresh(r.value, stmts, i)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonfresh_arrarr_return(f.then_body) || body_has_nonfresh_arrarr_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonfresh_arrarr_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonfresh_arrarr_return(fo.body)) { return true; } },
@@ -43815,7 +43883,7 @@ function body_has_nonstrfresh_arrarr_return(stmts: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(r.value)) { return true; } },
+            parser.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(r.value, stmts, i)) { return true; } },
             parser.StmtIf(f) => { if (body_has_nonstrfresh_arrarr_return(f.then_body) || body_has_nonstrfresh_arrarr_return(f.else_body)) { return true; } },
             parser.StmtWhile(w) => { if (body_has_nonstrfresh_arrarr_return(w.body)) { return true; } },
             parser.StmtFor(fo) => { if (body_has_nonstrfresh_arrarr_return(fo.body)) { return true; } },
@@ -49415,7 +49483,7 @@ function rc_ml_recv_elem_type(obj: parser.Expr, types_n: string[], types_t: stri
 
 // rc_ml_construction_moves: bare-ident owned rc locals consumed at their last
 // use in a counted construction slot of `val` (struct-lit rc-tracked
-// NON-STRING field / array-literal element / tuple-literal element / the
+// field / array-literal element / tuple-literal element / the
 // element of an array STORE) — native markConstructionMoves minus the
 // closure-capture arm.
 //
