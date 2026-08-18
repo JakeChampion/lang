@@ -764,14 +764,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
             // read, and the immortal rc makes every reclaim path a no-op (#7080).
             //
-            // The data pointer is stored PC-relatively on every evaluation rather
-            // than left to the block's own `.quad .S<i>`. That word is a link-time
-            // absolute address, which is only the runtime one when the image loads
-            // where it was linked: `-target arm64-android` is a position-independent
-            // ET_DYN with no PT_DYNAMIC and no relocations, so the linked value is
-            // near zero there and dereferencing it segfaults. The store is the same
-            // value every time, so it needs no first-use bookkeeping, and `.data` is
-            // in the image's RW segment on every arm64 target.
+            // The block's own `.quad .S<i>` is a link-time absolute address, which
+            // is the runtime one only where the image loads where it was linked.
+            // On the static-PIE target it is not, and emit_ir_reloc fixes it once
+            // at _start rather than every evaluation paying to recompute it.
             // Still mark_heap: the literal itself no longer allocates, but its
             // value is a box pointer that flows into ops which do, and the
             // runtime those need is emitted behind this flag.
@@ -779,12 +775,8 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
             var boxlbl: string = asm_ir.str_box_label(s, lo.idx);
-            var datlbl: string = asm_ir.str_lit_label(s, lo.idx);
             s = s.write("    adrp x0, " + boxlbl + "\n");
             s = s.write("    add x0, x0, :lo12:" + boxlbl + "\n");
-            s = s.write("    adrp x1, " + datlbl + "\n");
-            s = s.write("    add x1, x1, :lo12:" + datlbl + "\n");
-            s = s.write("    str x1, [x0]\n");
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (ir.is_str_op_kind(o.kind_tag)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
@@ -1959,8 +1951,78 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 //   at all. Reading [sp] there yields garbage: it lands in __fern_envp, and
 //   the first env() walk dereferences it (#6042's audit — the same
 //   Linux-value-on-the-darwin-path class as the arena mmap flags).
+// emit_ir_reloc emits the startup self-relocation loop (#7112).
+//
+// A static aggregate constant's shape word and a static string box's data word
+// are ABSOLUTE pointers sitting in `.data`. `-target arm64-android` is a static
+// PIE — ET_DYN, no PT_DYNAMIC, no relocations — so the kernel maps it at a base
+// the linker never knew and those words arrive stale by the slide. A shape
+// compare then never matches (`match` on a const aggregate took no arm and the
+// program returned 0), and a string box's bytes pointer faults.
+//
+// The slide comes from `.Lfern_relanchor`, whose `.quad` names itself: the
+// linker writes that word's LINK-TIME address, `adrp` computes its RUNTIME one,
+// and the difference is the slide. Nothing here needs a relocation to bootstrap.
+//
+// Emitted on both ELF targets rather than gated on the PIE one, which keeps
+// `-emit asm` identical between arm64-linux and arm64-android: ET_EXEC links and
+// loads at the same address, so the slide is 0 and `cbz` skips the walk.
+//
+// Mach-O is excluded instead of relied on to cancel. LC_DYLD_INFO rebase opcodes
+// already add the slide to every one of these words, so a second pass would
+// double it — and the anchor is itself rebased, which is exactly what would make
+// that look safe (slide reads as 0) without it being verifiable from here.
+//
+// The regions are walked rather than tabulated: string boxes are a fixed 24-byte
+// stride, and a const-aggregate block carries its own length in the `cap` word
+// the walk strides by. Only the whole-program pool is contiguous and complete,
+// which is the only shape `-target arm64-android` produces; a per-module unit
+// (str_ns != "") emits its pool piecewise and gets no loop.
+function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    if (darwin || s.str_ns.len() != 0) { return s; }
+    s = s.write("    adrp x9, .Lfern_relanchor\n");
+    s = s.write("    add x9, x9, :lo12:.Lfern_relanchor\n");
+    s = s.write("    ldr x10, [x9]\n");
+    s = s.write("    sub x9, x9, x10\n");            // x9 = load slide
+    s = s.write("    cbz x9, .Lfern_reloc_done\n");
+    // String boxes: [rc][data][len], 24 bytes, data word at +8.
+    s = s.write("    adrp x11, .Lfern_sbox_begin\n");
+    s = s.write("    add x11, x11, :lo12:.Lfern_sbox_begin\n");
+    s = s.write("    adrp x12, .Lfern_sbox_end\n");
+    s = s.write("    add x12, x12, :lo12:.Lfern_sbox_end\n");
+    s = s.write(".Lfern_sbox_loop:\n");
+    s = s.write("    cmp x11, x12\n");
+    s = s.write("    b.hs .Lfern_sbox_done\n");
+    s = s.write("    ldr x13, [x11, #8]\n");
+    s = s.write("    add x13, x13, x9\n");
+    s = s.write("    str x13, [x11, #8]\n");
+    s = s.write("    add x11, x11, #24\n");
+    s = s.write("    b .Lfern_sbox_loop\n");
+    s = s.write(".Lfern_sbox_done:\n");
+    // Const-aggregate blocks: [cap][rc][shape][val…], shape word at +16, and
+    // the block spans 16 + cap*8 bytes.
+    s = s.write("    adrp x11, .Lfern_cagg_begin\n");
+    s = s.write("    add x11, x11, :lo12:.Lfern_cagg_begin\n");
+    s = s.write("    adrp x12, .Lfern_cagg_end\n");
+    s = s.write("    add x12, x12, :lo12:.Lfern_cagg_end\n");
+    s = s.write(".Lfern_cagg_loop:\n");
+    s = s.write("    cmp x11, x12\n");
+    s = s.write("    b.hs .Lfern_reloc_done\n");
+    s = s.write("    ldr x13, [x11, #16]\n");
+    s = s.write("    add x13, x13, x9\n");
+    s = s.write("    str x13, [x11, #16]\n");
+    s = s.write("    ldr x14, [x11]\n");
+    s = s.write("    add x11, x11, #16\n");
+    s = s.write("    add x11, x11, x14, lsl #3\n");
+    s = s.write("    b .Lfern_cagg_loop\n");
+    s = s.write(".Lfern_reloc_done:\n");
+    return s;
+}
+
 function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = s.write("_start:\n");
+    // Before anything that could read a relocated pointer.
+    s = emit_ir_reloc(s, darwin);
     if (darwin) {
         // x0 / x1 / x2 already hold argc / argv / envp; x3 is the scratch that
         // keeps the address materialisation off them.
@@ -2578,11 +2640,28 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
             s = s.write(asm_ir.str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+    }
+    // The self-relocation anchor and the bounds of the two regions holding
+    // absolute pointers, read by emit_ir_reloc's startup loop (#7112). The
+    // anchor's `.quad` names ITSELF, so it holds this image's LINK-TIME base
+    // for that word while `adrp` yields the runtime one — their difference is
+    // the load slide, with no relocation needed to learn it.
+    s = s.write("    .section .data\n    .align 8\n");
+    s = s.write(".Lfern_relanchor:\n    .quad .Lfern_relanchor\n");
+    // Each region's begin label repeats the `.align 8` its blocks are emitted
+    // under, so the label lands ON the first block rather than on the padding
+    // before it — `.align n` is 2^n, so that is 256 bytes of skid, and a walk
+    // starting in it reads zeroes as a block header.
+    s = s.write("    .align 8\n.Lfern_sbox_begin:\n");
+    if (s.string_lits.len() > 0) {
         s = asm_ir.emit_str_box_data_from(s, 0);
     }
+    s = s.write("    .section .data\n.Lfern_sbox_end:\n");
     // .data: one block per static aggregate constant (#6149), after the string
     // pool because a block's first word is a shape POINTER into it.
+    s = s.write("    .align 8\n.Lfern_cagg_begin:\n");
     s = asm_ir.emit_const_agg_data(s);
+    s = s.write("    .section .data\n.Lfern_cagg_end:\n");
     if (s.shape_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
         var shi: i32 = 0;
