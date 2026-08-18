@@ -12001,7 +12001,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.Name, c.variantEnumList(n.Name), c.variantQualifierHint(n.Name), n.Name)
 			return nil
 		} else if n.EnumName != "" {
-			c.errfCode(n.P, "E036", "enum %s has no variant %q", n.EnumName, n.Name)
+			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
 			return nil
 		}
 		c.errIdent(n, s, "undefined identifier %q", n.Name)
@@ -13995,13 +13995,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
+						en := c.enumHintName(tid.Name)
 						c.errfCode(n.P, "E036", "variant %s.%s expects %d payload argument(s); call it as %s.%s(...)",
-							tid.Name, n.Field, len(vr.payloads), tid.Name, n.Field)
+							en, n.Field, len(vr.payloads), en, n.Field)
 						return nil
 					}
 					return ast.EnumType{Name: vr.enumName}
 				}
-				c.errfCode(n.P, "E036", "enum %s has no variant %q", tid.Name, n.Field)
+				c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(tid.Name), n.Field)
 				return nil
 			}
 		}
@@ -15508,12 +15509,12 @@ func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *as
 	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
 		if qualifier != ed.Name {
 			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
-				qualifier, ed.Name)
+				c.enumHintName(qualifier), c.enumHintName(ed.Name))
 		}
 		return
 	}
 	if ed.SourceModule != "" && qualifier != ed.SourceModule {
 		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
-			qualifier, ed.Name, ed.SourceModule)
+			qualifier, c.enumHintName(ed.Name), ed.SourceModule)
 	}
 }
