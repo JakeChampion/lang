@@ -84,4 +84,50 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { re
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"strarr-elem-alias-excluded-arm64", 0, "no")
+
+	// PRODUCER-CALL ELEMENT: the stored elements are calls to a proven
+	// fresh-string producer rather than inline concats. The credit's element
+	// proof is strarr_value_is_fresh, so the registry arm admits them; the
+	// registry-blind sibling it replaced refused any call. Correctness +
+	// over-release under qemu (the x86 sibling carries the flatness leg).
+	// 43 + 3 + 43 = 89 each build.
+	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function build(pre: string): i32 { var xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-elem-producer-store-arm64", 0, "yes")
+
+	// LOCAL BOUND FROM A PRODUCER: `var xs = mk(pre)` where `mk` is a "STRARR:"
+	// registry function — the frame owns every element the callee handed it, so
+	// the exit sweep may element-walk. `mk`'s own `out` escapes by return and
+	// keeps the shallow dec, so each element is freed exactly once. 3 + 43 = 46.
+	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function build(pre: string): i32 { var xs: string[] = mk(pre); return xs.len() + xs[1].len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-local-from-producer-arm64", 0, "yes")
+
+	// STORED BY THE CALLEE excludes: `keep` puts the array in the struct it
+	// returns, so the parameter is not borrowable and the array outlives build's
+	// sweep point inside `b`. Element-walking here would free boxes `b.rows`
+	// still owns; both reads stay valid. 3 + 43 + 43 = 89.
+	run(t, `struct Box { rows: string[] }
+function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
+function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
+function keep(xs: string[]): Box { return Box { rows: xs }; }
+function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-local-stored-by-callee-excluded-arm64", 0, "no")
+
+	// SELF-`.with` REBIND (#6407): the in-place element store releases the
+	// superseded box and retains the stored value, which makes the rebind
+	// admissible to the credit. `v` is another ELEMENT, so without the retain
+	// the exit walk would free one box through two slots → 99. 8 + 23 + 23 = 54.
+	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
+function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
+function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 54) { bad = 1; } i = i + 1; } return bad; }
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+		"strarr-with-rebind-arm64", 0, "yes")
 }

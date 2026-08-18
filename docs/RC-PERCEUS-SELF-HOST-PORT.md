@@ -8877,3 +8877,98 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `-slice-view-safe` returns 88 with the slice arm credited and 0 without;
   `-uncounted-store-safe` segfaults with the STRFLDOK gate removed. All three
   backend legs. Refs #6522 #6544 #4451.
+- 2026-08-18 (decomposition + slice): **Most of `alloc_flat_fresh_array_arg` is
+  not the argument, not the struct, and not a call — it is a plain `string[]`
+  local whose ELEMENTS are never reclaimed.** The previous entry asked for the
+  row to be re-decomposed from scratch. Doing that first, before writing any
+  code, moved the target twice.
+
+  Per round, self-host x86-64 against native on the identical program:
+
+  | probe | self-host | native |
+  |---|---|---|
+  | `var s: string = wide(n)` — fresh string producer bound | 0 | 0 |
+  | `var d: string[] = deps_of(n)` — fresh string[] producer bound, `.len()` only | **213** | 0 |
+  | the same with 6 elements instead of 3 | **428** | 0 |
+  | `var d: i32[] = nums_of(n)` — same shape, scalar elements | 0 | 0 |
+  | `var d: string[] = []` then `d = d.append(wide(n + i))` — no call at all | **213** | 0 |
+  | `var d: string[] = [wide(n), wide(n+1), wide(n+2)]` — a literal | **213** | 0 |
+  | the same literal with the concats written INLINE | 0 | 0 |
+  | `var p: P = mkp(n, n)` — scalar-only struct from a call | 0 | 0 |
+  | `var s: S1 = mks(wide(n))` — string-field struct from a call | 0 | 0 |
+
+  428/213 for 6 elements against 3 is exactly per-element, and the `i32[]` row
+  is flat, so the array BUFFER was always reclaimed — only the element boxes
+  leaked. Writing the same concat inline instead of behind `wide()` is flat.
+  That is the whole finding: the leak keys on the element being a CALL.
+
+  **Cause: two predicates for one question, one of them registry-blind.**
+  `strarr_value_is_fresh(e, str_fresh)` — used by the `"STRARR:"` producer
+  admission — accepts a literal, a `str_local_binding_is_fresh` shape, or a call
+  to a whole-program-proven `str_fresh_ret_fns` function.
+  `strarr_elem_store_ok(e)` — used by the `"SARR:"` local credit — was a copy of
+  it with the registry arm missing, so it refused every call. The same registry
+  was already in `reclaimable_names_of`'s hands; the credit simply never asked.
+  `strarr_elem_store_ok` now delegates to `strarr_value_is_fresh` with an empty
+  registry, so the narrowing at its other callers is stated once instead of
+  duplicated as a second body.
+
+  **The second half is the same gap one level up.** `collect_fresh_strarr_names`
+  admitted only an array-LITERAL initialiser, so `var d = deps_of(n)` earned no
+  credit even though `deps_of` is already a `"STRARR:"` registry function whose
+  admission proved whole-program that every returned element is a box the callee
+  allocated at rc=1. The registry's other consumers (the discarded-call and
+  `mk()[i]` read reclaims) had been reading it all along — witness: `var s =
+  deps_of(n)[0]` measured 0 before this change while `var d = deps_of(n)`
+  measured 213. The declaration arm now accepts such a call, refusing a callee
+  name the frame shadows (`body_declares_name`).
+
+  After: every row above is 0, no underflow, values correct.
+
+  **This does NOT move `alloc_flat_fresh_array_arg`, and that is correct.** The
+  case still measures 798. Both of its `deps_of` results are passed to `node`,
+  which STORES the array in the struct it returns — a non-borrowable parameter,
+  so the array escapes and `strarr_unsafe_for` refuses the credit. Its residual
+  is the returned struct, unchanged from the previous entry. What the
+  decomposition bought is the knowledge that 213 of that 798 was never about the
+  argument at all, and that the same 213 is paid by any frame anywhere that
+  builds a `string[]` from a producer — including several in the self-host's own
+  sources.
+
+  **A leak found on the way, because closing the above unmasked it (#6407).**
+  `TestSelfHostStrArrayWithReclaim` asserts that `a = a.with(i, v)` on a
+  `string[]` costs nothing *relative to the same loop without it*, and it passed
+  only because both of its columns leaked 380 B/round: the array comes back from
+  `mks()`, which is exactly the credit this slice grants. Give the control its
+  credit and the `.with` column's leak stops cancelling and the test fails —
+  correctly.
+
+  The self-host does not have native's `__fern_arr_cow_inplace` bug, but it
+  inherited the leak by another route. On a sole-owned slot the rebind lowers to
+  a bare in-place `arr_set`, which writes the new pointer over the old one and
+  drops the overwritten box on the floor; and because the rebind is not the
+  sanctioned self-append, it also cost the array its `"SARR:"` credit, so every
+  element leaked, not just the overwritten one. `lower_strarr_with_store` makes
+  the store reference-correct — retain the value unless it is a fresh temp the
+  frame already owns, release the superseded box unless it IS the value (the
+  cow guard), then `arr_set` — which is what lets `strarr_unsafe_for` sanction
+  the rebind. `a.with(3, a[5])` measured 380 B/round before and 0 after, with
+  the retain load-bearing: without it two slots share one reference and the exit
+  walk frees it twice.
+
+  The IR verify gate that landed this morning (#6639) caught the first draft of
+  that emitter on the first compile — `__fern_str_free`'s result left on the
+  stack inside a void `if`.
+
+  VERIFIED: eight new rows on the x86 leg and four each on the arm64 / wasm legs
+  of `internal/e2eselfhost`'s string[] element reclaim suite. The two admission
+  rows fail at 98 on the parent — checked through the harness, not only by
+  probe. The refusals (`keep(xs)` storing the array in a returned struct;
+  `fwd(pre)` handing it back out) assert values under recycling pressure rather
+  than bytes, and each keeps the shallow buffer-only dec on both sides. A
+  borrowable-parameter call arg stays admitted, which is what makes the
+  refusals mean something. The `.with` rows cover the live-local value (the
+  local reads valid bytes after the store), the self-store `a.with(i, a[i])`
+  (the cow guard), and a fresh-temp value (no retain, the array is sole owner) —
+  each with a long string built between the store and the reads so a wrongly
+  freed block is really recycled first. Refs #6544 #6522 #6407 #4355 #4451.
