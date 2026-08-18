@@ -611,6 +611,84 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// Four parallel walks in this package descend a generic body; the
+// *ast.FuncDecl case had been added to one of them and missed in the other
+// three, so a NESTED NAMED FUNCTION was left holding the enclosing generic's
+// type parameters and the monomorpher's own re-check rejected the program it
+// had just produced (#7042).
+//
+// Each row fails on the parent for a different reason, so they are separate
+// cases rather than one program:
+//
+//   - nested-fn-type-param      substituteStmt never substituted T
+//   - nested-fn-struct-lit      walkStmtStructLits never rewrote `Box { … }`
+//   - nested-fn-annotation      rewriteStmtTypes never rewrote `Box[i32]`
+//   - lambda-annotation         rewriteStmtTypes descended into no expression
+//     at all, so a lambda body was unreachable
+//   - two-instantiations        CloneStmt shared the nested FuncDecl by
+//     pointer, so the second clone overwrote the first
+func TestMonomorphEntersNestedFunctionAndLambdaBodies(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"nested-fn-type-param", `function apply[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
+function outer[T](acc: T): T {
+  function skip(n: i32, a: T): T { return a; }
+  return apply(acc, skip);
+}
+function main(): i32 { return outer(7); }`},
+		{"nested-fn-struct-lit", `struct Box[T] { v: T }
+function outer(n: i32): i32 {
+  function inner(k: i32): i32 { return Box { v: k }.v; }
+  return inner(n);
+}
+function main(): i32 { return outer(7); }`},
+		{"nested-fn-annotation", `struct Box[T] { v: T }
+function outer(n: i32): i32 {
+  function inner(k: i32): i32 {
+    var b: Box[i32] = Box { v: k };
+    return b.v;
+  }
+  return inner(n);
+}
+function main(): i32 { return outer(7); }`},
+		{"lambda-annotation", `struct Box[T] { v: T }
+function outer(n: i32): i32 {
+  var f = ((k: i32) => {
+    var c: Box[i32] = Box { v: k };
+    c.v
+  });
+  return f(n);
+}
+function main(): i32 { return outer(7); }`},
+		{"two-instantiations", `function apply[T](acc: T, f: (i32, T) => T): T { return f(1, acc); }
+function outer[T](acc: T): T {
+  function skip(n: i32, a: T): T { return a; }
+  return apply(acc, skip);
+}
+function main(): i32 {
+  var a: i32 = outer(7);
+  var b: string[] = outer(["x", "y"]);
+  return a + b.len();
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			// Run's own re-check is the assertion: it reports
+			// "re-check failed (compiler bug)" for exactly the shapes
+			// above, naming the type it failed to substitute.
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}
+
 func TestMonomorphTupleArgProducesAssemblerSafeName(t *testing.T) {
 	src := `function id[T](x: T): T { return x; }
 function main(): i32 {

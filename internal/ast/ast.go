@@ -729,6 +729,16 @@ func CloneStmt(s Stmt) Stmt {
 			c.Arms[i] = &ac
 		}
 		return &c
+	case *FuncDecl:
+		// A nested function declaration. Falling through to `return s`
+		// shared this node by pointer with the original — and with every
+		// other clone of it — so a caller that clones a generic body per
+		// instantiation and then substitutes types in place would have
+		// each instantiation overwrite the last (#7042).
+		c := *x
+		c.Params = append([]Param(nil), x.Params...)
+		c.Body = CloneBlock(x.Body)
+		return &c
 	}
 	return s
 }
