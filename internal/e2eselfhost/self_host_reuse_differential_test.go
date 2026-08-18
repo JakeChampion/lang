@@ -257,7 +257,10 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(prog))
-		cmd.Env = append(os.Environ(), extraEnv...)
+		// childEnv, not os.Environ(): the "reuse on" arm sets nothing, so an
+		// ambient FERN_SELFHOST_NO_REUSE=1 makes it reuse-OFF too and the
+		// on-vs-off comparison below compares a run with itself (#6833).
+		cmd.Env = childEnv(extraEnv...)
 		out, err := cmd.Output()
 		if err != nil || len(out) == 0 {
 			t.Fatalf("driver failed (env %v): %v", extraEnv, err)
