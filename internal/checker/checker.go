@@ -11501,6 +11501,12 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	prevSink := c.captureSink
 	prevOuter := c.captureOuter
 	prevLoop := c.loopDepth
+	if prev != nil && fn.SourceModule == "" {
+		// A nested function is not in prog.Funcs, so modload never
+		// stamped it; errf reads SourceModule off c.current to fill
+		// Error.Path.
+		fn.SourceModule = prev.SourceModule
+	}
 	c.current = fn
 	c.loopDepth = 0
 	// Snapshot the mutual-recursion sibling set at this
@@ -13498,6 +13504,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			ReturnType:        n.ReturnType,
 			ReturnUnannotated: n.ReturnUnannotated,
 			Body:              n.Body,
+		}
+		if prev != nil {
+			// modload stamps SourceModule on prog.Funcs only, and errf
+			// reads it off c.current to fill Error.Path.
+			synth.SourceModule = prev.SourceModule
 		}
 		n.Synthetic = synth
 		c.current = synth
