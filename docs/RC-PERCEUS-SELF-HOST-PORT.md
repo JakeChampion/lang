@@ -8473,12 +8473,35 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   without this they would have been safe by accident; requiring a concrete
   scalar result to earn an entry makes it an invariant of the registry instead.
 
-  **`alloc_flat_fresh_array_arg` still does not move, and the blocker is now
-  located precisely.** Its `node(name, deps_of(n), mtime)` returns a STRUCT, and
-  a struct-returning callee lowers through a path that never reaches this arg
-  stash — proven by the pair of probes above: the same storing callee returning
-  a SCALAR is flat, returning a STRUCT is 103. So the remaining work is not more
-  analysis; it is wiring the same admission into the struct-returning call path.
+  **`alloc_flat_fresh_array_arg` still does not move, and the cause is NOT
+  established.** Two earlier readings of this were wrong and are corrected here,
+  because both would have sent the next reader at the wrong file.
+
+  First wrong reading: "a struct-returning callee lowers through a path that
+  never reaches the arg stash". Disproved — a borrowable array param is released
+  when the callee returns a SCALAR-ONLY struct *and* when it returns a
+  POINTER-BEARING one. The arm is reached regardless of the return's shape; the
+  inference came from `keep(…): i32` being flat and `node(…): Node` not, without
+  ever testing reachability for a struct return.
+
+  Second wrong reading: "this slice's own scalar-result guard is the blocker".
+  Also disproved — removing that guard leaves `node(mk(i), i)` at 103 and
+  `both(mk(i), i)` at 54, unmoved.
+
+  What is left is a genuine open question. `keep` (credited, fires) and `node`
+  (does not fire) should be classified identically by `array_param_counted_of` —
+  the parameter is a struct-literal slot value in each — so the divergence is
+  somewhere between the registry and the call site and has not been isolated.
+  Isolate it before writing any more code: dump or otherwise witness whether
+  `node` earns an `"ACNT:"` entry at all, rather than inferring the mechanism
+  from which probes happen to be flat. That inference has now failed twice on
+  this exact row.
+
+  The scalar-result guard is independently stricter than native —
+  `countedArgTemp` has no result-type check, and native's comment names
+  `node(name, no_deps(), k)` as the shape it exists to admit — but it stays: it
+  is the conservative direction, costs only a leak, and removing it changes
+  nothing measurable until the real blocker is found.
   The case stays at 798 B/round.
 
   VERIFIED: `counted-retain-arr-arg-flat` fails at 98 on the parent;
