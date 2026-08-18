@@ -3258,6 +3258,48 @@ func TestStructFieldSubPatternAcceptsWildcardFallback(t *testing.T) {
 	}
 }
 
+// A merged arm's GUARD can name a sibling plain slot, not only the bindings
+// its own sub-pattern introduces. The nested-pattern desugar rebinds plain
+// slots inside the arm BODY, and the guard runs first, so `when n > m` drew
+// E001 on `m`. The guard is now wrapped in the same BlockExpr the value form
+// uses, which puts the slots in scope without renaming anything.
+func TestMergedArmGuardSeesSiblingSlots(t *testing.T) {
+	const decls = "enum Res { Ok2(i32), Err2(i32) }\nenum W { V(Res, i32), None2 }\nstruct P { x: i32, y: i32 }\n"
+	for name, body := range map[string]string{
+		"payload slot, statement form": `function f(w: W): i32 {
+  match (w) {
+    V(Ok2(n), m) when n > m => { return n; },
+    V(x, m) => { return m; },
+    None2 => { return 0; },
+  }
+}`,
+		"payload slot, expression form": `function f(w: W): i32 {
+  return match (w) { V(Ok2(n), m) when n > m => n, V(x, m) => m, None2 => 0 };
+}`,
+		"struct field": `function f(w: W): i32 {
+  match (w) { V(Ok2(n), m) when m > 0 => { return n; }, _ => { return 0; } }
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("guard should see the sibling slot, got: %v", err)
+			}
+		})
+	}
+
+	// The wrap is a real scope, so a lambda parameter inside the guard still
+	// shadows the slot — which renaming the identifiers would have broken.
+	if err := checkSource(t, decls+`function f(w: W): i32 {
+  match (w) {
+    V(Ok2(n), m) when ((m: i32): boolean => m > 100)(n) => { return n; },
+    V(x, m) => { return m; },
+    None2 => { return 0; },
+  }
+}`); err != nil {
+		t.Errorf("a lambda param should still shadow the slot, got: %v", err)
+	}
+}
+
 // A struct that implements all of a trait's methods with matching
 // signatures type-checks, and the impl is recorded in Info.Impls.
 // See docs/TRAITS.md.

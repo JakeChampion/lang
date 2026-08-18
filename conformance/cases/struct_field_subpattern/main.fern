@@ -85,15 +85,13 @@ function renamed(w: W): i32 {
     }
 }
 
-// A guard sees the field sub-pattern's OWN bindings. It cannot yet see a
-// sibling plain field (`when v > n`): the desugar rebinds those inside the
-// arm body, after the guard runs. That is pre-existing — a payload slot's
-// guard cannot see a sibling slot either (`Wrap(Ok2(n), m) when n > m`) — and
-// is not specific to fields, so it is left to its own fix rather than worked
-// around here.
+// A guard sees the field sub-pattern's own bindings AND the sibling plain
+// fields. The sibling half needed the guard to be wrapped in the same scope
+// the arm body gets: the desugar rebinds plain slots inside the body, and the
+// guard runs first, so `when v > n` used to draw E001 on `n`.
 function guarded(w: W): i32 {
     match (w) {
-        W { e: A(v), n } when v > 5 => { return v; },
+        W { e: A(v), n } when v > n => { return v; },
         W { e: A(v), n } => { return n; },
         _ => { return 0; },
     }
