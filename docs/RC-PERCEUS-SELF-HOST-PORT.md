@@ -9182,3 +9182,169 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `alloc_flat_fresh_array_arg` remains 798. Its `node()` stores borrowed
   parameters, which is the one shape this arm must keep refusing. Refs #6544
   #6522 #6758 #4451.
+- 2026-08-18 (scoping, measured, NOT implemented): **what the last of
+  `alloc_flat_fresh_array_arg` costs and what would close it.** Four slices
+  have each closed a real leak without moving this row; this entry establishes
+  the remaining mechanism by measurement so the next one does not start from a
+  guess. Nothing here is a behaviour change.
+
+  Two hypotheses were tested and killed first, each by opening exactly one gate
+  and re-measuring:
+
+  | gate opened diagnostically | w5 / w6 / w7 | conformance |
+  |---|---|---|
+  | (none — current main) | 310 / 398 / 398 | 798 |
+  | `strarrfld_scan` store gate admits a bare-ident store | 310 / 398 / 398 | 798 |
+  | the `.len()` arm tolerates a transient `x.f[i].len()` element read | 310 / 398 / 398 | 798 |
+  | **BOTH the store gate AND the strict-fresh return gate** | **270 / 268 / 268** | **537** |
+
+  Neither gate alone moves anything, which is why reading either one in
+  isolation gives the wrong answer. The refusal is a genuine THREE-way
+  circularity:
+
+  1. `mka(deps: string[]): A1 { return A1 { deps: deps }; }` is not
+     strict-fresh — `return_value_is_strictfresh_struct` refuses a bare-ident
+     array field — so `mka` never enters `return_fresh_struct_ret_fns` and the
+     CALLER's `var a: A1 = mka(...)` gets no drop at all (witnessed: `round`
+     emits no `__struct_drop_A1`, where the `string`-field sibling emits four
+     calls);
+  2. `A1.deps` is not STRFLDOK-admitted, because `strarrfld_scan`'s store gate
+     sees the same bare-ident store;
+  3. the struct-literal construction does not retain that array, because the
+     retain is gated on `struct_routes_field_reclaim` (irlower.fern ~11845) —
+     which is what (2) decides.
+
+  Open (2) and the retain starts firing, which is what makes opening (1) safe.
+  They have to move together; either alone is inert, and (1) alone would be an
+  over-release.
+
+  **The retain was verified, not assumed.** With both gates open, the sharpest
+  aliasing shapes are correct on the self-host and match native: a struct built
+  from a live local, dropped in an inner scope FIRST, with the local's elements
+  read afterwards under heavy recycling pressure (a 40-block string plus a
+  fresh 3-element array between the drop and the reads); and two holders over
+  one array, both dropped. Plus the conformance case's own aliased half, which
+  reads `live` after `aliased`. No underflow, no wrong values.
+
+  So the pairing works and is worth 798 -> 537 on the row and 398 -> 268 on the
+  method/struct probes. What stops it landing here is that the honest
+  implementation needs a condition the diagnostic skipped: the strict-fresh
+  return gate must admit a bare-ident array field ONLY when that field's type
+  routes reclaim, so the retain is guaranteed rather than assumed — and
+  `return_value_is_strictfresh_struct` has no `sfok` in scope to ask. Threading
+  it is the work, and it is a soundness-critical widening across every struct
+  with a borrowed array field in a compiler that compiles itself; it wants the
+  full sweep, the fixpoints and the conformance suite behind it rather than a
+  hurried push.
+
+  **The threading is not plumbing — it carries a documented correctness
+  constraint.** Asking "does this field's type route reclaim?" means consulting
+  `strfld_reclaim_ok_types_of(funcs, structs, borrowable)`, and the two sites
+  that would have to ask —
+  `return_fresh_struct_ret_fns_of(funcs, structs)` and
+  `fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh)` — take no `borrowable`
+  at all. So the change introduces a new dependency from the strict-fresh
+  registry onto the borrowable-params verdict, and that function's own header
+  says what happens if the verdicts differ: "the interprocedural fixpoint admits
+  more borrows than the single pass, so a backend seeding `strfldok:` from the
+  fixpoint while the lowering routed on the single pass would free fields
+  nothing retained." Every emit path already overrides `strfld_ok_types`
+  wherever it overrides `borrowable_params`, and a third consumer has to join
+  that discipline rather than compute its own answer.
+
+  That is the concrete reason this is scoped rather than shipped: the diagnostic
+  that produced the numbers above asked no such question, and an implementation
+  that got this dependency subtly wrong would free a field nothing retained — in
+  a compiler that compiles itself.
+
+  The residual 537 after the pairing is undecomposed and should be measured
+  before anything else is attempted on it. Refs #6544 #6522 #4451.
+
+- 2026-08-18 (measurement, no code): **The "~21 B/round floor shared by every
+  read of the relabel probe" was one string box per round, and #7080 removes the
+  box rather than the leak. The durable finding is the discriminator: whether the
+  call's result is BOUND to a local or read INLINE off the call.**
+
+  Measured on `432d8c5` and again on #7103's branch `512d9ac`, which makes an
+  interned literal a static `.data` box at `rc = -1` instead of a
+  per-evaluation `__fern_str_box`. Both columns matter, because every probe that
+  showed the original floor stores a LITERAL in the struct's string field:
+
+  | `struct Box { tag: string, n: i32 }` | `432d8c5` | `512d9ac` |
+  |---|---|---|
+  | `mkbox("ab", 7).n` — free fn, inline read | 24 | **0** |
+  | `b.freshonly("ab").n` — method, inline read | 24 | **0** |
+  | `mkbox2(7).n` — no string parameter; literal built INSIDE the callee | 24 | **0** |
+  | `b.relabel("…").tag.len()` | 24 | **0** |
+  | `b.relabel("…").n` — scalar field read | 24 | **0** |
+  | either form with the result BOUND to a local | 0 | 0 |
+  | `b.mixed("ab").n`, `tag` COMPUTED (`t + "-suffix"`), inline read | 64 | **40** |
+  | the same, result bound to a local | 24 | **0** |
+
+  So the literal-field rows are not a leak to fix: the box should not have
+  existed, and #7080 is why. Recording them as a shallow-dec floor stranding the
+  field was true of the emitted code and beside the point.
+
+  **What survives is the last two rows, and they keep the shape:** an inline read
+  off a call whose returned struct carries a COMPUTED string field grows 40 B a
+  round, where binding the result to a local is flat. The inline read releases
+  the returned struct with the BARE box dec — the documented shallow-dec safe
+  floor — so the field is stranded, while a bound local reaches
+  `__struct_drop_Box` at scope exit and frees it. Use the COMPUTED-field probe;
+  the literal one stops reproducing the moment #7080 lands.
+
+  Three things this rules out, each of which an earlier revision of this entry
+  asserted before the 2×2 was run: it is not a read-site cost (the SCALAR field
+  read costs the same as the string one), not method-vs-free (both columns are
+  identical), and not the argument (a producer taking no string parameter at all
+  leaks the same). It is also not `stash_fresh_str_arg` or the counted-retain
+  registries — the first revision pointed there, on method-call probes alone.
+
+  **The free twin at 72** (`relabel_free`, an identity path plus an inline read)
+  is a different, larger row: an identity path earns no strict-fresh entry and a
+  free function has no FRESHSELF tier, so the returned `Box` leaks too.
+
+  Not implemented here on purpose. #7098 makes the case, for the array half of
+  the same machinery, that a widening in this area wants the full sweep behind
+  it; the same applies here. The #7067 entry below is the array-field member of
+  the family and its framing is the sharper one — two per-type reclaim helpers
+  that disagree about how deep to go, so which one a value reaches decides
+  whether its fields are freed. Refs #6544 #6522 #7080 #4451.
+
+- 2026-08-18: **#7067 — the two per-type reclaim helpers disagreed about a
+  struct's array field whose ELEMENTS are pointer-shaped.**
+
+  `__struct_drop_<T>` is_unique-gates the buffer, walks it dec'ing each element
+  box (and, for a deep-drop-ok element struct, runs
+  `__struct_arr_elems_drop_<E>` first), then decs the buffer.
+  `__field_reclaim_<T>` dec'd the buffer only. So the value that goes out of
+  scope was reclaimed and every value that was REBOUND leaked its elements —
+  `var b: Bag = Bag { es: [P { .. }, P { .. }], .. }` in a loop stranded one
+  element box per element per iteration, on x86-64, arm64 and wasm alike. The
+  reclaim body now runs the same walk; `string[]` fields keep the
+  `__fern_str_arr_free` arm they already had. Measured on the doubling-rounds
+  probe: 28256 / 56000 bump bytes -> 336 / 0, native flat on both sides.
+
+  **The gate is the interesting half.** Mirroring the walk unconditionally
+  segfaults `alloc_flat_array_push_bound_elem`: `d = Doc { ...d, vals:
+  d.vals.append(v) }` hands the NEW buffer the same element pointers the
+  superseded one holds, uncounted, so walking the old buffer frees boxes the
+  live one still references. A buffer-uniqueness test cannot see that — the old
+  buffer IS unique. So the walk is admitted per type by a whole-program scan
+  ("sarr:" in `strfld_reclaim_ok_types_of`, riding the same `strarrfld_scan`
+  marks as the `string[]` half): every store to the field is an array literal of
+  fresh elements (`boxarr_lit_all_elems_fresh`, the proof the reuse admission
+  already makes for these fields), every read a bare `.len()` borrow. Marks are
+  matched type-keyed (`<T>.<field>`) with the bare name as the fallback, exactly
+  like the `arr:` half since #6544. `__struct_drop` needs no such admission, and
+  that asymmetry is the reason the two helpers were allowed to differ in the
+  first place — at scope exit every buffer that ever shared those elements is
+  dying too.
+
+  Residual, unchanged by this: an enum element's variant PAYLOAD is still one
+  level deeper than either helper reaches, and on wasm an enum-array field whose
+  element type carries no methods classifies scalar, so BOTH helpers keep it on
+  the flat dec. Regression test:
+  `internal/e2eselfhost/self_host_field_reclaim_arr_elems_test.go` (all three
+  backends, including the append-carry case that pins the admission).
+  Refs #7067 #6544 #2649 #5235 #4451.

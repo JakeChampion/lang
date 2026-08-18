@@ -38,6 +38,7 @@
 import "./util";
 import "./lexer";
 import "./parser";
+import "./astwalk";
 
 // =================== TYPE SYSTEM ====================
 // TypeI32 models EVERY integer width — i32 / i64 / u32 / u64 — distinguished
@@ -9762,46 +9763,66 @@ function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], unio
   return "";
 }
 
-// e064_var_diags walks a (non-generic, non-method) function body and reports
-// E064 for any `var x: T` annotation whose bare nominal type is undefined. It
-// recurses into control-flow blocks the same way dupvar_diags does, but not
-// into nested function / lambda bodies — those carry their own scope. The
-// caller restricts this to functions with no type parameters, so a plain
-// identifier that resolves to unknown is a genuine typo, never an erased
-// generic parameter.
-function e064_var_diags(stmts: parser.Stmt[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
-  var out: Diag[] = [];
+// Annot is one type a declaration ANNOTATES, with where to report against it:
+// a `var`'s type, or a lambda's parameter / return type.
+struct Annot { type_name: string, line: i32, col: i32 }
+
+// collect_annots gathers every annotation in a body, wherever it nests —
+// including inside a lambda, which the hand-rolled statement recursion this
+// replaced could not reach at all, so neither E064 nor E057 ever fired on
+// `((x: Wibble) => 1)` while both fired on the `var x: Wibble` beside it
+// (#7100). Native reaches them through one shared node set for the same reason
+// (forEachDeclaredType, #7099); here the shared spine is astwalk, so a parser
+// node added later is covered the moment fold_stmt_nodes covers it.
+//
+// A lambda the PARSER synthesised carries no position (ExprLambda.line is 0)
+// and no annotation the programmer wrote — its `ret_type` is if_expr_rt's guess
+// — so it contributes nothing.
+function collect_annots(stmts: parser.Stmt[]): Annot[] {
+  var acc: Annot[] = [];
   var i: i32 = 0;
   while (i < stmts.len()) {
-    match (stmts[i]) {
-      parser.StmtVar(v) => {
-        var vu: string = e064_unknown_name(v.type_name, struct_names, union_names, extra_known);
-        if (vu.len() > 0) {
-          out = out.append(dg_at("E064", "unknown type \"" + vu + "\"", v.line, v.col));
-        }
-      },
-      parser.StmtIf(f) => {
-        out = append_diags(out, e064_var_diags(f.then_body, struct_names, union_names, extra_known));
-        out = append_diags(out, e064_var_diags(f.else_body, struct_names, union_names, extra_known));
-      },
-      parser.StmtWhile(w) => {
-        out = append_diags(out, e064_var_diags(w.body, struct_names, union_names, extra_known));
-      },
-      parser.StmtFor(fr) => {
-        out = append_diags(out, e064_var_diags(fr.body, struct_names, union_names, extra_known));
-      },
-      parser.StmtMatch(m) => {
-        var a: i32 = 0;
-        while (a < m.arms.len()) {
-          out = append_diags(out, e064_var_diags(m.arms[a].body, struct_names, union_names, extra_known));
-          a = a + 1;
-        }
-      },
-      parser.StmtDefer(d) => {
-        var one: parser.Stmt[] = [d.action];
-        out = append_diags(out, e064_var_diags(one, struct_names, union_names, extra_known));
-      },
-      _ => {}
+    acc = astwalk.fold_stmt_nodes(stmts[i], acc, annot_of_stmt, annot_of_expr, astwalk.descend_all);
+    i = i + 1;
+  }
+  return acc;
+}
+
+function annot_of_stmt(st: parser.Stmt, acc: Annot[]): Annot[] {
+  match (st) {
+    parser.StmtVar(v) => { return acc.append(Annot { type_name: v.type_name, line: v.line, col: v.col }); },
+    _ => { return acc; }
+  }
+  return acc;
+}
+
+function annot_of_expr(e: parser.Expr, acc: Annot[]): Annot[] {
+  match (e) {
+    parser.ExprLambda(lm) => {
+      if (lm.line == 0) { return acc; }
+      var i: i32 = 0;
+      while (i < lm.params.len()) {
+        acc = acc.append(Annot { type_name: lm.params[i].type_name, line: lm.line, col: lm.col });
+        i = i + 1;
+      }
+      return acc.append(Annot { type_name: lm.ret_type, line: lm.line, col: lm.col });
+    },
+    _ => { return acc; }
+  }
+  return acc;
+}
+
+// e064_annot_diags reports E064 for any annotation whose bare nominal type is
+// undefined. The caller restricts this to functions with no type parameters, so
+// a plain identifier that resolves to unknown is a genuine typo, never an
+// erased generic parameter.
+function e064_annot_diags(an: Annot[], struct_names: string[], union_names: string[], extra_known: string[]): Diag[] {
+  var out: Diag[] = [];
+  var i: i32 = 0;
+  while (i < an.len()) {
+    var vu: string = e064_unknown_name(an[i].type_name, struct_names, union_names, extra_known);
+    if (vu.len() > 0) {
+      out = out.append(dg_at("E064", "unknown type \"" + vu + "\"", an[i].line, an[i].col));
     }
     i = i + 1;
   }
@@ -9868,41 +9889,14 @@ function e057_annot_diags(type_name: string, line: i32, col: i32): Diag[] {
   return out;
 }
 
-// e057_var_diags walks a (non-generic, non-method) function body and
-// reports the annotation-form E057 for any `var x: T` annotation embedding
-// a `Cell[<composite>]`. Recurses into control-flow blocks exactly like
-// e064_var_diags (not into nested function / lambda bodies).
-function e057_var_diags(stmts: parser.Stmt[]): Diag[] {
+// e057_var_annot_diags reports the annotation-form E057 for any annotation
+// embedding a `Cell[<composite>]`. Reads the same annotation set E064 does,
+// which is why the caller collects it once and hands it to both.
+function e057_var_annot_diags(an: Annot[]): Diag[] {
   var out: Diag[] = [];
   var i: i32 = 0;
-  while (i < stmts.len()) {
-    match (stmts[i]) {
-      parser.StmtVar(v) => {
-        out = append_diags(out, e057_annot_diags(v.type_name, v.line, v.col));
-      },
-      parser.StmtIf(f) => {
-        out = append_diags(out, e057_var_diags(f.then_body));
-        out = append_diags(out, e057_var_diags(f.else_body));
-      },
-      parser.StmtWhile(w) => {
-        out = append_diags(out, e057_var_diags(w.body));
-      },
-      parser.StmtFor(fr) => {
-        out = append_diags(out, e057_var_diags(fr.body));
-      },
-      parser.StmtMatch(m) => {
-        var a: i32 = 0;
-        while (a < m.arms.len()) {
-          out = append_diags(out, e057_var_diags(m.arms[a].body));
-          a = a + 1;
-        }
-      },
-      parser.StmtDefer(d) => {
-        var one: parser.Stmt[] = [d.action];
-        out = append_diags(out, e057_var_diags(one));
-      },
-      _ => {}
-    }
+  while (i < an.len()) {
+    out = append_diags(out, e057_annot_diags(an[i].type_name, an[i].line, an[i].col));
     i = i + 1;
   }
   return out;
@@ -11839,8 +11833,9 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       }
       body_diags = append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `var x: T` annotations (same non-generic scope).
-      body_diags = append_diags(body_diags, e064_var_diags(efn.body, struct_names, union_names, e064_extra));
-      body_diags = append_diags(body_diags, e057_var_diags(efn.body));
+      var efn_annots: Annot[] = collect_annots(efn.body);
+      body_diags = append_diags(body_diags, e064_annot_diags(efn_annots, struct_names, union_names, e064_extra));
+      body_diags = append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
     efi = efi + 1;
   }

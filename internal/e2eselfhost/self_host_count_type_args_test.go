@@ -32,7 +32,7 @@ func TestSelfHostCountTypeArgs(t *testing.T) {
 	}
 	dir := t.TempDir()
 	for _, name := range []string{
-		"util.fern", "lexer.fern", "parser.fern", "checker.fern", "count_type_args_run.fern",
+		"util.fern", "lexer.fern", "parser.fern", "astwalk.fern", "checker.fern", "count_type_args_run.fern",
 	} {
 		src, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
 		if err != nil {
