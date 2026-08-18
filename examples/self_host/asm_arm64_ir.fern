@@ -1978,15 +1978,22 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
 // the walk strides by. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
-// reloc_wanted: the relocation loop and the data it walks exist only for a
-// WHOLE-PROGRAM emit (str_ns == ""), whose pool is the single contiguous one the
-// walk assumes. A per-module unit emits its pool piecewise and gets neither.
-pub function reloc_wanted(s: asmcore.EmitState): boolean {
-    return s.str_ns.len() == 0;
+// reloc_wanted decides, for BOTH the relocation loop and the data it walks,
+// whether either exists. They have to agree: scaffolding without a loop is dead
+// weight that still changes the image (a `.data` section appearing in a program
+// that has no data is enough to fail a container assertion), and a loop without
+// scaffolding does not assemble.
+//
+// Mach-O is out because LC_DYLD_INFO rebase opcodes already add the slide.
+// A per-module unit is out because it emits its pool piecewise, while the walk
+// assumes the single contiguous pool only a whole-program emit produces — and
+// because several units link into one image, so the labels would collide.
+pub function reloc_wanted(s: asmcore.EmitState, darwin: boolean): boolean {
+    return !darwin && s.str_ns.len() == 0;
 }
 
 function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    if (darwin || !reloc_wanted(s)) { return s; }
+    if (!reloc_wanted(s, darwin)) { return s; }
     s = s.write("    adrp x9, .Lfern_relanchor\n");
     s = s.write("    add x9, x9, :lo12:.Lfern_relanchor\n");
     s = s.write("    ldr x10, [x9]\n");
@@ -2639,7 +2646,7 @@ function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
-pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
+pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     if (s.string_lits.len() > 0) {
         s = s.write("    .section .rodata\n");
         var li: i32 = 0;
@@ -2658,7 +2665,7 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
     // build links several units into one image and runs this per unit, so an
     // ungated emit defines every one of these labels once per unit and the
     // assembler rejects the duplicates.
-    var reloc: boolean = reloc_wanted(s);
+    var reloc: boolean = reloc_wanted(s, darwin);
     if (reloc) {
         s = s.write("    .section .data\n    .align 8\n");
         s = s.write(".Lfern_relanchor:\n    .quad .Lfern_relanchor\n");
@@ -4815,7 +4822,7 @@ function emit_rt_heap(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState 
     // sequences in the quoted string, so a `\n` byte in the
     // source string lands as a single LF in the resulting
     // .rodata bytes.
-    s = emit_rodata_pools_arm64(s);
+    s = emit_rodata_pools_arm64(s, darwin);
     // Heap allocator (arm64): 1 MiB .bss buffer + bump pointer.
     // Same shape as the x86-64 backend; instructions translated
     // to aarch64. Sets x0 = old ptr (return), advances the
@@ -6607,7 +6614,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
     if (is_entry) {
         s = emit_ir_runtime(s, false);
     } else {
-        s = emit_rodata_pools_arm64(s);
+        s = emit_rodata_pools_arm64(s, false);
     }
     return peephole_push_pop_arm64(strbuf_take());
 }
