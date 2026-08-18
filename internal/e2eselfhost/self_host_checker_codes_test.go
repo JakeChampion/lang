@@ -653,7 +653,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"slice-low-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[\"x\":3]; return 0; }\n", []string{"E037"}},
 		{"slice-high-non-i32", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:\"y\"]; return 0; }\n", []string{"E037"}},
 		{"slice-bounds-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = s[1:3]; return 0; }\n", nil},
-		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: string = s[:]; return 0; }\n", nil},
+		// `s[:]` is the full-range view (#6798 un-reserved it in the Go
+		// parser). Like every string slice since the #4813 P2 producer flip it
+		// yields `str`, so the sink is annotated `str` exactly as
+		// slice-bounds-ok's is — a `string` sink is an E003 asking for
+		// `.to_owned()`, which is the rule under test one line up, not this one.
+		{"slice-full-ok", "function main(): i32 { var s: string = \"hello\"; var t: str = s[:]; return 0; }\n", nil},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
