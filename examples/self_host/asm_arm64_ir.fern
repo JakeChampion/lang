@@ -2672,6 +2672,14 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState): asmcore.EmitState {
             shi = shi + 1;
         }
     }
+    // Hand back `.text`, which every caller emitting code after this one needs
+    // and the per-module pool site already restores by hand. It used to hold by
+    // accident: a program with no pooled data emitted nothing here and never
+    // left `.text` in the first place. The anchor above always emits, so a
+    // runtime helper appended after this would have been assembled INTO `.data`
+    // — its label then is not a text label, and the `bl` at its call site fails
+    // to resolve rather than mis-linking silently.
+    s = s.write("    .text\n");
     return s;
 }
 
