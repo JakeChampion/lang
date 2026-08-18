@@ -7676,15 +7676,87 @@ struct RExpr { rexpr: Expr, rins: Insts }
 struct RStmtOne { rstmt: Stmt, renv: MEnv, rins2: Insts }
 struct RStmts { rstmts: Stmt[], rins3: Insts }
 
-// bg_index returns the index in `funcs` of a bounded-generic function
-// named `name` (type_params non-empty, plain function), or -1.
-function bg_index(funcs: FuncDecl[], name: string): i32 {
+// MFns is the monomorphiser's view of the module's function table: the decls
+// themselves, plus the two lookups the rewrite consults per expression.
+//
+// `bg_find` answers only for BOUNDED-GENERIC free functions and `smm_any` only
+// for `__smm_`-folded struct-method generics — between them a few dozen decls
+// out of a whole-compiler module's ~4,600 — yet both used to scan all 4,600,
+// once per call expression and once per field access. That was 39 of 626
+// profile samples of a self-compile, the third cost after the append ratchet
+// and string compare (docs/PERFORMANCE-AUDIT-2026-08.md §4d.7). Indexing the
+// QUALIFYING decls alone makes the common answer, a miss, one hash and an
+// empty bucket.
+//
+// The index travels WITH the decls rather than beside them so the two cannot
+// be built from different arrays. Mirrors irlower.MFuncs, which does the same
+// for the closure-lift pass.
+pub struct MFns {
+    decls: FuncDecl[],
+    // Chained hash index over the generic free functions. ghead[b] is the first
+    // entry in bucket b (-1 when empty) and gnext chains within a bucket in
+    // ASCENDING entry order, so a chain walk answers with the same decl the
+    // linear scan reached first. gname[e] / gat[e] are the entry's name and its
+    // position in `decls`.
+    ghead: i32[],
+    gnext: i32[],
+    gname: string[],
+    gat: i32[],
+    // The `__smm_<Base>_<field>` fold names. A handful per module, and the test
+    // is a SUFFIX match rather than equality, so this one stays a scan.
+    smm: string[],
+}
+
+// mfns_buckets is the bucket count of the generic index. Prime, and far larger
+// than the ~170 generic free functions a whole-compiler module declares, so the
+// chains are almost all length 0 or 1.
+function mfns_buckets(): i32 { return 257; }
+
+// mfns_of builds the index. Chains are laid down by walking the qualifying
+// entries BACKWARD and pushing each onto the front of its bucket, which leaves
+// every chain ascending without a per-bucket tail.
+//
+// The decls array must not be rebound while the index is live. All three
+// monomorphise passes build it once from a field they never reassign — the
+// clones they produce accumulate in a separate list — so an entry position
+// means the same thing for the whole pass.
+pub function mfns_of(decls: FuncDecl[]): MFns {
+    var ghead: i32[] = [];
+    var b: i32 = 0;
+    var nb: i32 = mfns_buckets();
+    while (b < nb) { ghead = ghead.append(0 - 1); b = b + 1; }
+    var gname: string[] = [];
+    var gat: i32[] = [];
+    var smm: string[] = [];
     var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].type_params.len() > 0) {
-            return i;
+    while (i < decls.len()) {
+        if (decls[i].type_params.len() > 0 && decls[i].receiver_name.len() == 0) {
+            gname = gname.append(decls[i].name);
+            gat = gat.append(i);
         }
+        if (decls[i].name.len() > 6 && decls[i].name[0 : 6] == "__smm_") { smm = smm.append(decls[i].name); }
         i = i + 1;
+    }
+    var gnext: i32[] = [];
+    var j: i32 = 0;
+    while (j < gname.len()) { gnext = gnext.append(0 - 1); j = j + 1; }
+    var k: i32 = gname.len() - 1;
+    while (k >= 0) {
+        var bk: i32 = util.hash_bucket(gname[k], nb);
+        gnext = gnext.with(k, ghead[bk]);
+        ghead = ghead.with(bk, k);
+        k = k - 1;
+    }
+    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm };
+}
+
+// bg_find returns the position in `fns.decls` of the bounded-generic function
+// named `name` (type_params non-empty, plain function), or -1.
+function bg_find(fns: MFns, name: string): i32 {
+    var e: i32 = fns.ghead[util.hash_bucket(name, fns.ghead.len())];
+    while (e >= 0) {
+        if (fns.gname[e] == name) { return fns.gat[e]; }
+        e = fns.gnext[e];
     }
     return 0 - 1;
 }
@@ -8005,7 +8077,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
 // `return` in the body, typed under an env extended with the lambda's
 // own (declared) params. "" for a non-lambda arg or an unknown body type
 // — the call then stays generic exactly as before.
-function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+function lambda_ret_of(e: Expr, env: MEnv, funcs: MFns): string {
     match (e) {
         ExprLambda(lm) => {
             if (lm.ret_type.len() > 0) { return lm.ret_type; }
@@ -8035,7 +8107,7 @@ function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
         // nothing about the value, so leave it unknown as before.
         ExprIdent(fid) => {
             if (env.elook(fid.name).len() > 0) { return ""; }
-            return func_ret_of(funcs, fid.name);
+            return func_ret_of(funcs.decls, fid.name);
         },
         _ => { return ""; }
     }
@@ -8054,7 +8126,7 @@ function lambda_ret_of(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
 // unbound, the key is "", and the whole template is dropped (an
 // undefined-reference link error). Returns "" if any type parameter is
 // left unbound — the call then stays generic.
-function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[]): string {
+function infer_inst(fd: FuncDecl, args: Expr[], env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
@@ -8111,7 +8183,7 @@ function binds_to_key(tparams: string[], binds: MEnv): string {
 // template (T unbound), whose `Box { xs: [] }` can't lower and drags the
 // module to the AST emitter (std/set's `set_new` → segfault). Returns "" when
 // still incomplete (the call then stays generic, as before).
-function infer_inst_ret(fd: FuncDecl, args: Expr[], expected_ret: string, env: MEnv, funcs: FuncDecl[]): string {
+function infer_inst_ret(fd: FuncDecl, args: Expr[], expected_ret: string, env: MEnv, funcs: MFns): string {
     if (fd.type_params.len() == 0) { return ""; }
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
@@ -8194,7 +8266,7 @@ function type_str_vars(ty: string, acc: string[]): string[] {
 // bounded-only substitution (the `T` in `sort_key[T, K: Ord](xs, key):
 // T[]`, erased from fd.type_params). A fn-param's own return var is
 // bound from the lambda argument's return type (mirroring infer_inst).
-function full_ret_binds(fd: FuncDecl, args: Expr[], env: MEnv, funcs: FuncDecl[], vars: string[]): MEnv {
+function full_ret_binds(fd: FuncDecl, args: Expr[], env: MEnv, funcs: MFns, vars: string[]): MEnv {
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
     while (i < fd.params.len()) {
@@ -8242,15 +8314,15 @@ function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
     return "";
 }
 
-function call_ret_type(funcs: FuncDecl[], name: string, args: Expr[], env: MEnv): string {
+function call_ret_type(funcs: MFns, name: string, args: Expr[], env: MEnv): string {
     var fi: i32 = 0 - 1;
     var i: i32 = 0;
-    while (i < funcs.len()) {
-        if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) { fi = i; }
+    while (i < funcs.decls.len()) {
+        if (funcs.decls[i].name == name && funcs.decls[i].receiver_name.len() == 0 && funcs.decls[i].receiver_type.len() == 0) { fi = i; }
         i = i + 1;
     }
     if (fi < 0) { return ""; }
-    var fd: FuncDecl = funcs[fi];
+    var fd: FuncDecl = funcs.decls[fi];
     if (fd.type_params.len() == 0) { return fd.ret_type; }
     var key: string = infer_inst(fd, args, env, funcs);
     if (key.len() == 0) { return ""; }
@@ -8316,7 +8388,7 @@ pub function literal_is_i64(text: string): boolean {
     }
     return false;
 }
-function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
+function mono_infer(e: Expr, env: MEnv, funcs: MFns): string {
     match (e) {
         ExprNumber(n) => {
             if (n.is_float) { return "f64"; }
@@ -8377,7 +8449,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
             match (c.callee) {
                 ExprIdent(cid) => {
                     var crt: string = call_ret_type(funcs, cid.name, c.args, env);
-                    if (crt.len() == 0) { crt = func_ret_of(funcs, cid.name); }
+                    if (crt.len() == 0) { crt = func_ret_of(funcs.decls, cid.name); }
                     // A bare type variable as the inferred call type — `A` from a
                     // generic whose return type IS an UNBOUNDED type param
                     // (`fold[T, A, I]: A`): `A` is erased from `type_params`, so
@@ -8410,12 +8482,12 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     // type and substitute it into the method's return type, so a
                     // CHAINED call (`a.concat(b).concat(c)`) recovers the inner
                     // result type and the outer call rewrites onto the IR path too.
-                    var amgi: i32 = bg_index(funcs, "__arrm_" + cfa.field);
+                    var amgi: i32 = bg_find(funcs, "__arrm_" + cfa.field);
                     if (amgi >= 0) {
                         var recvt: string = mono_infer(cfa.obj, env, funcs);
                         if (type_ends_arr(recvt)) {
                             var el: str = recvt[0 : recvt.len() - 2];
-                            return subst_ty(funcs[amgi].ret_type, funcs[amgi].type_params, [el]);
+                            return subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el]);
                         }
                     }
                     // Generic-struct method with its own type params — folded to
@@ -8423,16 +8495,16 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                     // its result by instantiating the fold from the receiver +
                     // arguments, so a CHAINED or unannotated call still types.
                     var srt: string = "";
-                    if (smm_any_for_field(funcs, cfa.field)) { srt = mono_infer(cfa.obj, env, funcs); }
+                    if (smm_any(funcs, cfa.field)) { srt = mono_infer(cfa.obj, env, funcs); }
                     if (first_bracket(srt) > 0 && srt[srt.len() - 1 : srt.len()] == "]") {
-                        var sgi: i32 = bg_index(funcs, smm_name(strip_struct_base(srt), cfa.field));
+                        var sgi: i32 = bg_find(funcs, smm_name(strip_struct_base(srt), cfa.field));
                         if (sgi >= 0) {
                             var sargs: Expr[] = [cfa.obj];
                             var sk: i32 = 0;
                             while (sk < c.args.len()) { sargs = sargs.append(c.args[sk]); sk = sk + 1; }
-                            var skey: string = infer_inst(funcs[sgi], sargs, env, funcs);
+                            var skey: string = infer_inst(funcs.decls[sgi], sargs, env, funcs);
                             if (skey.len() > 0) {
-                                return subst_ty(funcs[sgi].ret_type, funcs[sgi].type_params, split_inst_key(skey));
+                                return subst_ty(funcs.decls[sgi].ret_type, funcs.decls[sgi].type_params, split_inst_key(skey));
                             }
                         }
                     }
@@ -8444,7 +8516,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
                         ExprIdent(oid) => {
                             var qrt: string = call_ret_type(funcs, oid.name + "." + cfa.field, c.args, env);
                             if (qrt.len() > 0) { return qrt; }
-                            return assoc_ret_of(funcs, oid.name, cfa.field);
+                            return assoc_ret_of(funcs.decls, oid.name, cfa.field);
                         },
                         _ => { return ""; }
                     }
@@ -8491,7 +8563,7 @@ function mono_infer(e: Expr, env: MEnv, funcs: FuncDecl[]): string {
 
 // mono_expr rebuilds `e`, rewriting any call to a bounded generic into
 // its mangled clone name and recording the instantiation.
-function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+function mono_expr(e: Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     match (e) {
         ExprBinary(b) => {
             var l: RExpr = mono_expr(b.left, env, funcs, ins);
@@ -8514,9 +8586,9 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
             }
             match (c.callee) {
                 ExprIdent(cid) => {
-                    var bi: i32 = bg_index(funcs, cid.name);
+                    var bi: i32 = bg_find(funcs, cid.name);
                     if (bi >= 0) {
-                        var ct: string = infer_inst(funcs[bi], c.args, env, funcs);
+                        var ct: string = infer_inst(funcs.decls[bi], c.args, env, funcs);
                         if (ct.len() > 0) {
                             // The clone NAME must be symbol-safe: a key that is a
                             // generic-struct instantiation (`iter__ArrayIter[i32]`,
@@ -8540,9 +8612,9 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     match (fac.obj) {
                         ExprIdent(modid) => {
                             var qn: string = modid.name + "." + fac.field;
-                            var bi2: i32 = bg_index(funcs, qn);
+                            var bi2: i32 = bg_find(funcs, qn);
                             if (bi2 >= 0) {
-                                var ct2: string = infer_inst(funcs[bi2], c.args, env, funcs);
+                                var ct2: string = infer_inst(funcs.decls[bi2], c.args, env, funcs);
                                 if (ct2.len() > 0) {
                                     cur = cur.iadd(qn, ct2);
                                     return RExpr { rexpr: ExprCall { callee: ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col, ty: fac.ty }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
@@ -8559,14 +8631,14 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     // Checked after the module-qualified case so a real
                     // `mod.f(args)` still wins.
                     var amn: string = "__arrm_" + fac.field;
-                    var amg: i32 = bg_index(funcs, amn);
+                    var amg: i32 = bg_find(funcs, amn);
                     if (amg >= 0) {
                         var rty: string = mono_infer(fac.obj, env, funcs);
                         if (type_ends_arr(rty)) {
                             var raw: Expr[] = [fac.obj];
                             var rk: i32 = 0;
                             while (rk < c.args.len()) { raw = raw.append(c.args[rk]); rk = rk + 1; }
-                            var ct3: string = infer_inst(funcs[amg], raw, env, funcs);
+                            var ct3: string = infer_inst(funcs.decls[amg], raw, env, funcs);
                             if (ct3.len() > 0) {
                                 var ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                                 cur = ro.rins;
@@ -8585,14 +8657,14 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     // to `__mapm_verb__<K>;<V>`. The Map sibling of the array arm
                     // above; checked after it so a `T[]` receiver still wins.
                     var mmn: string = "__mapm_" + fac.field;
-                    var mmg: i32 = bg_index(funcs, mmn);
+                    var mmg: i32 = bg_find(funcs, mmn);
                     if (mmg >= 0) {
                         var mrty: string = mono_infer(fac.obj, env, funcs);
                         if (mrty.len() >= 4 && mrty[0:4] == "Map[") {
                             var mraw: Expr[] = [fac.obj];
                             var mrk: i32 = 0;
                             while (mrk < c.args.len()) { mraw = mraw.append(c.args[mrk]); mrk = mrk + 1; }
-                            var mct: string = infer_inst(funcs[mmg], mraw, env, funcs);
+                            var mct: string = infer_inst(funcs.decls[mmg], mraw, env, funcs);
                             if (mct.len() > 0) {
                                 var mro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                                 cur = mro.rins;
@@ -8612,15 +8684,15 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
                     // concrete key. Struct mono runs AFTER this pass, so the
                     // receiver still reads as the generic `Box[i32]` spelling here.
                     var srty: string = "";
-                    if (smm_any_for_field(funcs, fac.field)) { srty = mono_infer(fac.obj, env, funcs); }
+                    if (smm_any(funcs, fac.field)) { srty = mono_infer(fac.obj, env, funcs); }
                     if (first_bracket(srty) > 0 && srty[srty.len() - 1 : srty.len()] == "]") {
                         var smn: string = smm_name(strip_struct_base(srty), fac.field);
-                        var smg: i32 = bg_index(funcs, smn);
+                        var smg: i32 = bg_find(funcs, smn);
                         if (smg >= 0) {
                             var sraw: Expr[] = [fac.obj];
                             var srk: i32 = 0;
                             while (srk < c.args.len()) { sraw = sraw.append(c.args[srk]); srk = srk + 1; }
-                            var sct: string = infer_inst(funcs[smg], sraw, env, funcs);
+                            var sct: string = infer_inst(funcs.decls[smg], sraw, env, funcs);
                             if (sct.len() > 0) {
                                 var sro: RExpr = mono_expr(fac.obj, env, funcs, cur);
                                 cur = sro.rins;
@@ -8721,15 +8793,15 @@ function mono_expr(e: Expr, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
 // Falls through to plain mono_expr when there is no expected type, the callee
 // isn't a bounded generic, or the instantiation still can't be resolved — a
 // strict superset of mono_expr for this position.
-function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: FuncDecl[], ins: Insts): RExpr {
+function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     if (expected.len() > 0) {
         match (e) {
             ExprCall(c) => {
                 match (c.callee) {
                     ExprIdent(cid) => {
-                        var bi: i32 = bg_index(funcs, cid.name);
+                        var bi: i32 = bg_find(funcs, cid.name);
                         if (bi >= 0) {
-                            var key: string = infer_inst_ret(funcs[bi], c.args, expected, env, funcs);
+                            var key: string = infer_inst_ret(funcs.decls[bi], c.args, expected, env, funcs);
                             if (key.len() > 0) {
                                 var nargs: Expr[] = [];
                                 var cur: Insts = ins;
@@ -8755,7 +8827,7 @@ function mono_call_expected(e: Expr, expected: string, env: MEnv, funcs: FuncDec
     return mono_expr(e, env, funcs, ins);
 }
 
-function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
+function mono_stmt(st: Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
             var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
@@ -8816,7 +8888,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
 // mono_stmts walks a statement list, threading the (block-local) env. `ret_ty`
 // is the enclosing function's declared return type, used by StmtReturn to bind
 // a `return <generic constructor>()` from it; "" at top-level / in a lambda.
-function mono_stmts(stmts: Stmt[], env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
+function mono_stmts(stmts: Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
@@ -9499,17 +9571,18 @@ function smm_name(base: string, method: string): string {
     return "__smm_" + base + "_" + method;
 }
 
-// smm_any_for_field reports whether ANY fold for the method name `field`
-// exists. The call-site arms consult this before inferring the receiver's
-// type, so a program with no such fold — every program the compiler and the
-// stdlib contain — pays one name scan and no inference, the same order of
-// work the array and map arms already do with their bg_index probe.
-function smm_any_for_field(funcs: FuncDecl[], field: string): boolean {
+// smm_any reports whether ANY fold for the method name `field` exists. The
+// call-site arms consult this before inferring the receiver's type, so a
+// program with no such fold — every program the compiler and the stdlib
+// contain — answers without inferring anything. The test is a SUFFIX match,
+// not equality (`__smm_Box_get_or` answers for `or` as well as for `get_or`),
+// which is why MFns keeps the fold NAMES rather than a set of field names.
+function smm_any(fns: MFns, field: string): boolean {
     var sfx: string = "_" + field;
     var i: i32 = 0;
-    while (i < funcs.len()) {
-        var n: string = funcs[i].name;
-        if (n.len() > 6 + sfx.len() && n[0 : 6] == "__smm_" && n[n.len() - sfx.len() : n.len()] == sfx) { return true; }
+    while (i < fns.smm.len()) {
+        var n: string = fns.smm[i];
+        if (n.len() > 6 + sfx.len() && n[n.len() - sfx.len() : n.len()] == sfx) { return true; }
         i = i + 1;
     }
     return false;
@@ -9597,6 +9670,7 @@ pub function monomorphize_module(mod: Module): Module {
     if (!any_bg) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
+    var fns: MFns = mfns_of(funcs);
     // Rewrite call sites in every NON-bounded function body. Bounded
     // generics themselves are dropped (replaced by clones), so their
     // bodies are rewritten later, per clone.
@@ -9608,7 +9682,7 @@ pub function monomorphize_module(mod: Module): Module {
             // skip — will be cloned
         } else {
             var env: MEnv = env_from_params(fd.params);
-            var rb: RStmts = mono_stmts(fd.body, env, funcs, ins, fd.ret_type);
+            var rb: RStmts = mono_stmts(fd.body, env, fns, ins, fd.ret_type);
             ins = rb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: fd.name, receiver_name: fd.receiver_name, receiver_type: fd.receiver_type,
@@ -9621,7 +9695,7 @@ pub function monomorphize_module(mod: Module): Module {
     }
     // Rewrite top-level stmts too.
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, funcs, ins, "");
+    var tr: RStmts = mono_stmts(mod.top_stmts, topenv, fns, ins, "");
     ins = tr.rins3;
 
     // Worklist: generate clones; a clone's own body may call bounded
@@ -9633,13 +9707,13 @@ pub function monomorphize_module(mod: Module): Module {
         var ct: string = ins.itypes[wi];
         if (done.ihas(nm, ct)) { wi = wi + 1; continue; }
         done = done.iadd(nm, ct);
-        var gi: i32 = bg_index(funcs, nm);
+        var gi: i32 = bg_find(fns, nm);
         if (gi >= 0) {
             var cl: FuncDecl = clone_bg(funcs[gi], ct);
             // Rewrite the clone's body so any bounded-generic calls it
             // makes resolve too (and enqueue their instantiations).
             var cenv: MEnv = env_from_params(cl.params);
-            var crb: RStmts = mono_stmts(cl.body, cenv, funcs, ins, cl.ret_type);
+            var crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, cl.ret_type);
             ins = crb.rins3;
             rewritten = rewritten.append(FuncDecl {
                 name: cl.name, receiver_name: "", receiver_type: "",
@@ -9785,7 +9859,7 @@ function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs:
 // value's inferred type against the field's declared type, exactly the
 // way a call's arguments pin its type parameters. Returns "" if any type
 // parameter is left unbound (the literal then stays erased).
-function infer_lit_key(gd: StructDecl, fnames: string[], fvals: Expr[], env: MEnv, funcs: FuncDecl[]): string {
+function infer_lit_key(gd: StructDecl, fnames: string[], fvals: Expr[], env: MEnv, funcs: MFns): string {
     var binds: MEnv = MEnv { mnames: [], mtypes: [] };
     var fi: i32 = 0;
     while (fi < gd.fields.len()) {
@@ -9817,7 +9891,7 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: Expr[], env: MEn
 // ms_expr rewrites a struct literal of a generic struct to its mangled
 // clone name (inferring the key from field values) and recurses through
 // every sub-expression, threading the instantiation accumulator.
-function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): RExpr {
+function ms_expr(e: Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
     match (e) {
         ExprBinary(b) => {
             var l: RExpr = ms_expr(b.left, env, gstructs, funcs, ins);
@@ -9993,7 +10067,7 @@ function retype_struct_lit(init: Expr, concrete: string, gstructs: StructDecl[])
 
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
-function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmtOne {
+function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         StmtVar(v) => {
             var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
@@ -10062,7 +10136,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
 // is the enclosing function's concrete (mangled) return type, used to retype a
 // `return <generic struct literal>` whose instantiation the field values can't
 // supply; "" at top-level / for non-struct returns (a no-op there).
-function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts, ret_ty: string): RStmts {
+function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
@@ -10079,7 +10153,7 @@ function ms_stmts(stmts: Stmt[], env: MEnv, gstructs: StructDecl[], funcs: FuncD
 
 // ms_func rewrites a non-generic function's param/return/receiver
 // annotations and body, recording any generic-struct instantiation used.
-function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: FuncDecl[], ins: Insts): FRes {
+function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts): FRes {
     var cur: Insts = ins;
     var nparams: ParamDecl[] = [];
     var i: i32 = 0;
@@ -10171,6 +10245,7 @@ pub function monomorphize_structs(mod: Module): Module {
     if (gstructs.len() == 0) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
+    var sfns: MFns = mfns_of(mod.funcs);
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -10200,7 +10275,7 @@ pub function monomorphize_structs(mod: Module): Module {
             // generic-struct method OR receiver-less associated fn (a derived
             // `default()`, receiver_name "") — dropped here, cloned in phase 2.
         } else {
-            var fr: FRes = ms_func(fn, gstructs, mod.funcs, ins);
+            var fr: FRes = ms_func(fn, gstructs, sfns, ins);
             ins = fr.fins;
             nfuncs = nfuncs.append(fr.ffn);
         }
@@ -10208,7 +10283,7 @@ pub function monomorphize_structs(mod: Module): Module {
     }
 
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, mod.funcs, ins, "");
+    var tr: RStmts = ms_stmts(mod.top_stmts, topenv, gstructs, sfns, ins, "");
     ins = tr.rins3;
 
     // Phase 2: generate clones; a worklist covers clones whose own field
@@ -10245,7 +10320,7 @@ pub function monomorphize_structs(mod: Module): Module {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, mod.funcs, ins, clm.ret_type);
+                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, sfns, ins, clm.ret_type);
                     ins = br2.rins3;
                     nfuncs = nfuncs.append(FuncDecl {
                         name: clm.name, receiver_name: clm.receiver_name, receiver_type: clm.receiver_type,
@@ -10560,8 +10635,8 @@ function variant_struct_index(structs: StructDecl[], vname: string, owner: strin
 // annotation (`var o: Opt[i32] = Sm(5)`), then from the payload argument
 // types unified against the variant struct's field types (`Sm(5)` → T=i32).
 // Returns "" (leave generic) if unresolved or composite.
-function me_infer_variant_key(ed: EnumDecl, vname: string, args: Expr[], expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[]): string {
-    var fromAnno: string = genum_key_from_anno(expected, ed.name, enums, funcs);
+function me_infer_variant_key(ed: EnumDecl, vname: string, args: Expr[], expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
+    var fromAnno: string = genum_key_from_anno(expected, ed.name, enums, funcs.decls);
     if (fromAnno.len() > 0) { return fromAnno; }
     var vidx: i32 = variant_struct_index(structs, vname, ed.name);
     if (vidx < 0) { return ""; }
@@ -10616,7 +10691,7 @@ function me_env_from_params(params: ParamDecl[]): MEnv {
 // clone names and recurses through every sub-expression. `expected` is the
 // type the expression flows into (a var annotation / return type), used to
 // pin a unit / ambiguous variant's instantiation; "" when unknown.
-function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RExpr {
+function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
     match (e) {
         ExprBinary(b) => {
             var l: RExpr = me_expr(b.left, "", env, enums, structs, funcs, ins);
@@ -10654,9 +10729,9 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             // single original-spelling arg.
             var argexp: string = "";
             if (vname.len() > 0) {
-                var ownerA: i32 = genum_owner_of_variant(enums, funcs, vname);
+                var ownerA: i32 = genum_owner_of_variant(enums, funcs.decls, vname);
                 if (ownerA >= 0 && enums[ownerA].type_params.len() == 1
-                    && genum_key_from_anno(expected, enums[ownerA].name, enums, funcs).len() > 0) {
+                    && genum_key_from_anno(expected, enums[ownerA].name, enums, funcs.decls).len() > 0) {
                     argexp = genum_single_arg(expected);
                 }
             }
@@ -10669,20 +10744,20 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             // generic `Non` struct and the dangling reference dragged the module
             // to the AST emitter (#5247).
             var calleeFn: string = "";
-            if (vname.len() > 0 && genum_owner_of_variant(enums, funcs, vname) < 0) { calleeFn = vname; }
+            if (vname.len() > 0 && genum_owner_of_variant(enums, funcs.decls, vname) < 0) { calleeFn = vname; }
             var nargs: Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < c.args.len()) {
                 var ae: string = argexp;
-                if (ae.len() == 0 && calleeFn.len() > 0) { ae = func_param_type_at(funcs, calleeFn, i); }
+                if (ae.len() == 0 && calleeFn.len() > 0) { ae = func_param_type_at(funcs.decls, calleeFn, i); }
                 var ra: RExpr = me_expr(c.args[i], ae, env, enums, structs, funcs, cur);
                 cur = ra.rins;
                 nargs = nargs.append(ra.rexpr);
                 i = i + 1;
             }
             if (vname.len() > 0) {
-                var owner: i32 = genum_owner_of_variant(enums, funcs, vname);
+                var owner: i32 = genum_owner_of_variant(enums, funcs.decls, vname);
                 if (owner >= 0) {
                     var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
                     if (key.len() > 0) {
@@ -10709,9 +10784,9 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         ExprIdent(id) => {
             // A bare unit-variant construction `Nn` — needs the expected
             // annotation to pin its instantiation (no payload to infer from).
-            var owner: i32 = genum_owner_of_variant(enums, funcs, id.name);
+            var owner: i32 = genum_owner_of_variant(enums, funcs.decls, id.name);
             if (owner >= 0) {
-                var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
+                var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs.decls);
                 if (key.len() > 0) {
                     var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
                     return RExpr { rexpr: ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col }, rins: nins };
@@ -10792,9 +10867,9 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
             match (fa.obj) {
                 ExprIdent(oid) => {
                     if (genum_index(enums, oid.name) >= 0) {
-                        var owner: i32 = genum_owner_of_variant(enums, funcs, fa.field);
+                        var owner: i32 = genum_owner_of_variant(enums, funcs.decls, fa.field);
                         if (owner >= 0) {
-                            var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs);
+                            var key: string = genum_key_from_anno(expected, enums[owner].name, enums, funcs.decls);
                             if (key.len() > 0) {
                                 var nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
                                 return RExpr { rexpr: ExprIdent { name: fa.field + "__" + key, line: fa.line, col: fa.col }, rins: nins };
@@ -10809,7 +10884,7 @@ function me_expr(e: Expr, expected: string, env: MEnv, enums: EnumDecl[], struct
         },
         ExprLambda(lm) => {
             var lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
-            return RExpr { rexpr: ExprLambda { ...lm, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs), body: lb.rstmts }, rins: lb.rins3 };
+            return RExpr { rexpr: ExprLambda { ...lm, ret_type: me_rewrite_ty(lm.ret_type, enums, funcs.decls), body: lb.rstmts }, rins: lb.rins3 };
         },
         _ => { return RExpr { rexpr: e, rins: ins }; }
     }
@@ -10926,7 +11001,7 @@ function me_tuple_elem_type(ty: string, field: string): string {
     return "";
 }
 
-function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[]): string {
+function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
     match (e) {
         ExprIdent(id) => { return env.elook(id.name); },
         ExprStructLit(s) => { return s.type_name; },
@@ -10939,7 +11014,7 @@ function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: Struc
                     // (`Opt[(i32) => i32]`), so ge_inst_of derives the same
                     // mangled key the construction rewrite used and the arms
                     // rewrite to the mangled variants (#5298 follow-up).
-                    var vgo: i32 = genum_owner_of_variant(enums, funcs, cid.name);
+                    var vgo: i32 = genum_owner_of_variant(enums, funcs.decls, cid.name);
                     if (vgo >= 0) {
                         var vgk: string = me_infer_variant_key(enums[vgo], cid.name, c.args, "", env, enums, structs, funcs);
                         if (vgk.len() > 0) {
@@ -10958,7 +11033,7 @@ function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: Struc
                     // Falls back to a top-level function's declared return type.
                     var fr: string = me_fn_ret_spelling(env.elook(cid.name));
                     if (fr.len() > 0) { return fr; }
-                    return func_ret_of(funcs, cid.name);
+                    return func_ret_of(funcs.decls, cid.name);
                 },
                 ExprFieldAccess(cfa) => {
                     // A METHOD call `recv.method(args)` as the scrutinee: resolve
@@ -10973,10 +11048,10 @@ function me_scrutinee_type(e: Expr, env: MEnv, enums: EnumDecl[], structs: Struc
                     if (rt.len() > 0) {
                         var rbase: string = strip_struct_base(rt);
                         var mi: i32 = 0;
-                        while (mi < funcs.len()) {
-                            if (funcs[mi].name == cfa.field && funcs[mi].receiver_type.len() > 0
-                                && strip_struct_base(funcs[mi].receiver_type) == rbase) {
-                                return funcs[mi].ret_type;
+                        while (mi < funcs.decls.len()) {
+                            if (funcs.decls[mi].name == cfa.field && funcs.decls[mi].receiver_type.len() > 0
+                                && strip_struct_base(funcs.decls[mi].receiver_type) == rbase) {
+                                return funcs.decls[mi].ret_type;
                             }
                             mi = mi + 1;
                         }
@@ -11060,12 +11135,12 @@ function me_bind_pat_vars(pat: Pattern, ed: EnumDecl, arg0: string, structs: Str
 // me_stmt mirrors mono_stmt for the enum pass: it rewrites generic-enum
 // annotations, variant constructions, and `match` arm patterns, threading
 // the var-type env (original spellings) and the enclosing return type.
-function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmtOne {
+function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RStmtOne {
     match (st) {
         StmtVar(v) => {
             var iv: RExpr = me_expr(v.init, v.type_name, env, enums, structs, funcs, ins);
-            var cins: Insts = me_collect_anno(v.type_name, enums, funcs, iv.rins);
-            var nty: string = me_rewrite_ty(v.type_name, enums, funcs);
+            var cins: Insts = me_collect_anno(v.type_name, enums, funcs.decls, iv.rins);
+            var nty: string = me_rewrite_ty(v.type_name, enums, funcs.decls);
             // Track the var's type for a later `match`: the annotation if
             // present, else the init's recovered type (a call result, so
             // `var o = wrap(4); match (o)` resolves like `match (wrap(4))`).
@@ -11147,7 +11222,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
             // ident / param / for-loop var, a call result (the callee's return
             // type), or an index into a generic-enum array.
             var sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs);
-            var gi: GEInst = ge_inst_of(sty, enums, funcs);
+            var gi: GEInst = ge_inst_of(sty, enums, funcs.decls);
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
@@ -11184,7 +11259,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
 }
 
 // me_stmts walks a statement list, threading the block-local env.
-function me_stmts(stmts: Stmt[], env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: FuncDecl[], ins: Insts): RStmts {
+function me_stmts(stmts: Stmt[], env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RStmts {
     var out: Stmt[] = [];
     var e2: MEnv = env;
     var cur: Insts = ins;
@@ -11222,6 +11297,7 @@ pub function monomorphize_enums(mod: Module): Module {
     if (!any) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
+    var efns: MFns = mfns_of(mod.funcs);
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
@@ -11230,7 +11306,7 @@ pub function monomorphize_enums(mod: Module): Module {
     while (fi < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi];
         var env: MEnv = me_env_from_params(fn.params);
-        var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, mod.funcs, ins);
+        var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, efns, ins);
         ins = rb.rins3;
         ins = me_collect_anno(fn.ret_type, mod.enums, mod.funcs, ins);
         var pj: i32 = 0;
@@ -11248,7 +11324,7 @@ pub function monomorphize_enums(mod: Module): Module {
         fi = fi + 1;
     }
     var topenv: MEnv = MEnv { mnames: [], mtypes: [] };
-    var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", mod.enums, mod.structs, mod.funcs, ins);
+    var tr: RStmts = me_stmts(mod.top_stmts, topenv, "", mod.enums, mod.structs, efns, ins);
     ins = tr.rins3;
 
     // Phase 1b: collect instantiations referenced by STRUCT FIELD types — a
