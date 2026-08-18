@@ -373,7 +373,8 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~The reclaim / sig registries: allocation-free decode, then stop copying module-wide rows per function~~ — **done**, #7020 + #7026 + #7036 + #7046 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the four; what is left is an index over the ~4,600-row SIG registries |
+| 10 | ~~The reclaim / sig registries: allocation-free decode, then stop copying module-wide rows per function~~ — **done**, #7020 + #7026 + #7036 + #7046 + #7048 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the five; what is left is an index over the ~4,600-row SIG registries |
+| 11 | **The method-receiver accumulator ratchet** — `arr_push_grow_ptr` is now the top cost and half of it is copies nothing needed | `internal/ir` (native rc) | §4d.5 — 71/400 samples, 52% of copies at `RC >= 2`, concentrated in `LowerState.emit` and `Scope.bind` |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -844,7 +845,83 @@ copies where it previously consumed a fresh array: #6988's ratchet, met from the
 other direction. A CSE that is obvious in an rc-free language is not obviously a
 win here.
 
+### 4d.5 `arr_push_grow_ptr` is the top cost, and half of it is not growth
+
+With the registry work done (§4d.4), a 400-sample profile of the self-compile
+puts **`__fern_arr_push_grow_ptr` at 71/400 inclusive (18%)** — the largest
+single cost, and 65 of its samples are `__fern_memcpy`. Growth is already
+`newCap = max(2*newLen, 4)`, textbook amortised doubling, so legitimate growth
+cannot account for it.
+
+**A new instrument attributes it.** The sampled backtrace cannot name the Fern
+caller of a runtime helper (frame #2 is `??`), but the copy path's FIRST
+instruction can: nothing has been pushed yet, so `[rsp]` is the return address
+and `rdi` still points at the buffer. Break there and every hit reports both the
+caller and the reason:
+
+```
+gdb -batch -x cmds ./fern-g            # cmds:
+  break *<addr of the copy-path label>   # x86-64: __fern_arr_push_grow_ptr+40
+  commands
+  silent
+  printf "RC %d CAP %d LEN %d FROM ", *(int*)($rdi-8), *(int*)($rdi-12), $esi
+  info symbol *(void **)$rsp
+  continue
+  end
+```
+
+`RC >= 2` means the copy was forced by a live alias — the ratchet — where
+`RC == 1 && LEN >= CAP` is real growth. Over 8,724 hits compiling one module:
+
+| | copies | top callers |
+|---|---|---|
+| `RC == 1` (real growth) | 4,181 (48%) | `assign_targets_into` 3,271 (mean len 1) |
+| **`RC >= 2` (ratchet)** | **4,543 (52%)** | `checker.Scope.bind` 2,200, `irlower.LowerState.emit` 1,307 |
+
+**Half of the top cost in the compiler is copies nothing needed.** The two
+dominant sites are its two hottest accumulators, and the buffers are not small:
+`LowerState.emit` copies mean 196 / median 70 / p90 683 / max 1,082 elements per
+hit; `Scope.bind` copies mean 5 but does it constantly.
+
+**Both are written the same way** — a struct-update spread that appends to one
+of the receiver's own fields, called as `st = st.emit(op)`:
+
+```fern
+pub function (s: LowerState) emit(op: ir.Op): LowerState {
+    return LowerState { ...s, ops: s.ops.append(op), ctrl: nctrl };
+}
+```
+
+**The hypothesis to test next, and it is testable.** This is the threaded-param
+struct accumulator `docs/OWNERSHIP-INFERENCE-PLAN.md` says was restored to O(N)
+on the natives — but its fix and its regression test
+(`TestX86_64SSAAccumThreadedParam`) are written in the FREE-FUNCTION spelling,
+`build(s: Bld, n)`. A minimal probe of both spellings of one accumulator, read
+with `__heap_bump_bytes()`, separates them:
+
+| spelling | bump bytes, n=20,000 | n=40,000 |
+|---|---|---|
+| `push_free(b, v)` | **0** | **0** |
+| `b.push_method(v)` | 229,024 | 229,376 |
+
+The free-function form allocates nothing net — every superseded buffer is freed
+and reused. The method-receiver form does not, which is exactly what the `RC >= 2`
+trace shows at `emit` and `bind`. So the likely gap is that the ownership fix
+does not reach the method-RECEIVER spelling, which is how the self-host compiler
+writes both of its hot accumulators. That is a native `internal/ir` question,
+not a self-host one.
+
 ## 8. Reproducing any of this
+
+**Build the A/B baseline from the SAME COMMIT, not just before your edit.**
+`CLAUDE.md`'s byte-comparison trap says to build the baseline binary before
+editing the file the compile reads. That is necessary and not sufficient: a
+baseline also goes stale the moment anything else merges. A baseline built two
+merges earlier reported a change as altering emitted code — an added
+`__fern_str_free` that came from somebody else's rc fix — and cost three bisect
+cycles chasing a predicate that had never diverged. Rebuild the baseline from
+the commit you are branching off, and re-clock A and B interleaved: this box's
+absolute speed drifts ~40% over an hour, so only interleaved pairs compare.
 
 The corpus and the gate landed with this audit:
 
