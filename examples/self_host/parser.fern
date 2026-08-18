@@ -949,6 +949,10 @@ function s_match_origin(scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, 
     var no_sugar: MatchArm[] = [];
     return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar };
 }
+// s_match_origin_sugared is s_match_origin plus the written-form arms.
+function s_match_origin_sugared(scrutinee: Expr, arms: MatchArm[], sugar: MatchArm[], line: i32, col: i32, origin: string): Stmt {
+    return StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar };
+}
 function p_variant(type_name: string, binding: string): Pattern {
     var no_extra: string[] = [];
     var no_nested: Pattern[] = [];
@@ -3813,6 +3817,7 @@ function parse_match_expr(p: Par): IfChain {
         return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
     }
     var arms: MatchArm[] = [];
+    var ewritten: MatchArm[] = [];
     var first: boolean = true;
     while (p.peek_punct() != "}" && !p.at_end()) {
         var aline: i32 = p.peek_line();
@@ -3865,6 +3870,7 @@ function parse_match_expr(p: Par): IfChain {
         if (first) { rt = art; first = false; } else { rt = wider_rt(rt, art); }
         var pi: i32 = 0;
         while (pi < pats.len()) {
+            ewritten = ewritten.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
             var (fa_pat, fa_g, fa_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
             arms = arms.append(MatchArm { pattern: fa_pat, body: abody, line: aline, col: acol, guard: fa_g, has_guard: fa_hg });
             pi = pi + 1;
@@ -3891,8 +3897,10 @@ function parse_match_expr(p: Par): IfChain {
         }
         return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0, ""), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
     }
+    var esugar: MatchArm[] = [];
+    if (arms_have_written_form(ewritten)) { esugar = ewritten; }
     arms = desugar_nested_arms(arms, 0, "");
-    return IfChain { par: p, stmt: s_match_at(sr_expr, arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
+    return IfChain { par: p, stmt: s_match_sugared(sr_expr, arms, esugar, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
 }
 
 // arms_have_tuple_subpattern reports whether any arm holds a tuple sub-pattern
@@ -5291,20 +5299,26 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                 ilelse = ileb_body;
             }
             var ilarms: MatchArm[] = [];
+            var ilwritten: MatchArm[] = [];
             var ilpi: i32 = 0;
             while (ilpi < ilpats.len()) {
+                ilwritten = ilwritten.append(MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
                 var (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
                 ilarms = ilarms.append(MatchArm { pattern: fi_pat, body: ilthen_body, line: 0, col: 0, guard: fi_g, has_guard: fi_hg });
                 ilpi = ilpi + 1;
             }
-            ilarms = ilarms.append(MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            var ilwild: MatchArm = MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false };
+            ilarms = ilarms.append(ilwild);
+            ilwritten = ilwritten.append(ilwild);
             // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
             // match arm does; the wildcard arm above is the outer fallthrough
             // desugar_nested_arms copies into the inner match, so a payload
             // matching no inner pattern runs the else rather than falling off
             // a non-exhaustive inner match.
             ilarms = desugar_nested_arms(ilarms, 0, "");
-            return (s_match_origin(ilscrut_expr, ilarms, 0, 0, "if_let"), p);
+            var ilsugar: MatchArm[] = [];
+            if (arms_have_written_form(ilwritten)) { ilsugar = ilwritten; }
+            return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, 0, 0, "if_let"), p);
         }
         if (p.peek_punct() != "(") {
             return (s_unknown("missing ( in if"), p);

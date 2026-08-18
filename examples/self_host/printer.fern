@@ -156,15 +156,21 @@ function print_expr_iife(c: parser.ExprCall): string {
             if (lm.params.len() != 0 || lm.body.len() != 1) { return ""; }
             match (lm.body[0]) {
                 parser.StmtMatch(m) => {
-                    if (m.arms.len() == 0) { return ""; }
+                    // The WRITTEN arms when the parse consumed something into
+                    // the lowering (a nested or literal payload) — otherwise a
+                    // `match (o) { A(Ok2(n)) => n, … }` reprints as the merged
+                    // arm and its inner match, wrapped back up in the IIFE.
+                    var marms: parser.MatchArm[] = m.arms;
+                    if (m.sugar.len() > 0) { marms = m.sugar; }
+                    if (marms.len() == 0) { return ""; }
                     var out: string = "match (" + print_expr(m.scrutinee) + ") { ";
                     var i: i32 = 0;
-                    while (i < m.arms.len()) {
-                        var av: string = print_return_only(m.arms[i].body);
+                    while (i < marms.len()) {
+                        var av: string = print_return_only(marms[i].body);
                         if (av.len() == 0) { return ""; }
                         if (i > 0) { out = out + ", "; }
-                        out = out + print_pattern(m.arms[i].pattern);
-                        if (m.arms[i].has_guard) { out = out + " when " + print_expr(m.arms[i].guard); }
+                        out = out + print_pattern(marms[i].pattern);
+                        if (marms[i].has_guard) { out = out + " when " + print_expr(marms[i].guard); }
                         out = out + " => " + av;
                         i = i + 1;
                     }
@@ -601,6 +607,37 @@ function print_match(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
         i = i + 1;
     }
     return (out + pad + "}", g);
+}
+
+// print_if_let reconstructs `if let PAT = EXPR { … }` (plus an optional
+// `else`) from the two-arm match the parser desugars it to: the leading arms
+// are the pattern alternatives and the trailing wildcard arm is the else.
+// StmtMatch.origin already recorded which form was written — only let_else was
+// reading it, so an `if let` reprinted as the desugared match, `_ => {}` and
+// all.
+function print_if_let(m: parser.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
+    // The written arms when a nested or literal payload was consumed into the
+    // lowering; otherwise the lowered ones already are the written ones.
+    var arms: parser.MatchArm[] = m.arms;
+    if (m.sugar.len() > 0) { arms = m.sugar; }
+    var g: Fmt = f;
+    var (then_block, g1) = print_block(arms[0].body, depth, g);
+    g = g1;
+    var out: string = "if let ";
+    var i: i32 = 0;
+    while (i + 1 < arms.len()) {
+        if (i > 0) { out = out + " | "; }
+        out = out + print_pattern(arms[i].pattern);
+        i = i + 1;
+    }
+    out = out + " = " + print_expr(m.scrutinee) + " " + then_block;
+    var els: parser.Stmt[] = arms[arms.len() - 1].body;
+    if (els.len() > 0) {
+        var (else_block, g2) = print_block(els, depth, g);
+        g = g2;
+        out = out + " else " + else_block;
+    }
+    return (out, g);
 }
 
 // print_let_else reconstructs `let PAT = EXPR else { … };` plus the statements
@@ -1042,6 +1079,7 @@ function print_stmt_body(st: parser.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             // a nested one. StmtMatch.origin already records which form was
             // written; the printer just had to read it.
             if (m.origin == "let_else" && m.arms.len() == 2) { return print_let_else(m, depth, f); }
+            if (m.origin == "if_let" && m.arms.len() >= 2) { return print_if_let(m, depth, f); }
             return print_match(m, depth, f);
         },
         parser.StmtFor(fo) => {
