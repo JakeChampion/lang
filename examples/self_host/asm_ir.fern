@@ -3863,6 +3863,41 @@ pub function str_lit_label(s: asmcore.EmitState, idx: i32): string {
     return ".S" + s.str_ns + "_" + util.i32_to_string(idx);
 }
 
+// str_box_label is the STATIC BOX for literal `idx` — the value a const_str
+// pushes. Namespaced exactly as str_lit_label, whose bytes it points at.
+pub function str_box_label(s: asmcore.EmitState, idx: i32): string {
+    if (s.str_ns.len() == 0) { return ".SB" + util.i32_to_string(idx); }
+    return ".SB" + s.str_ns + "_" + util.i32_to_string(idx);
+}
+
+// emit_str_box_data_from flushes one static box per interned literal as a GAS
+// `.data` block — shared verbatim by the x86-64 and arm64 emitters, whose string
+// box layout is identical (data@box+0, len@box+8, rc at box-8).
+//
+// Each block is what `__fern_str_box` built at runtime, with one difference: the
+// rc word is -1, the immortal sentinel every rc entry point already skips, and
+// which #6149's const-aggregate blocks already rely on. A literal is immutable
+// and compile-time known, so nothing about it is per-evaluation; building a box
+// at rc=1 each time it was evaluated is what #7080 measured leaking, because the
+// positions that read one (a comparison operand, a method receiver, a map key)
+// never gave it a slot to be reclaimed from.
+//
+// `.data` rather than `.rodata`: the block holds a relocated pointer, the same
+// reason emit_const_agg_data_from uses `.data`.
+pub function emit_str_box_data_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+    if (s.string_lits.len() <= first) { return s; }
+    var st: asmcore.EmitState = s.write("    .section .data\n    .align 8\n");
+    var i: i32 = first;
+    while (i < st.string_lits.len()) {
+        st = st.write("    .quad -1\n");                                            // rc @ box-8 (immortal)
+        st = st.write(str_box_label(st, i) + ":\n");
+        st = st.write("    .quad " + str_lit_label(st, i) + "\n");                  // data
+        st = st.write("    .quad " + util.i32_to_string(st.string_lits[i].len()) + "\n");  // len
+        i = i + 1;
+    }
+    return st;
+}
+
 // emit_const_agg_data flushes the unit's static aggregate constants (#6149) as
 // GAS `.data` blocks — shared verbatim by the x86-64 and arm64 emitters, which
 // have identical box layouts (`[shape_ptr@0, f0@8, …]`, cap at data-16, rc at
@@ -4600,16 +4635,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // this is the form for an address that has to be passed on.
             s = s.write("    popq %rcx\n    popq %rax\n    addq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 5) {  // const_str
-            // String literal: intern the bytes in .rodata, build an rc-headered box
-            // via __fern_str_box (#2649 Option A) — data = .rodata label, len = byte
-            // count. box = [rc=1][data][len]; data@box+0 / len@box+8 unchanged, so
-            // __fern_str_concat / _eq see the same layout. The rc header lets a fresh
-            // literal box (e.g. an accumulator's initial "") be reclaimed at rc==1.
+            // String literal: intern the bytes in .rodata and push the address of
+            // its STATIC box (emit_str_box_data_from). box = [rc=-1][data][len],
+            // so data@box+0 / len@box+8 are what __fern_str_concat / _eq already
+            // read, and the immortal rc makes every reclaim path a no-op.
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
-            s = s.write("    leaq " + str_lit_label(s, lo.idx) + "(%rip), %rdi\n");
-            s = s.write("    movq $" + util.i32_to_string(o.str.len()) + ", %rsi\n");
-            s = s.write("    call __fern_str_box\n");
+            s = s.write("    leaq " + str_box_label(s, lo.idx) + "(%rip), %rax\n");
             s = s.write("    pushq %rax\n");
         } else if (ir.is_str_op_kind(o.kind_tag)) {
             // All string operand-stack ops (len/index/slice/bytes/split/
@@ -6267,6 +6299,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
             s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+        s = emit_str_box_data_from(s, lit0);
         s = s.write("    .text\n");
     }
     // Same story for a static aggregate constant the helper body interns: the
@@ -6982,6 +7015,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
             s = s.write(str_lit_label(s, li) + ": .ascii \"" + asmcore.escape_for_ascii(s.string_lits[li]) + "\"\n");
             li = li + 1;
         }
+        s = emit_str_box_data_from(s, 0);
     }
     // .data: one block per static aggregate constant (#6149). After the string
     // pool, because a block's first word is a shape POINTER into it.
