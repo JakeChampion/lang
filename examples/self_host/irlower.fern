@@ -1584,6 +1584,19 @@ function sig_value_of(reg: string[], name: string): string {
     return "";
 }
 
+// sig_has_name: a "<name>|<value>" row for `name` is present. The registries
+// this asks about are module-wide and keyed by the text before the first '|',
+// so a row tagged with its own prefix ("RCE:" / "AAC:" / "ERRFRESH:") has a
+// head no bare callee name can equal, and answers no by construction.
+function sig_has_name(reg: string[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < reg.len()) {
+        if (tagged_value_start(reg[i], "", name) >= 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // sig_flag_at: the flag character recorded for parameter `idx` of `name` in a
 // "<name>|<flags>" registry — one character per parameter position — or 0 when
 // the name is absent, or records no flag that far out.
@@ -13240,7 +13253,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         tcm = tcm + 1;
     }
     // #4355: is the source box a FRESH producer's (every callee return a direct
-    // Ok/Err/Some/None ctor — "OPTFRESH:" seeded by lower_func)? Then the $try
+    // Ok/Err/Some/None ctor — the opt-fresh registry)? Then the $try
     // box is sole-owned and dead once consumed, so both consume edges free it:
     // the success path after the payload read (below), and the Option failure
     // path here (its box is a real rc-headered op_opt_none allocation on this
@@ -13256,7 +13269,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
                     // ownership is unknown) — the registry verdict doesn't
                     // apply, so the free is skipped (sound leak).
                     if (ts.slot_of(tfid.name) < 0
-                        && reclaim_has(ts.reclaimable_names, "OPTFRESH:", tfid.name)) { try_box_fresh = true; }
+                        && sig_has_name(ts.sigs.opt_fresh_ret_fns, tfid.name)) { try_box_fresh = true; }
                 },
                 _ => {}
             }
@@ -23482,7 +23495,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), optfresh_fresh_names_of(s.reclaimable_names), opterrfresh_names_of(s.reclaimable_names), true);
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.structs, optfresh_call_names_of(s.sigs.opt_fresh_ret_fns), optfresh_fresh_call_names_of(s.sigs.opt_fresh_ret_fns), opterrfresh_call_names_of(s.sigs.opt_fresh_ret_fns), true);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -23502,7 +23515,7 @@ pub function lower_block(stmts: parser.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_names_of(s.reclaimable_names), true);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.structs, optfresh_call_names_of(s.sigs.opt_fresh_ret_fns), true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -30573,26 +30586,9 @@ function fresh_scalar_option_call_init(v: parser.StmtVar, opt_fresh: string[]): 
     return false;
 }
 
-// optfresh_names_of pulls the bare callee names out of a LowerState
-// reclaimable_names list's "OPTFRESH:<name>" entries, for the block-level
-// consumed_scalar_enum_frees call which has the seeded list rather than the raw
-// registry. Entries the seeding derived from a TAGGED registry row ("RCE:" /
-// "AAC:") yield a name no real callee can match, so they are inert here.
-function optfresh_names_of(reclaim: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < reclaim.len()) {
-        var e: string = reclaim[i];
-        if (e.len() > 9 && bytes_at(e, 0, "OPTFRESH:")) { out = out.append(e[9:e.len()] + ""); }
-        i = i + 1;
-    }
-    return out;
-}
-
-// optfresh_call_names_of is the same list built from the RAW registry
-// (sg.opt_fresh_ret_fns, "name|ptype|flag"), for lower_func's two call sites —
-// one of which runs before the OPTFRESH seeding. Tagged rows ("RCE:" / "AAC:")
-// are skipped rather than yielding a junk name.
+// optfresh_call_names_of pulls the bare callee names out of the opt-fresh
+// registry ("name|ptype|flag"). Tagged rows ("RCE:" / "AAC:" / "ERRFRESH:")
+// carry no callee name and are skipped rather than yielding a junk one.
 function optfresh_call_names_of(entries: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -30624,16 +30620,6 @@ function optfresh_entry_payload_is_fresh(e: string): boolean {
 // The "f"-flagged siblings of the two extractors above: producers whose SUCCESS
 // payload is itself fresh, so a string payload may be released rather than only
 // the box. Same two sources — the seeded reclaimable_names and the raw registry.
-function optfresh_fresh_names_of(reclaim: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < reclaim.len()) {
-        var e: string = reclaim[i];
-        if (e.len() > 10 && bytes_at(e, 0, "OPTFRESHF:")) { out = out.append(e[10:e.len()] + ""); }
-        i = i + 1;
-    }
-    return out;
-}
 
 // The ERR-string-fresh producers, from the raw registry and from the seeded list
 // (#6360). Tagged rows rather than a second flag character, so every existing
@@ -30649,16 +30635,6 @@ function opterrfresh_call_names_of(entries: string[]): string[] {
     return out;
 }
 
-function opterrfresh_names_of(reclaim: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < reclaim.len()) {
-        var e: string = reclaim[i];
-        if (e.len() > 12 && bytes_at(e, 0, "OPTERRFRESH:")) { out = out.append(e[12:e.len()] + ""); }
-        i = i + 1;
-    }
-    return out;
-}
 
 function optfresh_fresh_call_names_of(entries: string[]): string[] {
     var out: string[] = [];
@@ -41516,42 +41492,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         }
         fnli = fnli + 1;
     }
-    // #4355: seed the opt-fresh producer NAMES as "OPTFRESH:<name>" so
-    // lower_try's `?`-edge source-box free can check callee eligibility from
-    // LowerState (33-field pin — no new registry field; prefix-tagged entries
-    // are the established convention, inert for every other consumer).
-    var ofr_i: i32 = 0;
-    while (ofr_i < sg.opt_fresh_ret_fns.len()) {
-        var ofr_e: string = sg.opt_fresh_ret_fns[ofr_i];
-        var ofr_bar: i32 = 0;
-        while (ofr_bar < ofr_e.len() && ofr_e[ofr_bar] != 124) { ofr_bar = ofr_bar + 1; }   // 124 = '|'
-        reclaim = reclaim.append("OPTFRESH:" + ofr_e[0:ofr_bar]);
-        // The "f"-flagged subset gets a second entry, so a STRING-payload call
-        // init can tell "the box is fresh" from "the payload is fresh too" —
-        // only the latter licenses __fern_str_free on it. A separate prefix
-        // rather than a flag on the entry above: the "OPTFRESH:<name>" lookups
-        // are exact-match, and "OPTFRESHF:"[0:9] is "OPTFRESHF", not
-        // "OPTFRESH:", so neither prefix test can see the other's rows.
-        // ERR-side sibling (#6360): the producer's every Err payload is a fresh
-        // string, which the flag above cannot say. Its rows are tagged, so the
-        // bar-scan never reaches them and they seed under their own prefix.
-        if (ofr_e.len() > 9 && bytes_at(ofr_e, 0, "ERRFRESH:")) {
-            reclaim = reclaim.append("OPTERRFRESH:" + ofr_e[9:ofr_e.len()]);
-        }
-        if (optfresh_entry_payload_is_fresh(ofr_e)) {
-            reclaim = reclaim.append("OPTFRESHF:" + ofr_e[0:ofr_bar]);
-        }
-        ofr_i = ofr_i + 1;
-    }
-    // #4355 slice 3: seed the STRFLDOK-admitted types (the whole-program
-    // string-field read scan) so struct_routes_field_reclaim and the
-    // construction retain can consult the verdict from LowerState. Same
-    // prefix-tag convention as OPTFRESH; inert for every other consumer.
-    var sfo_i: i32 = 0;
-    while (sfo_i < sg.strfld_ok_types.len()) {
-        reclaim = reclaim.append("STRFLDOK:" + sg.strfld_ok_types[sfo_i]);
-        sfo_i = sfo_i + 1;
-    }
     // #4355 slice 6: seed the borrowable-params entries ("name|flags") the
     // call lowering's literal-arg box reclaim (call_arg_borrowable) consults
     // from LowerState — but ONLY for callees this function actually calls
@@ -43032,7 +42972,7 @@ function body_has_nonfresh_opt_payload(stmts: parser.Stmt[], err: boolean): bool
 // static literal or a fresh string producer (so a string `?` binding may take
 // ownership — see collect_try_str_binding_names), else "a" (box-free only;
 // the aliased payload keeps its sound leak). lower_func seeds each name as
-// "OPTFRESH:<name>" into reclaimable_names so lower_try's consume-edge box
+// the opt-fresh registry, which lower_try's consume-edge box
 // free can check eligibility from LowerState (pinned at 33 fields — no new
 // registry field).
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
@@ -43720,8 +43660,8 @@ function strfld_collect_unsafe_stmts(stmts: parser.Stmt[], acc: string[]): strin
 // struct_routes_field_reclaim: slot type `sty` takes the __field_reclaim_<T>
 // consume-rebind path — either it carries an rc-array / nested-struct / enum
 // field (the original routing), or it is a STRING-fielded type admitted by
-// the whole-program read scan ("STRFLDOK:<T>" seeded into reclaimable_names
-// by lower_func — #4355 slice 3, the string-ONLY struct widening). The
+// the whole-program read scan (FnSigs.strfld_ok_types — #4355 slice 3, the
+// string-ONLY struct widening). The
 // construction-side retain (slit_reclaim in the ExprStructLit lowering) uses
 // the same disjunction so the field frees stay balanced.
 pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
@@ -43730,23 +43670,22 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
     // half of strfld_reclaim_ok_types_of) — routes so the backend
     // __struct_drop k_str_arr arm reaches the field.
     if (struct_has_strarr_field(s.structs, sty)
-        && reclaim_has(s.reclaimable_names, "STRFLDOK:arr:", sty)) { return true; }
+        && reclaim_has(s.sigs.strfld_ok_types, "arr:", sty)) { return true; }
     // fn-fielded (closure) type admitted by the clofld scan ("clo:"-tagged) —
     // routes so the backend k_clo arm shallow-frees the field's env box.
     if (struct_has_clo_field(s.structs, sty)
-        && reclaim_has(s.reclaimable_names, "STRFLDOK:clo:", sty)) { return true; }
+        && reclaim_has(s.sigs.strfld_ok_types, "clo:", sty)) { return true; }
     return struct_has_string_field(s.structs, sty)
-        && reclaim_has(s.reclaimable_names, "STRFLDOK:", sty);
+        && reclaim_has(s.sigs.strfld_ok_types, "", sty);
 }
 
 // strfld_reclaim_ok_types_of: struct types whose __field_reclaim_<T> body may
 // include the string arm — see the section comment for the contract. The
 // backends seed each admitted type as a "strfldok:<T>" need at their
-// whole-program emit orchestration (and lower_func seeds the SAME verdict as
-// "STRFLDOK:<T>" into reclaimable_names for the lowering-time routing +
-// construction-retain decisions — the two must agree, so both come from this
-// one scan); partial-funcs emit paths must pass [] funcs (admitting nothing)
-// rather than a unit-local list.
+// whole-program emit orchestration, and the lowering-time routing +
+// construction-retain decisions read this same list off FnSigs — the two must
+// agree, so both come from this one scan; partial-funcs emit paths must pass
+// [] funcs (admitting nothing) rather than a unit-local list.
 //
 // `borrowable` is the SAME registry the caller's FnSigs carries. The two must
 // come from one verdict: the interprocedural fixpoint admits more borrows than
@@ -43787,11 +43726,10 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: parse
         si = si + 1;
     }
     // string[]-FIELD admissions (the string[]-struct-field exit-drop slice),
-    // returned as "arr:"-prefixed entries in the SAME list: every caller's
-    // seeding loop threads them as "STRFLDOK:arr:<T>" (LowerState routing) /
-    // "strfldok:arr:<T>" (backend k_str_arr arm gate) automatically, and the
-    // prefixed spellings are inert for every exact "STRFLDOK:<T>" scalar
-    // lookup. A type T is admitted iff every one of its string[]-field NAMES
+    // returned as "arr:"-prefixed entries in the SAME list: the lowering asks
+    // for them under that tag and the backend gates its k_str_arr arm on
+    // "strfldok:arr:<T>", and the prefixed spellings are inert for every
+    // untagged scalar lookup. A type T is admitted iff every one of its string[]-field NAMES
     // is (a) never read outside a bare `.len()` borrow (strarrfld_scan — any
     // other read binds/escapes an ELEMENT alias the deep free would dangle:
     // element stores into a string[] are MOVES, so element rc does not count
