@@ -3957,6 +3957,8 @@ function parse_match_expr(p: Par): IfChain {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    var esugar: MatchArm[] = [];
+    if (arms_have_written_form(ewritten)) { esugar = ewritten; }
     // A TUPLE sub-pattern (`Pr((a, b))`) makes build_merged_arm splice the arm
     // bodies into build_tuple_match's done-flag chain, where an arm's `return`
     // leaves the enclosing function instead of yielding the expression's value.
@@ -3973,10 +3975,8 @@ function parse_match_expr(p: Par): IfChain {
             ntarms = ntarms.append(MatchArm { ...nta, body: value_arm_body(nta.body, ntval) });
             nti = nti + 1;
         }
-        return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0, ""), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
+        return IfChain { par: p, stmt: s_match_sugared(sr_expr, desugar_nested_arms(ntarms, 0, ""), esugar, mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
     }
-    var esugar: MatchArm[] = [];
-    if (arms_have_written_form(ewritten)) { esugar = ewritten; }
     arms = desugar_nested_arms(arms, 0, "");
     return IfChain { par: p, stmt: s_match_sugared(sr_expr, arms, esugar, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
 }
@@ -4838,7 +4838,7 @@ function arms_have_written_form(written: MatchArm[]): boolean {
         if (written[i].alt_cont) { return true; }
         match (written[i].pattern) {
             PatVariant(v) => {
-                if (v.nested.len() > 0 || v.has_lit_cond) { return true; }
+                if (v.nested.len() > 0 || v.has_lit_cond || v.tup_kinds.len() > 0) { return true; }
             },
             PatWildcard(w) => {}
         }
