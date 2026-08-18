@@ -9025,3 +9025,58 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   checked through the harness; `strarr-field-borrowed-param-still-excluded`
   passes on both sides and asserts values under recycling pressure. Two
   matching rows on the arm64 leg. Refs #6544 #6522 #4355 #4297 #4451.
+
+- 2026-08-18 (struct half, the forwarding frame): **`outer(a, b) { return mkp(a, b); }`
+  leaked the box it forwarded, and the strict-fresh registry is now a fixpoint
+  (#7062).**
+
+  The registry admitted only a body whose every return was a struct LITERAL, so a
+  frame that hands on another producer's result earned no entry and the CALLER's
+  binding got no reclaim credit at all. Not one box short — none freed:
+
+  | probe | allocs | frees |
+  |---|---|---|
+  | `var c: P = mkp(i, i+1)` — direct | 3 | 3 |
+  | `var c: P = outer(i, i+1)` — one frame between | 3 | **0** |
+
+  48 B a round on `struct P { a: i32, b: i32 }`, native 0. No strings, no arrays;
+  the string-bearing variants leak that same 48 plus their field, which is why
+  this looked like a string row when it first surfaced under #6522.
+
+  The forwarding arm rests entirely on the callee's own entry. `mkp` is admitted
+  because every return is a strict-fresh literal — so its result is a box it
+  allocated that nothing else references — and a frame that neither binds nor
+  aliases that result hands the caller the same sole reference. `return <ident>`
+  of a bound local stays refused: it could have been aliased in between.
+
+  That makes the bare-name half a LEAST FIXPOINT, because one frame's verdict now
+  depends on another's; a chain is admitted end to end and an ungrounded mutual
+  recursion stays uncredited. Two things keep it cheap, and they matter — the
+  first shape of this cost 6% of the self-host's own compile:
+
+  - later rounds re-walk only the still-UNCREDITED candidates, since the
+    classifier is monotone;
+  - the main pass no longer re-asks the question for a free function, reading its
+    membership in the fixpoint instead. Only a METHOD still walks there, and a
+    method can never be a forwarding callee (the arm resolves a bare ident).
+
+  Alternating measurements, `TestSelfHostStage2Compiler`: branch 38.04 / 38.15 s,
+  main 39.28 / 37.00 s — indistinguishable. Single unpaired runs on this box
+  scatter by ~15%, so a lone before/after pair on this instrument means nothing;
+  alternate them.
+
+  The arm refuses a callee name the frame declares as a local or takes as a
+  parameter — the same refusal `owned_fresh_call_callee` makes at the call site,
+  since either holds an unknown closure body rather than the registered producer.
+  **No probe witnesses that guard.** A lambda in a shadowing local still returns a
+  freshly allocated box, so the release stays balanced, and a capturing one that
+  returns a shared struct did not corrupt either. It is kept as the conservative
+  direction, not because a test proves it load-bearing.
+
+  VERIFIED: `forwarded-producer-flat` and `-chain-flat` fail at 98 on the parent;
+  `-through-aliasing-callee-safe` (an intermediate that returns its PARAMETER, so
+  never registered), `-ungrounded-cycle-safe` and `-survives-safe` pass on both
+  sides. x86-64 and wasm legs, plus `TestSelfHostRcPreciseDropX86IR`,
+  `TestSelfHostLiteralArgReclaim` on all three backends,
+  `TestSelfHostFreshContainerReadReclaimIRX86_64`, and the x86-64 fixture leg
+  (418 fixtures). Refs #7062 #6522 #4451.
