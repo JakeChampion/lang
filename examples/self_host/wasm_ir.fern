@@ -942,6 +942,28 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
         }
         fi = fi + 1;
     }
+    // A type with a $__field_reclaim_<T> but no $__struct_drop_<T> call still
+    // needs the struct-array ELEMENT bodies: the reclaim body deep-drops a
+    // replaced `E[]` field through $__struct_arr_elems_drop_E, which calls
+    // $__struct_drop_E. Add each such E (not T — nothing drops T) so the
+    // closure below expands E's own reclaimable fields.
+    var frt: string[] = field_reclaim_types(cache);
+    var fri: i32 = 0;
+    while (fri < frt.len()) {
+        var ffc: i32 = irlower.decl_field_count(structs, frt[fri]);
+        var fk: i32 = 0;
+        while (fk < ffc) {
+            var fft: string = irlower.decl_field_type_at(structs, frt[fri], fk);
+            if (irlower.is_struct_array_field_type(structs, fft)) {
+                var felem: str = fft[0 : fft.len() - 2];
+                if (irlower.nested_field_deep_drop_ok(structs, felem) && util.index_of_str(out, felem) < 0) {
+                    out = out.append(felem);
+                }
+            }
+            fk = fk + 1;
+        }
+        fri = fri + 1;
+    }
     // Transitive deep-drop closure (Perceus slice 3 deep-drop): emit_wasm_struct_drop_body
     // emits a recursive $__struct_drop_<Inner> call for each nested-struct field that is
     // deep-drop-ok. That recursive call is a backend instruction, not a lowered IR op, so
@@ -985,6 +1007,15 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
 // every needed helper.
 pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: parser.StructDecl[]): string[] {
     var sdt: string[] = struct_drop_types(cache, structs);
+    // The field-reclaim types need the same helpers: emit_wasm_field_reclaim_body
+    // deep-drops a replaced `E[]` field through $__struct_arr_elems_drop_E, and a
+    // rebound-but-never-dropped type is not in sdt.
+    var frt: string[] = field_reclaim_types(cache);
+    var fri: i32 = 0;
+    while (fri < frt.len()) {
+        sdt = sdt.append(frt[fri]);
+        fri = fri + 1;
+    }
     var out: string[] = [];
     var i: i32 = 0;
     while (i < sdt.len()) {
@@ -8445,13 +8476,13 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
     var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
     var frti: i32 = 0;
-    while (frti < frt.len()) {
-        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0);
-        frti = frti + 1;
-    }
     // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
     // registered field is buffer-only-freed (its elements are raw code addresses).
     var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    while (frti < frt.len()) {
+        out = out + emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, fpk);
+        frti = frti + 1;
+    }
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
         out = out + emit_wasm_struct_drop_body(sdt[sdti], mod.structs, mr_types, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk);
@@ -8625,14 +8656,15 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
 // the superseded `old` struct's rc-array field buffers are freed, then `old`'s
 // box itself via $__fern_snapshot_dec. For each ARRAY field (struct_field_kind_char
 // == "a") it frees old.field_k (SHALLOW — $__fern_arr_dec, matching the register
-// backends; a pointer-element field's element boxes are a known one-level gap on
-// every backend) iff old.field_k differs from BOTH new.field_k (cow — the rebind
+// backends; a struct/enum-array field goes through $__fern_arr_dec_ptr instead,
+// which releases the element boxes of a last-owner buffer as $__struct_drop
+// does) iff old.field_k differs from BOTH new.field_k (cow — the rebind
 // kept the buffer) and, when snap != 0, snap.field_k (the caller's borrowed
 // original). The field offset is the IR struct layout (`8 + i*8`), as in
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, fnptr_fields: string[]): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
     var si: i32 = 0;
@@ -8665,6 +8697,40 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                     var newf: string = "(i32.load offset=" + off + " (local.get $new))";
                     var snapf: string = "(i32.load offset=" + off + " (local.get $snap))";
                     var dec: string = "(drop (call $__fern_arr_dec " + oldf + "))";
+                    // A replaced struct-ARRAY / enum-ARRAY field (#7067) is
+                    // released DEEP via $__fern_arr_dec_ptr — which, exactly like
+                    // $__struct_drop_<T>'s arm, releases each element box only
+                    // when the buffer is the last owner (rc==1) and otherwise just
+                    // decs. Without it a rebound struct stranded one element box
+                    // per element per construction. Three conditions guard it:
+                    // sarr_ok is the whole-program admission (element-fresh
+                    // stores, .len()-only reads — without it the walk is a double
+                    // free for a field whose stores carry element pointers over,
+                    // `vals: d.vals.append(v)`); array_field_elem_is_ptr is the
+                    // same predicate $__struct_drop_<T> routes on, so an enum-array
+                    // whose element type carries no methods (classified scalar
+                    // "i" here) stays on the flat dec in BOTH helpers rather than
+                    // having raw slots walked as boxes; and a registered
+                    // plain-fn-pointer array field (#5235) stays flat too — its
+                    // elements are raw code addresses.
+                    if (sarr_ok
+                        && (irlower.is_struct_array_field_type(structs, ft) || irlower.is_enum_array_field_type(structs, ft))
+                        && array_field_elem_is_ptr(ft, structs, mr_types)
+                        && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs[si].fields[k].name)) {
+                        dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
+                        // MULTI-LEVEL element deep-drop (#2649), the same helper
+                        // $__struct_drop_<T>'s array arm calls first: release each
+                        // element's OWN rc fields before arr_dec_ptr frees the
+                        // element boxes. struct_drop_types seeds the field-reclaim
+                        // types into its closure, so $__struct_arr_elems_drop_E
+                        // and the $__struct_drop_E it calls are both emitted.
+                        if (irlower.is_struct_array_field_type(structs, ft)) {
+                            var elem_ty: str = ft[0 : ft.len() - 2];
+                            if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
+                                dec = "(drop (call $__struct_arr_elems_drop_" + elem_ty + " " + oldf + ")) " + dec;
+                            }
+                        }
+                    }
                     // cow: skip if old.field_k == new.field_k. Then snap guard,
                     // nested (NOT a flat i32.or) so snap.field_k is never loaded
                     // when snap == 0: dec if snap == 0, else dec iff
