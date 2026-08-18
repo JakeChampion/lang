@@ -23,6 +23,7 @@
 // Like asm_ir, this is a SEPARATE module imported only by its differential
 // driver (wasm_ir_run) — wasm.fern stays untouched until a later fold/flip.
 
+import "core/map";
 import "./parser";
 import "./util";
 import "./ir";
@@ -10737,102 +10738,42 @@ pub function parse_option_payload(t: string): string {
 }
 
 
-function expr_calls(e: parser.Expr, fn: string): boolean {
+// called_names is every function name `mod` calls by NAME, collected in ONE
+// walk. component_shape asks sixteen questions of it, and asking each of them
+// its own traversal is sixteen walks of the whole module.
+//
+// Only a direct `f(...)` callee counts, which is what the WASI categories are
+// spelled as; a method call reaches its receiver's type, not a name here.
+function call_name_of(e: parser.Expr, acc: Map[string, boolean]): Map[string, boolean] {
     match (e) {
-        parser.ExprUnary(u) => { return expr_calls(u.operand, fn); },
-        parser.ExprBinary(b) => { return expr_calls(b.left, fn) || expr_calls(b.right, fn); },
-        parser.ExprIndex(ix) => { return expr_calls(ix.array, fn) || expr_calls(ix.index, fn); },
-        parser.ExprSlice(sl) => { return expr_calls(sl.array, fn) || expr_calls(sl.start, fn) || expr_calls(sl.end, fn); },
-        parser.ExprTuple(tu) => {
-            var ti: i32 = 0;
-            while (ti < tu.elements.len()) {
-                if (expr_calls(tu.elements[ti], fn)) { return true; }
-                ti = ti + 1;
-            }
-            return false;
-        },
-        parser.ExprFieldAccess(fa) => { return expr_calls(fa.obj, fn); },
-        parser.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                if (expr_calls(a.elements[i], fn)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
-        parser.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                if (expr_calls(sl.field_values[i], fn)) { return true; }
-                i = i + 1;
-            }
-            return false;
-        },
         parser.ExprCall(c) => {
             match (c.callee) {
-                parser.ExprIdent(id) => { if (id.name == fn) { return true; } },
+                parser.ExprIdent(id) => { return acc.insert(id.name, true); },
                 _ => {},
             }
-            // Recurse the callee too — `args().len()` hides the args()
-            // call inside the .len() field-access receiver.
-            if (expr_calls(c.callee, fn)) { return true; }
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                if (expr_calls(c.args[i], fn)) { return true; }
-                i = i + 1;
-            }
-            return false;
         },
-        parser.ExprLambda(lm) => { return stmts_call(lm.body, fn); },
-        _ => { return false; },
+        _ => {},
     }
-    return false;
+    return acc;
 }
 
-function stmts_call(body: parser.Stmt[], fn: string): boolean {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        match (body[i]) {
-            parser.StmtVar(v) => { if (expr_calls(v.init, fn)) { return true; } },
-            parser.StmtAssign(a) => { if (expr_calls(a.value, fn)) { return true; } },
-            parser.StmtReturn(r) => { if (expr_calls(r.value, fn)) { return true; } },
-            parser.StmtExpr(e) => { if (expr_calls(e.value, fn)) { return true; } },
-            parser.StmtIf(f) => {
-                if (expr_calls(f.cond, fn)) { return true; }
-                if (stmts_call(f.then_body, fn)) { return true; }
-                if (stmts_call(f.else_body, fn)) { return true; }
-            },
-            parser.StmtWhile(w) => {
-                if (expr_calls(w.cond, fn)) { return true; }
-                if (stmts_call(w.body, fn)) { return true; }
-            },
-            parser.StmtFor(f) => {
-                if (expr_calls(f.iter, fn)) { return true; }
-                if (stmts_call(f.body, fn)) { return true; }
-            },
-            parser.StmtMatch(m) => {
-                if (expr_calls(m.scrutinee, fn)) { return true; }
-                var k: i32 = 0;
-                while (k < m.arms.len()) {
-                    if (stmts_call(m.arms[k].body, fn)) { return true; }
-                    k = k + 1;
-                }
-            },
-            _ => {},
+function called_names(mod: parser.Module): Map[string, boolean] {
+    var acc: Map[string, boolean] = map_new(64);
+    var t: i32 = 0;
+    while (t < mod.top_stmts.len()) {
+        acc = astwalk.fold_stmt(mod.top_stmts[t], acc, call_name_of);
+        t = t + 1;
+    }
+    var f: i32 = 0;
+    while (f < mod.funcs.len()) {
+        var i: i32 = 0;
+        while (i < mod.funcs[f].body.len()) {
+            acc = astwalk.fold_stmt(mod.funcs[f].body[i], acc, call_name_of);
+            i = i + 1;
         }
-        i = i + 1;
+        f = f + 1;
     }
-    return false;
-}
-
-function module_calls(mod: parser.Module, fn: string): boolean {
-    if (stmts_call(mod.top_stmts, fn)) { return true; }
-    var i: i32 = 0;
-    while (i < mod.funcs.len()) {
-        if (stmts_call(mod.funcs[i].body, fn)) { return true; }
-        i = i + 1;
-    }
-    return false;
+    return acc;
 }
 
 // component_shape classifies a program for the -target wasm32-wasi CLI.
@@ -10844,27 +10785,28 @@ function module_calls(mod: parser.Module, fn: string): boolean {
 //   0 no-I/O · 1 stdout · 2 fs-read · 3 fs-write · 4 fs-rw · 5 random
 //   6 env · 7 args · 8 clock(wall) · 9 clock(mono) · 13 stderr · 14 exit
 pub function component_shape(mod: parser.Module): i32 {
-    var io: boolean = module_calls(mod, "print") || module_calls(mod, "write")
-        || module_calls(mod, "putchar") || module_calls(mod, "print_int");
-    var rd: boolean = module_calls(mod, "read_file");
-    var wr: boolean = module_calls(mod, "write_file");
-    var env: boolean = module_calls(mod, "env");
+    var calls: Map[string, boolean] = called_names(mod);
+    var io: boolean = calls.has("print") || calls.has("write")
+        || calls.has("putchar") || calls.has("print_int");
+    var rd: boolean = calls.has("read_file");
+    var wr: boolean = calls.has("write_file");
+    var env: boolean = calls.has("env");
     // arg_at reads argv just as args() does, so it belongs to the args
     // category. Omitting it classified an arg_at program as plain-stdout and
     // wrapped it in component_full_io — a framing with no get-arguments to
     // satisfy the call (#5818).
-    var args: boolean = module_calls(mod, "args") || module_calls(mod, "arg_at");
+    var args: boolean = calls.has("args") || calls.has("arg_at");
     // Building a Map imports get-random-u64 with no explicit random call in the
     // program: core/map draws its per-process string-hash seed from the same
     // CSPRNG. module_uses_random counts that seed on the lowered side, where it
     // decides the core module's import, so this classification must agree — a
     // framing chosen without it cannot satisfy the import the core declares.
-    var rnd: boolean = module_calls(mod, "random_bytes") || module_calls(mod, "random_i32")
-        || module_calls(mod, "__map_hash_seed");
-    var clkw: boolean = module_calls(mod, "now_unix_ms") || module_calls(mod, "now_ns");
-    var clkm: boolean = module_calls(mod, "monotonic_ns");
-    var ep: boolean = module_calls(mod, "eprint");
-    var ex: boolean = module_calls(mod, "exit");
+    var rnd: boolean = calls.has("random_bytes") || calls.has("random_i32")
+        || calls.has("__map_hash_seed");
+    var clkw: boolean = calls.has("now_unix_ms") || calls.has("now_ns");
+    var clkm: boolean = calls.has("monotonic_ns");
+    var ep: boolean = calls.has("eprint");
+    var ex: boolean = calls.has("exit");
     // Count distinct non-stdout WASI categories. Single-category programs and
     // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
     // shape; anything else is rejected.
