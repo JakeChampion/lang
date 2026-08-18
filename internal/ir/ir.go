@@ -13134,10 +13134,10 @@ func (b *builder) callBody(n *ast.Call) error {
 	// key's buffer (boxed (data, len) cell), so __fern_str_inc it,
 	// balancing the __fern_str_dec in the __drop_map_str_keys walk
 	// at map drop. Fresh keys (concat / literal / call) are moved
-	// in with no inc. An OVERWRITE discards the freshly-boxed key
-	// (the runtime keeps the existing one), so an aliased overwrite
-	// key leaks its inc — safe (no double free), bounded, and keys
-	// already leaked entirely pre-slice.
+	// in with no inc. Either way the boxed key carries exactly one
+	// owned reference, which is what lets freeDiscardedSetKeyCell
+	// release it unconditionally when the set turns out to be an
+	// overwrite and the runtime keeps the key it already had.
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
 		ast.UseTwoWordStrings(b.ptrW) && needsRcIncOnAlias(n.Args[1], b) {
 		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
@@ -18969,12 +18969,32 @@ func (b *builder) emitMapCall(baseTarget string, baseArgc int32, kType ast.Type)
 // pointer is passed through; the entries array ends up holding
 // the cell pointers, transparent to the helper. Pairs with
 // emitWideMapGet on the read side.
+//
+// Only the INSERT branch of the helper takes the boxed key; an overwrite
+// keeps the equal key already in the column, so the cell and the string
+// reference it carries have to come back (freeDiscardedSetKeyCell, #6243).
 func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
+	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
 	if err := b.expr(n.Args[0]); err != nil {
 		return err
 	}
-	boxK := isStringForBoxing(kType, b.ptrW) || mapKeyKindTag(kType, b.ptrW) == 2
-	if err := b.pushMapMethodArg(n.Args[1], kType, boxK, "__map_set_kbox"); err != nil {
+	keyCell, preLen := int32(-1), int32(-1)
+	if boxK {
+		// Stash the receiver so its entry count can be read before the set
+		// consumes it — the insert-vs-overwrite test below.
+		mapSlot := b.allocSlot()
+		b.locals[fmt.Sprintf("__map_set_m_%d", mapSlot)] = mapSlot
+		b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+		preLen = b.allocSlot()
+		b.locals[fmt.Sprintf("__map_set_prelen_%d", preLen)] = preLen
+		b.emitMapLenLoad(mapSlot)
+		b.emit(Op{Kind: OpStoreLocal, I32: preLen})
+		b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+		var err error
+		if keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__map_set_kbox"); err != nil {
+			return err
+		}
+	} else if err := b.expr(n.Args[1]); err != nil {
 		return err
 	}
 	boxV := isWideScalar(vType) || isStringForBoxing(vType, b.ptrW)
@@ -18982,7 +19002,57 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 		return err
 	}
 	b.emitMapCall("__method_Map_set", 3, kType)
+	b.freeDiscardedSetKeyCell(keyCell, preLen, kType)
 	return nil
+}
+
+// emitMapLenLoad pushes the entry count of the Map handle in `slot`:
+// mem[mem[slot] + 4], the `len` field of the kv buffer (see core/map.fern's
+// layout header, and genMapStrColDropFn which reads it the same way).
+func (b *builder) emitMapLenLoad(slot int32) {
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+	b.emit(Op{Kind: OpConstI32, I32: 4})
+	b.emit(Op{Kind: OpAdd})
+	b.emit(Op{Kind: OpLoad})
+}
+
+// freeDiscardedSetKeyCell reclaims the key cell emitWideMapSet boxed when the
+// set turned out to be an OVERWRITE, which is the one branch of
+// __map_set_keyed_impl that does not take the incoming key.
+//
+// `len` grows by exactly one on the insert branch and is untouched by the
+// grow and by the COW copy, so an unchanged count is the exact test — and two
+// loads, against the extra hash a pre-lookup would cost on every set. The
+// set's result (a possibly COW-moved handle) is consumed off the operand
+// stack and pushed back, so this is stack-neutral.
+//
+// The string dec is unconditional here, unlike freeLookupKeyCell's: a key
+// boxed for a SET always carries one owned reference — a fresh key moves its
+// rc in, an aliased one is retained by the set's key retain in callBody —
+// where a read method's aliased key is only borrowed.
+func (b *builder) freeDiscardedSetKeyCell(cellSlot, preLen int32, kType ast.Type) {
+	if cellSlot < 0 {
+		return
+	}
+	resSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_set_res_%d", resSlot)] = resSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: resSlot})
+	b.emitMapLenLoad(resSlot)
+	b.emit(Op{Kind: OpLoadLocal, I32: preLen})
+	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	if _, isStr := kType.(ast.StringType); isStr {
+		b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+		b.emit(Op{Kind: OpLoad, Width: WidthString})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 }
 
 // emitMapGetRebox lowers `m.get(k)` by reboxing the helper's
