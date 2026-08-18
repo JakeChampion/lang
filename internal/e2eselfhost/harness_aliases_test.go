@@ -15,6 +15,7 @@ var buildLangBinForInterp = e2eharness.BuildLangBinForInterp
 var buildModloadArm64DriverX86 = e2eharness.BuildModloadArm64DriverX86
 var buildModloadDriverX86 = e2eharness.BuildModloadDriverX86
 var buildSelfHostBin = e2eharness.BuildSelfHostBin
+var childEnv = e2eharness.ChildEnv
 var cachedDriverBin = e2eharness.CachedDriverBin
 var cachedLink = e2eharness.CachedLink
 var compileAndRunArm64 = e2eharness.CompileAndRunArm64

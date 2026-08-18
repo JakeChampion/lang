@@ -231,8 +231,20 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 
 			run := func(bin, pkg string) (string, bool) {
 				cmd := exec.Command(bin, "-vendor", filepath.Join(pkg, c.target))
+				// childEnv on BOTH paths, not only when a cache dir is named:
+				// leaving cmd.Env nil inherits the whole environment just as
+				// surely, so an ambient FERN_CACHE_DIR would redirect the cache
+				// this row means to control (#6833).
+				//
+				// It does NOT make the row immune to FERN_SANITIZE: that is read
+				// in-process when the driver is EMITTED, so the binary carries
+				// the instrumentation and prints leak lines this differential
+				// then compares. That failure is loud and says so, which is the
+				// diagnostic mode working rather than something to route around.
 				if c.cache != "" {
-					cmd.Env = append(os.Environ(), "FERN_CACHE_DIR="+filepath.Join(pkg, c.cache))
+					cmd.Env = childEnv("FERN_CACHE_DIR=" + filepath.Join(pkg, c.cache))
+				} else {
+					cmd.Env = childEnv()
 				}
 				out, _ := cmd.CombinedOutput()
 				return string(out), cmd.ProcessState.ExitCode() == 0
