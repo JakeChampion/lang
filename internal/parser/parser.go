@@ -3959,8 +3959,8 @@ func (p *parser) buildMergedStmtArm(V, mod string, group []stmtRawArm, fall *ast
 		if coversEveryValue(innerPat) && g.guard == nil {
 			hasInnerWild = true
 		}
-		body := p.rebindStmtBody(g.pat, pos, tmps, g.body)
-		inner = append(inner, stmtRawArm{pat: innerPat, guard: g.guard, body: body})
+		body := p.rebindStmtBody(g.pat, tmps, g.body)
+		inner = append(inner, stmtRawArm{pat: innerPat, guard: p.rebindGuard(g.pat, tmps, g.guard), body: body})
 	}
 	// Route the outer fallthrough into this inner match so a payload matching
 	// none of the inner patterns runs the outer `_` body, not a non-exhaustive
@@ -4038,7 +4038,7 @@ func slotBinderOf(pat matchPattern, pos int) string {
 // slot the original arm named — every slot except the nested one (whose
 // sub-pattern introduces its own bindings). A flat sibling arm names the
 // nested slot too, so that slot is rebound as well.
-func (p *parser) rebindStmtBody(pat matchPattern, pos int, tmps []string, body *ast.Block) *ast.Block {
+func (p *parser) rebindStmtBody(pat matchPattern, tmps []string, body *ast.Block) *ast.Block {
 	var binds []ast.Stmt
 	for k, name := range pat.Bindings {
 		nested := k < len(pat.subPats) && pat.subPats[k] != nil
@@ -4717,8 +4717,8 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 		if coversEveryValue(innerPat) && g.guard == nil {
 			hasInnerWild = true
 		}
-		body := p.rebindExprBody(g.pat, pos, tmps, g.body)
-		inner = append(inner, exprRawArm{pat: innerPat, guard: g.guard, body: body})
+		body := p.rebindExprBody(g.pat, tmps, g.body)
+		inner = append(inner, exprRawArm{pat: innerPat, guard: p.rebindGuard(g.pat, tmps, g.guard), body: body})
 	}
 	if !hasInnerWild && fall != nil {
 		inner = append(inner, exprRawArm{pat: matchPattern{P: gp, IsWildcard: true}, body: ast.CloneExpr(fall)})
@@ -4741,11 +4741,27 @@ func (p *parser) buildMergedExprArm(V, mod string, group []exprRawArm, fall ast.
 	}, nil
 }
 
+// rebindGuard puts the plain payload slots in scope for a merged arm's GUARD.
+//
+// The guard runs BEFORE the inner arm's body, and rebindStmtBody/rebindExprBody
+// prepend the `var name = __nestK;` binders to that body — so a guard naming a
+// sibling slot (`Wrap(Ok2(n), m) when n > m`) resolved to nothing and drew
+// E001 on `m`. Wrapping the guard in the same BlockExpr the value form already
+// uses fixes it with the existing mechanism rather than a second one, and
+// because that is a real scope a lambda inside the guard still shadows
+// normally — which renaming the identifiers would have got wrong.
+func (p *parser) rebindGuard(pat matchPattern, tmps []string, guard ast.Expr) ast.Expr {
+	if guard == nil {
+		return nil
+	}
+	return p.rebindExprBody(pat, tmps, guard)
+}
+
 // rebindExprBody wraps an inner arm's value expression in a BlockExpr that
 // first rebinds each named plain payload slot (`var name = __nestK;`),
 // leaving the tail as the original value. Returns body unchanged when
 // there is nothing to rebind.
-func (p *parser) rebindExprBody(pat matchPattern, pos int, tmps []string, body ast.Expr) ast.Expr {
+func (p *parser) rebindExprBody(pat matchPattern, tmps []string, body ast.Expr) ast.Expr {
 	var binds []ast.Stmt
 	for k, name := range pat.Bindings {
 		nested := k < len(pat.subPats) && pat.subPats[k] != nil
