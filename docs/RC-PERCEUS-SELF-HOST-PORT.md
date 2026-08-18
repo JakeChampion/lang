@@ -9457,3 +9457,66 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   exclusion is a separate 277 and is a read-gate question, and the arg-temp work
   under #7039 / #7047 / #7049 covered BORROWABLE parameters only. Refs #6544
   #6522 #7061 #4451.
+
+- 2026-08-18: **#6527 — a `string[][]` whose ROW is a local earned no deep
+  reclaim at all, and the filed cause was not it.**
+
+  The issue attributed `alloc_flat_nested_string_array` to helper SELECTION —
+  the inner drop of a `string[][]` picking the pointer walk over the
+  string-aware one. That rule is already here: `arrarr_free_helper_of` picks
+  `__fern_strarrarr_free` by kind, and the rows-are-literals spelling has been
+  flat all along. The leak is in the FRESHNESS proof in front of it. Both
+  `arrarr_lit_is_fresh` and its strict string sibling required every row to be
+  an array LITERAL, so `var outer: string[][] = [inner, [..]]` earned no credit
+  and fell to a flat `__fern_arr_dec` per level, stranding every element string.
+
+  Read off the asm rather than inferred: the all-literal spelling emits two
+  `__fern_strarrarr_free` and no `arr_dec`; the ident-row spelling emits four
+  flat `__fern_arr_dec`, one `__fern_rc_inc` for the row, and no deep free
+  anywhere.
+
+  | probe (50 / 100 rounds) | before | after |
+  |---|---|---|
+  | `[inner, ["lit"]]` — the filed shape | 9672 / 19200 | **264 / 0** |
+  | `[inner]` alone | 6064 / 12000 | **184 / 0** |
+  | `return [inner, ["lit"]]` from a producer | — | **264 / 0** |
+  | all-literal rows (control) | 264 / 0 | 264 / 0 |
+  | single-level `string[]` (control) | 160 / 0 | 160 / 0 |
+
+  Both columns are measured on `cfd7d3b`, so they are reproducible as they
+  stand: #7080 landed between the first measurement and this one and took a
+  24 B literal box off every row, which moves both sides by the same amount.
+
+  A row that names a local is admitted when the construction is that local's
+  LAST USE: declared earlier in the same statement list from an array literal,
+  mentioned nowhere between, once here, never after. That is exactly the
+  invariant a literal row carries for free — its buffer is born in the slot —
+  so the deep reclaim frees nothing anything else still reads. The strict
+  string marker reads the row's elements off that same initializer, which is
+  what `arrarr_row_effective` returns, so a string-kind slot proves its element
+  pointers fresh the way it always did. The producer-return path (the `AAC:`
+  registry's two flags) reads the identical pair of gates and is widened with
+  them; leaving it behind would credit the bound spelling and refuse the
+  returned one.
+
+  **The predicted use-after-free did not materialise, and the guard is kept
+  anyway.** The earlier refutation expected a naive credit to dangle, since the
+  exit sweep runs in slot order and the row's dec precedes the outer's walk.
+  It does not: the row takes a counted retain when it is stored, so the outer's
+  deep free releases only its own reference and the order stops mattering. Four
+  shapes were built to break it with the guard REMOVED entirely — a row read
+  after, a row element aliasing a live string local read after, one row placed
+  into two arr-of-arrs, and a row rebound afterwards — and all four kept their
+  values (identical to native, 4840) with `__rc_underflow()` at 0. So the
+  last-use guard is the conservative direction and states the invariant the
+  design rests on; it is not held up by a test that fails without it. All four
+  are pinned as REFUSAL cases instead: values correct, over-release zero, and
+  deliberately not asserted flat, because a refused row still leaks as before.
+
+  The `alloc_flat_nested_string_array` row is deleted from all three
+  `selfhost-*-known-divergences.txt` files — the gate, since a listed case that
+  starts matching native fails those legs. All three targets now print
+  `3100 / 6200 / flat`, identical to native. Regression test:
+  `internal/e2eselfhost/self_host_arrarr_ident_row_reclaim_test.go` (three
+  backends, 7 cases; the three leak cases fail on the parent with 98).
+  Refs #6527 #6887 #4451.
