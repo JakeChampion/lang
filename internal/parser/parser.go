@@ -3818,6 +3818,17 @@ func (p *parser) freshNestName() string {
 	return fmt.Sprintf("__nest%d", n)
 }
 
+// freshDestructureName names the binder a NESTED tuple element gets in a
+// destructuring pattern — `let (a, (b, c)) = t;` binds the inner tuple to one
+// of these and destructures it again. Counter-based rather than
+// position-based: every level of one pattern shares the statement's position,
+// so a path like `((a, b), c)` beside `(x, (y, z))` would collide.
+func (p *parser) freshDestructureName() string {
+	n := p.nestN
+	p.nestN++
+	return fmt.Sprintf("__destruct_nest%d", n)
+}
+
 // desugarNestedStmtArms rewrites arms carrying nested sub-patterns
 // (`Some(Ok(n))`) into flat arms whose body re-matches the payload — so
 // every downstream stage (checker, IR) sees only ordinary flat arms plus
@@ -5225,7 +5236,7 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 	if err != nil {
 		return ast.Param{}, nil, err
 	}
-	d, err := p.irrefutableDestructure(pos, pat, paramSite)
+	d, err := p.irrefutableDestructure(pos, pat, paramSite, "")
 	if err != nil {
 		return ast.Param{}, nil, err
 	}
@@ -5263,10 +5274,15 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 // The two shapes that always match are a tuple of binders and `_`, and a
 // struct pattern. Everything else the shared grammar can express can
 // fail, and needs a `match` / `if let` / `let … else` instead.
-func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site string) (*ast.Destructure, error) {
+// tag distinguishes one NESTED level's synthesised names from its siblings':
+// every level of `let ((_, a), (_, b)) = t;` shares the statement's position,
+// so position alone would collide. The top level passes "" and keeps the
+// position-derived names it always had.
+func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site, tag string) (*ast.Destructure, error) {
 	switch {
 	case pat.TupleElems != nil:
 		names := make([]string, len(pat.TupleElems))
+		var nested []*ast.Destructure
 		for i, el := range pat.TupleElems {
 			switch {
 			case el.IsWildcard:
@@ -5276,11 +5292,21 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 			case el.VariantName != "":
 				return nil, p.refutableBindErr(pos, "a variant tuple element", site)
 			case el.Nested != nil:
-				// A nested tuple element always matches, so this is not the
-				// refutable-element diagnostic: the limit is that a
-				// destructure binds one flat level of a single tuple box.
-				return nil, p.errorfCode(pos, "P001",
-					"a nested tuple element is not supported in a %s pattern — bind the inner tuple to a name here and destructure it on the next line, or `match` on the value", site)
+				// A nested tuple element always matches, so it binds here
+				// rather than diagnosing: the element gets a synthesised
+				// binder and its own Destructure reading that binder, which
+				// is one more level of exactly this node.
+				name := p.freshDestructureName()
+				sub, err := p.irrefutableDestructure(pos, matchPattern{P: pos, TupleElems: el.Nested}, site, name)
+				if err != nil {
+					return nil, err
+				}
+				if nested == nil {
+					nested = make([]*ast.Destructure, len(pat.TupleElems))
+				}
+				names[i] = name
+				sub.Init = &ast.Ident{P: pos, Name: name}
+				nested[i] = sub
 			case el.Name != "":
 				names[i] = el.Name
 			default:
@@ -5290,12 +5316,12 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 				return nil, p.errorfCode(pos, "P001", "unsupported tuple element in a %s pattern", site)
 			}
 		}
-		return &ast.Destructure{P: pos, Names: discardNames(names, pos), Init: nil}, nil
+		return &ast.Destructure{P: pos, Names: discardNames(names, pos, tag), Nested: nested, Init: nil}, nil
 	case pat.NamedFields:
 		if len(pat.fieldNames) == 0 {
 			return nil, p.errorfCode(pos, "P001", "struct destructure needs at least one field")
 		}
-		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos), Fields: pat.fieldNames, StructName: pat.VariantName}, nil
+		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos, tag), Fields: pat.fieldNames, StructName: pat.VariantName}, nil
 	case pat.VariantName != "":
 		return nil, p.refutableBindErr(pos, "an enum variant pattern", site)
 	case pat.Literal != nil:
@@ -5308,9 +5334,13 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 // pattern may discard more than one position without the elements
 // colliding as a redeclared `_` (#6346 — `_` is a discard at every
 // binding site, never a variable). Non-discard names pass through.
-func discardNames(names []string, pos ast.Position) []string {
+func discardNames(names []string, pos ast.Position, tag string) []string {
 	out := make([]string, len(names))
 	for i, nm := range names {
+		if nm == "_" && tag != "" {
+			out[i] = fmt.Sprintf("__discard_%s_%d", strings.TrimPrefix(tag, "__"), i)
+			continue
+		}
 		out[i] = discardName(nm, pos, i)
 	}
 	return out
@@ -5357,7 +5387,7 @@ func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := p.irrefutableDestructure(kwPos, pat, destructureSite)
+	d, err := p.irrefutableDestructure(kwPos, pat, destructureSite, "")
 	if err != nil {
 		return nil, err
 	}

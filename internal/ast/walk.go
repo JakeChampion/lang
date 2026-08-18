@@ -262,6 +262,14 @@ func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
 		}
 	case *Destructure:
 		x.Init = rewriteExpr(x.Init, fn)
+		// A nested level is a whole Destructure of its own; its Init reads
+		// this level's synthesised binder, so a rewrite that renames or
+		// rewraps that binder has to reach it too.
+		for _, sub := range x.Nested {
+			if sub != nil {
+				rewriteStmtChildren(sub, fn)
+			}
+		}
 	case *ExprStmt:
 		x.Expr = rewriteExpr(x.Expr, fn)
 	case *Assign:
@@ -442,6 +450,11 @@ func walkChildren(n Node, fn func(Node) bool) {
 		}
 	case *Destructure:
 		Walk(x.Init, fn)
+		for _, sub := range x.Nested {
+			if sub != nil {
+				Walk(sub, fn)
+			}
+		}
 	case *ExprStmt:
 		Walk(x.Expr, fn)
 	case *Match:

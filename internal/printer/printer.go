@@ -233,14 +233,9 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 			b.WriteByte(';')
 			break
 		}
-		b.WriteString("let (")
-		for i, n := range x.Names {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(n)
-		}
-		b.WriteString(") = ")
+		b.WriteString("let ")
+		printDestructurePattern(b, x)
+		b.WriteString(" = ")
 		printExpr(b, x.Init)
 		b.WriteByte(';')
 	case *ast.ExprStmt:
@@ -618,4 +613,22 @@ func printType(t ast.Type) string {
 		return out + ") => " + printType(x.Result)
 	}
 	return ""
+}
+
+// printDestructurePattern renders a tuple destructure's pattern `(a, (b, c))`.
+// A nested position prints as its own pattern, not as the synthesised binder
+// the parser put in Names — that binder is a lowering detail.
+func printDestructurePattern(b *strings.Builder, x *ast.Destructure) {
+	b.WriteByte('(')
+	for i, n := range x.Names {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if i < len(x.Nested) && x.Nested[i] != nil {
+			printDestructurePattern(b, x.Nested[i])
+			continue
+		}
+		b.WriteString(n)
+	}
+	b.WriteByte(')')
 }

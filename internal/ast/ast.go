@@ -2670,6 +2670,25 @@ type Destructure struct {
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
 	Init       Expr
 	TempName   string // checker-stamped: name of the synthesised tuple/struct-holding local.
+	// Nested runs parallel to Names: a non-nil entry destructures that
+	// position AGAIN — `let (a, (b, c)) = t;`. Names[i] is then a
+	// synthesised binder holding the inner tuple and Nested[i] is a
+	// complete Destructure whose Init reads it, so every stage handles one
+	// level with the code it already had and recurses for the rest.
+	//
+	// A level per box is what the memory model wants anyway: the inner
+	// tuple is its own rc-tracked allocation, so it needs its own temp,
+	// alias-inc, loop-reclaim and exit sweep. Flattening the levels into
+	// extra offset hops off one temp would leave the inner box unowned.
+	//
+	// INVARIANT: Nested[i].Init is always an *Ident naming Names[i]. The
+	// parser is the only thing that builds these, and it always builds them
+	// that way, so a pass that only inspects Init (looking for calls, struct
+	// literals, consts, asserts) has nothing to find at a nested level and
+	// correctly stops at the top one. A pass that cares about DECLARED NAMES
+	// or about rewriting that ident — Walk, the checker, the IR, the
+	// interpreter, shadowrename, closure conversion — must recurse.
+	Nested []*Destructure
 }
 type ExprStmt struct {
 	P    Position

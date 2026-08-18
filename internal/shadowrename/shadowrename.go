@@ -190,6 +190,13 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 			n.Names[i] = r.bindShadow(name)
 			r.renameSyntheticLocal(n.P, name, n.Names[i])
 		}
+		// After this level's binders are bound: a nested level's Init reads
+		// one of them, so walking it now resolves through the new name.
+		for i := range n.Nested {
+			if n.Nested[i] != nil {
+				r.walkStmt(n.Nested[i])
+			}
+		}
 	case *ast.Return:
 		if n.Value != nil {
 			r.walkExpr(n.Value)

@@ -585,6 +585,42 @@ function s_var_at(name: string, type_name: string, init: Expr, line: i32, col: i
     return StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false };
 }
 
+// parse_destructure_names consumes `(a, b, …)` with the cursor ON the opening
+// `(`, returning the comma-joined binding encoding a tuple-destructure StmtVar
+// carries in its name. A NESTED element `(a, (b, c))` encodes as the inner list
+// in parens — `"a,(b,c)"` — and lower_var splits on TOP-LEVEL commas, binding
+// the parenthesised position to a temp it destructures again. ok=false when an
+// element is not a binder: native rejects the same shape, because a literal
+// element can fail to match and a destructuring bind has no else branch. The
+// count is this level's position count, which the no-singleton-tuples rule
+// needs and a comma scan cannot give (a nested position carries its own).
+function parse_destructure_names(p: Par): (string, i32, boolean, Par) {
+    p = p.advance(); // consume `(`
+    var names: string = "";
+    var count: i32 = 0;
+    var first: boolean = true;
+    while (p.peek_punct() != ")" && !p.at_end()) {
+        var part: string = "";
+        if (p.peek_punct() == "(") {
+            var (inner, inner_n, inner_ok, inner_p) = parse_destructure_names(p);
+            p = inner_p;
+            if (!inner_ok || inner_n < 2) { return ("", 0, false, p); }
+            part = "(" + inner + ")";
+        } else {
+            part = p.peek_ident();
+            if (part.len() == 0) { return ("", 0, false, p); }
+            p = p.advance();
+        }
+        if (!first) { names = names + ","; }
+        names = names + part;
+        first = false;
+        count = count + 1;
+        if (p.peek_punct() == ",") { p = p.advance(); }
+    }
+    if (p.peek_punct() == ")") { p = p.advance(); }
+    return (names, count, true, p);
+}
+
 // parse_struct_destructure consumes `{ x, y: b, .. } = E;` with the cursor
 // on the opening `{` (the struct-type name already consumed as `struct_name`).
 // It encodes the whole binding as ONE StmtVar the way tuple destructure does:
@@ -5296,25 +5332,11 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
         // ANY arity. The names are encoded comma-joined ("x,y,z"); the emitter
         // splits them and binds from the tuple's element slots.
         if (p.peek_punct() == "(") {
-            p = p.advance();
-            var tdnames: string = "";
-            var tdfirst: boolean = true;
-            while (p.peek_punct() != ")" && !p.at_end()) {
-                var tdn: string = p.peek_ident();
-                // A non-binder here (a literal, say) is consumed by neither
-                // branch below, so returning is what keeps the loop finite.
-                // Native rejects the same shape: a literal element can fail to
-                // match, and a destructuring bind has no else branch to take.
-                if (tdn.len() == 0) {
-                    return (s_unknown("a tuple destructuring pattern binds names, not literals"), p);
-                }
-                p = p.advance();
-                if (!tdfirst) { tdnames = tdnames + ","; }
-                tdnames = tdnames + tdn;
-                tdfirst = false;
-                if (p.peek_punct() == ",") { p = p.advance(); }
+            var (tdnames, tdcount, tdok, tdp) = parse_destructure_names(p);
+            p = tdp;
+            if (!tdok || tdcount < 2) {
+                return (s_unknown("a tuple destructuring pattern binds names, not literals"), p);
             }
-            if (p.peek_punct() == ")") { p = p.advance(); }
             if (p.peek_punct() == "=") { p = p.advance(); }
             var (tdinit_expr, tdinit_p) = parse_expr(p);
             p = tdinit_p;
@@ -6216,23 +6238,13 @@ function parse_tuple_param(p: Par): (ParamDecl, string, i32, i32, Par) {
     var tline: i32 = p.peek_line();
     var tcol: i32 = p.peek_col();
     var bad: ParamDecl = ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" };
-    p = p.advance(); // consume `(`
-    var names: string = "";
-    var count: i32 = 0;
-    while (true) {
-        var n: string = p.peek_ident();
-        if (n.len() == 0) { break; }
-        p = p.advance();
-        if (count > 0) { names = names + ","; }
-        names = names + n;
-        count = count + 1;
-        if (p.peek_punct() == ",") { p = p.advance(); continue; }
-        break;
-    }
-    if (p.peek_punct() == ")") { p = p.advance(); }
-    // At least 2 names (no-singleton-tuples rule), and the annotation
-    // is required.
-    if (count < 2) {
+    // The binding list is the same production a `let` destructure takes, so a
+    // nested position works here too — `((a, b), c): ((i32, i32), i32)`.
+    var (names, names_count, names_ok, names_p) = parse_destructure_names(p);
+    p = names_p;
+    // At least 2 positions (no-singleton-tuples rule), and the annotation is
+    // required.
+    if (!names_ok || names_count < 2) {
         return (bad, "", tline, tcol, p);
     }
     if (p.peek_punct() != ":") {

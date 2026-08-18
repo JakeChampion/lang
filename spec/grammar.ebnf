@@ -56,7 +56,14 @@ Param       = TupleParam | NamedParam ;
 NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
-TupleParam  = '(' IDENT { ',' IDENT } [ ',' ] ')' ':' Type ;
+# A tuple parameter binds by position, and every position is a name, a `_`
+# discard, or a nested list — the same shape the `let` destructure takes,
+# because both are irrefutable binding sites the one parser serves.
+TupleParam  = DestructureList ':' Type ;
+DestructureList
+            = '(' DestructurePos { ',' DestructurePos } [ ',' ] ')' ;
+DestructurePos
+            = IDENT | '_' | DestructureList ;
 
 StructDecl  = 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
 FieldDecl   = [ Visibility ] IDENT ':' Type [ ',' | ';' ] ;

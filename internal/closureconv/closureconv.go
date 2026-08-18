@@ -219,6 +219,11 @@ func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.Func
 		walkExprForNames(n.Init, selfName, siblings, seen)
 	case *ast.Destructure:
 		walkExprForNames(n.Init, selfName, siblings, seen)
+		for _, sub := range n.Nested {
+			if sub != nil {
+				walkStmtForNames(sub, selfName, siblings, seen)
+			}
+		}
 	case *ast.ExprStmt:
 		walkExprForNames(n.Expr, selfName, siblings, seen)
 	case *ast.Match:
@@ -550,6 +555,14 @@ func (c *converter) rewriteStmt(s ast.Stmt, ctx *captureCtx) (ast.Stmt, error) {
 			return nil, err
 		}
 		n.Init = nv
+		for _, sub := range n.Nested {
+			if sub == nil {
+				continue
+			}
+			if _, err := c.rewriteStmt(sub, ctx); err != nil {
+				return nil, err
+			}
+		}
 		return n, nil
 	case *ast.ExprStmt:
 		ne, err := c.rewriteExpr(n.Expr, ctx)

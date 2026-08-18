@@ -9876,7 +9876,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// init's evaluation and the per-name loads. Name is
 		// uniqued by source position so multiple destructures
 		// in the same function don't collide.
-		tempName := fmt.Sprintf("__destruct_%d_%d", n.P.Line, n.P.Col)
+		tempName := c.destructTempName(n.P)
 		n.TempName = tempName
 		tempVar := &ast.Var{P: n.P, Name: tempName, Type: tup}
 		s.names[tempName] = tup
@@ -9893,6 +9893,15 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			c.info.VarTypes[v] = elemT
 			c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
 		}
+		// A nested element's binder is now in scope, so its own Destructure
+		// — whose Init reads that binder — checks as an ordinary one. Running
+		// it in the SAME scope is what keeps the inner names visible to the
+		// rest of the block, the way the source spelling promises.
+		for i := range n.Nested {
+			if n.Nested[i] != nil {
+				c.checkStmt(n.Nested[i], s)
+			}
+		}
 	case *ast.ExprStmt:
 		c.checkExpr(n.Expr, s)
 		c.checkUnusedCollectionResult(n.Expr)
@@ -9901,6 +9910,31 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 	case *ast.FuncDecl:
 		c.checkLocalFunc(n, s)
 	}
+}
+
+// destructTempName names the hidden local that holds the value between a
+// destructure's init evaluation and its per-name loads. Source position is the
+// base, but not unique on its own: every level of a NESTED destructure shares
+// the statement's position, and two levels sharing one temp would leave the
+// inner level reading the outer level's layout.
+func (c *checker) destructTempName(pos ast.Position) string {
+	base := fmt.Sprintf("__destruct_%d_%d", pos.Line, pos.Col)
+	name := base
+	for n := 1; c.localDeclared(name); n++ {
+		name = fmt.Sprintf("%s_%d", base, n)
+	}
+	return name
+}
+
+// localDeclared reports whether the function being checked already has a local
+// of this name.
+func (c *checker) localDeclared(name string) bool {
+	for _, v := range c.info.Locals[c.current] {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // checkStructDestructure validates `let Point { x, y } = expr;` — Init
@@ -9937,7 +9971,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 			sub[tp] = st.Args[i]
 		}
 	}
-	tempName := fmt.Sprintf("__destruct_%d_%d", n.P.Line, n.P.Col)
+	tempName := c.destructTempName(n.P)
 	n.TempName = tempName
 	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
 	s.names[tempName] = st

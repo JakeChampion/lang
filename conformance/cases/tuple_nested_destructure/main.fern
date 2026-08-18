@@ -1,0 +1,88 @@
+// A NESTED tuple pattern at an irrefutable binding site: `let (a, (b, c)) = t;`.
+//
+// A destructure used to bind one flat level of one tuple box, so reaching an
+// inner tuple meant naming it and destructuring it on the next line. The
+// pattern now nests to any depth, at both binding sites the shared grammar
+// serves: the `let`/`var` statement and a destructuring PARAMETER.
+//
+// The lowering keeps one temp PER LEVEL rather than flattening the levels into
+// extra offset hops off a single temp. That is not an implementation
+// convenience: the inner tuple is its own rc-tracked box, so it needs its own
+// alias-inc, its own loop-body reclaim and its own scope-exit sweep. A flat
+// version would leave the inner box unowned. ast.Destructure.Nested carries
+// that structure — Names[i] is a synthesised binder holding the inner tuple and
+// Nested[i] is a complete Destructure reading it — so every stage handles one
+// level with the code it already had and recurses for the rest.
+//
+// The source shape survives to `-fmt`: the printer renders a nested position as
+// its own pattern rather than as the synthesised binder.
+//
+// The self-host reaches the same place from the other side. Its destructure is
+// one StmtVar whose name is the comma-joined binding list, so a nested position
+// rides as its own parenthesised list ("a,(b,c)"), lower_stmt_var splits on
+// TOP-LEVEL commas, and a parenthesised position binds a temp that the same
+// function destructures again. The second level already had to work — a tuple
+// element marks its slot's element tags so `var (s, b) = p` resolves — so the
+// recursion reuses it rather than adding a path.
+
+import "std/i32";
+
+// Pointer-shaped elements at BOTH levels, so the dup-on-projection inc and the
+// per-level exit sweep both have to be right.
+function pair(): ((string, i32[]), (i32, string)) {
+    return (("in", [1, 2, 3]), (7, "out"));
+}
+
+// Fresh boxes every iteration: the per-level loop-body reclaim has to release
+// the previous iteration's INNER box, not only the outer one.
+function loops(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        let (a, (b, c)) = (i, (i * 2, i * 3));
+        acc = acc + a + b + c;
+        i = i + 1;
+    }
+    return acc;
+}
+
+// Depth three.
+function deep(t: (i32, (i32, (i32, i32)))): i32 {
+    let (a, (b, (c, d))) = t;
+    return a * 1000 + b * 100 + c * 10 + d;
+}
+
+// `_` discards at two levels. Each is renamed to its own internal name, so two
+// discards in one pattern do not collide as a redeclared `_` — and the naming
+// is per LEVEL, because every level shares the statement's source position.
+function discards(t: (i32, (i32, i32))): i32 {
+    let (_, (_, c)) = t;
+    return c;
+}
+
+// A destructuring PARAMETER takes the same production.
+function param((a, (b, c)): (i32, (i32, i32))): i32 {
+    return a + b + c;
+}
+
+// Nesting in the FIRST position, and two nested positions in one pattern.
+function both(t: ((i32, i32), (i32, i32))): i32 {
+    let ((a, b), (c, d)) = t;
+    return a * 1000 + b * 100 + c * 10 + d;
+}
+
+function main(): i32 {
+    let ((s, arr), (n, s2)) = pair();
+    print(s);
+    print(arr.len().to_string());
+    print(arr[2].to_string());
+    print(n.to_string());
+    print(s2);
+
+    print(loops().to_string());
+    print(deep((1, (2, (3, 4)))).to_string());
+    print(discards((1, (2, 9))).to_string());
+    print(param((10, (20, 30))).to_string());
+    print(both(((1, 2), (3, 4))).to_string());
+    return 0;
+}
