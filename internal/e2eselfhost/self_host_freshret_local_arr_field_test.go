@@ -18,11 +18,15 @@ import (
 // single escape is the returned literal itself — so the returned box reaches the
 // caller as the sole owner of that buffer, exactly as a direct literal would.
 //
-// Both negatives below are the ways that proof can fail, and both must stay
+// The local may also be seeded by a CALL to an "ARR:" producer, which proves the
+// same sole-ownership one call further out; a producer that hands back its own
+// parameter earns no such entry, and that is what keeps the caller's buffer safe.
+//
+// The negatives below are the ways that proof can fail, and each must stay
 // DECLINED rather than merely happen to work: a field seeded from a PARAM
-// (freeing it would free the caller's buffer) and one local answering for TWO
-// fields (one rc, two field drops — a double free the literal form cannot even
-// express).
+// (freeing it would free the caller's buffer), a field seeded from a producer
+// that returns one, and one local answering for TWO fields (one rc, two field
+// drops — a double free the literal form cannot even express).
 var selfHostFreshRetLocalArrCases = []struct {
 	name string
 	src  string
@@ -71,6 +75,58 @@ function main(): i32 {
     if (w != 1000 || x != 1000) { return 97; }
     if (__rc_underflow() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
+    return 0;
+}`, 0},
+	// The producer-CALL spelling: the field's local is seeded by a call to an
+	// "ARR:" function rather than by a literal. That registry proves exactly what
+	// the literal does one call out — every return is a sole-owned scalar-element
+	// buffer the callee's frame allocated — so the returned box still reaches the
+	// caller as that buffer's only owner. 10400 B over the second churn on the
+	// parent commit (104 B/iteration), 0 after.
+	{"producer-call-array-field", `struct Q { xs: i32[], pos: i32 }
+function mk(n: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
+function mkq(k: i32): Q { var xs: i32[] = mk(k); return Q { xs: xs, pos: 1 }; }
+function churn(k: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) { var q: Q = mkq(i); t = t + q.pos + q.xs[3]; i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    var w: i32 = churn(100);
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var x: i32 = churn(100);
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (w != 5350 || x != 5350) { return 97; }
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 256) { return 98; }
+    return 0;
+}`, 0},
+	// Negative: the producer HANDS BACK ITS PARAMETER, so its result is the
+	// caller's buffer and not this frame's. It earns no "ARR:" entry, which is
+	// what has to keep the factory declined — crediting it would free `base`
+	// under the loop that keeps reading it. This is the boundary the
+	// producer-call row rests on, so it is carried beside it.
+	{"passthru-producer-declined", `struct Q { xs: i32[], pos: i32 }
+function passthru(p: i32[]): i32[] { return p; }
+function mkq(p: i32[]): Q { var xs: i32[] = passthru(p); return Q { xs: xs, pos: 1 }; }
+function work(k: i32): i32 {
+    var base: i32[] = [11, 22, 33];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) {
+        var q: Q = mkq(base);
+        t = t + q.pos;
+        var churn: i32[] = [i, i + 1, i + 2];
+        if (churn[0] != i) { return 96; }
+        i = i + 1;
+    }
+    if (base[0] != 11 || base[1] != 22 || base[2] != 33) { return 97; }
+    return t;
+}
+function main(): i32 {
+    if (work(60) != 60) { return 95; }
+    if (__rc_underflow() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Negative: the field is the caller's own buffer. Crediting the factory here

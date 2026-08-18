@@ -29838,19 +29838,19 @@ function local_decl_count(stmts: parser.Stmt[], name: string): i32 {
     return n;
 }
 
-// arr_field_ident_is_frame_built: `name` is an array LOCAL this frame built from
-// a literal, only ever self-appended to, and never escaped except into the
+// arr_field_ident_is_frame_built: `name` is an array LOCAL this frame owns from
+// its declaration, only ever self-appended to, and never escaped except into the
 // returned struct literal — so the returned box reaches the caller as the sole
 // owner of that buffer, exactly as a direct array literal in the field would.
 // The three predicates are the ones "ARR:" already uses for the same proof one
 // container out; the difference is only which single escape is forgiven.
-function arr_field_ident_is_frame_built(name: string, fnbody: parser.Stmt[]): boolean {
-    // Exactly one declaration, so the literal-init witness below cannot be a
-    // shadowed sibling of a `var xs = param` in another block — arr_local_has_
-    // literal_init answers on the first declaration it meets, and the two escape
-    // scans are name-keyed, so neither would see the second one.
+function arr_field_ident_is_frame_built(name: string, fnbody: parser.Stmt[], arr_fresh: string[]): boolean {
+    // Exactly one declaration, so the init witness below cannot be a shadowed
+    // sibling of a `var xs = param` in another block — arr_local_init_is_frame_
+    // fresh answers on the first declaration it meets, and the two escape scans
+    // are name-keyed, so neither would see the second one.
     if (local_decl_count(fnbody, name) != 1) { return false; }
-    if (!arr_local_has_literal_init(fnbody, name)) { return false; }
+    if (!arr_local_init_is_frame_fresh(fnbody, name, arr_fresh, fnbody)) { return false; }
     if (arr_reassigned_other_than_selfappend(fnbody, name)) { return false; }
     var no_borrow: string[] = [];
     return !body_unsafe_for_allow_structret(fnbody, name, no_borrow);
@@ -29920,7 +29920,7 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
     return false;
 }
 
-function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[]): boolean {
+function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[]): boolean {
     match (e) {
         parser.ExprStructLit(slit) => {
             if (!(decl_is_struct(structs, slit.type_name) && decl_is_leaksafe(structs, slit.type_name))) { return false; }
@@ -29942,7 +29942,7 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
                     match (v) {
                         parser.ExprIdent(vid) => {
                             if (!ok && struct_lit_field_ident_count(slit, vid.name) == 1
-                                && arr_field_ident_is_frame_built(vid.name, fnbody)) { ok = true; }
+                                && arr_field_ident_is_frame_built(vid.name, fnbody, arr_fresh)) { ok = true; }
                         },
                         _ => {}
                     }
@@ -29963,7 +29963,7 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
 // release under a pointer compare because those are the only two boxes it can
 // be. A body with no return at all answers false via the caller's
 // body_has_return check.
-function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string): boolean {
+function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -29973,27 +29973,27 @@ function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser
                     parser.ExprIdent(rid) => { if (rid.name == recv) { self_ret = true; } },
                     _ => {}
                 }
-                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody)) { return false; }
+                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh)) { return false; }
             },
-            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv)) { return false; } },
-            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv)) { return false; } },
-            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv)) { return false; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv)) { return false; } a = a + 1; } },
+            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh)) { return false; } },
+            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh)) { return false; } },
+            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh)) { return false; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh)) { return false; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
     }
     return true;
 }
-function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[]): boolean {
+function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody, arr_fresh)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -30087,23 +30087,41 @@ function body_has_nonident_arr_return(stmts: parser.Stmt[]): boolean {
     return false;
 }
 
-// arr_local_has_literal_init: `name` is declared in `stmts` as `var name = [ … ]`
-// (an empty `[]` qualifies — that is the accumulator idiom). Without this the
-// name could be seeded from a parameter and the caller would free the caller's
-// caller's buffer.
-function arr_local_has_literal_init(stmts: parser.Stmt[], name: string): boolean {
+// arr_local_init_is_frame_fresh: `name` is declared in `stmts` as `var name = [ … ]`
+// (an empty `[]` qualifies — that is the accumulator idiom) or as a call to a
+// producer in `arr_fresh`. Without this the name could be seeded from a
+// parameter and the caller would free the caller's caller's buffer.
+function arr_local_init_is_frame_fresh(stmts: parser.Stmt[], name: string, arr_fresh: string[], fnbody: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
             parser.StmtVar(v) => {
                 if (v.name == name) {
-                    match (v.init) { parser.ExprArray(_) => { return true; }, _ => { return false; } }
+                    match (v.init) {
+                        parser.ExprArray(_) => { return true; },
+                        // A call to an "ARR:" producer proves the same thing the
+                        // literal does — the returned buffer is a sole-owned rc=1
+                        // box this frame allocated — one call out. A LOCAL
+                        // shadowing the callee's name is refused: the registry is
+                        // keyed by declaration, so the name would resolve to
+                        // something the proof never saw.
+                        parser.ExprCall(c) => {
+                            match (c.callee) {
+                                parser.ExprIdent(cid) => {
+                                    return util.index_of_str(arr_fresh, cid.name) >= 0
+                                        && local_decl_count(fnbody, cid.name) == 0;
+                                },
+                                _ => { return false; }
+                            }
+                        },
+                        _ => { return false; }
+                    }
                 }
             },
-            parser.StmtIf(f) => { if (arr_local_has_literal_init(f.then_body, name) || arr_local_has_literal_init(f.else_body, name)) { return true; } },
-            parser.StmtWhile(w) => { if (arr_local_has_literal_init(w.body, name)) { return true; } },
-            parser.StmtFor(fo) => { if (arr_local_has_literal_init(fo.body, name)) { return true; } },
-            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_local_has_literal_init(m.arms[k].body, name)) { return true; } k = k + 1; } },
+            parser.StmtIf(f) => { if (arr_local_init_is_frame_fresh(f.then_body, name, arr_fresh, fnbody) || arr_local_init_is_frame_fresh(f.else_body, name, arr_fresh, fnbody)) { return true; } },
+            parser.StmtWhile(w) => { if (arr_local_init_is_frame_fresh(w.body, name, arr_fresh, fnbody)) { return true; } },
+            parser.StmtFor(fo) => { if (arr_local_init_is_frame_fresh(fo.body, name, arr_fresh, fnbody)) { return true; } },
+            parser.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (arr_local_init_is_frame_fresh(m.arms[k].body, name, arr_fresh, fnbody)) { return true; } k = k + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -30161,9 +30179,14 @@ function body_returns_local_built_arr(stmts: parser.Stmt[]): boolean {
     var names: string[] = arr_returned_ident_names(stmts, []);
     if (names.len() == 0) { return false; }
     var no_borrow: string[] = [];
+    // Literal inits only here: this predicate is what arr_fresh_ret_fns_of asks,
+    // so consulting that registry from inside it would be circular. A producer
+    // returning a local built from ANOTHER producer's result is a widening of
+    // its own, not this one.
+    var no_producers: string[] = [];
     var i: i32 = 0;
     while (i < names.len()) {
-        if (!arr_local_has_literal_init(stmts, names[i])) { return false; }
+        if (!arr_local_init_is_frame_fresh(stmts, names[i], no_producers, stmts)) { return false; }
         if (arr_reassigned_other_than_selfappend(stmts, names[i])) { return false; }
         if (body_unsafe_for_allow_ret(stmts, names[i], no_borrow)) { return false; }
         i = i + 1;
@@ -30345,6 +30368,27 @@ function decl_has_string_field(structs: parser.StructDecl[], sty: string): boole
     return false;
 }
 
+// arr_fresh_ret_fns_of: bare NAMES of FREE functions whose every return hands
+// back a SCALAR-element array box THIS frame allocated — a direct array literal,
+// or a local built from a literal and only ever self-appended to
+// (body_returns_local_built_arr). That is the "ARR:" registry's own admission
+// rule, lifted out so the strict-fresh struct walk can ask the same question
+// about a field value's producer instead of re-deriving it.
+pub function arr_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
+                && body_has_return(funcs[k].body)
+                && (!body_has_nonfresh_arrlit_return(funcs[k].body)
+                    || body_returns_local_built_arr(funcs[k].body))) {
+            out = out.append(funcs[k].name);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     // The whole-program str-fresh-ret registry, needed to prove a `string`
@@ -30361,17 +30405,17 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         pk = pk + 1;
     }
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
+    var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body)) {
+        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh)) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
         }
         // "ARR:<name>" entries (#4365): FREE functions returning a SCALAR-element
-        // array (is_leaksafe_array_field ret type) whose every return is a direct
-        // array literal. Rides this registry (prefix-multiplexed, the reclaimable_
+        // array box this frame allocated. Rides this registry (prefix-multiplexed, the reclaimable_
         // names convention) so the discarded-call reclaim in lower_stmt reads it
         // off LowerState with no new threading; every other consumer looks up bare
         // names / "<Base>.<method>" keys, which an "ARR:"-prefixed entry can never
@@ -30381,15 +30425,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // ownedCallResultType arc; the box is fresh-by-construction in return
         // position, so the dec is balanced and element-blind).
         //
-        // Two return shapes qualify, and they are disjoint by construction: a
-        // direct array LITERAL, or a LOCAL this frame built from a literal and
-        // only ever self-appended to (body_returns_local_built_arr). The second
-        // is how a producer is normally written, and admitting it is what makes
-        // the accumulator idiom reclaimable rather than a per-call leak.
-        if (funcs[k].receiver_type.len() == 0 && is_leaksafe_array_field(funcs[k].ret_type)
-                && body_has_return(funcs[k].body)
-                && (!body_has_nonfresh_arrlit_return(funcs[k].body)
-                    || body_returns_local_built_arr(funcs[k].body))) {
+        // Which functions qualify is arr_fresh_ret_fns_of's question, asked once
+        // above so the strict-fresh struct walk can ask the same one.
+        if (util.index_of_str(arr_fresh, funcs[k].name) >= 0) {
             out = out.append("ARR:" + funcs[k].name);
         }
         // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
@@ -30421,7 +30459,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // could carry the receiver's own box.
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
-                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body)
+                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh)
                 && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
             var skey: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { skey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
@@ -30444,7 +30482,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         if (funcs[k].receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && body_has_return(funcs[k].body)
                 && body_returns_bare_ident(funcs[k].body, funcs[k].receiver_name)
-                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name)) {
+                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh)) {
             out = out.append("FRESHSELF:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
