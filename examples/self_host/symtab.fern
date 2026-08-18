@@ -11,11 +11,12 @@
 //
 // Representation: a `string[]` (id -> name) with a linear-scan lookup, matching
 // how the compiler already models every other symbol-ish set (util.index_of_str
-// is used ~100× in irlower alone) and pulling in no runtime-map dependency — the
-// self-host compiler itself uses no `core/map`. The representation is a
-// deliberately deferred, benchmarked decision (docs/SELFHOST-SYMBOL-INTERNING.md):
-// an open-addressed / map-backed index is a drop-in follow-up behind this exact
-// intern/name_of contract if the 500×20 self-compile profile calls for it.
+// is used ~100× in irlower alone). A `Map[string, i32]` index is a drop-in
+// follow-up behind this exact intern/name_of contract, and since #6993 slice
+// four there is nothing left to prove about `core/map` in the compiler's own
+// sources — irverify's NameIndex is one. What is still deferred is the
+// measurement (docs/SELFHOST-SYMBOL-INTERNING.md): this table is not yet
+// consumed by the pipeline, so no profile calls for it.
 //
 // Threaded functionally like Lex / EmitState: intern returns the (possibly
 // extended) table alongside the id, so a caller does `var r = t.intern(n); t =

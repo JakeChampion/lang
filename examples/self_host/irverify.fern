@@ -24,6 +24,7 @@
 // RESOLUTION is irverifyprovided.fern (slice 4), which reports the callee this
 // file's arity check deliberately leaves alone.
 
+import "core/map";
 import "./ir";
 import "./util";
 
@@ -70,119 +71,55 @@ pub struct FnSig { name: string, n_params: i32 }
 
 // ---- the name index ----------------------------------------------------
 
-// NameIndex is a lookup over the program's declared names, bucketed so a
-// lookup does not scan the whole set. The self-host compiler declares ~3000
-// functions and emits tens of thousands of calls, so a linear scan per call op
-// makes a pass quadratic on the one program it most needs to check.
+// NameIndex is a lookup over the program's declared names. The self-host
+// compiler declares ~3000 functions and emits tens of thousands of calls, so a
+// linear scan per call op makes a pass quadratic on the one program it most
+// needs to check.
 //
-// Three flat arrays rather than a `string[][]`: `starts` holds each bucket's
-// first index into `items` (length n_buckets + 1, so bucket b spans
-// [starts[b], starts[b+1])), `items` holds the names grouped by bucket, and
-// `nparams` the parameter count beside each name, or -1 where the caller only
-// asked for membership.
-pub struct NameIndex { starts: i32[], items: string[], nparams: i32[] }
-
-function n_buckets(): i32 { return 1024; }
-
-// bucket_of hashes a name to its bucket. Ordinary polynomial hashing; the
-// multiply is allowed to wrap, which is what makes it a hash.
-function bucket_of(name: string): i32 {
-    var h: i32 = 0;
-    var i: i32 = 0;
-    while (i < name.len()) {
-        h = h * 31 + (name[i] as i32);
-        i = i + 1;
-    }
-    // Negate rather than mask, and treat the one value whose negation is
-    // itself (i32 min) as bucket 0 — `%` on a negative would index backwards.
-    if (h < 0) { h = 0 - h; }
-    if (h < 0) { return 0; }
-    return h % n_buckets();
-}
-
-// build_index groups (names, nparams) by bucket. Counting pass, prefix sum,
-// placement pass — so it is linear in the number of names rather than
-// quadratic. `nparams` is index-parallel to `names`.
-function build_index(names: string[], nparams: i32[]): NameIndex {
-    var nb: i32 = n_buckets();
-    var counts: i32[] = [];
-    var i: i32 = 0;
-    while (i <= nb) { counts = counts.append(0); i = i + 1; }
-    var j: i32 = 0;
-    while (j < names.len()) {
-        var b: i32 = bucket_of(names[j]);
-        counts = counts.with(b + 1, counts[b + 1] + 1);
-        j = j + 1;
-    }
-    var k: i32 = 1;
-    while (k <= nb) { counts = counts.with(k, counts[k] + counts[k - 1]); k = k + 1; }
-    // `cursor` walks each bucket's fill point; `counts` stays the boundaries.
-    var cursor: i32[] = [];
-    var c: i32 = 0;
-    while (c <= nb) { cursor = cursor.append(counts[c]); c = c + 1; }
-    var items: string[] = [];
-    var ps: i32[] = [];
-    var f: i32 = 0;
-    while (f < names.len()) { items = items.append(""); ps = ps.append(0 - 1); f = f + 1; }
-    var m: i32 = 0;
-    while (m < names.len()) {
-        var bb: i32 = bucket_of(names[m]);
-        items = items.with(cursor[bb], names[m]);
-        ps = ps.with(cursor[bb], nparams[m]);
-        cursor = cursor.with(bb, cursor[bb] + 1);
-        m = m + 1;
-    }
-    return NameIndex { starts: counts, items: items, nparams: ps };
-}
+// The value is the declared parameter count, or -1 where the caller only asked
+// for membership — which is also what a miss reads as, so index_params answers
+// "absent" and "membership-only" the same way by construction.
+pub struct NameIndex { m: Map[string, i32] }
 
 // name_index builds a membership-only index: every entry's arity is -1, so
-// index_has answers and index_params declines.
+// index_has answers and index_params declines. A name already present keeps its
+// first entry, so a duplicated name resolves to its first declaration.
 pub function name_index(names: string[]): NameIndex {
-    var ps: i32[] = [];
+    var m: Map[string, i32] = map_new(names.len() * 2 + 1);
     var i: i32 = 0;
-    while (i < names.len()) { ps = ps.append(0 - 1); i = i + 1; }
-    return build_index(names, ps);
+    while (i < names.len()) {
+        if (!m.has(names[i])) { m = m.insert(names[i], 0 - 1); }
+        i = i + 1;
+    }
+    return NameIndex { m: m };
 }
 
-// sig_index builds the callee-arity index the call check consults.
+// sig_index builds the callee-arity index the call check consults. First
+// declaration wins, as in name_index: two entries can disagree about arity, and
+// the call check reads whichever the index kept.
 pub function sig_index(sigs: FnSig[]): NameIndex {
-    var names: string[] = [];
-    var ps: i32[] = [];
+    var m: Map[string, i32] = map_new(sigs.len() * 2 + 1);
     var i: i32 = 0;
     while (i < sigs.len()) {
-        names = names.append(sigs[i].name);
-        ps = ps.append(sigs[i].n_params);
+        if (!m.has(sigs[i].name)) { m = m.insert(sigs[i].name, sigs[i].n_params); }
         i = i + 1;
     }
-    return build_index(names, ps);
+    return NameIndex { m: m };
 }
 
-// index_has reports membership.
+// index_has reports membership. The local rebind is load-bearing: a map op
+// dispatches off the written Map type, which a bare field read does not carry.
 pub function index_has(ix: NameIndex, name: string): boolean {
-    if (ix.items.len() == 0) { return false; }
-    var b: i32 = bucket_of(name);
-    var i: i32 = ix.starts[b];
-    var end: i32 = ix.starts[b + 1];
-    while (i < end) {
-        if (ix.items[i] == name) { return true; }
-        i = i + 1;
-    }
-    return false;
+    var m: Map[string, i32] = ix.m;
+    return m.has(name);
 }
 
 // index_params is the declared parameter count for `name`, or -1 when the
 // index does not carry it — either the name is absent or it was indexed for
 // membership only.
 pub function index_params(ix: NameIndex, name: string): i32 {
-    if (ix.items.len() == 0) { return 0 - 1; }
-    var b: i32 = bucket_of(name);
-    var i: i32 = ix.starts[b];
-    var end: i32 = ix.starts[b + 1];
-    while (i < end) {
-        if (ix.items[i] == name) { return ix.nparams[i]; }
-        i = i + 1;
-    }
-    return 0 - 1;
+    var m: Map[string, i32] = ix.m;
+    return m.get_or(name, 0 - 1);
 }
 
 // ---- the pass ----------------------------------------------------------
