@@ -8537,14 +8537,34 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   | the identity call alone, string-bearing struct | 24 | 24 |
 
   **What the last row says is where the next slice is.** The identity call
-  allocates nothing at all, so its 24 is the RECEIVER's own box: `relabel` has a
-  bare `return b`, which earns it `"RECVRET:"` and costs `b` its reclaim credit
-  at every call site (the slice before last). The `"RECVIDENT:"` tier exists to
-  give that credit back when the result dies inline, and `relabel` misses it on
-  `optstruct_body_moves_field` — because `b.n`, a SCALAR field, reaches the
-  returned literal. A scalar is copied out of its box; it carries no reference
-  and cannot strand one. Restricting that predicate to rc-tracked field types is
-  the next slice, and it is what takes the conformance case the rest of the way.
+  allocates nothing at all, so its 24 is the RECEIVER's own box, denied the
+  reclaim credit `pure-identity` gets.
+
+  **Corrected 2026-08-18: this entry first named the wrong cause**, and the
+  wrong cause was published for several hours — it read that `relabel` misses
+  `"RECVIDENT:"` on `optstruct_body_moves_field` because `b.n`, a scalar field,
+  reaches the returned literal. That is false twice over.
+  `fieldmove_is_move_value` ALREADY exempts a scalar leaf
+  (`return !is_scalar_type_name(lt)`), and a bisect over the method body says
+  the field read is not involved at all:
+
+  | method body (`b.relabel("").tag.len()`, identity path only) | B/round |
+  |---|---|
+  | `return b;` | **0** |
+  | `if (t.len() == 0) { return b; } return b;` | **0** |
+  | `if (t.len() == 0) { return b; } return Box { tag: t, n: b.n };` | 24 |
+  | `if (t.len() == 0) { return b; } return Box { tag: t, n: 1 };` | 24 |
+
+  Dropping the field read changes nothing; a second return that is also the
+  bare receiver is flat. So what costs the receiver its credit is that SOME
+  path returns a FRESH box — not the branch, and not a field reaching the
+  literal. The next slice is to find which predicate keys on that and whether
+  it has to: the caller's credit for `b` is a question about what the call site
+  does with the result, and on the identity path the result IS `b`.
+
+  The lesson is the one this file keeps relearning: a plausible mechanism read
+  off the source is not a measurement. Two sessions were hunting this same
+  increment when the wrong cause landed here.
 
   VERIFIED: new `freshself-mixed-method-flat` (failing at 92 on the parent),
   plus two safety rows that pass on both sides — `freshself-identity-path-not-freed`,
