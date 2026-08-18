@@ -1791,8 +1791,9 @@ function build(s: string): i32 {
 // two-word __fern_str_dec at scope exit, same shape as wasm. The
 // alias-inc on construction balances against the dec — both fire on
 // the two-word string ABI gate (UseTwoWordStrings), so wasm and
-// arm64-TwoWordOverride share the same Slice 3 codegen. arm64 single-
-// word (the !TwoWordOverride path) keeps the native rc_dec path.
+// arm64-TwoWordOverride share the same Slice 3 codegen. The single-word
+// (!TwoWordOverride) path loads the field as one pointer and reaches the
+// same __fern_str_dec — TestLowerStringStructFieldReclaimOnNative.
 func TestLowerStringStructFieldReclaimOnArm64TwoWord(t *testing.T) {
 	prevOverride := ast.TwoWordOverride
 	ast.TwoWordOverride = true
@@ -2023,18 +2024,36 @@ function build(): i32 {
 	}
 }
 
-// TestLowerStringEnumPayloadNoReclaimOnNative verifies enum string
-// payload reclamation is wasm-only (ptrW=8 emits no __fern_str_dec).
-func TestLowerStringEnumPayloadNoReclaimOnNative(t *testing.T) {
-	p := lowerSourceWith(t, `enum Msg { Text(string), Code(i32) }
+// TestLowerStringEnumPayloadReclaimOnNative is the single-word (ptrW=8)
+// sibling of the test above: the inline exit sweep frees the payload buffer
+// with __fern_str_dec, matching what the generated __drop_enum_Msg — emitted
+// into the SAME program, under the identical rc_is_unique + tag guard, via
+// appendChildDrop — has always done for this shape. A bare __fern_rc_dec only
+// decrements, so the buffer's count reached 0 and nothing was reclaimed.
+//
+// Both tiers of emitEnumSlotDrop are covered: `Msg` is non-uniform (variant
+// plan → dropStructField) and `Line` is uniform (branchless → decValueOnStack).
+func TestLowerStringEnumPayloadReclaimOnNative(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"nonuniform", `enum Msg { Text(string), Code(i32) }
 function build(): i32 {
     var m: Msg = Text("hello" + "world");
     var got: i32 = 0;
     match (m) { Text(t) => { got = t.len(); }, Code(c) => { got = c; } }
     return got;
-}`, 8)
-	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("native (ptrW=8) enum drop must not emit __fern_str_dec:\n%s", p)
+}`},
+		{"uniform", `enum Line { Head(string), Tail(string) }
+function build(): i32 {
+    var m: Line = Head("hello" + "world");
+    var got: i32 = 0;
+    match (m) { Head(t) => { got = t.len(); }, Tail(t) => { got = t.len(); } }
+    return got;
+}`},
+	} {
+		p := lowerSourceWith(t, tc.src, 8)
+		if !callsDirect(p, "build", "__fern_str_dec") {
+			t.Errorf("%s: native (ptrW=8) enum drop must reclaim its string payload via __fern_str_dec:\n%s", tc.name, p)
+		}
 	}
 }
 
@@ -2044,7 +2063,8 @@ function build(): i32 {
 // two-word ABI. Wasm and arm64-TwoWordOverride now share one
 // classifier (enumVariantDropPlan kind=3 fires for both) and one
 // dispatcher (dropStructField string branch fires for both). Native
-// single-word (x86_64, !TwoWordOverride) keeps its rc_dec path.
+// single-word (x86_64, !TwoWordOverride) reaches the same helper through
+// kind=4 — see TestLowerStringEnumPayloadReclaimOnNative.
 func TestLowerStringEnumPayloadReclaimOnArm64TwoWord(t *testing.T) {
 	prevOverride := ast.TwoWordOverride
 	ast.TwoWordOverride = true
