@@ -5383,6 +5383,16 @@ type checker struct {
 	// elements to a `dyn Trait[]` destination. See docs/DYN-TRAITS.md.
 	elemHint ast.Type
 
+	// typedRecv is an expression the caller has already type-checked, with
+	// its type in typedRecvType, handed to the method-call dispatch that is
+	// about to take it as a receiver. Set ONLY immediately around the
+	// checkExpr of a synthetic `recv.m()` wrapper — the Display spine builds
+	// `arg.to_string()` around an argument it has just typed — and consumed
+	// at once by the receiver check. Checking an expression a second time
+	// re-reports every diagnostic its subexpressions produced.
+	typedRecv     ast.Expr
+	typedRecvType ast.Type
+
 	// expectedType is the destination/result type a generic call's
 	// return-position type parameters can be inferred from when the
 	// arguments don't pin them. Set around `checkExpr` of a `var x:
@@ -12168,15 +12178,18 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						id.Name, typeLabel(at), typeLabel(at), deriveHint(atn, "cmp.Display", "cmp.Display"))
 					return ast.VoidType{}
 				}
+				arg := n.Args[0]
 				n.Args[0] = &ast.Call{
-					P: n.Args[0].Pos(),
+					P: arg.Pos(),
 					Callee: &ast.FieldAccess{
-						P:      n.Args[0].Pos(),
-						Target: n.Args[0],
+						P:      arg.Pos(),
+						Target: arg,
 						Field:  "to_string",
 					},
 				}
+				c.typedRecv, c.typedRecvType = arg, at
 				_ = c.checkExpr(n.Args[0], s)
+				c.typedRecv, c.typedRecvType = nil, nil
 				return ast.VoidType{}
 			}
 		}
@@ -12303,9 +12316,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
 			// A bare variant shared by multiple enum clones (#3693) is
-			// disambiguated by the destination's expected enum. checkCall
-			// snapshotted that into `callExpected` (the live field was
-			// cleared above so it can't leak into the args).
+			// disambiguated by the destination's expected enum, snapshotted
+			// into `callExpected` above (the live field was cleared there so
+			// it can't leak into the args).
 			if vrMulti && id.EnumName == "" {
 				if en := c.monomorphCloneEnumName(callExpected); en != "" {
 					if vr2, ok2, _ := c.resolveVariant(id.Name, en); ok2 {
@@ -12428,13 +12441,23 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// the Call node in place to `mangledName(target, args)` so the
 		// rest of the pipeline (codegen, IR) only ever sees a regular
 		// function call.
+		//
+		// The receiver is type-checked once, here, and its type carried to
+		// whichever path consumes it below: the argument loop (the rewrite
+		// prepends the receiver to n.Args) or the callee check (no rewrite —
+		// the FieldAccess is still the callee). Checking it a second time
+		// re-runs every diagnostic its subexpressions produced, doubling them
+		// at each link of a method chain.
+		var recvFA *ast.FieldAccess
+		var recvType ast.Type
+		var recvIsArg0 bool
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
-			tt := c.checkExpr(fa.Target, s)
+			tt := c.receiverType(fa.Target, s)
+			recvFA, recvType = fa, tt
 			// The receiver itself failed to type — an error is already
 			// reported on it (e.g. a chained `n.foo().bar()` whose inner
-			// `n.foo()` is invalid). Bail now: falling through to the
-			// generic `c.checkExpr(n.Callee, …)` below would re-check this
-			// same target and emit the identical diagnostic a second time.
+			// `n.foo()` is invalid), and no dispatch can resolve against a
+			// type that does not exist.
 			if tt == nil {
 				return nil
 			}
@@ -12548,6 +12571,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
+					recvIsArg0 = true
 					// Carry the receiver's TypeArgs (if any) so
 					// the call-checking path below can substitute
 					// ParamType-typed entries in the method's
@@ -12586,7 +12610,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
-		callee := c.checkExpr(n.Callee, s)
+		var callee ast.Type
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok && fa == recvFA {
+			callee = c.fieldAccessType(fa, s, recvType)
+		} else {
+			callee = c.checkExpr(n.Callee, s)
+		}
 		ft, ok := callee.(*ast.FuncType)
 		if !ok {
 			if callee != nil {
@@ -12716,7 +12745,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
 			}
-			at := c.checkExpr(n.Args[i], s)
+			// Arg 0 of a dispatch-rewritten call is the receiver, typed above.
+			at := recvType
+			if !(recvIsArg0 && i == 0) {
+				at = c.checkExpr(n.Args[i], s)
+			}
 			c.elemHint = nil
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
@@ -13923,102 +13956,120 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 		}
-		tt := c.checkExpr(n.Target, s)
-		// Tuple field access: `pair.0`, `pair.1`. The Field name
-		// is the digit string from the parser; reject anything
-		// that isn't a non-negative integer in range, but defer
-		// to the struct path otherwise so `obj.fieldName` keeps
-		// working.
-		if tup, ok := tt.(ast.TupleType); ok {
-			idx, err := strconv.Atoi(n.Field)
-			if err != nil || idx < 0 {
-				c.errfCode(n.P, "E046", "tuple field access requires a numeric index, got %q", n.Field)
-				return nil
-			}
-			if idx >= len(tup.Elems) {
-				c.errfCode(n.P, "E046", "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
-				return nil
-			}
-			return tup.Elems[idx]
-		}
-		st, ok := tt.(ast.StructType)
-		if !ok {
-			if tt != nil {
-				// A method call on a SCALAR whose defining stdlib module was not
-				// imported lands here, and the bare E043 actively misleads: it
-				// talks about struct field access on code the user may not have
-				// written at all. An f-string desugars `f"{n}"` to
-				// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
-				// reports "field access on non-struct value of type i32" pointing
-				// at the f-string. Name the import instead (#5494).
-				if mod := scalarMethodModule(tt, n.Field); mod != "" {
-					// The f-string note only makes sense for to_string — it is the
-					// only method the desugar produces, and the only way a user can
-					// reach this without writing a method call themselves.
-					hint := ""
-					if n.Field == "to_string" {
-						hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
-					}
-					c.errfCode(n.P, "E043",
-						"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
-					return nil
-				}
-				// A receiver with a method namespace of its own — an
-				// array, a map, a slice — reaching here means the
-				// method does not exist. Say so, and say what does.
-				if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
-					c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
-					return nil
-				}
-				c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
-			}
+		return c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+	}
+	return nil
+}
+
+// receiverType types a method call's receiver, taking the type from
+// typedRecv when the caller has already checked that very expression.
+func (c *checker) receiverType(e ast.Expr, s *scope) ast.Type {
+	if c.typedRecv != nil && c.typedRecv == e {
+		t := c.typedRecvType
+		c.typedRecv, c.typedRecvType = nil, nil
+		return t
+	}
+	return c.checkExpr(e, s)
+}
+
+// fieldAccessType types `n.Field` on a target whose type is already known.
+// The method-call path in the *ast.Call case types the receiver to resolve
+// dispatch and passes the result in: type-checking an expression twice
+// re-reports every diagnostic its subexpressions produced.
+func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast.Type {
+	// Tuple field access: `pair.0`, `pair.1`. The Field name
+	// is the digit string from the parser; reject anything
+	// that isn't a non-negative integer in range, but defer
+	// to the struct path otherwise so `obj.fieldName` keeps
+	// working.
+	if tup, ok := tt.(ast.TupleType); ok {
+		idx, err := strconv.Atoi(n.Field)
+		if err != nil || idx < 0 {
+			c.errfCode(n.P, "E046", "tuple field access requires a numeric index, got %q", n.Field)
 			return nil
 		}
-		sd := c.info.Structs[st.Name]
-		if sd == nil {
-			c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		if idx >= len(tup.Elems) {
+			c.errfCode(n.P, "E046", "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
 			return nil
 		}
-		c.checkOpaqueAccess(sd, n.P, "access a field of")
-		for _, f := range sd.Fields {
-			if f.Name == n.Field {
-				if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
-					// Generic struct field: substitute the
-					// type-arg values into the field's
-					// declared type so callers see the
-					// concrete type (`Pair[i32, string].first`
-					// → i32, not `A`).
-					sub := make(map[string]ast.Type, len(sd.TypeParams))
-					for i, tp := range sd.TypeParams {
-						sub[tp] = st.Args[i]
-					}
-					return substituteType(f.Type, sub)
+		return tup.Elems[idx]
+	}
+	st, ok := tt.(ast.StructType)
+	if !ok {
+		if tt != nil {
+			// A method call on a SCALAR whose defining stdlib module was not
+			// imported lands here, and the bare E043 actively misleads: it
+			// talks about struct field access on code the user may not have
+			// written at all. An f-string desugars `f"{n}"` to
+			// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
+			// reports "field access on non-struct value of type i32" pointing
+			// at the f-string. Name the import instead (#5494).
+			if mod := scalarMethodModule(tt, n.Field); mod != "" {
+				// The f-string note only makes sense for to_string — it is the
+				// only method the desugar produces, and the only way a user can
+				// reach this without writing a method call themselves.
+				hint := ""
+				if n.Field == "to_string" {
+					hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
 				}
-				return f.Type
+				c.errfCode(n.P, "E043",
+					"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
+				return nil
 			}
-		}
-		declared := make([]string, 0, len(sd.Fields))
-		for _, df := range sd.Fields {
-			declared = append(declared, df.Name)
-		}
-		// A misspelt METHOD call also lands here (`p.puzh(2)` — method
-		// resolution ran first and missed), so the struct's registered
-		// method names join the near-miss candidates: the fix then
-		// suggests `push` where the field set alone offers nothing.
-		// Sorted so map-iteration order can't flip a distance tie
-		// between runs (diagnostics must be deterministic).
-		prefix := st.Name + "."
-		var methodNames []string
-		for key := range c.info.Methods {
-			if strings.HasPrefix(key, prefix) {
-				methodNames = append(methodNames, key[len(prefix):])
+			// A receiver with a method namespace of its own — an
+			// array, a map, a slice — reaching here means the
+			// method does not exist. Say so, and say what does.
+			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
+				c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
+				return nil
 			}
+			c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
 		}
-		sort.Strings(methodNames)
-		declared = append(declared, methodNames...)
-		c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
 		return nil
 	}
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		return nil
+	}
+	c.checkOpaqueAccess(sd, n.P, "access a field of")
+	for _, f := range sd.Fields {
+		if f.Name == n.Field {
+			if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+				// Generic struct field: substitute the
+				// type-arg values into the field's
+				// declared type so callers see the
+				// concrete type (`Pair[i32, string].first`
+				// → i32, not `A`).
+				sub := make(map[string]ast.Type, len(sd.TypeParams))
+				for i, tp := range sd.TypeParams {
+					sub[tp] = st.Args[i]
+				}
+				return substituteType(f.Type, sub)
+			}
+			return f.Type
+		}
+	}
+	declared := make([]string, 0, len(sd.Fields))
+	for _, df := range sd.Fields {
+		declared = append(declared, df.Name)
+	}
+	// A misspelt METHOD call also lands here (`p.puzh(2)` — method
+	// resolution ran first and missed), so the struct's registered
+	// method names join the near-miss candidates: the fix then
+	// suggests `push` where the field set alone offers nothing.
+	// Sorted so map-iteration order can't flip a distance tie
+	// between runs (diagnostics must be deterministic).
+	prefix := st.Name + "."
+	var methodNames []string
+	for key := range c.info.Methods {
+		if strings.HasPrefix(key, prefix) {
+			methodNames = append(methodNames, key[len(prefix):])
+		}
+	}
+	sort.Strings(methodNames)
+	declared = append(declared, methodNames...)
+	c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
 	return nil
 }
 
