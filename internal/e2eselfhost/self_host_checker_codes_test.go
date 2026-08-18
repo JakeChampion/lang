@@ -163,6 +163,25 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// An annotation on a LAMBDA parameter or return, which the two
+		// annotation reporters could not see at all: both walked statements
+		// for `var` and nothing else, so `((x: Wibble) => 1)` was accepted
+		// outright while the `var x: Wibble` beside it drew E064 (#7100).
+		// Positive AND negative, because the fix widens what is looked at:
+		// a declared type on the same shape must stay clean, or the walk
+		// would be reporting on every lambda in the tree.
+		//
+		// The RETURN annotation is gated only by its clean row. An UNKNOWN
+		// return type draws a second code natively — E002 for the body not
+		// matching a type the same run has just rejected as undeclared —
+		// which the self-host does not emit, so that shape measures an
+		// unrelated difference rather than this one.
+		{"e064-lambda-param", "function main(): i32 { var f = ((x: Wibble) => 1); return 0; }\n", []string{"E064"}},
+		{"e064-lambda-param-clean", "struct P { x: i32 }\nfunction main(): i32 { var f = ((p: P) => p.x); return 0; }\n", nil},
+		{"e064-lambda-return-clean", "struct P { x: i32 }\nfunction main(): i32 { var f = ((n: i32): P => P { x: n }); return 0; }\n", nil},
+		// The same walk feeds E057, whose annotation form has the identical
+		// blind spot — native has reported it on a lambda parameter all along.
+		{"e057-lambda-param", "struct P { x: i32 }\nfunction main(): i32 { var f = ((c: Cell[P]) => 1); return 0; }\n", []string{"E057"}},
 		// E072 with the code written out. The differential below derives its
 		// expectation from the Go checker, so it cannot tell "both sides emit
 		// E072" from "neither side emits anything"; this row can.
