@@ -45,7 +45,7 @@ What a 167k-line compiler written in a modern language uses, counted across
 | Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **3** capturing visitors + **10** top-level fn values + **2** no-op lambdas (`astwalk`, #6993) |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **0** |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **0** |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **1** (`irverify`'s `NameIndex`, #6993) |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) |
@@ -116,12 +116,16 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler with no hash map.** Zero `Map[K, V]` locals in 167k lines. Every
-  symbol table, every "is this name in the set" test, every name→fact lookup is
-  a linear scan over a `string[]`: 290 sites comparing an array element to a
-  name, 114 hand-rolled `contains`/`index_of`/`find` helpers. The 65 string-tag
+- **A compiler that had no hash map.** One `Map[K, V]` in 167k lines —
+  `irverify`'s `NameIndex`, converted in #6993 slice four. Everything else is
+  still a linear scan over a `string[]` or a hand-rolled bucket table: 290 sites
+  comparing an array element to a name, 114 hand-rolled
+  `contains`/`index_of`/`find` helpers, and five hand-written hash tables
+  (`checker.SigTable`, `irlower`'s borrow registry and `MFuncs`,
+  `x86_native`'s label table, and the one now deleted). The 65 string-tag
   namespaces of §2.1 are, structurally, a hash map implemented in the string
-  type.
+  type. `core/map` reaches the compiler as an ordinary external import, so the
+  blocker this section names was the ratchet, not the module system.
 - **Reimplementation of the obvious.** `docs/SELF-HOST-AUDIT.md` SH-020 found
   `i32_to_string` in nine files. `util.fern` fixed most of that — but
   `checker.fern` still carries `itoa_nn` under a comment reading "checker.fern
@@ -309,7 +313,59 @@ What it cost, and none of it was visible from outside:
   `ast.Walk`, so a new binding form is reachable there the moment the shared
   walk reaches it — the same consolidation as the self-host half.
 
-Three slices, six bugs, and every one of them was sitting in a path nothing
+**What the fourth adoption cost (#6993).** The feature was `Map[K, V]`, and the
+module `irverify.fern`. Its `NameIndex` — a hand-written 1024-bucket hash (a
+polynomial `bucket_of`, a counting pass, a prefix sum, a cursor, a placement
+pass, over three parallel flat arrays) — is now `Map[string, i32]`, with the
+value doubling as the arity and `-1` reading as both "absent" and "membership
+only". **79 lines deleted against 25 added**, no public signature changed, no
+call site touched, and the fixed 1024-bucket cap gone with it.
+
+What made this the right first Map rather than a hotter one: the structure is
+**never iterated**, only probed, so no iteration order can reach the emitted
+output — the constraint `docs/RC-PERCEUS-SELF-HOST-PORT.md:494` puts on every
+analysis here. Two things had to be preserved deliberately, and neither had a
+test before this slice:
+
+- **First-declaration-wins.** The bucket build placed names in source order and
+  the probe returned the first match, so a duplicated name resolved to its first
+  declaration. `Map.insert` is last-wins, so the build inserts only when absent.
+  Two entries can disagree about arity and the call check reads whichever the
+  index kept, which is the difference between an arity report and a false one.
+- **The struct-field rebind.** `var m: Map[K, V] = ix.m;` before a map op is
+  load-bearing: dispatch keys off the written `Map` type, which a bare field
+  read does not carry. It costs nothing measurable.
+
+Costs that are real but bounded: `core/map` enters the compiler's transitive
+imports (an ordinary external import — no staging-list edits, and treeshake
+prunes it to **+8 KB** on the built compiler), and a `Map` in a struct field is
+never freed on the IR path, which here is a handful of boxes per compile because
+the index is built per module, not per function.
+
+**It is not a speed-up, and was never going to be** — it replaced a hash table
+with a hash table. Measured best-of-3 through the self-host CLI: 180 ms → 184 ms
+compiling `lexer.fern`, 3320 ms → 3305 ms compiling `parser.fern`. Both within
+noise. The win is 79 lines and a cap: the old build allocated two
+`(n_buckets + 1)`-element `i32` arrays per index no matter how few names it
+held, and chained past 1024 buckets at the ~3000 names the compiler actually
+declares. The scan-to-hash conversions with a real asymptotic win are still
+ahead — this slice buys the right to attempt them.
+
+The bug this one turned up was in the **wasm component wrapper**, not the
+feature: `component_shape` classified a program's randomness from `random_bytes`
+/ `random_i32` alone, while `module_uses_random` — deciding the core module's
+import — also counts `core/map`'s `map_hash_seed`. A `Map` program therefore
+emitted a core importing `wasi:random`'s `get-random-u64` wrapped in a framing
+with nothing to satisfy it, and the component would not instantiate (#7078). It
+had to be fixed *before* the adoption, because the compiler's own wasm builds
+hit it the moment a compiler module holds a `Map`. Two adjacent divergences fell
+out of the same probing and are filed rather than fixed here: a string literal
+used as a comparison operand or method receiver leaks 24 B per evaluation on the
+self-host where native allocates nothing (#7080), and native's wasm backend
+miscompiles a `Map` in a struct field after the second insert where all three
+self-host targets are correct (#7081).
+
+Four slices, nine bugs, and every one of them was sitting in a path nothing
 exercised. The census rows that remain are not blocked on the ratchet any more;
 they are blocked on their own prerequisites.
 

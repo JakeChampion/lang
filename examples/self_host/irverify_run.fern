@@ -356,6 +356,24 @@ function provided_checks(): i32 {
     // The empty program's index answers no to everything rather than trapping.
     if (irverify.index_has(irverify.name_index(none), "x")) { return 94; }
 
+    // A duplicated name resolves to its FIRST declaration. Two entries can
+    // disagree about arity, and the call check reads whichever the index kept,
+    // so this is the difference between an arity report and a false one.
+    var dsigs: irverify.FnSig[] = [
+        irverify.FnSig { name: "dup", n_params: 2 },
+        irverify.FnSig { name: "other", n_params: 1 },
+        irverify.FnSig { name: "dup", n_params: 7 }
+    ];
+    var dix: irverify.NameIndex = irverify.sig_index(dsigs);
+    if (irverify.index_params(dix, "dup") != 2) { return 97; }
+    if (irverify.index_params(dix, "other") != 1) { return 98; }
+    if (irverify.index_params(dix, "absent") != 0 - 1) { return 99; }
+    // A membership-only index carries no arity, so index_params declines for a
+    // name index_has admits — the two answers are independent.
+    var mix: irverify.NameIndex = irverify.name_index(["solo"]);
+    if (!irverify.index_has(mix, "solo")) { return 107; }
+    if (irverify.index_params(mix, "solo") != 0 - 1) { return 108; }
+
     // The inventory is non-empty and every entry resolves through is_provided
     // — an entry that did not would be dead weight the audit could not see.
     var inv: string[] = irverifyprovided.provided_names();
