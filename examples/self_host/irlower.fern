@@ -47337,7 +47337,23 @@ function arrparam_use_ok(e: parser.Expr, pn: string, counted: boolean, reg: stri
         },
         parser.ExprBinary(b) => { return arrparam_use_ok(b.left, pn, false, reg, pfx, structs, sfok) && arrparam_use_ok(b.right, pn, false, reg, pfx, structs, sfok); },
         parser.ExprUnary(u) => { return arrparam_use_ok(u.operand, pn, false, reg, pfx, structs, sfok); },
-        parser.ExprIndex(ix) => { return arrparam_use_ok(ix.array, pn, false, reg, pfx, structs, sfok) && arrparam_use_ok(ix.index, pn, false, reg, pfx, structs, sfok); },
+        // `p[i]` is credited for a STRING parameter and refused for an array
+        // one: a string's byte index yields a u8 VALUE copy that references
+        // nothing, while an array element may BE a reference the read hands out
+        // uncounted. Native draws the same line (stringParamCounted has the
+        // Index arm, arrayParamCounted does not).
+        //
+        // A SLICE is NOT credited for either, though native credits it for
+        // strings on the grounds that `__str_slice` copies. In Fern `p[a:b]`
+        // yields a `str` — a borrowed VIEW over the parameter's buffer, which
+        // the checker's own E043 says when it refuses to store one in a
+        // `string` field without `.to_owned()`. A view keeps the argument
+        // reachable after the caller's post-call release, so crediting it
+        // corrupts the value rather than leaking one.
+        parser.ExprIndex(ix) => {
+            var icnt: boolean = pfx == "SCNT:";
+            return arrparam_use_ok(ix.array, pn, icnt, reg, pfx, structs, sfok) && arrparam_use_ok(ix.index, pn, false, reg, pfx, structs, sfok);
+        },
         parser.ExprSlice(sl2) => { return arrparam_use_ok(sl2.array, pn, false, reg, pfx, structs, sfok) && arrparam_use_ok(sl2.start, pn, false, reg, pfx, structs, sfok) && arrparam_use_ok(sl2.end, pn, false, reg, pfx, structs, sfok); },
         parser.ExprFieldAccess(fa2) => { return arrparam_use_ok(fa2.obj, pn, false, reg, pfx, structs, sfok); },
         parser.ExprLambda(lm) => { return arrparam_uses_ok_stmts(lm.body, pn, reg, pfx, structs, sfok); },

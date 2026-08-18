@@ -547,4 +547,80 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-str-arg-live-local-safe", 0)
+
+	// The string vocabulary's BYTE INDEX arm. `t` is stored AND read as `t[0]`,
+	// which yields a u8 value copy referencing nothing — so the read creates no
+	// uncounted alias and the parameter stays credited. The array vocabulary
+	// must not credit the same shape (an element may BE a reference), which is
+	// the line native draws too: stringParamCounted has the Index arm,
+	// arrayParamCounted does not. Without it one read of a byte cost the whole
+	// parameter its credit: 24 B/round before.
+	run(t, `struct Q { tag: string, k: i32 }
+function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var c: Q = mkq2("tag", i); acc = (acc + c.k + c.tag.len()) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 2000) { var d: Q = mkq2("tag", j); acc = (acc + d.k + d.tag.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 512) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-str-arg-index-read-flat", 0)
+
+	// A SLICE is deliberately NOT credited, though native's stringParamCounted
+	// credits one on the grounds that __str_slice copies. In Fern `t[0:3]` is a
+	// `str` — a borrowed VIEW over the parameter's buffer, which the checker
+	// says itself when E043 refuses to store one in a `string` field without
+	// `.to_owned()`. The view outlives the caller's post-call release, so
+	// crediting the slice corrupts the stored value: this case returns 88 with
+	// the slice arm credited, and its `k` reads a byte of the same buffer so
+	// both halves of the read are covered.
+	run(t, `struct Q { tag: string, k: i32 }
+function mk3(t: string, k: i32): Q { return Q { tag: t[0:3], k: k + (t[3] as i32) }; }
+function main(): i32 {
+    var keep: Q[] = [];
+    var i: i32 = 0;
+    while (i < 200) { keep = keep.append(mk3("abc" + "abcdefgh"[i % 8 : (i % 8) + 1], i)); i = i + 1; }
+    var bad: i32 = 0;
+    var j: i32 = 0;
+    while (j < 200) {
+        if (keep[j].tag != "abc") { bad = 1; }
+        if (keep[j].k != j + 97 + (j % 8)) { bad = 1; }
+        j = j + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-str-arg-slice-view-safe", 0)
+
+	// The regression test for the gate that makes the whole string tier sound.
+	// A string field is retained on construction only for a type whose string
+	// reads are all provable transient borrows (struct_routes_field_reclaim_at /
+	// the STRFLDOK scan) — those are the types whose drop decs it back. `esc`
+	// hands `c.name` out of the frame, which disqualifies C, so the literal is
+	// stored with NO retain and the caller's box is the field's only reference.
+	// SEGFAULTS with that gate removed.
+	run(t, `struct C { name: string, args: string }
+function mk(name: string, args: string): C { return C { name: name, args: args }; }
+function esc(c: C): string[] { var o: string[] = []; return o.append(c.name); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var a: C = mk("fetch", "GET /a");
+        var e: string[] = esc(a);
+        if (e[0].len() != 5) { bad = 1; }
+        if (a.args.len() != 6) { bad = 1; }
+        if (a.args[0] != 71) { bad = 1; }
+        if (a.name[0] != 102) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, "counted-retain-str-arg-uncounted-store-safe", 0)
 }

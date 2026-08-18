@@ -169,6 +169,47 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
+		// The gate that makes the counted-retain STRING tier sound, on the leg
+		// where the release is a $__fern_arr_dec on a data-section pointer: `esc`
+		// disqualifies C from the STRFLDOK scan, so the field is stored with no
+		// retain and the caller's box is its only reference.
+		{"counted-retain-str-arg-uncounted-store-safe-wasm", `struct C { name: string, args: string }
+function mk(name: string, args: string): C { return C { name: name, args: args }; }
+function esc(c: C): string[] { var o: string[] = []; return o.append(c.name); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var a: C = mk("fetch", "GET /a");
+        var e: string[] = esc(a);
+        if (e[0].len() != 5) { bad = 1; }
+        if (a.args.len() != 6) { bad = 1; }
+        if (a.args[0] != 71) { bad = 1; }
+        if (a.name[0] != 102) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
+		// The byte-index arm of the string vocabulary — `t[0]` is a value copy,
+		// so the parameter stays credited and the struct's field survives the
+		// release.
+		{"counted-retain-str-arg-index-read-wasm", `struct Q { tag: string, k: i32 }
+function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 500) {
+        var c: Q = mkq2("tag", i);
+        if (c.tag != "tag") { bad = 1; }
+        if (c.k != i + 116) { bad = 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow() != 0) { return 99; }
+    if (bad != 0) { return 88; }
+    return 0;
+}`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

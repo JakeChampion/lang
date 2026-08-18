@@ -8840,3 +8840,40 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   (`countedArgTemp` carries no result-type check) has not been demonstrated here
   end-to-end — `both(deps, k)`, which returns the array back out of the struct,
   is the shape that would have to be measured first. Refs #6522 #4451.
+
+- 2026-08-18 (string tier, the byte-index arm and the slice that must not be
+  credited): **`p[i]` credits, `p[a:b]` does NOT, and native's rule does not
+  port (#6522 #6544).**
+
+  #7060 landed the string tier with neither arm. The INDEX one belongs there:
+  a string's byte index yields a u8 value copy that references nothing, so one
+  read of a byte should not cost the parameter its credit — and it did, 24 B a
+  round on `mkq2(t, k) { return Q { tag: t, k: k + (t[0] as i32) }; }`. Native
+  draws the same line, `stringParamCounted` carrying the Index arm that
+  `arrayParamCounted` deliberately lacks (an array ELEMENT may BE a reference).
+
+  **The SLICE arm does not port, and the reason is a language difference worth
+  not rediscovering.** Native credits `p[a:b]` on the stated grounds that
+  `__str_slice` copies the bytes into a fresh buffer. In Fern it does not: a
+  string slice yields a `str`, a borrowed VIEW over the source buffer. The
+  checker says so itself — E043 refuses to store one in a `string` field
+  without `.to_owned()` — so a credited slice leaves the view pointing into the
+  argument after the caller's post-call release. Measured, not reasoned: with
+  the slice arm credited, a producer storing `t[0:3]` reads back the wrong
+  value (88, not a byte count). Both arms were written and the slice one was
+  removed on that evidence.
+
+  Note the asymmetry this exposes: the self-host COMPILED that probe, native
+  refused it at E043. That is a separate checker gap, not tracked here.
+
+  **The gate that makes the whole string tier sound had no regression test.**
+  #7060 correctly refuses a struct-literal string slot whose type does not route
+  field reclaim — without it the field is an uncounted alias of the caller's box
+  — but nothing exercised the refusal. `counted-retain-str-arg-uncounted-store-safe`
+  now does, and it SEGFAULTS with the gate removed rather than reporting a byte
+  count.
+
+  VERIFIED: `counted-retain-str-arg-index-read-flat` fails at 98 on the parent;
+  `-slice-view-safe` returns 88 with the slice arm credited and 0 without;
+  `-uncounted-store-safe` segfaults with the STRFLDOK gate removed. All three
+  backend legs. Refs #6522 #6544 #4451.

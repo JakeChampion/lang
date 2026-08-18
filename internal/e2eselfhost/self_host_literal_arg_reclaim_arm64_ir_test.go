@@ -167,4 +167,23 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arr-arg-returned-safe-arm64", 0)
+
+	// The counted-retain STRING position on the second register backend, with
+	// the byte-index read that keeps the parameter credited. 24 B/round before;
+	// lighter churn under qemu.
+	run(t, `struct Q { tag: string, k: i32 }
+function mkq2(t: string, k: i32): Q { return Q { tag: t, k: k + (t[0] as i32) }; }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { var c: Q = mkq2("tag", i); acc = (acc + c.k + c.tag.len()) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 1000) { var d: Q = mkq2("tag", j); acc = (acc + d.k + d.tag.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow() != 0) { return 99; }
+    if (b2 - b1 >= 4096) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, "counted-retain-str-arg-index-read-flat-arm64", 0)
 }
