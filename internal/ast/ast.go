@@ -2741,6 +2741,14 @@ type TuplePatElem struct {
 	// per-payload load width.
 	VariantBindings     []string
 	VariantBindingTypes []Type
+	// VariantPayloads runs parallel to VariantBindings: a non-nil entry is
+	// a SUB-PATTERN matched against that payload rather than a binder —
+	// `(A(Ok(n)), y)`. The slot's VariantBindings entry is then empty and
+	// the sub-pattern introduces the bindings instead. A payload slot is
+	// itself a TuplePatElem, so it can be a binder, `_`, a literal, a
+	// variant or a nested tuple, recursively. Nil when every slot is a
+	// plain binder, which is the shape resolveVariantBindings still types.
+	VariantPayloads []*TuplePatElem
 	// Nested is a tuple pattern on the element itself — `(a, (b, c))` on
 	// a `(i32, (i32, string))` scrutinee. The element type must be a
 	// tuple of the same arity, and each entry follows the same element

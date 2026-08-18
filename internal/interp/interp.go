@@ -3148,28 +3148,48 @@ func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (b
 		return false, nil
 	}
 	for k, el := range elems {
-		switch {
-		case el.Nested != nil:
-			sub, isArr := arr[k].(Array)
-			if !isArr {
-				return false, nil
+		ok, err := i.tupleElemMatches(el, arr[k], e)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// tupleElemMatches reports whether ONE pattern position matches v, recursing
+// into a nested tuple's elements and into a variant's payload sub-patterns.
+func (i *Interp) tupleElemMatches(el ast.TuplePatElem, v Value, e *env) (bool, error) {
+	switch {
+	case el.Nested != nil:
+		sub, isArr := v.(Array)
+		if !isArr {
+			return false, nil
+		}
+		return i.tupleElemsMatch(el.Nested, sub, e)
+	case el.VariantName != "":
+		if !tupleElemVariantMatches(v, el.VariantName) {
+			return false, nil
+		}
+		ev, isEnum := v.(*Enum)
+		if !isEnum {
+			return false, nil
+		}
+		for idx, sub := range el.VariantPayloads {
+			if sub == nil || idx >= len(ev.Payloads) {
+				continue
 			}
-			ok, err := i.tupleElemsMatch(el.Nested, sub, e)
+			ok, err := i.tupleElemMatches(*sub, ev.Payloads[idx], e)
 			if err != nil || !ok {
 				return false, err
 			}
-		case el.VariantName != "":
-			if !tupleElemVariantMatches(arr[k], el.VariantName) {
-				return false, nil
-			}
-		case el.Literal != nil:
-			lv, err := i.evalExpr(el.Literal, e)
-			if err != nil {
-				return false, err
-			}
-			if !valuesEqual(arr[k], lv) {
-				return false, nil
-			}
+		}
+	case el.Literal != nil:
+		lv, err := i.evalExpr(el.Literal, e)
+		if err != nil {
+			return false, err
+		}
+		if !valuesEqual(v, lv) {
+			return false, nil
 		}
 	}
 	return true, nil
@@ -3198,9 +3218,19 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			return
 		}
 		for i, name := range el.VariantBindings {
-			if i < len(ev.Payloads) {
-				armEnv.declare(name, ev.Payloads[i])
+			if i >= len(ev.Payloads) {
+				continue
 			}
+			// A slot carrying a sub-pattern has the empty name; the
+			// sub-pattern supplies whatever bindings the slot introduces.
+			if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+				bindTupleElem(armEnv, *el.VariantPayloads[i], ev.Payloads[i])
+				continue
+			}
+			if name == "" {
+				continue
+			}
+			armEnv.declare(name, ev.Payloads[i])
 		}
 		return
 	}

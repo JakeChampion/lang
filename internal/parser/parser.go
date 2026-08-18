@@ -4232,8 +4232,8 @@ func (p *parser) tupleElemVariantStart() bool {
 
 // parseTupleElemVariant fills elem with a tuple element's variant sub-pattern
 // `A(x, y)` / `A()` / `mod.A(x)`, leaving the cursor after the closing `)`.
-// Payload slots are plain binders — a nested pattern there is step 3 of the
-// unified grammar, and rejecting it here keeps it loud rather than silent.
+// A payload slot is a plain binder, or a SUB-PATTERN when it unambiguously
+// opens one (`A(Ok(n))`) — VariantPayloads then carries it.
 func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 	nameTok := p.peek()
 	p.advance()
@@ -4252,11 +4252,25 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 	}
 	if !p.match(lexer.Punct, ")") {
 		for {
-			bt, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return err
+			// A payload slot is a plain binder unless it unambiguously opens a
+			// pattern — the same line isNestedPatternStart draws for an
+			// arm-position payload, so `A(x)` stays a binder and only `A(Ok(n))`
+			// / `A(0)` / `A((a, b))` recurse.
+			if p.isNestedPatternStart() {
+				sub, err := p.parseTuplePatElem()
+				if err != nil {
+					return err
+				}
+				elem.VariantBindings = append(elem.VariantBindings, "")
+				elem.VariantPayloads = append(elem.VariantPayloads, &sub)
+			} else {
+				bt, err := p.expect(lexer.Ident, "")
+				if err != nil {
+					return err
+				}
+				elem.VariantBindings = append(elem.VariantBindings, bt.Text)
+				elem.VariantPayloads = append(elem.VariantPayloads, nil)
 			}
-			elem.VariantBindings = append(elem.VariantBindings, bt.Text)
 			if _, ok := p.accept(lexer.Punct, ","); ok {
 				continue
 			}
@@ -4265,6 +4279,42 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 	}
 	_, err := p.expect(lexer.Punct, ")")
 	return err
+}
+
+// parseTuplePatElem parses ONE position of a tuple pattern: a binder name,
+// `_`, a literal, a variant sub-pattern, or a nested tuple pattern. A variant
+// PAYLOAD slot is the same grammar, so parseTupleElemVariant calls this too —
+// which is what makes `(A(Ok(n)), y)` work without a second element parser.
+func (p *parser) parseTuplePatElem() (ast.TuplePatElem, error) {
+	et := p.peek()
+	var elem ast.TuplePatElem
+	switch {
+	case et.Kind == lexer.Ident && et.Text == "_":
+		p.advance()
+		elem.IsWildcard = true
+	case et.Kind == lexer.Punct && et.Text == "(":
+		nested, err := p.parseTuplePatElems()
+		if err != nil {
+			return elem, err
+		}
+		elem.Nested = nested
+	case p.atLiteralPattern():
+		lit, err := p.parseLiteralPattern()
+		if err != nil {
+			return elem, err
+		}
+		elem.Literal = lit
+	case et.Kind == lexer.Ident && p.tupleElemVariantStart():
+		if err := p.parseTupleElemVariant(&elem); err != nil {
+			return elem, err
+		}
+	case et.Kind == lexer.Ident:
+		p.advance()
+		elem.Name = et.Text
+	default:
+		return elem, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, nested tuple pattern, or `_` in tuple pattern, got %s", et.Text)
+	}
+	return elem, nil
 }
 
 // parseTuplePatElems consumes `(p0, p1, …)` with the cursor on the opening
@@ -4277,33 +4327,9 @@ func (p *parser) parseTuplePatElems() ([]ast.TuplePatElem, error) {
 	p.advance() // `(`
 	var elems []ast.TuplePatElem
 	for {
-		et := p.peek()
-		var elem ast.TuplePatElem
-		switch {
-		case et.Kind == lexer.Ident && et.Text == "_":
-			p.advance()
-			elem.IsWildcard = true
-		case et.Kind == lexer.Punct && et.Text == "(":
-			nested, err := p.parseTuplePatElems()
-			if err != nil {
-				return nil, err
-			}
-			elem.Nested = nested
-		case p.atLiteralPattern():
-			lit, err := p.parseLiteralPattern()
-			if err != nil {
-				return nil, err
-			}
-			elem.Literal = lit
-		case et.Kind == lexer.Ident && p.tupleElemVariantStart():
-			if err := p.parseTupleElemVariant(&elem); err != nil {
-				return nil, err
-			}
-		case et.Kind == lexer.Ident:
-			p.advance()
-			elem.Name = et.Text
-		default:
-			return nil, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, nested tuple pattern, or `_` in tuple pattern, got %s", et.Text)
+		elem, err := p.parseTuplePatElem()
+		if err != nil {
+			return nil, err
 		}
 		elems = append(elems, elem)
 		if _, ok := p.accept(lexer.Punct, ","); ok {

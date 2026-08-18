@@ -2212,6 +2212,61 @@ func TestNestedTuplePatternParses(t *testing.T) {
 	}
 }
 
+// A tuple element's variant PAYLOAD slot is the same production the element
+// itself is: a binder, `_`, a literal, a nested variant, or a tuple.
+func TestTupleVariantPayloadSubPatternParses(t *testing.T) {
+	prog, err := Parse(`enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+enum Wrap { W((i32, i32)), Z(i32) }
+function f(p: (Outer, Wrap)): i32 {
+	match (p) {
+		(A(Ok2(n)), W((0, b))) => { return n + b; },
+		(A(x), Z(9)) => { return 9; },
+		_ => { return 0; }
+	}
+	return 0;
+}`)
+	if err != nil {
+		t.Fatalf("payload sub-pattern should parse: %v", err)
+	}
+	m, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Match)
+	if !ok {
+		t.Fatalf("first stmt should be *ast.Match; got %T", prog.Funcs[0].Body.Stmts[0])
+	}
+	first := m.Arms[0].TupleElems
+	if len(first) != 2 {
+		t.Fatalf("want 2 top-level elements, got %d", len(first))
+	}
+	// `A(Ok2(n))` — one payload slot, holding a variant sub-pattern, so the
+	// slot's own binder name is empty.
+	if len(first[0].VariantPayloads) != 1 || first[0].VariantPayloads[0] == nil {
+		t.Fatalf("element 0 should carry a payload sub-pattern: %+v", first[0])
+	}
+	if got := first[0].VariantBindings[0]; got != "" {
+		t.Fatalf("a sub-pattern slot binds nothing itself, got binder %q", got)
+	}
+	if sub := first[0].VariantPayloads[0]; sub.VariantName != "Ok2" || len(sub.VariantBindings) != 1 || sub.VariantBindings[0] != "n" {
+		t.Fatalf("element 0's payload should be `Ok2(n)`: %+v", sub)
+	}
+	// `W((0, b))` — a TUPLE in the payload slot, with a literal inside it.
+	tupSub := first[1].VariantPayloads[0]
+	if tupSub == nil || len(tupSub.Nested) != 2 || tupSub.Nested[0].Literal == nil || tupSub.Nested[1].Name != "b" {
+		t.Fatalf("element 1's payload should be `(0, b)`: %+v", first[1])
+	}
+	// A plain binder slot stays a binder — `A(x)` is not a sub-pattern.
+	second := m.Arms[1].TupleElems
+	if second[0].VariantBindings[0] != "x" {
+		t.Fatalf("`A(x)` should still be a plain binder: %+v", second[0])
+	}
+	if second[0].VariantPayloads[0] != nil {
+		t.Fatalf("`A(x)` should carry no sub-pattern: %+v", second[0])
+	}
+	// A LITERAL slot is a sub-pattern too — `Z(9)` tests, it does not bind.
+	if lit := second[1].VariantPayloads[0]; lit == nil || lit.Literal == nil {
+		t.Fatalf("`Z(9)` should carry a literal sub-pattern: %+v", second[1])
+	}
+}
+
 // `let Variant(b) = … else { … };` continues to route to the let-else
 // desugar — the tuple-destructure branch must not steal it. The
 // statement that lands is the origin-tagged match, and the rest of the

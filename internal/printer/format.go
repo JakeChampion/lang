@@ -1254,40 +1254,50 @@ func (f *formatter) formatArmPattern(arm *ast.MatchArm) {
 	}
 }
 
-// formatTuplePatElems renders a tuple pattern `(p0, p1, …)`, recursing for a
-// nested tuple element so `(a, (b, c))` round-trips at any depth.
+// formatTuplePatElems renders a tuple pattern `(p0, p1, …)`.
 func (f *formatter) formatTuplePatElems(elems []ast.TuplePatElem) {
 	f.b.WriteByte('(')
 	for i, el := range elems {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		switch {
-		case el.Nested != nil:
-			f.formatTuplePatElems(el.Nested)
-		case el.IsWildcard:
-			f.b.WriteByte('_')
-		case el.Literal != nil:
-			f.formatExpr(el.Literal, precLowest)
-		case el.VariantName != "":
-			if el.VariantModule != "" {
-				f.b.WriteString(el.VariantModule)
-				f.b.WriteByte('.')
-			}
-			f.b.WriteString(el.VariantName)
-			f.b.WriteByte('(')
-			for j, vb := range el.VariantBindings {
-				if j > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(vb)
-			}
-			f.b.WriteByte(')')
-		default:
-			f.b.WriteString(el.Name)
-		}
+		f.formatTuplePatElem(el)
 	}
 	f.b.WriteByte(')')
+}
+
+// formatTuplePatElem renders ONE pattern position. A nested tuple element and
+// a variant's payload slot are both the same grammar, so `(a, (b, c))` and
+// `(A(Ok(n)), y)` round-trip at any depth.
+func (f *formatter) formatTuplePatElem(el ast.TuplePatElem) {
+	switch {
+	case el.Nested != nil:
+		f.formatTuplePatElems(el.Nested)
+	case el.IsWildcard:
+		f.b.WriteByte('_')
+	case el.Literal != nil:
+		f.formatExpr(el.Literal, precLowest)
+	case el.VariantName != "":
+		if el.VariantModule != "" {
+			f.b.WriteString(el.VariantModule)
+			f.b.WriteByte('.')
+		}
+		f.b.WriteString(el.VariantName)
+		f.b.WriteByte('(')
+		for j, vb := range el.VariantBindings {
+			if j > 0 {
+				f.b.WriteString(", ")
+			}
+			if j < len(el.VariantPayloads) && el.VariantPayloads[j] != nil {
+				f.formatTuplePatElem(*el.VariantPayloads[j])
+				continue
+			}
+			f.b.WriteString(vb)
+		}
+		f.b.WriteByte(')')
+	default:
+		f.b.WriteString(el.Name)
+	}
 }
 
 // formatExprArmPattern renders a match-EXPRESSION arm's pattern. MatchExprArm

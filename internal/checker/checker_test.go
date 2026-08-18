@@ -6229,6 +6229,88 @@ func TestNestedTuplePatternChecks(t *testing.T) {
 	}
 }
 
+// A payload slot carrying a sub-pattern types under the element rules, so a
+// mismatch inside a payload draws the same code it would draw at top level.
+func TestTupleVariantPayloadSubPatternChecks(t *testing.T) {
+	const decls = "enum Inner { Ok2(i32), Err2(i32) }\nenum Outer { A(Inner), B }\nenum Wrap { W((i32, i32)), Z(i32) }\n"
+	bad := map[string]struct{ src, code string }{
+		"payload is not an enum": {`function f(t: (Wrap, i32)): i32 {
+  match (t) { (Z(Ok2(n)), y) => { return n + y; }, _ => { return 0; } }
+  return 0;
+}`, "E035"},
+		"unknown variant in a payload": {`function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Nope(n)), y) => { return n + y; }, _ => { return 0; } }
+  return 0;
+}`, "E014"},
+		"payload literal type mismatch": {`function f(t: (Outer, i32)): i32 {
+  match (t) { (A("x"), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`, "E035"},
+		"payload tuple arity": {`function f(t: (Wrap, i32)): i32 {
+  match (t) { (W((a, b, c)), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`, "E035"},
+		"payload binder collides with a sibling element's": {`function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Ok2(y)), y) => { return y; }, _ => { return 0; } }
+  return 0;
+}`, "E013"},
+		// A payload sub-pattern is refutable at every depth, so the arm cannot
+		// make the match exhaustive on its own.
+		"payload sub-pattern needs a wildcard arm": {`function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Ok2(n)), y) => { return n + y; } }
+  return 0;
+}`, "E030"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, decls+c.src)
+			if err == nil {
+				t.Fatalf("want %s, got none", c.code)
+			}
+			if code := firstErrCode(err); code != c.code {
+				t.Errorf("code = %q, want %s: %v", code, c.code, err)
+			}
+		})
+	}
+
+	ok := map[string]string{
+		"nested variant in a payload": `function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Ok2(n)), y) => { return n + y; }, _ => { return 0; } }
+  return 0;
+}`,
+		// Two arms sharing an outer variant but differing inside its payload:
+		// the tuple pattern stays flat, so the second is reached when the
+		// first's payload test fails.
+		"sibling arms differ inside the payload": `function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Ok2(n)), y) => { return n + y; }, (A(Err2(n)), y) => { return n - y; }, _ => { return 0; } }
+  return 0;
+}`,
+		"tuple in a payload": `function f(t: (Wrap, i32)): i32 {
+  match (t) { (W((0, b)), y) => { return b + y; }, (W((a, b)), y) => { return a * b + y; }, _ => { return 0; } }
+  return 0;
+}`,
+		"payload sub-pattern under a nested tuple element": `function f(t: ((Outer, i32), i32)): i32 {
+  match (t) { ((A(Ok2(n)), b), y) => { return n + b + y; }, _ => { return 0; } }
+  return 0;
+}`,
+		"guard sees a payload sub-pattern's binds and the sibling element's": `function f(t: (Outer, i32)): i32 {
+  match (t) { (A(Ok2(n)), y) when n > y => { return n; }, _ => { return 0; } }
+  return 0;
+}`,
+		"expression form takes payload sub-patterns too": `function f(t: (Outer, i32)): i32 {
+  var v = match (t) { (A(Ok2(n)), y) => n + y, _ => 0 };
+  return v;
+}`,
+	}
+	for name, body := range ok {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, decls+body); err != nil {
+				t.Errorf("want accepted, got: %v", err)
+			}
+		})
+	}
+}
+
 // TestTupleElemVariantPatternChecks covers the variant sub-pattern element
 // `(A(x), y)`: payload arity, tag/type agreement and binder scoping follow the
 // same rules an arm-position `A(x) => …` follows, because both route through

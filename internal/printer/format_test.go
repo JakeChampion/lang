@@ -1339,6 +1339,13 @@ function f(t: (E, i32)): i32 { return match (t) { (A(x), y) => x + y, (B(), _) =
 function f(t: (E, i32)): i32 { return match (t) { (B(), y) => y, _ => 0 }; }`, "(B(), y) =>"},
 		{"tuple_nested_elem", `function f(t: (i32, (i32, i32))): i32 { return match (t) { (a, (b, c)) => a + b + c }; }`, "(a, (b, c)) =>"},
 		{"tuple_nested_elem_depth3", `function f(t: ((i32, string), (i32, (i32, i32)))): i32 { return match (t) { ((1, "a"), (b, (c, _))) => b + c, _ => 0 }; }`, `((1, "a"), (b, (c, _))) =>`},
+		{"tuple_payload_subpattern", `enum Inner { Ok2(i32), Err2(i32) }
+enum Outer { A(Inner), B }
+function f(t: (Outer, i32)): i32 { return match (t) { (A(Ok2(n)), y) => n + y, _ => 0 }; }`, "(A(Ok2(n)), y) =>"},
+		{"tuple_payload_literal", `enum Outer { A(i32), B }
+function f(t: (Outer, i32)): i32 { return match (t) { (A(0), y) => y, _ => 0 }; }`, "(A(0), y) =>"},
+		{"tuple_payload_tuple", `enum Wrap { W((i32, i32)), Z(i32) }
+function f(t: (Wrap, i32)): i32 { return match (t) { (W((0, b)), y) => b + y, _ => 0 }; }`, "(W((0, b)), y) =>"},
 		{"struct_rename", `struct P { x: i32, y: i32 }
 function f(p: P): i32 { return match (p) { P { x: a, y: b } => a + b }; }`, "P { x: a, y: b } =>"},
 	} {
