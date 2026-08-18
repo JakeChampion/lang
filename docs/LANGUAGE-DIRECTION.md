@@ -337,8 +337,9 @@ borrows" without needing a borrow checker.
 
 What landed:
 - `[T]` slice type. `T[]` (owned) stays for declarations.
-- Slicing syntax: `arr[a:b]`, `arr[a:]`, `arr[:b]`. The fully
-  unbounded `arr[:]` form is reserved (errors with a hint).
+- Slicing syntax: `arr[a:b]`, `arr[a:]`, `arr[:b]`, `arr[:]`.
+  Both bounds are optional (absent low is 0, absent high is the
+  source's length), so `arr[:]` is the full-range view.
 - `len(slice)` reads from `slice + 4`; `len(arr)` and
   `len(str)` keep their `base - 4` shape. The IR's `len()`
   fold picks the right offset by static type.

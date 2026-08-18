@@ -5709,11 +5709,12 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			open := p.advance()
 			// Slicing distinguishes from indexing by the `:`
 			// separator: `arr[i]` indexes, `arr[a:b]` /
-			// `arr[a:]` / `arr[:b]` slices. Either bound is
-			// optional; `arr[:]` is reserved (no use case yet —
-			// errors out).
+			// `arr[a:]` / `arr[:b]` / `arr[:]` slices. Both
+			// bounds are optional — an absent low is 0, an absent
+			// high is the source's length, so `arr[:]` is the
+			// full-range view.
 			if _, ok := p.accept(lexer.Punct, ":"); ok {
-				// `[:b]` form — low is implicitly 0.
+				// `[:b]` / `[:]` form — low is implicitly 0.
 				var high ast.Expr
 				if !p.match(lexer.Punct, "]") {
 					h, err := p.parseExpr()
@@ -5724,9 +5725,6 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				}
 				if _, err := p.expect(lexer.Punct, "]"); err != nil {
 					return nil, err
-				}
-				if high == nil {
-					return nil, p.errorf(open.Pos, "`[:]` slice form is reserved; use `arr[0:len(arr)]` for now")
 				}
 				expr = &ast.SliceExpr{P: open.Pos, Source: expr, High: high}
 				continue

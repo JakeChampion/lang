@@ -3251,7 +3251,7 @@ func (c *checker) currentModule() string {
 }
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
-// `e` is directly an array literal and `dst` is an array type — the
+// `e` is directly an array literal and `dst` is an array or view type — the
 // only shape the ArrayLit case consumes the hint for. Keeping the guard
 // tight means the hint never leaks into an array literal nested inside
 // some other expression at the same site. See docs/DYN-TRAITS.md.
@@ -3260,7 +3260,13 @@ func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
 	if _, ok := e.(*ast.ArrayLit); !ok {
 		return
 	}
-	if at, ok := dst.(ast.ArrayType); ok {
+	switch at := dst.(type) {
+	case ast.ArrayType:
+		c.elemHint = at.Elem
+	case ast.SliceType:
+		// A literal at a `[T]` parameter is lent as a view of itself
+		// (#6798), so its elements settle against T exactly as they would
+		// at a `T[]` parameter.
 		c.elemHint = at.Elem
 	}
 }
@@ -3701,7 +3707,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 	for i, arg := range n.Args {
 		at := c.checkExpr(arg, s)
 		want := ast.SubstSelf(wantParams[i].Type, dt)
-		if at != nil && !c.argAssignable(want, at, wantParams[i].Own) {
+		if at != nil && !c.argOK(&n.Args[i], want, at, wantParams[i].Own) {
 			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 		}
 	}
@@ -7271,27 +7277,90 @@ func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
 	return strings.Join(missing, " + ")
 }
 
-// argAssignable is assignable plus the `str` borrow rule (#4813): a `str`
-// view may flow into a `string` PARAMETER -- params are borrowed by default
-// (OwnedByDefault), so the callee never frees its argument and lending a
-// view is safe. Owning sinks stay on the strict assignable. `own` params
-// are not yet distinguished here (FuncSigs carry types only); that
-// tightening rides the A2 escape slice (#4814).
+// argAssignable is assignable plus the two borrow rules that hold at a
+// PARAMETER and nowhere else -- params are borrowed by default
+// (OwnedByDefault), so the callee never frees its argument and lending is
+// safe. Owning sinks stay on the strict assignable.
+//
+//   - a `str` view may flow into a `string` parameter (#4813);
+//   - an owned `T[]` may flow into a borrowed `[T]` view parameter (#6798).
+//
+// The array half is a real coercion, not just a typing relaxation: an owned
+// array and a view have different runtime shapes, so an accepted argument is
+// rewritten to the full-range slice by lendArrayAsView. Use argOK at any site
+// that can perform that rewrite; the bare predicate is for the resolution
+// probes that only ask whether a call *would* apply.
 func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	if c.assignable(want, got) {
 		return true
 	}
 	if own {
 		// An `own` (consuming) parameter takes OWNERSHIP of its argument —
-		// the callee frees it. A `str` view must never be freed by its
-		// holder, so the borrow carve-out below does not apply: lending a
-		// view to a consumer is exactly the #4294 corruption shape.
-		// Materialise with .to_owned() instead.
+		// the callee frees it. A view must never be freed by its holder, so
+		// the borrow carve-outs below do not apply: lending a view to a
+		// consumer is exactly the #4294 corruption shape. Materialise with
+		// .to_owned() (string) / a copy (array) instead.
 		return false
+	}
+	if isArrayViewLend(want, got) {
+		return true
 	}
 	_, gotStr := got.(ast.StrType)
 	_, wantString := want.(ast.StringType)
 	return gotStr && wantString
+}
+
+// argOK is argAssignable at a real argument position: it decides the argument
+// AND materialises whatever implicit borrow the lowering needs, so no accepted
+// argument reaches the IR in a shape the parameter's ABI doesn't match.
+func (c *checker) argOK(arg *ast.Expr, want, got ast.Type, own bool) bool {
+	if !c.argAssignable(want, got, own) {
+		return false
+	}
+	c.lendArrayAsView(arg, want, got, own)
+	return true
+}
+
+// isArrayViewLend reports whether an owned `T[]` may be lent as the borrowed
+// view `[T]` (#6798). Element types must match exactly: a view aliases the
+// parent's storage element-for-element, so there is no widening to be had.
+func isArrayViewLend(want, got ast.Type) bool {
+	sl, isView := want.(ast.SliceType)
+	arr, isArray := got.(ast.ArrayType)
+	return isView && isArray && arr.Elem != nil && ast.Equal(sl.Elem, arr.Elem)
+}
+
+// lendArrayAsView rewrites an accepted owned-array argument into the
+// full-range slice `xs[:]` — the spelling the caller previously had to write
+// by hand. `[T]` is a `{data_ptr, len}` pair while `T[]` is the array itself,
+// so the view has to be materialised somewhere; doing it here means every
+// backend, the interpreter, and the rc passes see the same shape they already
+// handle for an explicit slice.
+func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
+	if own || arg == nil || *arg == nil || !isArrayViewLend(want, got) {
+		return
+	}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: got.(ast.ArrayType).Elem}
+}
+
+// unifyArrayArg is unifyType at an argument position, with the same `T[]` →
+// `[T]` borrow folded in: a generic `[T]` parameter binds T from an owned
+// `T[]` argument and takes a full-range view of it, so a view-taking generic
+// is no more hostile to its callers than a concrete one.
+func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[string]ast.Type, own bool) bool {
+	if c.unifyType(want, got, sub) {
+		return true
+	}
+	if own {
+		return false
+	}
+	sl, isView := want.(ast.SliceType)
+	arr, isArray := got.(ast.ArrayType)
+	if !isView || !isArray || arr.Elem == nil || !c.unifyType(sl.Elem, arr.Elem, sub) {
+		return false
+	}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: arr.Elem}
+	return true
 }
 
 // freshOwnedProducers are calls whose result is a freshly allocated value by
@@ -12012,7 +12081,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							for i, arg := range n.Args {
 								at := c.checkExpr(arg, s)
 								want := ast.SubstSelf(tm.Params[i].Type, tp)
-								if at != nil && !c.argAssignable(want, at, tm.Params[i].Own) {
+								if at != nil && !c.argOK(&n.Args[i], want, at, tm.Params[i].Own) {
 									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 								}
 							}
@@ -12216,7 +12285,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				for i, arg := range n.Args {
 					at := c.checkExpr(arg, s)
 					want := ast.SubstSelf(wantParams[i].Type, tt)
-					if at != nil && !c.argAssignable(want, at, wantParams[i].Own) {
+					if at != nil && !c.argOK(&n.Args[i], want, at, wantParams[i].Own) {
 						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 					}
 				}
@@ -12524,11 +12593,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
 				}
+				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
 				if sub != nil {
-					if !c.unifyType(expected, at, sub) {
+					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 					}
-				} else if !c.argAssignable(expected, at, i < len(calleeOwnFlags) && calleeOwnFlags[i]) {
+				} else if !c.argOK(&n.Args[i], expected, at, own) {
 					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
 				}
 			}
