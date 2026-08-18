@@ -65,8 +65,15 @@ original "exactly-once obligations" — corrected there).
 
 The ordering is a submoding order read exactly as OxCaml's: a
 binding at a stronger mode can be *used* where a weaker one is
-expected (owned values flow into borrowed positions freely —
-`argAssignable`), never the reverse (borrowed → owned is E051).
+expected, never the reverse (borrowed → owned is E051). The
+owned→borrowed direction is spelt out per surface: an owned
+`string` borrows into a `str` anywhere (`assignable`), and an
+owned `T[]` lends into a `[T]` at a PARAMETER (`argAssignable`
+/ `argOK`, #6798) — parameters are borrowed by default, so the
+callee never frees what it was lent, while an owning sink (var
+init, struct field, array element, return) keeps the strict
+rule because it would outlive the lend. `own` params are
+excluded from both: they consume.
 
 **Axis 2 — disposal obligation, per type, applied to owned
 values:**
@@ -207,6 +214,27 @@ returned through a callee is not chased — checker.go:7180).
 Guarantee: a borrowed view never outlives the frame that owns
 its backing store — the one place Fern needs a locality-style
 rule (§1).
+
+Lending in (#6798): an owned `T[]` argument reaching a `[T]`
+parameter is accepted and rewritten by the checker
+(`lendArrayAsView`, `unifyArrayArg` for a generic `[T]`) into
+the full-range slice `xs[:]`, so the two spellings compile to
+the same thing. Unlike `string` → `str`, which erases to one
+runtime shape, this is a real coercion — a view is a
+`{data,len}` pair — so the rewrite happens in the checker and
+every backend keeps seeing the explicit-slice shape it already
+handles. Without it a view-taking signature was hostile to its
+callers, and the surface went unused: `[T]` appeared once in
+the whole stdlib against 53 uses of `str`.
+
+The lend is an assignability rule, so it reaches every declared
+parameter but not method *resolution*: `[T]` receivers live in
+their own `slice` namespace (checker.go:2345), separate from
+`Array`, so `xs.view_method()` on an owned array still does not
+resolve where `view_method(xs)` does. `str` has no such gap —
+`ReceiverTypeName` maps it onto `string`'s surface. Unifying
+the two array namespaces is a method-surface decision, not an
+assignability one, and nothing declares a `[T]` receiver today.
 
 Self-host status: **ported.** `slice_escape_diags` /
 `slc_walk` (checker.fern:2791/2747, E063 at 2764);
