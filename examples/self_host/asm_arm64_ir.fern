@@ -772,6 +772,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // near zero there and dereferencing it segfaults. The store is the same
             // value every time, so it needs no first-use bookkeeping, and `.data` is
             // in the image's RW segment on every arm64 target.
+            // Still mark_heap: the literal itself no longer allocates, but its
+            // value is a box pointer that flows into ops which do, and the
+            // runtime those need is emitted behind this flag.
+            s = s.mark_heap();
             var lo: asmcore.StringLitOut = asmcore.add_string_lit(s, o.str);
             s = lo.state;
             var boxlbl: string = asm_ir.str_box_label(s, lo.idx);
