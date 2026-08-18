@@ -41,6 +41,38 @@ func goCheckerCodes(t *testing.T, dir, src string) []string {
 	return uniqueSortedCodes(codeRE.FindAllString(diag.Format(p, src, err), -1))
 }
 
+// driverDiag is one line of the self-host checker driver's output: the
+// diagnostic code and the message text it printed after the tab.
+type driverDiag struct {
+	code string
+	msg  string
+}
+
+// driverDiags splits the driver's `CODE\tMESSAGE` lines. The message half
+// is what the text differential reads; every codes-only gate takes .code
+// and throws it away.
+func driverDiags(out string) []driverDiag {
+	var ds []driverDiag
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimRight(line, "\r"); line == "" {
+			continue
+		}
+		code, msg, _ := strings.Cut(line, "\t")
+		ds = append(ds, driverDiag{code, msg})
+	}
+	return ds
+}
+
+// driverCodes is driverDiags reduced to the sorted, de-duplicated code
+// set the differential gates compare.
+func driverCodes(out string) []string {
+	var codes []string
+	for _, d := range driverDiags(out) {
+		codes = append(codes, d.code)
+	}
+	return uniqueSortedCodes(codes)
+}
+
 func uniqueSortedCodes(in []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -1339,7 +1371,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			out, _ := cmd.Output()
-			got := uniqueSortedCodes(strings.Fields(string(out)))
+			got := driverCodes(string(out))
 
 			want := uniqueSortedCodes(tc.want)
 			if !equalStrings(got, want) {
@@ -1527,7 +1559,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			out, _ := cmd.Output()
-			got := uniqueSortedCodes(strings.Fields(string(out)))
+			got := driverCodes(string(out))
 			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)
@@ -1700,7 +1732,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	for _, tc := range progs {
 		t.Run(tc.name, func(t *testing.T) {
 			out := checkSourceModload(t, runner, driverBin, tc.src)
-			got := uniqueSortedCodes(strings.Fields(out))
+			got := driverCodes(out)
 			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src)

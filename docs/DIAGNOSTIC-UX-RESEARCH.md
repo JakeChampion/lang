@@ -792,7 +792,17 @@ errors from a fuzz run, frozen as golden fixtures.
   produce a syntactically valid program when applied;
   if not, the suggestion is *misinformation* worse
   than no suggestion. Test golden suggestions for
-  apply-and-re-parse soundness.
+  apply-and-re-parse soundness. This one has bitten
+  twice and is now gated three ways (#6990, #7018):
+  `internal/checker/derive_hint_test.go` COMPILES the
+  spelling each hint suggests (and, for a type from
+  another module, pins that the routes it withholds
+  are ones the checker really refuses),
+  `internal/sourcelint/diag_suggestion_spelling_test.go`
+  makes a bare trait name unrepresentable in either
+  compiler's sources, and
+  `internal/e2eselfhost/self_host_checker_hint_text_test.go`
+  compares the advice the two compilers give.
 
 - **Verbose-by-default error chains.** Rust's full
   trait-bound chains can run 30 lines. Default-collapsed,

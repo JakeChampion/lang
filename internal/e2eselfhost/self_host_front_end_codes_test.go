@@ -96,7 +96,7 @@ func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 			cmd := exec.Command(interpBin, "-interp", driver)
 			cmd.Stdin = strings.NewReader(tc.src)
 			out, _ := cmd.Output()
-			got := uniqueSortedCodes(strings.Fields(string(out)))
+			got := driverCodes(string(out))
 
 			if !equalStrings(got, uniqueSortedCodes(tc.want)) {
 				t.Errorf("self-host front-end codes = %v, want %v (src %s)", got, tc.want, tc.src)

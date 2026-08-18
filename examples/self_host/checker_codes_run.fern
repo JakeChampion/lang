@@ -1,10 +1,11 @@
 // examples/self_host/checker_codes_run.fern — stdin-driven driver that
-// runs the self-hosted type checker and prints the diagnostic CODE of
-// every diagnostic it emits, one per line (e.g. "E007"). Companion to
-// checker_run.fern (which only signals well-typed via the exit code):
-// this driver exposes the coded diagnostics so the Go-vs-self-host
-// differential gate (internal/e2e/self_host_checker_codes_test.go) can
-// compare the SET of codes the two checkers produce for the same source.
+// runs the self-hosted type checker and prints one line per diagnostic:
+// the CODE, a tab, then the MESSAGE (e.g. "E007\tundefined variable x").
+// Companion to checker_run.fern (which only signals well-typed via the
+// exit code): this driver exposes the coded diagnostics so the
+// Go-vs-self-host differential gates in internal/e2eselfhost can compare
+// the two checkers on the same source — the SET of codes, and, for the
+// diagnostics that name a spelling to write, the message text (#7018).
 // Exits 1 when any diagnostic was emitted, 0 otherwise.
 
 import "std/io";
@@ -18,7 +19,7 @@ function main(): i32 {
     var mt: checker.ModuleTypes = checker.check_module(mod);
     var i: i32 = 0;
     while (i < mt.diags.len()) {
-        print(mt.diags[i].code);
+        print(mt.diags[i].code + "\t" + mt.diags[i].message);
         i = i + 1;
     }
     if (mt.diags.len() > 0) { return 1; }
