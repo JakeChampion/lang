@@ -30057,7 +30057,7 @@ function stmt_unsafe_for_allow_structret(st: parser.Stmt, name: string, borrowab
     return false;
 }
 
-function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[]): boolean {
+function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
     match (e) {
         parser.ExprStructLit(slit) => {
             if (!(decl_is_struct(structs, slit.type_name) && decl_is_leaksafe(structs, slit.type_name))) { return false; }
@@ -30089,6 +30089,31 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
             }
             return true;
         },
+        // `return mkp(a, b)` — a FORWARDING frame. The callee is already proven
+        // to hand back a box it allocated, and this frame neither binds nor
+        // aliases it, so what reaches the caller is that same sole reference.
+        // Without this the caller's binding earned no reclaim credit at all and
+        // the box leaked whole: 48 B a round on a scalar-only struct, where the
+        // direct call to the same producer is flat (#7062).
+        //
+        // Refused when the name is not the DECLARATION the registry is keyed by
+        // — a local or a parameter of that name holds an unknown closure body,
+        // the same refusal owned_fresh_call_callee makes at the call site.
+        parser.ExprCall(fc) => {
+            match (fc.callee) {
+                parser.ExprIdent(fcid) => {
+                    if (util.index_of_str(fwd, fcid.name) < 0) { return false; }
+                    if (body_declares_name(fnbody, fcid.name)) { return false; }
+                    var pi: i32 = 0;
+                    while (pi < fnparams.len()) {
+                        if (fnparams[pi].name == fcid.name) { return false; }
+                        pi = pi + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
         _ => { return false; }
     }
     return false;
@@ -30100,7 +30125,7 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
 // release under a pointer compare because those are the only two boxes it can
 // be. A body with no return at all answers false via the caller's
 // body_has_return check.
-function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[]): boolean {
+function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string, arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -30110,27 +30135,27 @@ function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser
                     parser.ExprIdent(rid) => { if (rid.name == recv) { self_ret = true; } },
                     _ => {}
                 }
-                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh)) { return false; }
+                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams)) { return false; }
             },
-            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh)) { return false; } },
-            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh)) { return false; } },
-            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh)) { return false; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh)) { return false; } a = a + 1; } },
+            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv, arr_fresh, fwd, fnparams) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
+            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
+            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv, arr_fresh, fwd, fnparams)) { return false; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
     }
     return true;
 }
-function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[]): boolean {
+function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], arr_fresh: string[], fwd: string[], fnparams: parser.ParamDecl[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
-            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh)) { return true; } },
-            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh)) { return true; } },
-            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh)) { return true; } },
-            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody, arr_fresh)) { return true; } },
-            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh)) { return true; } a = a + 1; } },
+            parser.StmtReturn(r) => { if (!return_value_is_strictfresh_struct(r.value, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
+            parser.StmtIf(f) => { if (body_has_nonstrictfresh_return(f.then_body, structs, fnbody, arr_fresh, fwd, fnparams) || body_has_nonstrictfresh_return(f.else_body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
+            parser.StmtWhile(w) => { if (body_has_nonstrictfresh_return(w.body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
+            parser.StmtFor(fo) => { if (body_has_nonstrictfresh_return(fo.body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrictfresh_return(m.arms[a].body, structs, fnbody, arr_fresh, fwd, fnparams)) { return true; } a = a + 1; } },
             _ => {}
         }
         i = i + 1;
@@ -30526,6 +30551,51 @@ pub function arr_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// fresh_struct_fwd_fixpoint: the bare NAMES of free functions whose every return
+// is a strict-fresh struct — the set the forwarding arm of
+// return_value_is_strictfresh_struct resolves a callee against. Iterated to a
+// fixpoint so a chain of forwarding frames is admitted end to end; the round cap
+// bounds the chain length rather than the call graph, and a longer one simply
+// stays uncredited.
+function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: parser.StructDecl[], arr_fresh: string[]): string[] {
+    // Candidates are fixed by their signature, so the type tests are done once.
+    var pending: i32[] = [];
+    var k: i32 = 0;
+    while (k < funcs.len()) {
+        var rt: string = funcs[k].ret_type;
+        if (funcs[k].receiver_type.len() == 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
+                && body_has_return(funcs[k].body)) {
+            pending = pending.append(k);
+        }
+        k = k + 1;
+    }
+    // Later rounds re-walk only what is still UNCREDITED. The classifier is
+    // monotone — a credited name never loses its entry when the set grows — so
+    // re-asking about one that already qualified can only produce the same
+    // answer, and the body walk is the expensive part of this pass.
+    var acc: string[] = [];
+    var round: i32 = 0;
+    while (round < 8) {
+        var still: i32[] = [];
+        var added: boolean = false;
+        var p: i32 = 0;
+        while (p < pending.len()) {
+            var fi: i32 = pending[p];
+            if (!body_has_nonstrictfresh_return(funcs[fi].body, structs, funcs[fi].body, arr_fresh, acc, funcs[fi].params)) {
+                acc = acc.append(funcs[fi].name);
+                added = true;
+            } else {
+                still = still.append(fi);
+            }
+            p = p + 1;
+        }
+        pending = still;
+        if (!added || pending.len() == 0) { return acc; }
+        round = round + 1;
+    }
+    return acc;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     var out: string[] = [];
     // The whole-program str-fresh-ret registry, needed to prove a `string`
@@ -30543,10 +30613,27 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
     }
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
+    // The bare-name half is a LEAST FIXPOINT, because a return may now forward
+    // to another producer (`return mkp(a, b)`) and so depends on that one's
+    // verdict. Starts empty and only ever adds — a use is credited on a literal
+    // or on a callee already proven — so the iteration is monotone; a mutual
+    // recursion with no grounding stays uncredited, the conservative direction.
+    // Free functions only: the forwarding arm resolves a bare-ident callee, so a
+    // method key could never be the thing it looks up.
+    var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh);
     var k: i32 = 0;
     while (k < funcs.len()) {
         var rt: string = funcs[k].ret_type;
-        if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh)) {
+        // A FREE function's verdict is exactly its membership in the fixpoint
+        // above, which asked this question with the same arguments; only a
+        // METHOD (never a forwarding-arm callee, so never in that set) still
+        // needs the walk here.
+        var strict_fresh_ret: boolean = decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt) && body_has_return(funcs[k].body);
+        if (strict_fresh_ret) {
+            if (funcs[k].receiver_type.len() == 0) { strict_fresh_ret = util.index_of_str(fwd, funcs[k].name) >= 0; }
+            else { strict_fresh_ret = !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh, fwd, funcs[k].params); }
+        }
+        if (strict_fresh_ret) {
             var key: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { key = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append(key);
@@ -30596,7 +30683,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // could carry the receiver's own box.
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && decl_has_string_field(structs, rt) && !struct_has_reclaim_array_field(structs, rt)
-                && body_has_return(funcs[k].body) && !body_has_nonstrictfresh_return(funcs[k].body, structs, funcs[k].body, arr_fresh)
+                && strict_fresh_ret
                 && body_strfields_all_fresh(funcs[k].body, structs, str_fresh)) {
             var skey: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { skey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
@@ -30619,7 +30706,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         if (funcs[k].receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
                 && body_has_return(funcs[k].body)
                 && body_returns_bare_ident(funcs[k].body, funcs[k].receiver_name)
-                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh)) {
+                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name, arr_fresh, fwd, funcs[k].params)) {
             out = out.append("FRESHSELF:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
