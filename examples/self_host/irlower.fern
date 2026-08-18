@@ -593,15 +593,26 @@ pub struct LowerState {
     // inc, and dropping that local's dec would turn a balanced pair into a leak.
     // Recorded by the emitter that elides, so the two halves cannot drift.
     moved_elided: i32[],
+    // move_sites: the "line:col" keys of the IDENT nodes the construction-move
+    // analysis actually marked (move_sites_toplevel_of). moved_names says WHICH
+    // local moves; only this says WHERE, and the retain may be elided at that
+    // one site alone.
+    move_sites: string[],
 }
 
-// with_selfrebind marks (or clears, with "") the local whose self-rebind literal
-// is being lowered. See the field's comment on LowerState.
-// moves_local: does this function MOVE `name` into a construction at its last
-// use? The construction then owns the reference, so the retain is redundant with
-// the sweep dec that cancels it (#6726).
-pub function (s: LowerState) moves_local(name: string): boolean {
-    return util.index_of_str(s.moved_names, name) >= 0;
+// moves_local_at: does the construction at THIS ident node take over `name`'s
+// reference? The construction then owns it, so the retain is redundant with the
+// sweep dec that cancels it (#6726).
+//
+// Keyed on the SITE, not just the name: a local is moved at its LAST use only,
+// and every other construction consuming it still needs its retain. Answering
+// by name alone elided the retain at all of them, which released the same
+// buffer once per literal (#6545). An unstamped ident (0:0) declines — the
+// retain stands and note_moved_elided never fires, so the pair stays balanced.
+pub function (s: LowerState) moves_local_at(name: string, line: i32, col: i32): boolean {
+    if (util.index_of_str(s.moved_names, name) < 0) { return false; }
+    if (line == 0 && col == 0) { return false; }
+    return util.index_of_str(s.move_sites, util.i32_to_string(line) + ":" + util.i32_to_string(col)) >= 0;
 }
 
 // note_moved_elided records that the retain for `slot` was actually skipped, so
@@ -613,6 +624,8 @@ pub function (s: LowerState) note_moved_elided(slot: i32): LowerState {
     return LowerState { ...s, moved_elided: s.moved_elided.append(slot) };
 }
 
+// with_selfrebind marks (or clears, with "") the local whose self-rebind literal
+// is being lowered. See the field's comment on LowerState.
 pub function (s: LowerState) with_selfrebind(name: string): LowerState {
     return LowerState { ...s, selfrebind: name };
 }
@@ -12205,7 +12218,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     if (fav_alias_inc) {
                         match (slit.field_values[found]) {
                             parser.ExprIdent(mvid) => {
-                                if (sm.moves_local(mvid.name)) { fav_moved = sm.slot_of(mvid.name); }
+                                if (sm.moves_local_at(mvid.name, mvid.line, mvid.col)) { fav_moved = sm.slot_of(mvid.name); }
                             },
                             _ => {}
                         }
@@ -41827,7 +41840,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [] };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, closure_opt_rets: clo_opt_rets, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -48859,8 +48872,9 @@ function rc_ml_last_use(body: parser.Stmt[], name: string, k: i32): boolean {
 // rc_ml_arr_elem_rc_tracked: native arrElemIsRcTracked — array / struct / enum
 // / closure / tuple. Exactly the element kinds a buffer's deep drop walks and
 // dec's, which is what balances a skipped construction inc. STRINGS are
-// excluded: their two-word retain/release diverges per backend, the same reason
-// the struct-lit arm skips a string field.
+// excluded because a two-word element needs the string-aware walk instead;
+// this is the NARROW set, and it mirrors native's storedArrayElemOperand. The
+// struct-lit arm above takes the wide one.
 function rc_ml_arr_elem_rc_tracked(t: string, structs: parser.StructDecl[]): boolean {
     if (t.len() == 0) { return false; }
     if (is_array_type_name(t)) { return true; }
@@ -49072,8 +49086,13 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
             while (i < sl.field_values.len()) {
                 match (sl.field_values[i]) {
                     parser.ExprIdent(id) => {
-                        // field must be rc-tracked and NOT string (native
-                        // arrElemIsRcTracked excludes strings here).
+                        // The field must be rc-tracked in the WIDE sense —
+                        // native's StructLit arm gates on rcTrackedSlotType
+                        // (internal/ir/rc_caps.go), which is arrElemIsRcTracked
+                        // PLUS string. The narrow set is the one a buffer's
+                        // deep drop can walk with a single-word dec; a struct
+                        // FIELD drop is string-aware, so a string field moves
+                        // like any other (#6545).
                         var ft: string = "";
                         var si: i32 = rc_struct_decl_index(structs, sl.type_name);
                         if (si >= 0) {
@@ -49083,7 +49102,7 @@ function rc_ml_construction_moves(val: parser.Expr, body: parser.Stmt[], k: i32,
                                 fi = fi + 1;
                             }
                         }
-                        var rc_field: boolean = is_array_type_name(ft) || (ft.len() > 0 && ft[0] == 40) || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
+                        var rc_field: boolean = is_array_type_name(ft) || ft == "string" || (ft.len() > 0 && ft[0] == 40) || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
                         if (rc_field && rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             // native keys the construction-move site on the
                             // consumed IDENT node.
@@ -49341,6 +49360,11 @@ pub function moved_locals_toplevel_of(fn: parser.FuncDecl, structs: parser.Struc
 }
 pub function move_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
     return rc_ml_compute(fn, structs).sites;
+}
+// move_sites_toplevel_of: the site keys of the top-level moves — the WHERE half
+// of moved_locals_toplevel_of, which is the subset the emitter acts on.
+pub function move_sites_toplevel_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    return rc_ml_compute_toplevel(fn, structs).sites;
 }
 
 // --- arraySetInc port (#4482, native computeArraySetIncs) --------------------
@@ -50170,7 +50194,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: str_ret_fns_of(funcs) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, closure_opt_rets: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {

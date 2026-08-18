@@ -7516,30 +7516,15 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `rcTrackedSlotType` (adding `StringType`) in #6545, and mirroring that
   predicate in the self-host makes a struct literal MOVE a bound string into
   the field. It does close the leak — a fresh-concat field went 2152/4000 to
-  232/0 bytes per round against native's 64/0.
+  232/0 bytes per round against native's 64/0 — but
+  `TestSelfHostRcPreciseDropX86IR/strdrop-two-alias-detector` went 0 to 1: an
+  over-release, which is a double free, so the port stayed out.
 
-  But the self-host's guard does not exclude a string that is still live for a
-  SECOND literal, and the failure direction is an over-release rather than a
-  leak:
-
-  ```fern
-  var s = "x";
-  var a = P { name: s };
-  var b = P { name: s };   // s moved by the first literal
-  ```
-
-  `__rc_underflow()` returns 1 where it must return 0
-  (`TestSelfHostRcPreciseDropX86IR/strdrop-two-alias-detector`). Both structs'
-  field drops release the same buffer.
-
-  The leak this closes is bounded; the over-release is a double free, so the
-  port stays out until the move is gated on the string being dead after the
-  literal — native's equivalent carries that guard through node identity, which
-  the self-host cannot reproduce positionally because desugared idents are
-  stamped 0/0.
-
-  The three `alloc_flat_struct_string_field` divergence rows therefore REMAIN
-  listed. Refs #6545 #6887 #4451.
+  **The mechanism recorded here at the time was wrong, and it cost the next
+  attempt a day.** It read the failure as the FIRST literal moving, and blamed
+  node identity — "the self-host cannot reproduce this positionally because
+  desugared idents are stamped 0/0". Both halves are false; the 2026-08-18
+  entry at the end of this log is the correction.
 
 - 2026-08-16: **The other two string-reclaim rows are NOT what their issues say.
   Measured, not reasoned.**
@@ -8711,3 +8696,38 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   rather than copying the scalar-result guard across.
 
   Refs #6544 #6522 #6887 #4451.
+- 2026-08-18: **#6545 lands. The blocker was never the string predicate — the
+  emitter elided the construction retain BY NAME, and an array field has been
+  over-releasing that way all along.**
+
+  The analysis was already right, and already byte-identical to native. On the
+  two-literal detector both compilers produce `movedLocals: s` and a single
+  `moveSites: 2:76` — the SECOND literal, the last use. `rc_ml_last_use` is
+  name-based, not positional, so it never marked the first; and no probe over
+  desugar-heavy shapes (`for i in 0..n`, concat inits, nested literals,
+  `xs.append(P{v:s})`) produced a `0:0` ident. The 2026-08-16 entry's
+  node-identity story was wrong on both counts.
+
+  The break was one layer down. Native keeps two tables — `moveSites` keyed by
+  NODE gates the inc, `movedLocals` keyed by NAME gates the exit-sweep dec
+  (`internal/ir/rc_analysis.go:61-71`). The self-host collapsed the inc side
+  onto the name table: `moves_local(name)` answered "is this local moved?" at
+  EVERY construction consuming it, so with two literals both retains were
+  elided and one buffer was released twice. The local's own dec elision was
+  never the problem — `moved_elided` is recorded by the eliding emitter, so
+  that half stayed balanced.
+
+  So the fix is a `move_sites` field on `LowerState` and a `moves_local_at(name,
+  line, col)` that asks WHERE as well as WHICH; `moves_local` is deleted. The
+  string arm on `rc_field` is then the small half.
+
+  **The array field is the part worth remembering.** Array fields have been in
+  the construction-move set since the beginning, so `struct Q { v: i32[] }` with
+  two literals over-released on every build before this — `__rc_underflow()` 1
+  against native's 0, on pristine `main`, with no source change. It was invisible
+  because nothing tested two literals over one array local, and because the
+  string arm's absence hid the only shape anyone was looking at. Filed as
+  #7055; `arrdrop-two-alias-detector` is the regression test.
+
+  The three `alloc_flat_struct_string_field` divergence rows are deleted — the
+  fixture now prints `flat`, matching native. Refs #6545 #6887 #7055 #4451.
