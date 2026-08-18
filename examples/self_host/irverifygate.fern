@@ -22,21 +22,23 @@
 // side for the same reason — it is an AST question, and answering it here
 // would drag the parser into the gate's closure.
 //
-// # Still off by default, and what it is waiting on
+// # On by default
 //
-// The plan is a flag first and on-by-default once the self-compile is clean
-// under it. Three of the four corpora are: the whole compiler verifies clean
-// on all three backends, and all 475 conformance fixtures compile clean
-// through the real CLI on x86-64 and wasm.
+// The plan was a flag first and on-by-default once the self-compile is clean
+// under it, and it now is on all four corpora: the whole compiler verifies
+// clean on all three backends, all 475 conformance fixtures compile clean
+// through the real CLI on x86-64 and wasm, and the WASM-HOSTED compiler emits
+// clean WAT with the gate running inside it.
 //
-// The fourth is not. Running the gate inside the WASM-HOSTED compiler
-// corrupts the WAT it emits — one 4-byte word of an emitted string literal
-// comes out incremented by one, which wasm-tools then refuses to parse. It is
-// irverifystack's walk that triggers it, the structure pass alone is clean,
-// and it reproduces on a tree without any of this: the gate has always done
-// this under FERN_IR_VERIFY=1, so it is a latent fault the gate surfaces
-// rather than one it introduces. #6994. Until that is fixed, on-by-default
-// would break the wasm-hosted compiler for everyone.
+// That fourth one is what held this back. Running the gate inside the
+// wasm-hosted compiler corrupted the WAT it emitted — one 4-byte word of an
+// emitted string literal came out incremented by one, which wasm-tools then
+// refused to parse. It was never the gate's fault: the gate was allocating
+// enough inside a wasm-hosted compile to reach a latent premature free, and
+// #6994 fixed that by rc-heading the strings the wasm WASI helpers hand back.
+//
+// FERN_IR_VERIFY=0 opts out, which is what a bisect wants when the gate itself
+// is the suspect.
 //
 // # What it does NOT check, and why
 //
@@ -51,11 +53,12 @@ import "./ir";
 import "./irverify";
 import "./irverifystack";
 
-// verify_on reports whether FERN_IR_VERIFY is set.
+// verify_on reports whether the gate runs. It is ON unless FERN_IR_VERIFY=0
+// opts out — #6994, the wasm-hosted corruption that kept it opt-in, is fixed.
 pub function verify_on(): boolean {
     match (env("FERN_IR_VERIFY")) {
-        Some(_) => { return true; },
-        None => { return false; }
+        Some(v) => { return v != "0"; },
+        None => { return true; }
     }
 }
 
@@ -80,8 +83,8 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
     return out;
 }
 
-// verify_or_refuse is what the backends call: a no-op unless FERN_IR_VERIFY is
-// set, and otherwise a hard exit naming what the verifiers found.
+// verify_or_refuse is what the backends call: a hard exit naming what the
+// verifiers found, and a no-op under FERN_IR_VERIFY=0.
 //
 // Exiting rather than returning a diagnostic is the point. The alternative is
 // emitting the malformed stream anyway, which is exactly the behaviour the

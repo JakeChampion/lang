@@ -100,7 +100,7 @@ function main(): i32 {
 }`},
 }
 
-// runGate compiles src with the driver, optionally under FERN_IR_VERIFY=1, and
+// runGate compiles src with the driver under FERN_IR_VERIFY=1 or =0, and
 // returns stdout, stderr and the exit code. It does not fail the test on a
 // non-zero exit: every caller here is asserting something about that code.
 func runGate(t *testing.T, runner []string, bin string, args []string, src string, verify bool) (string, string, int) {
@@ -118,6 +118,10 @@ func runGate(t *testing.T, runner []string, bin string, args []string, src strin
 	// Strip any ambient value first: a duplicate key resolves to the FIRST
 	// occurrence, so appending alone would leave an outer setting in force and
 	// the "flag off" half of every case below would silently test nothing.
+	//
+	// Both halves are then set EXPLICITLY. The gate is on by default, so an
+	// unset variable is the on state — leaving it out would make "off" mean
+	// "on" and every byte-identity comparison below compare a run with itself.
 	cmd.Env = []string{}
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "FERN_IR_VERIFY=") {
@@ -126,6 +130,8 @@ func runGate(t *testing.T, runner []string, bin string, args []string, src strin
 	}
 	if verify {
 		cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=1")
+	} else {
+		cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=0")
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -220,14 +226,15 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	copySelfHostDriver(t, dir, "irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
 
-	// Flag unset: inert. The gate runs on every function of every build, so
-	// being off by default is as much of the contract as the refusal is.
+	// Opted out: inert. The gate runs on every function of every build, so a
+	// working FERN_IR_VERIFY=0 is as much of the contract as the refusal is —
+	// it is the escape hatch when the gate itself is the suspect.
 	out, _, code := runGate(t, nil, bin, []string{"-refuse"}, "", false)
 	if code != 0 {
-		t.Errorf("-refuse without the flag exited %d, want 0 — the gate must be inert by default", code)
+		t.Errorf("-refuse under FERN_IR_VERIFY=0 exited %d, want 0 — the opt-out must make the gate inert", code)
 	}
 	if !strings.Contains(out, "irverifygate: inert") {
-		t.Errorf("-refuse without the flag printed %q, want the inert marker", out)
+		t.Errorf("-refuse under FERN_IR_VERIFY=0 printed %q, want the inert marker", out)
 	}
 
 	// Flag set: refuses, names the function, and says what is wrong with it.
