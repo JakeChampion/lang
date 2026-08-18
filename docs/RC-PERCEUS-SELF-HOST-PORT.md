@@ -9182,3 +9182,80 @@ qemu matrix. Run the whole `internal/e2e` with `-timeout 30m`.
   `alloc_flat_fresh_array_arg` remains 798. Its `node()` stores borrowed
   parameters, which is the one shape this arm must keep refusing. Refs #6544
   #6522 #6758 #4451.
+- 2026-08-18 (scoping, measured, NOT implemented): **what the last of
+  `alloc_flat_fresh_array_arg` costs and what would close it.** Four slices
+  have each closed a real leak without moving this row; this entry establishes
+  the remaining mechanism by measurement so the next one does not start from a
+  guess. Nothing here is a behaviour change.
+
+  Two hypotheses were tested and killed first, each by opening exactly one gate
+  and re-measuring:
+
+  | gate opened diagnostically | w5 / w6 / w7 | conformance |
+  |---|---|---|
+  | (none — current main) | 310 / 398 / 398 | 798 |
+  | `strarrfld_scan` store gate admits a bare-ident store | 310 / 398 / 398 | 798 |
+  | the `.len()` arm tolerates a transient `x.f[i].len()` element read | 310 / 398 / 398 | 798 |
+  | **BOTH the store gate AND the strict-fresh return gate** | **270 / 268 / 268** | **537** |
+
+  Neither gate alone moves anything, which is why reading either one in
+  isolation gives the wrong answer. The refusal is a genuine THREE-way
+  circularity:
+
+  1. `mka(deps: string[]): A1 { return A1 { deps: deps }; }` is not
+     strict-fresh — `return_value_is_strictfresh_struct` refuses a bare-ident
+     array field — so `mka` never enters `return_fresh_struct_ret_fns` and the
+     CALLER's `var a: A1 = mka(...)` gets no drop at all (witnessed: `round`
+     emits no `__struct_drop_A1`, where the `string`-field sibling emits four
+     calls);
+  2. `A1.deps` is not STRFLDOK-admitted, because `strarrfld_scan`'s store gate
+     sees the same bare-ident store;
+  3. the struct-literal construction does not retain that array, because the
+     retain is gated on `struct_routes_field_reclaim` (irlower.fern ~11845) —
+     which is what (2) decides.
+
+  Open (2) and the retain starts firing, which is what makes opening (1) safe.
+  They have to move together; either alone is inert, and (1) alone would be an
+  over-release.
+
+  **The retain was verified, not assumed.** With both gates open, the sharpest
+  aliasing shapes are correct on the self-host and match native: a struct built
+  from a live local, dropped in an inner scope FIRST, with the local's elements
+  read afterwards under heavy recycling pressure (a 40-block string plus a
+  fresh 3-element array between the drop and the reads); and two holders over
+  one array, both dropped. Plus the conformance case's own aliased half, which
+  reads `live` after `aliased`. No underflow, no wrong values.
+
+  So the pairing works and is worth 798 -> 537 on the row and 398 -> 268 on the
+  method/struct probes. What stops it landing here is that the honest
+  implementation needs a condition the diagnostic skipped: the strict-fresh
+  return gate must admit a bare-ident array field ONLY when that field's type
+  routes reclaim, so the retain is guaranteed rather than assumed — and
+  `return_value_is_strictfresh_struct` has no `sfok` in scope to ask. Threading
+  it is the work, and it is a soundness-critical widening across every struct
+  with a borrowed array field in a compiler that compiles itself; it wants the
+  full sweep, the fixpoints and the conformance suite behind it rather than a
+  hurried push.
+
+  **The threading is not plumbing — it carries a documented correctness
+  constraint.** Asking "does this field's type route reclaim?" means consulting
+  `strfld_reclaim_ok_types_of(funcs, structs, borrowable)`, and the two sites
+  that would have to ask —
+  `return_fresh_struct_ret_fns_of(funcs, structs)` and
+  `fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh)` — take no `borrowable`
+  at all. So the change introduces a new dependency from the strict-fresh
+  registry onto the borrowable-params verdict, and that function's own header
+  says what happens if the verdicts differ: "the interprocedural fixpoint admits
+  more borrows than the single pass, so a backend seeding `strfldok:` from the
+  fixpoint while the lowering routed on the single pass would free fields
+  nothing retained." Every emit path already overrides `strfld_ok_types`
+  wherever it overrides `borrowable_params`, and a third consumer has to join
+  that discipline rather than compute its own answer.
+
+  That is the concrete reason this is scoped rather than shipped: the diagnostic
+  that produced the numbers above asked no such question, and an implementation
+  that got this dependency subtly wrong would free a field nothing retained — in
+  a compiler that compiles itself.
+
+  The residual 537 after the pairing is undecomposed and should be measured
+  before anything else is attempted on it. Refs #6544 #6522 #4451.
