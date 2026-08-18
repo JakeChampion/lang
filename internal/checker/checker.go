@@ -8234,6 +8234,15 @@ func scalarModuleFor(t ast.Type) string {
 		mod = "std/float"
 	case ast.StringType:
 		mod = "std/string"
+	case ast.StrType:
+		// A `str` view shares the `string` method surface (methodTypeName maps
+		// it to "string"), so its methods come from the same module. Without
+		// this case the message fell through to the builtin list — "it has:
+		// as_bytes, len" — which is the outcome the comment above forbids, and
+		// it is reached by FOLLOWING another diagnostic: E043/E002/E003 on a
+		// `str` in an owned position all say "add `.to_owned()`", and
+		// `.to_owned()` is one of the methods that needs the import.
+		mod = "std/string"
 	default:
 		return ""
 	}

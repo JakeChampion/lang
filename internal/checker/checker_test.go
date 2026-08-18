@@ -5744,6 +5744,11 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		{"u32 still points at std/u32", `var x: u32 = 5; print(x.to_string());`, `std/u32`},
 		{"u64 still points at std/u64", `var x: u64 = 5; print(x.to_string());`, `std/u64`},
 		{"i64 still points at std/i64", `var x: i64 = 5; print(x.to_string());`, `std/i64`},
+		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
+		// so the message fell through to the builtin list ("it has: as_bytes,
+		// len") — the outcome that function's own comment forbids, and the one
+		// a reader reaches by FOLLOWING E043 (TestStrToOwnedAdviceIsFollowable).
+		{"str points at std/string", `var s: string = "abcdef"; var v: str = s[0:3]; print(v.to_owned());`, `std/string`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
