@@ -1364,9 +1364,11 @@ non-optional. **E044** ("captured variable has unsupported type") fires on all
 512 seeds, since any lambda capturing a value whose type the partial checker
 cannot resolve draws it.
 
-Each entry is a bug, not a permanent carve-out. E043 is #7011 (`type_eq` ignores
-integer width); E036 is the `derive_default` misreading recorded in
-`self_host_shadowed_builtin_variant_ir_test.go`. Deleting a line from
+Each entry is a bug, not a permanent carve-out. E036 is the `derive_default`
+misreading recorded in `self_host_shadowed_builtin_variant_ir_test.go`; E043 was
+mostly #7011 (`type_eq` ignoring integer width), which the section below closed —
+eight of its nine false-positive files went with it, and the one that remains is
+a generic-parameter collision. Deleting a line from
 `is_partial_checker_gap_code` is how one of these gets finished — re-run the
 sweep above before doing it.
 
@@ -1383,3 +1385,80 @@ checker says:
 Any code that appears is a false positive and belongs in the exclusion list.
 The end-to-end direction — that a gating code actually stops `-target` — is
 `TestSelfHostBuildGate{,MatchesCheck}X86_64` in `internal/e2eselfhost`.
+
+## 2026-08-18 — integer width enters the type (#7011)
+
+`type_eq`'s integer arm compared only `is_char`, so every width and signedness
+was interchangeable: `var x: i32 = c;` with `c: i64` type-checked, and no
+i64/u32/u64 differential row could be written for anything else because each one
+failed on this instead of on what it meant to test.
+
+Native's rule, measured rather than assumed:
+
+| shape | native |
+|---|---|
+| `var x: i32 = c;` (`c: i64`) — narrowing | E003 |
+| `var x: i64 = f();` (`f(): i32`) — widening | E003 |
+| `c - n`, `c < n` (`c: i64`, `n: i32`) — arithmetic / ordering | accepted |
+| `c == n` (`c: i64`, `n: i32`) — equality | E041 |
+| `var x: i64 = 5;` — unsuffixed literal | accepted |
+| `var x: i32 = 3000000000;` — literal out of range | E047 only |
+
+So there is no implicit conversion in either direction, integer widths unify in
+numeric *operator* contexts but not in equality, and an unsuffixed literal is
+read at its destination's type.
+
+### Why tightening `type_eq` alone does not work
+
+`type_eq(x, t_i32())` was the idiom for "is this an integer?" at 36 sites, so
+tightening the one comparison made the operator rules width-strict too. Measured
+on the compiler's own sources, that is **1,847 diagnostics** where native is
+silent — 668 E009, 590 E041, 321 E033, 110 E003 — i.e. the fixpoint stops.
+
+The laxity was standing in for three things the checker did not have. Each is
+now explicit:
+
+1. **`is_integer(t)`** — "an integer of any width", replacing all 36
+   `type_eq(_, t_i32())` sites. Behaviour-preserving on its own: with the old
+   `type_eq` those calls already meant exactly this.
+2. **`settles_to` reaches integer destinations** — an unsuffixed literal is read
+   at the destination's width, so `var n: i64 = 5;` is not an i32-into-i64
+   assignment. The predicate already existed for `f64` (#6654); it needed the
+   integer arm and five more call sites (method / closure / free-function
+   arguments, `var` initialisers, `return`, array elements, `append` / `with`).
+3. **`int_result`** — an integer binop yields its operands' width rather than
+   always i32, so `a + a` on i64 stays i64. Unary minus likewise.
+
+Equality gets the literal rule explicitly in both the structural and diagnostic
+paths: two *differently typed* integers are E041 like native, but an unsuffixed
+literal on either side is read at the other operand's width.
+
+### The literal classifiers have to agree
+
+`check_expr` read a literal's suffix but not its magnitude, so `1234567890123`
+typed i32 while `parser.if_expr_rt` and `parser.mono_infer` — which the parser
+already calls "sibling literal classifiers" — called it i64. `check_expr` is the
+third and now applies the same `literal_is_i64` rule (made `pub` for it).
+
+Two boundaries that rule gets wrong on its own, both pinned by differential rows:
+
+- **`-2147483648`** is i32-min, but the magnitude rule judges the operand's
+  *positive* text, where `2147483648` is one past i32-max. The negation is
+  read on the signed value.
+- **A wide literal at a destination** still settles: native reads it at the
+  destination's type and lets E047 object if it does not fit, rather than
+  reporting an assignment mismatch as well.
+
+### Measured outcome
+
+Same four-corpus sweep as #6961. On `conformance/cases`, false-positive files go
+from **58 to 54**: eight fixed (`i64_arith`, `i64_bitops`, `i64_max_to_string`,
+`i64_min_to_string`, `int_bit_accessors`, `int_byte_swap`, `int_checked_div`,
+`to_string_round_trip`) and none newly broken. The compiler's own sources are
+back to their single pre-existing E064.
+
+E043's false positives drop from nine files to one — width was the cause of the
+other eight. The one that remains (`type_param_name_collision`) is a
+generic-parameter problem unrelated to width, so **E043 stays in
+`is_partial_checker_gap_code`**; deleting that line needs the collision case
+fixed first.

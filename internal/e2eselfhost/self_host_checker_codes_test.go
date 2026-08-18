@@ -1547,6 +1547,39 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// independent — E072 fires on any variant, E036 only on a declared
 		// enum's typed payload — so this row is what proves they compose.
 		{"e072-and-e036-void-user-variant", "function nothing(): void { }\nenum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(nothing()); }\nfunction main(): i32 { return 0; }\n"},
+		// Integer WIDTH in assignability (#7011). `type_eq` compared only
+		// `is_char`, so every width was interchangeable and the permissive
+		// direction went unreported — and no i64/u32/u64 row could be written
+		// for anything else, because each one failed on this instead of on
+		// what it meant to test. Both directions are here: native rejects
+		// narrowing AND widening without a cast, so a rule that only caught
+		// one would pass half of these.
+		{"width-narrow-i64-to-i32", "function main(): i32 { var c: i64 = 5i64; var x: i32 = c; return 0; }\n"},
+		{"width-widen-i32-to-i64", "function f(): i32 { return 1; }\nfunction main(): i32 { var x: i64 = f(); return 0; }\n"},
+		{"width-unsigned-u32-to-i32", "function f(): u32 { return 1u32; }\nfunction main(): i32 { var x: i32 = f(); return 0; }\n"},
+		{"width-u64-to-i64", "function f(): u64 { return 1u64; }\nfunction main(): i32 { var x: i64 = f(); return 0; }\n"},
+		{"width-arg-i32-to-i64-param", "function g(v: i64): i32 { return 0; }\nfunction f(): i32 { return 1; }\nfunction main(): i32 { return g(f()); }\n"},
+		{"width-return-i32-from-i64-fn", "function f(): i32 { return 1; }\nfunction g(): i64 { return f(); }\nfunction main(): i32 { return 0; }\n"},
+		{"width-equality-i64-vs-i32", "function f(): i32 { return 1; }\nfunction g(): i64 { return 1i64; }\nfunction main(): i32 { if (f() == g()) { return 1; } return 0; }\n"},
+		// The other half of the same rule: an UNSUFFIXED literal is read at the
+		// destination's width, so tightening assignability must not start
+		// rejecting these. Each one is accepted by native.
+		{"width-literal-into-i64", "function main(): i32 { var x: i64 = 5; return 0; }\n"},
+		{"width-literal-into-u64", "function main(): i32 { var x: u64 = 5; return 0; }\n"},
+		{"width-literal-arg-to-i64-param", "function g(v: i64): i32 { return 0; }\nfunction main(): i32 { return g(5); }\n"},
+		{"width-literal-return-from-i64-fn", "function g(): i64 { return 5; }\nfunction main(): i32 { return 0; }\n"},
+		{"width-literal-equality-with-i64", "function main(): i32 { var c: i64 = 5i64; if (c == 3) { return 1; } return 0; }\n"},
+		{"width-i64-arithmetic-stays-i64", "function main(): i32 { var a: i64 = 1i64; var c: i64 = a + a; return 0; }\n"},
+		{"width-i64-mixed-arithmetic", "function main(): i32 { var a: i64 = 1i64; var n: i32 = 3; var c: i64 = a - (n as i64); return 0; }\n"},
+		{"width-i64-unary-minus", "function main(): i32 { var a: i64 = 1i64; var c: i64 = 0i64 - a; return 0; }\n"},
+		// A magnitude past i32-max names i64 with no suffix to say so, and
+		// `-2147483648` is still i32 — the boundary the magnitude rule reads
+		// on the operand's POSITIVE text.
+		{"width-wide-literal-into-i64", "function main(): i32 { var x: i64 = 5000000000; return 0; }\n"},
+		{"width-wide-literal-into-u64", "function main(): i32 { var x: u64 = 5000000000; return 0; }\n"},
+		{"width-i32-min-literal", "function main(): i32 { var x: i32 = -2147483648; return x; }\n"},
+		{"width-i32-min-return", "function smallest(): i32 { return -2147483648; }\nfunction main(): i32 { return 0; }\n"},
+		{"width-mixed-literal-array", "function main(): i32 { var a: i64[] = [5000000000, 1]; return a.len(); }\n"},
 	}
 
 	for _, tc := range progs {

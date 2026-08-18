@@ -387,6 +387,30 @@ pub function type_debug(t: Type): string {
   return "?";
 }
 
+// is_integer reports whether `t` is an integer of ANY width or signedness.
+// `char` rides an i32 slot but is not an integer (#5629), so it is excluded.
+//
+// The numeric operator rules want this rather than type_eq: native unifies
+// widths across `+`, `<`, `%` and friends (`c - n` with `c: i64`, `n: i32` is
+// accepted) and only assignment cares which width it got.
+function is_integer(t: Type): boolean {
+  match (t) {
+    TypeI32(i) => { return !i.is_char; },
+    _ => { return false; }
+  }
+}
+
+// int_result: the type an integer binop yields. An unsuffixed literal is read
+// at the other operand's width, so `n + 1` stays i64 when `n` is; when both
+// sides are settled the operator rules have already required them to agree, so
+// either side names the result.
+function int_result(lt: Type, rt: Type, le: parser.Expr): Type {
+  if (unsettled_int_literal(le)) {
+    return rt;
+  }
+  return lt;
+}
+
 // type_eq: structural equality on the type union. Returns true
 // only for matching variants; mismatched variants and Unknown
 // on either side return false (Unknown is a "couldn't resolve"
@@ -401,8 +425,9 @@ function type_eq(a: Type, b: Type): boolean {
           // explicit cast — that distinctness is the type's whole point,
           // since a byte and a code point sharing i32 is what made
           // `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable.
-          // The widths stay interchangeable among themselves, as before.
-          return ai.is_char == bi.is_char;
+          // Width and signedness are part of the type: i64 is not i32, and
+          // u32 is not i32. The Go checker rejects both without a cast.
+          return ai.is_char == bi.is_char && ai.width == bi.width && ai.unsigned == bi.unsigned;
         },
         _ => {
           return false;
@@ -727,15 +752,15 @@ function as_cast_allowed(src: Type, tgt: Type): boolean {
   if (type_eq(src, tgt)) {
     return true;
   }
-  var src_num: boolean = type_eq(src, t_i32()) || type_eq(src, t_char()) || type_eq(src, t_float());
-  var tgt_num: boolean = type_eq(tgt, t_i32()) || type_eq(tgt, t_char()) || type_eq(tgt, t_float());
+  var src_num: boolean = is_integer(src) || type_eq(src, t_char()) || type_eq(src, t_float());
+  var tgt_num: boolean = is_integer(tgt) || type_eq(tgt, t_char()) || type_eq(tgt, t_float());
   if (src_num && tgt_num) {
     return true;
   }
-  if (type_eq(src, t_string()) && type_eq(tgt, t_i32())) {
+  if (type_eq(src, t_string()) && is_integer(tgt)) {
     return true;
   }
-  if (type_eq(src, t_i32()) && type_eq(tgt, t_string())) {
+  if (is_integer(src) && type_eq(tgt, t_string())) {
     return true;
   }
   return false;
@@ -2133,7 +2158,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     var mi: i32 = 0;
     while (mi < c.args.len()) {
       var mat: Type = check_expr(c.args[mi], s);
-      if (!type_assignable(mat, msig.param_types[mi], s.unions)) {
+      if (!settles_to(c.args[mi], msig.param_types[mi], s) && !type_assignable(mat, msig.param_types[mi], s.unions)) {
         return t_unknown("arg-type mismatch calling method `" + name + "`");
       }
       mi = mi + 1;
@@ -2175,7 +2200,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
       var ci: i32 = 0;
       while (ci < c.args.len()) {
         var cat: Type = check_expr(c.args[ci], s);
-        if (!type_assignable(cat, tf.param_types[ci], s.unions)) {
+        if (!settles_to(c.args[ci], tf.param_types[ci], s) && !type_assignable(cat, tf.param_types[ci], s.unions)) {
           return t_unknown("arg-type mismatch calling closure `" + name + "`");
         }
         ci = ci + 1;
@@ -2228,7 +2253,7 @@ function check_call_expr(c: parser.ExprCall, s: Scope): Type {
     // where T erases to unknown) — the arg can't be checked against it, so
     // skip rather than mis-flag a mismatch (mirrors the E038 diag pass,
     // #4346 piece 2). A concrete param is still checked.
-    if (!is_unknown(sig.param_types[i]) && !type_assignable(at, sig.param_types[i], s.unions)) {
+    if (!is_unknown(sig.param_types[i]) && !settles_to(c.args[i], sig.param_types[i], s) && !type_assignable(at, sig.param_types[i], s.unions)) {
       return t_unknown("arg-type mismatch calling `" + name + "`");
     }
     i = i + 1;
@@ -2318,6 +2343,12 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       if (n.suffix == "char") {
         return t_char();
       }
+      // A magnitude past i32-max names i64 with no suffix to say so.
+      // parser.if_expr_rt and parser.mono_infer are the sibling literal
+      // classifiers; all three have to agree or a width is lost between them.
+      if (parser.literal_is_i64(n.text)) {
+        return t_i64();
+      }
       return t_i32();
     },
     parser.ExprBool(_) => {
@@ -2374,8 +2405,8 @@ function check_expr(e: parser.Expr, s: Scope): Type {
         if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
           return t_string();
         }
-        if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
-          return t_i32();
+        if (is_integer(lt) && is_integer(rt)) {
+          return int_result(lt, rt, b.left);
         }
         if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
           return t_float();
@@ -2386,25 +2417,24 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       // integer-only, so there is no string or float form. `<<|` is
       // the shift member — same operand rule as `<<`.
       if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-        if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
-          return t_i32();
+        if (is_integer(lt) && is_integer(rt)) {
+          return int_result(lt, rt, b.left);
         }
         return t_unknown("`" + b.op + "` operands must both be integers");
       }
       // Checked arithmetic (#5542) yields `Option[T]` — integer-only,
-      // no string or float form. The coarse Type collapses widths to
-      // i32, so the element is t_i32() (asmcore's Ty carries the real
-      // width for lowering).
+      // no string or float form. The element carries the operands' own
+      // width, so `a %? b` on i64 is `Option[i64]`.
       if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-        if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
-          var chkoa: Type[] = [t_i32()];
+        if (is_integer(lt) && is_integer(rt)) {
+          var chkoa: Type[] = [int_result(lt, rt, b.left)];
           return t_union_g("Option", chkoa);
         }
         return t_unknown("`" + b.op + "` operands must both be integers");
       }
       if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-        if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
-          return t_i32();
+        if (is_integer(lt) && is_integer(rt)) {
+          return int_result(lt, rt, b.left);
         }
         // `%` on floats isn't supported — interp surfaces
         // VErr; checker is lenient and just rejects it.
@@ -2414,7 +2444,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
         return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
       }
       if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-        if (type_eq(lt, t_i32()) && type_eq(rt, t_i32())) {
+        if (is_integer(lt) && is_integer(rt)) {
           return t_bool();
         }
         if (type_eq(lt, t_float()) && type_eq(rt, t_float())) {
@@ -2424,6 +2454,13 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       }
       if (b.op == "==" || b.op == "!=") {
         if (type_eq(lt, rt) && !is_unknown(lt)) {
+          return t_bool();
+        }
+        // An unsuffixed literal is read at the other operand's width, so
+        // `n == 3` holds whatever integer type `n` has (the E041 rule
+        // below says the same).
+        if (is_integer(lt) && is_integer(rt)
+            && (unsettled_int_literal(b.left) || unsettled_int_literal(b.right))) {
           return t_bool();
         }
         return t_unknown("equality op `" + b.op + "` requires same-typed operands");
@@ -2439,8 +2476,8 @@ function check_expr(e: parser.Expr, s: Scope): Type {
     parser.ExprUnary(u) => {
       var ot: Type = check_expr(u.operand, s);
       if (u.op == "-") {
-        if (type_eq(ot, t_i32())) {
-          return t_i32();
+        if (is_integer(ot)) {
+          return ot;
         }
         if (type_eq(ot, t_float())) {
           return t_float();
@@ -2496,7 +2533,7 @@ function check_expr(e: parser.Expr, s: Scope): Type {
     parser.ExprIndex(x) => {
       var at: Type = check_expr(x.array, s);
       var it: Type = check_expr(x.index, s);
-      if (!type_eq(it, t_i32())) {
+      if (!is_integer(it)) {
         return t_unknown("array index must be i32");
       }
       match (at) {
@@ -2520,10 +2557,10 @@ function check_expr(e: parser.Expr, s: Scope): Type {
       var at: Type = check_expr(sl.array, s);
       var st: Type = check_expr(sl.start, s);
       var et: Type = check_expr(sl.end, s);
-      if (!type_eq(st, t_i32())) {
+      if (!is_integer(st)) {
         return t_unknown("slice start must be i32");
       }
-      if (!type_eq(et, t_i32())) {
+      if (!is_integer(et)) {
         return t_unknown("slice end must be i32");
       }
       match (at) {
@@ -2743,7 +2780,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
         }
-        if (!type_assignable(t, declared, s.unions)) {
+        if (!settles_to(v.init, declared, init_scope) && !type_assignable(t, declared, s.unions)) {
           var err: Type = t_unknown("var `" + v.name + "`: init type doesn't match annotation `" + v.type_name + "`");
           return CheckResult { scope: s.bind(v.name, declared), ty: err };
         }
@@ -2785,7 +2822,7 @@ function check_stmt(st: parser.Stmt, s: Scope): CheckResult {
       if (is_unknown(t)) {
         return CheckResult { scope: s, ty: t };
       }
-      if (!type_assignable(t, s.ret_type, s.unions)) {
+      if (!settles_to(r.value, s.ret_type, s) && !type_assignable(t, s.ret_type, s.unions)) {
         return CheckResult { scope: s, ty: t_unknown("return type doesn't match declaration") };
       }
       return CheckResult { scope: s, ty: t };
@@ -6146,10 +6183,24 @@ function mlit_is_base(e: parser.Expr): boolean {
 function unsettled_int_literal(e: parser.Expr): boolean {
   match (e) {
     parser.ExprNumber(n) => {
-      return !n.is_float && n.suffix.len() == 0;
+      // A wide literal is already settled at i64 by its magnitude, so it is
+      // not free to be read at the destination's width.
+      return !n.is_float && n.suffix.len() == 0 && !parser.literal_is_i64(n.text);
     },
     parser.ExprUnary(u) => {
       if (u.op == "-") {
+        // `-2147483648` is i32-min. The magnitude rule judges the operand's
+        // POSITIVE text, where 2147483648 is one past i32-max, so the
+        // negation has to be read on the signed value or the i32 corner
+        // becomes an i64.
+        match (u.operand) {
+          parser.ExprNumber(un) => {
+            if (!un.is_float && un.suffix.len() == 0 && un.text == "2147483648") {
+              return true;
+            }
+          },
+          _ => {}
+        }
         return unsettled_int_literal(u.operand);
       }
       return false;
@@ -6165,6 +6216,18 @@ function unsettled_int_literal(e: parser.Expr): boolean {
     }
   }
   return false;
+}
+
+// wide_int_literal: an unsuffixed integer literal whose magnitude puts it past
+// i32-max. It types i64 on its own, but at a destination it is still read at
+// the destination's type — E047 is what reports one it cannot fit.
+function wide_int_literal(e: parser.Expr): boolean {
+  match (e) {
+    parser.ExprNumber(n) => {
+      return !n.is_float && n.suffix.len() == 0 && parser.literal_is_i64(n.text);
+    },
+    _ => { return false; }
+  }
 }
 
 // settles_to: would `e` reach type `want` once its unsettled integer literals
@@ -6183,6 +6246,16 @@ function settles_to(e: parser.Expr, want: Type, s: Scope): boolean {
   match (want) {
     TypeFloat(_) => {
       return unsettled_int_literal(e);
+    },
+    TypeI32(wi) => {
+      // An unsuffixed literal is read at the destination's width, so
+      // `var n: i64 = 5;` is not an i32-into-i64 assignment. `char` is
+      // excluded: it needs a character literal, not a number (#5629).
+      if (wi.is_char) { return false; }
+      // A wide literal settles here too: native reads it at the destination's
+      // type and lets the RANGE rule (E047) object if it does not fit, rather
+      // than reporting an assignment mismatch as well.
+      return unsettled_int_literal(e) || wide_int_literal(e);
     },
     TypeArray(wa) => {
       match (e) {
@@ -6540,7 +6613,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           // Go checker, which checks `MapLit.Entries[0].Key`.
           if (mfa.field == "insert" && mlit_is_base(mfa.obj) && c.args.len() >= 1) {
             var kt: Type = check_expr(c.args[0], s);
-            if (!is_unknown(kt) && !type_eq(kt, t_i32()) && !type_eq(kt, t_string())) {
+            if (!is_unknown(kt) && !is_integer(kt) && !type_eq(kt, t_string())) {
               out = out.append(dg_at("E045", "map key type " + type_label(kt) + " is not yet supported (use i32 or string)", expr_line(c.args[0]), expr_col(c.args[0])));
             }
           }
@@ -6758,13 +6831,13 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
               // (uninferred receiver) or unknown arg is skipped.
               if (mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
                 var aat: Type = check_expr(c.args[0], s);
-                if (!is_unknown(aat) && !type_assignable(aat, ar.elem, s.unions)) {
+                if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !type_assignable(aat, ar.elem, s.unions)) {
                   out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat), expr_line(c.args[0]), expr_col(c.args[0])));
                 }
               }
               if (mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
                 var wvt: Type = check_expr(c.args[1], s);
-                if (!is_unknown(wvt) && !type_assignable(wvt, ar.elem, s.unions)) {
+                if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !type_assignable(wvt, ar.elem, s.unions)) {
                   out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt), expr_line(c.args[1]), expr_col(c.args[1])));
                 }
               }
@@ -6873,9 +6946,16 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
       if (b.op == "==" || b.op == "!=") {
         var elt: Type = check_expr(b.left, s);
         var ert: Type = check_expr(b.right, s);
-        if (!is_unknown(elt) && !is_unknown(ert) && !type_eq(elt, ert)) {
+        // An unsuffixed literal on either side is read at the other
+        // operand's width, so `n == 3` holds for an `n` of any integer
+        // type. Two DIFFERENTLY-typed integers are still E041, matching
+        // native.
+        var eq_widths: boolean = type_eq(elt, ert)
+          || (is_integer(elt) && is_integer(ert)
+              && (unsettled_int_literal(b.left) || unsettled_int_literal(b.right)));
+        if (!is_unknown(elt) && !is_unknown(ert) && !eq_widths) {
           out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
-        } else if (!is_unknown(elt) && type_eq(elt, ert) && is_composite_type(elt)) {
+        } else if (!is_unknown(elt) && eq_widths && is_composite_type(elt)) {
           // Composite `==` / `!=` is STRUCTURAL equality via the
           // type's `Eq` impl — it desugars to `a.eq(b)`, so a struct
           // or enum that HAS an `eq` is well-formed. Without one the
@@ -6899,7 +6979,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         var pr: Type = check_expr(b.right, s);
         if (!is_unknown(pl) && !is_unknown(pr)) {
           var oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
-          var oki2: boolean = type_eq(pl, t_i32()) && type_eq(pr, t_i32());
+          var oki2: boolean = is_integer(pl) && is_integer(pr);
           var okf2: boolean = type_eq(pl, t_float()) && type_eq(pr, t_float());
           if (!oks && !oki2 && !okf2) {
             out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
@@ -6910,7 +6990,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         var alt: Type = check_expr(b.left, s);
         var art: Type = check_expr(b.right, s);
         if (!is_unknown(alt) && !is_unknown(art)) {
-          var oki: boolean = type_eq(alt, t_i32()) && type_eq(art, t_i32());
+          var oki: boolean = is_integer(alt) && is_integer(art);
           var okf: boolean = b.op != "%" && type_eq(alt, t_float()) && type_eq(art, t_float());
           if (!oki && !okf) {
             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
@@ -6924,7 +7004,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         var qlt: Type = check_expr(b.left, s);
         var qrt: Type = check_expr(b.right, s);
         if (!is_unknown(qlt) && !is_unknown(qrt)) {
-          if (!type_eq(qlt, t_i32()) || !type_eq(qrt, t_i32())) {
+          if (!is_integer(qlt) || !is_integer(qrt)) {
             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
           }
         }
@@ -6935,7 +7015,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         var klt: Type = check_expr(b.left, s);
         var krt: Type = check_expr(b.right, s);
         if (!is_unknown(klt) && !is_unknown(krt)) {
-          if (!type_eq(klt, t_i32()) || !type_eq(krt, t_i32())) {
+          if (!is_integer(klt) || !is_integer(krt)) {
             out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(klt) + " and " + type_label(krt), b.line, b.col));
           }
         }
@@ -6947,9 +7027,9 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
       if (b.op == "<<" || b.op == ">>" || b.op == "&" || b.op == "|" || b.op == "^") {
         var slt: Type = check_expr(b.left, s);
         var srt: Type = check_expr(b.right, s);
-        if (!is_unknown(slt) && !type_eq(slt, t_i32())) {
+        if (!is_unknown(slt) && !is_integer(slt)) {
           out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(slt), b.line, b.col));
-        } else if (!is_unknown(srt) && !type_eq(srt, t_i32())) {
+        } else if (!is_unknown(srt) && !is_integer(srt)) {
           out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(srt), b.line, b.col));
         }
       }
@@ -6961,7 +7041,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
         var olt: Type = check_expr(b.left, s);
         var ort: Type = check_expr(b.right, s);
         if (!is_unknown(olt) && !is_unknown(ort)) {
-          var oki_o: boolean = type_eq(olt, t_i32()) && type_eq(ort, t_i32());
+          var oki_o: boolean = is_integer(olt) && is_integer(ort);
           var okf_o: boolean = type_eq(olt, t_float()) && type_eq(ort, t_float());
           if (!oki_o && !okf_o) {
             if (type_eq(olt, ort) && is_composite_type(olt)) {
@@ -7001,7 +7081,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
       // minus); a string / bool / composite operand is rejected.
       if (u.op == "-") {
         var nt: Type = check_expr(u.operand, s);
-        if (!is_unknown(nt) && !type_eq(nt, t_i32()) && !type_eq(nt, t_float())) {
+        if (!is_unknown(nt) && !is_integer(nt) && !type_eq(nt, t_float())) {
           out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
         }
       }
@@ -7051,7 +7131,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           // struct target is not is_primitive_type here), matching the
           // sound-subset conservatism of E033/E042 above; the Go
           // checker carries the full array/struct-target rule.
-          if (type_eq(tgt, t_string()) && (type_eq(cot, t_i32()) || type_eq(cot, t_u32()))) {
+          if (type_eq(tgt, t_string()) && (is_integer(cot) || type_eq(cot, t_u32()))) {
             out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
           } else if (!as_cast_allowed(cot, tgt)) {
             out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
@@ -7128,7 +7208,13 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
           var flagged: boolean = false;
           while (k < a.elements.len() && !flagged) {
             var etk: Type = check_expr(a.elements[k], s);
-            if (is_primitive_type(etk) && !type_eq(etk, et0)) {
+            // Two unsuffixed integer literals in one array unify: the
+            // element type comes from the destination, not from whichever
+            // literal happened to be written first.
+            var lits_agree: boolean = is_integer(etk) && is_integer(et0)
+              && (unsettled_int_literal(a.elements[k]) || wide_int_literal(a.elements[k]))
+              && (unsettled_int_literal(a.elements[0]) || wide_int_literal(a.elements[0]));
+            if (is_primitive_type(etk) && !type_eq(etk, et0) && !lits_agree) {
               out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
               flagged = true;
             }
@@ -7150,7 +7236,7 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
       // checker's Index case (index type != i32 -> E034 at the index
       // position). A missing / unknown index type is skipped (no cascade).
       var ixt: Type = check_expr(ix.index, s);
-      if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
+      if (!is_unknown(ixt) && !is_integer(ixt)) {
         out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
       }
       // E034: the indexed value must be an array or string. Mirrors the Go
@@ -7176,11 +7262,11 @@ function call_diags(e: parser.Expr, s: Scope): Diag[] {
       // E037: a present slice bound must be i32. A missing bound
       // (`s[:]`, `s[a:]`) parses to an unknown placeholder — skip it.
       var sbt: Type = check_expr(s2.start, s);
-      if (!is_unknown(sbt) && !type_eq(sbt, t_i32())) {
+      if (!is_unknown(sbt) && !is_integer(sbt)) {
         out = out.append(dg_at("E037", "slice low bound must be i32, got " + type_label(sbt), expr_line(s2.start), expr_col(s2.start)));
       }
       var ebt: Type = check_expr(s2.end, s);
-      if (!is_unknown(ebt) && !type_eq(ebt, t_i32())) {
+      if (!is_unknown(ebt) && !is_integer(ebt)) {
         out = out.append(dg_at("E037", "slice high bound must be i32, got " + type_label(ebt), expr_line(s2.end), expr_col(s2.end)));
       }
       // E037: the sliced value must be an array or string. Mirrors the Go
@@ -7455,7 +7541,7 @@ function array_elem_check(elem_ty: Type, init: parser.Expr, s: Scope): Diag[] {
       var k: i32 = 0;
       while (k < arr.elements.len()) {
         var ekt: Type = check_expr(arr.elements[k], s);
-        if (!is_unknown(ekt) && !type_assignable(ekt, elem_ty, s.unions)) {
+        if (!is_unknown(ekt) && !settles_to(arr.elements[k], elem_ty, s) && !type_assignable(ekt, elem_ty, s.unions)) {
           out = out.append(dg_at("E034", "array element type " + type_label(ekt) + ", expected " + type_label(elem_ty), expr_line(arr.elements[k]), expr_col(arr.elements[k])));
         }
         k = k + 1;
