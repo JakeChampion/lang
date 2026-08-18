@@ -373,7 +373,7 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~Decode the reclaim and sig registries without slicing~~ — **done**, #7020 + #7026 + #7031 | `irlower.fern` | §4d.4 — −38% self-compile user between them; indexing the surviving walks is what is left, sized at 15.8% for one predicate |
+| 10 | ~~The reclaim / sig registries: allocation-free decode, then stop copying module-wide rows per function~~ — **done**, #7020 + #7026 + #7036 + #7046 | `irlower.fern` | §4d.4 — the self-compile roughly halved across the four; what is left is an index over the ~4,600-row SIG registries |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -804,20 +804,37 @@ had to zero, so removing them shows up on both sides of the clock.
 Across #7020 + #7026 the self-compile is **78.8 s → 51.2 s user (−35%)**. What
 remains of this shape is the walk itself: the registries are still linear.
 
-**Then the membership half, #7031.** 43 sites asked the reclaim registry
+**Then the membership half, #7036.** 43 sites asked the reclaim registry
 `util.index_of_str(names, "PFX:" + name) >= 0` — no per-candidate slice, but a
 concatenated KEY built once per probe, and the exit sweep runs a dozen of these
 per local slot. `reclaim_has` byte-compares prefix and name against each
 candidate instead: 35.1 s → 33.3 s user, −5%, byte-identical.
 
-**The next step is an index, and it is now sized.** Stubbing
-`dyn_reclaim_concrete_of` to `return ""` on post-#7026 main clocks **29.9 s
-against 35.5 s** — 15.8% for ONE of the dozen per-slot predicates, all of which
-re-derive a slot's classification from the registry on every probe. That is the
-ceiling for indexing, and it is large enough to be worth the design: the
-per-slot classification wants computing once per function, not per probe per
-sweep. Note the walk survives an allocation-free decode precisely because it is
-called O(slots × sweeps) times, not because any single walk is slow.
+**The walk looked like it wanted an index. It wanted a census.** Stubbing
+`dyn_reclaim_concrete_of` to `return ""` on post-#7026 main clocked **29.9 s
+against 35.5 s** — 15.8% for ONE of a dozen per-slot predicates — which reads as
+a mandate to index the registry. Measuring what the registry CONTAINS said
+otherwise. Instrumenting `lower_func` over a `checker.fern` compile:
+
+| | |
+|---|---|
+| entries per function | mean **91.6**, median 91, max 122 |
+| `OPTFRESH:` rows | 68,327 of ~84,000 (81%) |
+| `STRFLDOK:` rows | 15,242 (18%) |
+| everything else | <1% — 144 `TUP:`, 100 `NODEEP:`, 23 `STR:`, … |
+
+91.1 of the 91.6. The per-function registry was almost entirely two MODULE-WIDE
+lists, copied in per function, so every per-slot probe walked ~91 rows to find
+the ~0.5 that were about this function's locals. Both were already on the shared
+structure as `s.sigs.opt_fresh_ret_fns` / `s.sigs.strfld_ok_types`; the copy was
+added to avoid a 34th `LowerState` field, and its comment says so. #7046 deletes
+the seeding, points the five consumers at the originals, and takes **49.5 s →
+42.4 s user, ≈ −14%** (interleaved A/B/A/B), byte-identical. It also deletes
+~83,000 string concatenations per module.
+
+So the index is no longer the next step for THIS registry: with ~0.5 rows per
+function the walk is free. The sig registries (§ above, ~4,600 rows) are where
+an index still has something to buy.
 
 **One thing that did NOT work, and why.** `lower_block` calls
 `optfresh_names_of(s.reclaimable_names)` twice with the same argument, so
