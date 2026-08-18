@@ -2105,6 +2105,16 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// the imported module's mangled name; the imported module
 		// must export the named decl.
 		if id, ok := x.Target.(*ast.Ident); ok {
+			// `MyEnum.Variant` naming this module's OWN enum: the
+			// target names a type, not a value, so it takes
+			// selfPrefix like any other same-module type reference
+			// (rewriteStructNameAt). The checker resolves the
+			// qualifier through c.info.Enums, which is keyed by the
+			// mangled name.
+			if r.ownEnums[id.Name] && !r.localVars[id.Name] {
+				id.Name = r.selfPrefix + id.Name
+				return
+			}
 			if mod, prefix, ok := r.importedModule(id.Name); ok {
 				r.checkPublicValue(mod, x.Field, x.P)
 				target := prefix + x.Field
@@ -2237,19 +2247,18 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 //   - `TokA(...)` with TokA declared in this module → VariantName
 //     gains selfPrefix to line up with the (already-mangled)
 //     EnumVariant.Name produced by the union desugar.
+//   - `Color.Red(...)` with Color an enum declared in this module →
+//     the qualifier is an enum NAME, not a module, so it takes
+//     selfPrefix like any other same-module type reference.
 //
 // The checker then matches arm.VariantName against the variants
-// of the scrutinee enum (also mangled), and compares
-// arm.VariantModule to the enum's SourceModule for safety.
+// of the scrutinee enum (also mangled), and resolves
+// arm.VariantModule against c.info.Enums (enum qualifier) or the
+// enum's SourceModule (module qualifier).
 func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos ast.Position) {
 	if *armModule != "" {
-		// `Color.Red`-style enum-qualified match arm. The
-		// qualifier names an enum in this module, not an imported
-		// module — leave both fields alone so the printer can
-		// round-trip the qualifier and the checker can verify it
-		// matches the scrutinee's enum. We just suppress the
-		// "unknown module" diagnostic below.
 		if r.ownEnums[*armModule] {
+			*armModule = r.selfPrefix + *armModule
 			return
 		}
 		mod, prefix, ok := r.importedModule(*armModule)
