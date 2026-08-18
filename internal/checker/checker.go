@@ -3244,8 +3244,11 @@ func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled
 }
 
 // currentModule names the module whose source the checker is walking, or
-// "" outside any function (and for a single-file program that bypassed
-// modload).
+// "" outside any function (the top-level pre-checking phase that
+// registers structs / enums, and a single-file program that bypassed
+// modload). It is both the module identity visibility rules compare
+// against and the path errf stamps on every diagnostic, which the CLI
+// formatter and LSP workspace mode route per file by.
 func (c *checker) currentModule() string {
 	if c.current == nil {
 		return ""
@@ -7747,7 +7750,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	path := c.currentFile()
+	path := c.currentModule()
 	// Identical diagnostics at the same position are dropped. Several
 	// checks reach the same expression by different routes — a string
 	// `a < b` produced the same E009 twice, byte for byte — and a reader
@@ -8248,7 +8251,7 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 		Pos:     n.P,
 		Span:    len(n.Name),
 		Msg:     fmt.Sprintf(format, args...),
-		Path:    c.currentFile(),
+		Path:    c.currentModule(),
 		ErrCode: "E001",
 	}
 	if suggestion != "" {
@@ -8423,7 +8426,7 @@ func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field s
 	e := &Error{
 		Pos:     pos,
 		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
-		Path:    c.currentFile(),
+		Path:    c.currentModule(),
 		ErrCode: "E043",
 	}
 	if s := diag.Suggest(field, declared); s != "" && namePos.Line > 0 {
@@ -8435,17 +8438,6 @@ func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field s
 		}
 	}
 	c.errors = append(c.errors, e)
-}
-
-// currentFile returns the SourceModule path of the FuncDecl the
-// checker is currently inside, or "" when no decl is active (the
-// top-level pre-checking phase that registers structs / enums).
-// LSP workspace mode uses this for per-file diagnostic routing.
-func (c *checker) currentFile() string {
-	if c.current == nil {
-		return ""
-	}
-	return c.current.SourceModule
 }
 
 // collectNames flattens every name reachable from s, plus all top-level
