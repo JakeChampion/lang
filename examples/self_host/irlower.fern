@@ -15262,7 +15262,7 @@ function iife_rewrite_arm_body(body: parser.Stmt[], tmp: string, tslot: i32, ts:
             while (ii < im.arms.len()) {
                 var ib: parser.Stmt[] = iife_rewrite_arm_body(im.arms[ii].body, tmp, tslot, ts);
                 if (ib.len() == 0) { return none; }
-                iarms = iarms.append(parser.MatchArm { pattern: im.arms[ii].pattern, body: ib, line: im.arms[ii].line, col: im.arms[ii].col, guard: im.arms[ii].guard, has_guard: im.arms[ii].has_guard });
+                iarms = iarms.append(parser.MatchArm { pattern: im.arms[ii].pattern, body: ib, line: im.arms[ii].line, col: im.arms[ii].col, guard: im.arms[ii].guard, has_guard: im.arms[ii].has_guard, alt_cont: false });
                 ii = ii + 1;
             }
             tail = tail.append(parser.StmtMatch { ...im, scrutinee: im.scrutinee, arms: iarms });
@@ -15407,7 +15407,7 @@ function lower_iife_match(m: parser.StmtMatch, s: LowerState, force_i64: boolean
         // result means the shape is not rewritable.
         var nbody: parser.Stmt[] = iife_rewrite_arm_body(arm.body, tmp, tslot, ts);
         if (nbody.len() == 0) { return s.fail(); }
-        newarms = newarms.append(parser.MatchArm { pattern: arm.pattern, body: nbody, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+        newarms = newarms.append(parser.MatchArm { ...arm, body: nbody });
         i = i + 1;
     }
     var newmatch: parser.Stmt = parser.StmtMatch { ...m, scrutinee: m.scrutinee, arms: newarms };
@@ -19964,7 +19964,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     while (at_bi < arm.body.len()) { at_body = at_body.append(arm.body[at_bi]); at_bi = at_bi + 1; }
                     var at_guard: parser.Expr = arm.guard;
                     if (arm.has_guard) { at_guard = astwalk.subst_ident_expr(arm.guard, pv_at.at_binding, scrut); }
-                    arm = parser.MatchArm { pattern: arm.pattern, body: at_body, line: arm.line, col: arm.col, guard: at_guard, has_guard: arm.has_guard };
+                    arm = parser.MatchArm { ...arm, body: at_body, guard: at_guard };
                 }
             },
             _ => {}
@@ -52436,7 +52436,7 @@ function desugar_lambda_returns(body: parser.Stmt[], counter: i32): DesugarRet {
                 var ai: i32 = 0;
                 while (ai < m.arms.len()) {
                     var ad: DesugarRet = desugar_lambda_returns(m.arms[ai].body, c); c = ad.counter;
-                    narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ad.body, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                    narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ad.body, line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard, alt_cont: false });
                     ai = ai + 1;
                 }
                 out = out.append(parser.StmtMatch { ...m, scrutinee: m.scrutinee, arms: narms });
@@ -52558,7 +52558,7 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
                 var ge: LiftExpr = lift_expr_walk(m.arms[ai].guard, ma, gfns);
                 var ab: LiftStmts = lift_stmts(m.arms[ai].body, ge.acc, gfns);
                 ma = ab.acc;
-                narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ab.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard });
+                narms = narms.append(parser.MatchArm { pattern: m.arms[ai].pattern, body: ab.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard, alt_cont: false });
                 ai = ai + 1;
             }
             var nm: parser.Stmt = parser.StmtMatch { ...m, scrutinee: se.expr, arms: narms };
@@ -53437,7 +53437,7 @@ function subst_fcall_stmts(stmts: parser.Stmt[], fname: string, lname: string, c
                     var marm: parser.MatchArm = mm.arms[q];
                     var ng: parser.Expr = marm.guard;
                     if (marm.has_guard) { ng = subst_fcall_expr(marm.guard, fname, lname, capargs); }
-                    narms = narms.append(parser.MatchArm { pattern: marm.pattern, body: subst_fcall_stmts(marm.body, fname, lname, capargs), line: marm.line, col: marm.col, guard: ng, has_guard: marm.has_guard });
+                    narms = narms.append(parser.MatchArm { ...marm, body: subst_fcall_stmts(marm.body, fname, lname, capargs), guard: ng });
                     q = q + 1;
                 }
                 var ns: parser.Stmt = parser.StmtMatch { ...mm, scrutinee: subst_fcall_expr(mm.scrutinee, fname, lname, capargs), arms: narms };
@@ -53598,7 +53598,7 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
                         var narms: parser.MatchArm[] = [];
                         var q: i32 = 0;
                         while (q < mm.arms.len()) {
-                            if (q == ami) { narms = narms.append(parser.MatchArm { pattern: mm.arms[q].pattern, body: sm.body, line: mm.arms[q].line, col: mm.arms[q].col, guard: mm.arms[q].guard, has_guard: mm.arms[q].has_guard }); }
+                            if (q == ami) { narms = narms.append(parser.MatchArm { pattern: mm.arms[q].pattern, body: sm.body, line: mm.arms[q].line, col: mm.arms[q].col, guard: mm.arms[q].guard, has_guard: mm.arms[q].has_guard, alt_cont: false }); }
                             else { narms = narms.append(mm.arms[q]); }
                             q = q + 1;
                         }
@@ -54121,7 +54121,7 @@ function lift_iife_conditions(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: 
                 while (a < mm.arms.len()) {
                     var ab: InlineCloStmts = lift_iife_conditions(mm.arms[a].body, fd, fs, ct, gfns, mfuncs, structs);
                     fs = ab.funcs; ct = ab.counter;
-                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard, alt_cont: false });
                     a = a + 1;
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
@@ -54162,7 +54162,7 @@ function box_iife_arm_values(stmts: parser.Stmt[], fd: parser.FuncDecl, funcs: p
                 while (a < mm.arms.len()) {
                     var ab: InlineCloStmts = box_iife_arm_values(mm.arms[a].body, fd, fs, ct, gfns, mfuncs, structs);
                     fs = ab.funcs; ct = ab.counter;
-                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard, alt_cont: false });
                     a = a + 1;
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
@@ -54911,7 +54911,7 @@ function box_iife_arm_array_elems(stmts: parser.Stmt[], fd: parser.FuncDecl, fun
                 while (a < mm.arms.len()) {
                     var ab: InlineCloStmts = box_iife_arm_array_elems(mm.arms[a].body, fd, fs, ct, gfns, structs, mfuncs);
                     fs = ab.funcs; ct = ab.counter;
-                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard });
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[a].pattern, body: ab.stmts, line: mm.arms[a].line, col: mm.arms[a].col, guard: mm.arms[a].guard, has_guard: mm.arms[a].has_guard, alt_cont: false });
                     a = a + 1;
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: mm.scrutinee, arms: narms });
@@ -55914,7 +55914,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                     }
                     var ab: InlineCloStmts = lift_inline_closures_stmts(mm.arms[ami].body, fd, fs, ct, gfns, structs, mfuncs);
                     fs = ab.funcs; ct = ab.counter;
-                    narms = narms.append(parser.MatchArm { pattern: mm.arms[ami].pattern, body: ab.stmts, line: mm.arms[ami].line, col: mm.arms[ami].col, guard: gexpr, has_guard: mm.arms[ami].has_guard });
+                    narms = narms.append(parser.MatchArm { pattern: mm.arms[ami].pattern, body: ab.stmts, line: mm.arms[ami].line, col: mm.arms[ami].col, guard: gexpr, has_guard: mm.arms[ami].has_guard, alt_cont: false });
                     ami = ami + 1;
                 }
                 out = out.append(parser.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms });
@@ -56060,7 +56060,7 @@ function box_rewrite_stmt(st: parser.Stmt, boxed: string[], btypes: string[]): p
                 // guard references no boxed var (box_rewrite_expr returns it as-is).
                 var ng: parser.Expr = arm.guard;
                 if (arm.has_guard) { ng = box_rewrite_expr(arm.guard, boxed, btypes); }
-                na = na.append(parser.MatchArm { pattern: arm.pattern, body: box_rewrite_stmts(arm.body, boxed, btypes), line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
+                na = na.append(parser.MatchArm { ...arm, body: box_rewrite_stmts(arm.body, boxed, btypes), guard: ng });
                 ai = ai + 1;
             }
             return parser.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na };
@@ -56471,7 +56471,7 @@ function wcap_stmt(st: parser.Stmt, fd: parser.FuncDecl, gfns: string[], structs
                 }
                 var ab: WCapBody = box_wide_captures_stmts(arm.body, fd, gfns, structs, mfuncs, atargets);
                 if (ab.changed) { mchanged = true; }
-                na = na.append(parser.MatchArm { pattern: arm.pattern, body: ab.stmts, line: arm.line, col: arm.col, guard: ng, has_guard: arm.has_guard });
+                na = na.append(parser.MatchArm { ...arm, body: ab.stmts, guard: ng });
                 ai = ai + 1;
             }
             return WCapStmt { stmt: parser.StmtMatch { ...m, scrutinee: sr.expr, arms: na }, caps: a, changed: mchanged };

@@ -246,7 +246,12 @@ pub type Pattern = PatVariant | PatWildcard;
 // guard is an optional `if <expr>` between the pattern and `=>`; has_guard
 // distinguishes a real guard from the placeholder. When present the arm matches
 // only if the guard evaluates true (E027 checks it is boolean).
-pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean }
+// alt_cont marks an arm that continues the previous one's `|` alternative
+// list: `A | B => …` parses to one arm per alternative with the guard and body
+// shared, and only the reprint needs to know they were written as one arm. Set
+// on the WRITTEN arms (StmtMatch.sugar) only; the lowered arms are independent
+// by construction. Read by the printer.
+pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard: Expr, has_guard: boolean, alt_cont: boolean }
 // `origin` records whether this match was written directly (""), or
 // synthesised by the parser from an `if let` (`"if_let"`) / `let … else`
 // (`"let_else"`) desugar. Codegen ignores it (a desugared match compiles
@@ -859,7 +864,7 @@ function rewrite_builder_stmt(s: Stmt, b: string): Stmt {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var arm: MatchArm = m.arms[ai];
-                arms = arms.append(MatchArm { pattern: arm.pattern, body: rewrite_builder_stmts(arm.body, b), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                arms = arms.append(MatchArm { ...arm, body: rewrite_builder_stmts(arm.body, b) });
                 ai = ai + 1;
             }
             return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
@@ -1104,7 +1109,7 @@ function resolve_labels_stmt(st: Stmt, labels: string[]): Stmt {
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var a: MatchArm = m.arms[ai];
-                arms2 = arms2.append(MatchArm { pattern: a.pattern, body: resolve_labels_block(a.body, labels), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                arms2 = arms2.append(MatchArm { ...a, body: resolve_labels_block(a.body, labels) });
                 ai = ai + 1;
             }
             return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms2 };
@@ -2727,7 +2732,9 @@ function wider_rt(a: string, b: string): string {
 // bound, `range_hi` the high, and `range_inclusive` picks `..=` (inclusive)
 // over `..` (exclusive). build_literal_match lowers it to a bound test
 // `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
-pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean }
+// alt_cont — see MatchArm.alt_cont. `0 | 1 => …` parses to one LitArm per
+// alternative sharing a guard and body.
+pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean }
 
 // parse_lit_or_range parses a scalar-pattern low bound and, when a `..` /
 // `..=` follows, the high bound of a range pattern. Returns (low, high,
@@ -2832,7 +2839,7 @@ function build_literal_match(scrut: Expr, arms: LitArm[], mkline: i32, mkcol: i3
             var la: LitArm = arms[mi];
             var pat: Pattern = p_variant("", "");
             if (la.is_wild) { pat = p_wildcard(); }
-            marms = marms.append(MatchArm { pattern: pat, body: la.body, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard });
+            marms = marms.append(MatchArm { pattern: pat, body: la.body, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard, alt_cont: false });
             mi = mi + 1;
         }
         return s_match_at(scrut, marms, mkline, mkcol);
@@ -2909,7 +2916,9 @@ function with_match_sugar(st: Stmt, sugar: MatchSugar): Stmt {
 // its own tup_* fields and build_tuple_match destructures the element temp a
 // level deeper. elem_pats runs parallel to elem_kinds with a wildcard filler
 // at every other kind.
-pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+// alt_cont — see MatchArm.alt_cont. `(1, 2) | (3, 4) => …` parses to one
+// TupArm per alternative sharing the guard and body.
+pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, alt_cont: boolean }
 
 // p_tuple_carrier wraps a nested tuple element's encoding in a Pattern so it
 // can ride on elem_pats. The variant fields are inert — elem_kinds says 4, and
@@ -3024,9 +3033,9 @@ function wrap_tuple_elems(path: Stmt[], kinds: i32[], pats: Pattern[], prefix: s
         if (kinds[wi] == 3) {
             var (mk_pat, mk_guard, mk_hg) = fold_lit_cond(pats[wi], e_bool(true), false);
             var mk_arms: MatchArm[] = [];
-            mk_arms = mk_arms.append(MatchArm { pattern: mk_pat, body: cur, line: line, col: col, guard: mk_guard, has_guard: mk_hg });
+            mk_arms = mk_arms.append(MatchArm { pattern: mk_pat, body: cur, line: line, col: col, guard: mk_guard, has_guard: mk_hg, alt_cont: false });
             var mk_skip: Stmt[] = [];
-            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false });
+            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false, alt_cont: false });
             var mk_wrap: Stmt[] = [];
             // Every element of every level shares the arm's line/col, so the
             // element temp name is what keeps the desugar's own temps apart.
@@ -3354,9 +3363,9 @@ function wrap_struct_fields(path: Stmt[], a: StructArm, tmp: string): Stmt[] {
     while (wi >= 0) {
         if (a.field_kinds[wi] == 3) {
             var mk_arms: MatchArm[] = [];
-            mk_arms = mk_arms.append(MatchArm { pattern: a.field_pats[wi], body: cur, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+            mk_arms = mk_arms.append(MatchArm { pattern: a.field_pats[wi], body: cur, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
             var mk_skip: Stmt[] = [];
-            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false });
+            mk_arms = mk_arms.append(MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
             // Match on an IDENT holding the field, not on the field access
             // itself: the scrutinee is read once, and the IR lowers a match on
             // a local where a match on a field expression bails to the AST
@@ -3715,7 +3724,7 @@ function parse_match_expr(p: Par): IfChain {
                 if (etpr_elem_kinds.len() == 0) {
                     return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                 }
-                etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, elem_pats: etpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
+                etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, elem_pats: etpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol, alt_cont: false });
                 // Tuple or-patterns: one TupArm per `|` alternative sharing
                 // the guard + body (per-alternative binds), same as the
                 // statement form and the native per-alternative desugar.
@@ -3726,7 +3735,7 @@ function parse_match_expr(p: Par): IfChain {
                     if (etor_kinds.len() == 0) {
                         return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                     }
-                    etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, elem_pats: etor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol });
+                    etpats = etpats.append(TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, elem_pats: etor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol, alt_cont: false });
                 }
             } else {
                 var (etwp_pattern, etwp_p) = parse_pattern(p);
@@ -3762,12 +3771,12 @@ function parse_match_expr(p: Par): IfChain {
                 var etw_pats: Pattern[] = [];
                 var etw_binds: string[] = [];
                 var etw_lits: Expr[] = [];
-                etarms = etarms.append(TupArm { is_wild: true, elem_kinds: etw_kinds, binds: etw_binds, lits: etw_lits, elem_pats: etw_pats, at_binding: "", guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
+                etarms = etarms.append(TupArm { is_wild: true, elem_kinds: etw_kinds, binds: etw_binds, lits: etw_lits, elem_pats: etw_pats, at_binding: "", guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol, alt_cont: false });
             } else {
                 var etalt: i32 = 0;
                 while (etalt < etpats.len()) {
                     var etpa: TupArm = etpats[etalt];
-                    etarms = etarms.append(TupArm { is_wild: false, elem_kinds: etpa.elem_kinds, binds: etpa.binds, lits: etpa.lits, elem_pats: etpa.elem_pats, at_binding: et_at, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol });
+                    etarms = etarms.append(TupArm { is_wild: false, elem_kinds: etpa.elem_kinds, binds: etpa.binds, lits: etpa.lits, elem_pats: etpa.elem_pats, at_binding: et_at, guard: et_guard, has_guard: et_has_guard, body: etbody, line: etline, col: etcol, alt_cont: etalt > 0 });
                     etalt = etalt + 1;
                 }
             }
@@ -3784,7 +3793,7 @@ function parse_match_expr(p: Par): IfChain {
         var etvi: i32 = 0;
         while (etvi < etarms.len()) {
             var etva: TupArm = etarms[etvi];
-            etvarms = etvarms.append(TupArm { is_wild: etva.is_wild, elem_kinds: etva.elem_kinds, binds: etva.binds, lits: etva.lits, elem_pats: etva.elem_pats, at_binding: etva.at_binding, guard: etva.guard, has_guard: etva.has_guard, body: value_arm_body(etva.body, etval), line: etva.line, col: etva.col });
+            etvarms = etvarms.append(TupArm { ...etva, body: value_arm_body(etva.body, etval) });
             etvi = etvi + 1;
         }
         return IfChain { par: p, stmt: build_tuple_match(sr_expr, etvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: etval };
@@ -3870,12 +3879,12 @@ function parse_match_expr(p: Par): IfChain {
             }
             if (lfirst) { rt = lrt; lfirst = false; }
             if (lwild) {
-                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
             } else {
                 // One LitArm per `|` alternative, sharing the guard + body.
                 var lai: i32 = 0;
                 while (lai < lalt_lits.len()) {
-                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0 });
                     lai = lai + 1;
                 }
             }
@@ -3939,9 +3948,9 @@ function parse_match_expr(p: Par): IfChain {
         if (first) { rt = art; first = false; } else { rt = wider_rt(rt, art); }
         var pi: i32 = 0;
         while (pi < pats.len()) {
-            ewritten = ewritten.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            ewritten = ewritten.append(MatchArm { pattern: pats[pi], body: abody, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard, alt_cont: pi > 0 });
             var (fa_pat, fa_g, fa_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
-            arms = arms.append(MatchArm { pattern: fa_pat, body: abody, line: aline, col: acol, guard: fa_g, has_guard: fa_hg });
+            arms = arms.append(MatchArm { pattern: fa_pat, body: abody, line: aline, col: acol, guard: fa_g, has_guard: fa_hg, alt_cont: false });
             pi = pi + 1;
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
@@ -3961,7 +3970,7 @@ function parse_match_expr(p: Par): IfChain {
         var nti: i32 = 0;
         while (nti < arms.len()) {
             var nta: MatchArm = arms[nti];
-            ntarms = ntarms.append(MatchArm { pattern: nta.pattern, body: value_arm_body(nta.body, ntval), line: nta.line, col: nta.col, guard: nta.guard, has_guard: nta.has_guard });
+            ntarms = ntarms.append(MatchArm { ...nta, body: value_arm_body(nta.body, ntval) });
             nti = nti + 1;
         }
         return IfChain { par: p, stmt: s_match_at(sr_expr, desugar_nested_arms(ntarms, 0, ""), mkline, mkcol), rt: rt, needs_default_return: false, value_local: ntval };
@@ -4522,11 +4531,11 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         }
         if (pv_name(inner_pat) == "" && !g.has_guard) { has_inner_wild = true; }
         var (fn_pat, fn_g, fn_hg) = fold_lit_cond(inner_pat, g.guard, g.has_guard);
-        inner = inner.append(MatchArm { pattern: fn_pat, body: inner_body, line: g.line, col: g.col, guard: fn_g, has_guard: fn_hg });
+        inner = inner.append(MatchArm { pattern: fn_pat, body: inner_body, line: g.line, col: g.col, guard: fn_g, has_guard: fn_hg, alt_cont: false });
         k = k + 1;
     }
     if (!has_inner_wild && has_fall) {
-        inner = inner.append(MatchArm { pattern: p_wildcard(), body: fall, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false });
+        inner = inner.append(MatchArm { pattern: p_wildcard(), body: fall, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false });
     }
     // A TUPLE sub-pattern makes the inner match a TUPLE match. Same merge
     // shape as the variant case — the slot binds a temp and each arm of the
@@ -4548,14 +4557,14 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
                 PatVariant(gv2) => {
                     if (gv2.tup_kinds.len() > 0) {
                         if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds, gv2.tup_pats)) { tuple_covers = true; }
-                        tarms = tarms.append(TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col });
+                        tarms = tarms.append(TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col, alt_cont: false });
                     } else {
                         var b2: Stmt[] = ga.body;
                         if (gv2.binding.len() > 0 && gv2.binding != "_") {
                             b2 = prepend_stmt(s_var(gv2.binding, "", e_ident(tmp)), ga.body);
                         }
                         if (!ga.has_guard) { tuple_covers = true; }
-                        tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col });
+                        tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col, alt_cont: false });
                     }
                 },
                 PatWildcard(w2) => {}
@@ -4566,7 +4575,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         // covers every value — an all-binder tuple arm does, and appending
         // after it would emit an arm that can never run.
         if (!tuple_covers && has_fall) {
-            tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col });
+            tarms = tarms.append(TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: e_bool(true), has_guard: false, body: fall, line: gp_line, col: gp_col, alt_cont: false });
         }
         var tmatch: Stmt = build_tuple_match(e_ident(tmp), tarms, gp_line, gp_col);
         var t_no_extra: string[] = [];
@@ -4577,7 +4586,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
         var t_np: Pattern[] = [];
         var t_merged: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np };
         var t_body: Stmt[] = [tmatch];
-        return MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
+        return MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
     }
     var inner_desugared: MatchArm[] = desugar_nested_arms(inner, depth + 1, tag);
     var inner_match: Stmt = s_match_at(e_ident(tmp), inner_desugared, gp_line, gp_col);
@@ -4589,7 +4598,7 @@ function build_merged_arm(vn: string, arms: MatchArm[], lo: i32, hi: i32, fall: 
     var no_tup_pats: Pattern[] = [];
     var merged_pat: Pattern = PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
     var body: Stmt[] = [inner_match];
-    return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false };
+    return MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
 }
 
 // parse_match_stmt consumes `match (scrutinee) { arm, arm, … }`
@@ -4645,7 +4654,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
                 if (tpr_elem_kinds.len() == 0) {
                     return (s_unknown("bad tuple pattern"), p);
                 }
-                tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tpr_elem_kinds, binds: tpr_binds, lits: tpr_lits, elem_pats: tpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
+                tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tpr_elem_kinds, binds: tpr_binds, lits: tpr_lits, elem_pats: tpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol, alt_cont: false });
                 // Tuple or-patterns: `(1, 2) | (3, 4) => …`. Each `|`
                 // alternative becomes its own TupArm sharing the guard +
                 // body (per-alternative binds), matching the literal path
@@ -4657,7 +4666,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
                     if (tor_kinds.len() == 0) {
                         return (s_unknown("bad tuple pattern"), p);
                     }
-                    tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tor_kinds, binds: tor_binds, lits: tor_lits, elem_pats: tor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol });
+                    tpats = tpats.append(TupArm { is_wild: false, elem_kinds: tor_kinds, binds: tor_binds, lits: tor_lits, elem_pats: tor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol, alt_cont: false });
                 }
             } else {
                 var (twp_pattern, twp_p) = parse_pattern(p);
@@ -4681,12 +4690,12 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
                 var tw_pats: Pattern[] = [];
                 var tw_binds: string[] = [];
                 var tw_lits: Expr[] = [];
-                tarms = tarms.append(TupArm { is_wild: true, elem_kinds: tw_kinds, binds: tw_binds, lits: tw_lits, elem_pats: tw_pats, at_binding: "", guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
+                tarms = tarms.append(TupArm { is_wild: true, elem_kinds: tw_kinds, binds: tw_binds, lits: tw_lits, elem_pats: tw_pats, at_binding: "", guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol, alt_cont: false });
             } else {
                 var talt: i32 = 0;
                 while (talt < tpats.len()) {
                     var tpa: TupArm = tpats[talt];
-                    tarms = tarms.append(TupArm { is_wild: false, elem_kinds: tpa.elem_kinds, binds: tpa.binds, lits: tpa.lits, elem_pats: tpa.elem_pats, at_binding: t_at, guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol });
+                    tarms = tarms.append(TupArm { is_wild: false, elem_kinds: tpa.elem_kinds, binds: tpa.binds, lits: tpa.lits, elem_pats: tpa.elem_pats, at_binding: t_at, guard: t_guard, has_guard: t_has_guard, body: tbb_body, line: taline, col: tacol, alt_cont: talt > 0 });
                     talt = talt + 1;
                 }
             }
@@ -4744,12 +4753,12 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             var (lbb_body, lbb_p) = parse_block(p);
             p = lbb_p;
             if (lwild) {
-                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false });
+                lit_arms = lit_arms.append(LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
             } else {
                 // One LitArm per `|` alternative, sharing the guard + body.
                 var lai: i32 = 0;
                 while (lai < lalt_lits.len()) {
-                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai] });
+                    lit_arms = lit_arms.append(LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0 });
                     lai = lai + 1;
                 }
             }
@@ -4805,9 +4814,9 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
             // literal payload into the guard and before desugar_nested_arms
             // merges a nested one — those two are what the printer must not
             // reprint in place of the source.
-            written = written.append(MatchArm { pattern: pats[pi], body: bb_body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard });
+            written = written.append(MatchArm { pattern: pats[pi], body: bb_body, line: aline, col: acol, guard: arm_guard, has_guard: arm_has_guard, alt_cont: pi > 0 });
             var (fs_pat, fs_g, fs_hg) = fold_lit_cond(pats[pi], arm_guard, arm_has_guard);
-            arms = arms.append(MatchArm { pattern: fs_pat, body: bb_body, line: aline, col: acol, guard: fs_g, has_guard: fs_hg });
+            arms = arms.append(MatchArm { pattern: fs_pat, body: bb_body, line: aline, col: acol, guard: fs_g, has_guard: fs_hg, alt_cont: false });
             pi = pi + 1;
         }
         if (p.peek_punct() == ",") { p = p.advance(); continue; }
@@ -4826,6 +4835,7 @@ function parse_match_stmt(p: Par): (Stmt, Par) {
 function arms_have_written_form(written: MatchArm[]): boolean {
     var i: i32 = 0;
     while (i < written.len()) {
+        if (written[i].alt_cont) { return true; }
         match (written[i].pattern) {
             PatVariant(v) => {
                 if (v.nested.len() > 0 || v.has_lit_cond) { return true; }
@@ -5372,12 +5382,12 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var ilwritten: MatchArm[] = [];
             var ilpi: i32 = 0;
             while (ilpi < ilpats.len()) {
-                ilwritten = ilwritten.append(MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+                ilwritten = ilwritten.append(MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
                 var (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
-                ilarms = ilarms.append(MatchArm { pattern: fi_pat, body: ilthen_body, line: 0, col: 0, guard: fi_g, has_guard: fi_hg });
+                ilarms = ilarms.append(MatchArm { pattern: fi_pat, body: ilthen_body, line: 0, col: 0, guard: fi_g, has_guard: fi_hg, alt_cont: false });
                 ilpi = ilpi + 1;
             }
-            var ilwild: MatchArm = MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false };
+            var ilwild: MatchArm = MatchArm { pattern: p_wildcard(), body: ilelse, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false };
             ilarms = ilarms.append(ilwild);
             ilwritten = ilwritten.append(ilwild);
             // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
@@ -5524,10 +5534,10 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
                     var lsp_i: i32 = 0;
                     while (lsp_i < lsp_pats.len()) {
                         var (fl_pat, fl_g, fl_hg) = fold_lit_cond(lsp_pats[lsp_i], e_bool(true), false);
-                        lsp_arms = lsp_arms.append(MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg });
+                        lsp_arms = lsp_arms.append(MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg, alt_cont: false });
                         lsp_i = lsp_i + 1;
                     }
-                    lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+                    lsp_arms = lsp_arms.append(MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
                     lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
                     return (s_match_origin(lsp_init, lsp_arms, vline, vcol, "let_else"), p);
                 }
@@ -5624,8 +5634,8 @@ function parse_stmt_at(p: Par): (Stmt, Par) {
             var no_tup_pats: Pattern[] = [];
             var le_pat: Pattern = PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
             var le_arms: MatchArm[] = [];
-            le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
-            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false });
+            le_arms = le_arms.append(MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
+            le_arms = le_arms.append(MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
             return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
         }
         if (p.peek_punct() == ";") { p = p.advance(); }
@@ -8793,7 +8803,7 @@ function mono_stmt(st: Stmt, env: MEnv, funcs: FuncDecl[], ins: Insts, ret_ty: s
             while (i < m.arms.len()) {
                 var ab: RStmts = mono_stmts(m.arms[i].body, env, funcs, cur, ret_ty);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -8983,7 +8993,7 @@ function subst_stmts(stmts: Stmt[], tparams: string[], cts: string[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: subst_stmts(m.arms[j].body, tparams, cts), line: m.arms[j].line, col: m.arms[j].col, guard: subst_expr(m.arms[j].guard, tparams, cts), has_guard: m.arms[j].has_guard, alt_cont: false });
                     j = j + 1;
                 }
                 out = out.append(StmtMatch { ...m, scrutinee: subst_expr(m.scrutinee, tparams, cts), arms: arms });
@@ -9063,7 +9073,7 @@ function retarget_self_lit_stmts(stmts: Stmt[], base: string, mang: string): Stm
                 var arms: MatchArm[] = [];
                 var j: i32 = 0;
                 while (j < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: retarget_self_lit_stmts(m.arms[j].body, base, mang), line: m.arms[j].line, col: m.arms[j].col, guard: retarget_self_lit_expr(m.arms[j].guard, base, mang), has_guard: m.arms[j].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[j].pattern, body: retarget_self_lit_stmts(m.arms[j].body, base, mang), line: m.arms[j].line, col: m.arms[j].col, guard: retarget_self_lit_expr(m.arms[j].guard, base, mang), has_guard: m.arms[j].has_guard, alt_cont: false });
                     j = j + 1;
                 }
                 out = out.append(StmtMatch { ...m, scrutinee: retarget_self_lit_expr(m.scrutinee, base, mang), arms: arms });
@@ -10038,7 +10048,7 @@ function ms_stmt(st: Stmt, env: MEnv, gstructs: StructDecl[], funcs: FuncDecl[],
             while (i < m.arms.len()) {
                 var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur, ret_ty);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -11163,7 +11173,7 @@ function me_stmt(st: Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], structs
                 cur = gv.rins;
                 var ab: RStmts = me_stmts(m.arms[i].body, armenv, ret_ty, enums, structs, funcs, cur);
                 cur = ab.rins3;
-                arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: npat, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: gv.rexpr, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
             }
             return RStmtOne { rstmt: StmtMatch { ...m, scrutinee: sv.rexpr, arms: arms }, renv: env, rins2: cur };
@@ -11768,7 +11778,7 @@ function dl_expand_loop_edges(stmts: Stmt[], actions: Stmt[], flags: i32[], star
                     var ge: DeferEdgeExpr = dl_edges_expr(m.arms[ai].guard, actions, flags, start, armed, label, own_level);
                     var ar: DeferEdges = dl_expand_loop_edges(m.arms[ai].body, actions, flags, start, ge.armed, label, own_level);
                     if (ar.armed > armed) { armed = ar.armed; }
-                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: ar.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: ar.stmts, line: m.arms[ai].line, col: m.arms[ai].col, guard: ge.expr, has_guard: m.arms[ai].has_guard, alt_cont: false });
                     ai = ai + 1;
                 }
                 out = out.append(s_match(se.expr, arms));
@@ -11936,7 +11946,7 @@ function dl_collect_stmt(st: Stmt, actions: Stmt[], flags: i32[]): DeferAcc {
             while (i < m.arms.len()) {
                 var gr: DeferExprAcc = dl_collect_expr(m.arms[i].guard, acc, afl);
                 var ar: DeferAcc = dl_collect_stmts(m.arms[i].body, gr.actions, gr.flags);
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: gr.expr, has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: ar.stmts, line: m.arms[i].line, col: m.arms[i].col, guard: gr.expr, has_guard: m.arms[i].has_guard, alt_cont: false });
                 acc = ar.actions;
                 afl = ar.flags;
                 i = i + 1;
@@ -12091,7 +12101,7 @@ function dl_expand_return_stmt(st: Stmt, cleanup_all: Stmt[], cleanup_err: Stmt[
             var arms: MatchArm[] = [];
             var i: i32 = 0;
             while (i < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: dl_return_expr(m.arms[i].guard, cleanup_all, cleanup_err), has_guard: m.arms[i].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: dl_return_expr(m.arms[i].guard, cleanup_all, cleanup_err), has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
             }
             var one: Stmt[] = [s_match(dl_return_expr(m.scrutinee, cleanup_all, cleanup_err), arms)];
@@ -12291,7 +12301,7 @@ function rw_call_stmts(stmts: Stmt[], fname: string, caps: string[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: rw_call_stmts(m.arms[a].body, fname, caps), line: m.arms[a].line, col: m.arms[a].col, guard: rw_call_expr(m.arms[a].guard, fname, caps), has_guard: m.arms[a].has_guard, alt_cont: false });
                     a = a + 1;
                 }
                 out = out.append(s_match_at(rw_call_expr(m.scrutinee, fname, caps), arms, m.line, m.col));
@@ -12317,7 +12327,7 @@ function hl_rewrite_match(m: StmtMatch, enclosing: string[], hoisted: FuncDecl[]
         var (ar_stmts, ar_hoisted, ar_lifts) = hl_rewrite(m.arms[a].body, enclosing, acc);
         acc = ar_hoisted;
         acc_lifts = hl_append_lifts(acc_lifts, ar_lifts);
-        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar_stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: ar_stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
         a = a + 1;
     }
     return ([s_match_at(m.scrutinee, arms, m.line, m.col)], acc, acc_lifts);
@@ -12914,7 +12924,7 @@ function desugar_ranges_one(st: Stmt): Stmt[] {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
             while (a < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
                 a = a + 1;
             }
             return [StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
@@ -13121,7 +13131,7 @@ function rvf_stmt(st: Stmt, structs: StructDecl[]): Stmt {
             var arms: MatchArm[] = [];
             var a: i32 = 0;
             while (a < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: rvf_pattern(m.arms[a].pattern, structs), body: rvf_block(m.arms[a].body, structs), line: m.arms[a].line, col: m.arms[a].col, guard: rvf_expr(m.arms[a].guard, structs), has_guard: m.arms[a].has_guard });
+                arms = arms.append(MatchArm { pattern: rvf_pattern(m.arms[a].pattern, structs), body: rvf_block(m.arms[a].body, structs), line: m.arms[a].line, col: m.arms[a].col, guard: rvf_expr(m.arms[a].guard, structs), has_guard: m.arms[a].has_guard, alt_cont: false });
                 a = a + 1;
             }
             return StmtMatch { ...m, scrutinee: rvf_expr(m.scrutinee, structs), arms: arms };
@@ -13521,7 +13531,7 @@ function fda_stmts(stmts: Stmt[], funcs: FuncDecl[]): Stmt[] {
                 var arms: MatchArm[] = [];
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard });
+                    arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: fda_stmts(m.arms[a].body, funcs), line: m.arms[a].line, col: m.arms[a].col, guard: fda_expr(m.arms[a].guard, funcs), has_guard: m.arms[a].has_guard, alt_cont: false });
                     a = a + 1;
                 }
                 out = out.append(s_match_at(fda_expr(m.scrutinee, funcs), arms, m.line, m.col));
@@ -14200,7 +14210,7 @@ function cf_rw_stmt(st: Stmt, f: string, target: string): Stmt {
         StmtMatch(m) => {
             var arms: MatchArm[] = [];
             var i: i32 = 0;
-            while (i < m.arms.len()) { arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard }); i = i + 1; }
+            while (i < m.arms.len()) { arms = arms.append(MatchArm { pattern: m.arms[i].pattern, body: cf_rw_stmts(m.arms[i].body, f, target), line: m.arms[i].line, col: m.arms[i].col, guard: cf_rw_expr(m.arms[i].guard, f, target), has_guard: m.arms[i].has_guard, alt_cont: false }); i = i + 1; }
             return StmtMatch { ...m, scrutinee: cf_rw_expr(m.scrutinee, f, target), arms: arms };
         },
         StmtDefer(d) => { return StmtDefer { action: cf_rw_stmt(d.action, f, target), on_error: d.on_error, line: d.line }; },
@@ -14294,7 +14304,7 @@ function elb_recurse_stmt(st: Stmt): Stmt {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var arm: MatchArm = m.arms[i];
-                arms = arms.append(MatchArm { pattern: arm.pattern, body: elide_len_bounded_body(arm.body), line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard });
+                arms = arms.append(MatchArm { ...arm, body: elide_len_bounded_body(arm.body) });
                 i = i + 1;
             }
             return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
@@ -14528,7 +14538,7 @@ function elb_mark_stmt(st: Stmt, idx: string, arr: string): Stmt {
             var i: i32 = 0;
             while (i < m.arms.len()) {
                 var arm: MatchArm = m.arms[i];
-                arms = arms.append(MatchArm { pattern: arm.pattern, body: elb_mark_stmts(arm.body, idx, arr), line: arm.line, col: arm.col, guard: elb_mark_expr(arm.guard, idx, arr), has_guard: arm.has_guard });
+                arms = arms.append(MatchArm { ...arm, body: elb_mark_stmts(arm.body, idx, arr), guard: elb_mark_expr(arm.guard, idx, arr) });
                 i = i + 1;
             }
             return StmtMatch { ...m, scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms };
@@ -14915,7 +14925,7 @@ function fnv_rewrite_stmt(st: Stmt, whole: Stmt[], funcs: FuncDecl[], structs: S
             var arms: MatchArm[] = [];
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
-                arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: fnv_rewrite_block(m.arms[ai].body, whole, funcs, structs), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard });
+                arms = arms.append(MatchArm { pattern: m.arms[ai].pattern, body: fnv_rewrite_block(m.arms[ai].body, whole, funcs, structs), line: m.arms[ai].line, col: m.arms[ai].col, guard: m.arms[ai].guard, has_guard: m.arms[ai].has_guard, alt_cont: false });
                 ai = ai + 1;
             }
             return StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
@@ -15265,16 +15275,16 @@ function synth_from_json(sd: StructDecl): FuncDecl {
         var accessor_call: Expr = e_call(e_field_access(e_ident("json"), acc), [e_ident("__fj_jv"), e_string(fname)]);
         var missing: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("missing field: " + fname)]))];
         var arms: MatchArm[] = [];
-        arms = arms.append(MatchArm { pattern: p_variant("Some", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
-        arms = arms.append(MatchArm { pattern: p_variant("None", ""), body: missing, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant("Some", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+        arms = arms.append(MatchArm { pattern: p_variant("None", ""), body: missing, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         body = [s_match(accessor_call, arms)];
         fi = fi - 1;
     }
     // Outermost: parse the string, then run the field chain.
     var parse_fail: Stmt[] = [s_return(e_call(e_ident("Err"), [e_string("invalid JSON")]))];
     var oarms: MatchArm[] = [];
-    oarms = oarms.append(MatchArm { pattern: p_variant("Some", "__fj_jv"), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false });
-    oarms = oarms.append(MatchArm { pattern: p_variant("None", ""), body: parse_fail, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+    oarms = oarms.append(MatchArm { pattern: p_variant("Some", "__fj_jv"), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+    oarms = oarms.append(MatchArm { pattern: p_variant("None", ""), body: parse_fail, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
     var obody: Stmt[] = [s_match(e_call(e_field_access(e_ident("json"), "json_parse"), [e_ident("s")]), oarms)];
     var params: ParamDecl[] = [ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var notp: string[] = [];
@@ -15294,9 +15304,9 @@ function synth_enum_display(ename: string, variants: StructDecl[]): FuncDecl {
             var e: Expr = e_string(v.name + "(");
             e = e_binary("+", e, dv_call0(e_ident("__p0"), "to_string"));
             e = e_binary("+", e, e_string(")"));
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, "__p0"), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }
         i = i + 1;
     }
@@ -15327,9 +15337,9 @@ function synth_enum_debug(ename: string, variants: StructDecl[]): FuncDecl {
                 dj = dj + 1;
             }
             e = e_binary("+", e, e_string(")"));
-            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string(v.name))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }
         i = i + 1;
     }
@@ -15357,13 +15367,13 @@ function synth_enum_eq(ename: string, variants: StructDecl[]): FuncDecl {
                 eqx = e_binary("&&", eqx, dv_eq_expr(v.fields[qj].type_name, e_ident("__s" + dl_itoa(qj)), e_ident("__o" + dl_itoa(qj))));
                 qj = qj + 1;
             }
-            inner = inner.append(MatchArm { pattern: p_variant_n(v.name, "__o", v.fields.len()), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__s", v.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant_n(v.name, "__o", v.fields.len()), body: [s_return(eqx)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__s", v.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
-            inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_bool(true))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            inner = inner.append(MatchArm { pattern: p_wildcard(), body: [s_return(e_bool(false))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }
         i = i + 1;
     }
@@ -15416,10 +15426,10 @@ function synth_enum_ord(ename: string, variants: StructDecl[]): FuncDecl {
                     }
                 }
             }
-            inner = inner.append(MatchArm { pattern: p_variant_n(vj.name, "__o", obn), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            inner = inner.append(MatchArm { pattern: p_variant_n(vj.name, "__o", obn), body: ibody, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
             j = j + 1;
         }
-        arms = arms.append(MatchArm { pattern: p_variant_n(vi.name, "__s", vi.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant_n(vi.name, "__s", vi.fields.len()), body: [s_match(e_ident("other"), inner)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -15448,7 +15458,7 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
             hj = hj + 1;
         }
         stmts = stmts.append(s_return(e_ident("__h")));
-        arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false });
+        arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: stmts, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         i = i + 1;
     }
     var body: Stmt[] = [s_match(e_ident("self"), arms), s_return(e_number("0", "", false))];
@@ -15480,9 +15490,9 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
             }
             if (v.fields.len() > 1) { e = e_binary("+", e, e_string("]")); }
             e = e_binary("+", e, e_string("}"));
-            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         } else {
-            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false });
+            arms = arms.append(MatchArm { pattern: p_variant(v.name, ""), body: [s_return(e_string("\"" + v.name + "\""))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
         }
         i = i + 1;
     }
@@ -16731,7 +16741,7 @@ function settle_match_arms(m: StmtMatch): Stmt {
     var arms: MatchArm[] = [];
     var a: i32 = 0;
     while (a < m.arms.len()) {
-        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: settle_branch_body(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard });
+        arms = arms.append(MatchArm { pattern: m.arms[a].pattern, body: settle_branch_body(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
         a = a + 1;
     }
     return s_match_origin(m.scrutinee, arms, m.line, m.col, m.origin);
@@ -16971,7 +16981,7 @@ function settle_stmt(st: Stmt, ret_type: string, names: string[], types: string[
             var ai: i32 = 0;
             while (ai < m.arms.len()) {
                 var a: MatchArm = m.arms[ai];
-                arms = arms.append(MatchArm { pattern: a.pattern, body: settle_block(a.body, ret_type, names, types, funcs, structs), line: a.line, col: a.col, guard: a.guard, has_guard: a.has_guard });
+                arms = arms.append(MatchArm { ...a, body: settle_block(a.body, ret_type, names, types, funcs, structs) });
                 ai = ai + 1;
             }
             return StmtMatch { ...m, scrutinee: settle_expr(m.scrutinee, funcs, structs), arms: arms };

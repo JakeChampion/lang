@@ -2877,8 +2877,17 @@ type MatchArm struct {
 	// match for every other stage, and without this the formatter had
 	// nothing left to reprint but that lowering — writing `__nest0` into
 	// the user's source, permanently under `-fmt -w`. The walk skips it.
-	Sub  []*MatchArm
-	Body *Block
+	Sub []*MatchArm
+	// AltCont marks an arm that continues the previous one's or-pattern
+	// alternative list: `A | B => …` parses to one arm per alternative,
+	// with the guard and body CLONED into each, and nothing else records
+	// that they were written as one arm.
+	//
+	// Set on Match.Sugar's arms only — never on the lowered arms, which
+	// are independent by construction — so like Sugar itself it is read by
+	// the printer and skipped by the walk.
+	AltCont bool
+	Body    *Block
 }
 
 // MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
@@ -2947,8 +2956,11 @@ type MatchExprArm struct {
 	FallConsumed bool
 	// Sub mirrors MatchArm.Sub: the payload sub-patterns as written,
 	// parallel to Bindings. Printer-only, walk-skipped.
-	Sub  []*MatchExprArm
-	Body Expr
+	Sub []*MatchExprArm
+	// AltCont mirrors MatchArm.AltCont: this arm continues the previous
+	// one's `|` alternative list. Set on MatchExpr.Sugar's arms only.
+	AltCont bool
+	Body    Expr
 }
 
 func (s *Block) Pos() Position                  { return s.P }
