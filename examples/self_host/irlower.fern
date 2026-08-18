@@ -10792,6 +10792,47 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 lr = lr.emit(ir.op_drop());
                 return lr;
             }
+            // `b.relabel(t).tag.len()` — a string field read off a MIXED-path
+            // method result ("FRESHSELF:"). The STRING is borrowed on both
+            // paths; what dies here is the temp BOX, and only when the fresh
+            // path produced it. Read the length while the box is still alive,
+            // then release under the pointer compare. The string-fresh cases
+            // above never match this shape: their release frees the string, and
+            // here the string belongs to whoever the literal took it from.
+            match (fa.obj) {
+                parser.ExprFieldAccess(fsfa) => {
+                    // Shape first: freshself_call_recv_slot rejects on the callee's
+                    // form before any type walk, and this arm sits on the path every
+                    // `<expr>.len()` takes.
+                    var fsbrecv: i32 = freshself_call_recv_slot(fsfa.obj, s);
+                    if (fsbrecv >= 0) {
+                        var fsbty: string = expr_struct_type(fsfa.obj, s);
+                        var fsbfld: i32 = 0 - 1;
+                        if (fsbty != "" && decl_field_type(s.structs, fsbty, fsfa.field) == "string") {
+                            fsbfld = s.field_index_in(fsbty, fsfa.field);
+                        }
+                        if (fsbfld >= 0) {
+                            var fsb: LowerState = lower_expr(fsfa.obj, s);
+                            if (!fsb.ok) { return fsb; }
+                            var bscr: string = "$fslb" + util.i32_to_string(fsb.locals.len());
+                            fsb = fsb.add_local(bscr);
+                            var bslot: i32 = fsb.slot_of(bscr);
+                            fsb = fsb.mark_struct_type(bslot, fsbty);
+                            fsb = fsb.emit(ir.op_store_local(bslot));
+                            var nscr2: string = "$fsln" + util.i32_to_string(fsb.locals.len());
+                            fsb = fsb.add_local(nscr2);
+                            var nslot2: i32 = fsb.slot_of(nscr2);
+                            fsb = fsb.emit(ir.op_load_local(bslot));
+                            fsb = fsb.emit(ir.op_struct_get(fsbfld, struct_field_width(s.structs, fsbty, fsbfld)));
+                            fsb = fsb.emit(ir.op_str_len());
+                            fsb = fsb.emit(ir.op_store_local(nslot2));
+                            fsb = emit_freshself_release(fsb, bslot, fsbrecv);
+                            return fsb.emit(ir.op_load_local(nslot2));
+                        }
+                    }
+                },
+                _ => {}
+            }
             // A fresh-or-RECEIVER method result (`base.drop(2).len()`,
             // `base.tail(4).to_owned().len()`, SFRRECV:) — the receiver-position
             // half of #6544. Every link on the chain is proven to return a fresh
@@ -11650,6 +11691,55 @@ function owned_fresh_call_callee(e: parser.Expr, kind: string, s: LowerState): s
     return "";
 }
 
+// emit_freshself_release: release the temp box parked in `boxslot` unless it is
+// the same pointer as the receiver parked in `recvslot`. A "FRESHSELF:" producer
+// hands back a fresh box on one path and its receiver on the other, so only the
+// runtime knows which arrived — the compare is the whole admission. The dec is
+// SHALLOW: a fresh literal's field values are not proven owned here, so what the
+// box does own leaks with it rather than being freed out from under a caller.
+function emit_freshself_release(st: LowerState, boxslot: i32, recvslot: i32): LowerState {
+    var r: LowerState = st.emit(ir.op_load_local(boxslot));
+    r = r.emit(ir.op_load_local(recvslot));
+    r = r.emit(ir.op_bin("ne", 0, false));
+    r = r.emit(ir.op_if(0));
+    r = r.emit(ir.op_load_local(boxslot));
+    r = r.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    r = r.emit(ir.op_drop());
+    return r.emit(ir.op_end());
+}
+
+// freshself_call_recv_slot: the RECEIVER's slot when `e` is a method call whose
+// callee is in the "FRESHSELF:" registry — every return either a strict-fresh
+// struct literal or the receiver itself — else -1. The result is then one of
+// two boxes and only the runtime knows which, so the caller releases it under a
+// pointer compare against this slot. The receiver must be a bare LOCAL for that
+// compare to reload it without re-evaluating anything, which is the same
+// restriction owned_fresh_call_callee's method arm carries.
+function freshself_call_recv_slot(e: parser.Expr, s: LowerState): i32 {
+    match (e) {
+        parser.ExprCall(c) => {
+            match (c.callee) {
+                parser.ExprFieldAccess(cfa) => {
+                    var rslot: i32 = 0 - 1;
+                    match (cfa.obj) {
+                        parser.ExprIdent(rid) => { rslot = s.slot_of(rid.name); },
+                        _ => { return 0 - 1; }
+                    }
+                    if (rslot < 0) { return 0 - 1; }
+                    var rty: string = expr_struct_type(cfa.obj, s);
+                    if (rty == "") { return 0 - 1; }
+                    if (decl_field_type(s.structs, rty, cfa.field) != "") { return 0 - 1; }
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, "FRESHSELF:" + rty + "." + cfa.field) < 0) { return 0 - 1; }
+                    return rslot;
+                },
+                _ => { return 0 - 1; }
+            }
+        },
+        _ => { return 0 - 1; }
+    }
+    return 0 - 1;
+}
+
 // lower_expr lowers one expression, stamping the bail description on the way
 // out of a failure (see LowerState.fail_why). The dispatch itself is
 // lower_expr_dispatch; this wrapper is the only place the tag is computed, and
@@ -12284,8 +12374,39 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     faown = owned_fresh_call_callee(fa.obj, "", s);
                 }
             }
+            // A MIXED-path method producer (`b.relabel(t).tag`, "FRESHSELF:"):
+            // every return is either a strict-fresh literal or the receiver
+            // itself, so which box arrived is a runtime fact and the pointer
+            // decides it — the struct twin of the SFRRECV chain release. The
+            // release is the BARE box dec: the fresh path's field values are
+            // not proven owned (`Box { tag: t, … }` takes a parameter's box),
+            // so the field read stays a borrow and everything the box does own
+            // leaks with it, which is the established safe floor.
+            var fsrecv: i32 = 0 - 1;
+            if (faown == "" && !struct_field_is_i64(s.structs, sty, idx)
+                    && (owned_scalar_field_type(decl_field_type(s.structs, sty, fa.field))
+                        || decl_field_type(s.structs, sty, fa.field) == "string")) {
+                fsrecv = freshself_call_recv_slot(fa.obj, s);
+            }
             var so: LowerState = lower_expr(fa.obj, s);
             if (!so.ok) { return so; }
+            if (fsrecv >= 0) {
+                var fsn: string = "$fsfld" + util.i32_to_string(so.locals.len());
+                so = so.add_local(fsn);
+                var fsslot: i32 = so.slot_of(fsn);
+                so = so.mark_struct_type(fsslot, sty);
+                so = so.emit(ir.op_store_local(fsslot));
+                // Park the field value: the release opens a block, and the read
+                // has to happen while the box is still alive either way.
+                var fsv: string = "$fsval" + util.i32_to_string(so.locals.len());
+                so = so.add_local(fsv);
+                var fsvslot: i32 = so.slot_of(fsv);
+                so = so.emit(ir.op_load_local(fsslot));
+                so = so.emit(ir.op_struct_get(idx, struct_field_width(s.structs, sty, idx)));
+                so = so.emit(ir.op_store_local(fsvslot));
+                so = emit_freshself_release(so, fsslot, fsrecv);
+                return so.emit(ir.op_load_local(fsvslot));
+            }
             if (faown != "") {
                 var fan: string = "$ocfld" + util.i32_to_string(so.locals.len());
                 so = so.add_local(fan);
@@ -29835,6 +29956,35 @@ function return_value_is_strictfresh_struct(e: parser.Expr, structs: parser.Stru
     }
     return false;
 }
+// body_returns_fresh_or_self_struct: every return in `stmts` hands back either a
+// strict-fresh struct literal or the RECEIVER itself (`return b`). The mixed
+// shape every builder-ish method opens with — `if (t.len() == 0) { return b; }`
+// — which no all-fresh registry can admit, and which the caller can still
+// release under a pointer compare because those are the only two boxes it can
+// be. A body with no return at all answers false via the caller's
+// body_has_return check.
+function body_returns_fresh_or_self_struct(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[], recv: string): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            parser.StmtReturn(r) => {
+                var self_ret: boolean = false;
+                match (r.value) {
+                    parser.ExprIdent(rid) => { if (rid.name == recv) { self_ret = true; } },
+                    _ => {}
+                }
+                if (!self_ret && !return_value_is_strictfresh_struct(r.value, structs, fnbody)) { return false; }
+            },
+            parser.StmtIf(f) => { if (!body_returns_fresh_or_self_struct(f.then_body, structs, fnbody, recv) || !body_returns_fresh_or_self_struct(f.else_body, structs, fnbody, recv)) { return false; } },
+            parser.StmtWhile(w) => { if (!body_returns_fresh_or_self_struct(w.body, structs, fnbody, recv)) { return false; } },
+            parser.StmtFor(fo) => { if (!body_returns_fresh_or_self_struct(fo.body, structs, fnbody, recv)) { return false; } },
+            parser.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (!body_returns_fresh_or_self_struct(m.arms[a].body, structs, fnbody, recv)) { return false; } a = a + 1; } },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return true;
+}
 function body_has_nonstrictfresh_return(stmts: parser.Stmt[], structs: parser.StructDecl[], fnbody: parser.Stmt[]): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -30276,6 +30426,26 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
             var skey: string = funcs[k].name;
             if (funcs[k].receiver_type.len() > 0) { skey = util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name; }
             out = out.append("STRFLDF:" + skey);
+        }
+        // "FRESHSELF:<Base>.<method>" — the MIXED-path producer: SOME return hands
+        // back the receiver and every other is a strict-fresh struct literal. The
+        // bare-receiver return is required, not merely allowed: an all-fresh body
+        // is what the plain entry above already admits, with no runtime compare to
+        // pay for, and a second entry for it would only lengthen a registry every
+        // call site scans (#6911 §4d.4). Neither
+        // the bare entry nor "STRFLDF:" can hold it (both demand every path be
+        // fresh), and refusing it strands the fresh path's box at every call —
+        // the shape `if (t.len() == 0) { return b; }` gives every builder-ish
+        // method. The caller releases under a pointer compare against the
+        // receiver, so the identity path costs nothing and the fresh path is
+        // freed; the release is the BARE box dec, since a fresh literal's field
+        // values are not proven owned here (`Box { tag: t, … }` takes a
+        // parameter's box) and only the box itself is provably this frame's.
+        if (funcs[k].receiver_type.len() > 0 && decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)
+                && body_has_return(funcs[k].body)
+                && body_returns_bare_ident(funcs[k].body, funcs[k].receiver_name)
+                && body_returns_fresh_or_self_struct(funcs[k].body, structs, funcs[k].body, funcs[k].receiver_name)) {
+            out = out.append("FRESHSELF:" + util.base_type_name(funcs[k].receiver_type) + "." + funcs[k].name);
         }
         k = k + 1;
     }
