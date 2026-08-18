@@ -819,7 +819,7 @@ pub function (s: LowerState) is_borrowed_name(name: string): boolean {
 // update `name = T { ...name, … }` may reuse its own box in place (#6134).
 // Seeded once per function by lower_func as "SAREUSE:<name>".
 pub function (s: LowerState) is_self_assign_reuse_name(name: string): boolean {
-    return util.index_of_str(s.reclaimable_names, "SAREUSE:" + name) >= 0;
+    return reclaim_has(s.reclaimable_names, "SAREUSE:", name);
 }
 
 // trmc_consume_param returns the parameter index a consume-safe TRMC callee
@@ -839,7 +839,7 @@ pub function (s: LowerState) is_trmc_consume_arg(name: string, idx: i32): boolea
 // borrows it and none outlives the frame. Seeded once per function by lower_func
 // as "VIEWFRAME:<name>" (see view_frame_names_of for the rule).
 pub function (s: LowerState) is_view_frame_name(name: string): boolean {
-    return util.index_of_str(s.reclaimable_names, "VIEWFRAME:" + name) >= 0;
+    return reclaim_has(s.reclaimable_names, "VIEWFRAME:", name);
 }
 
 // mark_enum_field_alias records that local `name` was bound from a DIRECT enum
@@ -857,7 +857,7 @@ pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
 // the name to a non-alias value does not clear it — a stale mark costs one
 // retain too many, which leaks and never over-frees.
 pub function (s: LowerState) is_enum_field_alias(name: string): boolean {
-    return util.index_of_str(s.reclaimable_names, "ENUMALIAS:" + name) >= 0;
+    return reclaim_has(s.reclaimable_names, "ENUMALIAS:", name);
 }
 
 // enum_alias_ident_escapes reports whether `e` is a bare ident on a local bound
@@ -1553,6 +1553,21 @@ function tagged_value_of(names: string[], pfx: string, name: string): string {
     return "";
 }
 
+// reclaim_has: the registry holds the exact entry "<pfx><name>". Byte compares
+// against each candidate, where `index_of_str(names, pfx + name)` had to build
+// the key string first — one allocation per probe, and the sweep runs a dozen
+// of these probes per local slot.
+function reclaim_has(names: string[], pfx: string, name: string): boolean {
+    var want: i32 = pfx.len() + name.len();
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var e: string = names[i];
+        if (e.len() == want && bytes_at(e, 0, pfx) && bytes_at(e, pfx.len(), name)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // sig_value_of: the <value> of the first "<name>|<value>" entry in a sig
 // registry, or "" when the name is absent. An entry with an empty value ENDS
 // the scan here rather than being passed over — a registry records one entry
@@ -1726,7 +1741,7 @@ pub function (s: LowerState) clo_cap_kinds_of(name: string): string {
 // clo_rc_approved reports whether lower_func approved `name` for capture RC
 // (an "OK:<name>" seed entry — see the clo_cap_kinds field doc).
 pub function (s: LowerState) clo_rc_approved(name: string): boolean {
-    return util.index_of_str(s.reclaimable_names, "CLO:OK:" + name) >= 0;
+    return reclaim_has(s.reclaimable_names, "CLO:OK:", name);
 }
 
 // is_str_slot / mark_str query and set the string-ness of slot i.
@@ -10663,7 +10678,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
                 parser.ExprCall(lrc) => {
                     match (lrc.callee) {
                         parser.ExprIdent(lrcid) => {
-                            if (util.index_of_str(s.reclaimable_names, "SFRLEN:" + lrcid.name) >= 0) { lfresh = true; }
+                            if (reclaim_has(s.reclaimable_names, "SFRLEN:", lrcid.name)) { lfresh = true; }
                         },
                         _ => {}
                     }
@@ -13208,7 +13223,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
                     // ownership is unknown) — the registry verdict doesn't
                     // apply, so the free is skipped (sound leak).
                     if (ts.slot_of(tfid.name) < 0
-                        && util.index_of_str(ts.reclaimable_names, "OPTFRESH:" + tfid.name) >= 0) { try_box_fresh = true; }
+                        && reclaim_has(ts.reclaimable_names, "OPTFRESH:", tfid.name)) { try_box_fresh = true; }
                 },
                 _ => {}
             }
@@ -16021,7 +16036,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 // blind, so the scalar elements ride the freed buffer
                                 // and nothing can dangle.
                                 se = se.emit(ir.op_call_direct("__fern_rc_dec", 1));
-                            } else if (util.index_of_str(s.reclaimable_names, "MAPRET:" + dcid.name) >= 0) {
+                            } else if (reclaim_has(s.reclaimable_names, "MAPRET:", dcid.name)) {
                                 // A discarded call to a MAPF-registered map builder
                                 // (`mk(i);`, #4357): the result is a fresh sole-owner
                                 // scalar-column map that leaks whole if merely dropped.
@@ -18288,7 +18303,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // capture extract (`var <cap> = __env[1+i]`, registered "ENVCAP:" by
     // lower_func) is excluded: the sweep already skips it as a BORROW, so a
     // retain here would have no matching dec and leak one count per call.
-    if (is_arr && !alias_inc && util.index_of_str(se.reclaimable_names, "ENVCAP:" + v.name) < 0) {
+    if (is_arr && !alias_inc && !reclaim_has(se.reclaimable_names, "ENVCAP:", v.name)) {
         match (v.init) {
             parser.ExprFieldAccess(_) => { alias_inc = true; },
             parser.ExprIndex(_) => { alias_inc = true; },
@@ -18526,7 +18541,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // RHSs, so `e = f(e)` — the one shape where the old box is still needed here —
     // is excluded. Params are never candidates (the local is fn-declared), but the
     // slot check mirrors the enumfrees emission rather than relying on that.
-    if (slot >= s.n_params && util.index_of_str(s.reclaimable_names, "SCENRB:" + a.target) >= 0) {
+    if (slot >= s.n_params && reclaim_has(s.reclaimable_names, "SCENRB:", a.target)) {
         s = s.emit(ir.op_load_local(slot));
         s = s.emit(ir.op_call_direct("__fern_rc_dec", 1));
         s = s.emit(ir.op_drop());
@@ -18863,7 +18878,7 @@ function lower_stmt_assign(a: parser.StmtAssign, s: LowerState): LowerState {
     // is excluded for the same reason as the bind: the sweep skips it as a
     // borrow, so a retain would leak.
     if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params
-            && util.index_of_str(s.reclaimable_names, "ENVCAP:" + s.locals[slot].slot_name) < 0) {
+            && !reclaim_has(s.reclaimable_names, "ENVCAP:", s.locals[slot].slot_name)) {
         match (a.value) {
             parser.ExprFieldAccess(_) => { reassign_inc = true; },
             parser.ExprIndex(_) => { reassign_inc = true; },
@@ -21540,7 +21555,7 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // DISPROVEN — with the marker visible, granting the deep drop still segfaults.
 function slot_nodeep(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
-    return util.index_of_str(s.reclaimable_names, "NODEEP:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "NODEEP:", reclaim_slot_name(s, i));
 }
 
 function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
@@ -22563,7 +22578,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && util.index_of_str(st.reclaimable_names, "ENVCAP:" + st.locals[i].slot_name) < 0) {
+        if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.locals[i].slot_name)) {
             // #4354 closure-env capture release: a registered closure local
             // (bound once from a literal lambda, non-escaping, kinds recorded
             // at the build site) releases its classifiable captures BEFORE the
@@ -22715,7 +22730,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         var scoped_credit: boolean = !live_credit && slot_is_reclaimable_struct_scoped(st, j);
         // A scoped slot deep-drops only when the move scan could type-check it.
         var scoped_deep_ok: boolean = scoped_credit
-            && util.index_of_str(st.reclaimable_names, "FLDCHECKED:" + reclaim_slot_name(st, j)) >= 0;
+            && reclaim_has(st.reclaimable_names, "FLDCHECKED:", reclaim_slot_name(st, j));
         if (!slot_list_has(keeps, j) && (live_credit || scoped_credit)) {
             // Deep-drop the struct's scalar-array fields (sole-owned literals), then
             // free the box. Order matters: read the fields before freeing the box.
@@ -33089,7 +33104,7 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUP:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "TUP:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_tuple_rebind: slot `i` is a "TUP:" tuple whose every
@@ -33098,7 +33113,7 @@ function slot_is_reclaimable_tuple(s: LowerState, i: i32): boolean {
 // slot_is_reclaimable_tuple — the credit is only ever appended alongside "TUP:".
 function slot_is_reclaimable_tuple_rebind(s: LowerState, i: i32): boolean {
     if (!slot_is_reclaimable_tuple(s, i)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPREBIND:" + s.locals[i].slot_name) >= 0;
+    return reclaim_has(s.reclaimable_names, "TUPREBIND:", s.locals[i].slot_name);
 }
 
 // slot_is_reclaimable_rctuple: a fresh, non-escaping tuple local carrying a fresh
@@ -33110,7 +33125,7 @@ function slot_is_reclaimable_rctuple(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRC:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "TUPRC:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_rctuple_sweep: a "TUPRC:" slot whose FINAL value the scope-exit
@@ -33122,7 +33137,7 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "TUPRCS:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "TUPRCS:", reclaim_slot_name(s, i));
 }
 
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
@@ -33159,7 +33174,7 @@ function slot_is_reclaimable_rcenum(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "RCENUM:" + s.locals[i].slot_name) >= 0;
+    return reclaim_has(s.reclaimable_names, "RCENUM:", s.locals[i].slot_name);
 }
 
 // slot_is_reclaimable_rcenum_sweep: an rc-payload enum slot whose FINAL value the
@@ -33182,7 +33197,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "RCENUMS:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "RCENUMS:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
@@ -33205,7 +33220,7 @@ function slot_is_reclaimable_scenum(s: LowerState, i: i32): boolean {
     // site consults, rather than in the collector — the collector sees the
     // declared type, but a future overlap need not come through one.
     if (slot_is_reclaimable_dyn(s, i)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SCENUMS:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "SCENUMS:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_map: slot `i` is a fresh, non-escaping, non-iterated MAP local
@@ -33217,7 +33232,7 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].map_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "MAP:" + s.locals[i].slot_name) >= 0;
+    return reclaim_has(s.reclaimable_names, "MAP:", s.locals[i].slot_name);
 }
 
 // emit_map_buffers_free frees the map in `slot` via the per-backend
@@ -33242,8 +33257,8 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     // __fern_str_arr_free; wasm_helper_symbol maps all of them to the already-deep
     // $__fern_map_release). A map with neither keeps the shallow __fern_map_free
     // (string boxes in the non-credited column leak one level — sound).
-    var mvs: boolean = util.index_of_str(s.reclaimable_names, "MAPVS:" + s.locals[slot].slot_name) >= 0;
-    var mks: boolean = util.index_of_str(s.reclaimable_names, "MAPKS:" + s.locals[slot].slot_name) >= 0;
+    var mvs: boolean = reclaim_has(s.reclaimable_names, "MAPVS:", s.locals[slot].slot_name);
+    var mks: boolean = reclaim_has(s.reclaimable_names, "MAPKS:", s.locals[slot].slot_name);
     if (mks && mvs) {
         st = st.emit(ir.op_call_direct("__fern_map_free_kvs", 1));
     } else if (mks) {
@@ -33272,7 +33287,7 @@ function slot_is_reclaimable_str(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_str) { return false; }
-    return util.index_of_str(s.reclaimable_names, "STR:" + s.locals[i].slot_name) >= 0;
+    return reclaim_has(s.reclaimable_names, "STR:", s.locals[i].slot_name);
 }
 
 // slot_is_reclaimable_strarr: slot `i` is a fresh, non-escaping string[] local
@@ -34390,9 +34405,9 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     // can't dangle a live local. Scalar-kind inners value-copy their
     // elements, so the lax rows-are-literals credit suffices.
     if (s.arrarr_elem_of_slot(i) == "string") {
-        return util.index_of_str(s.reclaimable_names, "ARRARRS:" + reclaim_slot_name(s, i)) >= 0;
+        return reclaim_has(s.reclaimable_names, "ARRARRS:", reclaim_slot_name(s, i));
     }
-    return util.index_of_str(s.reclaimable_names, "ARRARR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "ARRARR:", reclaim_slot_name(s, i));
 }
 
 // arrarr_free_helper_of picks the release helper from the slot's INNER element
@@ -34415,7 +34430,7 @@ function slot_is_reclaimable_optaarr(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arr) { return false; }
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTAARR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTAARR:", reclaim_slot_name(s, i));
 }
 
 // emit_optaarr_reclaim_store: the option-element twin of
@@ -34448,7 +34463,7 @@ function slot_is_reclaimable_opttup(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTTUP:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTTUP:", reclaim_slot_name(s, i));
 }
 
 // emit_opttup_deep_free frees the option box in `slot`: null-guarded, if the box
@@ -34773,7 +34788,7 @@ function slot_is_reclaimable_optstruct(s: LowerState, i: i32): boolean {
     var inner: string = opttup_inner_type(s.locals[i].opt_type);
     if (!decl_is_struct(s.structs, inner)) { return false; }
     if (!optstruct_payload_reclaimable(s.structs, inner)) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTSTRUCT:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTSTRUCT:", reclaim_slot_name(s, i));
 }
 
 // emit_optstruct_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -35660,11 +35675,11 @@ function collect_fresh_optarrarr_names(stmts: parser.Stmt[], acc: string[]): str
 // "OPTARRERR:" — its Err payload is a proven-fresh string, so the deep free may
 // release it instead of stranding it (#6360).
 function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
-    return util.index_of_str(s.reclaimable_names, "OPTARRERR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTARRERR:", reclaim_slot_name(s, i));
 }
 
 function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {
-    return util.index_of_str(s.reclaimable_names, "OPTSTR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTSTR:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_optarr: slot i holds a REBOUND, fresh, non-escaping
@@ -35675,7 +35690,7 @@ function slot_is_reclaimable_optarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTARR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTARR:", reclaim_slot_name(s, i));
 }
 
 // slot_is_reclaimable_optarrarr: slot i holds a fresh, non-escaping
@@ -35688,7 +35703,7 @@ function slot_is_reclaimable_optarrarr(s: LowerState, i: i32): boolean {
     // collect_fresh_optarrarr_names on the authoritative Option[<scalar-arr-of-arr>]
     // annotation, so it uniquely identifies genuine arr-of-arr option slots.
     if (s.locals[i].opt_type.len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "OPTARRARR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "OPTARRARR:", reclaim_slot_name(s, i));
 }
 
 // emit_optarrarr_deep_free frees the option box in `slot`: null-guarded, if Some
@@ -36080,7 +36095,7 @@ function slot_is_reclaimable_arrtup(s: LowerState, i: i32): boolean {
     if (s.locals[i].is_arrarr || s.locals[i].is_strarr) { return false; }
     var et: string = s.locals[i].arrarr_elem;
     if (et.len() < 2 || et[0:1] != "(") { return false; }
-    return util.index_of_str(s.reclaimable_names, "ARRTUP:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "ARRTUP:", reclaim_slot_name(s, i));
 }
 
 // emit_arrtup_deep_free frees the array-of-tuples buffer in `slot`: null-guarded, a
@@ -36913,12 +36928,12 @@ function slot_is_reclaimable_arrstruct(s: LowerState, i: i32): boolean {
     var sty: string = s.struct_type_of_slot(i);
     if (sty.len() == 0) { return false; }
     if (!struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (util.index_of_str(s.reclaimable_names, "ARRSTRUCT:" + reclaim_slot_name(s, i)) >= 0) { return true; }
+    if (reclaim_has(s.reclaimable_names, "ARRSTRUCT:", reclaim_slot_name(s, i))) { return true; }
     // APPEND-BUILT (#6535) carries a separate credit so the literal-built rule
     // is not widened by accident — the two reach the same deep walk, and the
     // rebind that distinguishes them is cow-guarded in
     // emit_arrstruct_reclaim_store.
-    return util.index_of_str(s.reclaimable_names, "ARRSTRUCTA:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "ARRSTRUCTA:", reclaim_slot_name(s, i));
 }
 
 // emit_arrstruct_deep_free frees the array-of-structs buffer in `slot`: null-guarded, a
@@ -37018,7 +37033,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     if (sty.len() == 0) { return false; }
     if (sty.len() > 4 && sty[0:4] == "dyn ") { return false; }
     if (struct_has_reclaim_array_field(s.structs, sty)) { return false; }
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARR:" + reclaim_slot_name(s, i)) >= 0) { return true; }
+    if (reclaim_has(s.reclaimable_names, "STRUCTARR:", reclaim_slot_name(s, i))) { return true; }
     // APPEND-BUILT candidates (#6127) carry a SEPARATE credit and a STRICTER
     // rule: the element struct's fields must be scalar or `string`.
     //
@@ -37044,7 +37059,7 @@ function slot_is_reclaimable_structarr(s: LowerState, i: i32): boolean {
     // which is the sound direction and measurably the same code. Without this,
     // an append-built `N[]` leaked its element boxes too: 28800 bytes over 100
     // rounds against the literal-built form's 9600 (the strings alone).
-    if (util.index_of_str(s.reclaimable_names, "STRUCTARRA:" + reclaim_slot_name(s, i)) >= 0) {
+    if (reclaim_has(s.reclaimable_names, "STRUCTARRA:", reclaim_slot_name(s, i))) {
         return struct_all_scalar_string_or_fn_fields(s.structs, sty);
     }
     return false;
@@ -37120,7 +37135,7 @@ function slot_is_reclaimable_strarr(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_strarr) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SARR:" + reclaim_slot_name(s, i)) >= 0;
+    return reclaim_has(s.reclaimable_names, "SARR:", reclaim_slot_name(s, i));
 }
 
 // dyn_reclaim_concrete_of (#4351): the payload tag registered for dyn local
@@ -37162,7 +37177,7 @@ function slot_is_snapshot_param(s: LowerState, i: i32): boolean {
     if (i >= s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return util.index_of_str(s.reclaimable_names, "SNAP:" + s.locals[i].slot_name) >= 0;
+    return reclaim_has(s.reclaimable_names, "SNAP:", s.locals[i].slot_name);
 }
 
 // --- struct in-place reuse (FBIP): functional-update self-overwrite ---------
@@ -43662,13 +43677,13 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
     // half of strfld_reclaim_ok_types_of) — routes so the backend
     // __struct_drop k_str_arr arm reaches the field.
     if (struct_has_strarr_field(s.structs, sty)
-        && util.index_of_str(s.reclaimable_names, "STRFLDOK:arr:" + sty) >= 0) { return true; }
+        && reclaim_has(s.reclaimable_names, "STRFLDOK:arr:", sty)) { return true; }
     // fn-fielded (closure) type admitted by the clofld scan ("clo:"-tagged) —
     // routes so the backend k_clo arm shallow-frees the field's env box.
     if (struct_has_clo_field(s.structs, sty)
-        && util.index_of_str(s.reclaimable_names, "STRFLDOK:clo:" + sty) >= 0) { return true; }
+        && reclaim_has(s.reclaimable_names, "STRFLDOK:clo:", sty)) { return true; }
     return struct_has_string_field(s.structs, sty)
-        && util.index_of_str(s.reclaimable_names, "STRFLDOK:" + sty) >= 0;
+        && reclaim_has(s.reclaimable_names, "STRFLDOK:", sty);
 }
 
 // strfld_reclaim_ok_types_of: struct types whose __field_reclaim_<T> body may

@@ -373,7 +373,7 @@ contradict comments in the tree:
 | 6 | `ir.Inline` + IR dead-funcs on the natives (#4377) | `internal/codegen/{x86_64,arm64}` | measured −9% when trialled |
 | 7 | ~~Index the string-encoded borrow registry~~ — **done**, #6909 | `irlower.fern` | **measured −0.18%: the cost was already gone** |
 | 8 | **Cut the copying** — `arr_push_grow*`, `str_slice`, `strcat`; `arr_cow_inplace` done for x86 in #6911 | runtime + whoever calls them | §4b — 24–51%, the largest cost and previously unlisted |
-| 10 | ~~Decode the reclaim and sig registries without slicing~~ — **done**, #7020 + #7026 | `irlower.fern` | §4d.4 — −35% self-compile user between them; indexing the surviving walks is what is left |
+| 10 | ~~Decode the reclaim and sig registries without slicing~~ — **done**, #7020 + #7026 + #7031 | `irlower.fern` | §4d.4 — −38% self-compile user between them; indexing the surviving walks is what is left, sized at 15.8% for one predicate |
 
 **The ordering to trust is 8, then 5, then 4** — not the numbering, which is
 historical. 8 is where the time is; 5 is the only pre-existing item still
@@ -802,9 +802,30 @@ the self-compile **67.8 s → 51.2 s user, −24.5%**, byte-identical again.
 had to zero, so removing them shows up on both sides of the clock.
 
 Across #7020 + #7026 the self-compile is **78.8 s → 51.2 s user (−35%)**. What
-remains of this shape is the walk itself: the registries are still linear, and
-`fn_param_sigs` at ~4,600 rows is now the one worth indexing rather than
-decoding faster.
+remains of this shape is the walk itself: the registries are still linear.
+
+**Then the membership half, #7031.** 43 sites asked the reclaim registry
+`util.index_of_str(names, "PFX:" + name) >= 0` — no per-candidate slice, but a
+concatenated KEY built once per probe, and the exit sweep runs a dozen of these
+per local slot. `reclaim_has` byte-compares prefix and name against each
+candidate instead: 35.1 s → 33.3 s user, −5%, byte-identical.
+
+**The next step is an index, and it is now sized.** Stubbing
+`dyn_reclaim_concrete_of` to `return ""` on post-#7026 main clocks **29.9 s
+against 35.5 s** — 15.8% for ONE of the dozen per-slot predicates, all of which
+re-derive a slot's classification from the registry on every probe. That is the
+ceiling for indexing, and it is large enough to be worth the design: the
+per-slot classification wants computing once per function, not per probe per
+sweep. Note the walk survives an allocation-free decode precisely because it is
+called O(slots × sweeps) times, not because any single walk is slow.
+
+**One thing that did NOT work, and why.** `lower_block` calls
+`optfresh_names_of(s.reclaimable_names)` twice with the same argument, so
+hoisting it into a `var` looks free. It measured 33.3 s → 35.3 s — WORSE.
+Binding the list and passing it to two callees lifts its rc, so each callee
+copies where it previously consumed a fresh array: #6988's ratchet, met from the
+other direction. A CSE that is obvious in an rc-free language is not obviously a
+win here.
 
 ## 8. Reproducing any of this
 
