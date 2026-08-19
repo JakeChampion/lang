@@ -101,7 +101,7 @@ pub struct State {
 
 // parse_version parses "MAJOR.MINOR.PATCH", returning ok=false otherwise.
 pub function parse_version(s: string): Version {
-    var parts: string[] = split_char(s, 46);   // '.'
+    var parts: string[] = split_char(s, b'.');
     if (parts.len() != 3) { return Version { major: 0, minor: 0, patch: 0, ok: false }; }
     var i: i32 = 0;
     while (i < 3) {
@@ -119,7 +119,7 @@ pub function parse_version(s: string): Version {
 // version_error is the diagnostic for a spelling parse_version rejects. The
 // part-count and the digit failures word differently, as native's do.
 pub function version_error(s: string): string {
-    if (split_char(s, 46).len() != 3) {
+    if (split_char(s, b'.').len() != 3) {
         return "invalid version " + quoted(s) + " (want MAJOR.MINOR.PATCH)";
     }
     return "invalid version " + quoted(s);
@@ -152,7 +152,7 @@ function ver_cmp_s(a: string, b: string): i32 {
 pub function parse_index(src: string): Index {
     var entries: Entry[] = [];
     var pkg: string = "";
-    var lines: string[] = split_char(src, 10);   // '\n'
+    var lines: string[] = split_char(src, b'\n');
     var ln: i32 = 0;
     while (ln < lines.len()) {
         var line: string = trim(lines[ln]);
@@ -172,7 +172,7 @@ pub function parse_index(src: string): Index {
         if (pkg.len() == 0) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": version entry outside a [package] section");
         }
-        var eq: i32 = index_of_char(line, 61, 0);   // '='
+        var eq: i32 = index_of_char(line, b'=', 0);
         if (eq < 0) {
             return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
         }
@@ -208,13 +208,13 @@ function parse_source(val: string): SourceResult {
     var path: string = "";
     var url: string = "";
     var hash: string = "";
-    var parts: string[] = split_char(trim(val[1:val.len() - 1] + ""), 44);   // ','
+    var parts: string[] = split_char(trim(val[1:val.len() - 1] + ""), b',');
     var i: i32 = 0;
     while (i < parts.len()) {
         var part: string = trim(parts[i]);
         i = i + 1;
         if (part.len() == 0) { continue; }
-        var eq: i32 = index_of_char(part, 61, 0);   // '='
+        var eq: i32 = index_of_char(part, b'=', 0);
         if (eq < 0) {
             return SourceResult { src: none, err: "expected `key = value`, got " + quoted(part) };
         }
@@ -564,12 +564,12 @@ pub function trim(s: string): string {
 }
 
 // split_char splits `s` on the byte `c`, keeping empty fields.
-pub function split_char(s: string, c: i32): string[] {
+pub function split_char(s: string, c: u8): string[] {
     var out: string[] = [];
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        if ((s[i] as i32) == c) {
+        if (s[i] == c) {
             out = out.append(s[start:i] + "");
             start = i + 1;
         }
@@ -579,10 +579,10 @@ pub function split_char(s: string, c: i32): string[] {
     return out;
 }
 
-function index_of_char(s: string, c: i32, from: i32): i32 {
+function index_of_char(s: string, c: u8, from: i32): i32 {
     var i: i32 = from;
     while (i < s.len()) {
-        if ((s[i] as i32) == c) { return i; }
+        if (s[i] == c) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -623,7 +623,7 @@ pub function is_abs(p: string): boolean {
 pub function join_path(dir: string, rel: string): string {
     var abs: boolean = is_abs(dir);
     var segs: string[] = [];
-    var parts: string[] = split_char(dir + "/" + rel, 47);   // '/'
+    var parts: string[] = split_char(dir + "/" + rel, b'/');
     var i: i32 = 0;
     while (i < parts.len()) {
         var p: string = parts[i];

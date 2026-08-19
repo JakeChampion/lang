@@ -890,7 +890,7 @@ function run_add(pos: string[]): i32 {
 // [dependencies] table, creating the table at EOF when there is none.
 // Everything else — formatting, comments, other sections — survives verbatim.
 function insert_dependency(src: string, line: string): string {
-    var lines: string[] = mvs.split_char(src, 10);   // '\n'
+    var lines: string[] = mvs.split_char(src, b'\n');
     var i: i32 = 0;
     while (i < lines.len()) {
         if (mvs.trim(lines[i]) == "[dependencies]") {
