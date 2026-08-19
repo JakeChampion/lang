@@ -25,10 +25,11 @@
 //        2 = wide-scalar-boxed (i64/f64 on a narrow-ptr target),
 //        3 = user struct/enum key (hashed/compared via its derived
 //        hash/eq, threaded in per call — see the keyKind-3 section)
-//   +12  valTag : i32 — low byte = valKind (0 = i32-scalar,
+//   +12  valTag : i32 — low byte = valKind (0 = scalar,
 //        1 = non-array pointer, 2 = array(plain elems),
-//        3 = array(rc elems)); high bytes = value element
-//        stride for kinds 2/3 (see mapValTag / __map_val_*)
+//        3 = array(rc elems)); high bytes = the value element
+//        stride for kinds 2/3, or the owned cell size for a
+//        cell-boxed wide scalar (see mapValTag / __map_val_*)
 //   +16  hashSeed : i32 — per-process string-hash seed, 0 = unseeded
 //        (string keys only — see __map_seed / #6194)
 //   +20  pad      : i32 — keeps the entry column 8-byte aligned
@@ -340,7 +341,9 @@ pub function __map_cow_inplace(m: usize): usize {
 // A string KEY slot means two different things across the two string ABIs, and
 // __map_own_key covers both. Array VALUES are counted on every target, so one
 // inc each is the whole claim — __map_retain_val's own kind guard decides
-// which values get it.
+// which values get it. A boxed wide-scalar VALUE carries no count at all, so
+// the copy needs a cell of its own; that is what lets an overwrite / delete /
+// drop free the cell it displaces instead of leaking it.
 //
 // Two value columns are left shared, both for want of a way to recognise them
 // HERE (#6242): a struct value (valKind 4), whose deep drop is the IR-generated
@@ -352,7 +355,8 @@ pub function __map_cow_inplace(m: usize): usize {
 function __map_own_copied_cols(buf: usize): void {
     var ownKeys: boolean = __load_i32(buf + 8) == 1;
     var retainVals: boolean = __map_val_kind(buf) >= 2;
-    if (!ownKeys && !retainVals) { return; }
+    var cellBytes: i32 = __map_val_cell_bytes(buf);
+    if (!ownKeys && !retainVals && cellBytes == 0) { return; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
@@ -363,6 +367,11 @@ function __map_own_copied_cols(buf: usize): void {
         var slot: usize = entriesBase + i * entryStride;
         if (ownKeys) { __store_ptr(slot, __map_own_key(__load_ptr(slot))); }
         if (retainVals) { __map_retain_val(buf, __load_ptr(slot + ptrW)); }
+        if (cellBytes != 0) {
+            var fresh: usize = __alloc(cellBytes);
+            __memcpy(fresh, __load_ptr(slot + ptrW), cellBytes);
+            __store_ptr(slot + ptrW, fresh);
+        }
         i = i + 1;
     }
 }
@@ -510,7 +519,9 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
 // at buf+12 by map_new: the low byte is the valKind (0 = scalar,
 // 1 = non-array pointer, 2 = plain-elem array, 3 = rc-elem
 // array); for kinds 2/3 the high bytes carry the value element
-// stride in bytes (the IR's mapValTag).
+// stride in bytes (the IR's mapValTag), which is what
+// __map_val_stride reads — a kind-0 column packs its cell size
+// there instead (__map_val_cell_bytes).
 function __map_val_kind(buf: usize): i32 {
     return __load_i32(buf + 12) & 255;
 }
@@ -518,14 +529,43 @@ function __map_val_stride(buf: usize): i32 {
     return __load_i32(buf + 12) >> 8;
 }
 
-// __map_dec_value releases one array-typed value (valKind 2/3) at
-// the value element stride from the buf: arr_dec for plain-elem
-// arrays, drop_arr_ptr (recurse one level) for rc-elem arrays.
-// rc-aware — frees only at the value's last reference, so an
-// outstanding inc-on-get borrow stays alive. No-op for scalar /
-// non-array values.
+// __map_val_cell_bytes returns the size of the heap cell each value slot
+// points at, or 0 when the slot holds the value itself.
+//
+// A wide scalar (i64 / u64 / f64) does not fit the runtime's pointer-wide
+// value slot on every target, so emitWideMapSet alloc-and-stores it into a
+// cell and the column carries cell pointers. The column OWNS those cells:
+// each has exactly one owning kv buffer, which is what makes the reclamation
+// below safe — a COW copy reboxes rather than sharing them
+// (__map_own_copied_cols). The size lives in the tag's high bytes, which only
+// kinds 2/3 otherwise use (for their element stride).
+function __map_val_cell_bytes(buf: usize): i32 {
+    if (__map_val_kind(buf) != 0) { return 0; }
+    return __load_i32(buf + 12) >> 8;
+}
+
+// __map_free_val_cell reclaims the boxed cell a value slot pointed at once
+// the map has stopped naming it — the displaced slot of an overwrite or a
+// delete. No-op for a column whose slots are not boxed.
+function __map_free_val_cell(buf: usize, v: usize): void {
+    var cellBytes: i32 = __map_val_cell_bytes(buf);
+    if (cellBytes == 0) { return; }
+    if (v == 0) { return; }
+    __free(v, cellBytes);
+}
+
+// __map_dec_value releases one value the map is dropping: the boxed cell of
+// a wide-scalar column, or an array-typed value (valKind 2/3) at the value
+// element stride from the buf — arr_dec for plain-elem arrays, drop_arr_ptr
+// (recurse one level) for rc-elem arrays. The array release is rc-aware —
+// it frees only at the value's last reference, so an outstanding inc-on-get
+// borrow stays alive. No-op for an unboxed scalar / non-array value.
 function __map_dec_value(buf: usize, v: usize): void {
     var vk: i32 = __map_val_kind(buf);
+    if (vk == 0) {
+        __map_free_val_cell(buf, v);
+        return;
+    }
     if (vk != 2 && vk != 3) { return; }
     var stride: i32 = __map_val_stride(buf);
     if (vk == 3) {
@@ -763,34 +803,41 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
     return __fern_rc_inc(out as usize);
 }
 
-// __map_drop_values frees the array-typed value column when a Map
-// is dropped at its LAST reference. The IR emits a call to this
+// __map_drop_values frees the array-typed and boxed-cell value columns when
+// a Map is dropped at its LAST reference. The IR emits a call to this
 // just before the (1-arg) __fern_map_drop, so it guards on the
 // handle rc itself (at [m-8]): only the last reference (rc==1)
 // frees the values — a shared map (rc>1) or a static-sentinel
 // handle (negative rc) leaves them untouched, matching
 // __fern_map_drop's own rc==1 free of the buf+handle. The value
-// element stride is read from the buf's packed valKind tag
-// (__map_dec_value). valKind 0/1 (scalar / non-array pointer)
-// leave the column alone — those values still leak. Each value's
-// rc was bumped on store (inc-on-set) and on every read
-// (inc-on-get), so this dec is the balancing release.
+// element stride / cell size is read from the buf's packed valKind tag
+// (__map_dec_value). An unboxed valKind 0/1 (i32-sized scalar /
+// non-array pointer) leaves the column alone — those values still leak.
+// Each array value's rc was bumped on store (inc-on-set) and on every
+// read (inc-on-get), so this dec is the balancing release; a boxed cell
+// carries no count and is owned outright by this buffer.
 pub function __map_drop_values(m: usize): usize {
-    // Null / low-address guard, mirroring __fern_map_drop: an
-    // owned-Map slot can be unset on some path at the exit sweep.
-    // Dereferencing m-8 without this traps. Returns m so the IR's
-    // OpCallDirect/OpDrop pops a real value (matching every other
-    // drop helper), not a void-call phantom.
-    if (m < 65536) { return m; }
+    // Null guard: an owned-Map slot can be unset on some path at the exit
+    // sweep, and dereferencing m-8 then traps. Returns m so the IR's
+    // OpCallDirect/OpDrop pops a real value (matching every other drop
+    // helper), not a void-call phantom. A static-sentinel handle needs no
+    // guard of its own — its negative rc fails the rc==1 test below.
+    //
+    // NOT an address floor: this is target-agnostic lang source, and the
+    // heap sits at ~1 KiB on the wasm preview-2 layout, so the 64 KiB floor
+    // the backends' rc helpers once used (rcLowAddrGuard, #6423) skipped
+    // every wasm map here and made the whole walk a no-op.
+    if (m == 0) { return m; }
     if (__load_i32(m - 8) != 1) { return m; }
     var buf: usize = __load_ptr(m);
     var vk0: i32 = __map_val_kind(buf);
-    // Only array values (2/3) are reclaimed here. Struct values (kind 4)
-    // are deep-dropped by the IR-generated __drop_map_struct_<T> at the
-    // map LOCAL's drop; a struct-valued map reached as a field / capture
-    // routes through here and must NOT misread its struct pointers as
-    // arrays — skip. Scalar (0) / other-pointer (1) leave the column.
-    if (vk0 != 2 && vk0 != 3) { return m; }
+    // Only array values (2/3) and boxed wide-scalar cells are reclaimed
+    // here. Struct values (kind 4) are deep-dropped by the IR-generated
+    // __drop_map_struct_<T> at the map LOCAL's drop; a struct-valued map
+    // reached as a field / capture routes through here and must NOT
+    // misread its struct pointers as arrays — skip. An unboxed scalar (0)
+    // / other-pointer (1) leaves the column.
+    if (vk0 != 2 && vk0 != 3 && __map_val_cell_bytes(buf) == 0) { return m; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);
     var ptrW: i32 = __ptr_width();
@@ -819,6 +866,18 @@ pub function __map_delete_impl(m: usize, k: usize): boolean {
 pub function __map_clear_impl(m: usize): void {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
+    var cellBytes: i32 = __map_val_cell_bytes(buf);
+    if (cellBytes != 0) {
+        var len_: i32 = __load_i32(buf + 4);
+        var ptrW: i32 = __ptr_width();
+        var entryStride: i32 = 2 * ptrW;
+        var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+        var i: i32 = 0;
+        while (i < len_) {
+            __map_free_val_cell(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
+            i = i + 1;
+        }
+    }
     __store_i32(buf + 4, 0);
     __memset(buf + __map_hdr(buf), 255, cap * 4);
 }
@@ -1024,6 +1083,7 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
         bucket = (bucket + 1) & mask;
     }
     if (foundBucket == 0 - 1) { return false; }
+    __map_free_val_cell(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
     __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
     var last: i32 = len_ - 1;
     if (idx != last) {

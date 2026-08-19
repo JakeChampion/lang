@@ -11989,17 +11989,19 @@ func mapKeyTypeName(t ast.Type) string {
 //
 // Encoding (widened for Stage A of map-value reclamation):
 //
-//	0 = i32-sized scalar (no rc)
+//	0 = scalar — i32-sized (stored raw), or a wide scalar
+//	    (i64 / u64 / f64) stored as a pointer to a cell the
+//	    column owns, which mapValTag's size byte marks
 //	1 = non-array pointer (string / struct / enum / slice /
 //	    tuple) — pointer-shaped but not yet reclaimed by
 //	    map_drop
 //	2 = array value with non-rc elements (plain arr_dec free)
 //	3 = array value with rc-tracked elements (drop_arr_ptr)
 //
-// Kinds 2 / 3 are reclaimed by __map_drop_values + the
-// overwrite-dec in __map_set_impl; readers mask the low byte
-// (kind != 0 == pointer-shaped) since map_new stores the packed
-// mapValTag (kind | stride<<8), not the bare kind.
+// Kinds 2 / 3 and the boxed half of kind 0 are reclaimed by
+// __map_drop_values + the overwrite-dec in __map_set_impl;
+// readers mask the low byte since map_new stores the packed
+// mapValTag (kind | size<<8), not the bare kind.
 func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, ptrW int) int32 {
 	if at, ok := t.(ast.ArrayType); ok {
 		if arrElemIsRcTracked(at.Elem) {
@@ -12054,19 +12056,26 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 }
 
 // mapValTag is what map_new actually stores at buf+12: the low
-// byte is the valKind (mapValKindTag) and, for array values
-// (kind 2/3), the high bytes carry the value's element stride in
-// bytes. Both __map_drop_values and __map_set_impl's overwrite-
-// dec read the stride straight from the buf (vk = tag & 255,
-// stride = tag >> 8) so the runtime can arr_dec / drop_arr_ptr a
-// value without the IR threading the stride through every set /
-// drop call. Non-array kinds (0/1) carry no stride.
+// byte is the valKind (mapValKindTag) and the high bytes carry a
+// per-kind size. For array values (kind 2/3) that is the value's
+// element stride; for a WIDE SCALAR value (kind 0 — i64 / u64 /
+// f64, which emitWideMapSet cell-boxes on every target) it is the
+// byte size of the cell each value slot points at, which is what
+// lets the runtime free a displaced one (__map_val_cell_bytes).
+// Both sizes are read straight off the buf (vk = tag & 255,
+// size = tag >> 8) so the runtime can reclaim a value without the
+// IR threading the size through every set / drop call. A
+// non-boxed kind-0 (i32-sized) or kind-1 value carries no size.
 func mapValTag(t ast.Type, ptrW int, info *checker.Info, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType) int32 {
 	kind := mapValKindTag(t, info, genEnumDrops, genTupleDrops, ptrW)
 	if kind >= 2 {
 		if at, ok := t.(ast.ArrayType); ok {
 			return kind | (int32(ast.ElemSizeBytesFor(at.Elem, ptrW)) << 8)
 		}
+		return kind
+	}
+	if kind == 0 && isWideScalar(t) {
+		return kind | (payloadSlotSize(t, ptrW) << 8)
 	}
 	return kind
 }
@@ -15662,11 +15671,12 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 // handle may still share columns with the old buffer.
 //
 // It walks exactly the columns __map_own_copied_cols gives the copy a claim of
-// its own on: the string-KEY column, and the array-value column via the
-// kind-guarded __map_drop_values. A string or struct VALUE column is still
-// SHARED with the copy (#6242 claims neither), so walking it would free what
-// the new handle reads — those values leak here instead, until the claim
-// widens. Then the buf and handle, which are exclusively the old handle's.
+// its own on: the string-KEY column, and the array-value and boxed-cell value
+// columns via the kind-guarded __map_drop_values. A string or struct VALUE
+// column is still SHARED with the copy (#6242 claims neither), so walking it
+// would free what the new handle reads — those values leak here instead, until
+// the claim widens. Then the buf and handle, which are exclusively the old
+// handle's.
 //
 // Every helper self-guards on the map's own rc==1, so a still-shared handle
 // only dec's. Net-zero on the operand stack, so a reinit RHS sitting
