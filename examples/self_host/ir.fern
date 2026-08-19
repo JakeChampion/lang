@@ -153,8 +153,9 @@ pub function op_fbin(kind: string): Op {
 // backend selects the single hardware instruction (sqrtsd / roundsd / and-mask
 // on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
 // on wasm). Round-half-away (__round_f64) and the libm transcendentals
-// (log/exp/sin/cos/pow) need multi-instruction emulation / external calls and
-// stay on the AST path for now.
+// log/exp/sin/cos are op_funary kinds too, but need multi-instruction emulation
+// or a runtime call on some backends; wasm has neither, so wasm_eligible
+// subtracts the transcendental kinds there.
 pub function op_funary(kind: string): Op {
     return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
@@ -773,8 +774,7 @@ pub function op_map_new(keykind: i32, fns: string): Op { return Op { decl: 0 - 1
 // the value 8-byte unconditionally (movq / str x), so they ignore it. On wasm the
 // i32-celled $__fern_map_set can't hold an 8-byte value directly: widekind 1
 // (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
-// column); widekind 2 (f64) stays deferred to the AST backend via
-// wasm_ir_deferrals_ok. #5253.
+// column); widekind 2 (f64) is still refused via wasm_ir_deferrals_ok. #5253.
 pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32): Op {
     var w: i32 = 0;
     if (vconsume) { w = w + 1; }
@@ -804,7 +804,7 @@ pub function op_print_str(): Op { return op0("print_str"); }
 // `read_int` reads a line from stdin and parses a leading optional-sign decimal,
 // pushing the i32 (a VALUE op — no args, leaves the result on the stack). Lowers
 // to each backend's __fern_read_int helper. No wasm support (no stdin read), so a
-// read_int module is wasm-ineligible (wasm_eligible) and stays on the AST path.
+// read_int module is wasm-ineligible (wasm_eligible) and is refused.
 pub function op_read_int(): Op { return op0("read_int"); }
 // `read_all_stdin` reads fd 0 to EOF and pushes ONE string box holding the whole
 // input (a VALUE op — no args). Unlike `read_line`'s single 256-byte read it
@@ -835,20 +835,20 @@ pub function op_exit(): Op { return op0("exit"); }
 // `read_line` reads up to 256 bytes (one line) from stdin and returns a fresh
 // string box `{data, len}` (a VALUE op — no args, leaves the box on the stack).
 // Lowers to each backend's __fern_read_line helper. No wasm stdin, so a read_line
-// module is wasm-ineligible (wasm_eligible) and stays on the AST path there.
+// module is wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_read_line(): Op { return op0("read_line"); }
 // `read_file` pops a path string value and reads the whole named file, pushing a
 // fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
 // error (a VALUE op — one arg consumed, the box left on the stack). Lowers to
 // each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
-// module is wasm-ineligible (wasm_eligible) and stays on the AST path there.
+// module is wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_read_file(): Op { return op0("read_file"); }
 // `write_file` pops a content string value and a path string value and writes the
 // content to the named file, pushing a fresh Result[(), IoError]: Ok(()) on success,
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
-// (wasm_eligible) and stays on the AST path there.
+// (wasm_eligible) and is refused there.
 pub function op_write_file(): Op { return op0("write_file"); }
 // op_write_file_exec is op_write_file with the executable bit — see
 // asmcore.rt_src_write_file_exec for why it is a separate op (#6133).
@@ -859,13 +859,13 @@ pub function op_write_file_exec(): Op { return op0("write_file_exec"); }
 // ENOENT/ENOTDIR (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
 // path calls). No wasm file I/O here, so a remove_dir_all module is wasm-
-// ineligible (wasm_eligible) and stays on the AST path there.
+// ineligible (wasm_eligible) and is refused there.
 pub function op_remove_dir_all(): Op { return op0("remove_dir_all"); }
 // `remove_file` pops a path string value and unlinks the named file, pushing a
 // fresh Result[(), IoError]: Ok(()) on success, Err(_) on error (a VALUE op — one arg
 // consumed, the box left on the stack). Lowers to each backend's
 // __fern_remove_file helper (the same one the AST path calls). No wasm file I/O
-// here, so a remove_file module is wasm-ineligible and stays on the AST path.
+// here, so a remove_file module is wasm-ineligible and is refused.
 pub function op_remove_file(): Op { return op0("remove_file"); }
 // `temp_dir` pops a prefix string value and creates a uniquely-named directory
 // under /tmp (prefix + a monotonic-ns suffix, via mkdirat), pushing a fresh
@@ -873,7 +873,7 @@ pub function op_remove_file(): Op { return op0("remove_file"); }
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_temp_dir helper (the same one the AST path calls; it also
 // calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
-// wasm-ineligible (wasm_eligible) and stays on the AST path there.
+// wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_temp_dir(): Op { return op0("temp_dir"); }
 // `create_dir_all` pops a path string value and creates that directory and
 // every missing parent (POSIX `mkdir -p`), pushing a fresh Result[(), IoError]:
@@ -887,14 +887,14 @@ pub function op_create_dir_all(): Op { return op0("create_dir_all"); }
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_read_dir helper (the same one the AST path calls; it boxes a
 // string[] via __fern_arr_box). No wasm file I/O here, so a read_dir module is
-// wasm-ineligible (wasm_eligible) and stays on the AST path there.
+// wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_read_dir(): Op { return op0("read_dir"); }
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_env helper (the same one the AST path calls; it boxes the
 // value into a fresh string block). No wasm env access here, so an env module
-// is wasm-ineligible (wasm_eligible) and stays on the AST path there.
+// is wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_env(): Op { return op0("env"); }
 // `stat` pops a path string value and stat()s the named file (newfstatat),
 // pushing a fresh Result[FileStat, IoError]: Ok(FileStat{is_file, is_dir, size})
@@ -902,7 +902,7 @@ pub function op_env(): Op { return op0("env"); }
 // left on the stack). Lowers to each backend's __fern_stat helper (the same one
 // the AST path calls; it boxes a FileStat struct whose shape pointer is the
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
-// ineligible (wasm_eligible) and stays on the AST path there.
+// ineligible (wasm_eligible) and is refused there.
 pub function op_stat(): Op { return op0("stat"); }
 // `subprocess` pops a stdin string, an args string[], and a cmd string (TOS
 // order stdin/args/cmd), spawns the child, pipes its streams, and pushes a fresh
@@ -911,7 +911,7 @@ pub function op_stat(): Op { return op0("stat"); }
 // __fern_subprocess helper (the same one the AST path calls; it boxes a
 // ProcessResult whose shape pointer is the interned "ProcessResult" name). No
 // wasm process spawn here, so a subprocess module is wasm-ineligible
-// (wasm_eligible) and stays on the AST path there.
+// (wasm_eligible) and is refused there.
 pub function op_subprocess(): Op { return op0("subprocess"); }
 // `read_chunk` pops an i32 byte-count `n` and an i32 Reader fd (a stdin/file
 // handle from `stdin()`/`open_reader`), reads up to n bytes via `read(fd, …, n)`,
@@ -919,7 +919,7 @@ pub function op_subprocess(): Op { return op0("subprocess"); }
 // (a VALUE op — two args consumed, the box left on the stack). Lowers to each
 // backend's __fern_reader_read_chunk helper (the same one the AST path calls). No
 // wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_eligible) and
-// stays on the AST path there.
+// is refused there.
 pub function op_read_chunk(): Op { return op0("read_chunk"); }
 // `reader_close` pops an i32 Reader fd and closes it (`close(fd)`), pushing a
 // fresh Option[IoError] (None on success). A VALUE op — one arg consumed. Lowers
@@ -930,7 +930,7 @@ pub function op_reader_close(): Op { return op0("reader_close"); }
 // Lowers to each backend's __fern_args helper (which reads the __fern_argc /
 // __fern_argv globals the entry's _start saves from the initial stack). No wasm
 // argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
-// stays on the AST path there.
+// is refused there.
 pub function op_args(): Op { return op0("args"); }
 // `putchar` pops an i32 and writes its low byte to stdout (write(1, &byte, 1)),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.
@@ -947,7 +947,7 @@ pub function op_putchar(): Op { return op0("putchar"); }
 //      length (a VALUE op — no args, leaves the box on the stack; allocates).
 // Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
 // AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
-// strbuf module is wasm-ineligible (wasm_eligible) and stays on the wasm AST path.
+// strbuf module is wasm-ineligible (wasm_eligible) and is refused there.
 pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
 pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
 pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
@@ -994,7 +994,7 @@ pub function op_map_has(keykind: i32, eqfn: string): Op { return Op { decl: 0 - 
 // `widekind` (i64_imm) is the twin of op_map_set's: 0 narrow, 1 i64/u64, 2 f64.
 // The register backends return the value full-width regardless; on wasm widekind 1
 // routes to $__fern_map_get_or_w64 (dereferences the boxed 8-byte cell) and
-// widekind 2 (f64) stays deferred to the AST backend. #5253.
+// widekind 2 (f64) is still refused. #5253.
 pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
@@ -1023,7 +1023,7 @@ pub function op_map_keys(elemptr: i32): Op { return Op { decl: 0 - 1, kind_tag: 
 // op_map_set's: 0 narrow, 1 i64/u64, 2 f64. The register backends read the column
 // with the 8-byte forms regardless and ignore it. On wasm, widekind 1 snapshots
 // the boxed 8-byte cells into a fresh i64[] ($__fern_map_values_w64); widekind 2
-// (f64) stays deferred to the AST backend via wasm_ir_deferrals_ok. #5253.
+// (f64) is still refused via wasm_ir_deferrals_ok. #5253.
 pub function op_map_values(elemptr: i32, widekind: i32): Op {
     var vw: i64 = 0;
     if (widekind == 1) { vw = 1; }
@@ -1068,8 +1068,7 @@ pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
 // `[type_id, f0@4, f1@8, …]` 4-byte slots + an rc header). `struct_get` pops
 // [struct] and pushes field `i32_imm`. This first slice covers scalar-field
 // (i32/boolean) structs only and is leak-only (no RC / drop) — exit-code-
-// equivalent to every backend's AST path since the value is read before any
-// free; rc-tracked fields + drop specialization are later slices.
+// equivalent to every backend since the value is read before any free; rc-tracked fields + drop specialization are later slices.
 // op_struct_make builds a struct / enum-variant box from nfields values on the
 // stack. `decl_index` identifies WHICH decl `type_name` names: the backends read
 // each field's store width off it, and for a variant name two enums share the
@@ -3126,8 +3125,8 @@ pub function render_op(o: Op): string {
 // "heap" need per-function off the ops it already lowered, and wasm_ir's
 // module_allocates walks the stream the same way. Keeping the list here means a
 // newly-added allocating op is taught to every backend's heap gate at once,
-// rather than silently routing modules to the AST fallback because one backend's
-// hand-maintained copy of the list fell behind.
+// rather than silently refusing modules because one backend's hand-maintained
+// copy of the list fell behind.
 //
 // (wasm_ir.module_allocates additionally ORs in module_uses_strings for the
 // non-allocating string ops — str_len/str_eq/str_cmp/str_index — that still

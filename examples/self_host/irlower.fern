@@ -936,9 +936,9 @@ pub function (s: LowerState) is_arr_slot(i: i32): boolean {
 pub function (s: LowerState) retire_locals(from: i32): LowerState {
     // Rename slots [from, len) one at a time via set_local_name (the `.with`
     // pattern mark_arr uses) rather than rebuilding local_names as a fresh array
-    // inside the big struct literal — the legacy AST backend (asm.fern) miscompiles
-    // the latter's RC (the self-compile still routes through that backend), while
-    // `.with` on an existing column is the proven, AST-safe shape.
+    // inside the big struct literal — the legacy AST backend miscompiled the
+    // latter's RC, and `.with` on an existing column is the shape every other
+    // marker on this struct uses.
     var st: LowerState = s;
     var i: i32 = from;
     while (i < st.locals.len()) {
@@ -1180,8 +1180,7 @@ function reclaim_slot_name(s: LowerState, i: i32): string {
 }
 
 // set_local_name rewrites slot i's NAME (used by retire_locals). Mirrors mark_arr
-// exactly — a single `.with` on local_names, every other field carried through —
-// so it compiles on the legacy AST backend the self-compile still uses.
+// exactly — a single `.with` on local_names, every other field carried through.
 pub function (s: LowerState) set_local_name(i: i32, name: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_names(s.locals[i], name)) };
 }
@@ -1733,7 +1732,7 @@ pub function (s: LowerState) mark_closure_local(name: string): LowerState {
 // the sibling of the closure_opt_rets seeding that runs over fn-typed PARAMS
 // (ParamDecl.fn_ret). Without it `var f: () => Option[i32] = <lambda>; match
 // (f()) { … }` had no way to name its scrutinee type and bailed the enclosing
-// function to the AST emitter — while the same shape through a param, or
+// function — while the same shape through a param, or
 // through a NAMED function (which opt_ret_type resolves), lowered fine.
 pub function (s: LowerState) mark_closure_opt_ret(name: string, ty: string): LowerState {
     return LowerState { ...s, closure_opt_rets: s.closure_opt_rets.append(name + "|" + ty) };
@@ -1980,8 +1979,8 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
             // TUPLE TYPE is recorded on the (is_arr) slot's arrarr_elem (set at binding
             // for a reclaim-eligible tuple array, #4365). Read element n's tag out of it,
             // so `arr[i].N.field` (struct field of a tuple element) and a wide `arr[i].N`
-            // read resolve on the IR path instead of bailing to the AST fallback (which
-            // fired because expr_struct_type(arr[i].N) had no tag here → lower_expr fail).
+            // read resolve on the IR path instead of bailing (the bail fired because
+            // expr_struct_type(arr[i].N) had no tag here → lower_expr fail).
             match (ix.array) {
                 parser.ExprIdent(aid) => {
                     var asl: i32 = s.slot_of(aid.name);
@@ -2008,9 +2007,9 @@ pub function expr_tuple_elem_tag(e: parser.Expr, n: i32, s: LowerState): string 
             // "(t0, t1, …)" tag on c.ty (the checker resolved any generic
             // element to a concrete type), so read element n directly. Without
             // it a `f().N` tuple-element read whose element is a struct / nested
-            // tuple had no tag here, so `f().N.field` bailed the function to the
-            // AST emitter. Unannotated (asm_ir_run / native) leaves c.ty "" →
-            // tuple_type_elem_tag("", n) is "" → unchanged (AST fallback).
+            // tuple has no tag here, so `f().N.field` bails the enclosing function.
+            // Unannotated (asm_ir_run / native) leaves c.ty "" →
+            // tuple_type_elem_tag("", n) is "" → unchanged, so the read still bails.
             return tuple_type_elem_tag(tc.ty, n);
         },
         _ => { return ""; }
@@ -2186,7 +2185,7 @@ pub function ident_is_fn_value(name: string, s: LowerState): boolean {
 // "Option[string]"), or "" otherwise. Comma-free is required because the tuple-
 // element tag encoding (mark_tuple_elems / tuple_elem_tag) splits on commas, so
 // `Result[T, E]` (which has one) is deliberately NOT recovered here — a Result
-// element stays on the AST path (#3018). Only a `Some(<scalar/string>)`
+// element gets no tag, so the lowering bails on it (#3018). Only a `Some(<scalar/string>)`
 // construction or an Option-typed local/param is admitted (a leak-only box, one
 // pointer slot, like a struct element); a `None` with no statically-known
 // payload, or a nested Option, falls through to "".
@@ -2251,7 +2250,7 @@ pub function some_opt_type(e: parser.Expr, s: LowerState): string {
                         // inner Option type is recovered — elem_type_tag defaults a
                         // nested Some to "i32", collapsing `Option[Option[P]]` to
                         // `Option[i32]`, which then mis-binds the outer match's
-                        // payload as i32 and bailed `match (inner)` to the AST path.
+                        // payload as i32 and bailed `match (inner)`.
                         var innr: string = some_opt_type(c.args[0], s);
                         if (innr.len() > 0) { return "Option[" + innr + "]"; }
                         var pt: string = elem_type_tag(c.args[0], s);
@@ -2763,7 +2762,7 @@ pub function (s: LowerState) is_i64_slot(i: i32): boolean {
 // kind, struct, Option/Result, tuple, map). It gates the implicit i32->i64
 // widening in lower_i64's ExprIdent leaf: such a leaf can be sign/zero-extended
 // into an i64 context (`s64 + i`, a for-range loop var accumulated into an i64)
-// instead of bailing the whole module to the AST path. The extend's signedness
+// instead of bailing the whole module. The extend's signedness
 // is chosen by the caller (is_u32_slot -> zero-extend; otherwise sign-extend,
 // which is also correct for a subword already loaded sign-correct in 32 bits).
 pub function (s: LowerState) is_i32_scalar_slot(i: i32): boolean {
@@ -2783,9 +2782,9 @@ pub function (s: LowerState) is_i32_scalar_slot(i: i32): boolean {
     // scalar even though some var-decl paths spuriously record its type tag in
     // local_struct_type ("u32"); is_u32_slot is the authoritative signal, so
     // admit it before the struct/opt/tuple/map heap-type exclusions below — those
-    // would otherwise reject it on the bogus "u32" struct tag, leaving `u64 + u32`
+    // would otherwise reject it on the bogus "u32" struct tag, bailing `u64 + u32`
     // (the only context an unsigned 32-bit leaf can appear; the checker forbids
-    // i64 + u32) stuck on the AST path.
+    // i64 + u32).
     if (s.is_u32_slot(i)) { return true; }
     if (s.struct_type_of_slot(i).len() > 0) { return false; }
     if (s.opt_type_of_slot(i).len() > 0) { return false; }
@@ -3132,10 +3131,8 @@ pub function is_map_type_name(t: string): boolean {
 // is_scalar_arr_field_access reports whether `e` reads a scalar-array struct
 // field (`v.items` where items: i32[]). Such an array lives inside the struct
 // (which leaks), so binding/returning/assigning it would create an alias the
-// IR path can't retain (leak-only) — but the AST path DOES retain. To avoid
-// regressing that RC behaviour, those alias-creating uses bail to the AST
-// emitter; only direct reads (`v.items[i]`, `v.items.len()`) stay in the IR
-// (neither path retains there).
+// IR path can't retain (leak-only). Those alias-creating uses therefore bail;
+// only direct reads (`v.items[i]`, `v.items.len()`) lower.
 // is_struct_array_field_type: a `X[]` where X is a leaf-safe struct (array-of-
 // struct field). Admitted to the IR path (construction + `f[i].field` read) but
 // NOT deep-dropped yet — the array and its struct elements leak with the struct (a
@@ -3173,7 +3170,7 @@ pub function is_enum_array_field_type(structs: parser.StructDecl[], t: string): 
 // reads via op_opt_payload_w(64) + marks the slot u64 (unsigned, 8-byte). The
 // sub-word int (u8) is NOT here: its payload-box read needs
 // zero-extension that currently differs across backends (a u8 read
-// mis-extends on wasm), so an Option/Result-of-it field stays on the AST path.
+// mis-extends on wasm), so an Option/Result-of-it field is excluded here.
 function is_leaksafe_payload(p: string): boolean {
     return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
         || p == "u32" || p == "u64";
@@ -3197,9 +3194,9 @@ pub function is_leaksafe_opt_field(t: string): boolean {
 // opt_payload_ok_d: an Option/Result payload type is admissible for a leak-safe
 // struct field when it is a leak-safe scalar/string OR a leak-safe STRUCT (a
 // leak-only pointer in one slot, offset 8 — exactly what the match lowering's
-// ptag_is_struct branch reads). Enum payloads are deliberately excluded: the
-// legacy AST backend miscompiles an `Option[enum]` struct field (it segfaults),
-// so admitting it to the IR path would route a backend-buggy shape.
+// ptag_is_struct branch reads). Enum payloads are deliberately excluded, held
+// out by a negative pin whose rationale no longer holds — see the tail of
+// opt_payload_ok_dv.
 function opt_payload_ok_d(structs: parser.StructDecl[], p: string): boolean {
     var seen: string[] = [];
     return opt_payload_ok_dv(structs, p, 0, seen);
@@ -3230,13 +3227,14 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
     // that reasoning — but `opt-enum-field-stays-ast` in
     // self_host_opt_struct_payload_field_ir_test.go is a deliberate NEGATIVE pin
-    // requiring it to route AST. Admitting it (tried, reverted) turns that test
-    // red. Its stated rationale is self-contradictory — "the legacy AST backend
-    // miscompiles an Option[enum] field", which would be an argument FOR the IR
-    // path — so whoever revisits this has to re-derive which backend actually
-    // mishandles the shape before moving the pin. On the wasm IR path all four
-    // probe shapes (Some / None / payload matched / read into a local) already
-    // agree with the interpreter; the x86 IR runtime answer is the unverified part.
+    // requiring the module to come out IR-INELIGIBLE. Admitting it (tried,
+    // reverted) turns that test red. The pin's stated rationale was that the
+    // legacy AST backend miscompiled an Option[enum] field — an argument FOR the
+    // IR path, and moot now that no AST backend exists — so whoever revisits this
+    // has to re-derive what actually mishandles the shape before moving the pin.
+    // On the wasm IR path all four probe shapes (Some / None / payload matched /
+    // read into a local) already agree with the interpreter; the x86 IR runtime
+    // answer is the unverified part.
     return false;
 }
 
@@ -3666,7 +3664,7 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
         // in leak mode (the array + its elements leak with the struct; a
         // recursive-drop follow-up frees them). The element's leaf-safety
         // rides the SAME depth-bounded recursion so a cyclic `X[]` graph
-        // hits the cap and bails to AST.
+        // hits the cap and bails.
         if (t.len() >= 3 && t[t.len() - 2 : t.len()] == "[]") {
             var elt: str = t[0 : t.len() - 2];
             if (decl_is_struct(structs, elt) && decl_is_leaksafe_d(structs, elt, depth + 1, nv)) {
@@ -3706,7 +3704,7 @@ function decl_is_leaksafe_at_d(structs: parser.StructDecl[], decl_index: i32, de
 // dispatches to `<Enum>.<method>` (the enum-receiver-method path). A name that
 // is really a scalar type alias would be mis-marked, but the only consequence
 // is a method-dispatch label that calls_only_known finds absent → the module
-// bails to AST; never a miscompile.
+// bails; never a miscompile.
 pub function is_enum_like_name(t: string, structs: parser.StructDecl[]): boolean {
     if (t.len() == 0) { return false; }
     if (t == "i32" || t == "boolean" || t == "bool" || t == "string"
@@ -4043,7 +4041,7 @@ pub function (s: LowerState) field_index_in(struct_name: string, field: string):
 // bind their payload via opt_payload once the scrutinee's Option/Result type is
 // recovered) instead of the variant_is path it uses for user enums. Only a
 // payload whose type can't be recovered, or a non-scalar/-string payload, still
-// bails to the AST emitter from there.
+// bails from there.
 pub function is_builtin_pattern(name: string): boolean {
     return name == "Some" || name == "None" || name == "Ok" || name == "Err"
         || name == "true" || name == "false";
@@ -4214,7 +4212,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 // P[]-returning free fn already records the ELEMENT type "P" (the
                 // registry strips "[]", #3035), so recover it for `mk()[i]` — the
                 // call sibling of the `arr[i]` ExprIdent case above. Restricted to a
-                // bare-name (free fn) callee; method-call callees stay on the AST path.
+                // bare-name (free fn) callee; method-call callees are not recovered.
                 parser.ExprCall(cc) => {
                     match (cc.callee) {
                         parser.ExprIdent(ccid) => {
@@ -4263,7 +4261,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                     // ExprIndex arm above answers it, so a struct / enum / dyn
                     // element all resolve identically to a concrete `P[]` return.
                     // Without it an UNANNOTATED `var s = idf(xs)` lost `s[i]`'s
-                    // type and bailed the caller to the AST emitter.
+                    // type and bailed the caller.
                     var gsa: i32 = struct_ret_argref(s, id.name);
                     if (gsa >= 0 && gsa < c.args.len()) {
                         return expr_struct_type(arr_elem_index_expr(c.args[gsa]), s);
@@ -4363,7 +4361,7 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
                 if (decl_is_struct(s.structs, olt)) {
                     // A struct result only when the type actually defines the
                     // overload method (struct-returning). No method ⇒ "" — an
-                    // invalid program the lowering bails to AST, kept consistent
+                    // invalid program the lowering bails on, kept consistent
                     // here so a consumer never types the result as a struct.
                     return s.struct_ret_type(olt + "." + binop_overload_method(opb.op));
                 }
@@ -4394,8 +4392,8 @@ pub function expr_struct_type(e: parser.Expr, s: LowerState): string {
 //
 // It exists because the two Option/Result scrutinee resolvers each enumerated
 // only `ExprIdent` and a named-field `ExprFieldAccess` here, so `aoa[i][j]` and
-// `t.N[i]` resolved to "" and bailed the enclosing function to the AST emitter
-// (found by auditing under FERN_STRICT_IR — #5646 option 3). The struct-element
+// `t.N[i]` resolved to "" and bailed the enclosing function (found by auditing
+// under FERN_STRICT_IR — #5646 option 3). The struct-element
 // sibling of this walk already lives in expr_struct_type, which is why
 // `t.N[i].field` resolved while `match (t.N[i])` on an Option element did not.
 function arr_tag_of(e: parser.Expr, s: LowerState): string {
@@ -4434,7 +4432,7 @@ function opt_elem_of(tag: string): string {
 //   `e as Option[T]`   -> `as_Option[T]`     — a plain ascription, the tag IS the type
 //
 // Only the downcast was enumerated, so `match (None as Option[i32])` resolved
-// to "" and bailed the enclosing function to the AST emitter (#5646 option 3).
+// to "" and bailed the enclosing function (#5646 option 3).
 // The sibling ascription shapes already lowered because they bind or return
 // through an annotation that carries the payload type; this one is the
 // value-position match, where the cast is the only place the type is written.
@@ -4518,7 +4516,7 @@ function expr_is_bool(e: parser.Expr, s: LowerState): boolean {
 // otherwise not a dispatchable primitive receiver. Strings / i64 / f64 / a
 // statically-boolean value are detected precisely via the existing predicates;
 // any other scalar defaults to "i32". This only drives the call-site label: a
-// label naming a non-existent method bails the whole module to the AST path
+// label naming a non-existent method bails the whole module
 // (calls_only_known), so an over-broad "i32" guess is safe, never a miscompile.
 // expr_scalar_type returns the scalar/string type of `e` — the single
 // classifier the per-type predicates (expr_is_str / expr_is_f64 / …) fold into.
@@ -4545,7 +4543,7 @@ pub function expr_scalar_type(e: parser.Expr, s: LowerState): string {
     // methods are recorded under their u32 base type. Without this a u32 receiver
     // silently dispatched to the SIGNED "i32.<m>" (which std/i32 also defines, so
     // calls_only_known passed and the module did NOT bail — a real miscompile, not
-    // an AST fallback): abs_diff used a signed compare, midpoint a sign-extending
+    // a refused lowering): abs_diff used a signed compare, midpoint a sign-extending
     // (arithmetic) `>>`. Both diverge from the unsigned answer once bit 31 is set.
     // Mirrors the expr_is_u64 branch just above.
     if (expr_is_u32(e, s)) { return "u32"; }
@@ -4553,7 +4551,7 @@ pub function expr_scalar_type(e: parser.Expr, s: LowerState): string {
     // the "i32.<m>" fallback that would render it as 1/0. Placed last: the
     // width/unsigned checks above never match a boolean, and "boolean.<m>"
     // resolves for the methods a bool actually has (to_string / to_json /
-    // to_debug / eq) — any other keys an absent label and bails to AST, safe.
+    // to_debug / eq) — any other keys an absent label and bails, safe.
     if (expr_is_bool(e, s)) { return "boolean"; }
     return "i32";
 }
@@ -4563,7 +4561,7 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     if (expr_struct_type(e, s) != "") { return ""; }
     // An enum value is not a primitive either: a variant construction `V(x)`
     // (call to a variant-struct name) or a unit variant `V` (bare ident naming
-    // one). Returning "" bails the module to AST rather than mis-dispatching to
+    // one). Returning "" bails the module rather than mis-dispatching to
     // `i32.<method>` — its `<Enum>.<method>` dispatch needs the variant->enum
     // map (a later slice). An enum value held in a LOCAL is dispatched earlier
     // via expr_struct_type (the local carries the enum name).
@@ -4580,7 +4578,7 @@ pub function expr_recv_prim_type(e: parser.Expr, s: LowerState): string {
     // A BYTE receiver keys "u8.<m>", not the "i32.<m>" expr_scalar_type falls
     // through to. Same reason the u32 / u64 branches exist there: std/i32's 21
     // ascii classifiers are declared on `u8` now (#5629), so an i32 key misses
-    // and bails the module to AST. expr_subword_kind sees through an `as u8`
+    // and bails the module. expr_subword_kind sees through an `as u8`
     // cast as well as a tracked slot, so `(b as u8).is_ascii_digit()` — the
     // shape a byte pulled out of i32 arithmetic takes — resolves too.
     if (expr_subword_kind(e, s) == "u8") { return "u8"; }
@@ -4664,9 +4662,9 @@ function emit_ascii_case(p: LowerState, bslot: i32, to_lower: boolean): LowerSta
 // `expr_struct_type != ""`, and a `var c: u8 = 65` slot records "u8" as its
 // declared type there — so expr_struct_type answers "u8", the receiver reads as a
 // STRUCT, and the commonest byte receiver of all never reaches the dispatch. That
-// is why the AST emitter's own gate (asm.fern:1520, on the same
-// expr_recv_prim_type sibling) admits `ty_is_i32` alongside `ty_is_u8`: it is
-// working around the same thing from the other side.
+// is why the AST emitter's own gate, on the same expr_recv_prim_type sibling,
+// admitted `ty_is_i32` alongside `ty_is_u8`: it worked around the same thing
+// from the other side.
 function ascii_byte_receiver(e: parser.Expr, s: LowerState): boolean {
     if (expr_subword_kind(e, s) == "u8") { return true; }
     match (e) {
@@ -4702,9 +4700,9 @@ function ascii_byte_method(field: string): boolean {
 
 // lower_ascii_byte_method lowers the ASCII classifier / case family on a byte
 // receiver (#3457 slice 5). Until this existed every one of them bailed the
-// module to the AST emitter, where they live as hand-written `setbe` /
-// `cmovbe` sequences — none of which the IR path could express, though the
-// pieces (an unsigned compare, a mask) were all already there.
+// module: they had only the AST emitter's hand-written `setbe` / `cmovbe`
+// sequences, none of which the IR path could express, though the pieces (an
+// unsigned compare, a mask) were all already there.
 //
 // The receiver goes through a temp local because every method reads it at least
 // twice (the alnum / hex forms three times) — the #5661 abs/sign pattern — so a
@@ -4793,8 +4791,8 @@ pub function lower_dyn_array_lit(a: parser.ExprArray, s: LowerState): LowerState
 // expr_is_nonscalar conservatively reports whether `e` evaluates to a non-scalar
 // (heap) value — a string, array, struct, tuple, variant box, or anything that
 // might (a call). Used to keep tuple elements (and other scalar-only contexts)
-// to i32/boolean: a tuple with a heap element bails to the AST path, since its
-// rc would need tracking.
+// to i32/boolean: a tuple with a heap element bails, since its rc would need
+// tracking.
 pub function expr_is_nonscalar(e: parser.Expr, s: LowerState): boolean {
     if (expr_is_str(e, s)) { return true; }
     if (expr_struct_type(e, s) != "") { return true; }
@@ -4830,7 +4828,7 @@ pub function (s: LowerState) is_str_ret_fn(name: string): boolean {
 // `obj` isn't a map OR the element type isn't one the unannotated
 // `var x = m.keys()/values()` array path handles. Keys are i32 (an i32-keyed
 // map) or string; an i32 / string VALUE likewise. Anything else (i64 / f64 /
-// u64 / u32 / struct / nested-array values) stays on the AST path: the 8-byte
+// u64 / u32 / struct / nested-array values) is refused: the 8-byte
 // i64/f64 cases hit a SEPARATE pre-existing wasm bug in op_map_values (the
 // annotated `var x: i64[] = m.values()` form mis-sums on wasm too), so routing
 // them to IR would expose that, and the unsigned/heap cases need extra marking.
@@ -5175,7 +5173,7 @@ function arr_firstlast_call(field: string, recv: parser.Expr, argc: i32, s: Lowe
 // NOT recovered: the element STRUCT type. `expr_struct_type` reports "" for an
 // array value by design, and a struct-array reverse would need the result slot
 // marked with the element type at its binding. `ps.reverse()[0].n` therefore
-// bails to the AST emitter rather than mis-resolving — safe, and left open.
+// bails rather than mis-resolving — safe, and left open.
 function arr_samekind_call(field: string, recv: parser.Expr, argc: i32, s: LowerState): boolean {
     if (!((field == "reverse" && argc == 0) || (field == "concat" && argc == 1))) { return false; }
     return expr_is_arr_src(recv, s) || expr_is_strarr(recv, s)
@@ -6264,7 +6262,7 @@ pub function is_chk_op(op: string): boolean {
 // evaluates to, T being the operand width. Option-consuming positions (a
 // `match` scrutinee, a `?`) resolve the scrutinee's Option type by walking the
 // expression; without this a `match (a +? b)` can't recover the Some payload's
-// type and bails to the AST path. The width detection mirrors
+// type and bails. The width detection mirrors
 // lower_checked_binary's `kind`.
 pub function chk_opt_type_tag(b: parser.ExprBinary, s: LowerState): string {
     if (infer_expr_width(b.left, s) == 64 || infer_expr_width(b.right, s) == 64) {
@@ -6983,7 +6981,8 @@ pub function is_fcmp_kind(kind: string): boolean {
 // mask / fabs / f64.abs). __round_f64 (round-half-away, Go's math.Round) is one
 // instruction on arm64 (frinta) but needs trunc(x+copysign(0.5,x)) emulation on
 // x86 (roundsd toward zero) and wasm (f64.nearest is ties-to-even, not -away).
-// The libm transcendentals (log/exp/sin/cos/pow) still stay on the AST path.
+// The libm transcendentals log/exp/sin/cos lower here too; `pow`, the only
+// two-argument one, lowers as an `fpow` fbin instead (the __pow_f64 call case).
 pub function f64_math_builtin_kind(name: string): string {
     if (name == "__sqrt_f64") { return "fsqrt"; }
     if (name == "__floor_f64") { return "ffloor"; }
@@ -6995,7 +6994,7 @@ pub function f64_math_builtin_kind(name: string): string {
     // fyl2x+f2xm1), arm64 calls its polynomial-approximation runtime helpers
     // (bl __fern_<op>_f64). wasm has no transcendental instruction or IR runtime
     // for them, so wasm_eligible subtracts these op kinds and a transcendental
-    // module stays on the wasm AST path (#2691 float-math IR widening).
+    // module is not wasm-IR-eligible (#2691 float-math IR widening).
     if (name == "__sin_f64") { return "fsin"; }
     if (name == "__cos_f64") { return "fcos"; }
     if (name == "__exp_f64") { return "fexp"; }
@@ -8076,8 +8075,7 @@ pub function sfrrecv_chain_root_slot(e: parser.Expr, s: LowerState, depth: i32):
 // const_i64 (carrying source text), i64 locals load directly, and unary `-` /
 // the non-comparison arithmetic + bitwise ops recurse on i64 operands. Anything
 // that isn't a pure-i64 value here — an i32 variable (mixed width), a call, a
-// comparison, i64 division/remainder — fails, bailing the module to the AST path
-// where full i64 already works.
+// comparison, i64 division/remainder — fails, bailing the module.
 pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
     // c.get() on a Cell[i64/u64] -> c[0], lowered as an 8-byte i64 load (#5510).
     // Without this, c.get() in an i64 context (e.g. `c.get() + 1i64`) reaches
@@ -8107,7 +8105,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
             if (sl >= 0 && s.is_i64_slot(sl)) { return s.emit(ir.op_load_local(sl)); }
             // An i32-width scalar leaf consumed in an i64 context — `s64 + i`, a
             // mixed-width param/local, or a for-range loop var accumulated into an
-            // i64 — widens to i64 instead of bailing the module to the AST path.
+            // i64 — widens to i64 instead of bailing the module.
             // lower_expr pushes the i32 value; op_int_extend widens it (zero-extend
             // for u32, sign-extend for a signed i32 / subword). Because the
             // ExprBinary arm recurses through lower_i64, this also lifts the i32
@@ -8219,9 +8217,7 @@ pub function lower_i64(e: parser.Expr, s: LowerState): LowerState {
         parser.ExprCall(c) => {
             // An i64-valued if/match-EXPRESSION (the 0-arg IIFE) — delegate to
             // lower_iife, which marks the inline temp i64 and widens each branch
-            // value. Gated on i64-classifiability so a fully-small-literal i64
-            // expression (i64-ness only from the annotation) stays on the AST path
-            // instead of inlining into an i32 temp.
+            // value.
             if (c.args.len() == 0) {
                 match (c.callee) {
                     parser.ExprLambda(lam) => {
@@ -8742,15 +8738,14 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     }
     // The RC test hooks come in TWO source spellings: the short
     // one below, and the RUNTIME SYMBOL's own name. The RC test
-    // corpus uses the second — the AST emitters accept it because
-    // the helper they emit happens to be called that (see
-    // wasm.fern's module_calls gate) — and the IR path knew only
-    // the short form, so ~140 uses across the self-host RC tests
-    // routed to the AST emitter. Two thirds of the entire mode-0
-    // decline set, for a NAME rather than a construct. Neither
-    // spelling is natively valid (E001), so these are self-host
-    // dialect programs either way; accepting both is what lets the
-    // AST emitter retire without rewriting the corpus.
+    // corpus uses the second — the AST emitters accepted it
+    // because the helper they emitted happened to be called that —
+    // and the IR path knew only the short form, so ~140 uses across
+    // the self-host RC tests declined. Two thirds of the entire
+    // mode-0 decline set, for a NAME rather than a construct.
+    // Neither spelling is natively valid (E001), so these are
+    // self-host dialect programs either way; accepting both is what
+    // let the AST emitters retire without rewriting the corpus.
     //
     // __rc_dec(a) / __fern_rc_dec(a) / __fern_arr_dec(a): manual
     // release (a hook for exercising the underflow detector);
@@ -9322,8 +9317,8 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
         // The ms count is read into a 64-bit register (rdi / x0),
         // so an i64 arg (`sleep_ms(5 as i64)`) lowers through the
         // i64 path; a plain i32 count keeps the 32-bit path. Without
-        // the width dispatch an i64 arg bailed lower_expr -> the
-        // whole timing module fell to the AST emitter.
+        // the width dispatch an i64 arg bails lower_expr -> the
+        // whole timing module is IR-ineligible.
         var sms: LowerState = s;
         if (infer_expr_width(c.args[0], s) == 64) {
             sms = lower_i64(c.args[0], s);
@@ -9610,7 +9605,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     //
     // arg_at(i) does NOT get that treatment: args() allocates a fresh
     // string[] per call, so `args()[i]` inside a loop would allocate the
-    // whole argv per iteration — O(n) where the AST path is O(1), i.e.
+    // whole argv per iteration — O(n) where the AST path was O(1), i.e.
     // quadratic argv iteration in a language aimed at CLI tools.
     // args_count is typically called once, so its single allocation is
     // fine; arg_at gets a real register-ABI op instead.
@@ -9854,7 +9849,7 @@ function lower_call_named(e: parser.Expr, c: parser.ExprCall, cid: parser.ExprId
     // the callee reads param[i] from a fixed frame offset; wasm
     // passes them on the operand stack), and the function-entry
     // param copy is a count-agnostic loop. So a call of any arity
-    // lowers exactly as asm.fern's AST path does.
+    // lowers exactly as the retired AST path did.
     var sc: LowerState = s;
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
@@ -10606,8 +10601,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // variant's shape-named struct box via struct_make). The native
     // compiler accepts both spellings; the self-host IR path only
     // handled the bare form, so a qualified construction made the
-    // module IR-ineligible and fell back to the AST emitter, which
-    // mis-lowers it (`# unresolved ident: <Enum>`). Recognise it
+    // module IR-ineligible. Recognise it
     // here: `fa.field` is a variant DECLARED BY the bare type name in
     // `fa.obj` (not a local), so `Enum.Variant` is variant construction,
     // not a method/assoc call. Asked of that enum rather than of the
@@ -10720,7 +10714,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // xs.min() / xs.max() on an i32[] — receiver-only like
     // sum/product, but the first helper-backed builtin with a
     // COMPOSITE return: Option[i32], Some(extremum) on a non-empty
-    // array and None on an empty one. The AST emitter open-codes the
+    // array and None on an empty one. The AST emitter open-coded the
     // `len == 0` branch and both 16-byte boxes around a raw-extremum
     // helper; here the guard and the box live INSIDE the Fern helper
     // (asmcore.rt_src_arr_i32_min_max_opt), so the call site is an
@@ -10781,13 +10775,13 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
         return pcc.emit(ir.op_arr_concat());
     }
     // xs.first() / xs.last() — O(1) element reads the AST emitter
-    // open-codes as raw loads off the array header (asm.fern:1879
-    // /1887). Lowered as the equivalent INDEX read, so the element
-    // width, the bounds check and the element rc handling all come
-    // from the one ExprIndex arm instead of a second copy. That
-    // makes `.first()` bounds-CHECKED where the AST emitter reads
-    // the header word as an element — a UB program aborts instead
-    // of returning garbage, which is the safer disagreement.
+    // open-coded as raw loads off the array header. Lowered as the
+    // equivalent INDEX read, so the element width, the bounds check
+    // and the element rc handling all come from the one ExprIndex
+    // arm instead of a second copy. That makes `.first()`
+    // bounds-CHECKED where the AST emitter read the header word as
+    // an element — a UB program aborts instead of returning
+    // garbage, which is the safer disagreement.
     //
     // f64[] / i64[] receivers are excluded, like the sum / index_of
     // / min / max intercepts above: their element reads lower in the
@@ -11272,13 +11266,12 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
             return t2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
         }
         // The WIDE receivers (#5826). Without these an i64/u64
-        // `.to_string()` fell through to the method paths, which
+        // `.to_string()` falls through to the method paths, which
         // resolve an `i64.to_string` label that only exists with
-        // `import "std/i64"` — so the call matched nothing and the
-        // whole MODULE bailed to the AST emitter. f-strings desugar
-        // to `.to_string()`, so `f"{n}"` over any wide value bailed
-        // too, which is what made this one of the broader remaining
-        // subset holes.
+        // `import "std/i64"` — so the call matches nothing and the
+        // whole MODULE bails. f-strings desugar to `.to_string()`,
+        // so `f"{n}"` over any wide value bailed too, which is what
+        // made this one of the broader remaining subset holes.
         //
         // u64 first, for the same reason u32 precedes i32 above: a
         // u64 is also width-64, and the SIGNED formatter renders a
@@ -11310,10 +11303,10 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // a temp slot rather than a second lower_expr of the same subtree.
     //
     // The ASCII classifier / case family on a BYTE receiver
-    // (#3457 slice 5). The AST emitter admits both scalar tags at
-    // its own gate (asm.fern:1520) because the checker has already
-    // rejected the wrong pairing, so this mirrors that rather than
-    // re-splitting them: `s[i]` is a u8 now (#5629), and every
+    // (#3457 slice 5). The AST emitter admitted both scalar tags at
+    // its own gate because the checker has already rejected the
+    // wrong pairing, so this mirrors that rather than re-splitting
+    // them: `s[i]` is a u8 now (#5629), and every
     // classifier call site reads one. Each of these needs the
     // receiver at least twice, so lower_ascii_byte_method binds it
     // to a temp local (the abs/sign pattern).
@@ -11360,7 +11353,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // pow rather than re-derived.
     //
     // Until this existed, `.gcd()` / `.lcm()` bailed the whole
-    // module to the AST emitter — but worse, the arm64 per-module
+    // module — but worse, the arm64 per-module
     // UNIT path emits __fern_i32_lcm unconditionally (i32_lcm is in
     // asm_ir.all_runtime_need_roots) and its body calls `.gcd()`,
     // so the generic primitive-receiver dispatch below lowered it as
@@ -11380,7 +11373,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // so no runtime helper. Store receiver + arg in temps (each
     // value is read several times) then compute; a side-effecting
     // receiver/arg is evaluated exactly once. Until this existed
-    // they bailed the module to the AST emitter (#3457 slice 5).
+    // they bailed the module (#3457 slice 5).
     if ((fa.field == "min" || fa.field == "max") && c.args.len() == 1
             && expr_recv_prim_type(fa.obj, s) == "i32"
             && !expr_is_u32(c.args[0], s) && !expr_is_u64(c.args[0], s)) {
@@ -11529,7 +11522,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     // receiver's tracked struct type to `call_direct("<Type>.<m>")`
     // with the receiver as arg 0 (matching the method's
     // `__fn_<Type>.<m>` label). calls_only_known verifies the method
-    // exists, else the module bails to AST.
+    // exists, else the module bails.
     var rty: string = expr_struct_type(fa.obj, s);
     // Option/Result-receiver method call `o.method(args)` (impl on
     // Option[T] / Result[T, E]). expr_struct_type is "" for an
@@ -11690,7 +11683,7 @@ function lower_call_method(c: parser.ExprCall, fa: parser.ExprFieldAccess, s: Lo
     }
     // Array-receiver method `arr.<field>(args)` — the std/array
     // auto-discovered helper `__method_Array_<field>(arr, args)`.
-    // The AST backend rewrites this at emit time (asm.fern via
+    // The AST backend rewrote this at emit time (via
     // find_array_method_func); the IR sibling resolves the in-scope
     // helper name (find_arr_method) and lowers a free call with the
     // array as arg 0. Checked BEFORE the prim path — an array
@@ -12703,8 +12696,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // operand is a struct lowers to `a.<method>(b)` (`+`→add, …),
             // mirroring the native checker desugar. Rewriting to a method call
             // reuses the struct-returning-method path (#3640); if the type has
-            // no such method, that path bails to the AST fallback rather than
-            // mis-lowering the struct pointers as scalar arithmetic. Scalars /
+            // no such method, that path bails rather than mis-lowering the
+            // struct pointers as scalar arithmetic. Scalars /
             // strings / f64 return "" from expr_struct_type, so they're
             // untouched and fall through to the numeric/string dispatch below.
             if (binop_overload_method(b.op) != "") {
@@ -12717,8 +12710,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                     var ovm: string = binop_overload_method(b.op);
                     // Only a defined (struct-returning) overload method lowers.
                     // Without one this is an invalid program (native rejects it
-                    // E009), so bail to the AST path rather than mis-lower the
-                    // struct pointers as scalar arithmetic.
+                    // E009), so bail rather than mis-lower the struct pointers
+                    // as scalar arithmetic.
                     if (s.struct_ret_type(blt + "." + ovm) == "") { return s.fail(); }
                     var ovcall: parser.Expr = parser.ExprCall { callee: parser.ExprFieldAccess { obj: b.left, field: ovm, line: b.line, col: b.col, ty: "" }, args: [b.right], line: b.line, col: b.col, type_argc: 0, ty: "" };
                     return lower_expr(ovcall, s);
@@ -12830,7 +12823,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // f64 dispatch: float operands lower as f64 (their bit pattern flows
             // on the rt-stack) and use the float ops. Arithmetic (+ - * /) yields
             // f64; a comparison yields an i32 bool. `%` / bitwise / shifts have no
-            // float form (map_fbinop = "") and bail to the AST path.
+            // float form (map_fbinop = "") and bail.
             if (expr_is_f64(b.left, s) || expr_is_f64(b.right, s)) {
                 var fk: string = map_fbinop(b.op);
                 if (fk == "") { return s.fail(); }
@@ -12967,8 +12960,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 }
                 // Composite unary minus (#2706): `-a` on a struct/enum lowers
                 // to `a.neg()`, mirroring the native checker's NegCall desugar.
-                // As with the binary overloads, a type without `neg` bails to
-                // the AST path rather than negating a struct pointer as a scalar.
+                // As with the binary overloads, a type without `neg` bails
+                // rather than negating a struct pointer as a scalar.
                 var ust: string = expr_struct_type(u.operand, s);
                 if (decl_is_struct(s.structs, ust)) {
                     if (s.struct_ret_type(ust + ".neg") == "") { return s.fail(); }
@@ -13056,8 +13049,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
             // value with the same ownership `E` alone would. Numeric
             // conversions (as_i32 / as_f64 / …) are handled above and keep
             // their value-converting path; an unsupported operand (e.g. a bare
-            // `None` to an Option target) makes lower_expr bail, and the caller
-            // falls back to the AST path.
+            // `None` to an Option target) makes lower_expr bail.
             // `e as? T` fallible downcast (docs/DYN-TRAITS.md §9): the parser
             // tags this `as?_<T>`. `e` is a `dyn Trait` value (a heap pointer
             // carrying its concrete shape at offset 0); lower it, then
@@ -13129,7 +13121,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // unique — the same degradation this comment describes for arrays,
                 // one slot kind over.) Without it `var both = [a, b]` left a's rc
                 // at 1, and __fern_rc_is_unique reported a container-retained array
-                // as UNIQUE on both IR backends where both AST emitters report it
+                // as UNIQUE on both IR backends where both AST emitters reported it
                 // shared — silently degrading the constructor-reuse guard (#4350),
                 // whose whole job is to answer "sole owner?" before an in-place
                 // write. A fresh-literal element is not a local, so this never
@@ -13157,7 +13149,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
         },
         parser.ExprTuple(tup) => {
             // Tuple literal `(a, b, …)` → tuple_make. Scalar elements only
-            // (leak-only); a heap element bails to the AST path. Elements lower
+            // (leak-only); a heap element bails. Elements lower
             // in source order (element 0 deepest), then tuple_make boxes them.
             var tn: i32 = tup.elements.len();
             if (tn == 0) { return s.fail(); }
@@ -13176,7 +13168,7 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                 // enum); tuple_elem_ctor_eligible is the shared admission (also
                 // gating tuple cross-reuse), classifying an if-/match-EXPRESSION
                 // element by its IIFE leaf branch value. A heap element outside the
-                // set bails to the AST path.
+                // set bails.
                 if (!tuple_elem_ctor_eligible(iife_leaf_value(tup.elements[tei]), s)) { return s.fail(); }
                 tei = tei + 1;
             }
@@ -13373,8 +13365,8 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                         // it as a plain fn-pointer array: the idx_is_arr branch below
                         // lowers c.callee (`r.hs[i]` — struct_get then arr_get to the
                         // fn pointer) and call_indirect(arity). Without this arm the
-                        // field-access array fell to `_` → s.fail() → AST fallback,
-                        // which miscompiled it.
+                        // field-access array fell to `_` → s.fail(), so the whole
+                        // module refused to lower.
                         parser.ExprFieldAccess(_) => {
                             if (field_access_is_fnarr(cidx.array, s)) { idx_is_arr = true; }
                             // …and the CLOSURE-box sibling (`R { hs: [() => n] }`,
@@ -13382,9 +13374,9 @@ function lower_expr_dispatch(e: parser.Expr, s: LowerState): LowerState {
                             // elements are `__mkclo$` env boxes, so it needs the
                             // env-first form above, not the raw-pointer one. Without
                             // this arm the shape matched NEITHER flag and fell to `_`
-                            // → s.fail() → AST fallback, even though construction,
-                            // `.len()`, and the same call through a LOCAL clo-array
-                            // all lowered fine (#3457).
+                            // → s.fail(), even though construction, `.len()`, and the
+                            // same call through a LOCAL clo-array all lowered fine
+                            // (#3457).
                             //
                             // field_access_is_closurearr already declines a registered
                             // fn-POINTER field, so the pointer arm above keeps
@@ -13685,10 +13677,10 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
         // source Err payload (E1), call the associated `E2.from`, and rebuild an
         // Err box around the converted value. Mirrors the native checker's
         // tryConvertErrViaFrom desugar. Gated to a leaf-safe struct E2 with a
-        // `from` (the whole-module IR-eligibility scan bails to AST if `E2.from`
+        // `from` (the whole-module IR-eligibility scan bails if `E2.from`
         // is absent) and an i32-/pointer-width E1 payload (op_opt_payload's
         // default read — i32 / boolean / struct / enum / string); an i64 / u64 /
-        // f64 / f32 E1, which would need a width-64 read, bails to AST. When
+        // f64 / f32 E1, which would need a width-64 read, bails. When
         // E1 == E2 (or the return error type can't be recovered) the box is
         // forwarded unchanged, exactly as before.
         var src_err: string = opt_payload_type(ot, "Err");
@@ -13773,7 +13765,7 @@ function lower_try(inner: parser.Expr, s: LowerState): LowerState {
 // / _max_opt (#3457). Those helpers are RUNTIME functions, not module functions,
 // so opt_ret_fns_of never sees their signature and every scrutinee-type resolver
 // (`match (xs.min())`, `xs.min()?`, `var o = xs.min()`) would fail to recover
-// Option[i32] and bail the module to the AST emitter. This is the composite-
+// Option[i32] and bail the module. This is the composite-
 // return analogue of is_fern_helper: the registry for a helper's shape that the
 // module-derived side-tables cannot supply. It shares the lowering's receiver
 // predicate (arr_i32_recv) so the type reported here cannot drift from the call
@@ -13808,7 +13800,7 @@ function arr_method_opt_ret_type(field: string, obj: parser.Expr, s: LowerState)
 // inner expression, mirroring the match-scrutinee resolution: a direct-call
 // `f()` via opt_ret_fns, a direct `Some(x)` construction via some_opt_type, a
 // map `.get()` (Option[V]), a local/param via its tracked Option/Result type, or
-// an Option/Result struct field. "" when it can't (lower_try then bails to AST).
+// an Option/Result struct field. "" when it can't (lower_try then bails).
 function try_opt_type(inner: parser.Expr, s: LowerState): string {
     // typed-IR (#5531): an Option/Result-returning call carries its full
     // "Option[T]" / "Result[T, E]" tag on c.ty (the checker resolved any generic
@@ -14057,7 +14049,7 @@ function iife_returns_fresh_array(e: parser.Expr): boolean {
 // classifies the whole expression), an i64 if-expression can mix an i64-sized
 // branch with a small-literal branch (`{ 5000000000 } else { 1 }`), so every
 // return is checked. A fully-small-literal i64 expression (whose i64-ness comes
-// only from the binding annotation) isn't caught here and stays on the AST path.
+// only from the binding annotation) isn't caught here.
 //
 // Width comes from infer_expr_width alone. It reads a literal's SUFFIX ahead of
 // its magnitude, which a second magnitude-only test cannot do: `2147484571u32`
@@ -14140,7 +14132,7 @@ function lower_value_stmt(st: parser.Stmt, s: LowerState, force_i64: boolean): L
         // A single `return E` body is the DIRECT, hand-written IIFE —
         // `(function (): i32 { return 7; })()` — as opposed to the if/match
         // desugars above, which is why it reached the catch-all and bailed the
-        // whole module to the AST emitter (#3457 slice 5). Its value simply IS
+        // whole module (#3457 slice 5). Its value simply IS
         // E, evaluated here: the lambda is invoked immediately in this scope, so
         // a capture reads the enclosing local. No temp and no branch structure —
         // this is lower_value_block's inline treatment with zero leading
@@ -14235,7 +14227,7 @@ function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolea
 // loads tmp. Conservatively scoped so the i32 temp is always the right width:
 // arms must have NO payload binding (a unit variant, `_`, or `true`/`false`)
 // and an i32 result. A payload-binding arm (`Some(n) => n`) or an f64 / string
-// / i64 result bails to the AST emitter (#2938 follow-up).
+// / i64 result bails (#2938 follow-up).
 // iife_payload_bindable reports whether a payload-binding match arm's payload can
 // be bound for the inlined match-expression. The payload type is resolved from the
 // scrutinee's tracked opt type (Option/Result Some/Ok/Err) or, for a user-enum
@@ -14249,10 +14241,10 @@ function lower_value_block(body: parser.Stmt[], s: LowerState, force_i64: boolea
 // into the i32 temp as the result. The underlying StmtMatch path binds it via
 // mark_opt_type, so the inner match recovers b's type. The ident-scrutinee
 // restriction is deliberate: a CALL scrutinee returning a nested Option
-// (`match (f()) { Some(b) => match (b) … }`) is left on the AST path. A non-i32
+// (`match (f()) { Some(b) => match (b) … }`) is not admitted. A non-i32
 // result temp keeps the strict i32-only rule (a payload returned directly would
 // need its type at gate-classify time, before the binding is in scope). A
-// string / Result / fn payload stays on the AST path here.
+// string / Result / fn payload is not admitted here either.
 // iife_arm_returns_ident reports whether the arm's TAIL `return E` is exactly the
 // bare ident `name` (so a payload bound to `name` would be stored DIRECTLY into the
 // result temp). Used to reject a leak-safe array payload returned bare (it would
@@ -14430,7 +14422,7 @@ function iife_payload_chain_type(e: parser.Expr, name: string, ft: string, s: Lo
 // provably `kind` by the ordinary `s`-based classifiers (infer_expr_width == 64 for
 // i64 / expr_is_f64 for f64) or — for i64 only — an integer literal (a bare numeric
 // literal participating in i64 arithmetic). Anything else returns false (the whole
-// tree then bails to the AST path — correctness preserved).
+// tree then bails — correctness preserved).
 function iife_payload_arith_leaf_kind(e: parser.Expr, name: string, ft: string, kind: string, s: LowerState): boolean {
     if (iife_expr_mentions_ident(e, name)) {
         // A wide READ of the payload — the bare payload itself, or a field / element
@@ -14464,7 +14456,7 @@ function iife_payload_arith_leaf_kind(e: parser.Expr, name: string, ft: string, 
 // RHS through lower_i64 / the f64 path (it already does — statement-position works),
 // so this gate only certifies the value-position result temp is the wide width. Any
 // non-arithmetic shape, or a leaf that isn't a provable wide read / value, returns
-// false so the arm stays on the AST path (conservative — correctness preserved).
+// false so the arm bails (conservative — correctness preserved).
 function iife_payload_arith_kind(e: parser.Expr, name: string, ft: string, kind: string, s: LowerState): boolean {
     if (kind != "i64" && kind != "f64") { return false; }
     match (e) {
@@ -14491,7 +14483,7 @@ function iife_payload_arith_kind(e: parser.Expr, name: string, ft: string, kind:
 // returning string / i64 / f64 / an array / a tuple / a struct / an Option is
 // rejected; anything else (an i32 / boolean return) is admitted. Over-admission
 // is safe — the actual lowering of the rewritten `tmp = g(args)` is the truth, so
-// a non-i32 / non-lowerable callee bails the function back to AST.
+// a non-i32 / non-lowerable callee bails the function.
 function iife_free_fn_ret_i32(name: string, s: LowerState): boolean {
     if (s.is_str_ret_fn(name)) { return false; }
     if (s.is_i64_ret_fn(name)) { return false; }
@@ -14615,7 +14607,7 @@ function iife_borrow_leaf_i32(e: parser.Expr, name: string, ft: string, s: Lower
                     // enum payload whose return is provably i32 (NOT in any wider-
                     // result registry — a boolean return also rides the i32 temp).
                     // Args are not re-checked here: a non-borrow / non-lowerable arg
-                    // bails the function in lowering (AST fallback).
+                    // bails the function in lowering.
                     match (cfa.obj) {
                         parser.ExprIdent(rid) => {
                             if (rid.name == name) {
@@ -15251,7 +15243,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, scr
                                     // i64 only: a wide i64-returning payload method
                                     // round-trips through the value-position temp; the
                                     // f64 method result does NOT (it mis-lowers to 0),
-                                    // so an f64-returning method stays on the AST path.
+                                    // so an f64-returning method is rejected here.
                                     if (decl_is_struct(s.structs, ft0) || is_enum_like_name(ft0, s.structs)) {
                                         if (iife_method_ret_kind(ft0, mcf.field, s) == "i64") { return "i64"; }
                                     }
@@ -15275,7 +15267,7 @@ function iife_arm_payload_result_kind(arm: parser.MatchArm, opt_srt: string, scr
 // kind ("string" / "i64" / "f64"), returning the first arm's recovered kind. Only the
 // payload-binding arms contribute a kind; the i32 / non-payload arms return "" and are
 // skipped. Arms must not disagree — if two arms recover DIFFERENT non-"" kinds the
-// match is not uniformly typed, so "" is returned (it bails to AST). i64 / f64 are
+// match is not uniformly typed, so "" is returned (the match bails). i64 / f64 are
 // already covered by iife_payload_result_width for the bare case; this adds string and
 // the struct-field / tuple-element shapes for all three kinds.
 function iife_payload_result_kind(m: parser.StmtMatch, s: LowerState): string {
@@ -15395,7 +15387,7 @@ function iife_arm_composite_result_type(arm: parser.MatchArm, opt_srt: string, s
 // iife_match_composite_result_type scans every arm of a match-EXPRESSION for a
 // COMPOSITE result type and returns the consensus type — or "" if no arm yields a
 // composite, or if two arms recover DIFFERENT composite types (the match isn't
-// uniformly typed, so it bails to AST). EVERY arm must agree: a struct payload from
+// uniformly typed, so it bails). EVERY arm must agree: a struct payload from
 // one arm and a constructed struct of the SAME type from the `N => P { x: 0 }` arm
 // is the admitted shape; an arm that can't be classified as the consensus composite
 // (a scalar tail, or a different composite) makes the whole match bail. The result is
@@ -15449,8 +15441,8 @@ function iife_user_enum_payload_type(pv: parser.PatVariant, scrut_enum: string, 
 // The nested-match case is what a NESTED PATTERN needs. The parser desugars
 // `Some(Ok(n)) => n + 100` into a flat `Some($p)` arm whose body re-matches the
 // payload (see parser.PatVariant's `nested` note), so the arm's terminal is a
-// StmtMatch, not a return — and before this the whole match-expression bailed to
-// the AST emitter even though the identical STATEMENT-form match lowered.
+// StmtMatch, not a return — and before this the whole match-expression bailed
+// even though the identical STATEMENT-form match lowered.
 //
 // Returns an empty array to mean "not rewritable", which the caller turns into a
 // bail. The f64 / string / i64 result guards live here so they apply at every
@@ -15649,7 +15641,7 @@ function lower_value_if(iff: parser.StmtIf, tslot: i32, s: LowerState): LowerSta
 // the value: any leading statements lower normally, then the terminal
 // `return E` becomes `store tslot = E`, or a nested `else if` recurses through
 // lower_value_if. Only an i32 result inlines into the i32 temp — an f64 /
-// string / i64-width value bails so it stays on the AST path.
+// string / i64-width value bails.
 function lower_value_tail(body: parser.Stmt[], tslot: i32, s: LowerState): LowerState {
     if (body.len() == 0) { return s.fail(); }
     var cs: LowerState = s;
@@ -16320,7 +16312,7 @@ function lower_stmt_inner(st: parser.Stmt, s: LowerState): LowerState {
                                 //     arrays — a separate step, tracked in
                                 //     docs/SELFHOST-AST-RETIREMENT.md.
                                 //
-                                // This is what used to bail to the AST emitter, and is
+                                // This is what used to bail, and is
                                 // the first mode-0 wasm decliner: `a.code = enc(…)` in
                                 // x86_native.fern.
                                 var fmft: string = decl_field_type(s.structs, fsty, fname);
@@ -16980,7 +16972,7 @@ function bind_var_slot(v: parser.StmtVar, s: LowerState, se: LowerState, vt: Var
     // A NESTED-tuple element (`var inner = t.0` where t.0's tag is itself a
     // "(…)" tuple spelling) transfers the inner element tags onto the binding
     // (mark_tuple_elems) so `inner.N` reads — and an `inner.N(args)` closure
-    // element call — resolve instead of bailing the module to the AST path.
+    // element call — resolve instead of bailing the module.
     match (v.init) {
         parser.ExprFieldAccess(ctfa) => {
             if (util.is_all_digits(ctfa.field)) {
@@ -17403,11 +17395,11 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
     // Record an Option/Result return for an ANNOTATED fn-typed local bound to a
     // named opt-returning fn (`var f: () => Option[i32] = g`), so a later
-    // `match (f())` names its scrutinee type instead of bailing to the AST
-    // emitter (#3457 slice 3). Gated on the fn-type ANNOTATION: the bare
-    // unannotated `var f = g` form has no fn-type slot metadata, so its `f()`
-    // call miscompiles on the IR path (a raw-pointer dispatch, SIGSEGV) — it must
-    // stay on the AST fallback, which lowers it correctly. Lambdas / closures are
+    // `match (f())` names its scrutinee type instead of bailing (#3457 slice 3).
+    // Gated on the fn-type ANNOTATION: the bare unannotated `var f = g` form has
+    // no fn-type slot metadata, so its `f()` call miscompiles on the IR path (a
+    // raw-pointer dispatch, SIGSEGV) — leaving it unseeded keeps that shape out
+    // of the IR path, so it bails rather than miscompiles. Lambdas / closures are
     // seeded by the clo_init path below (they carry their own dispatch metadata).
     if (is_fn_payload_spelling(v.type_name) || v.type_name == "fn") {
         var vfn_optret: string = closure_init_opt_ret(v.init, s);
@@ -17520,7 +17512,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
                     // `for x in xs` over this LOCAL recover the receiver as
                     // `dyn Trait` and dispatch through op_dyn_dispatch.
                     // Without it the local lost its trait and every element
-                    // method call bailed to the AST path.
+                    // method call bailed.
                     dab = dab.mark_struct_type(daslot, v.type_name[0 : v.type_name.len() - 2]);
                     return dab.emit(ir.op_store_local(daslot));
                 },
@@ -17820,8 +17812,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // i64 binding: `var x: i64 = E`, or an init that infers to i64
     // (`var z = a + 1` with a:i64, `var y = a`). Mark the slot i64, lower
     // the init as an i64 value, store. Scalar locals only — i64 arrays /
-    // params / returns are deferred to the AST path (lower_func bails on
-    // an i64 param/return; lower_i64 bails on anything non-i64-value).
+    // params / returns still bail (lower_func bails on an i64 param/return;
+    // lower_i64 bails on anything non-i64-value).
     // A u32 var holds a 32-bit value, so even a large literal init
     // (`var x: u32 = 4000000000`, whose value exceeds i32-max and thus
     // infers width 64) must NOT take the i64 path — that would i64-back
@@ -17847,7 +17839,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // literals/arithmetic through const_f64 / the float ops, pushing the
     // 8-byte bit pattern; mark the slot f64 so later uses pick the float
     // ops. Scalar locals only — f64 params / returns / arrays / fields
-    // are deferred to the AST path (lower_func bails an f64 signature).
+    // still bail (lower_func bails an f64 signature).
     if (comma < 0 && (is_f64_scalar_type_name(v.type_name) || expr_is_f64(v.init, s))) {
         var fv: LowerState = lower_expr(v.init, s);
         if (!fv.ok) { return fv; }
@@ -18436,7 +18428,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // A struct-array LITERAL without annotation (`var ps = [P { .. }, ..]`):
     // infer the ELEMENT struct type from the first element, matching the
     // `var ps: P[]` annotation path above, so `ps[i].field` / `for x in ps`
-    // recover it instead of bailing to the AST fallback (#2793 sibling).
+    // recover it instead of bailing (#2793 sibling).
     else if (struct_ty == "") {
         match (v.init) {
             parser.ExprArray(arrl) => {
@@ -18486,7 +18478,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // `var e = A(9)`) records the slot's ENUM type — recovered from the
     // variant via its enum_owner — so `c.method()` dispatches to
     // `<Enum>.<method>`. Without this the slot stays untyped and the
-    // enum-receiver method call bails the whole module to AST (#2947).
+    // enum-receiver method call bails the whole module (#2947).
     // A standalone `if` (NOT chained off the struct-array-literal `else
     // if (struct_ty == "")` above, which is entered for ANY untyped init
     // and would otherwise swallow this clause for a non-array enum init —
@@ -18583,7 +18575,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // the same expression. `args()` sat in one and not the other for as long as
     // the builtin has existed, so `var a = args()` came out string-array-tracked
     // and NOT array-tracked: `a[i]` and `a.len()` lowered fine while `for s in a`
-    // bailed the whole function to the (now deleted) AST emitter. #5983 patched
+    // bailed the whole function. #5983 patched
     // the missing entry; this removes the way for the next one to hide.
     //
     // Deliberately keyed on the INIT predicates only, not on the is_strarr /
@@ -18687,7 +18679,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
         // The IIFE-leaf arm above already recovers an opt_type from an ident this
         // way; the plain alias did not, so `var o = Some(20); var u = o;` left u
         // untyped and the later `match (u)` could not recover the payload, bailing
-        // the module to the AST emitter. (Annotating u worked, which is what made
+        // the module. (Annotating u worked, which is what made
         // this look like a match gap rather than a propagation one.)
         parser.ExprIdent(oaid) => { opt_ty = se.opt_type_of_slot(se.slot_of(oaid.name)); },
         _ => {}
@@ -18898,8 +18890,8 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
             // it so the foreach marking can re-mark the loop var as an
             // array-of-arrays and a third `for` level keeps its element type —
             // without it `for plane in cube` bound `plane` as a plain array, the
-            // next level bound a SCALAR, and the innermost loop bailed the module
-            // to the AST emitter. The reclaim consumers compare against the scalar
+            // next level bound a SCALAR, and the innermost loop bailed the module.
+            // The reclaim consumers compare against the scalar
             // kinds, so "arr" falls through to their leak-safe default; a FOUR-deep
             // array is still out of the model (its loop var gets arrarr_elem "").
             if (is_array_type_name(innr)) { arrarr_e = "arr"; }
@@ -18948,8 +18940,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
     // element tuple tag from the FIRST literal element (elem_type_tag — post-lift,
     // so a lambda element reads "clo"), so `a[j].N` reads and the `a[j].N(args)`
     // closure-element dispatch resolve via expr_tuple_elem_tag's Index arm instead
-    // of falling through to bogus method dispatch and bailing the module to the
-    // legacy AST path (which miscompiles the call into a nonexistent `i32.0`).
+    // of falling through to bogus method dispatch and bailing the module.
     // Reclaim-inert: ARRTUP crediting requires an annotated decl, so this tag only
     // feeds the read/dispatch side (the array stays leak-only).
     if (is_arr && !is_arrarr && arrarr_e == "") {
@@ -19009,7 +19000,7 @@ function lower_stmt_var(v: parser.StmtVar, s: LowerState): LowerState {
 // `var m = map_new_i32(n)` has no insert to read a value type from, so it records
 // `Map[K, i32]`; when the first insert arrives as a separate assignment the slot
 // would keep that tag forever and a later `var p = m.get_or(…)` could not recover
-// P — the read bailed the function to the AST emitter. Fact-only: both tags are
+// P — the read bailed the function. Fact-only: both tags are
 // pointer-shaped for op selection (map_value_widekind 0, map_insert_val_is_i64
 // false), so no emitted op changes; only the read side's type recovery does.
 function refine_map_struct_val(a: parser.StmtAssign, slot: i32, s: LowerState): LowerState {
@@ -19611,9 +19602,8 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // (after the header) and calls enter_loop/exit_loop, so a `continue`
     // br-to-header re-runs the advance instead of skipping it and a
     // `break` exits the loop's outer block — mirroring the while-loop
-    // shape. (Earlier this whole arm bailed any break/continue body to
-    // the AST path with a bottom-increment shape that `continue` would
-    // skip.)
+    // shape. (Earlier this whole arm bailed any break/continue body,
+    // its bottom-increment shape being one `continue` would skip.)
     // Range form `for i in LOW..HIGH` — the parser encodes the
     // half-open interval as a synthetic `__range(LOW, HIGH)` call.
     // lower_range_for emits the counted loop. Kept in its own function
@@ -19627,7 +19617,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     // iterate that local (lower_foreach_snapshot). The bare-ident forms
     // — array foreach and the `for k, v in m` map foreach below — read
     // the slot directly, so they stay on their own paths; a comma var
-    // (map form) is left to the map path / AST fallback.
+    // (map form) is left to the map path.
     var for_iter_ident: boolean = false;
     var for_var_comma: boolean = false;
     match (fr.iter) { parser.ExprIdent(_) => { for_iter_ident = true; }, _ => {} }
@@ -19851,7 +19841,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
                 // loop body. The field-foreach analog of the #5305 local-array case;
                 // without it a pointer element (`p.1` of a `(i32, string)`) has no
                 // tag, so the body's `p.1.len()` fails to lower and the whole module
-                // drops to the legacy AST emitter (which miscompiles it).
+                // bails.
                 else if (fel.len() >= 2 && fel[0:1] == "(") {
                     fld_elem_kind = 4;
                     fld_elem_ty = fel + "";
@@ -20045,7 +20035,7 @@ function lower_stmt_for(fr: parser.StmtFor, s: LowerState): LowerState {
     }
     // `for x in <arr>` over an array LOCAL/PARAM (i32[] or string[]) →
     // a counted loop using existing ops. Other iter forms (calls,
-    // literals, maps) bail to AST. break/continue in the body DO lower:
+    // literals, maps) bail. break/continue in the body DO lower:
     // the loop is emitted advance-at-top (#2788, same as the range form),
     // so the StmtBreak / StmtContinue handlers' br-to-exit / br-to-header
     // land correctly (continue re-runs the increment). The array is an
@@ -20195,7 +20185,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
     // OUTER block (exiting the match). A wildcard arm runs unconditionally
     // and exits. Only scalar-payload enum-variant arms + a trailing
     // wildcard are lowered; guards, multi-bindings, Option/Result/bool
-    // patterns, and non-scalar payloads bail to the AST emitter.
+    // patterns, and non-scalar payloads bail.
     var ms: LowerState = lower_expr(m.scrutinee, s);
     if (!ms.ok) { return ms; }
     var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
@@ -20260,7 +20250,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                     // (opt_ret_fns) lets us recover it: T for Some/Ok, E for
                     // Err. Scalar (i32/boolean) binds plain; string via
                     // mark_str; anything else (composite/unknown/non-call
-                    // scrutinee) bails to AST.
+                    // scrutinee) bails.
                     var ptag: string = "";
                     if (hb) {
                         // Recover the scrutinee's Option/Result type: a
@@ -20605,7 +20595,7 @@ function lower_stmt_match(m: parser.StmtMatch, s: LowerState): LowerState {
                 // builtin/Option patterns handled above have no '.', so
                 // this is identity for them; a stripped name that isn't a
                 // local variant struct still bails just below (cross-module
-                // enums stay on the AST path).
+                // enums are not resolvable here).
                 var vname: string = pv.type_name;
                 var vdot: i32 = 0 - 1;
                 var vld: i32 = 0;
@@ -24058,7 +24048,7 @@ function stmt_scopes_bindings(st: parser.Stmt): boolean {
 // match arm, the else branch) re-uses a fresh slot rather than colliding.
 // with_xblock_pending replaces the cross-block pending-pairings list (see the
 // LowerState field). Threaded like set_local_name — a single field swap, every
-// other column carried through, so it compiles on the legacy AST backend too.
+// other column carried through.
 pub function (s: LowerState) with_xblock_pending(v: string[]): LowerState {
     return LowerState { ...s, xblock_pending: v };
 }
@@ -24560,9 +24550,9 @@ pub struct LowerResult {
     // erased_wide: the body passes a 64-bit or f64 value to a BARE-TYPEVAR
     // (erased-generic) param, or consumes such a call's mirrored 64-bit
     // return. The register backends lower it (8-byte slots); the wasm
-    // backend types erased param locals i32, so wasm_ir_deferrals_ok defers
-    // the module to the AST path (an f64 through an erased param previously
-    // emitted type-INVALID WAT the wasmtime loader rejects).
+    // backend types erased param locals i32, so wasm_ir_deferrals_ok refuses
+    // the module (an f64 through an erased param previously emitted
+    // type-INVALID WAT the wasmtime loader rejects).
     erased_wide: boolean,
     // arr_slots: the local slots holding arrays — the backend zeroes these at
     // entry so the exit dec-sweep never decs an uninitialised (untaken-branch)
@@ -33209,10 +33199,10 @@ function enum_only_wildcard_used_rec(stmts: parser.Stmt[], name: string, enum_na
                                 // module in the self-host BOOTSTRAP, where each file is
                                 // compiled STANDALONE (imported modules' struct decls are
                                 // not loaded). So the `parser.PatVariant(pv)` match here
-                                // bails to the AST emitter, which — with no PatVariant
-                                // field info — mis-infers the `string[]`-element receiver
-                                // `pv.extra_bindings[ei]` as i32 and emits an undefined
-                                // `__fn_i32__len` (a link error). A typed `string` local +
+                                // does not lower. The AST emitter it once fell to had no
+                                // PatVariant field info, mis-inferred the `string[]`-element
+                                // receiver `pv.extra_bindings[ei]` as i32 and emitted an
+                                // undefined `__fn_i32__len` (a link error). A typed `string` local +
                                 // `!= ""` sidesteps the `.len()` dispatch entirely and
                                 // compares as strings. (Typing the payload properly means
                                 // lowering the qualified imported-union match through the
@@ -40627,7 +40617,7 @@ function tuple_elem_ctor_eligible(el: parser.Expr, s: LowerState): boolean {
     // construction loop routes an i64 element through lower_i64. A wide-
     // returning callee was excluded here while a wide LOCAL or wide
     // ARITHMETIC element was already admitted, which made only the call form
-    // bail the whole module to the AST path (#5902). An UNKNOWN or
+    // bail the whole module (#5902). An UNKNOWN or
     // nonscalar-returning callee stays ineligible (its result would mistype
     // the enc) — struct-returning calls pass via the expr_struct_type gate,
     // and f64[]/i64[]-returning ones via el_typedarr_ok.
@@ -42633,7 +42623,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // A Cell[T] PARAM's element type (#3457 slice 5): the local-annotation path
     // marks a `var c: Cell[i32]` slot is_cell, but the param columns hard-coded
     // is_cell false, so `c.get()` on a PARAMETER keyed "i32.get" — an unknown
-    // symbol — and bailed the whole module to the AST emitter. The map column
+    // symbol — and bailed the whole module. The map column
     // right above is the same shape, added for the same reason (#map-param).
     var cellty: string[] = [];
     var isi64: boolean[] = [];
@@ -42658,7 +42648,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // receiver binds slot 0 as a plain (heap-pointer) slot carrying the enum
     // type name, so `match (self)` works and an enum-typed call site dispatches
     // to `<Enum>.<method>`. An array / Option / tuple / non-leaksafe-struct
-    // receiver still bails the module to AST.
+    // receiver still bails the module.
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
@@ -42785,7 +42775,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // tuple_elem_tags split the declared-return registry uses, with fn
         // segments mapped "clo") so `t.N` reads / `t.N(args)` dispatch on the
         // parameter resolve — without this a tuple param's element reads had
-        // no tag and the function bailed to the AST path.
+        // no tag and the function bailed.
         var ptup: string = "";
         if (ptn.len() >= 2 && ptn[0:1] == "(" && !is_array_type_name(ptn)) { ptup = tuple_elem_tags(ptn); }
         tupty = tupty.append(ptup);
@@ -44245,8 +44235,8 @@ function erased_uses_only_returned(stmts: parser.Stmt[], names: string[]): boole
 // erased_passthrough_safe: is `fn` a free erased-generic fn that returns a bare
 // typevar and merely passes its erased param(s) through to `return` — the shape
 // the wasm backend widens to the uniform i64 slot (#5464)? Everything else (a
-// container/concrete return, or a body that USES the erased value) stays on the
-// AST path (a wide instantiation defers via erased_wide; a narrow one is
+// container/concrete return, or a body that USES the erased value) is refused
+// here (a wide instantiation defers via erased_wide; a narrow one is
 // unaffected).
 pub function erased_passthrough_safe(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
     if (!declares_typevars(fn)) { return false; }
@@ -44400,8 +44390,8 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // functions `__method_Array_<m>` (free functions, no receiver — possibly
 // `<mod>__`-mangled). lower_expr resolves an array-receiver method call
 // `arr.<m>(args)` to the matching helper (find_arr_method below), the IR
-// sibling of the AST backend's find_array_method_func dispatch (asm.fern), so
-// e.g. distinct / index_of / mode lower instead of bailing to AST.
+// sibling of the AST backend's find_array_method_func dispatch, so e.g.
+// distinct / index_of / mode lower instead of bailing.
 pub function arr_method_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var k: i32 = 0;
@@ -46157,7 +46147,7 @@ function fnptr_scan_stmts(stmts: parser.Stmt[], funcs: parser.FuncDecl[], struct
                 // nowhere: `var a = [seven]; a = [() => n];` retracts the pointer
                 // proof and credits the closure one, so the field it is then stored
                 // into is PROVEN a closure array instead of falling through
-                // unclassified into the AST fallback (which miscompiles it on wasm).
+                // unclassified and bailing the module.
                 //
                 // The POINTER side is deliberately NOT re-proved by an assignment.
                 // A local's element representation is fixed by its DECLARATION, not
@@ -46323,7 +46313,9 @@ pub function fnptr_arr_fields_of(funcs: parser.FuncDecl[], structs: parser.Struc
 // an env box called as a plain pointer crashes too. Before this gate the read
 // simply bailed the function, the module dropped to the legacy AST emitter, and
 // THAT miscompiled it — a SIGSEGV at runtime with no diagnostic (#5787 measured
-// both the param-built and loop-built shapes crashing on both paths).
+// both the param-built and loop-built shapes crashing on both paths). With the
+// emitters gone the bail alone would be a bare "not IR-eligible", naming
+// nothing.
 //
 // So: report it, the way `wasm_unsupported_builtin` reports a builtin with no
 // wasm meaning. A diagnostic naming the field beats a segfault.
@@ -46856,7 +46848,7 @@ pub function tuple_elem_tags(rt: string): string {
 // leaf-safe struct / Option / nested-tuple element is a leak-only pointer (no
 // RC), recovered at the call site by its type tag, like the struct-return path.
 // Array / i64-array / Result elements still make it false so the function bails
-// to the AST path (they'd need RC / width / payload threading).
+// (they'd need RC / width / payload threading).
 pub function tuple_elems_lowerable(rt: string, structs: parser.StructDecl[]): boolean {
     var tags: string = tuple_elem_tags(rt);
     if (tags.len() == 0) { return false; }
@@ -46988,7 +46980,7 @@ function irl_looks_type_var(s: string): boolean {
 // actual argument's inferred tag (resolve_argref_tuple_tags), so
 // `pair("xy", 3)` types element 0 "string" — before, the raw "K" tag read as
 // a scalar and `s.0.len()` on the returned string silently miscompiled to 0
-// on BOTH the IR path and the legacy AST fallback.
+// on BOTH the IR path and the legacy AST emitters.
 // arrtup_ret_fns_of records "name|(elem tuple)" for each function returning an
 // ARRAY OF TUPLES (`mk(): (i32, f64)[]`), keyed like tuple_ret_fns_of — bare
 // name for a free function, "<BaseType>.<method>" for a method.
@@ -47205,7 +47197,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
         //
         // The type-var test alone is NOT enough to tell this from a real enum:
         // an `enum E` is a single uppercase letter too, and skipping it sent the
-        // whole @derive(Default) enum family to the AST path. So require the
+        // whole @derive(Default) enum family off the IR path. So require the
         // ERASED-GENERIC signature the `T[]` sibling already keys on — a free
         // function with a parameter declared at exactly that spelling. A derived
         // `E_default(): E` takes no `E`, so it still records.
@@ -47248,8 +47240,8 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructD
             // An ERASED-generic `T[]` return (`idf[T](arr: T[]): T[]`, `sort_by_
             // i32_key[T](arr: T[], key: (T) => i32): T[]`): the element is the bare
             // typevar, so there is no declared struct to record and an UNANNOTATED
-            // `var s = f(xs)` lost `s[i]`'s type — which bailed the caller to the
-            // AST emitter while the generic fn itself lowered fine. Record a
+            // `var s = f(xs)` lost `s[i]`'s type — which bailed the caller while
+            // the generic fn itself lowered fine. Record a
             // positional "name|$arg<i>" entry instead, meaning "the element type is
             // whatever argument i's element type is", and let expr_struct_type
             // resolve it against the ACTUAL argument at the call site. Same
@@ -47406,8 +47398,8 @@ pub function i64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // (a `const NAME = expr` desugars to exactly one — see parser.parse_const_decl).
 // A bare ident reference to one, in value position, lowers to a CALL (the
 // const's value); the LowerState carries this so lower_expr's ExprIdent arm can
-// dispatch it instead of bailing the module to the AST emitter (#2954). Mirrors
-// asm.fern's ExprIdent rule (zero-arg receiver-less -> call; >0-arg -> fn-value).
+// dispatch it instead of bailing the module (#2954). The rule is zero-arg
+// receiver-less -> call; >0-arg -> fn-value.
 pub function const_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     var ci: i32 = 0;
@@ -52153,7 +52145,7 @@ pub function (s: LowerState) callee_param_is_fn(name: string, idx: i32): boolean
 // (every local's width mark is recorded), so infer_expr_width / expr_is_f64
 // judge argument expressions exactly as the lowering did. f64 is included
 // even though the register backends lower it fine: the wasm backend types an
-// erased param local i32, so both wide kinds must defer wasm to the AST path.
+// erased param local i32, so both wide kinds must refuse the wasm lowering.
 pub function erased_wide_stmts(stmts: parser.Stmt[], s: LowerState): boolean {
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -52293,8 +52285,8 @@ function erased_wide_expr(e: parser.Expr, s: LowerState): boolean {
                     // bare-tuple return (`pair[K,V](k,v):(K,V)`, whose 8-byte-per-element
                     // box reads back at the concrete width — #5464 tuple slice). A wide
                     // arg to a NON-widened erased param (flag '5' — a fold-style body, or
-                    // an Option/Result/array return not yet handled) still defers the
-                    // module to the AST path. Non-wasm lowerings ignore erased_wide.
+                    // an Option/Result/array return not yet handled) still refuses the
+                    // module. Non-wasm lowerings ignore erased_wide.
                     if (s.for_wasm()) {
                         var ai: i32 = 0;
                         while (ai < c.args.len()) {
@@ -53087,7 +53079,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             // (reuse an exact-size freed block or bump-grow). Scalar
             // (i32/boolean) fields only, leak-only (no RC/drop on structs yet),
             // so the box is never freed — exit-code-equivalent to every
-            // backend's AST path. A 0-field box is a bare enum variant (`E.A`).
+            // backend. A 0-field box is a bare enum variant (`E.A`).
             var snf: i32 = o.i32_imm;
             var ssize: i32 = (snf + 2) * 4;
             var sreuse: i32 = 0;
@@ -53185,7 +53177,7 @@ pub function eval_ops(ops: ir.Op[], n_locals: i32, args: i32[], fns: LoweredFn[]
             // element values (element 0 deepest, the order the lowering pushes
             // them) and fill them, then push the base. Mirrors arr_make's alloc.
             // Scalar (i32/boolean) elements only, leak-only — exit-code-
-            // equivalent to every backend's AST path. (`tuple_make_k` shares this
+            // equivalent to every backend. (`tuple_make_k` shares this
             // kind; the 8-byte i64/f64 element form isn't modelled here, like the
             // rest of this i32-only evaluator.)
             var tn: i32 = o.i32_imm;
@@ -53581,8 +53573,8 @@ pub function do_branch(ops: ir.Op[], pc: i32, d: i32): i32 {
 // param position, is exactly the function VALUE that closures slice 1 lowers via
 // const_func — so capture-free lambdas-as-callbacks ride the slice-1 machinery
 // with no new IR ops. Capturing lambdas (and lambdas in positions this bounded
-// walk doesn't reach) are left as ExprLambda, so the module falls back to the
-// AST backend. A module with no lifted lambda is returned UNCHANGED (so the
+// walk doesn't reach) are left as ExprLambda, so the module bails. A module
+// with no lifted lambda is returned UNCHANGED (so the
 // lambda-free fixpoint is byte-identical).
 
 pub struct LiftAcc { funcs: parser.FuncDecl[], counter: i32 }
@@ -53725,8 +53717,8 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
         // no-capture lambda ARGUMENT gets), so the array becomes one of bare
         // function-name idents -- which lower to a function-pointer array, and
         // `fs[i](args)` rides the existing fn-pointer-array call_indirect path.
-        // A capturing lambda element is returned unchanged by lift_call_arg and
-        // keeps the module on the AST path.
+        // A capturing lambda element is returned unchanged by lift_call_arg, so
+        // the module bails.
         parser.ExprArray(arr) => {
             var aa: LiftAcc = acc;
             var nelems: parser.Expr[] = [];
@@ -53810,8 +53802,7 @@ function lift_expr_walk(e: parser.Expr, acc: LiftAcc, gfns: string[]): LiftExpr 
 // dispatches env-first. This replaces the old inline-return handling — no-capture
 // returns hoisted to a bare `__lam_N` fn-value the caller called env-first (SIGSEGV),
 // and capturing returns hoisted to a bare `<fd>$clo` that COLLIDED across multiple
-// returns (the wrong closure body ran) or bailed the whole module to the AST emitter
-// (#5266). `$lamret$N` names are function-local slots (the `$` prefix can't collide
+// returns (the wrong closure body ran) or bailed the whole module (#5266). `$lamret$N` names are function-local slots (the `$` prefix can't collide
 // with user idents); the counter is function-local. The self-host sources contain no
 // bare lambda returns, so this fires on none of them and leaves the self-compile
 // byte-identical.
@@ -53920,7 +53911,7 @@ function lift_stmt(st: parser.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
             // lambda argument / array element / struct-field value gets), so the
             // return becomes a bare fn-name -> const_func, riding the existing
             // "return a named function value" path. A capturing lambda is left in
-            // place (keeps the module on the AST path); a non-lambda value recurses
+            // place (so the module bails); a non-lambda value recurses
             // through lift_expr_walk unchanged. (Inline `return <lambda>` returns are
             // pre-desugared to a `var $lamret$N = <lambda>; return $lamret$N;` local
             // binding before this pass runs — see desugar_lambda_returns — so a bare
@@ -54103,8 +54094,8 @@ function lambda_captures(lam: parser.ExprLambda, fd: parser.FuncDecl): string[] 
 // scalar literals (i32 / string / boolean — float declines, matching the old
 // scalar behaviour), array literals (element type from the first element, so
 // `[1,2,3]` is `i32[]` and `["a"]` is `string[]`), and struct literals (their
-// named type). "" when it can't infer — the caller then declines the lift,
-// leaving the closure on the AST path. Pure AST analysis: the inferred type
+// named type). "" when it can't infer — the caller then declines the lift, so
+// the module bails. Pure AST analysis: the inferred type
 // only labels the lifted function's capture PARAM, so an unannotated
 // array/struct capture flows exactly like the already-supported annotated /
 // param-typed array capture (passed by value as an ordinary argument — no env
@@ -54136,7 +54127,7 @@ function lit_init_type(e: parser.Expr): string {
 // over such (`var k = i % 7`). The binding is found ANYWHERE in the body
 // (while/for/if/match nesting included — a loop-body `var k = i` used to be
 // invisible, so a tuple-lifted lambda capturing it DECLINED and the module
-// bailed to the legacy AST path, which miscompiles the shape — #5051). "" when
+// bailed — #5051). "" when
 // it can't infer (the caller then declines the lift). Mirrors
 // ssa.resolve_capture_type.
 // pat_variant_payload_field_s is the structs-taking sibling of
@@ -54145,7 +54136,7 @@ function lit_init_type(e: parser.Expr): string {
 // main binding, `__ev<k+1>` for the k-th extra. Used by the lift-side
 // cap_type walk (which carries `structs`, not a LowerState) so a lambda
 // capturing a USER-ENUM match payload resolves its type and lifts instead of
-// declining to the miscompiling AST path (#5155). "" when the name binds no
+// declining and bailing the module (#5155). "" when the name binds no
 // payload of this variant.
 function pat_variant_payload_field_s(pv: parser.PatVariant, name: string, structs: parser.StructDecl[]): string {
     var vname: string = pv.type_name;
@@ -54491,7 +54482,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // a pointer riding the 32-bit env slot, so the nested-destructure
                 // capture lifts instead of declining (#5201). A pointer-element
                 // tuple stays declined: a captured string from a destructure is a
-                // separate pre-existing IR gap, so keep it on the AST fallback.
+                // separate pre-existing IR gap.
                 if (rc_fe_is_destructure(v.name)) {
                     var dnames: string[] = rc_fe_split_csv(v.name);
                     var didx: i32 = util.index_of_str(dnames, name);
@@ -54525,15 +54516,15 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // `T[]` local/param binds a T (strip the "[]"), and a range
                 // (`for x in 0..n`, any non-array iter of scalar shape) binds
                 // an i32. Without this a lambda capturing a for-in binder
-                // resolved "" → cap_slot_ok declined → the whole module fell
-                // to the AST path, where a capturing lambda in a struct fn
-                // FIELD miscompiles (silent wrong values — the f5/f4 probes).
+                // resolved "" → cap_slot_ok declined → the whole module
+                // bailed (and the AST emitter it then fell to miscompiled a
+                // capturing lambda in a struct fn FIELD — the f5/f4 probes).
                 // A capture only labels the hoisted fn's param, so a miss
                 // stays a declined lift, never a miscompile.
                 // `for (k, v) in m` binds two names, encoded comma-joined, so
                 // the single-binder test below never matches either of them and
-                // a lambda capturing one resolved "" — the whole module fell to
-                // the AST path. The pair is a Map's key and value type.
+                // a lambda capturing one resolved "" — the whole module bailed.
+                // The pair is a Map's key and value type.
                 if (rc_fe_is_destructure(fr.var_name)) {
                     var kvn: string[] = rc_fe_split_csv(fr.var_name);
                     var kvi: i32 = util.index_of_str(kvn, name);
@@ -54633,8 +54624,9 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
                 // A match-arm PAYLOAD BINDING (`match (o) { Some(v) => … }`):
                 // `v` is not a `var`, so the body walk below never resolves its
                 // type — a lambda capturing it declined the lift and the module
-                // fell to the AST path, where a fn-field-captured lambda
-                // miscompiles (the m1 probe: native 20, self-host 4). Resolve
+                // fell out of the IR subset, onto an AST emitter that miscompiled
+                // a fn-field-captured lambda (the m1 probe: native 20,
+                // self-host 4). Resolve
                 // the MAIN binding of an Option/Result arm from the scrutinee's
                 // type spelling (opt_payload_type — no enum decls needed here).
                 // A USER-ENUM variant's payload resolves via the enum
@@ -54710,8 +54702,7 @@ function cap_type_in_stmts(body: parser.Stmt[], name: string, fd: parser.FuncDec
 // (depth-bounded so a cycle terminates as ""); comparisons/logic → boolean;
 // arithmetic/bitwise where BOTH sides infer i32 → i32; `+` over two strings →
 // string (concat — a string capture rides the env box's pointer slot like any
-// other pointer-shaped type, so declining it only forced the module onto the
-// legacy AST path, which miscompiles the capturing-tuple shape). Every other
+// other pointer-shaped type, so declining it only bailed the module). Every other
 // operator still requires both sides i32.
 function cap_type_expr(e: parser.Expr, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: MFuncs): string {
     var lt: string = lit_init_type(e);
@@ -54901,7 +54892,7 @@ function subst_fcall_expr(e: parser.Expr, fname: string, lname: string, capargs:
             // injected caps flow through as the nested lambda's own caps).
             // Declined when `fname` or any injected capture name is shadowed by a
             // binding (param or local `var`) of the nested lambda: the rewrite
-            // would then bind the wrong value, so it stays on the AST path.
+            // would then bind the wrong value, so the module bails instead.
             var bound: string[] = [];
             var bpi: i32 = 0;
             while (bpi < lm.params.len()) { bound = bound.append(lm.params[bpi].name); bpi = bpi + 1; }
@@ -54978,7 +54969,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
     // the same way, with no capture args — `f(a)` becomes a direct call to the
     // hoisted `__lam_N(a)`. (Previously declined here, so it fell through to the
     // first-class-closure lowering, which emits const_func(<fn>$clo) with no
-    // such hoisted body and bailed the module to the AST emitter.) The
+    // such hoisted body and bailed the module.) The
     // fname-not-used-as-a-value guard below still applies, so a lambda that
     // escapes (passed/returned/reassigned) declines and keeps the box path.
     if (util.index_of_str(assigns, fname) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
@@ -54991,7 +54982,7 @@ function try_lift_binding(body: parser.Stmt[], idx: i32, fname: string, lam: par
         // reads the binding's current value — exactly the interpreter's
         // by-reference capture semantics (#5301 pointer captures, #5300
         // outer-mutated scalars; the old decline sent these shapes to the AST
-        // path, which snapshots at make time and diverges from the oracle).
+        // emitter, which snapshots at make time and diverges from the oracle).
         // Closure-side writes never reach here un-shared: a written scalar
         // capture is already a boxed cell (box_mutated_scalar_captures runs
         // first), and a written pointer capture is checker-rejected (E049).
@@ -55058,8 +55049,8 @@ function cl_replace_at(body: parser.Stmt[], at: i32, ns: parser.Stmt): parser.St
 // at the top level OR inside a `while` / `for` / `if` / `match` body. Before
 // the nested recursion only top-level bindings lifted, so a loop-local
 // capturing closure (`while (…) { var f = function(n){ return n + base; }; …
-// f(i) … }`) was never lifted and the whole module fell to the AST path
-// (correct, but off the IR path — the loop-local capturing-closure IR gap).
+// f(i) … }`) was never lifted, taking the whole module off the IR path (the
+// loop-local capturing-closure IR gap).
 function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): ClosureLift {
     var assigns: string[] = body_assign_targets(body);
     var i: i32 = 0;
@@ -55071,7 +55062,7 @@ function closure_lift_one(body: parser.Stmt[], fd: parser.FuncDecl, acc: LiftAcc
                         // Both capturing and capture-free lambda bindings lift to
                         // a hoisted top-level function + direct call sites (the
                         // capture-free case carries no capture args). try_lift_
-                        // binding declines (keeping the closure-box / AST path) if
+                        // binding declines (keeping the closure-box path) if
                         // the binding escapes — used as a value, returned, or
                         // reassigned — rather than only called.
                         var lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns, structs, mfuncs);
@@ -55154,7 +55145,7 @@ function cap_slot_ok(t: string): boolean {
 // caps follow) and then runs the lambda body. Each capture must fit the box's
 // 32-bit slot (cap_slot_ok: i32 or any pointer-shaped type — string, array,
 // struct, enum, …; an 8-byte scalar declines); otherwise it returns ok:false so
-// the closure stays an ExprLambda and the module bails to AST. The capture var
+// the closure stays an ExprLambda and the module bails. The capture var
 // is declared with its REAL type so downstream uses (e.g. a captured string's
 // `.len()`) dispatch correctly even though the box is typed i32[] (the 32-bit
 // load yields the pointer, which fits). Shared by the return-position
@@ -55281,7 +55272,7 @@ function try_inline_closure(lam: parser.ExprLambda, fd: parser.FuncDecl, funcs: 
 // __env, the args, then box[0], and call_indirect(arity+1). Captures must be
 // i32 (make_clo_func declines otherwise); a fn-name whose FuncDecl isn't found,
 // or any other field-value shape, declines (ok:false) so the field stays as-is
-// and the module bails to AST (correctness preserved).
+// and the module bails (correctness preserved).
 
 // make_wrap_lambda_func builds the env-taking trampoline for a NO-CAPTURE inline
 // lambda field value: `<wrapname>(__env: i32[], origparams…) { <lambda body> }`
@@ -55299,7 +55290,7 @@ function make_wrap_lambda_func(lam: parser.ExprLambda, wrapname: string): parser
 // value (`Box { f: dbl }`): `<wrapname>(__env: i32[], p0, p1…) { return dbl(p0,
 // p1…); }`, reusing the target function's parameter list / return type (looked
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
-// that name is found — the field then stays as-is and the module bails to AST.
+// that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
     var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, async: false, is_const: false, is_pub: true };
     var fi: i32 = 0;
@@ -55322,8 +55313,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             // one `return` expression are mislowered when this pass runs inside
             // an IR-built compiler: the lifted wrapper ends up declared under its
             // BASE name (`main` rather than `main$wrap0`), so the eligibility
-            // walk's module_has_func lookup fails and the whole module falls back
-            // to the AST emitter — which per #5622 silently drops i32 wrapping.
+            // walk's module_has_func lookup fails and the whole module bails.
             // Binding EITHER aggregate to a local fixes it; binding a scalar
             // field value does not. The underlying lowering defect is #5674 —
             // this hoist works around it at the one site that is known to hit it.
@@ -55341,7 +55331,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
 // args (box [funcval]). Bare fn-name → a `$wrapN` trampoline calling the named
 // fn, marker with no cap args. Any other value shape (or an unresolvable fn-name
 // / non-i32-capture lambda) declines: the value is returned unchanged so the
-// module bails to AST (correctness preserved). The marker arg list is empty for
+// module bails (correctness preserved). The marker arg list is empty for
 // the wrap cases, so __mkclo$ lowering emits a 1-slot box [const_func($wrapN)].
 function try_fn_field_value(e: parser.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): InlineCloRes {
     match (e) {
@@ -56928,7 +56918,7 @@ function lift_inline_closures_expr(e: parser.Expr, fd: parser.FuncDecl, funcs: p
             // A field whose declared type isn't `fn`, or whose value can't be
             // wrapped (e.g. an unresolvable fn-name, a non-i32-capture lambda),
             // recurses / is left unchanged so a nested array INSIDE a field value
-            // is still reached and the module bails to AST when it must.
+            // is still reached and the module bails when it must.
             var fs: parser.FuncDecl[] = funcs;
             var ct: i32 = counter;
             var nvals: parser.Expr[] = [];
@@ -57314,7 +57304,7 @@ function lift_inline_closures_stmts(stmts: parser.Stmt[], fd: parser.FuncDecl, f
                         // marker (ExprCall) and DECLINES (returns the lambda
                         // unchanged) for non-i32 captures — only the ExprCall result
                         // counts as boxed; a decline falls through to the walk so the
-                        // module bails to AST (correctness preserved).
+                        // module bails (correctness preserved).
                         if (stmts_value_use(fd.body, bn)) {
                             var lr: InlineCloRes = try_fn_field_value(v.init, fd, fs, ct, gfns, mfuncs, structs);
                             match (lr.expr) {
@@ -58447,7 +58437,7 @@ function box_nested_lambdas(e: parser.Expr, acc: parser.ExprLambda[]): parser.Ex
 // represented as exactly this IIFE-return, so once such a lambda is lifted to a
 // `__lam_N`, its body is `[return (IIFE)()]` and any lambda NESTED in the block
 // stays buried inside the IIFE where closure_lift_one never descends → the inner
-// lambda doesn't lift and the module bails to AST (broken on wasm). Inlining the
+// lambda doesn't lift and the module bails. Inlining the
 // IIFE (rather than hoisting it — which breaks enclosing-loop break/continue and
 // match-expression payloads) is semantically neutral: no function boundary is
 // added, so control flow and captures resolve exactly as before, and the block's
@@ -58637,16 +58627,14 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
         wi = wi + 1;
     }
     // Normalise the lifted module for the IR path, mirroring the transient-node
-    // pass the AST backend gets via module_with_builtins:
+    // pass module_with_builtins runs:
     //   * lower `defer` / `errdefer` → the action scheduled at every scope exit
-    //     (cf. lower_defers; the AST emitters likewise see no StmtDefer).
+    //     (cf. lower_defers).
     // Without this a module whose only IR-ineligible construct was a defer
-    // bailed the whole module to the AST backend. Applied to the FINAL
-    // lifted module so defers inside lifted-lambda bodies (now top-level funcs
-    // in `newfuncs`) are covered — lower_defers doesn't descend into lambda
-    // bodies, but after lifting those bodies are ordinary functions. The AST
-    // fallback path uses the original `mod`, not this lifted module, so its
-    // own defer handling is unchanged.
+    // bailed in full. Applied to the FINAL lifted module so defers inside
+    // lifted-lambda bodies (now top-level funcs in `newfuncs`) are covered —
+    // lower_defers doesn't descend into lambda bodies, but after lifting those
+    // bodies are ordinary functions.
     var result: parser.Module = mod;
     if (acc.counter != 0) {
         result = parser.Module { funcs: stamp_fn_local_types(newfuncs), structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
@@ -58654,9 +58642,9 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
     // Infer return types on the FINAL lifted module so a lifted lambda with an
     // inferred (empty) ret_type that returns i64/u64 is typed BEFORE eligibility
     // lowers it. Without this, eligibility ran on the un-inferred module and
-    // `lower` bailed on the wide return (ret_is_i64 unknown) → the lambda routed
-    // to the AST emitter (correct on x86, broken WAT on wasm), even though EMIT
-    // (which runs on the separately-inferred module) would have handled it.
+    // `lower` bailed on the wide return (ret_is_i64 unknown) → the lambda took
+    // the whole module out of the IR subset, even though EMIT (which runs on the
+    // separately-inferred module) would have handled it.
     // infer_ret_types_module only fills EMPTY ret_types (annotated fns untouched)
     // and is idempotent with the drivers' own downstream infer pass.
     return parser.infer_ret_types_module(parser.lower_defers_module(result));
