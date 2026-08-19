@@ -61,7 +61,9 @@ func TestX86_64HeapReclamationPeakRSS(t *testing.T) {
 	// linearly with the loop count. Measured here: ON ~ 27 MB
 	// regardless of N, OFF ~ 62 MB at 800k (and rising with N).
 	// Result is 0 either way (last array's [0] == 799999).
-	const churn = `function main(): i32 {
+	const churn = `import "core/map";
+
+function main(): i32 {
     var m: Map[i32, i32[]] = map_new(4);
     var i: i32 = 0;
     while (i < 800000) {

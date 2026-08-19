@@ -297,8 +297,11 @@ differential fuzz and `__rc_underflow_count` guard.
    /`m.get_or` / `m.iter().value()` all retain the returned string, and
    a key OVERWRITE pre-drops the replaced buffer via `__map_lookup_val`
    + `__fern_str_dec` (wasm) or `__fern_rc_dec` (x86_64). The 8-byte
-   cell on wasm leaks (like every boxed-value cell today — a minor
-   follow-up); the dominant string buffer is reclaimed.
+   cell on wasm leaks — a string value's cell and the reference it
+   carries cannot be reclaimed independently, so it waits on #6242's
+   claim over the value column, where a WIDE-scalar value column is
+   already owned outright (#7114); the dominant string buffer is
+   reclaimed.
 
    **arm64 is excluded.** arm64 IR-lowering forces `TwoWordOverride=true`
    (see `internal/codegen/arm64/arm64.go`), so strings are stored boxed
